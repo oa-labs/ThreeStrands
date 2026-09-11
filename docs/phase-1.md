@@ -19,21 +19,52 @@ This document tracks implementation against the Phase 1 exit criteria in
   and SVG blocked.
 - Browser development mode backed by deterministic fixtures.
 - Sync diagnostics for cursor, latest success, pending mutations, and errors.
+- Google installed-app OAuth Authorization Code flow with PKCE, a random
+  loopback port, state validation, and browser handoff. The non-secret client
+  ID is configured with `DISPATCH_GOOGLE_CLIENT_ID`.
+- OAuth access and refresh tokens stored only in the operating-system
+  credential store (`app.dispatch.mail`), never SQLite or the webview.
+- Gmail REST integration with bounded `Retry-After`/exponential backoff,
+  base64url MIME decoding, nested multipart plain/HTML selection, attachment
+  exclusion, and normalized Subject/From/To/Date fields.
+- Initial paginated synchronization and incremental Gmail History
+  synchronization. Expired/invalid history cursors trigger a complete import;
+  the import cursor is captured before listing and history is replayed
+  afterwards to close the snapshot race.
+- Durable Gmail delivery for archive, read/unread, star, and arbitrary label
+  changes. Identical pending changes are coalesced; interrupted `running`
+  records return to `pending` on startup; acknowledged and rejected changes
+  are recorded separately.
+- Typed commands for Google connection status/connect/disconnect, manual sync,
+  label list/create/rename/delete, and label thread mutations.
+- Adaptive background polling while connected, plus catch-up on Tauri startup
+  and desktop resume events.
+- Native tests for nested MIME normalization and malformed provider data,
+  repeated mutation idempotence, and recovery of an interrupted mutation.
+- Label creation, rename, deletion, and per-thread application UI.
+- Opt-in crash reporting with local retention, address/URL redaction, optional
+  build-time reporting endpoint, and a documented data/retention policy.
+- Automated accessibility checks, a reusable provider contract suite, native
+  fault-injection tests, and Playwright keyboard read/triage workflows.
 
 ## Remaining before Phase 1 exit
 
-- Google OAuth Authorization Code with PKCE.
-- OS-keychain token persistence.
-- Gmail REST adapter and MIME normalization.
-- Initial Gmail synchronization and history cursor recovery.
-- Adaptive polling, startup/resume catch-up, and provider quota handling.
-- Durable mutation delivery and reconciliation against Gmail.
-- Label mutations and label management.
-- Crash reporting policy and opt-in implementation.
-- Automated accessibility, end-to-end, provider contract, and fault-injection
-  coverage.
+- Validate OAuth and synchronization against a Google test account. Automated
+  repository tests use provider contracts and mocks so CI never needs mailbox
+  credentials.
 - Two weeks of dogfooding without a data-loss incident.
 
-The browser preview intentionally uses fixtures. The Tauri build reads from the
-local SQLite database. The current `sync_account` command updates diagnostics
-only; it does not claim to contact Gmail.
+The browser preview intentionally continues to use fixtures. The Tauri build
+reads from local SQLite and contacts Gmail only after explicit OAuth consent.
+Create a Google OAuth client of type **Desktop app**, enable the Gmail API, and
+provide its public client ID when launching/building:
+
+```sh
+DISPATCH_GOOGLE_CLIENT_ID=1234.apps.googleusercontent.com pnpm tauri dev
+```
+
+No Google client secret is used or expected. OAuth requires the system browser
+and an available loopback port. OS credential-store availability depends on a
+logged-in desktop keychain service. Background polling runs only while the
+process is alive; the app performs catch-up rather than claiming OS-level
+background delivery while suspended or terminated.

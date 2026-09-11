@@ -23,12 +23,24 @@ Prerequisites:
 - the [Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 ```sh
-npm install
-npm run dev       # browser preview with fixture mail
-npm test
-npm run build
-npm run tauri dev # native app with local SQLite
+pnpm install
+pnpm dev       # browser preview with fixture mail
+pnpm test
+pnpm test:e2e  # first run: pnpm exec playwright install chromium
+pnpm build
+pnpm tauri dev # native app with local SQLite
 ```
+
+To connect Gmail, enable the Gmail API in a Google Cloud project, create an
+OAuth client of type **Desktop app**, and launch the native client with its
+public client ID:
+
+```sh
+DISPATCH_GOOGLE_CLIENT_ID=1234.apps.googleusercontent.com pnpm tauri dev
+```
+
+No Google client secret is used. Tokens are stored in the operating-system
+keychain.
 
 ## Product principles
 

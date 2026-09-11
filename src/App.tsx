@@ -4,9 +4,12 @@ import {
   Inbox,
   Mail,
   MailOpen,
+  Pencil,
   RefreshCw,
   Search,
   Star,
+  Tag,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -18,8 +21,21 @@ import {
   useState,
 } from "react";
 import { commands, isEditableTarget, matchesShortcut, type CommandContext } from "./commands";
+import {
+  clearLocalCrashReports,
+  crashReportingEnabled,
+  localCrashReports,
+  setCrashReportingEnabled,
+} from "./crashReporting";
 import { mailClient } from "./data/client";
-import type { SyncStatus, Thread, ThreadDetail, ThreadMutation } from "./domain";
+import type {
+  AuthStatus,
+  Label,
+  SyncStatus,
+  Thread,
+  ThreadDetail,
+  ThreadMutation,
+} from "./domain";
 import { SafeMessage } from "./SafeMessage";
 
 type Notice = { message: string; undo?: () => void };
@@ -63,6 +79,10 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [labelsOpen, setLabelsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [labels, setLabels] = useState<Label[]>([]);
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -80,8 +100,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    Promise.all([loadThreads(""), mailClient.syncStatus()])
-      .then(([, status]) => setSyncStatus(status))
+    Promise.all([loadThreads(""), mailClient.syncStatus(), mailClient.googleAuthStatus()])
+      .then(([, status, auth]) => {
+        setSyncStatus(status);
+        setAuthStatus(auth);
+        void mailClient.listLabels().then(setLabels).catch(() => setLabels([]));
+      })
       .finally(() => setLoading(false));
   }, [loadThreads]);
 
@@ -106,7 +130,11 @@ export function App() {
       if (thread.id !== mutation.threadId) return thread;
       if (mutation.kind === "archive") return { ...thread, archived: mutation.value };
       if (mutation.kind === "read") return { ...thread, unread: !mutation.value };
-      return { ...thread, starred: mutation.value };
+      if (mutation.kind === "star") return { ...thread, starred: mutation.value };
+      const threadLabels = new Set(thread.labels);
+      if (mutation.value) threadLabels.add(mutation.labelId);
+      else threadLabels.delete(mutation.labelId);
+      return { ...thread, labels: [...threadLabels] };
     };
 
     setThreads((current) =>
@@ -167,6 +195,7 @@ export function App() {
       });
     },
     openDiagnostics: () => setDiagnosticsOpen(true),
+    openLabels: () => setLabelsOpen(true),
   }), [loadThreads, mutate, query, selected, selectedId, selectedIndex, threads]);
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
@@ -175,7 +204,7 @@ export function App() {
   return (
     <main className="app-shell">
       <nav className="sidebar" aria-label="Mailboxes">
-        <div className="brand">D</div>
+        <button className="brand" aria-label="Account" onClick={() => setAccountOpen(true)}>D</button>
         <button className="nav-button active" aria-label="Inbox"><Inbox size={19} /></button>
         <div className="sidebar-spacer" />
         <button
@@ -261,6 +290,9 @@ export function App() {
                 >
                   {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
                 </ActionButton>
+                <ActionButton label="Labels" shortcut="v" onClick={context.openLabels}>
+                  <Tag size={17} />
+                </ActionButton>
                 <ActionButton label="Archive" shortcut="e" onClick={context.archiveSelected}>
                   <Archive size={17} />
                 </ActionButton>
@@ -292,6 +324,48 @@ export function App() {
       ) : null}
       {diagnosticsOpen ? (
         <Diagnostics status={syncStatus} onClose={() => setDiagnosticsOpen(false)} />
+      ) : null}
+      {labelsOpen && selected ? (
+        <LabelManager
+          labels={labels}
+          thread={selected}
+          onClose={() => setLabelsOpen(false)}
+          onCreate={async (name) => {
+            const label = await mailClient.createLabel(name);
+            setLabels((current) => [...current, label]);
+          }}
+          onDelete={async (id) => {
+            await mailClient.deleteLabel(id);
+            setLabels((current) => current.filter((label) => label.id !== id));
+            await loadThreads(query);
+          }}
+          onRename={async (id, name) => {
+            const updated = await mailClient.updateLabel(id, name);
+            setLabels((current) =>
+              current.map((label) => label.id === id ? { ...label, ...updated } : label),
+            );
+          }}
+          onToggle={(labelId, value) =>
+            mutate({ kind: "label", threadId: selected.id, labelId, value })
+          }
+        />
+      ) : null}
+      {accountOpen ? (
+        <AccountManager
+          status={authStatus}
+          onClose={() => setAccountOpen(false)}
+          onConnect={async () => {
+            const status = await mailClient.connectGoogle();
+            setSyncStatus(status);
+            setAuthStatus(await mailClient.googleAuthStatus());
+            await loadThreads(query);
+            setLabels(await mailClient.listLabels());
+          }}
+          onDisconnect={async () => {
+            await mailClient.disconnectGoogle();
+            setAuthStatus(await mailClient.googleAuthStatus());
+          }}
+        />
       ) : null}
       {notice ? (
         <div className="toast" role="status">
@@ -373,6 +447,8 @@ function Diagnostics({
   status: SyncStatus | null;
   onClose(): void;
 }) {
+  const [reporting, setReporting] = useState(crashReportingEnabled);
+  const [reportCount, setReportCount] = useState(() => localCrashReports().length);
   return (
     <Modal title="Sync diagnostics" onClose={onClose}>
       <dl className="diagnostics">
@@ -383,6 +459,185 @@ function Diagnostics({
         <dt>Pending mutations</dt><dd>{status?.pendingMutations ?? 0}</dd>
         <dt>Last error</dt><dd>{status?.error ?? "None"}</dd>
       </dl>
+      <div className="reporting-settings">
+        <label>
+          <input
+            type="checkbox"
+            checked={reporting}
+            onChange={(event) => {
+              setReporting(event.target.checked);
+              setCrashReportingEnabled(event.target.checked);
+            }}
+          />
+          Share sanitized crash reports
+        </label>
+        <span>
+          Disabled by default. Email addresses and URLs are redacted.{" "}
+          Policy: <code>docs/crash-reporting.md</code>
+        </span>
+        <button
+          disabled={reportCount === 0}
+          onClick={() => {
+            clearLocalCrashReports();
+            setReportCount(0);
+          }}
+        >
+          Clear {reportCount} local {reportCount === 1 ? "report" : "reports"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function LabelManager({
+  labels,
+  thread,
+  onClose,
+  onCreate,
+  onDelete,
+  onRename,
+  onToggle,
+}: {
+  labels: Label[];
+  thread: Thread;
+  onClose(): void;
+  onCreate(name: string): Promise<void>;
+  onDelete(id: string): Promise<void>;
+  onRename(id: string, name: string): Promise<void>;
+  onToggle(id: string, value: boolean): void;
+}) {
+  const [name, setName] = useState("");
+  const [renaming, setRenaming] = useState<Label | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal title="Manage labels" onClose={onClose}>
+      <form
+        className="create-label"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!name.trim() || busy) return;
+          setBusy(true);
+          void onCreate(name).then(() => setName("")).finally(() => setBusy(false));
+        }}
+      >
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="New label name"
+          aria-label="New label name"
+        />
+        <button type="submit" disabled={!name.trim() || busy}>Create</button>
+      </form>
+      <div className="label-list">
+        {labels.map((label) => (
+          <div key={label.id}>
+            <label>
+              <input
+                type="checkbox"
+                checked={thread.labels.includes(label.id)}
+                onChange={(event) => onToggle(label.id, event.target.checked)}
+              />
+              <span className="label-color" style={{ background: label.color ?? "#64646d" }} />
+              {label.name}
+            </label>
+            {label.kind === "user" ? (
+              <span className="label-actions">
+                <button
+                  aria-label={`Rename ${label.name}`}
+                  onClick={() => {
+                    setRenaming(label);
+                    setRenameValue(label.name);
+                  }}
+                >
+                  <Pencil size={14} />
+                </button>
+                <button aria-label={`Delete ${label.name}`} onClick={() => void onDelete(label.id)}>
+                  <Trash2 size={14} />
+                </button>
+              </span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+      {renaming ? (
+        <form
+          className="rename-label"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!renameValue.trim() || busy) return;
+            setBusy(true);
+            void onRename(renaming.id, renameValue)
+              .then(() => setRenaming(null))
+              .finally(() => setBusy(false));
+          }}
+        >
+          <input
+            autoFocus
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+            aria-label={`Rename ${renaming.name}`}
+          />
+          <button type="submit" disabled={!renameValue.trim() || busy}>Save</button>
+          <button type="button" onClick={() => setRenaming(null)}>Cancel</button>
+        </form>
+      ) : null}
+    </Modal>
+  );
+}
+
+function AccountManager({
+  status,
+  onClose,
+  onConnect,
+  onDisconnect,
+}: {
+  status: AuthStatus | null;
+  onClose(): void;
+  onConnect(): Promise<void>;
+  onDisconnect(): Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const act = (operation: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    void operation()
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : String(reason)),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Modal title="Google account" onClose={onClose}>
+      <div className="account-manager">
+        {!status?.configured ? (
+          <>
+            <strong>Google OAuth is not configured</strong>
+            <p>
+              Set <code>DISPATCH_GOOGLE_CLIENT_ID</code> to a Google Desktop app
+              OAuth client ID and restart Dispatch.
+            </p>
+          </>
+        ) : status.connected ? (
+          <>
+            <strong>Gmail is connected</strong>
+            <p>Credentials are stored in the operating-system keychain.</p>
+            <button disabled={busy} onClick={() => act(onDisconnect)}>
+              Disconnect Gmail
+            </button>
+          </>
+        ) : (
+          <>
+            <strong>Connect Gmail</strong>
+            <p>Authorization opens in your browser and returns over a local loopback port.</p>
+            <button disabled={busy} onClick={() => act(onConnect)}>
+              {busy ? "Waiting for Google…" : "Continue with Google"}
+            </button>
+          </>
+        )}
+        {error ? <p className="form-error" role="alert">{error}</p> : null}
+      </div>
     </Modal>
   );
 }

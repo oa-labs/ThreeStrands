@@ -8,6 +8,7 @@ export type CommandContext = {
   focusSearch(): void;
   refresh(): void;
   openDiagnostics(): void;
+  openLabels(): void;
 };
 
 export type Command = {
@@ -59,6 +60,14 @@ export const commands: Command[] = [
     group: "Triage",
     enabled: (context) => context.selectedId !== null,
     run: (context) => context.toggleStarSelected(),
+  },
+  {
+    id: "labels.open",
+    title: "Manage labels",
+    keys: ["v"],
+    group: "Triage",
+    enabled: (context) => context.selectedId !== null,
+    run: (context) => context.openLabels(),
   },
   {
     id: "search.focus",

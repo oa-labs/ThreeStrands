@@ -34,7 +34,15 @@ export type SearchThreadsRequest = {
 export type ThreadMutation =
   | { kind: "archive"; threadId: string; value: boolean }
   | { kind: "read"; threadId: string; value: boolean }
-  | { kind: "star"; threadId: string; value: boolean };
+  | { kind: "star"; threadId: string; value: boolean }
+  | { kind: "label"; threadId: string; labelId: string; value: boolean };
+
+export type Label = {
+  id: string;
+  name: string;
+  kind: "system" | "user" | string;
+  color?: string | null;
+};
 
 export type SyncStatus = {
   state: "idle" | "syncing" | "offline" | "error";
@@ -42,4 +50,19 @@ export type SyncStatus = {
   cursor: string | null;
   pendingMutations: number;
   error: string | null;
+};
+
+export type AuthStatus = {
+  configured: boolean;
+  connected: boolean;
+};
+
+export type CrashReport = {
+  id: string;
+  occurredAt: string;
+  kind: "error" | "unhandledrejection";
+  message: string;
+  stack: string | null;
+  appVersion: string;
+  userAgent: string;
 };

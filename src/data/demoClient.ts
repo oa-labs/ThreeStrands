@@ -1,5 +1,5 @@
 import type { MailClient } from "./client";
-import type { SyncStatus, Thread, ThreadDetail, ThreadMutation } from "../domain";
+import type { Label, SyncStatus, Thread, ThreadDetail, ThreadMutation } from "../domain";
 
 const initialThreads: Thread[] = [
   {
@@ -41,6 +41,11 @@ const initialThreads: Thread[] = [
 ];
 
 let threads = structuredClone(initialThreads);
+let labels: Label[] = [
+  { id: "INBOX", name: "Inbox", kind: "system", color: null },
+  { id: "STARRED", name: "Starred", kind: "system", color: null },
+  { id: "work", name: "Work", kind: "user", color: "#7b73ee" },
+];
 
 const details: Record<string, string> = {
   welcome: `
@@ -85,6 +90,12 @@ function update(mutation: ThreadMutation) {
         return { ...thread, unread: !mutation.value };
       case "star":
         return { ...thread, starred: mutation.value };
+      case "label": {
+        const next = new Set(thread.labels);
+        if (mutation.value) next.add(mutation.labelId);
+        else next.delete(mutation.labelId);
+        return { ...thread, labels: [...next] };
+      }
     }
   });
 }
@@ -135,5 +146,41 @@ export const demoClient: MailClient = {
   },
   async syncStatus() {
     return { ...status };
+  },
+  async googleAuthStatus() {
+    return { configured: false, connected: false };
+  },
+  async connectGoogle() {
+    status.lastSuccessfulSync = new Date().toISOString();
+    return { ...status };
+  },
+  async disconnectGoogle() {},
+  async listLabels() {
+    return structuredClone(labels);
+  },
+  async createLabel(name) {
+    const normalized = name.trim();
+    if (!normalized) throw new Error("Label name is required");
+    const label: Label = {
+      id: `demo-${crypto.randomUUID()}`,
+      name: normalized,
+      kind: "user",
+      color: null,
+    };
+    labels = [...labels, label];
+    return structuredClone(label);
+  },
+  async updateLabel(id, name) {
+    const label = labels.find((candidate) => candidate.id === id);
+    if (!label) throw new Error("Label not found");
+    label.name = name.trim();
+    return structuredClone(label);
+  },
+  async deleteLabel(id) {
+    labels = labels.filter((label) => label.id !== id || label.kind === "system");
+    threads = threads.map((thread) => ({
+      ...thread,
+      labels: thread.labels.filter((labelId) => labelId !== id),
+    }));
   },
 };

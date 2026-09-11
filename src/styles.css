@@ -38,6 +38,8 @@ button { color: inherit; }
   background: linear-gradient(135deg, #835cff, #5b8cff);
   color: white;
   font-weight: 800;
+  border: 0;
+  cursor: pointer;
 }
 
 .sidebar-spacer { flex: 1; }
@@ -196,6 +198,30 @@ kbd {
 .diagnostics { display: grid; grid-template-columns: 1fr 1.5fr; gap: 10px 20px; padding: 10px 20px 24px; font-size: 13px; }
 .diagnostics dt { color: #83838d; }
 .diagnostics dd { margin: 0; overflow-wrap: anywhere; }
+.reporting-settings { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 0 20px 20px; padding-top: 14px; border-top: 1px solid #34343a; font-size: 12px; }
+.reporting-settings label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.reporting-settings span { color: #888893; }
+.reporting-settings a { color: #aaa6ff; }
+.reporting-settings button, .create-label button { padding: 6px 9px; border: 1px solid #414149; border-radius: 6px; background: #29292f; cursor: pointer; }
+.reporting-settings button:disabled { opacity: .4; }
+.create-label { display: flex; gap: 8px; padding: 8px 14px 12px; }
+.create-label input { min-width: 0; flex: 1; padding: 9px 10px; border: 1px solid #3b3b42; border-radius: 7px; outline: none; color: #f1f1f3; background: #242429; }
+.create-label input:focus { border-color: #6e69d8; }
+.label-list { max-height: 44vh; overflow: auto; padding: 0 10px 14px; }
+.label-list > div { display: flex; align-items: center; justify-content: space-between; padding: 9px; border-radius: 7px; }
+.label-list > div:hover { background: #29292f; }
+.label-list label { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.label-list button { display: grid; place-items: center; border: 0; color: #92929c; background: transparent; cursor: pointer; }
+.label-color { width: 8px; height: 8px; border-radius: 50%; }
+.label-actions { display: flex; gap: 4px; }
+.rename-label { display: flex; gap: 7px; padding: 10px 14px; border-top: 1px solid #34343a; }
+.rename-label input { min-width: 0; flex: 1; padding: 7px 9px; border: 1px solid #494952; border-radius: 6px; color: #f1f1f3; background: #242429; }
+.rename-label button { border: 1px solid #414149; border-radius: 6px; background: #29292f; cursor: pointer; }
+.account-manager { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 20px 24px; }
+.account-manager p { margin: 0 0 8px; color: #92929c; font-size: 13px; line-height: 1.5; }
+.account-manager button { padding: 8px 11px; border: 1px solid #514c91; border-radius: 7px; background: #373263; cursor: pointer; }
+.account-manager button:disabled { opacity: .5; }
+.form-error { color: #f29595 !important; }
 
 .toast {
   position: fixed;

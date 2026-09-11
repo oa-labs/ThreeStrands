@@ -41,12 +41,30 @@ pub struct SearchThreadsRequest {
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ThreadMutation {
-    Archive { thread_id: String, value: bool },
-    Read { thread_id: String, value: bool },
-    Star { thread_id: String, value: bool },
+    Archive {
+        thread_id: String,
+        value: bool,
+    },
+    Read {
+        thread_id: String,
+        value: bool,
+    },
+    Star {
+        thread_id: String,
+        value: bool,
+    },
+    Label {
+        thread_id: String,
+        label_id: String,
+        value: bool,
+    },
 }
 
 impl ThreadMutation {
@@ -54,7 +72,8 @@ impl ThreadMutation {
         match self {
             Self::Archive { thread_id, .. }
             | Self::Read { thread_id, .. }
-            | Self::Star { thread_id, .. } => thread_id,
+            | Self::Star { thread_id, .. }
+            | Self::Label { thread_id, .. } => thread_id,
         }
     }
 }
@@ -67,4 +86,32 @@ pub struct SyncStatus {
     pub cursor: Option<String>,
     pub pending_mutations: i64,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Label {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLabelRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLabelRequest {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthStatus {
+    pub configured: bool,
+    pub connected: bool,
 }
