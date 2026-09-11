@@ -4,6 +4,8 @@ import {
   Inbox,
   Mail,
   MailOpen,
+  Moon,
+  Sun,
   Pencil,
   RefreshCw,
   Search,
@@ -37,6 +39,8 @@ import type {
   ThreadMutation,
 } from "./domain";
 import { SafeMessage } from "./SafeMessage";
+
+import { applyTheme, readTheme, saveTheme } from "./theme";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -72,6 +76,13 @@ function useShortcutHandler(
 }
 
 export function App() {
+  const [theme, setTheme] = useState(readTheme);
+  useEffect(() => applyTheme(theme), [theme]);
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    saveTheme(next);
+    setTheme(next);
+  };
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
@@ -207,6 +218,14 @@ export function App() {
         <button className="brand" aria-label="Account" onClick={() => setAccountOpen(true)}>D</button>
         <button className="nav-button active" aria-label="Inbox"><Inbox size={19} /></button>
         <div className="sidebar-spacer" />
+        <button
+          className="nav-button"
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          onClick={toggleTheme}
+        >
+          {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+        </button>
         <button
           className="nav-button"
           aria-label="Command palette"

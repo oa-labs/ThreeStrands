@@ -15,7 +15,7 @@ const allowedTags = [
 ];
 
 // Keep text formatting without allowing positioning, hidden content, or CSS
-// network requests. Colors inherit the reader's dark theme for legibility.
+// network requests. Colors inherit the reader's active theme for legibility.
 const safeStyles: Record<string, RegExp> = {
   "text-align": /^(left|right|center|justify|start|end)$/,
   "font-weight": /^(normal|bold|[1-9]00)$/,

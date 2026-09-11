@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { installCrashReporter } from "./crashReporting";
 import "./styles.css";
+import { applyTheme, readTheme } from "./theme";
+
+applyTheme(readTheme());
 
 installCrashReporter();
 
