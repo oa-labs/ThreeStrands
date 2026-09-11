@@ -40,3 +40,29 @@ test("switches themes and remembers the choice after reload", async ({ page }) =
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
+
+test("resizes the inbox with pointer and keyboard and restores the preferred width", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const divider = page.getByRole("separator", { name: "Resize inbox" });
+  await expect(divider).toHaveAttribute("aria-valuenow", "400");
+  const bounds = (await divider.boundingBox())!;
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 150);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width / 2 + 120, bounds.y + 150);
+  await page.mouse.up();
+  await expect(page.locator(".thread-column")).toHaveCSS("width", "520px");
+  await page.reload();
+  await expect(divider).toHaveAttribute("aria-valuenow", "520");
+  await divider.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(divider).toHaveAttribute("aria-valuenow", "510");
+  await page.setViewportSize({ width: 900, height: 800 });
+  await expect(divider).toHaveAttribute("aria-valuenow", "422");
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(divider).toHaveAttribute("aria-valuenow", "510");
+  await page.keyboard.press("Home");
+  await expect(divider).toHaveAttribute("aria-valuenow", "280");
+  await divider.dblclick();
+  await expect(divider).toHaveAttribute("aria-valuenow", "400");
+});

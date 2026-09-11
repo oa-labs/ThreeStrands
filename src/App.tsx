@@ -1,6 +1,8 @@
 import {
   Archive,
+  Check,
   Command as CommandIcon,
+  Copy,
   Inbox,
   Mail,
   MailOpen,
@@ -16,6 +18,7 @@ import {
 } from "lucide-react";
 import {
   type RefObject,
+  type CSSProperties,
   useCallback,
   useEffect,
   useMemo,
@@ -38,6 +41,7 @@ import type {
   ThreadDetail,
   ThreadMutation,
 } from "./domain";
+import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { SafeMessage } from "./SafeMessage";
 
 import { applyTheme, readTheme, saveTheme } from "./theme";
@@ -76,6 +80,7 @@ function useShortcutHandler(
 }
 
 export function App() {
+  const inboxSize = useInboxWidth();
   const [theme, setTheme] = useState(readTheme);
   useEffect(() => applyTheme(theme), [theme]);
   const toggleTheme = () => {
@@ -213,7 +218,7 @@ export function App() {
   useShortcutHandler(context, openPalette);
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <button className="brand" aria-label="Account" onClick={() => setAccountOpen(true)}>D</button>
         <button className="nav-button active" aria-label="Inbox"><Inbox size={19} /></button>
@@ -235,7 +240,8 @@ export function App() {
         </button>
       </nav>
 
-      <section className="thread-column" aria-label="Inbox">
+      <section id="inbox-panel" className="thread-column" aria-label="Inbox">
+        <InboxResizeHandle {...inboxSize} />
         <header className="thread-header">
           <div>
             <span className="eyebrow">Inbox</span>
@@ -323,8 +329,16 @@ export function App() {
                   <header>
                     <div className="avatar">{message.sender.charAt(0)}</div>
                     <div>
-                      <strong>{message.sender}</strong>
-                      <span>to {message.recipients.join(", ")}</span>
+                      <strong><AddressWithCopy address={message.sender} /></strong>
+                      <span>
+                        to{" "}
+                        {message.recipients.map((recipient, index) => (
+                          <span key={recipient}>
+                            {index > 0 ? ", " : ""}
+                            <AddressWithCopy address={recipient} />
+                          </span>
+                        ))}
+                      </span>
                     </div>
                     <time>{new Date(message.sentAt).toLocaleString()}</time>
                   </header>
@@ -394,6 +408,31 @@ export function App() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function AddressWithCopy({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    await navigator.clipboard.writeText(address);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <span className="address">
+      {address}
+      <button
+        type="button"
+        className="address-copy"
+        aria-label={copied ? "Copied" : `Copy ${address}`}
+        onClick={handleCopy}
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+    </span>
   );
 }
 

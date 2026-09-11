@@ -73,7 +73,7 @@ button { color: inherit; }
 
 .app-shell {
   display: grid;
-  grid-template-columns: 58px minmax(320px, 400px) 1fr;
+  grid-template-columns: 58px var(--inbox-width, 400px) minmax(0, 1fr);
   height: 100vh;
   background: var(--background);
 }
@@ -116,6 +116,7 @@ button { color: inherit; }
 .nav-button:hover, .nav-button.active, .icon-button:hover { background: var(--hover); }
 
 .thread-column {
+  position: relative;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -330,3 +331,26 @@ kbd {
 
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 input::placeholder { color: var(--muted); opacity: 1; }
+
+.inbox-resizer {
+  position: absolute;
+  inset-block: 0;
+  right: -4px;
+  width: 8px;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+.inbox-resizer::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+}
+.inbox-resizer:hover::after, .inbox-resizer:focus-visible::after,
+.inbox-resizer.dragging::after { background: var(--accent); }
+.inbox-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.app-shell:has(.inbox-resizer.dragging) { cursor: col-resize; user-select: none; }
