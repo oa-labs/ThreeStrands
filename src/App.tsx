@@ -309,7 +309,7 @@ export function App() {
                     </div>
                     <time>{new Date(message.sentAt).toLocaleString()}</time>
                   </header>
-                  <SafeMessage html={message.bodyHtml} />
+                  <SafeMessage html={message.bodyHtml} text={message.bodyText} />
                 </article>
               ))}
             </div>
