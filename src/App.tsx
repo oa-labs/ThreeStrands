@@ -1,0 +1,422 @@
+import {
+  Archive,
+  Command as CommandIcon,
+  Inbox,
+  Mail,
+  MailOpen,
+  RefreshCw,
+  Search,
+  Star,
+  X,
+} from "lucide-react";
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { commands, isEditableTarget, matchesShortcut, type CommandContext } from "./commands";
+import { mailClient } from "./data/client";
+import type { SyncStatus, Thread, ThreadDetail, ThreadMutation } from "./domain";
+import { SafeMessage } from "./SafeMessage";
+
+type Notice = { message: string; undo?: () => void };
+
+const timeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function useShortcutHandler(
+  context: CommandContext,
+  openPalette: () => void,
+) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        openPalette();
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
+      const command = commands.find(
+        (candidate) =>
+          candidate.enabled(context) &&
+          candidate.keys.some((key) => matchesShortcut(event, key)),
+      );
+      if (!command) return;
+      event.preventDefault();
+      command.run(context);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [context, openPalette]);
+}
+
+export function App() {
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ThreadDetail | null>(null);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const loadThreads = useCallback(async (search: string) => {
+    const next = search.trim()
+      ? await mailClient.searchThreads({ query: search })
+      : await mailClient.listThreads();
+    setThreads(next);
+    setSelectedId((current) =>
+      current && next.some((thread) => thread.id === current)
+        ? current
+        : (next[0]?.id ?? null),
+    );
+  }, []);
+
+  useEffect(() => {
+    Promise.all([loadThreads(""), mailClient.syncStatus()])
+      .then(([, status]) => setSyncStatus(status))
+      .finally(() => setLoading(false));
+  }, [loadThreads]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      return;
+    }
+    mailClient.getThread(selectedId).then(setDetail);
+  }, [selectedId, threads]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => void loadThreads(query), 180);
+    return () => window.clearTimeout(timeout);
+  }, [query, loadThreads]);
+
+  const mutate = useCallback(async (mutation: ThreadMutation) => {
+    const previous = threads.find((thread) => thread.id === mutation.threadId);
+    if (!previous) return;
+
+    const applyLocal = (thread: Thread): Thread => {
+      if (thread.id !== mutation.threadId) return thread;
+      if (mutation.kind === "archive") return { ...thread, archived: mutation.value };
+      if (mutation.kind === "read") return { ...thread, unread: !mutation.value };
+      return { ...thread, starred: mutation.value };
+    };
+
+    setThreads((current) =>
+      current.map(applyLocal).filter((thread) => !thread.archived),
+    );
+    if (mutation.kind === "archive") {
+      setNotice({
+        message: "Conversation archived",
+        undo: () => {
+          void mailClient
+            .mutateThread({ ...mutation, value: false })
+            .then(() => loadThreads(query));
+          setNotice(null);
+        },
+      });
+    }
+
+    try {
+      await mailClient.mutateThread(mutation);
+      if (mutation.kind !== "archive") await loadThreads(query);
+    } catch {
+      setThreads((current) => [
+        ...current.filter((thread) => thread.id !== previous.id),
+        previous,
+      ].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)));
+      setNotice({ message: "Change could not be saved" });
+    }
+  }, [loadThreads, query, threads]);
+
+  const selected = threads.find((thread) => thread.id === selectedId) ?? null;
+  const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
+
+  const context = useMemo<CommandContext>(() => ({
+    selectedId,
+    selectNext: () => {
+      const next = Math.min(selectedIndex + 1, threads.length - 1);
+      setSelectedId(threads[next]?.id ?? null);
+    },
+    selectPrevious: () => {
+      const next = Math.max(selectedIndex - 1, 0);
+      setSelectedId(threads[next]?.id ?? null);
+    },
+    archiveSelected: () => {
+      if (selected) void mutate({ kind: "archive", threadId: selected.id, value: true });
+    },
+    toggleReadSelected: () => {
+      if (selected) void mutate({ kind: "read", threadId: selected.id, value: selected.unread });
+    },
+    toggleStarSelected: () => {
+      if (selected) void mutate({ kind: "star", threadId: selected.id, value: !selected.starred });
+    },
+    focusSearch: () => searchRef.current?.focus(),
+    refresh: () => {
+      setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
+      void mailClient.sync().then((status) => {
+        setSyncStatus(status);
+        void loadThreads(query);
+      });
+    },
+    openDiagnostics: () => setDiagnosticsOpen(true),
+  }), [loadThreads, mutate, query, selected, selectedId, selectedIndex, threads]);
+
+  const openPalette = useCallback(() => setPaletteOpen(true), []);
+  useShortcutHandler(context, openPalette);
+
+  return (
+    <main className="app-shell">
+      <nav className="sidebar" aria-label="Mailboxes">
+        <div className="brand">D</div>
+        <button className="nav-button active" aria-label="Inbox"><Inbox size={19} /></button>
+        <div className="sidebar-spacer" />
+        <button
+          className="nav-button"
+          aria-label="Command palette"
+          onClick={() => setPaletteOpen(true)}
+        >
+          <CommandIcon size={19} />
+        </button>
+      </nav>
+
+      <section className="thread-column" aria-label="Inbox">
+        <header className="thread-header">
+          <div>
+            <span className="eyebrow">Inbox</span>
+            <h1>{threads.length} conversations</h1>
+          </div>
+          <button
+            className="icon-button"
+            aria-label="Refresh mail"
+            onClick={context.refresh}
+          >
+            <RefreshCw size={17} className={syncStatus?.state === "syncing" ? "spin" : ""} />
+          </button>
+        </header>
+        <label className="search-box">
+          <Search size={16} />
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search mail"
+            aria-label="Search mail"
+          />
+          <kbd>/</kbd>
+        </label>
+        <div className="thread-list" role="listbox" aria-label="Conversations">
+          {loading ? <p className="empty">Loading inbox…</p> : null}
+          {!loading && threads.length === 0 ? <p className="empty">Inbox zero.</p> : null}
+          {threads.map((thread) => (
+            <button
+              key={thread.id}
+              role="option"
+              aria-selected={thread.id === selectedId}
+              className={`thread-row ${thread.id === selectedId ? "selected" : ""}`}
+              onClick={() => setSelectedId(thread.id)}
+            >
+              <span className={`unread-dot ${thread.unread ? "visible" : ""}`} />
+              <span className="thread-content">
+                <span className="thread-meta">
+                  <strong>{thread.participants.join(", ")}</strong>
+                  <time>{timeFormatter.format(new Date(thread.lastMessageAt))}</time>
+                </span>
+                <span className="thread-subject">{thread.subject}</span>
+                <span className="thread-snippet">{thread.snippet}</span>
+              </span>
+              {thread.starred ? <Star className="starred" size={15} fill="currentColor" /> : null}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="reader" aria-label="Conversation">
+        {detail ? (
+          <>
+            <header className="reader-header">
+              <div>
+                <span className="eyebrow">{detail.thread.labels.join(" · ")}</span>
+                <h2>{detail.thread.subject}</h2>
+              </div>
+              <div className="reader-actions">
+                <ActionButton
+                  label={selected?.starred ? "Unstar" : "Star"}
+                  shortcut="s"
+                  onClick={context.toggleStarSelected}
+                >
+                  <Star size={17} fill={selected?.starred ? "currentColor" : "none"} />
+                </ActionButton>
+                <ActionButton
+                  label={selected?.unread ? "Mark read" : "Mark unread"}
+                  shortcut="u"
+                  onClick={context.toggleReadSelected}
+                >
+                  {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
+                </ActionButton>
+                <ActionButton label="Archive" shortcut="e" onClick={context.archiveSelected}>
+                  <Archive size={17} />
+                </ActionButton>
+              </div>
+            </header>
+            <div className="message-stack">
+              {detail.messages.map((message) => (
+                <article className="message" key={message.id}>
+                  <header>
+                    <div className="avatar">{message.sender.charAt(0)}</div>
+                    <div>
+                      <strong>{message.sender}</strong>
+                      <span>to {message.recipients.join(", ")}</span>
+                    </div>
+                    <time>{new Date(message.sentAt).toLocaleString()}</time>
+                  </header>
+                  <SafeMessage html={message.bodyHtml} />
+                </article>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="reader-empty"><Mail size={28} /><p>Select a conversation</p></div>
+        )}
+      </section>
+
+      {paletteOpen ? (
+        <CommandPalette context={context} onClose={() => setPaletteOpen(false)} />
+      ) : null}
+      {diagnosticsOpen ? (
+        <Diagnostics status={syncStatus} onClose={() => setDiagnosticsOpen(false)} />
+      ) : null}
+      {notice ? (
+        <div className="toast" role="status">
+          {notice.message}
+          {notice.undo ? <button onClick={notice.undo}>Undo</button> : null}
+          <button aria-label="Dismiss" onClick={() => setNotice(null)}><X size={14} /></button>
+        </div>
+      ) : null}
+    </main>
+  );
+}
+
+function ActionButton({
+  children,
+  label,
+  onClick,
+  shortcut,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick(): void;
+  shortcut: string;
+}) {
+  return (
+    <button className="action-button" aria-label={`${label} (${shortcut})`} onClick={onClick}>
+      {children}<span>{label}</span><kbd>{shortcut}</kbd>
+    </button>
+  );
+}
+
+function CommandPalette({
+  context,
+  onClose,
+}: {
+  context: CommandContext;
+  onClose(): void;
+}) {
+  const [filter, setFilter] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => inputRef.current?.focus(), []);
+  const visible = commands.filter((command) =>
+    command.title.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
+  );
+  return (
+    <Modal title="Command palette" onClose={onClose}>
+      <label className="palette-search">
+        <Search size={18} />
+        <input
+          ref={inputRef}
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          placeholder="Type a command"
+          aria-label="Filter commands"
+        />
+      </label>
+      <div className="command-list">
+        {visible.map((command) => (
+          <button
+            key={command.id}
+            disabled={!command.enabled(context)}
+            onClick={() => {
+              command.run(context);
+              onClose();
+            }}
+          >
+            <span><small>{command.group}</small>{command.title}</span>
+            <span>{command.keys.map((key) => <kbd key={key}>{key}</kbd>)}</span>
+          </button>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+function Diagnostics({
+  status,
+  onClose,
+}: {
+  status: SyncStatus | null;
+  onClose(): void;
+}) {
+  return (
+    <Modal title="Sync diagnostics" onClose={onClose}>
+      <dl className="diagnostics">
+        <dt>State</dt><dd>{status?.state ?? "unknown"}</dd>
+        <dt>Last successful sync</dt>
+        <dd>{status?.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Never"}</dd>
+        <dt>History cursor</dt><dd>{status?.cursor ?? "Not initialized"}</dd>
+        <dt>Pending mutations</dt><dd>{status?.pendingMutations ?? 0}</dd>
+        <dt>Last error</dt><dd>{status?.error ?? "None"}</dd>
+      </dl>
+    </Modal>
+  );
+}
+
+function Modal({
+  children,
+  onClose,
+  title,
+}: {
+  children: React.ReactNode;
+  onClose(): void;
+  title: string;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose]);
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div
+        ref={panelRef as RefObject<HTMLDivElement>}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header><h2>{title}</h2><button aria-label="Close" onClick={onClose}><X size={18} /></button></header>
+        {children}
+      </div>
+    </div>
+  );
+}

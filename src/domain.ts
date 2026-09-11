@@ -1,0 +1,45 @@
+export type Thread = {
+  id: string;
+  providerThreadId: string;
+  subject: string;
+  snippet: string;
+  participants: string[];
+  lastMessageAt: string;
+  unread: boolean;
+  starred: boolean;
+  archived: boolean;
+  labels: string[];
+};
+
+export type Message = {
+  id: string;
+  threadId: string;
+  sender: string;
+  recipients: string[];
+  sentAt: string;
+  bodyHtml: string;
+  bodyText: string;
+};
+
+export type ThreadDetail = {
+  thread: Thread;
+  messages: Message[];
+};
+
+export type SearchThreadsRequest = {
+  query: string;
+  limit?: number;
+};
+
+export type ThreadMutation =
+  | { kind: "archive"; threadId: string; value: boolean }
+  | { kind: "read"; threadId: string; value: boolean }
+  | { kind: "star"; threadId: string; value: boolean };
+
+export type SyncStatus = {
+  state: "idle" | "syncing" | "offline" | "error";
+  lastSuccessfulSync: string | null;
+  cursor: string | null;
+  pendingMutations: number;
+  error: string | null;
+};
