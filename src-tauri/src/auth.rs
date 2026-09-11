@@ -23,6 +23,7 @@ const SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify 
 pub struct GoogleAuth {
     client: Client,
     client_id: String,
+    client_secret: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,9 +50,18 @@ impl GoogleAuth {
                 "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_ID to an installed-app client ID."
                     .to_string()
             })?;
+        let client_secret = std::env::var("DISPATCH_GOOGLE_CLIENT_SECRET")
+            .ok()
+            .or_else(|| option_env!("DISPATCH_GOOGLE_CLIENT_SECRET").map(str::to_owned))
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_SECRET to the value from the Desktop app credential."
+                    .to_string()
+            })?;
         Ok(Self {
             client: Client::new(),
             client_id,
+            client_secret,
         })
     }
 
@@ -143,6 +153,7 @@ impl GoogleAuth {
             .post(TOKEN_URL)
             .form(&[
                 ("client_id", self.client_id.as_str()),
+                ("client_secret", self.client_secret.as_str()),
                 ("code", code),
                 ("code_verifier", verifier),
                 ("grant_type", "authorization_code"),
@@ -174,6 +185,7 @@ impl GoogleAuth {
             .post(TOKEN_URL)
             .form(&[
                 ("client_id", self.client_id.as_str()),
+                ("client_secret", self.client_secret.as_str()),
                 ("refresh_token", refresh_token),
                 ("grant_type", "refresh_token"),
             ])

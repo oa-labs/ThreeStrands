@@ -615,8 +615,9 @@ function AccountManager({
           <>
             <strong>Google OAuth is not configured</strong>
             <p>
-              Set <code>DISPATCH_GOOGLE_CLIENT_ID</code> to a Google Desktop app
-              OAuth client ID and restart Dispatch.
+              Set <code>DISPATCH_GOOGLE_CLIENT_ID</code> and{" "}
+              <code>DISPATCH_GOOGLE_CLIENT_SECRET</code> from a Google Desktop
+              app credential, then restart Dispatch.
             </p>
           </>
         ) : status.connected ? (

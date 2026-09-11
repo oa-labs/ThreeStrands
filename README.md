@@ -33,14 +33,18 @@ pnpm tauri dev # native app with local SQLite
 
 To connect Gmail, enable the Gmail API in a Google Cloud project, create an
 OAuth client of type **Desktop app**, and launch the native client with its
-public client ID:
+client ID and client-secret value:
 
 ```sh
-DISPATCH_GOOGLE_CLIENT_ID=1234.apps.googleusercontent.com pnpm tauri dev
+DISPATCH_GOOGLE_CLIENT_ID="1234.apps.googleusercontent.com" \
+DISPATCH_GOOGLE_CLIENT_SECRET="value-from-downloaded-desktop-client-json" \
+pnpm tauri dev
 ```
 
-No Google client secret is used. Tokens are stored in the operating-system
-keychain.
+Google labels this value a client secret, but installed desktop applications
+are public clients and cannot keep it confidential. It is used only as a
+required token-endpoint parameter; OAuth tokens are stored in the
+operating-system keychain. Never commit the credential value.
 
 ## Product principles
 

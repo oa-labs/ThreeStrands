@@ -21,7 +21,8 @@ This document tracks implementation against the Phase 1 exit criteria in
 - Sync diagnostics for cursor, latest success, pending mutations, and errors.
 - Google installed-app OAuth Authorization Code flow with PKCE, a random
   loopback port, state validation, and browser handoff. The non-secret client
-  ID is configured with `DISPATCH_GOOGLE_CLIENT_ID`.
+  ID and Google-required Desktop client-secret value are configured with
+  `DISPATCH_GOOGLE_CLIENT_ID` and `DISPATCH_GOOGLE_CLIENT_SECRET`.
 - OAuth access and refresh tokens stored only in the operating-system
   credential store (`app.dispatch.mail`), never SQLite or the webview.
 - Gmail REST integration with bounded `Retry-After`/exponential backoff,
@@ -60,11 +61,15 @@ Create a Google OAuth client of type **Desktop app**, enable the Gmail API, and
 provide its public client ID when launching/building:
 
 ```sh
-DISPATCH_GOOGLE_CLIENT_ID=1234.apps.googleusercontent.com pnpm tauri dev
+DISPATCH_GOOGLE_CLIENT_ID="1234.apps.googleusercontent.com" \
+DISPATCH_GOOGLE_CLIENT_SECRET="value-from-downloaded-desktop-client-json" \
+pnpm tauri dev
 ```
 
-No Google client secret is used or expected. OAuth requires the system browser
-and an available loopback port. OS credential-store availability depends on a
-logged-in desktop keychain service. Background polling runs only while the
-process is alive; the app performs catch-up rather than claiming OS-level
-background delivery while suspended or terminated.
+Google calls the second value a client secret, but installed desktop
+applications are public clients and cannot keep it confidential. It is used
+only as a required token-endpoint parameter and must not be committed. OAuth
+requires the system browser and an available loopback port. OS credential-store
+availability depends on a logged-in desktop keychain service. Background
+polling runs only while the process is alive; the app performs catch-up rather
+than claiming OS-level background delivery while suspended or terminated.

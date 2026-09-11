@@ -126,7 +126,8 @@ async fn delete_label(id: String, state: State<'_, AppState>) -> Result<(), Stri
 }
 
 fn not_configured() -> String {
-    "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_ID to an installed-app client ID."
+    "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_ID and \
+     DISPATCH_GOOGLE_CLIENT_SECRET from a Desktop app credential."
         .into()
 }
 
