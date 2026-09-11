@@ -11,11 +11,11 @@ is:
 > Process important email at the speed of thought, without losing follow-ups,
 > context, or control of your data.
 
-Superhuman's durable advantage is the combination of speed, deliberate
-keyboard workflows, focused triage, and safeguards against dropped work.
-Recent positioning adds AI-assisted writing and triage plus collaboration.
-Matching the feature list is less important than matching the complete,
-low-latency workflow.
+The product is inspired by some of the best email clients available: combining
+speed, deliberate keyboard workflows, focused triage, and safeguards against
+dropped work. AI-assisted writing, intelligent triage, and collaboration are
+valuable later additions. Matching a competitor's feature list is less
+important than building a complete, trustworthy, low-latency workflow.
 
 The recommended product is a standalone, local-first Tauri desktop application.
 It stores mail in local SQLite, keeps OAuth credentials in the operating
@@ -88,10 +88,10 @@ loops.
 
 ### 2.6 A premium-feeling, trustworthy experience
 
-Superhuman also sells confidence: careful visual design, onboarding, coaching,
-offline support, undo send, and reliable synchronization. For an open-source
-alternative, privacy, inspectability, local-first storage, and operation without
-a third-party application backend are additional differentiators.
+The best email clients also create confidence through careful visual design,
+onboarding, offline support, undo send, and reliable synchronization. Privacy,
+inspectability, local-first storage, and operation without a third-party
+application backend are additional open-source differentiators.
 
 **Success signal:** users trust the client as their primary inbox, not as an
 occasional secondary view.
@@ -130,7 +130,7 @@ at least an hour per day in email and prefers keyboard workflows.
 
 ### Explicit non-goals for MVP
 
-- pixel-for-pixel imitation of Superhuman;
+- pixel-for-pixel imitation of any existing email client;
 - generic IMAP, Exchange on-premises, or every Gmail edge case;
 - autonomous AI sending;
 - CRM integrations;
@@ -597,23 +597,10 @@ justify an optional service later.
 | AI creates privacy or correctness incidents | Opt-in adapters, context preview, validated outputs, no autonomous send |
 | Feature parity delays useful release | Gate phases on the daily core loop, not competitor checklist parity |
 
-## 19. Source notes
+## 19. Research basis
 
-Product claims and feature inventory were checked against public Superhuman
-pages on 2026-03-05:
-
-- [Superhuman Mail overview](https://superhuman.com/mail): speed, Split Inbox,
-  follow-up reminders, snippets, AI, and team collaboration.
-- [Superhuman email overview](https://superhuman.com/email): Auto Drafts,
-  rewriting, summarization/search positioning, shared conversations, and
-  supported surfaces.
-- [Superhuman plan comparison](https://superhuman.com/plans/mail): current
-  feature inventory across email, calendar, collaboration, sales, security,
-  and administration.
-- [Custom Split Inbox help](https://help.superhuman.com/hc/en-us/articles/38458483333907-Custom-Split-Inbox):
-  rule/search-based splits and batch-processing workflow.
-- [Superhuman engineering: offline web architecture](https://blog.superhuman.com/architecting-a-web-app-to-just-work-offline-part-1/):
-  historical rationale for local caching and offline behavior.
-
-These sources explain public workflows and positioning, not proprietary
-implementation. Architecture in this document is an independent proposal.
+The product definition draws on publicly documented patterns across leading
+email clients: keyboard-driven processing, categorized inboxes, follow-up
+reminders, snippets, delayed send, local caching, AI assistance, and team
+collaboration. The architecture and implementation are independent and use
+their own code, identity, assets, and product language.

@@ -1,9 +1,12 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use reqwest::{Method, RequestBuilder, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tokio::time::sleep;
+use tokio::{
+    sync::Mutex,
+    time::{sleep, Instant},
+};
 
 use crate::{auth::GoogleAuth, mime::GmailMessage, models::Label};
 
@@ -58,6 +61,7 @@ pub trait GmailProvider: Send + Sync {
 pub struct GmailClient {
     http: reqwest::Client,
     auth: GoogleAuth,
+    next_thread_fetch: Arc<Mutex<Instant>>,
 }
 
 impl GmailClient {
@@ -65,7 +69,21 @@ impl GmailClient {
         Self {
             http: reqwest::Client::new(),
             auth,
+            next_thread_fetch: Arc::new(Mutex::new(Instant::now())),
         }
+    }
+
+    async fn pace_thread_fetch(&self) {
+        // `threads.get` costs 10 quota units. Four hundred calls per minute
+        // consume 4,000 of Gmail's 6,000 per-user units, leaving headroom for
+        // lists, history, labels, mutations, and another active client.
+        const INTERVAL: Duration = Duration::from_millis(150);
+        let mut next = self.next_thread_fetch.lock().await;
+        let now = Instant::now();
+        if *next > now {
+            sleep(*next - now).await;
+        }
+        *next = Instant::now() + INTERVAL;
     }
 
     async fn request(&self, method: Method, url: String) -> ProviderResult<RequestBuilder> {
@@ -99,19 +117,22 @@ impl GmailClient {
             if response.status() == StatusCode::NOT_FOUND {
                 return Err(ProviderError::NotFound);
             }
-            if response.status() == StatusCode::TOO_MANY_REQUESTS
-                || response.status() == StatusCode::SERVICE_UNAVAILABLE
-                || response.status().is_server_error()
+            let status = response.status();
+            let retry_after = retry_after(&response);
+            let body = response.text().await.unwrap_or_default();
+            let quota_limited = status == StatusCode::TOO_MANY_REQUESTS
+                || (status == StatusCode::FORBIDDEN && is_quota_error(&body));
+            if quota_limited
+                || status == StatusCode::SERVICE_UNAVAILABLE
+                || status.is_server_error()
             {
                 if attempt == 4 {
                     return Err(ProviderError::RateLimited);
                 }
-                let delay = retry_delay(&response, attempt);
+                let delay = retry_after.unwrap_or_else(|| retry_delay(attempt, quota_limited));
                 sleep(delay).await;
                 continue;
             }
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
             return Err(ProviderError::Other(format!(
                 "Gmail returned {status}: {body}"
             )));
@@ -235,7 +256,10 @@ impl GmailProvider for GmailClient {
 
     async fn list_threads(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
         let mut request = self
-            .request(Method::GET, format!("{API}/threads?maxResults=100"))
+            .request(
+                Method::GET,
+                format!("{API}/threads?maxResults=100&labelIds=INBOX"),
+            )
             .await?;
         if let Some(page) = page {
             request = request.query(&[("pageToken", page)]);
@@ -248,6 +272,7 @@ impl GmailProvider for GmailClient {
     }
 
     async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>> {
+        self.pace_thread_fetch().await;
         let request = self
             .request(Method::GET, format!("{API}/threads/{id}?format=full"))
             .await?;
@@ -340,12 +365,48 @@ impl GmailProvider for GmailClient {
     }
 }
 
-fn retry_delay(response: &reqwest::Response, attempt: u32) -> Duration {
+fn retry_after(response: &reqwest::Response) -> Option<Duration> {
     response
         .headers()
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
-        .map(|seconds| Duration::from_secs(seconds.min(60)))
-        .unwrap_or_else(|| Duration::from_secs(1_u64 << attempt.min(5)))
+        .map(|seconds| Duration::from_secs(seconds.clamp(1, 60)))
+}
+
+fn retry_delay(attempt: u32, quota_limited: bool) -> Duration {
+    let base = if quota_limited { 15 } else { 1 };
+    Duration::from_secs((base * (1_u64 << attempt.min(5))).min(60))
+}
+
+fn is_quota_error(body: &str) -> bool {
+    let normalized = body.to_ascii_lowercase();
+    normalized.contains("ratelimitexceeded")
+        || normalized.contains("user_rate_limit_exceeded")
+        || normalized.contains("quota exceeded")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_gmail_quota_errors_returned_as_forbidden() {
+        assert!(is_quota_error(
+            r#"{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}"#
+        ));
+        assert!(is_quota_error(
+            r#"{"error":{"message":"Quota exceeded for quota metric 'Total Query Cost'"}}"#
+        ));
+        assert!(!is_quota_error(
+            r#"{"error":{"errors":[{"reason":"insufficientPermissions"}]}}"#
+        ));
+    }
+
+    #[test]
+    fn quota_retries_wait_for_the_usage_window() {
+        assert_eq!(retry_delay(0, true), Duration::from_secs(15));
+        assert_eq!(retry_delay(2, true), Duration::from_secs(60));
+        assert_eq!(retry_delay(2, false), Duration::from_secs(4));
+    }
 }

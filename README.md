@@ -1,10 +1,26 @@
-# Open-source high-performance email client
+# Dispatch
 
-This repository is the starting point for an open-source, keyboard-first,
-local-first email client inspired by the workflow benefits of Superhuman.
+Dispatch is an open-source, keyboard-first, local-first email client inspired
+by some of the best email clients available. It is designed for people who
+spend significant time in email and want to process important conversations
+quickly without losing follow-ups, context, or control of their data.
 
-The product definition and proposed system design are in
-[`docs/overview.md`](docs/overview.md).
+The core experience combines:
+
+- instant keyboard navigation and a discoverable command palette;
+- focused inbox triage, local full-text search, and optimistic actions;
+- reliable archive, read, star, label, and eventual follow-up workflows;
+- offline access backed by a local SQLite cache; and
+- a privacy-conscious desktop architecture that connects directly to mail
+  providers without requiring a Dispatch backend.
+
+Dispatch currently targets Gmail through a standalone Tauri desktop
+application. OAuth credentials are kept in the operating-system keychain,
+message data and search indexes stay in local SQLite, and a durable mutation
+queue reconciles local actions with Gmail.
+
+The detailed product definition, architecture, and delivery roadmap are in
+[`PLAN.MD`](PLAN.MD).
 
 ## Status
 
@@ -55,9 +71,8 @@ operating-system keychain. Never commit the credential value.
 5. The desktop client connects directly to mail providers and requires no
    project-operated backend.
 
-## Naming and clean-room implementation
+## Independent implementation
 
-“Superhuman” is used in the planning document only to describe the existing
-product category and benchmark. This project should use its own name, visual
-identity, copy, and implementation. It should reproduce useful workflows, not
-proprietary code, assets, or trademarks.
+Dispatch uses its own name, visual identity, product language, and
+implementation. It learns from established interaction patterns across the
+email category without copying proprietary code, assets, or trademarks.

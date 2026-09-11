@@ -1,7 +1,7 @@
 # Phase 1 — read and triage
 
 This document tracks implementation against the Phase 1 exit criteria in
-[`overview.md`](overview.md).
+[`PLAN.MD`](../PLAN.MD).
 
 ## Implemented
 
@@ -26,8 +26,10 @@ This document tracks implementation against the Phase 1 exit criteria in
 - OAuth access and refresh tokens stored only in the operating-system
   credential store (`app.dispatch.mail`), never SQLite or the webview.
 - Gmail REST integration with bounded `Retry-After`/exponential backoff,
-  base64url MIME decoding, nested multipart plain/HTML selection, attachment
-  exclusion, and normalized Subject/From/To/Date fields.
+  recognition of quota failures returned as either HTTP 429 or 403, paced
+  high-cost thread retrieval, base64url MIME decoding, nested multipart
+  plain/HTML selection, attachment exclusion, and normalized
+  Subject/From/To/Date fields.
 - Initial paginated synchronization and incremental Gmail History
   synchronization. Expired/invalid history cursors trigger a complete import;
   the import cursor is captured before listing and history is replayed
