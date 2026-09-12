@@ -107,6 +107,53 @@ button { color: inherit; }
   cursor: pointer;
 }
 
+.account-switcher { position: relative; margin-bottom: 14px; }
+.account-switcher .brand { margin-bottom: 0; }
+.account-switcher-menu {
+  position: absolute;
+  z-index: 30;
+  top: 0;
+  left: calc(100% + 10px);
+  display: flex;
+  min-width: 220px;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: 0 8px 24px var(--shadow);
+}
+.account-switcher-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: calc(13px * var(--font-scale));
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-switcher-menu button:hover { background: var(--hover); }
+.account-switcher-menu button.active { background: var(--selected); font-weight: 600; }
+.account-switcher-divider { height: 1px; margin: 4px 2px; background: var(--border); }
+
+.account-dot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.account-dot.all-accounts {
+  background: conic-gradient(#4285F4, #34A853, #EA4335, #FBBC05, #4285F4);
+}
+
 .sidebar-spacer { flex: 1; }
 .nav-button, .icon-button, .modal header button {
   width: 34px;
@@ -304,6 +351,8 @@ kbd {
 .thread-content { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
 .thread-meta { display: flex; justify-content: space-between; gap: 8px; font-size: calc(13px * var(--font-scale)); }
 .thread-meta time { flex: 0 0 auto; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
+.thread-sender { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.thread-sender strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-subject { overflow: hidden; font-size: calc(13px * var(--font-scale)); font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
 .thread-snippet { overflow: hidden; color: var(--muted); font-size: calc(12px * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
 .thread-snippet mark { color: var(--text); background: var(--accent-soft, color-mix(in srgb, var(--accent) 30%, transparent)); border-radius: 2px; }
@@ -484,6 +533,19 @@ kbd {
 .account-manager p { margin: 0 0 8px; color: var(--muted); font-size: calc(13px * var(--font-scale)); line-height: 1.5; }
 .account-manager button { padding: 8px 11px; border: 1px solid var(--primary-border); border-radius: 7px; background: var(--primary); cursor: pointer; }
 .account-manager button:disabled { opacity: .5; }
+.accounts-manager { width: 100%; padding: 10px 20px 24px; }
+.accounts-manager > button { margin-top: 10px; padding: 8px 11px; border: 1px solid var(--primary-border); border-radius: 7px; background: var(--primary); cursor: pointer; }
+.accounts-manager > button:disabled { opacity: .5; }
+.accounts-list { display: flex; flex-direction: column; gap: 2px; width: 100%; margin: 6px 0 0; padding: 0; list-style: none; }
+.accounts-list li { display: flex; align-items: center; gap: 9px; padding: 8px 4px; border-radius: 7px; }
+.accounts-list li:hover { background: var(--hover); }
+.accounts-list-email { flex: 1; min-width: 0; overflow: hidden; font-size: calc(13px * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
+.accounts-list-email em { color: var(--error); font-style: normal; }
+.accounts-list-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
+.accounts-list-actions button { display: inline-flex; align-items: center; padding: 5px 8px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: calc(12px * var(--font-scale)); cursor: pointer; }
+.accounts-list-actions button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.accounts-list-actions button:disabled { opacity: .4; }
+.accounts-list-actions input[type="color"] { width: 22px; height: 22px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: none; cursor: pointer; }
 .form-error { color: var(--error) !important; }
 
 .settings-modal { width: min(640px, calc(100vw - 40px)); max-height: 78vh; }

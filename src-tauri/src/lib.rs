@@ -93,8 +93,11 @@ async fn finish_exit(app: tauri::AppHandle, state: State<'_, AppState>) -> Resul
 }
 
 #[tauri::command]
-fn list_threads(state: State<'_, AppState>) -> Result<Vec<Thread>, String> {
-    state.database.list_threads()
+fn list_threads(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Thread>, String> {
+    state.database.list_threads(account_id.as_deref())
 }
 
 #[tauri::command]
@@ -105,9 +108,12 @@ fn get_thread(id: String, state: State<'_, AppState>) -> Result<ThreadDetail, St
 #[tauri::command]
 fn search_threads(
     request: SearchThreadsRequest,
+    account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Thread>, String> {
-    state.database.search_threads(&request)
+    state
+        .database
+        .search_threads(&request, account_id.as_deref())
 }
 
 #[tauri::command]

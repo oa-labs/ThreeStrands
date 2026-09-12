@@ -144,20 +144,31 @@ impl Database {
             .map_err(|_| "Local database lock was poisoned".to_string())
     }
 
-    pub fn list_threads(&self) -> Result<Vec<Thread>, String> {
+    /// `account_id` merges every account when `None` — the unified inbox —
+    /// or scopes to just that account when set.
+    pub fn list_threads(&self, account_id: Option<&str>) -> Result<Vec<Thread>, String> {
         let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT id, provider_thread_id, subject, snippet, participants_json,
-                        last_message_at, unread, starred, archived, labels_json, trashed
-                 FROM threads
-                 WHERE archived = 0 AND trashed = 0
-                 ORDER BY last_message_at DESC",
-            )
-            .map_err(display_error)?;
-        let rows = statement
-            .query_map([], thread_from_row)
-            .map_err(display_error)?;
+        let sql = format!(
+            "SELECT id, provider_thread_id, subject, snippet, participants_json,
+                    last_message_at, unread, starred, archived, labels_json, trashed, account_id
+             FROM threads
+             WHERE archived = 0 AND trashed = 0 {}
+             ORDER BY last_message_at DESC",
+            if account_id.is_some() {
+                "AND account_id = ?1"
+            } else {
+                ""
+            }
+        );
+        let mut statement = connection.prepare(&sql).map_err(display_error)?;
+        let rows = match account_id {
+            Some(id) => statement
+                .query_map([id], thread_from_row)
+                .map_err(display_error)?,
+            None => statement
+                .query_map([], thread_from_row)
+                .map_err(display_error)?,
+        };
         rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
     }
 
@@ -166,7 +177,7 @@ impl Database {
         let thread = connection
             .query_row(
                 "SELECT id, provider_thread_id, subject, snippet, participants_json,
-                        last_message_at, unread, starred, archived, labels_json, trashed
+                        last_message_at, unread, starred, archived, labels_json, trashed, account_id
                  FROM threads WHERE id = ?1",
                 [id],
                 thread_from_row,
@@ -198,9 +209,15 @@ impl Database {
         Ok(ThreadDetail { thread, messages })
     }
 
-    pub fn search_threads(&self, request: &SearchThreadsRequest) -> Result<Vec<Thread>, String> {
+    /// `account_id` merges every account when `None` — the unified inbox —
+    /// or scopes to just that account when set, same as [`Self::list_threads`].
+    pub fn search_threads(
+        &self,
+        request: &SearchThreadsRequest,
+        account_id: Option<&str>,
+    ) -> Result<Vec<Thread>, String> {
         if request.query.trim().is_empty() {
-            return self.list_threads();
+            return self.list_threads(account_id);
         }
         let connection = self.connection()?;
         let limit = request.limit.unwrap_or(50).min(200) as i64;
@@ -217,6 +234,11 @@ impl Database {
         } else {
             "AND t.archived = 0 AND t.trashed = 0"
         };
+        let account_filter = if account_id.is_some() {
+            "AND t.account_id = ?4"
+        } else {
+            ""
+        };
         // -1 asks FTS5 to excerpt whichever column has the most matches, so a
         // hit on the body or a recipient still produces a relevant snippet.
         // The match itself is wrapped in \u{1}/\u{2} rather than HTML markup
@@ -224,33 +246,40 @@ impl Database {
         let sql = format!(
             "SELECT t.id, t.provider_thread_id, t.subject, t.snippet,
                     t.participants_json, t.last_message_at, t.unread, t.starred,
-                    t.archived, t.labels_json, t.trashed,
+                    t.archived, t.labels_json, t.trashed, t.account_id,
                     snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet
              FROM thread_search s
              JOIN threads t ON t.id = s.thread_id
-             WHERE thread_search MATCH ?1 {archived_filter}
+             WHERE thread_search MATCH ?1 {archived_filter} {account_filter}
              ORDER BY rank, t.last_message_at DESC
              LIMIT ?2 OFFSET ?3"
         );
         let mut statement = connection.prepare(&sql).map_err(display_error)?;
-        let rows = statement
-            .query_map(params![query, limit, offset], |row| {
-                Ok(Thread {
-                    id: row.get(0)?,
-                    provider_thread_id: row.get(1)?,
-                    subject: row.get(2)?,
-                    snippet: row.get(3)?,
-                    participants: decode_json(row.get::<_, String>(4)?)?,
-                    last_message_at: row.get(5)?,
-                    unread: row.get(6)?,
-                    starred: row.get(7)?,
-                    archived: row.get(8)?,
-                    labels: decode_json(row.get::<_, String>(9)?)?,
-                    trashed: row.get(10)?,
-                    match_snippet: row.get(11)?,
-                })
+        let map_row = |row: &rusqlite::Row<'_>| {
+            Ok(Thread {
+                id: row.get(0)?,
+                provider_thread_id: row.get(1)?,
+                subject: row.get(2)?,
+                snippet: row.get(3)?,
+                participants: decode_json(row.get::<_, String>(4)?)?,
+                last_message_at: row.get(5)?,
+                unread: row.get(6)?,
+                starred: row.get(7)?,
+                archived: row.get(8)?,
+                labels: decode_json(row.get::<_, String>(9)?)?,
+                trashed: row.get(10)?,
+                account_id: row.get(11)?,
+                match_snippet: row.get(12)?,
             })
-            .map_err(display_error)?;
+        };
+        let rows = match account_id {
+            Some(id) => statement
+                .query_map(params![query, limit, offset, id], map_row)
+                .map_err(display_error)?,
+            None => statement
+                .query_map(params![query, limit, offset], map_row)
+                .map_err(display_error)?,
+        };
         rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
     }
 
@@ -839,6 +868,7 @@ fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         archived: row.get(8)?,
         labels: decode_json(row.get::<_, String>(9)?)?,
         trashed: row.get(10)?,
+        account_id: row.get(11)?,
         match_snippet: None,
     })
 }
@@ -969,12 +999,15 @@ mod tests {
     #[test]
     fn searches_local_fts_index() {
         let result = database()
-            .search_threads(&SearchThreadsRequest {
-                query: "keyboard".into(),
-                limit: None,
-                offset: None,
-                include_archived: None,
-            })
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "keyboard".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: None,
+                },
+                None,
+            )
             .unwrap();
         assert_eq!(result[0].id, "welcome");
         assert!(result[0].match_snippet.is_some());
@@ -984,22 +1017,28 @@ mod tests {
     fn phrase_search_requires_contiguous_words() {
         let database = database();
         let matches = database
-            .search_threads(&SearchThreadsRequest {
-                query: "\"keeps your mail\"".into(),
-                limit: None,
-                offset: None,
-                include_archived: None,
-            })
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "\"keeps your mail\"".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: None,
+                },
+                None,
+            )
             .unwrap();
         assert_eq!(matches[0].id, "welcome");
 
         let no_matches = database
-            .search_threads(&SearchThreadsRequest {
-                query: "\"mail your keeps\"".into(),
-                limit: None,
-                offset: None,
-                include_archived: None,
-            })
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "\"mail your keeps\"".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: None,
+                },
+                None,
+            )
             .unwrap();
         assert!(no_matches.is_empty());
     }
@@ -1015,22 +1054,28 @@ mod tests {
             .unwrap();
 
         let hidden = database
-            .search_threads(&SearchThreadsRequest {
-                query: "keyboard".into(),
-                limit: None,
-                offset: None,
-                include_archived: None,
-            })
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "keyboard".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: None,
+                },
+                None,
+            )
             .unwrap();
         assert!(hidden.is_empty());
 
         let shown = database
-            .search_threads(&SearchThreadsRequest {
-                query: "keyboard".into(),
-                limit: None,
-                offset: None,
-                include_archived: Some(true),
-            })
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "keyboard".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: Some(true),
+                },
+                None,
+            )
             .unwrap();
         assert_eq!(shown[0].id, "welcome");
     }
@@ -1063,20 +1108,26 @@ mod tests {
         }
 
         let first_page = database
-            .search_threads(&SearchThreadsRequest {
-                query: "unique-pagination-term".into(),
-                limit: Some(1),
-                offset: None,
-                include_archived: None,
-            })
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "unique-pagination-term".into(),
+                    limit: Some(1),
+                    offset: None,
+                    include_archived: None,
+                },
+                None,
+            )
             .unwrap();
         let second_page = database
-            .search_threads(&SearchThreadsRequest {
-                query: "unique-pagination-term".into(),
-                limit: Some(1),
-                offset: Some(1),
-                include_archived: None,
-            })
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "unique-pagination-term".into(),
+                    limit: Some(1),
+                    offset: Some(1),
+                    include_archived: None,
+                },
+                None,
+            )
             .unwrap();
         assert_eq!(first_page.len(), 1);
         assert_eq!(second_page.len(), 1);
@@ -1111,28 +1162,34 @@ mod tests {
             })
             .unwrap();
         assert!(!database
-            .list_threads()
+            .list_threads(None)
             .unwrap()
             .iter()
             .any(|thread| thread.id == "welcome"));
 
         let hidden = database
-            .search_threads(&SearchThreadsRequest {
-                query: "keyboard".into(),
-                limit: None,
-                offset: None,
-                include_archived: None,
-            })
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "keyboard".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: None,
+                },
+                None,
+            )
             .unwrap();
         assert!(hidden.is_empty());
 
         let shown = database
-            .search_threads(&SearchThreadsRequest {
-                query: "keyboard".into(),
-                limit: None,
-                offset: None,
-                include_archived: Some(true),
-            })
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "keyboard".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: Some(true),
+                },
+                None,
+            )
             .unwrap();
         assert!(shown[0].trashed);
     }
@@ -1147,7 +1204,7 @@ mod tests {
         database.mutate_thread(&mutation).unwrap();
         database.mutate_thread(&mutation).unwrap();
         assert!(!database
-            .list_threads()
+            .list_threads(None)
             .unwrap()
             .iter()
             .any(|thread| thread.id == "welcome"));
@@ -1321,7 +1378,7 @@ mod tests {
             )
             .unwrap();
 
-        let threads = database.list_threads().unwrap();
+        let threads = database.list_threads(None).unwrap();
         let work = threads
             .iter()
             .find(|t| t.id == "work@example.com:shared-id")
@@ -1342,7 +1399,7 @@ mod tests {
         database
             .delete_gmail_thread("work@example.com", "shared-id")
             .unwrap();
-        let remaining = database.list_threads().unwrap();
+        let remaining = database.list_threads(None).unwrap();
         assert!(!remaining.iter().any(|t| t.id == work.id));
         assert!(remaining.iter().any(|t| t.id == personal.id));
     }
@@ -1363,7 +1420,7 @@ mod tests {
             )
             .unwrap();
         database.begin_full_sync("work@example.com").unwrap();
-        let threads = database.list_threads().unwrap();
+        let threads = database.list_threads(None).unwrap();
         assert!(!threads.iter().any(|t| t.id == "work@example.com:t1"));
         assert!(threads.iter().any(|t| t.id == "personal@example.com:t2"));
     }
@@ -1414,5 +1471,31 @@ mod tests {
             Some("work-cursor")
         );
         assert_eq!(database.cursor("personal@example.com").unwrap(), None);
+    }
+
+    #[test]
+    fn list_threads_merges_by_default_and_filters_when_scoped() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .upsert_gmail_thread(
+                "personal@example.com",
+                &[message("m2", "t2", "2026-01-02T00:00:00Z", "body")],
+            )
+            .unwrap();
+
+        let merged = database.list_threads(None).unwrap();
+        assert!(merged.iter().any(|t| t.id == "work@example.com:t1"));
+        assert!(merged.iter().any(|t| t.id == "personal@example.com:t2"));
+
+        let scoped = database.list_threads(Some("work@example.com")).unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].id, "work@example.com:t1");
+        assert_eq!(scoped[0].account_id, "work@example.com");
     }
 }

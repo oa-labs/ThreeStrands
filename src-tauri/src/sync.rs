@@ -478,7 +478,7 @@ mod tests {
         );
         assert_eq!(provider.full_lists.load(Ordering::SeqCst), 1);
         assert_eq!(
-            database.list_threads().unwrap()[0].id,
+            database.list_threads(None).unwrap()[0].id,
             "default:gmail-thread"
         );
     }

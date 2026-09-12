@@ -32,6 +32,8 @@ export type CommandContext = {
   decreaseFontSize(): void;
   canUndoAction: boolean;
   undoLastAction(): void;
+  showAllAccounts(): void;
+  switchAccount(email: string): void;
 };
 
 export type CommandResult = {
@@ -220,6 +222,29 @@ export function labelCommand(labelId: string, labelName: string, value: boolean)
     enabled: (context) => context.selectedId !== null && !context.composerActive,
     run: (context) => context.setLabelSelected(labelId, value),
     undo: undoResult,
+  };
+}
+
+/** One entry per connected account, `Mod+1`..`Mod+9` bound by sort order. */
+export function accountCommand(email: string, index: number): Command {
+  return {
+    id: `account.switch.${email}`,
+    title: `Switch to ${email}`,
+    keys: index < 9 ? [`Mod+${index + 1}`] : [],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => complete(() => context.switchAccount(email)),
+  };
+}
+
+export function showAllAccountsCommand(): Command {
+  return {
+    id: "account.showAll",
+    title: "Show all accounts",
+    keys: [],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => complete(context.showAllAccounts),
   };
 }
 

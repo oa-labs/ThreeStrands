@@ -1158,9 +1158,9 @@ mod tests {
     #[test]
     fn migrations_preserve_existing_mail_and_are_repeatable() {
         let db = database();
-        let before = db.list_threads().unwrap().len();
+        let before = db.list_threads(None).unwrap().len();
         migrate(&mut db.connection().unwrap()).unwrap();
-        assert_eq!(db.list_threads().unwrap().len(), before);
+        assert_eq!(db.list_threads(None).unwrap().len(), before);
     }
     fn service() -> Correspondence {
         Correspondence {

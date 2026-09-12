@@ -10,6 +10,7 @@ export type Thread = {
   archived: boolean;
   trashed: boolean;
   labels: string[];
+  accountId: string;
   /** FTS5 match excerpt with hits wrapped in MATCH_START/MATCH_END markers. Only set on search results. */
   matchSnippet?: string | null;
 };
@@ -61,6 +62,16 @@ export type SyncStatus = {
 export type AuthStatus = {
   configured: boolean;
   connected: boolean;
+};
+
+export type Account = {
+  email: string;
+  displayName: string | null;
+  color: string;
+  status: "connected" | "needs_reauth";
+  sortOrder: number;
+  connectedAt: string;
+  lastSyncedAt: string | null;
 };
 
 export type CrashReport = {

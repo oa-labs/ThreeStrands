@@ -1,6 +1,8 @@
 import { demoCorrespondence } from "./demoCorrespondence";
 import type { MailClient } from "./client";
-import type { Label, SyncStatus, Thread, ThreadDetail, ThreadMutation } from "../domain";
+import type { Account, Label, SyncStatus, Thread, ThreadDetail, ThreadMutation } from "../domain";
+
+const DEMO_ACCOUNT_ID = "demo@example.com";
 
 const initialThreads: Thread[] = [
   {
@@ -15,6 +17,7 @@ const initialThreads: Thread[] = [
     archived: false,
     trashed: false,
     labels: ["INBOX"],
+    accountId: DEMO_ACCOUNT_ID,
   },
   {
     id: "roadmap",
@@ -28,6 +31,7 @@ const initialThreads: Thread[] = [
     archived: false,
     trashed: false,
     labels: ["INBOX", "STARRED"],
+    accountId: DEMO_ACCOUNT_ID,
   },
   {
     id: "privacy",
@@ -41,6 +45,19 @@ const initialThreads: Thread[] = [
     archived: false,
     trashed: false,
     labels: ["INBOX"],
+    accountId: DEMO_ACCOUNT_ID,
+  },
+];
+
+let accounts: Account[] = [
+  {
+    email: DEMO_ACCOUNT_ID,
+    displayName: null,
+    color: "#4285F4",
+    status: "connected",
+    sortOrder: 0,
+    connectedAt: "2026-03-04T00:00:00Z",
+    lastSyncedAt: null,
   },
 ];
 
@@ -78,9 +95,10 @@ const status: SyncStatus = {
   error: null,
 };
 
-function visible(): Thread[] {
+function visible(accountId?: string): Thread[] {
   return threads
     .filter((thread) => !thread.archived && !thread.trashed)
+    .filter((thread) => !accountId || accountId === "all" || thread.accountId === accountId)
     .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
 }
 
@@ -138,8 +156,8 @@ function update(mutation: ThreadMutation) {
 
 export const demoClient: MailClient = {
   ...demoCorrespondence((id) => demoClient.getThread(id)),
-  async listThreads() {
-    return structuredClone(visible());
+  async listThreads(accountId) {
+    return structuredClone(visible(accountId));
   },
   async getThread(id) {
     const thread = threads.find((candidate) => candidate.id === id);
@@ -160,11 +178,13 @@ export const demoClient: MailClient = {
     };
     return detail;
   },
-  async searchThreads({ query, limit = 50, offset = 0, includeArchived = false }) {
-    if (!query.trim()) return this.listThreads();
+  async searchThreads({ query, limit = 50, offset = 0, includeArchived = false }, accountId) {
+    if (!query.trim()) return this.listThreads(accountId);
     const pool = includeArchived
-      ? [...threads].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
-      : visible();
+      ? [...threads]
+          .filter((thread) => !accountId || accountId === "all" || thread.accountId === accountId)
+          .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
+      : visible(accountId);
     return structuredClone(
       pool
         .filter((thread) =>
@@ -194,6 +214,45 @@ export const demoClient: MailClient = {
     return { ...status };
   },
   async disconnectGoogle() {},
+  async listAccounts() {
+    return structuredClone(accounts);
+  },
+  async addAccount() {
+    const palette = ["#4285F4", "#34A853", "#EA4335", "#FBBC05", "#9C27B0", "#00ACC1", "#FF7043", "#5C6BC0"];
+    const account: Account = {
+      email: `demo-${accounts.length + 1}@example.com`,
+      displayName: null,
+      color: palette[accounts.length % palette.length]!,
+      status: "connected",
+      sortOrder: accounts.length,
+      connectedAt: new Date().toISOString(),
+      lastSyncedAt: null,
+    };
+    accounts = [...accounts, account];
+    return structuredClone(account);
+  },
+  async removeAccount(email) {
+    accounts = accounts.filter((account) => account.email !== email);
+  },
+  async reconnectAccount(email) {
+    const account = accounts.find((candidate) => candidate.email === email);
+    if (!account) throw new Error("Account not found");
+    account.status = "connected";
+    return structuredClone(account);
+  },
+  async setAccountColor(email, color) {
+    const account = accounts.find((candidate) => candidate.email === email);
+    if (!account) throw new Error("Account not found");
+    account.color = color;
+  },
+  async reorderAccounts(emails) {
+    accounts = emails
+      .map((email, index) => {
+        const account = accounts.find((candidate) => candidate.email === email);
+        return account ? { ...account, sortOrder: index } : null;
+      })
+      .filter((account): account is Account => account !== null);
+  },
   async listLabels() {
     return structuredClone(labels);
   },

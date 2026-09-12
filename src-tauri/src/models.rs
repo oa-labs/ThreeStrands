@@ -14,6 +14,7 @@ pub struct Thread {
     pub archived: bool,
     pub trashed: bool,
     pub labels: Vec<String>,
+    pub account_id: String,
     /// Match excerpt from the FTS5 index, wrapping hits in `\u{1}`/`\u{2}`
     /// markers. Only populated by `search_threads`; `None` elsewhere.
     pub match_snippet: Option<String>,

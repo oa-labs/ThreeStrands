@@ -2,6 +2,8 @@ import {
   Archive,
   Check,
   CheckSquare,
+  ChevronDown,
+  ChevronUp,
   Command as CommandIcon,
   Copy,
   FileText,
@@ -34,11 +36,13 @@ import {
   useState,
 } from "react";
 import {
+  accountCommand,
   commands,
   isEditableTarget,
   labelCommand,
   matchesShortcut,
   shortcutSteps,
+  showAllAccountsCommand,
   undoResult,
   type Command,
   type CommandContext,
@@ -54,6 +58,7 @@ import { mailClient } from "./data/client";
 import { createForegroundRefreshController } from "./foregroundRefresh";
 import { formattingShortcuts } from "./richText";
 import type {
+  Account,
   AuthStatus,
   Label,
   SyncStatus,
@@ -94,7 +99,7 @@ import {
 } from "./aiSettings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
-type SettingsSection = "appearance" | "account" | "ai" | "privacy";
+type SettingsSection = "appearance" | "account" | "accounts" | "ai" | "privacy";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -233,9 +238,12 @@ function sortByRecency(threads: Thread[]): Thread[] {
 function useShortcutHandler(
   context: CommandContext,
   execute: (command: Command) => void,
+  extraCommands: Command[] = [],
 ) {
   const contextRef = useRef(context);
   contextRef.current = context;
+  const extraRef = useRef(extraCommands);
+  extraRef.current = extraCommands;
   const pendingStep = useRef<string | null>(null);
   const pendingTimeout = useRef<number | null>(null);
 
@@ -266,8 +274,10 @@ function useShortcutHandler(
         return;
       }
 
+      const allCommands = [...commands, ...extraRef.current];
+
       if (pendingStep.current) {
-        const command = commands.find(
+        const command = allCommands.find(
           (candidate) =>
             candidate.enabled(currentContext) &&
             candidate.keys.some((key) => {
@@ -285,7 +295,7 @@ function useShortcutHandler(
         }
       }
 
-      const command = commands.find(
+      const command = allCommands.find(
         (candidate) =>
           candidate.enabled(currentContext) &&
           candidate.keys.some((key) => {
@@ -299,7 +309,7 @@ function useShortcutHandler(
         return;
       }
 
-      const prefix = commands
+      const prefix = allCommands
         .filter((candidate) => candidate.enabled(currentContext))
         .flatMap((candidate) => candidate.keys)
         .map(shortcutSteps)
@@ -360,6 +370,11 @@ export function App() {
   const [labels, setLabels] = useState<Label[]>([]);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+  const refreshAccounts = useCallback(() => {
+    void mailClient.listAccounts().then(setAccounts).catch(() => setAccounts([]));
+  }, []);
   const [notice, setNotice] = useNotice();
   const lastUndo = useRef<{ command: Command; result: CommandResult } | null>(null);
   const [canUndoAction, setCanUndoAction] = useState(false);
@@ -379,15 +394,16 @@ export function App() {
     }
   }, [setNotice]);
 
-  const loadThreads = useCallback(async (search: string) => {
+  const loadThreads = useCallback(async (search: string, accountOverride?: string | null) => {
     const trimmed = search.trim();
+    const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
     const next = trimmed
       ? await mailClient.searchThreads({
           query: trimmed,
           limit: SEARCH_PAGE_SIZE,
           includeArchived,
-        })
-      : await mailClient.listThreads();
+        }, accountId)
+      : await mailClient.listThreads(accountId);
     setThreads(next);
     setHasMoreResults(trimmed ? next.length === SEARCH_PAGE_SIZE : false);
     setSelectedId((current) =>
@@ -395,7 +411,7 @@ export function App() {
         ? current
         : (next[0]?.id ?? null),
     );
-  }, [includeArchived]);
+  }, [includeArchived, activeAccountId]);
 
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
@@ -405,10 +421,10 @@ export function App() {
       limit: SEARCH_PAGE_SIZE,
       offset: threads.length,
       includeArchived,
-    });
+    }, activeAccountId ?? undefined);
     setThreads((current) => [...current, ...next]);
     setHasMoreResults(next.length === SEARCH_PAGE_SIZE);
-  }, [query, threads.length, includeArchived]);
+  }, [query, threads.length, includeArchived, activeAccountId]);
 
   useEffect(() => {
     if (correspondence.sentCount > 0) void loadThreads(query);
@@ -420,6 +436,7 @@ export function App() {
         setSyncStatus(status);
         setAuthStatus(auth);
         void mailClient.listLabels().then(setLabels).catch(() => setLabels([]));
+        refreshAccounts();
       })
       .finally(() => setLoading(false));
   }, [loadThreads]);
@@ -655,6 +672,14 @@ export function App() {
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
     undoLastAction: () => { void undoLastAction(); },
+    switchAccount: (email) => {
+      setActiveAccountId(email);
+      void loadThreads(query, email);
+    },
+    showAllAccounts: () => {
+      setActiveAccountId(null);
+      void loadThreads(query, null);
+    },
   }), [adjustFontScale, canUndoAction, labelTargetIds, loadThreads, mutateIds, openSettingsAt, query, refreshMail, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
@@ -672,7 +697,14 @@ export function App() {
     const command = commands.find((candidate) => candidate.id === id);
     if (command?.enabled(context)) executeCommand(command);
   }, [context, executeCommand]);
-  useShortcutHandler(context, executeCommand);
+  const accountCommands = useMemo<Command[]>(
+    () =>
+      accounts.length > 1
+        ? [showAllAccountsCommand(), ...accounts.map((account, index) => accountCommand(account.email, index))]
+        : [],
+    [accounts],
+  );
+  useShortcutHandler(context, executeCommand, accountCommands);
 
   const runOnSelection = useCallback((title: string, template: MutationTemplate) => {
     executeCommand({
@@ -694,7 +726,13 @@ export function App() {
   return (
     <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
-        <button className="brand" aria-label="Account" onClick={() => openSettingsAt("account")}>D</button>
+        <AccountSwitcher
+          accounts={accounts}
+          activeAccountId={activeAccountId}
+          onSwitch={context.switchAccount}
+          onShowAll={context.showAllAccounts}
+          onManage={() => openSettingsAt("accounts")}
+        />
         <HoverTooltip label="Inbox" shortcut="G I">
           <button
             className="nav-button active"
@@ -861,7 +899,16 @@ export function App() {
               <span className={`unread-dot ${thread.unread ? "visible" : ""}`} />
               <span className="thread-content">
                 <span className="thread-meta">
-                  <strong>{thread.participants.join(", ")}</strong>
+                  <span className="thread-sender">
+                    {accounts.length > 1 ? (
+                      <span
+                        className="account-dot"
+                        aria-hidden="true"
+                        style={{ background: accounts.find((account) => account.email === thread.accountId)?.color }}
+                      />
+                    ) : null}
+                    <strong>{thread.participants.join(", ")}</strong>
+                  </span>
                   <time>{timeFormatter.format(new Date(thread.lastMessageAt))}</time>
                 </span>
                 <span className="thread-subject">{thread.subject}</span>
@@ -950,10 +997,15 @@ export function App() {
 
       {correspondence.overlay}
       {paletteOpen ? (
-        <CommandPalette context={context} execute={executeCommand} onClose={() => setPaletteOpen(false)} />
+        <CommandPalette
+          context={context}
+          execute={executeCommand}
+          extraCommands={accountCommands}
+          onClose={() => setPaletteOpen(false)}
+        />
       ) : null}
       {shortcutHelpOpen ? (
-        <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} />
+        <ShortcutHelp extraCommands={accountCommands} onClose={() => setShortcutHelpOpen(false)} />
       ) : null}
       {diagnosticsOpen ? (
         <Diagnostics status={syncStatus} onClose={() => setDiagnosticsOpen(false)} />
@@ -1012,10 +1064,38 @@ export function App() {
             setAuthStatus(await mailClient.googleAuthStatus());
             await loadThreads(query);
             setLabels(await mailClient.listLabels());
+            refreshAccounts();
           }}
           onDisconnectAccount={async () => {
             await mailClient.disconnectGoogle();
             setAuthStatus(await mailClient.googleAuthStatus());
+            refreshAccounts();
+          }}
+          accounts={accounts}
+          onAddAccount={async () => {
+            await mailClient.addAccount();
+            refreshAccounts();
+          }}
+          onRemoveAccount={async (email) => {
+            await mailClient.removeAccount(email);
+            if (activeAccountId === email) {
+              setActiveAccountId(null);
+              void loadThreads(query, null);
+            }
+            refreshAccounts();
+            setAuthStatus(await mailClient.googleAuthStatus());
+          }}
+          onReconnectAccount={async (email) => {
+            await mailClient.reconnectAccount(email);
+            refreshAccounts();
+          }}
+          onSetAccountColor={async (email, color) => {
+            await mailClient.setAccountColor(email, color);
+            refreshAccounts();
+          }}
+          onReorderAccounts={async (emails) => {
+            await mailClient.reorderAccounts(emails);
+            refreshAccounts();
           }}
         />
       ) : null}
@@ -1052,6 +1132,92 @@ function AddressWithCopy({ address }: { address: string }) {
         {copied ? <Check size={12} /> : <Copy size={12} />}
       </button>
     </span>
+  );
+}
+
+function AccountSwitcher({
+  accounts,
+  activeAccountId,
+  onSwitch,
+  onShowAll,
+  onManage,
+}: {
+  accounts: Account[];
+  activeAccountId: string | null;
+  onSwitch(email: string): void;
+  onShowAll(): void;
+  onManage(): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEscapeDismiss(() => setOpen(false));
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  if (accounts.length <= 1) {
+    return <button className="brand" aria-label="Account" onClick={onManage}>D</button>;
+  }
+
+  return (
+    <div className="account-switcher" ref={rootRef}>
+      <button
+        className="brand"
+        aria-label="Switch account"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        D
+      </button>
+      {open ? (
+        <div className="account-switcher-menu" role="menu" aria-label="Accounts">
+          <button
+            role="menuitemradio"
+            aria-checked={activeAccountId === null}
+            className={activeAccountId === null ? "active" : ""}
+            onClick={() => {
+              onShowAll();
+              setOpen(false);
+            }}
+          >
+            <span className="account-dot all-accounts" aria-hidden="true" />
+            All accounts
+          </button>
+          <div className="account-switcher-divider" />
+          {accounts.map((account) => (
+            <button
+              key={account.email}
+              role="menuitemradio"
+              aria-checked={activeAccountId === account.email}
+              className={activeAccountId === account.email ? "active" : ""}
+              onClick={() => {
+                onSwitch(account.email);
+                setOpen(false);
+              }}
+            >
+              <span className="account-dot" aria-hidden="true" style={{ background: account.color }} />
+              {account.email}
+            </button>
+          ))}
+          <div className="account-switcher-divider" />
+          <button
+            onClick={() => {
+              onManage();
+              setOpen(false);
+            }}
+          >
+            Manage accounts…
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1098,16 +1264,18 @@ function ActionButton({
 function CommandPalette({
   context,
   execute,
+  extraCommands = [],
   onClose,
 }: {
   context: CommandContext;
   execute(command: Command): void;
+  extraCommands?: Command[];
   onClose(): void;
 }) {
   const [filter, setFilter] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => inputRef.current?.focus(), []);
-  const visible = commands.filter((command) =>
+  const visible = [...commands, ...extraCommands].filter((command) =>
     command.title.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
   );
   return (
@@ -1143,9 +1311,15 @@ function CommandPalette({
 
 const shortcutGroupOrder = ["Navigation", "Triage", "Compose", "Application"] as const;
 
-function ShortcutHelp({ onClose }: { onClose(): void }) {
+function ShortcutHelp({
+  extraCommands = [],
+  onClose,
+}: {
+  extraCommands?: Command[];
+  onClose(): void;
+}) {
   const shortcutCommands = [
-    ...commands.filter((command) => command.keys.length > 0),
+    ...[...commands, ...extraCommands].filter((command) => command.keys.length > 0),
     ...formattingShortcuts.map((shortcut) => ({
       id: shortcut.id,
       title: shortcut.title,
@@ -1317,6 +1491,7 @@ function LabelManager({
 const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "account", label: "Account" },
+  { id: "accounts", label: "Accounts" },
   { id: "ai", label: "AI provider" },
   { id: "privacy", label: "Privacy" },
 ];
@@ -1334,6 +1509,12 @@ function Settings({
   authStatus,
   onConnectAccount,
   onDisconnectAccount,
+  accounts,
+  onAddAccount,
+  onRemoveAccount,
+  onReconnectAccount,
+  onSetAccountColor,
+  onReorderAccounts,
 }: {
   section: SettingsSection;
   onSectionChange(section: SettingsSection): void;
@@ -1347,6 +1528,12 @@ function Settings({
   authStatus: AuthStatus | null;
   onConnectAccount(): Promise<void>;
   onDisconnectAccount(): Promise<void>;
+  accounts: Account[];
+  onAddAccount(): Promise<void>;
+  onRemoveAccount(email: string): Promise<void>;
+  onReconnectAccount(email: string): Promise<void>;
+  onSetAccountColor(email: string, color: string): Promise<void>;
+  onReorderAccounts(emails: string[]): Promise<void>;
 }) {
   return (
     <Modal title="Settings" className="settings-modal" onClose={onClose}>
@@ -1379,6 +1566,17 @@ function Settings({
               status={authStatus}
               onConnect={onConnectAccount}
               onDisconnect={onDisconnectAccount}
+            />
+          ) : null}
+          {section === "accounts" ? (
+            <AccountsSettings
+              accounts={accounts}
+              primaryConnected={authStatus?.connected ?? false}
+              onAdd={onAddAccount}
+              onRemove={onRemoveAccount}
+              onReconnect={onReconnectAccount}
+              onSetColor={onSetAccountColor}
+              onReorder={onReorderAccounts}
             />
           ) : null}
           {section === "ai" ? <AiProviderSettings /> : null}
@@ -1502,6 +1700,118 @@ function AccountSettings({
           </button>
         </>
       )}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+function AccountsSettings({
+  accounts,
+  primaryConnected,
+  onAdd,
+  onRemove,
+  onReconnect,
+  onSetColor,
+  onReorder,
+}: {
+  accounts: Account[];
+  primaryConnected: boolean;
+  onAdd(): Promise<void>;
+  onRemove(email: string): Promise<void>;
+  onReconnect(email: string): Promise<void>;
+  onSetColor(email: string, color: string): Promise<void>;
+  onReorder(emails: string[]): Promise<void>;
+}) {
+  const [busyEmail, setBusyEmail] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const act = (busyKey: string, operation: () => Promise<void>) => {
+    setBusyEmail(busyKey);
+    setError(null);
+    void operation()
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setBusyEmail(null));
+  };
+
+  const move = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= accounts.length) return;
+    const next = [...accounts];
+    [next[index], next[target]] = [next[target]!, next[index]!];
+    act(accounts[index]!.email, () => onReorder(next.map((account) => account.email)));
+  };
+
+  return (
+    <section className="settings-section accounts-manager" aria-label="Accounts">
+      <p>
+        The inbox merges every connected account by default. Switch to one account,
+        show all again, or jump straight to an account with <kbd>⌘1</kbd>–<kbd>⌘9</kbd>
+        from the sidebar switcher or command palette.
+      </p>
+      {accounts.length === 0 ? (
+        <p>Connect a Gmail account from the Account tab to get started.</p>
+      ) : (
+        <ul className="accounts-list">
+          {accounts.map((account, index) => (
+            <li key={account.email}>
+              <span className="account-dot" aria-hidden="true" style={{ background: account.color }} />
+              <span className="accounts-list-email">
+                {account.email}
+                {account.status === "needs_reauth" ? <em> · needs reconnect</em> : null}
+              </span>
+              <span className="accounts-list-actions">
+                <button
+                  type="button"
+                  aria-label={`Move ${account.email} up`}
+                  disabled={index === 0 || busyEmail !== null}
+                  onClick={() => move(index, -1)}
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Move ${account.email} down`}
+                  disabled={index === accounts.length - 1 || busyEmail !== null}
+                  onClick={() => move(index, 1)}
+                >
+                  <ChevronDown size={14} />
+                </button>
+                <input
+                  type="color"
+                  aria-label={`Color for ${account.email}`}
+                  value={account.color}
+                  disabled={busyEmail !== null}
+                  onChange={(event) => {
+                    const color = event.target.value;
+                    act(account.email, () => onSetColor(account.email, color));
+                  }}
+                />
+                {account.status === "needs_reauth" ? (
+                  <button
+                    type="button"
+                    disabled={busyEmail !== null}
+                    onClick={() => act(account.email, () => onReconnect(account.email))}
+                  >
+                    Reconnect
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={busyEmail !== null}
+                  onClick={() => act(account.email, () => onRemove(account.email))}
+                >
+                  Remove
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {primaryConnected ? (
+        <button type="button" disabled={busyEmail !== null} onClick={() => act("__add__", onAdd)}>
+          {busyEmail === "__add__" ? "Waiting for Google…" : "Add another account"}
+        </button>
+      ) : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
   );
