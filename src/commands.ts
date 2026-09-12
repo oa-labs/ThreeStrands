@@ -22,6 +22,8 @@ export type CommandContext = {
   refresh(): void;
   openDiagnostics(): void;
   openLabels(): void;
+  openPalette(): void;
+  openShortcutHelp(): void;
 };
 
 export type Command = {
@@ -101,6 +103,22 @@ export const commands: Command[] = [
     run: (context) => context.focusSearch(),
   },
   {
+    id: "palette.open",
+    title: "Command palette",
+    keys: ["Mod+k"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => context.openPalette(),
+  },
+  {
+    id: "shortcuts.open",
+    title: "Keyboard shortcuts",
+    keys: ["?"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => context.openShortcutHelp(),
+  },
+  {
     id: "mail.refresh",
     title: "Refresh mail",
     keys: ["Shift+r"],
@@ -121,8 +139,12 @@ export const commands: Command[] = [
 export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   const parts = key.split("+");
   const base = parts.at(-1)!;
+  const expectsShift = parts.includes("Shift");
+  const shiftMatches = expectsShift
+    ? event.shiftKey
+    : base === "?" || !event.shiftKey;
   return event.key.toLocaleLowerCase() === base.toLocaleLowerCase()
-    && event.shiftKey === parts.includes("Shift")
+    && shiftMatches
     && (event.ctrlKey || event.metaKey) === parts.includes("Mod")
     && !event.altKey;
 }
