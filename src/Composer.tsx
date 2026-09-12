@@ -1,43 +1,21 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import { Paperclip, Send, X, Trash2 } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem } from "./correspondence";
+import {
+  clampComposerPosition,
+  clampComposerSize,
+  minimumComposerHeight,
+  minimumComposerWidth,
+  readComposerPosition,
+  readComposerSize,
+  saveComposerPosition,
+  saveComposerSize,
+  type ComposerPosition,
+  type ComposerSize,
+} from "./composerLayout";
 
 export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(): void; attach(): void; close(): void };
-
-const composerSizeKey = "dispatch.composerSize";
-const minimumComposerWidth = 480;
-const minimumComposerHeight = 380;
-
-type ComposerSize = { width: number; height: number };
-
-function readComposerSize(): ComposerSize | null {
-  try {
-    const saved = JSON.parse(localStorage.getItem(composerSizeKey) ?? "null") as Partial<ComposerSize> | null;
-    if (saved && Number.isFinite(saved.width) && Number.isFinite(saved.height)
-      && saved.width! >= minimumComposerWidth && saved.height! >= minimumComposerHeight) {
-      return { width: saved.width!, height: saved.height! };
-    }
-  } catch {
-    // Keep the default size when storage is unavailable or invalid.
-  }
-  return null;
-}
-
-function composerBounds(viewport = { width: window.innerWidth, height: window.innerHeight }) {
-  return {
-    maxWidth: Math.max(320, viewport.width - 48),
-    maxHeight: Math.max(320, viewport.height - 48),
-  };
-}
-
-function clampComposerSize(size: ComposerSize, viewport?: { width: number; height: number }): ComposerSize {
-  const { maxWidth, maxHeight } = composerBounds(viewport);
-  return {
-    width: Math.round(Math.max(Math.min(minimumComposerWidth, maxWidth), Math.min(maxWidth, size.width))),
-    height: Math.round(Math.max(Math.min(minimumComposerHeight, maxHeight), Math.min(maxHeight, size.height))),
-  };
-}
 
 export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): void; onQueued(item: OutboxItem): void }>(function Composer({ draft: initial, onClose, onQueued }, ref) {
   const [draft, setDraft] = useState(initial);
@@ -51,8 +29,12 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
   const busyRef = useRef(false);
   const [showCopies, setShowCopies] = useState(Boolean(initial.cc || initial.bcc));
   const [preferredSize, setPreferredSize] = useState(readComposerSize);
+  const [preferredPosition, setPreferredPosition] = useState(readComposerPosition);
+  const [measuredSize, setMeasuredSize] = useState<ComposerSize | null>(null);
+  const [moving, setMoving] = useState(false);
   const [viewportSize, setViewportSize] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
   const panel = useRef<HTMLDivElement>(null);
+  const moveDrag = useRef<{ x: number; y: number; position: ComposerPosition; pointerId: number } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
 
@@ -113,19 +95,64 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
   }, []);
 
   const visibleSize = preferredSize ? clampComposerSize(preferredSize, viewportSize) : null;
+  useLayoutEffect(() => {
+    const rect = panel.current?.getBoundingClientRect();
+    if (!rect) return;
+    setMeasuredSize((current) => (
+      current && Math.round(current.width) === Math.round(rect.width) && Math.round(current.height) === Math.round(rect.height)
+        ? current
+        : { width: rect.width, height: rect.height }
+    ));
+  });
+  const layoutSize = visibleSize ?? measuredSize ?? { width: minimumComposerWidth, height: minimumComposerHeight };
+  const visiblePosition = preferredPosition ? clampComposerPosition(preferredPosition, layoutSize, viewportSize) : null;
   const resize = (size: ComposerSize) => {
     const next = clampComposerSize(size, viewportSize);
     setPreferredSize(next);
-    try {
-      localStorage.setItem(composerSizeKey, JSON.stringify(next));
-    } catch {
-      // Retain the preferred size for this session if persistence is unavailable.
+    saveComposerSize(next);
+    if (preferredPosition) {
+      const nextPosition = clampComposerPosition(preferredPosition, next, viewportSize);
+      setPreferredPosition(nextPosition);
+      saveComposerPosition(nextPosition);
     }
   };
+  const move = (position: ComposerPosition) => {
+    const next = clampComposerPosition(position, layoutSize, viewportSize);
+    setPreferredPosition(next);
+    saveComposerPosition(next);
+  };
+  function onHeaderPointerDown(event: PointerEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest("button")) return;
+    event.preventDefault();
+    const rect = panel.current?.getBoundingClientRect();
+    if (!rect) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    moveDrag.current = { x: event.clientX, y: event.clientY, position: { x: rect.left, y: rect.top }, pointerId: event.pointerId };
+    setMoving(true);
+  }
+  function onHeaderPointerMove(event: PointerEvent<HTMLElement>) {
+    if (moveDrag.current?.pointerId !== event.pointerId) return;
+    move({
+      x: moveDrag.current.position.x + event.clientX - moveDrag.current.x,
+      y: moveDrag.current.position.y + event.clientY - moveDrag.current.y,
+    });
+  }
+  function endHeaderDrag(event: PointerEvent<HTMLElement>) {
+    if (moveDrag.current?.pointerId !== event.pointerId) return;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    moveDrag.current = null;
+    setMoving(false);
+  }
+
+  const frameStyle = {
+    ...(visibleSize ? { width: visibleSize.width, height: visibleSize.height } : {}),
+    ...(visiblePosition ? { left: visiblePosition.x, top: visiblePosition.y } : {}),
+  } as CSSProperties;
 
   return <div className="compose-backdrop">
-    <div ref={panel} className="composer" role="dialog" aria-modal="true" aria-label={initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
-      style={visibleSize ? { width: visibleSize.width, height: visibleSize.height } as CSSProperties : undefined}
+    <div ref={panel} className={`composer${visibleSize ? " sized" : ""}${visiblePosition ? " placed" : ""}`} role="dialog" aria-modal="true" aria-label={initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
+      style={Object.keys(frameStyle).length ? frameStyle : undefined}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
@@ -136,7 +163,14 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
           if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
         }
       }}>
-      <header><div><h2>{initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply all" : "Reply"}</h2><span>From {draft.account}</span></div><button className="icon-button" aria-label="Save and close draft" onClick={close} disabled={busy}><X size={19} /></button></header>
+      <header
+        className={`composer-header${moving ? " dragging" : ""}`}
+        title="Drag to move"
+        onPointerDown={onHeaderPointerDown}
+        onPointerMove={onHeaderPointerMove}
+        onPointerUp={endHeaderDrag}
+        onLostPointerCapture={() => { moveDrag.current = null; setMoving(false); }}
+      ><div><h2>{initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply all" : "Reply"}</h2><span>From {draft.account}</span></div><button className="icon-button" aria-label="Save and close draft" onClick={close} disabled={busy}><X size={19} /></button></header>
       <div className="composer-content">
         <label className="compose-field"><span>To</span><input name="to" aria-label="To" value={draft.to} onChange={(e) => edit("to", e.target.value)} disabled={busy} placeholder="Name <email@example.com>" /></label>
         <button className="text-button" aria-expanded={showCopies} onClick={() => setShowCopies(!showCopies)}>Cc / Bcc</button>
