@@ -8,9 +8,10 @@ import type {
   ThreadDetail,
   ThreadMutation,
 } from "../domain";
+import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
 import { demoClient } from "./demoClient";
 
-export interface MailClient {
+export interface MailClient extends CorrespondenceClient {
   listThreads(): Promise<Thread[]>;
   getThread(id: string): Promise<ThreadDetail>;
   searchThreads(request: SearchThreadsRequest): Promise<Thread[]>;
@@ -31,6 +32,7 @@ function isTauri(): boolean {
 }
 
 const tauriClient: MailClient = {
+  ...nativeCorrespondence,
   listThreads: () => invoke("list_threads"),
   getThread: (id) => invoke("get_thread", { id }),
   searchThreads: (request) => invoke("search_threads", { request }),

@@ -1,4 +1,5 @@
 mod auth;
+mod correspondence;
 mod db;
 mod gmail;
 mod mime;
@@ -20,6 +21,31 @@ struct AppState {
     database: Arc<Database>,
     auth: Option<GoogleAuth>,
     sync: Option<SyncService>,
+    correspondence: correspondence::Correspondence,
+    exiting: std::sync::atomic::AtomicBool,
+}
+
+#[tauri::command]
+async fn correspondence_request(
+    request: correspondence::Request,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    state.correspondence.request(request).await
+}
+
+#[tauri::command]
+async fn finish_exit(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // Give pending undo windows time to complete while keeping the UI responsive.
+    while state.database.pending_undo()? {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    // Do not terminate while a provider request is awaiting acknowledgement.
+    let _send_guard = state.correspondence.gate.lock().await;
+    state
+        .exiting
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -52,6 +78,7 @@ fn sync_status(state: State<'_, AppState>) -> Result<SyncStatus, String> {
 
 #[tauri::command]
 async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+    let _ = state.correspondence.refresh_identity().await;
     state.sync.as_ref().ok_or_else(not_configured)?.sync().await
 }
 
@@ -65,17 +92,21 @@ fn google_auth_status(state: State<'_, AppState>) -> AuthStatus {
 
 #[tauri::command]
 async fn connect_google(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+    let _guard = state.correspondence.gate.lock().await;
     state
         .auth
         .as_ref()
         .ok_or_else(not_configured)?
         .authorize()
         .await?;
+    let _ = state.correspondence.refresh_identity().await;
     state.sync.as_ref().ok_or_else(not_configured)?.sync().await
 }
 
 #[tauri::command]
-fn disconnect_google() -> Result<(), String> {
+async fn disconnect_google(state: State<'_, AppState>) -> Result<(), String> {
+    let _guard = state.correspondence.gate.lock().await;
+    state.database.pause_ready_sends()?;
     GoogleAuth::disconnect()
 }
 
@@ -165,14 +196,34 @@ pub fn run() {
                     service.polling_loop().await;
                 });
             }
+            let root = data_dir.join("attachments");
+            std::fs::create_dir_all(&root)?;
+            let correspondence = correspondence::Correspondence {
+                database: database.clone(),
+                auth: auth.clone(),
+                root,
+                gate: Arc::new(tokio::sync::Mutex::new(())),
+                edits: Arc::new(tokio::sync::Mutex::new(())),
+            };
+            let worker = correspondence.clone();
+            tauri::async_runtime::spawn(async move {
+                if GoogleAuth::available() {
+                    let _ = worker.refresh_identity().await;
+                }
+                worker.run().await;
+            });
             app.manage(AppState {
                 database,
                 auth,
                 sync,
+                correspondence,
+                exiting: std::sync::atomic::AtomicBool::new(false),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            correspondence_request,
+            finish_exit,
             list_threads,
             get_thread,
             search_threads,
@@ -190,6 +241,29 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Dispatch")
         .run(|handle, event| {
+            use tauri::Emitter;
+            match &event {
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::CloseRequested { api, .. },
+                    ..
+                } => {
+                    if let Some(state) = handle.try_state::<AppState>() {
+                        if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
+                            api.prevent_close();
+                            let _ = handle.emit("compose-before-exit", ());
+                        }
+                    }
+                }
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    if let Some(state) = handle.try_state::<AppState>() {
+                        if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
+                            api.prevent_exit();
+                            let _ = handle.emit("compose-before-exit", ());
+                        }
+                    }
+                }
+                _ => {}
+            }
             if matches!(event, tauri::RunEvent::Resumed) {
                 if let Some(state) = handle.try_state::<AppState>() {
                     if GoogleAuth::available() {

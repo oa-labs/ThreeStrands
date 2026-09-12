@@ -3,6 +3,11 @@ import {
   Check,
   Command as CommandIcon,
   Copy,
+  FileText,
+  Send,
+  Reply,
+  ReplyAll,
+  Forward,
   Inbox,
   Mail,
   MailOpen,
@@ -42,6 +47,7 @@ import type {
   ThreadMutation,
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
+import { useCorrespondence } from "./useCorrespondence";
 import { SafeMessage } from "./SafeMessage";
 
 import { applyTheme, readTheme, saveTheme } from "./theme";
@@ -59,12 +65,14 @@ function useShortcutHandler(
 ) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (context.closing || event.isComposing || event.defaultPrevented) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         openPalette();
         return;
       }
-      if (event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
+      const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && context.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
+      if (!sendShortcut && (isEditableTarget(event.target) || document.querySelector('[role="dialog"]'))) return;
       const command = commands.find(
         (candidate) =>
           candidate.enabled(context) &&
@@ -91,6 +99,7 @@ export function App() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
+  const correspondence = useCorrespondence(detail?.messages.at(-1)?.id);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -114,6 +123,10 @@ export function App() {
         : (next[0]?.id ?? null),
     );
   }, []);
+
+  useEffect(() => {
+    if (correspondence.sentCount > 0) void loadThreads(query);
+  }, [correspondence.sentCount, loadThreads]);
 
   useEffect(() => {
     Promise.all([loadThreads(""), mailClient.syncStatus(), mailClient.googleAuthStatus()])
@@ -190,6 +203,7 @@ export function App() {
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
 
   const context = useMemo<CommandContext>(() => ({
+    ...correspondence.context,
     selectedId,
     selectNext: () => {
       const next = Math.min(selectedIndex + 1, threads.length - 1);
@@ -218,7 +232,7 @@ export function App() {
     },
     openDiagnostics: () => setDiagnosticsOpen(true),
     openLabels: () => setLabelsOpen(true),
-  }), [loadThreads, mutate, query, selected, selectedId, selectedIndex, threads]);
+  }), [loadThreads, mutate, query, selected, selectedId, selectedIndex, threads, correspondence.context]);
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
   useShortcutHandler(context, openPalette);
@@ -228,6 +242,9 @@ export function App() {
       <nav className="sidebar" aria-label="Mailboxes">
         <button className="brand" aria-label="Account" onClick={() => setAccountOpen(true)}>D</button>
         <button className="nav-button active" aria-label="Inbox"><Inbox size={19} /></button>
+        <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={context.compose}><Pencil size={19} /></button>
+        <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount})`} title="Drafts" onClick={context.openDrafts}><FileText size={19} /></button>
+        <button className="nav-button" aria-label={`Outbox (${correspondence.outboxCount})`} title="Outbox" onClick={context.openOutbox}><Send size={19} /></button>
         <div className="sidebar-spacer" />
         <button
           className="nav-button"
@@ -329,6 +346,11 @@ export function App() {
                 </ActionButton>
               </div>
             </header>
+            <div className="reply-toolbar" aria-label="Correspondence actions">
+              <ActionButton label="Reply" shortcut="r" onClick={context.reply}><Reply size={16} /></ActionButton>
+              <ActionButton label="Reply all" shortcut="a" onClick={context.replyAll}><ReplyAll size={16} /></ActionButton>
+              <ActionButton label="Forward" shortcut="f" onClick={context.forward}><Forward size={16} /></ActionButton>
+            </div>
             <div className="message-stack">
               {detail.messages.map((message) => (
                 <article className="message" key={message.id}>
@@ -358,6 +380,7 @@ export function App() {
         )}
       </section>
 
+      {correspondence.overlay}
       {paletteOpen ? (
         <CommandPalette context={context} onClose={() => setPaletteOpen(false)} />
       ) : null}

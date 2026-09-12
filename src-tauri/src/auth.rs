@@ -1,3 +1,4 @@
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -18,6 +19,20 @@ const TOKEN_KEY: &str = "google-oauth-default";
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels";
+
+// There is only ever one Google account per app instance (fixed SERVICE/TOKEN_KEY above),
+// so an in-memory cache can live at process scope. This is what keeps `access_token()` and
+// `available()` from hitting the OS keychain on every Gmail API call and every poll tick.
+static TOKEN_CACHE: OnceLock<Mutex<Option<Tokens>>> = OnceLock::new();
+static AVAILABLE_CACHE: OnceLock<Mutex<Option<bool>>> = OnceLock::new();
+
+fn token_cache() -> &'static Mutex<Option<Tokens>> {
+    TOKEN_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn available_cache() -> &'static Mutex<Option<bool>> {
+    AVAILABLE_CACHE.get_or_init(|| Mutex::new(None))
+}
 
 #[derive(Clone)]
 pub struct GoogleAuth {
@@ -66,9 +81,15 @@ impl GoogleAuth {
     }
 
     pub fn available() -> bool {
-        Self::entry()
+        let cached = *available_cache().lock().unwrap();
+        if let Some(value) = cached {
+            return value;
+        }
+        let value = Self::entry()
             .and_then(|entry| entry.get_password().map_err(|error| error.to_string()))
-            .is_ok()
+            .is_ok();
+        *available_cache().lock().unwrap() = Some(value);
+        value
     }
 
     pub async fn authorize(&self) -> Result<(), String> {
@@ -202,19 +223,32 @@ impl GoogleAuth {
 
     pub fn disconnect() -> Result<(), String> {
         match Self::entry()?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(()) | Err(keyring::Error::NoEntry) => {
+                *token_cache().lock().unwrap() = None;
+                *available_cache().lock().unwrap() = Some(false);
+                Ok(())
+            }
             Err(error) => Err(error.to_string()),
         }
     }
 
     fn load(&self) -> Result<Tokens, String> {
+        let cached = token_cache().lock().unwrap().clone();
+        if let Some(tokens) = cached {
+            return Ok(tokens);
+        }
         let value = Self::entry()?.get_password().map_err(display)?;
-        serde_json::from_str(&value).map_err(display)
+        let tokens: Tokens = serde_json::from_str(&value).map_err(display)?;
+        *token_cache().lock().unwrap() = Some(tokens.clone());
+        Ok(tokens)
     }
 
     fn save(&self, tokens: &Tokens) -> Result<(), String> {
         let value = serde_json::to_string(tokens).map_err(display)?;
-        Self::entry()?.set_password(&value).map_err(display)
+        Self::entry()?.set_password(&value).map_err(display)?;
+        *token_cache().lock().unwrap() = Some(tokens.clone());
+        *available_cache().lock().unwrap() = Some(true);
+        Ok(())
     }
 
     fn entry() -> Result<Entry, String> {

@@ -410,3 +410,137 @@ mod tests {
         assert_eq!(retry_delay(2, false), Duration::from_secs(4));
     }
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SentMessage {
+    pub id: String,
+    pub thread_id: String,
+}
+
+impl GmailClient {
+    pub async fn sender_identity(&self) -> ProviderResult<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Identity {
+            email_address: String,
+        }
+        let request = self.request(Method::GET, format!("{API}/profile")).await?;
+        Ok(self.json::<Identity>(request, false).await?.email_address)
+    }
+    pub async fn get_message(&self, id: &str) -> ProviderResult<GmailMessage> {
+        let request = self
+            .request(Method::GET, format!("{API}/messages/{id}?format=full"))
+            .await?;
+        self.json(request, false).await
+    }
+    pub async fn attachment_bytes(&self, message: &str, id: &str) -> ProviderResult<Vec<u8>> {
+        use base64::Engine;
+        #[derive(Deserialize)]
+        struct Body {
+            data: String,
+        }
+        let request = self
+            .request(
+                Method::GET,
+                format!("{API}/messages/{message}/attachments/{id}"),
+            )
+            .await?;
+        let body: Body = self.json(request, false).await?;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(body.data.trim_end_matches('='))
+            .map_err(|e| ProviderError::Other(e.to_string()))
+    }
+    pub async fn prepare_send(&self) -> ProviderResult<RequestBuilder> {
+        Ok(self
+            .request(Method::POST, format!("{API}/messages/send"))
+            .await?
+            .timeout(Duration::from_secs(60)))
+    }
+    // Send is non-idempotent: never use the generic HTTP retry helper here.
+    pub async fn deliver_once(
+        &self,
+        request: RequestBuilder,
+        raw: &[u8],
+        thread: Option<&str>,
+    ) -> Result<SentMessage, (bool, String)> {
+        use base64::Engine;
+        let mut body =
+            serde_json::json!({"raw":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)});
+        if let Some(thread) = thread {
+            body["threadId"] = thread.into();
+        }
+        let response = request.json(&body).send().await.map_err(|_| {
+            (
+                false,
+                "Connection ended during delivery. Check sent mail before sending again.".into(),
+            )
+        })?;
+        if !response.status().is_success() {
+            let status = response.status();
+            // A server error or timeout can follow acceptance; only explicit client rejection is definite.
+            let definite = status.is_client_error() && status != StatusCode::REQUEST_TIMEOUT;
+            return Err((
+                definite,
+                format!(
+                    "Gmail returned HTTP {}. {}",
+                    status.as_u16(),
+                    if definite {
+                        "Restore the draft and retry after resolving the error."
+                    } else {
+                        "Delivery is uncertain; check sent mail."
+                    }
+                ),
+            ));
+        }
+        response.json().await.map_err(|_| {
+            (
+                false,
+                "Gmail accepted the request but its result could not be read. Check sent mail."
+                    .into(),
+            )
+        })
+    }
+    pub async fn find_sent(
+        &self,
+        operation: &str,
+        expected_sender: &str,
+    ) -> ProviderResult<Option<SentMessage>> {
+        #[derive(Deserialize)]
+        struct Found {
+            #[serde(default)]
+            messages: Vec<SentMessage>,
+        }
+        let request = self
+            .request(Method::GET, format!("{API}/messages"))
+            .await?
+            .query(&[(
+                "q",
+                format!("in:sent rfc822msgid:{operation}@dispatch.local"),
+            )]);
+        let matches: Found = self.json(request, false).await?;
+        // Verify the message identity and sender, rather than relying on search alone.
+        for candidate in matches.messages {
+            let message = self.get_message(&candidate.id).await?;
+            let matches_id = message.payload.headers.iter().any(|h| {
+                h.name.eq_ignore_ascii_case("Message-ID")
+                    && h.value.trim().trim_matches(['<', '>'])
+                        == format!("{operation}@dispatch.local")
+            });
+            let matches_sender = message
+                .payload
+                .headers
+                .iter()
+                .filter(|h| h.name.eq_ignore_ascii_case("From"))
+                .any(|h| {
+                    crate::correspondence::addresses(&h.value).is_ok_and(|list| {
+                        list.len() == 1 && list[0].1.eq_ignore_ascii_case(expected_sender)
+                    })
+                });
+            if matches_id && matches_sender && message.label_ids.iter().any(|l| l == "SENT") {
+                return Ok(Some(candidate));
+            }
+        }
+        Ok(None)
+    }
+}

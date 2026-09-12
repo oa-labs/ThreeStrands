@@ -90,7 +90,7 @@ pub struct Database(Mutex<Connection>);
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self, String> {
-        let connection = Connection::open(path).map_err(display_error)?;
+        let mut connection = Connection::open(path).map_err(display_error)?;
         connection.execute_batch(SCHEMA).map_err(display_error)?;
         connection
             .execute(
@@ -99,19 +99,21 @@ impl Database {
                 [],
             )
             .map_err(display_error)?;
+        crate::correspondence::migrate(&mut connection)?;
         seed_if_empty(&connection).map_err(display_error)?;
         Ok(Self(Mutex::new(connection)))
     }
 
     #[cfg(test)]
     pub(crate) fn open_memory() -> Self {
-        let connection = Connection::open_in_memory().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(SCHEMA).unwrap();
+        crate::correspondence::migrate(&mut connection).unwrap();
         seed_if_empty(&connection).unwrap();
         Self(Mutex::new(connection))
     }
 
-    fn connection(&self) -> Result<MutexGuard<'_, Connection>, String> {
+    pub(crate) fn connection(&self) -> Result<MutexGuard<'_, Connection>, String> {
         self.0
             .lock()
             .map_err(|_| "Local database lock was poisoned".to_string())
@@ -459,6 +461,7 @@ impl Database {
             .map_err(display_error)?;
         let mut body = String::new();
         for message in messages {
+            transaction.execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", params![message.id, message.metadata_json]).map_err(display_error)?;
             body.push_str(&message.body_text);
             body.push(' ');
             transaction

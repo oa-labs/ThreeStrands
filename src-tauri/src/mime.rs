@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GmailMessage {
     pub id: String,
@@ -15,7 +15,7 @@ pub struct GmailMessage {
     pub payload: MimePart,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MimePart {
     #[serde(default)]
@@ -30,15 +30,19 @@ pub struct MimePart {
     pub parts: Vec<MimePart>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MimeHeader {
     pub name: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MimeBody {
     pub data: Option<String>,
+    #[serde(default)]
+    pub attachment_id: Option<String>,
+    #[serde(default)]
+    pub size: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +57,7 @@ pub struct NormalizedMessage {
     pub body_text: String,
     pub snippet: String,
     pub labels: Vec<String>,
+    pub metadata_json: String,
 }
 
 pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
@@ -76,6 +81,7 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
         body_text: text.unwrap_or_default(),
         snippet: message.snippet.clone(),
         labels: message.label_ids.clone(),
+        metadata_json: serde_json::to_string(message).map_err(|e| e.to_string())?,
     })
 }
 
@@ -150,6 +156,7 @@ mod tests {
             mime_type: kind.into(),
             body: MimeBody {
                 data: Some(URL_SAFE_NO_PAD.encode(body)),
+                ..Default::default()
             },
             ..Default::default()
         }

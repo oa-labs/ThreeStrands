@@ -1,6 +1,6 @@
 # Phase 2 implementation plan: compose and correspondence
 
-Status: proposed implementation plan
+Status: implemented correspondence scope; see [verification status and remaining release checks](phase-2-status.md).
 
 This delivers the four correspondence items from `PLAN.MD`: composer and local drafts; safe sending and undo; forwarding and attachments; keyboard integration. The first complete milestone is: open an email, write a reply offline, restart without losing saved work, reconnect, and send with an undo window.
 

@@ -1,3 +1,4 @@
+import { demoCorrespondence } from "./demoCorrespondence";
 import type { MailClient } from "./client";
 import type { Label, SyncStatus, Thread, ThreadDetail, ThreadMutation } from "../domain";
 
@@ -101,6 +102,7 @@ function update(mutation: ThreadMutation) {
 }
 
 export const demoClient: MailClient = {
+  ...demoCorrespondence((id) => demoClient.getThread(id)),
   async listThreads() {
     return structuredClone(visible());
   },

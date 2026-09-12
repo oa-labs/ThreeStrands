@@ -290,6 +290,7 @@ mod tests {
                     ],
                     body: MimeBody {
                         data: Some(URL_SAFE_NO_PAD.encode("provider body")),
+                        ..Default::default()
                     },
                     ..Default::default()
                 },

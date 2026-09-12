@@ -24,7 +24,7 @@ The detailed product definition, architecture, and delivery roadmap are in
 
 ## Status
 
-Phase 1 (read and triage) is in progress.
+Read/triage and the Phase 2 correspondence workflow are implemented, with live-account validation still required. Compose, reply, forward, local drafts, attachments, and a durable undo-send outbox are available. See [correspondence status and shortcuts](docs/phase-2-status.md).
 
 The browser development build runs against deterministic fixtures. The native
 Tauri build uses local SQLite through the same typed client interface. See
