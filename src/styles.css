@@ -93,56 +93,6 @@ button { color: inherit; }
   background: var(--sidebar);
 }
 
-.brand {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  margin-bottom: 14px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #835cff, #5b8cff);
-  color: white;
-  font-weight: 800;
-  border: 0;
-  cursor: pointer;
-}
-
-.account-switcher { position: relative; margin-bottom: 14px; }
-.account-switcher .brand { margin-bottom: 0; }
-.account-switcher-menu {
-  position: absolute;
-  z-index: 30;
-  top: 0;
-  left: calc(100% + 10px);
-  display: flex;
-  min-width: 220px;
-  flex-direction: column;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--raised);
-  box-shadow: 0 8px 24px var(--shadow);
-}
-.account-switcher-menu button {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 9px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  font-size: calc(13px * var(--font-scale));
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.account-switcher-menu button:hover { background: var(--hover); }
-.account-switcher-menu button.active { background: var(--selected); font-weight: 600; }
-.account-switcher-divider { height: 1px; margin: 4px 2px; background: var(--border); }
-
 .account-dot {
   flex-shrink: 0;
   width: 9px;
@@ -150,26 +100,26 @@ button { color: inherit; }
   border-radius: 50%;
   background: var(--muted);
 }
-.account-dot.all-accounts {
-  background: conic-gradient(#4285F4, #34A853, #EA4335, #FBBC05, #4285F4);
-}
 
-.active-account-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--hover);
-  color: var(--text);
+.account-rail { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.account-icon {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--muted);
+  color: white;
   font-size: calc(12px * var(--font-scale));
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 200px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: box-shadow 120ms ease, transform 120ms ease;
 }
+.account-icon:hover { transform: scale(1.07); }
+.account-icon.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--accent); }
+.account-icon.all-accounts { background: conic-gradient(#4285F4, #34A853, #EA4335, #FBBC05, #4285F4); }
 
 .sidebar-spacer { flex: 1; }
 .nav-button, .icon-button, .modal header button {
@@ -335,8 +285,14 @@ kbd {
   margin-top: 2px;
   color: var(--muted);
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
 }
 .row-check:hover, .row-check.checked { color: var(--accent); }
+.thread-row:hover .row-check,
+.thread-row:focus-within .row-check,
+.row-check.checked { opacity: 1; }
+.thread-list:has(.row-check.checked) .row-check { opacity: 1; }
 .sr-only {
   position: absolute;
   width: 1px;
@@ -407,11 +363,47 @@ kbd {
 .action-button span { display: none; }
 .message-stack { min-height: 0; overflow: auto; padding: 28px clamp(28px, 5vw, 72px); }
 .message { max-width: 840px; margin: 0 auto; }
-.message > header { display: flex; align-items: center; gap: 10px; padding-bottom: 24px; }
-.message > header div:nth-child(2) { display: flex; min-width: 0; flex: 1; flex-direction: column; font-size: calc(13px * var(--font-scale)); }
-.message > header span, .message > header time { color: var(--muted); font-size: calc(11px * var(--font-scale)); }
+.message > header { display: flex; align-items: flex-start; width: 100%; gap: 10px; padding-bottom: 24px; }
+.message-header-details { display: flex; min-width: 0; flex: 1; flex-direction: column; font-size: calc(13px * var(--font-scale)); }
+.message-sender-row { display: flex; align-items: baseline; gap: 12px; min-width: 0; margin-bottom: 5px; }
+.message-sender-row strong { min-width: 0; white-space: nowrap; }
+.message-sender-row time, .message-recipients { color: var(--muted); font-size: calc(11px * var(--font-scale)); }
+.message-sender-row time { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
+.message-recipients { line-height: 1.45; }
 .avatar { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; background: var(--avatar); font-weight: 700; }
-.message > header .address { display: inline-flex; align-items: center; gap: 4px; color: inherit; font-size: inherit; }
+.message > header .address { position: relative; display: inline-flex; align-items: center; color: inherit; font-size: inherit; }
+.address-name { cursor: help; }
+.address:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.address-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 7px 8px 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--raised);
+  box-shadow: 0 8px 24px var(--shadow);
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 400;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+.address:hover .address-popover,
+.address:focus-within .address-popover {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+}
+.address-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .address-copy {
   display: inline-flex;
   align-items: center;
@@ -423,11 +415,9 @@ kbd {
   border-radius: 4px;
   background: transparent;
   color: var(--muted);
-  opacity: 0;
+  flex: 0 0 auto;
   cursor: pointer;
 }
-.address:hover .address-copy,
-.address-copy:focus-visible { opacity: 1; }
 .address-copy:hover { background: var(--hover); color: var(--text); }
 .message + .message { margin-top: 32px; padding-top: 28px; border-top: 1px solid var(--border); }
 .message-images-notice {

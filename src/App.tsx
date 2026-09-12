@@ -372,9 +372,6 @@ export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
-  const activeAccount = accounts.length > 1 && activeAccountId
-    ? accounts.find((account) => account.email === activeAccountId) ?? null
-    : null;
   const accountsRequest = useRef(0);
   const refreshAccounts = useCallback(() => {
     // Guards against an earlier-issued refresh resolving after a later one
@@ -746,7 +743,6 @@ export function App() {
           activeAccountId={activeAccountId}
           onSwitch={context.switchAccount}
           onShowAll={context.showAllAccounts}
-          onManage={() => openSettingsAt("accounts")}
         />
         <HoverTooltip label="Inbox" shortcut="G I">
           <button
@@ -802,7 +798,7 @@ export function App() {
         <InboxResizeHandle {...inboxSize} />
         <header className="thread-header">
           <div className="thread-header-title">
-            {threads.length > 0 ? (
+            {checkedIds.size > 0 ? (
               <label className="select-all">
                 <input
                   ref={selectAllRef}
@@ -819,12 +815,6 @@ export function App() {
               <span className="eyebrow">Inbox</span>
               <h1>{threads.length} conversations</h1>
             </div>
-            {activeAccount ? (
-              <span className="active-account-badge" title={activeAccount.email}>
-                <span className="account-dot" aria-hidden="true" style={{ background: activeAccount.color }} />
-                {activeAccount.displayName ?? activeAccount.email}
-              </span>
-            ) : null}
           </div>
           <button
             className="icon-button"
@@ -1006,9 +996,12 @@ export function App() {
                 <article className="message" key={message.id}>
                   <header>
                     <div className="avatar">{message.sender.charAt(0)}</div>
-                    <div>
-                      <strong><AddressWithCopy address={message.sender} /></strong>
-                      <span>
+                    <div className="message-header-details">
+                      <div className="message-sender-row">
+                        <strong><AddressWithCopy address={message.sender} /></strong>
+                        <time>{new Date(message.sentAt).toLocaleString()}</time>
+                      </div>
+                      <div className="message-recipients">
                         to{" "}
                         {message.recipients.map((recipient, index) => (
                           <span key={recipient}>
@@ -1016,9 +1009,8 @@ export function App() {
                             <AddressWithCopy address={recipient} />
                           </span>
                         ))}
-                      </span>
+                      </div>
                     </div>
-                    <time>{new Date(message.sentAt).toLocaleString()}</time>
                   </header>
                   <SafeMessage html={message.bodyHtml} text={message.bodyText} />
                 </article>
@@ -1147,27 +1139,49 @@ export function App() {
 
 function AddressWithCopy({ address }: { address: string }) {
   const [copied, setCopied] = useState(false);
+  const parsed = parseAddress(address);
 
   const handleCopy = async (event: React.MouseEvent) => {
     event.stopPropagation();
-    await navigator.clipboard.writeText(address);
+    await navigator.clipboard.writeText(parsed.email);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
   };
 
   return (
-    <span className="address">
-      {address}
-      <button
-        type="button"
-        className="address-copy"
-        aria-label={copied ? "Copied" : `Copy ${address}`}
-        onClick={handleCopy}
-      >
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-      </button>
+    <span className="address" tabIndex={0}>
+      <span className="address-name">{parsed.name}</span>
+      <span className="address-popover">
+        <span className="address-email">{parsed.email}</span>
+        <button
+          type="button"
+          className="address-copy"
+          aria-label={copied ? "Copied" : `Copy ${parsed.email}`}
+          onClick={handleCopy}
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      </span>
     </span>
   );
+}
+
+function parseAddress(value: string): { name: string; email: string } {
+  const trimmed = value.trim();
+  const openBracket = trimmed.lastIndexOf("<");
+  const closeBracket = trimmed.lastIndexOf(">");
+
+  if (openBracket > 0 && closeBracket > openBracket) {
+    const email = trimmed.slice(openBracket + 1, closeBracket).trim();
+    const name = trimmed
+      .slice(0, openBracket)
+      .trim()
+      .replace(/^("|')|("|')$/g, "")
+      .trim();
+    if (email) return { name: name || email, email };
+  }
+
+  return { name: trimmed, email: trimmed };
 }
 
 function AccountSwitcher({
@@ -1175,83 +1189,44 @@ function AccountSwitcher({
   activeAccountId,
   onSwitch,
   onShowAll,
-  onManage,
 }: {
   accounts: Account[];
   activeAccountId: string | null;
   onSwitch(email: string): void;
   onShowAll(): void;
-  onManage(): void;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  useEscapeDismiss(() => setOpen(false));
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-
-  if (accounts.length <= 1) {
-    return <button className="brand" aria-label="Account" onClick={onManage}>D</button>;
-  }
+  if (accounts.length <= 1) return null;
 
   return (
-    <div className="account-switcher" ref={rootRef}>
-      <button
-        className="brand"
-        aria-label="Switch account"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        D
-      </button>
-      {open ? (
-        <div className="account-switcher-menu" role="menu" aria-label="Accounts">
-          <button
-            role="menuitemradio"
-            aria-checked={activeAccountId === null}
-            className={activeAccountId === null ? "active" : ""}
-            onClick={() => {
-              onShowAll();
-              setOpen(false);
-            }}
-          >
-            <span className="account-dot all-accounts" aria-hidden="true" />
-            All accounts
-          </button>
-          <div className="account-switcher-divider" />
-          {accounts.map((account) => (
+    <div className="account-rail" role="radiogroup" aria-label="Filter by account">
+      <HoverTooltip label="All accounts">
+        <button
+          type="button"
+          role="radio"
+          aria-checked={activeAccountId === null}
+          aria-label="All accounts"
+          className={`account-icon all-accounts ${activeAccountId === null ? "active" : ""}`}
+          onClick={onShowAll}
+        />
+      </HoverTooltip>
+      {accounts.map((account) => {
+        const name = account.displayName ?? account.email;
+        return (
+          <HoverTooltip key={account.email} label={name}>
             <button
-              key={account.email}
-              role="menuitemradio"
+              type="button"
+              role="radio"
               aria-checked={activeAccountId === account.email}
-              className={activeAccountId === account.email ? "active" : ""}
-              onClick={() => {
-                onSwitch(account.email);
-                setOpen(false);
-              }}
+              aria-label={name}
+              className={`account-icon ${activeAccountId === account.email ? "active" : ""}`}
+              style={{ background: account.color }}
+              onClick={() => onSwitch(account.email)}
             >
-              <span className="account-dot" aria-hidden="true" style={{ background: account.color }} />
-              {account.email}
+              {name.charAt(0).toUpperCase()}
             </button>
-          ))}
-          <div className="account-switcher-divider" />
-          <button
-            onClick={() => {
-              onManage();
-              setOpen(false);
-            }}
-          >
-            Manage accounts…
-          </button>
-        </div>
-      ) : null}
+          </HoverTooltip>
+        );
+      })}
     </div>
   );
 }
