@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { Composer, type ComposerHandle } from "./Composer";
 import { mailClient } from "./data/client";
 import type { ComposeMode, Draft, OutboxItem } from "./correspondence";
+import { useEscapeDismiss } from "./useEscapeDismiss";
 
 export function useCorrespondence(sourceId?: string) {
   const [active, setActive] = useState<Draft | null>(null);
@@ -74,8 +75,8 @@ export function useCorrespondence(sourceId?: string) {
 function CorrespondenceList({ title, onClose, children }: { title: string; onClose(): void; children: React.ReactNode }) {
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => { const previous = document.activeElement as HTMLElement; panel.current?.querySelector("button")?.focus(); return () => previous?.focus(); }, []);
+  useEscapeDismiss(onClose);
   return <div className="compose-backdrop"><div className="correspondence-list" role="dialog" aria-modal="true" aria-label={title} ref={panel} onKeyDown={(e) => {
-    if (e.key === "Escape") { e.stopPropagation(); onClose(); }
     if (e.key === "Tab") { const buttons = Array.from(panel.current?.querySelectorAll("button") ?? []); if (e.shiftKey && document.activeElement === buttons[0]) { e.preventDefault(); buttons.at(-1)?.focus(); } else if (!e.shiftKey && document.activeElement === buttons.at(-1)) { e.preventDefault(); buttons[0]?.focus(); } }
   }}><header><h2>{title}</h2><button className="icon-button" aria-label={`Close ${title}`} onClick={onClose}><X size={19} /></button></header><div>{children}</div></div></div>;
 }
