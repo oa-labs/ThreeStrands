@@ -26,13 +26,21 @@ pub struct PendingMutation {
     pub mutation: ThreadMutation,
 }
 
+/// `threads.id`, derived from the pair that's actually unique: Gmail thread
+/// IDs are unique only within one account, not across two different
+/// accounts, so the bare provider ID can't be used as the local primary key
+/// once more than one account is connected.
+fn local_thread_id(account_id: &str, provider_thread_id: &str) -> String {
+    format!("{account_id}:{provider_thread_id}")
+}
+
 const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
-    provider_thread_id TEXT NOT NULL UNIQUE,
+    provider_thread_id TEXT NOT NULL,
     subject TEXT NOT NULL,
     snippet TEXT NOT NULL,
     participants_json TEXT NOT NULL,
@@ -318,6 +326,13 @@ impl Database {
         if changed == 0 {
             return Err("Thread not found".to_string());
         }
+        let account_id: String = transaction
+            .query_row(
+                "SELECT account_id FROM threads WHERE id = ?1",
+                [mutation.thread_id()],
+                |row| row.get(0),
+            )
+            .map_err(display_error)?;
         let payload = serde_json::to_string(mutation).map_err(display_error)?;
         let duplicate: bool = transaction
             .query_row(
@@ -335,9 +350,10 @@ impl Database {
                 .execute(
                     "INSERT INTO mutations(
                     id, account_id, thread_id, kind, payload_json, state, created_at
-                 ) VALUES (?1, 'default', ?2, ?3, ?4, 'pending', ?5)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
                     params![
                         Uuid::new_v4().to_string(),
+                        account_id,
                         mutation.thread_id(),
                         kind,
                         payload,
@@ -349,7 +365,7 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
-    pub fn sync_status(&self) -> Result<SyncStatus, String> {
+    pub fn sync_status(&self, account_id: &str) -> Result<SyncStatus, String> {
         let connection = self.connection()?;
         let (cursor, last_successful_sync, mut error): (
             Option<String>,
@@ -358,8 +374,8 @@ impl Database {
         ) = connection
             .query_row(
                 "SELECT cursor, last_successful_sync, last_error
-                 FROM sync_state WHERE account_id = 'default'",
-                [],
+                 FROM sync_state WHERE account_id = ?1",
+                [account_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(display_error)?;
@@ -367,8 +383,8 @@ impl Database {
             error = connection
                 .query_row(
                     "SELECT last_error FROM mutations
-                     WHERE state = 'failed' ORDER BY created_at DESC LIMIT 1",
-                    [],
+                     WHERE state = 'failed' AND account_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                    [account_id],
                     |row| row.get(0),
                 )
                 .optional()
@@ -377,8 +393,8 @@ impl Database {
         }
         let pending_mutations = connection
             .query_row(
-                "SELECT count(*) FROM mutations WHERE state IN ('pending', 'running')",
-                [],
+                "SELECT count(*) FROM mutations WHERE state IN ('pending', 'running') AND account_id = ?1",
+                [account_id],
                 |row| row.get(0),
             )
             .map_err(display_error)?;
@@ -391,65 +407,75 @@ impl Database {
         })
     }
 
-    pub fn cursor(&self) -> Result<Option<String>, String> {
+    pub fn cursor(&self, account_id: &str) -> Result<Option<String>, String> {
         self.connection()?
             .query_row(
-                "SELECT cursor FROM sync_state WHERE account_id = 'default'",
-                [],
+                "SELECT cursor FROM sync_state WHERE account_id = ?1",
+                [account_id],
                 |row| row.get(0),
             )
             .map_err(display_error)
     }
 
-    pub fn finish_sync(&self, cursor: &str) -> Result<(), String> {
+    pub fn finish_sync(&self, account_id: &str, cursor: &str) -> Result<(), String> {
         self.connection()?
             .execute(
                 "UPDATE sync_state SET cursor = ?1, last_successful_sync = ?2, last_error = NULL
-                 WHERE account_id = 'default'",
-                params![cursor, Utc::now().to_rfc3339()],
+                 WHERE account_id = ?3",
+                params![cursor, Utc::now().to_rfc3339(), account_id],
             )
             .map(|_| ())
             .map_err(display_error)
     }
 
-    pub fn fail_sync(&self, error: &str) -> Result<(), String> {
+    pub fn fail_sync(&self, account_id: &str, error: &str) -> Result<(), String> {
         self.connection()?
             .execute(
-                "UPDATE sync_state SET last_error = ?1 WHERE account_id = 'default'",
-                [error],
+                "UPDATE sync_state SET last_error = ?1 WHERE account_id = ?2",
+                params![error, account_id],
             )
             .map(|_| ())
             .map_err(display_error)
     }
 
-    pub fn begin_full_sync(&self) -> Result<(), String> {
+    /// Wipes only `account_id`'s cached threads before a full resync, never
+    /// another connected account's mail.
+    pub fn begin_full_sync(&self, account_id: &str) -> Result<(), String> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         transaction
-            .execute("DELETE FROM thread_search", [])
+            .execute(
+                "DELETE FROM thread_search WHERE thread_id IN
+                    (SELECT id FROM threads WHERE account_id = ?1)",
+                [account_id],
+            )
             .map_err(display_error)?;
         transaction
-            .execute("DELETE FROM threads", [])
+            .execute("DELETE FROM threads WHERE account_id = ?1", [account_id])
             .map_err(display_error)?;
         // An interrupted full import must restart in full. Keeping the old
         // cursor here would make the next startup perform an incremental sync
         // against an intentionally emptied cache.
         transaction
             .execute(
-                "UPDATE sync_state SET cursor = NULL WHERE account_id = 'default'",
-                [],
+                "UPDATE sync_state SET cursor = NULL WHERE account_id = ?1",
+                [account_id],
             )
             .map_err(display_error)?;
         transaction.commit().map_err(display_error)
     }
 
-    pub fn delete_gmail_thread(&self, provider_thread_id: &str) -> Result<(), String> {
+    pub fn delete_gmail_thread(
+        &self,
+        account_id: &str,
+        provider_thread_id: &str,
+    ) -> Result<(), String> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         let thread_id: Option<String> = transaction
             .query_row(
-                "SELECT id FROM threads WHERE provider_thread_id = ?1",
-                [provider_thread_id],
+                "SELECT id FROM threads WHERE account_id = ?1 AND provider_thread_id = ?2",
+                params![account_id, provider_thread_id],
                 |row| row.get(0),
             )
             .optional()
@@ -468,11 +494,16 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
-    pub fn upsert_gmail_thread(&self, messages: &[NormalizedMessage]) -> Result<(), String> {
+    pub fn upsert_gmail_thread(
+        &self,
+        account_id: &str,
+        messages: &[NormalizedMessage],
+    ) -> Result<(), String> {
         let Some(latest) = messages.iter().max_by(|a, b| a.date.cmp(&b.date)) else {
             return Ok(());
         };
-        let thread_id = &latest.thread_id;
+        let provider_thread_id = &latest.thread_id;
+        let thread_id = local_thread_id(account_id, provider_thread_id);
         let mut participants: Vec<String> = messages
             .iter()
             .map(|message| message.from.clone())
@@ -505,9 +536,9 @@ impl Database {
         transaction
             .execute(
                 "INSERT INTO threads(
-                    id, provider_thread_id, subject, snippet, participants_json,
+                    id, account_id, provider_thread_id, subject, snippet, participants_json,
                     last_message_at, unread, starred, archived, labels_json, trashed
-                 ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                  ON CONFLICT(id) DO UPDATE SET
                     subject=excluded.subject, snippet=excluded.snippet,
                     participants_json=excluded.participants_json,
@@ -516,6 +547,8 @@ impl Database {
                     labels_json=excluded.labels_json, trashed=excluded.trashed",
                 params![
                     thread_id,
+                    account_id,
+                    provider_thread_id,
                     latest.subject,
                     latest.snippet,
                     serde_json::to_string(&participants).map_err(display_error)?,
@@ -529,12 +562,12 @@ impl Database {
             )
             .map_err(display_error)?;
         transaction
-            .execute("DELETE FROM messages WHERE thread_id = ?1", [thread_id])
+            .execute("DELETE FROM messages WHERE thread_id = ?1", [&thread_id])
             .map_err(display_error)?;
         transaction
             .execute(
                 "DELETE FROM thread_search WHERE thread_id = ?1",
-                [thread_id],
+                [&thread_id],
             )
             .map_err(display_error)?;
         let mut body = String::new();
@@ -575,7 +608,14 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
-    pub fn claim_mutations(&self, limit: usize) -> Result<Vec<PendingMutation>, String> {
+    /// Claims only `account_id`'s pending mutations, so one account's poller
+    /// never picks up and tries to deliver another account's mutation
+    /// through the wrong Gmail session.
+    pub fn claim_mutations(
+        &self,
+        account_id: &str,
+        limit: usize,
+    ) -> Result<Vec<PendingMutation>, String> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         let result = {
@@ -583,11 +623,12 @@ impl Database {
                 .prepare(
                     "SELECT m.id, t.provider_thread_id, m.payload_json
                      FROM mutations m JOIN threads t ON t.id = m.thread_id
-                     WHERE m.state = 'pending' ORDER BY m.created_at LIMIT ?1",
+                     WHERE m.state = 'pending' AND m.account_id = ?1
+                     ORDER BY m.created_at LIMIT ?2",
                 )
                 .map_err(display_error)?;
             let rows = statement
-                .query_map([limit as i64], |row| {
+                .query_map(params![account_id, limit as i64], |row| {
                     let payload: String = row.get(2)?;
                     let mutation = serde_json::from_str(&payload).map_err(|error| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -691,6 +732,8 @@ impl Database {
                 )
                 .map_err(display_error)?;
         }
+        // Fold any pre-multi-account local state, still keyed by the literal
+        // 'default', onto the real address. A no-op after the first time.
         transaction
             .execute(
                 "UPDATE sync_state SET account_id = ?1 WHERE account_id = 'default'",
@@ -700,6 +743,20 @@ impl Database {
         transaction
             .execute(
                 "UPDATE mutations SET account_id = ?1 WHERE account_id = 'default'",
+                [email],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "UPDATE threads SET account_id = ?1 WHERE account_id = 'default'",
+                [email],
+            )
+            .map_err(display_error)?;
+        // Accounts adopted directly (not migrated from a 'default' row)
+        // still need their own cursor row.
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO sync_state(account_id) VALUES (?1)",
                 [email],
             )
             .map_err(display_error)?;
@@ -864,7 +921,7 @@ fn insert_demo(
     let participants = serde_json::to_string(&[participant]).expect("static data serializes");
     let labels = serde_json::to_string(&["INBOX"]).expect("static data serializes");
     transaction.execute(
-        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0)",
+        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0, 'default')",
         params![
             id,
             format!("demo-{id}"),
@@ -986,19 +1043,22 @@ mod tests {
             ("beta", "2026-01-02T00:00:00Z"),
         ] {
             database
-                .upsert_gmail_thread(&[NormalizedMessage {
-                    id: format!("{id}-message"),
-                    thread_id: id.into(),
-                    subject: "Pagination test".into(),
-                    from: "sender@example.com".into(),
-                    to: vec!["recipient@example.com".into()],
-                    date: date.into(),
-                    body_html: String::new(),
-                    body_text: "unique-pagination-term".into(),
-                    snippet: "unique-pagination-term".into(),
-                    labels: vec!["INBOX".into()],
-                    metadata_json: "{}".into(),
-                }])
+                .upsert_gmail_thread(
+                    "default",
+                    &[NormalizedMessage {
+                        id: format!("{id}-message"),
+                        thread_id: id.into(),
+                        subject: "Pagination test".into(),
+                        from: "sender@example.com".into(),
+                        to: vec!["recipient@example.com".into()],
+                        date: date.into(),
+                        body_html: String::new(),
+                        body_text: "unique-pagination-term".into(),
+                        snippet: "unique-pagination-term".into(),
+                        labels: vec!["INBOX".into()],
+                        metadata_json: "{}".into(),
+                    }],
+                )
                 .unwrap();
         }
 
@@ -1026,7 +1086,9 @@ mod tests {
     #[test]
     fn deleting_a_thread_also_removes_its_search_index_row() {
         let database = database();
-        database.delete_gmail_thread("demo-welcome").unwrap();
+        database
+            .delete_gmail_thread("default", "demo-welcome")
+            .unwrap();
         let remaining: i64 = database
             .connection()
             .unwrap()
@@ -1089,7 +1151,10 @@ mod tests {
             .unwrap()
             .iter()
             .any(|thread| thread.id == "welcome"));
-        assert_eq!(database.sync_status().unwrap().pending_mutations, 1);
+        assert_eq!(
+            database.sync_status("default").unwrap().pending_mutations,
+            1
+        );
     }
 
     #[test]
@@ -1110,7 +1175,7 @@ mod tests {
                 .unwrap();
         }
         let reopened = Database::open(&path).unwrap();
-        assert_eq!(reopened.claim_mutations(10).unwrap().len(), 1);
+        assert_eq!(reopened.claim_mutations("default", 10).unwrap().len(), 1);
         drop(reopened);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
@@ -1120,9 +1185,9 @@ mod tests {
     #[test]
     fn interrupted_full_sync_cannot_reuse_the_previous_cursor() {
         let database = database();
-        database.finish_sync("old-cursor").unwrap();
-        database.begin_full_sync().unwrap();
-        assert_eq!(database.cursor().unwrap(), None);
+        database.finish_sync("default", "old-cursor").unwrap();
+        database.begin_full_sync("default").unwrap();
+        assert_eq!(database.cursor("default").unwrap(), None);
     }
 
     #[test]
@@ -1212,5 +1277,142 @@ mod tests {
         let accounts = database.list_accounts().unwrap();
         assert_eq!(accounts[0].email, "second@gmail.com");
         assert_eq!(accounts[1].email, "first@gmail.com");
+    }
+
+    fn message(id: &str, thread_id: &str, date: &str, body: &str) -> NormalizedMessage {
+        NormalizedMessage {
+            id: id.into(),
+            thread_id: thread_id.into(),
+            subject: "Subject".into(),
+            from: "sender@example.com".into(),
+            to: vec!["recipient@example.com".into()],
+            date: date.into(),
+            body_html: String::new(),
+            body_text: body.into(),
+            snippet: body.into(),
+            labels: vec!["INBOX".into()],
+            metadata_json: "{}".into(),
+        }
+    }
+
+    #[test]
+    fn two_accounts_with_the_same_provider_thread_id_stay_fully_separate() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message(
+                    "work-msg",
+                    "shared-id",
+                    "2026-01-01T00:00:00Z",
+                    "work body",
+                )],
+            )
+            .unwrap();
+        database
+            .upsert_gmail_thread(
+                "personal@example.com",
+                &[message(
+                    "personal-msg",
+                    "shared-id",
+                    "2026-01-01T00:00:00Z",
+                    "personal body",
+                )],
+            )
+            .unwrap();
+
+        let threads = database.list_threads().unwrap();
+        let work = threads
+            .iter()
+            .find(|t| t.id == "work@example.com:shared-id")
+            .unwrap();
+        let personal = threads
+            .iter()
+            .find(|t| t.id == "personal@example.com:shared-id")
+            .unwrap();
+        assert_eq!(
+            database.get_thread(&work.id).unwrap().messages[0].id,
+            "work-msg"
+        );
+        assert_eq!(
+            database.get_thread(&personal.id).unwrap().messages[0].id,
+            "personal-msg"
+        );
+
+        database
+            .delete_gmail_thread("work@example.com", "shared-id")
+            .unwrap();
+        let remaining = database.list_threads().unwrap();
+        assert!(!remaining.iter().any(|t| t.id == work.id));
+        assert!(remaining.iter().any(|t| t.id == personal.id));
+    }
+
+    #[test]
+    fn full_sync_wipes_only_the_given_accounts_threads() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .upsert_gmail_thread(
+                "personal@example.com",
+                &[message("m2", "t2", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database.begin_full_sync("work@example.com").unwrap();
+        let threads = database.list_threads().unwrap();
+        assert!(!threads.iter().any(|t| t.id == "work@example.com:t1"));
+        assert!(threads.iter().any(|t| t.id == "personal@example.com:t2"));
+    }
+
+    #[test]
+    fn claim_mutations_only_claims_the_given_accounts_mutations() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .upsert_gmail_thread(
+                "personal@example.com",
+                &[message("m2", "t2", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Star {
+                thread_id: "work@example.com:t1".into(),
+                value: true,
+            })
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Star {
+                thread_id: "personal@example.com:t2".into(),
+                value: true,
+            })
+            .unwrap();
+
+        let claimed = database.claim_mutations("work@example.com", 10).unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].provider_thread_id, "t1");
+    }
+
+    #[test]
+    fn sync_state_is_isolated_per_account() {
+        let database = database();
+        database.adopt_account("work@example.com").unwrap();
+        database.adopt_account("personal@example.com").unwrap();
+        database
+            .finish_sync("work@example.com", "work-cursor")
+            .unwrap();
+        assert_eq!(
+            database.cursor("work@example.com").unwrap().as_deref(),
+            Some("work-cursor")
+        );
+        assert_eq!(database.cursor("personal@example.com").unwrap(), None);
     }
 }

@@ -49,19 +49,28 @@ impl SyncService {
         self.auth.available()
     }
 
+    /// The local key for this account's cursor/threads/mutations rows. Reads
+    /// through to `auth`'s live keychain key, so it stays correct across a
+    /// rekey (e.g. the primary account resolving its real address after
+    /// startup) without this service needing to be reconstructed.
+    fn account_id(&self) -> String {
+        self.auth.key()
+    }
+
     pub async fn sync(&self) -> Result<SyncStatus, String> {
         let _guard = self.gate.lock().await;
+        let account_id = self.account_id();
         let provider = GmailClient::new(self.auth.clone());
-        let result = sync_with(self.database.as_ref(), &provider).await;
+        let result = sync_with(self.database.as_ref(), &account_id, &provider).await;
         if let Ok(mut last_attempt) = self.last_attempt.lock() {
             *last_attempt = Some(Instant::now());
         }
         if let Err(error) = result {
             let message = error.to_string();
-            self.database.fail_sync(&message)?;
+            self.database.fail_sync(&account_id, &message)?;
             return Err(message);
         }
-        self.database.sync_status()
+        self.database.sync_status(&account_id)
     }
 
     /// Incremental catch-up for OS resume / window focus. Skips if polling
@@ -69,26 +78,28 @@ impl SyncService {
     pub async fn sync_if_stale(&self) -> Result<SyncStatus, String> {
         let last_attempt = self.last_attempt.lock().ok().and_then(|guard| *guard);
         if should_skip_stale_sync(last_attempt, Instant::now(), MIN_POLL_INTERVAL) {
-            return self.database.sync_status();
+            return self.database.sync_status(&self.account_id());
         }
         self.sync().await
     }
 
     pub async fn flush_pending(&self) -> Result<SyncStatus, String> {
-        if self.database.sync_status()?.pending_mutations == 0 {
-            return self.database.sync_status();
+        let account_id = self.account_id();
+        if self.database.sync_status(&account_id)?.pending_mutations == 0 {
+            return self.database.sync_status(&account_id);
         }
         if !self.auth.available() {
-            return self.database.sync_status();
+            return self.database.sync_status(&account_id);
         }
         let _guard = self.gate.lock().await;
         let provider = GmailClient::new(self.auth.clone());
-        if let Err(error) = flush_pending_with(self.database.as_ref(), &provider).await {
+        if let Err(error) = flush_pending_with(self.database.as_ref(), &account_id, &provider).await
+        {
             let message = error.to_string();
-            self.database.fail_sync(&message)?;
+            self.database.fail_sync(&account_id, &message)?;
             return Err(message);
         }
-        self.database.sync_status()
+        self.database.sync_status(&account_id)
     }
 
     pub async fn labels(&self) -> Result<Vec<Label>, String> {
@@ -131,7 +142,7 @@ impl SyncService {
             }
             let before = self
                 .database
-                .sync_status()
+                .sync_status(&self.account_id())
                 .map(|status| status.pending_mutations)
                 .unwrap_or_default();
             delay = match self.sync().await {
@@ -154,67 +165,76 @@ fn validate_label_name(name: &str) -> Result<(), String> {
 
 pub async fn flush_pending_with(
     database: &Database,
+    account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
 ) -> ProviderResult<()> {
     if database
-        .sync_status()
+        .sync_status(account_id)
         .map_err(ProviderError::Other)?
         .pending_mutations
         == 0
     {
         return Ok(());
     }
-    deliver_mutations(database, provider).await
+    deliver_mutations(database, account_id, provider).await
 }
 
 pub async fn sync_with(
     database: &Database,
+    account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
 ) -> ProviderResult<()> {
-    deliver_mutations(database, provider).await?;
-    match database.cursor().map_err(ProviderError::Other)? {
-        Some(cursor) => match incremental_sync(database, provider, &cursor).await {
-            Err(ProviderError::InvalidCursor) => full_sync(database, provider).await,
+    deliver_mutations(database, account_id, provider).await?;
+    match database.cursor(account_id).map_err(ProviderError::Other)? {
+        Some(cursor) => match incremental_sync(database, account_id, provider, &cursor).await {
+            Err(ProviderError::InvalidCursor) => full_sync(database, account_id, provider).await,
             result => result,
         },
-        None => full_sync(database, provider).await,
+        None => full_sync(database, account_id, provider).await,
     }
 }
 
 async fn full_sync(
     database: &Database,
+    account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
 ) -> ProviderResult<()> {
-    match full_sync_attempt(database, provider).await {
-        Err(ProviderError::InvalidCursor) => full_sync_attempt(database, provider).await,
+    match full_sync_attempt(database, account_id, provider).await {
+        Err(ProviderError::InvalidCursor) => {
+            full_sync_attempt(database, account_id, provider).await
+        }
         result => result,
     }
 }
 
 async fn full_sync_attempt(
     database: &Database,
+    account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
 ) -> ProviderResult<()> {
     // Capture the cursor before listing. The following history pass closes the race
     // with mail arriving while the potentially long initial list is downloaded.
     let starting_cursor = provider.profile_history_id().await?;
-    database.begin_full_sync().map_err(ProviderError::Other)?;
+    database
+        .begin_full_sync(account_id)
+        .map_err(ProviderError::Other)?;
     let mut page = None;
     loop {
         let result = provider.list_threads(page.as_deref()).await?;
         for id in result.thread_ids {
-            ingest_thread(database, provider, &id).await?;
+            ingest_thread(database, account_id, provider, &id).await?;
         }
         page = result.next_page_token;
         if page.is_none() {
             break;
         }
     }
-    incremental_sync(database, provider, &starting_cursor).await
+    incremental_sync(database, account_id, provider, &starting_cursor).await
 }
 
 async fn incremental_sync(
     database: &Database,
+    account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
     cursor: &str,
 ) -> ProviderResult<()> {
@@ -229,15 +249,16 @@ async fn incremental_sync(
         }
     };
     for id in changed {
-        ingest_thread(database, provider, &id).await?;
+        ingest_thread(database, account_id, provider, &id).await?;
     }
     database
-        .finish_sync(&final_cursor)
+        .finish_sync(account_id, &final_cursor)
         .map_err(ProviderError::Other)
 }
 
 async fn ingest_thread(
     database: &Database,
+    account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
     id: &str,
 ) -> ProviderResult<()> {
@@ -245,7 +266,7 @@ async fn ingest_thread(
         Ok(messages) => messages,
         Err(ProviderError::NotFound) => {
             return database
-                .delete_gmail_thread(id)
+                .delete_gmail_thread(account_id, id)
                 .map_err(ProviderError::Other)
         }
         Err(error) => return Err(error),
@@ -256,16 +277,19 @@ async fn ingest_thread(
         .collect::<Result<Vec<_>, _>>()
         .map_err(ProviderError::Other)?;
     database
-        .upsert_gmail_thread(&normalized)
+        .upsert_gmail_thread(account_id, &normalized)
         .map_err(ProviderError::Other)
 }
 
 async fn deliver_mutations(
     database: &Database,
+    account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
 ) -> ProviderResult<()> {
     loop {
-        let mutations = database.claim_mutations(50).map_err(ProviderError::Other)?;
+        let mutations = database
+            .claim_mutations(account_id, 50)
+            .map_err(ProviderError::Other)?;
         if mutations.is_empty() {
             return Ok(());
         }
@@ -447,23 +471,32 @@ mod tests {
     async fn provider_contract_imports_and_advances_cursor() {
         let database = Database::open_memory();
         let provider = ContractProvider::normal();
-        sync_with(&database, &provider).await.unwrap();
-        assert_eq!(database.cursor().unwrap().as_deref(), Some("current"));
+        sync_with(&database, "default", &provider).await.unwrap();
+        assert_eq!(
+            database.cursor("default").unwrap().as_deref(),
+            Some("current")
+        );
         assert_eq!(provider.full_lists.load(Ordering::SeqCst), 1);
-        assert_eq!(database.list_threads().unwrap()[0].id, "gmail-thread");
+        assert_eq!(
+            database.list_threads().unwrap()[0].id,
+            "default:gmail-thread"
+        );
     }
 
     #[tokio::test]
     async fn invalid_history_cursor_recovers_with_full_resync() {
         let database = Database::open_memory();
-        database.finish_sync("stale").unwrap();
+        database.finish_sync("default", "stale").unwrap();
         let provider = ContractProvider {
             invalidate_stale_cursor: AtomicBool::new(true),
             ..ContractProvider::normal()
         };
-        sync_with(&database, &provider).await.unwrap();
+        sync_with(&database, "default", &provider).await.unwrap();
         assert_eq!(provider.full_lists.load(Ordering::SeqCst), 1);
-        assert_eq!(database.cursor().unwrap().as_deref(), Some("current"));
+        assert_eq!(
+            database.cursor("default").unwrap().as_deref(),
+            Some("current")
+        );
     }
 
     #[tokio::test]
@@ -480,10 +513,13 @@ mod tests {
             ..ContractProvider::normal()
         };
         assert!(matches!(
-            sync_with(&database, &provider).await,
+            sync_with(&database, "default", &provider).await,
             Err(ProviderError::RateLimited)
         ));
-        assert_eq!(database.sync_status().unwrap().pending_mutations, 1);
+        assert_eq!(
+            database.sync_status("default").unwrap().pending_mutations,
+            1
+        );
     }
 
     #[test]
@@ -538,7 +574,9 @@ mod tests {
     async fn inactivity_flush_skips_provider_when_nothing_is_pending() {
         let database = Database::open_memory();
         let provider = ContractProvider::normal();
-        flush_pending_with(&database, &provider).await.unwrap();
+        flush_pending_with(&database, "default", &provider)
+            .await
+            .unwrap();
         assert_eq!(provider.modifies.load(Ordering::SeqCst), 0);
         assert_eq!(provider.full_lists.load(Ordering::SeqCst), 0);
     }
@@ -553,9 +591,14 @@ mod tests {
             })
             .unwrap();
         let provider = ContractProvider::normal();
-        flush_pending_with(&database, &provider).await.unwrap();
+        flush_pending_with(&database, "default", &provider)
+            .await
+            .unwrap();
         assert_eq!(provider.modifies.load(Ordering::SeqCst), 1);
         assert_eq!(provider.full_lists.load(Ordering::SeqCst), 0);
-        assert_eq!(database.sync_status().unwrap().pending_mutations, 0);
+        assert_eq!(
+            database.sync_status("default").unwrap().pending_mutations,
+            0
+        );
     }
 }

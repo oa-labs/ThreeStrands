@@ -59,6 +59,20 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 4 {
+        // Gmail thread IDs are unique only within one account, so the bare
+        // provider ID can no longer be the uniqueness key once a second
+        // account exists. Existing rows all get the 'default' placeholder;
+        // `Database::adopt_account` rewrites it onto the real address the
+        // first time an account's identity is confirmed.
+        tx.execute_batch(
+            "ALTER TABLE threads ADD COLUMN account_id TEXT NOT NULL DEFAULT 'default';
+            CREATE UNIQUE INDEX IF NOT EXISTS threads_account_provider_unique
+                ON threads(account_id, provider_thread_id);
+            PRAGMA user_version=4;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection
@@ -863,7 +877,8 @@ impl Correspondence {
                 .iter()
                 .map(crate::mime::normalize)
                 .collect::<Result<Vec<_>, _>>()?;
-            self.database.upsert_gmail_thread(&normalized)?;
+            self.database
+                .upsert_gmail_thread(&item.draft.account, &normalized)?;
         } else {
             return Err("Delivery is still uncertain. No automatic retry was made. Check Gmail Sent before composing another message.".into());
         }
@@ -919,7 +934,7 @@ impl Correspondence {
                         .map(crate::mime::normalize)
                         .collect::<Result<Vec<_>, _>>()
                     {
-                        self.database.upsert_gmail_thread(&normalized)?;
+                        self.database.upsert_gmail_thread(&identity, &normalized)?;
                     }
                 }
             }
