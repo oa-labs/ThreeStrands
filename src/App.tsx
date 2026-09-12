@@ -56,6 +56,12 @@ import type {
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { useCorrespondence } from "./useCorrespondence";
 import { SafeMessage } from "./SafeMessage";
+import {
+  applyFontScale,
+  changeFontScale,
+  readFontScale,
+  saveFontScale,
+} from "./fontScale";
 
 import { applyTheme, readTheme, saveTheme } from "./theme";
 
@@ -126,9 +132,10 @@ function useShortcutHandler(
         return;
       }
       const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
+      const fontShortcut = (event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
       const dialog = document.querySelector('[role="dialog"]');
       const allowsMailboxNavigation = dialog?.classList.contains("correspondence-list");
-      if (!sendShortcut && (isEditableTarget(event.target) || (dialog && !allowsMailboxNavigation))) {
+      if (!sendShortcut && !fontShortcut && (isEditableTarget(event.target) || (dialog && !allowsMailboxNavigation))) {
         clearPendingStep();
         return;
       }
@@ -187,12 +194,17 @@ function useShortcutHandler(
 export function App() {
   const inboxSize = useInboxWidth();
   const [theme, setTheme] = useState(readTheme);
+  const [fontScale, setFontScale] = useState(readFontScale);
   useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => applyFontScale(fontScale), [fontScale]);
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
     saveTheme(next);
     setTheme(next);
   };
+  const adjustFontScale = useCallback((direction: 1 | -1) => {
+    setFontScale((current) => saveFontScale(changeFontScale(current, direction)));
+  }, []);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
@@ -361,7 +373,9 @@ export function App() {
     openLabels: () => setLabelsOpen(true),
     openPalette: () => setPaletteOpen(true),
     openShortcutHelp: () => setShortcutHelpOpen(true),
-  }), [loadThreads, mutate, query, selected, selectedId, selectedIndex, threads, correspondence.context]);
+    increaseFontSize: () => adjustFontScale(1),
+    decreaseFontSize: () => adjustFontScale(-1),
+  }), [adjustFontScale, loadThreads, mutate, query, selected, selectedId, selectedIndex, threads, correspondence.context]);
 
   useShortcutHandler(context);
 

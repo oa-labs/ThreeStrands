@@ -43,3 +43,11 @@ it("distinguishes reply from refresh and matches the send modifier", () => {
   expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", metaKey: true }), "Mod+Enter")).toBe(true);
   expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter" }), "Mod+Enter")).toBe(false);
 });
+
+it("matches desktop font-size shortcuts", () => {
+  expect(matchesShortcut(new KeyboardEvent("keydown", { key: "=", metaKey: true }), "Mod+=")).toBe(true);
+  expect(matchesShortcut(new KeyboardEvent("keydown", { key: "=", shiftKey: true, ctrlKey: true }), "Mod+=")).toBe(true);
+  expect(matchesShortcut(new KeyboardEvent("keydown", { key: "+", shiftKey: true, ctrlKey: true }), "Mod++")).toBe(true);
+  expect(matchesShortcut(new KeyboardEvent("keydown", { key: "-", ctrlKey: true }), "Mod+-")).toBe(true);
+  expect(matchesShortcut(new KeyboardEvent("keydown", { key: "=" }), "Mod+=")).toBe(false);
+});

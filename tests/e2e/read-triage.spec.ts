@@ -27,7 +27,29 @@ test("searches and opens the command palette", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Your inbox stays local" })).toBeVisible();
 
   await page.keyboard.press("ControlOrMeta+k");
-  await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  await expect(palette).toBeVisible();
+  await expect(palette.getByRole("button", { name: /Increase font size/ })).toContainText("Mod+=");
+  await expect(palette.getByRole("button", { name: /Increase font size/ })).toContainText("Mod++");
+  await expect(palette.getByRole("button", { name: /Decrease font size/ })).toContainText("Mod+-");
+});
+
+test("changes the app font size with desktop shortcuts and restores it", async ({ page }) => {
+  await page.goto("/");
+  const messageBody = page.locator(".message-body").first();
+  await expect(messageBody).toHaveCSS("font-size", "15px");
+
+  await page.keyboard.press("ControlOrMeta+=");
+  await expect(messageBody).toHaveCSS("font-size", "16.5px");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("dispatch.fontScale"))).toBe("110");
+
+  await page.reload();
+  await expect(page.locator(".message-body").first()).toHaveCSS("font-size", "16.5px");
+
+  await page.keyboard.press("ControlOrMeta+Shift+=");
+  await expect(page.locator(".message-body").first()).toHaveCSS("font-size", "18px");
+  await page.keyboard.press("ControlOrMeta+-");
+  await expect(page.locator(".message-body").first()).toHaveCSS("font-size", "16.5px");
 });
 
 test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) => {

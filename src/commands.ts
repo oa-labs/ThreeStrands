@@ -24,6 +24,8 @@ export type CommandContext = {
   openLabels(): void;
   openPalette(): void;
   openShortcutHelp(): void;
+  increaseFontSize(): void;
+  decreaseFontSize(): void;
 };
 
 export type Command = {
@@ -134,20 +136,44 @@ export const commands: Command[] = [
     enabled: () => true,
     run: (context) => context.openDiagnostics(),
   },
+  {
+    id: "font.increase",
+    title: "Increase font size",
+    keys: ["Mod+=", "Mod++"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => context.increaseFontSize(),
+  },
+  {
+    id: "font.decrease",
+    title: "Decrease font size",
+    keys: ["Mod+-"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => context.decreaseFontSize(),
+  },
 ];
 
 export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
-  const parts = key.split("+");
-  const base = parts.at(-1)!;
-  const expectsShift = parts.includes("Shift");
+  let base = key;
+  const expectsMod = base.startsWith("Mod+");
+  if (expectsMod) base = base.slice(4);
+  const expectsShift = base.startsWith("Shift+");
+  if (expectsShift) base = base.slice(6);
+  const implicitSymbolShift = event.shiftKey && (
+    (base === "+" && event.key === "+") ||
+    (base === "=" && event.key === "=")
+  );
+  const questionMark = base === "?" && (
+    event.key === "?" || (event.key === "/" && event.shiftKey)
+  );
   const shiftMatches = expectsShift
     ? event.shiftKey
-    : base === "?" || !event.shiftKey;
-  const baseMatches = event.key.toLocaleLowerCase() === base.toLocaleLowerCase()
-    || (base === "?" && event.key === "/" && event.shiftKey);
+    : base === "?" || implicitSymbolShift || !event.shiftKey;
+  const baseMatches = questionMark || event.key.toLocaleLowerCase() === base.toLocaleLowerCase();
   return baseMatches
     && shiftMatches
-    && (event.ctrlKey || event.metaKey) === parts.includes("Mod")
+    && (event.ctrlKey || event.metaKey) === expectsMod
     && !event.altKey;
 }
 
