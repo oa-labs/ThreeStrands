@@ -317,6 +317,18 @@ impl Database {
         Ok(())
     }
 
+    pub fn message_ids_for_thread(&self, thread_id: &str) -> Result<Vec<String>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT id FROM messages WHERE thread_id = ?1 ORDER BY sent_at")
+            .map_err(display_error)?;
+        statement
+            .query_map([thread_id], |row| row.get(0))
+            .map_err(display_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(display_error)
+    }
+
     /// `account_id` merges every account when `None` — the unified inbox —
     /// or scopes to just that account when set, same as [`Self::list_threads`].
     pub fn search_threads(
@@ -397,11 +409,39 @@ impl Database {
         let (kind, value) = match mutation {
             ThreadMutation::Archive { value, .. } => ("archive", *value),
             ThreadMutation::Trash { value, .. } => ("trash", *value),
+            ThreadMutation::Spam { value, .. } => ("spam", *value),
             ThreadMutation::Read { value, .. } => ("read", *value),
             ThreadMutation::Star { value, .. } => ("star", *value),
             ThreadMutation::Label { value, .. } => ("label", *value),
         };
         let changed = match mutation {
+            ThreadMutation::Spam { thread_id, value } => {
+                let labels: String = transaction
+                    .query_row(
+                        "SELECT labels_json FROM threads WHERE id = ?1",
+                        [thread_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(display_error)?
+                    .ok_or_else(|| "Thread not found".to_string())?;
+                let mut labels: Vec<String> =
+                    serde_json::from_str(&labels).map_err(display_error)?;
+                labels.retain(|item| item != "SPAM" && item != "INBOX");
+                labels.push(if *value { "SPAM" } else { "INBOX" }.to_string());
+                labels.sort();
+                labels.dedup();
+                transaction
+                    .execute(
+                        "UPDATE threads SET labels_json = ?1, archived = ?2 WHERE id = ?3",
+                        params![
+                            serde_json::to_string(&labels).map_err(display_error)?,
+                            value,
+                            thread_id,
+                        ],
+                    )
+                    .map_err(display_error)?
+            }
             ThreadMutation::Label {
                 thread_id,
                 label_id,
@@ -446,12 +486,14 @@ impl Database {
                 let column = match mutation {
                     ThreadMutation::Archive { .. } => "archived",
                     ThreadMutation::Trash { .. } => "trashed",
+                    ThreadMutation::Spam { .. } => unreachable!(),
                     ThreadMutation::Read { .. } => "unread",
                     ThreadMutation::Star { .. } => "starred",
                     ThreadMutation::Label { .. } => unreachable!(),
                 };
                 let stored_value = match mutation {
                     ThreadMutation::Read { .. } => !value,
+                    ThreadMutation::Spam { .. } => unreachable!(),
                     _ => value,
                 };
                 let sql = format!("UPDATE threads SET {column} = ?1 WHERE id = ?2");

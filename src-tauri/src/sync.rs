@@ -293,27 +293,59 @@ async fn deliver_mutations(
         if mutations.is_empty() {
             return Ok(());
         }
-        for mutation in mutations {
-            let (add, remove) = mutation_labels(&mutation);
-            match provider
-                .modify_thread(&mutation.provider_thread_id, &add, &remove)
-                .await
-            {
-                Ok(()) => database
-                    .complete_mutation(&mutation.id)
-                    .map_err(ProviderError::Other)?,
+        let mut index = 0;
+        while index < mutations.len() {
+            let mutation = &mutations[index];
+            let (add, remove) = mutation_labels(mutation);
+            let mut batch_end = index + 1;
+            let result = if let ThreadMutation::Spam { value, .. } = &mutation.mutation {
+                while batch_end < mutations.len()
+                    && matches!(
+                        &mutations[batch_end].mutation,
+                        ThreadMutation::Spam { value: next, .. } if next == value
+                    )
+                {
+                    batch_end += 1;
+                }
+                let message_ids = mutations[index..batch_end]
+                    .iter()
+                    .map(|item| database.message_ids_for_thread(item.mutation.thread_id()))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(ProviderError::Other)?
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>();
+                provider.modify_messages(&message_ids, &add, &remove).await
+            } else {
+                provider
+                    .modify_thread(&mutation.provider_thread_id, &add, &remove)
+                    .await
+            };
+            match result {
+                Ok(()) => {
+                    for item in &mutations[index..batch_end] {
+                        database
+                            .complete_mutation(&item.id)
+                            .map_err(ProviderError::Other)?;
+                    }
+                }
                 Err(error @ ProviderError::RateLimited) => {
-                    database
-                        .reject_mutation(&mutation.id, &error.to_string(), true)
-                        .map_err(ProviderError::Other)?;
+                    for item in &mutations[index..batch_end] {
+                        database
+                            .reject_mutation(&item.id, &error.to_string(), true)
+                            .map_err(ProviderError::Other)?;
+                    }
                     return Err(error);
                 }
                 Err(error) => {
-                    database
-                        .reject_mutation(&mutation.id, &error.to_string(), false)
-                        .map_err(ProviderError::Other)?;
+                    for item in &mutations[index..batch_end] {
+                        database
+                            .reject_mutation(&item.id, &error.to_string(), false)
+                            .map_err(ProviderError::Other)?;
+                    }
                 }
             }
+            index = batch_end;
         }
     }
 }
@@ -329,9 +361,17 @@ fn mutation_labels(mutation: &PendingMutation) -> (Vec<String>, Vec<String>) {
             (vec!["INBOX".to_string()], vec!["TRASH".to_string()])
         };
     }
+    if let ThreadMutation::Spam { value, .. } = &mutation.mutation {
+        return if *value {
+            (vec!["SPAM".to_string()], vec!["INBOX".to_string()])
+        } else {
+            (vec!["INBOX".to_string()], vec!["SPAM".to_string()])
+        };
+    }
     let (label, value) = match &mutation.mutation {
         ThreadMutation::Archive { value, .. } => ("INBOX", !value),
         ThreadMutation::Trash { .. } => unreachable!(),
+        ThreadMutation::Spam { .. } => unreachable!(),
         ThreadMutation::Read { value, .. } => ("UNREAD", !value),
         ThreadMutation::Star { value, .. } => ("STARRED", *value),
         ThreadMutation::Label {
@@ -450,6 +490,20 @@ mod tests {
             }
         }
 
+        async fn modify_messages(
+            &self,
+            _ids: &[String],
+            _add: &[String],
+            _remove: &[String],
+        ) -> ProviderResult<()> {
+            self.modifies.fetch_add(1, Ordering::SeqCst);
+            if self.fail_mutation {
+                Err(ProviderError::RateLimited)
+            } else {
+                Ok(())
+            }
+        }
+
         async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
             Ok(vec![])
         }
@@ -551,6 +605,38 @@ mod tests {
         assert_eq!(
             mutation_labels(&mutation),
             (vec!["INBOX".to_string()], vec!["TRASH".to_string()]),
+        );
+    }
+
+    #[test]
+    fn marking_spam_adds_spam_and_removes_inbox() {
+        let mutation = PendingMutation {
+            id: "m1".into(),
+            provider_thread_id: "gmail-thread".into(),
+            mutation: ThreadMutation::Spam {
+                thread_id: "welcome".into(),
+                value: true,
+            },
+        };
+        assert_eq!(
+            mutation_labels(&mutation),
+            (vec!["SPAM".to_string()], vec!["INBOX".to_string()]),
+        );
+    }
+
+    #[test]
+    fn undoing_spam_restores_inbox_and_removes_spam() {
+        let mutation = PendingMutation {
+            id: "m1".into(),
+            provider_thread_id: "gmail-thread".into(),
+            mutation: ThreadMutation::Spam {
+                thread_id: "welcome".into(),
+                value: false,
+            },
+        };
+        assert_eq!(
+            mutation_labels(&mutation),
+            (vec!["INBOX".to_string()], vec!["SPAM".to_string()]),
         );
     }
 

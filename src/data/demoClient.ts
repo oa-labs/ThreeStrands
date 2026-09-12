@@ -163,6 +163,17 @@ function update(mutation: ThreadMutation) {
         return { ...thread, archived: mutation.value };
       case "trash":
         return { ...thread, trashed: mutation.value };
+      case "spam": {
+        const next = new Set(thread.labels);
+        if (mutation.value) {
+          next.add("SPAM");
+          next.delete("INBOX");
+        } else {
+          next.delete("SPAM");
+          next.add("INBOX");
+        }
+        return { ...thread, archived: mutation.value, labels: [...next] };
+      }
       case "read":
         return { ...thread, unread: !mutation.value };
       case "star":

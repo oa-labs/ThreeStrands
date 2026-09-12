@@ -51,6 +51,12 @@ pub trait GmailProvider: Send + Sync {
         add: &[String],
         remove: &[String],
     ) -> ProviderResult<()>;
+    async fn modify_messages(
+        &self,
+        ids: &[String],
+        add: &[String],
+        remove: &[String],
+    ) -> ProviderResult<()>;
     async fn list_labels(&self) -> ProviderResult<Vec<Label>>;
     async fn create_label(&self, name: &str) -> ProviderResult<Label>;
     async fn update_label(&self, id: &str, name: &str) -> ProviderResult<Label>;
@@ -221,6 +227,22 @@ struct ModifyRequest<'a> {
     remove_label_ids: &'a [String],
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchModifyRequest<'a> {
+    ids: &'a [String],
+    add_label_ids: &'a [String],
+    remove_label_ids: &'a [String],
+}
+
+fn message_modify_url(ids: &[String]) -> Option<String> {
+    match ids {
+        [] => None,
+        [id] => Some(format!("{API}/messages/{id}/modify")),
+        _ => Some(format!("{API}/messages/batchModify")),
+    }
+}
+
 #[derive(Deserialize)]
 struct LabelList {
     #[serde(default)]
@@ -329,6 +351,34 @@ impl GmailProvider for GmailClient {
         Ok(())
     }
 
+    async fn modify_messages(
+        &self,
+        ids: &[String],
+        add: &[String],
+        remove: &[String],
+    ) -> ProviderResult<()> {
+        let request = match ids {
+            [] => return Err(ProviderError::Other("No Gmail messages to modify".into())),
+            [_] => self
+                .request(Method::POST, message_modify_url(ids).unwrap())
+                .await?
+                .json(&ModifyRequest {
+                    add_label_ids: add,
+                    remove_label_ids: remove,
+                }),
+            _ => self
+                .request(Method::POST, message_modify_url(ids).unwrap())
+                .await?
+                .json(&BatchModifyRequest {
+                    ids,
+                    add_label_ids: add,
+                    remove_label_ids: remove,
+                }),
+        };
+        self.send(request, false).await?;
+        Ok(())
+    }
+
     async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
         let request = self.request(Method::GET, format!("{API}/labels")).await?;
         Ok(self
@@ -408,6 +458,34 @@ mod tests {
         assert_eq!(retry_delay(0, true), Duration::from_secs(15));
         assert_eq!(retry_delay(2, true), Duration::from_secs(60));
         assert_eq!(retry_delay(2, false), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn spam_message_modify_payload_adds_spam_and_removes_inbox() {
+        let ids = vec!["message-1".to_string(), "message-2".to_string()];
+        let add = vec!["SPAM".to_string()];
+        let remove = vec!["INBOX".to_string()];
+        let payload = serde_json::to_value(BatchModifyRequest {
+            ids: &ids,
+            add_label_ids: &add,
+            remove_label_ids: &remove,
+        })
+        .unwrap();
+
+        assert_eq!(
+            payload,
+            serde_json::json!({
+                "ids": ["message-1", "message-2"],
+                "addLabelIds": ["SPAM"],
+                "removeLabelIds": ["INBOX"],
+            }),
+        );
+        assert!(message_modify_url(&ids)
+            .unwrap()
+            .ends_with("/messages/batchModify"));
+        assert!(message_modify_url(&ids[..1])
+            .unwrap()
+            .ends_with("/messages/message-1/modify"));
     }
 }
 

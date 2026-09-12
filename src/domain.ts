@@ -54,6 +54,7 @@ export type SearchThreadsRequest = {
 export type ThreadMutation =
   | { kind: "archive"; threadId: string; value: boolean }
   | { kind: "trash"; threadId: string; value: boolean }
+  | { kind: "spam"; threadId: string; value: boolean }
   | { kind: "read"; threadId: string; value: boolean }
   | { kind: "star"; threadId: string; value: boolean }
   | { kind: "label"; threadId: string; labelId: string; value: boolean };

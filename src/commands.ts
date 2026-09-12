@@ -21,6 +21,7 @@ export type CommandContext = {
   markNotDoneSelected(): Promise<CommandResult>;
   unsubscribeSelected(): void;
   trashSelected(): Promise<CommandResult>;
+  markSpamSelected(): Promise<CommandResult>;
   setLabelSelected(labelId: string, value: boolean): Promise<CommandResult>;
   toggleReadSelected(): Promise<CommandResult>;
   toggleStarSelected(): Promise<CommandResult>;
@@ -124,6 +125,15 @@ export const commands: Command[] = [
     group: "Triage",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
     run: (context) => context.trashSelected(),
+    undo: undoResult,
+  },
+  {
+    id: "thread.spam",
+    title: "Mark spam",
+    keys: ["!"],
+    group: "Triage",
+    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    run: (context) => context.markSpamSelected(),
     undo: undoResult,
   },
   {
