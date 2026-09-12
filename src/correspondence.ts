@@ -11,7 +11,10 @@ export type Draft = {
 export type OutboxItem = { id: string; draft: Draft; state: "undo_pending" | "ready" | "sending" | "sent" | "failed" | "uncertain" | "canceled"; deadline: number; error: string | null };
 export interface CorrespondenceClient {
   senderIdentity(): Promise<string>;
-  createDraft(mode: ComposeMode, sourceId?: string): Promise<Draft>;
+  /** `account` is required for reply/replyAll/forward (the source thread's owning account) and optional for "new" (defaults to the most-recently-used account). */
+  createDraft(mode: ComposeMode, sourceId?: string, account?: string): Promise<Draft>;
+  /** Changes a "new" message's sending account; reply/replyAll/forward stay locked to their source thread's account. */
+  setDraftAccount(id: string, account: string): Promise<Draft>;
   saveDraft(draft: Draft): Promise<Draft>;
   listDrafts(): Promise<Draft[]>;
   discardDraft(id: string): Promise<void>;
@@ -27,7 +30,8 @@ export interface CorrespondenceClient {
 const request = <T>(op: string, args: object = {}) => invoke<T>("correspondence_request", { request: { op, ...args } });
 export const nativeCorrespondence: CorrespondenceClient = {
   senderIdentity: () => request("identity"),
-  createDraft: (mode, sourceId) => request("create", { mode, sourceId }),
+  createDraft: (mode, sourceId, account) => request("create", { mode, sourceId, account }),
+  setDraftAccount: (id, account) => request("setAccount", { id, account }),
   saveDraft: (draft) => request("save", { draft }),
   listDrafts: () => request("listDrafts"),
   discardDraft: (id) => request("discard", { id }),

@@ -356,7 +356,8 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
-  const correspondence = useCorrespondence(detail?.messages.at(-1)?.id);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const correspondence = useCorrespondence(accounts, detail?.messages.at(-1)?.id, detail?.thread.accountId);
   const [query, setQuery] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
   const [hasMoreResults, setHasMoreResults] = useState(false);
@@ -370,7 +371,6 @@ export function App() {
   const [labels, setLabels] = useState<Label[]>([]);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
   const refreshAccounts = useCallback(() => {
     void mailClient.listAccounts().then(setAccounts).catch(() => setAccounts([]));

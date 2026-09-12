@@ -5,9 +5,10 @@ import { X } from "lucide-react";
 import { Composer, type ComposerHandle } from "./Composer";
 import { mailClient } from "./data/client";
 import type { ComposeMode, Draft, OutboxItem } from "./correspondence";
+import type { Account } from "./domain";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
-export function useCorrespondence(sourceId?: string) {
+export function useCorrespondence(accounts: Account[], sourceId?: string, sourceAccountId?: string) {
   const [active, setActive] = useState<Draft | null>(null);
   const [view, setView] = useState<"drafts" | "outbox" | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -39,10 +40,16 @@ export function useCorrespondence(sourceId?: string) {
   const start = useCallback(async (mode: ComposeMode) => {
     if (opening.current) return;
     opening.current = true;
-    try { await editor.current?.flush(); const d = await mailClient.createDraft(mode, mode === "new" ? undefined : sourceId); setActive(d); setView(null); setError(""); }
+    try {
+      await editor.current?.flush();
+      const d = mode === "new"
+        ? await mailClient.createDraft(mode)
+        : await mailClient.createDraft(mode, sourceId, sourceAccountId);
+      setActive(d); setView(null); setError("");
+    }
     catch (e) { setError(String(e)); }
     finally { opening.current = false; }
-  }, [sourceId]);
+  }, [sourceId, sourceAccountId]);
   const show = useCallback(async (next: "drafts" | "outbox") => { try { await editor.current?.flush(); setActive(null); await refresh(); setView(next); } catch (e) { setError(String(e)); } }, [refresh]);
   const undo = useCallback(async (id?: string) => {
     const target = id ?? outbox.find((o) => ["undo_pending", "ready"].includes(o.state))?.id;
@@ -62,7 +69,7 @@ export function useCorrespondence(sourceId?: string) {
     undoSend: () => { void undo(); }, canUndoSend: Boolean(pending),
   };
   return { context, sentCount: outbox.filter((o) => o.state === "sent").length, draftCount: drafts.length, outboxCount: outbox.filter((o) => !["sent", "canceled"].includes(o.state)).length, overlay: <>
-    {active && <Composer key={active.id} ref={editor} draft={active} onClose={() => { setActive(null); void refresh(); }} onQueued={() => { setActive(null); void refresh(); }} />}
+    {active && <Composer key={active.id} ref={editor} draft={active} accounts={accounts} onClose={() => { setActive(null); void refresh(); }} onQueued={() => { setActive(null); void refresh(); }} />}
     {view && <CorrespondenceList title={view === "drafts" ? "Drafts" : "Outbox"} onClose={() => setView(null)}>
       {view === "drafts" ? <>{drafts.length === 0 && <p className="empty">No saved drafts.</p>}{drafts.map((d) => <button className="draft-row" key={d.id} onClick={() => { setActive(d); setView(null); }}><strong>{d.subject || "(no subject)"}</strong><span>{d.to || "No recipients"}</span><small>{new Date(d.updatedAt).toLocaleString()} · Saved on this device</small></button>)}</> : <>{outbox.filter((o) => o.state !== "canceled").length === 0 && <p className="empty">No outgoing messages.</p>}{outbox.filter((o) => o.state !== "canceled").map((o) => <article className="outbox-row" key={o.id}><strong>{o.draft.subject || "(no subject)"}</strong><span>From {o.draft.account} · To {o.draft.to || o.draft.cc || "Bcc recipients"}</span><small>{o.state === "undo_pending" ? (o.deadline > clock ? `Undo available · ${Math.ceil((o.deadline - clock) / 1000)}s` : "Waiting for connection") : o.state}</small>{o.error && <p>{o.error}</p>}{["undo_pending", "ready"].includes(o.state) && <button onClick={() => void undo(o.id)}>Undo send</button>}{o.state === "failed" && <button onClick={() => { void mailClient.recoverSend(o.id).then((d) => { setActive(d); setView(null); void refresh(); }).catch((e) => setError(String(e))); }}>Restore draft</button>}{o.state === "uncertain" && <button onClick={() => { void mailClient.reconcileSend(o.id).then(refresh).catch((e) => setError(String(e))); }}>Check sent mail</button>}</article>)}</>}
     </CorrespondenceList>}

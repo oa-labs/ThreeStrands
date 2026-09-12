@@ -639,6 +639,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-backdrop:has(.composer-header.dragging) { cursor: grabbing; user-select: none; }
 .composer h2, .correspondence-list h2 { margin: 0; font-size: calc(18px * var(--font-scale)); }
 .composer header span { display: block; margin-top: 5px; color: var(--muted); font-size: calc(12px * var(--font-scale)); }
+.compose-from { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+.compose-from span { margin-top: 0; }
+.compose-from select { font: inherit; font-size: calc(12px * var(--font-scale)); color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: 6px; padding: 1px 4px; }
 .composer-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 0 22px; }
 .compose-field { display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--border); font-size: calc(13px * var(--font-scale)); flex-shrink: 0; }
 .compose-field > span { width: 50px; flex-shrink: 0; color: var(--muted); }

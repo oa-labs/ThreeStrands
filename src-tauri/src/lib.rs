@@ -20,9 +20,11 @@ use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
 
 /// An account beyond the primary: its own credentials and the task running
-/// its own sync loop. Removing the account aborts `poll_task`.
-struct ConnectedAccount {
-    auth: GoogleAuth,
+/// its own sync loop. Removing the account aborts `poll_task`. Shared with
+/// `Correspondence`, which resolves a draft's own account through the same
+/// registry rather than assuming the primary account sends everything.
+pub(crate) struct ConnectedAccount {
+    pub(crate) auth: GoogleAuth,
     poll_task: JoinHandle<()>,
 }
 
@@ -394,14 +396,15 @@ pub fn run() {
             }
             let root = data_dir.join("attachments");
             std::fs::create_dir_all(&root)?;
+            let additional_accounts = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
             let correspondence = correspondence::Correspondence {
                 database: database.clone(),
-                auth: auth.clone(),
+                primary: auth.clone(),
+                additional_accounts: additional_accounts.clone(),
                 root,
                 gate: Arc::new(tokio::sync::Mutex::new(())),
                 edits: Arc::new(tokio::sync::Mutex::new(())),
             };
-            let additional_accounts = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
             let worker = correspondence.clone();
             {
                 let database = database.clone();
@@ -415,7 +418,7 @@ pub fn run() {
                     // sync loop. Sequenced after identity resolution above
                     // so the primary's now-final key can be excluded here.
                     if let Some(config) = &auth_config {
-                        let primary_email = worker.auth.as_ref().map(GoogleAuth::key);
+                        let primary_email = worker.primary.as_ref().map(GoogleAuth::key);
                         if let Ok(accounts) = database.list_accounts() {
                             for account in accounts {
                                 if Some(&account.email) == primary_email.as_ref() {

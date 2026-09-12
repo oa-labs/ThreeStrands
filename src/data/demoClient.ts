@@ -155,7 +155,7 @@ function update(mutation: ThreadMutation) {
 }
 
 export const demoClient: MailClient = {
-  ...demoCorrespondence((id) => demoClient.getThread(id)),
+  ...demoCorrespondence((id) => demoClient.getThread(id), () => accounts[0]?.email ?? DEMO_ACCOUNT_ID),
   async listThreads(accountId) {
     return structuredClone(visible(accountId));
   },

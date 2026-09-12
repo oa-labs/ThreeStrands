@@ -27,16 +27,18 @@ function cancel(id: string, recover = false) {
   const restored = { ...item.draft, revision: item.draft.revision + 1 };
   store.drafts.push(restored); write(store); return restored;
 }
-export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDetail>): CorrespondenceClient {
+export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDetail>, defaultAccount: () => string): CorrespondenceClient {
   return {
-    async senderIdentity() { return "you@example.com"; },
-    async createDraft(mode, sourceId) {
+    async senderIdentity() { return defaultAccount(); },
+    async createDraft(mode, sourceId, account) {
       const store = read();
       const existing = mode !== "new" && store.drafts.find((d) => d.mode === mode && d.sourceId === sourceId);
       if (existing) return existing;
-      const d: Draft = { id: crypto.randomUUID(), revision: 0, account: "you@example.com", mode, sourceId: sourceId ?? null, threadId: null, replyId: null, references: [], to: "", cc: "", bcc: "", subject: "", body: "", attachments: [], updatedAt: Date.now() };
+      const d: Draft = { id: crypto.randomUUID(), revision: 0, account: account ?? defaultAccount(), mode, sourceId: sourceId ?? null, threadId: null, replyId: null, references: [], to: "", cc: "", bcc: "", subject: "", body: "", attachments: [], updatedAt: Date.now() };
       if (sourceId) {
         const detail = await getSource(sourceId.replace(/-message$/, ""));
+        // Reply/replyAll/forward always send from the thread's owning account, never the "new message" default.
+        if (mode !== "new") d.account = account ?? detail.thread.accountId;
         const message = detail.messages.find((m) => m.id === sourceId)!;
         d.subject = detail.thread.subject;
         d.body = `\n\nOn ${message.sentAt}, ${message.sender} wrote:\n> ${message.bodyText}`;
@@ -51,6 +53,11 @@ export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDeta
         }
       }
       store.drafts.push(d); write(store); return d;
+    },
+    async setDraftAccount(id, account) {
+      const store = read(); const d = draft(store, id);
+      if (d.mode !== "new") throw new Error("Only new messages can change the sending account");
+      d.account = account; d.revision++; d.updatedAt = Date.now(); write(store); return d;
     },
     async saveDraft(next) {
       const store = read(); const previous = draft(store, next.id);

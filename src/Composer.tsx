@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, us
 import { Paperclip, Send, X, Trash2 } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem } from "./correspondence";
+import type { Account } from "./domain";
 import {
   clampComposerPosition,
   clampComposerSize,
@@ -24,7 +25,7 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 
 export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(): void; attach(): void; close(): void };
 
-export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): void; onQueued(item: OutboxItem): void }>(function Composer({ draft: initial, onClose, onQueued }, ref) {
+export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Account[]; onClose(): void; onQueued(item: OutboxItem): void }>(function Composer({ draft: initial, accounts, onClose, onQueued }, ref) {
   const [draft, setDraft] = useState(initial);
   const latest = useRef(initial);
   const generation = useRef(0);
@@ -92,6 +93,10 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
   function close() { void run(async () => { await flush(); onClose(); }); }
   function send() { void run(async () => { const saved = await flush(); const item = await mailClient.queueDraft(saved.id, saved.revision); onQueued(item); }); }
   function attach() { void run(async () => { await flush(); const next = await mailClient.attachFiles(latest.current.id); latest.current = next; setDraft(next); }); }
+  function changeAccount(email: string) {
+    if (email === latest.current.account) return;
+    void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); latest.current = next; setDraft(next); });
+  }
   useImperativeHandle(ref, () => ({ flush, send, attach, close, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
@@ -190,7 +195,11 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
         onPointerMove={onHeaderPointerMove}
         onPointerUp={endHeaderDrag}
         onLostPointerCapture={() => { moveDrag.current = null; setMoving(false); }}
-      ><div><h2>{initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply all" : "Reply"}</h2><span>From {draft.account}</span></div><button className="icon-button" aria-label="Save and close draft" onClick={close} disabled={busy}><X size={19} /></button></header>
+      ><div><h2>{initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply all" : "Reply"}</h2>{initial.mode === "new" && accounts.length > 1 ? (
+        <label className="compose-from"><span>From</span><select aria-label="Send from" value={draft.account} disabled={busy} onChange={(e) => changeAccount(e.target.value)}>
+          {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
+        </select></label>
+      ) : <span>From {draft.account}</span>}</div><button className="icon-button" aria-label="Save and close draft" onClick={close} disabled={busy}><X size={19} /></button></header>
       <div className="composer-content">
         <label className="compose-field"><span>To</span><input name="to" aria-label="To" value={draft.to} onChange={(e) => edit("to", e.target.value)} disabled={busy} placeholder="Name <email@example.com>" /></label>
         <button className="text-button" aria-expanded={showCopies} onClick={() => setShowCopies(!showCopies)}>Cc / Bcc</button>

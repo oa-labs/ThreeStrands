@@ -12,7 +12,7 @@ use mail_parser::MessageParser;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -134,6 +134,14 @@ pub enum Request {
     Create {
         mode: String,
         source_id: Option<String>,
+        /// The sending account. Required for reply/replyAll/forward (the
+        /// source thread's owning account); optional for "new", which falls
+        /// back to the most-recently-used account.
+        account: Option<String>,
+    },
+    SetAccount {
+        id: String,
+        account: String,
     },
     Save {
         draft: Draft,
@@ -261,11 +269,15 @@ impl Database {
             .map_err(|_| "Draft no longer exists".to_string())?;
         serde_json::from_str(&value).map_err(error)
     }
-    pub fn create_draft(&self, mode: &str, source_id: Option<String>) -> Result<Draft, String> {
+    pub fn create_draft(
+        &self,
+        mode: &str,
+        source_id: Option<String>,
+        account: &str,
+    ) -> Result<Draft, String> {
         if !["new", "reply", "replyAll", "forward"].contains(&mode) {
             return Err("Unknown compose mode".into());
         }
-        let account = self.compose_identity()?;
         if mode != "new" {
             if let Some(existing) = self
                 .drafts()?
@@ -278,7 +290,7 @@ impl Database {
         let mut d = Draft {
             id: Uuid::new_v4().to_string(),
             revision: 0,
-            account: account.clone(),
+            account: account.to_string(),
             mode: mode.into(),
             source_id: source_id.clone(),
             thread_id: None,
@@ -334,7 +346,7 @@ impl Database {
                 let reply = header(part, "Reply-To");
                 let own = addresses(from)?
                     .iter()
-                    .any(|(_, a)| a.eq_ignore_ascii_case(&account));
+                    .any(|(_, a)| a.eq_ignore_ascii_case(account));
                 let target = if own {
                     header(part, "To")
                 } else if !reply.is_empty() {
@@ -422,6 +434,31 @@ impl Database {
         }
         Ok(draft)
     }
+    /// Changes which account a "new" message sends from. Reply/replyAll/
+    /// forward stay locked to their source thread's account, so this
+    /// rejects any other mode rather than silently ignoring it.
+    pub fn set_draft_account(&self, id: &str, account: &str) -> Result<Draft, String> {
+        let mut d = self.draft(id)?;
+        if d.mode != "new" {
+            return Err("Only new messages can change the sending account".into());
+        }
+        d.account = account.to_string();
+        let expected = d.revision;
+        d.revision += 1;
+        d.updated_at = now();
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
+                params![d.revision, json(&d)?, d.id, expected],
+            )
+            .map_err(error)?;
+        if changed != 1 {
+            return Err("Draft changed elsewhere. Reopen it before editing.".into());
+        }
+        self.set_compose_identity(account)?;
+        Ok(d)
+    }
     pub fn discard_draft(&self, id: &str) -> Result<(), String> {
         self.connection()?
             .execute("DELETE FROM drafts WHERE id=?1", [id])
@@ -486,7 +523,13 @@ impl Database {
         if d.revision != revision {
             return Err("Draft is still saving".into());
         }
-        if d.account != self.compose_identity()? {
+        // Gated on the draft's own account status, not whichever account is
+        // currently active in the UI — otherwise queuing a reply from a
+        // non-active account would be rejected even though it can send fine.
+        if self
+            .get_account(&d.account)?
+            .is_some_and(|a| a.status == "needs_reauth")
+        {
             return Err("Reconnect the draft's account before sending".into());
         }
         let operation_id = Uuid::new_v4().to_string();
@@ -630,26 +673,54 @@ fn build_mime(d: &Draft, id: &str, root: &Path) -> Result<Vec<u8>, String> {
 #[derive(Clone)]
 pub struct Correspondence {
     pub database: Arc<Database>,
-    pub auth: Option<GoogleAuth>,
+    /// The account driving today's single-account UI and the compose
+    /// identity bootstrap. Not the only account drafts can send from — see
+    /// `auth_for`.
+    pub primary: Option<GoogleAuth>,
+    /// Every other connected account, shared with `AppState` in `lib.rs` (the
+    /// same `Arc`, so add/remove/reconnect there is immediately visible
+    /// here). Lets a draft addressed to any connected account resolve and
+    /// send through *that* account's credentials, regardless of which
+    /// account is active in the UI.
+    pub additional_accounts: Arc<tokio::sync::Mutex<HashMap<String, crate::ConnectedAccount>>>,
     pub root: PathBuf,
     pub gate: Arc<tokio::sync::Mutex<()>>,
     pub edits: Arc<tokio::sync::Mutex<()>>,
 }
 impl Correspondence {
-    fn provider(&self) -> Result<GmailClient, String> {
-        Ok(GmailClient::new(
-            self.auth.clone().ok_or("Google OAuth is not configured")?,
-        ))
+    async fn auth_for(&self, account: &str) -> Option<GoogleAuth> {
+        if self
+            .primary
+            .as_ref()
+            .is_some_and(|auth| auth.key() == account)
+        {
+            return self.primary.clone();
+        }
+        self.additional_accounts
+            .lock()
+            .await
+            .get(account)
+            .map(|connected| connected.auth.clone())
+    }
+    async fn provider_for(&self, account: &str) -> Result<GmailClient, String> {
+        Ok(GmailClient::new(self.auth_for(account).await.ok_or_else(
+            || format!("{account} is not connected. Reconnect it before continuing."),
+        )?))
     }
     pub fn is_connected(&self) -> bool {
-        self.auth.as_ref().is_some_and(GoogleAuth::available)
+        self.primary.as_ref().is_some_and(GoogleAuth::available)
     }
     pub async fn refresh_identity(&self) -> Result<String, String> {
-        let identity = self.provider()?.sender_identity().await.map_err(error)?;
+        let auth = self
+            .primary
+            .clone()
+            .ok_or("Google OAuth is not configured")?;
+        let identity = GmailClient::new(auth.clone())
+            .sender_identity()
+            .await
+            .map_err(error)?;
         self.database.set_compose_identity(&identity)?;
-        if let Some(auth) = &self.auth {
-            auth.accept_identity(&identity)?;
-        }
+        auth.accept_identity(&identity)?;
         self.database.adopt_account(&identity)?;
         Ok(identity)
     }
@@ -674,10 +745,21 @@ impl Correspondence {
             }
             ListDrafts => Ok(serde_json::to_value(self.database.drafts()?).map_err(error)?),
             ListOutbox => Ok(serde_json::to_value(self.database.outbox()?).map_err(error)?),
-            Create { mode, source_id } => {
-                if self.database.compose_identity().is_err() {
-                    self.refresh_identity().await?;
-                }
+            Create {
+                mode,
+                source_id,
+                account,
+            } => {
+                let resolved_account = match account {
+                    Some(account) => account,
+                    None if mode == "new" => {
+                        if self.database.compose_identity().is_err() {
+                            self.refresh_identity().await?;
+                        }
+                        self.database.compose_identity()?
+                    }
+                    None => return Err("Reopen the thread before replying".into()),
+                };
                 if let Some(id) = &source_id {
                     let missing = self
                         .database
@@ -690,7 +772,12 @@ impl Correspondence {
                         .map_err(error)?
                         == 0;
                     if missing {
-                        let source = self.provider()?.get_message(id).await.map_err(error)?;
+                        let source = self
+                            .provider_for(&resolved_account)
+                            .await?
+                            .get_message(id)
+                            .await
+                            .map_err(error)?;
                         self.database
                             .connection()?
                             .execute(
@@ -700,11 +787,18 @@ impl Correspondence {
                             .map_err(error)?;
                     }
                 }
-                Ok(
-                    serde_json::to_value(self.database.create_draft(&mode, source_id)?)
-                        .map_err(error)?,
-                )
+                let draft = self
+                    .database
+                    .create_draft(&mode, source_id, &resolved_account)?;
+                if mode == "new" {
+                    let _ = self.database.set_compose_identity(&resolved_account);
+                }
+                Ok(serde_json::to_value(draft).map_err(error)?)
             }
+            SetAccount { id, account } => Ok(serde_json::to_value(
+                self.database.set_draft_account(&id, &account)?,
+            )
+            .map_err(error)?),
             Save { draft } => {
                 Ok(serde_json::to_value(self.database.save_draft(draft)?).map_err(error)?)
             }
@@ -788,7 +882,8 @@ impl Correspondence {
             }
             FetchAttachment { id, attachment_id } => {
                 let mut d = self.database.draft(&id)?;
-                if self.refresh_identity().await? != d.account {
+                let provider = self.provider_for(&d.account).await?;
+                if provider.sender_identity().await.map_err(error)? != d.account {
                     return Err("Reconnect the draft's account".into());
                 }
                 let a = d
@@ -798,12 +893,12 @@ impl Correspondence {
                     .ok_or("Attachment not found")?;
                 let message = a.message_id.as_ref().ok_or("No attachment source")?;
                 let data = if let Some(provider_id) = &a.provider_id {
-                    self.provider()?
+                    provider
                         .attachment_bytes(message, provider_id)
                         .await
                         .map_err(error)?
                 } else {
-                    let source = self.provider()?.get_message(message).await.map_err(error)?;
+                    let source = provider.get_message(message).await.map_err(error)?;
                     fn find(part: &MimePart, name: &str) -> Option<String> {
                         if part.filename == name {
                             return part.body.data.clone();
@@ -859,7 +954,7 @@ impl Correspondence {
         if item.state != "uncertain" {
             return Ok(());
         }
-        let provider = self.provider()?;
+        let provider = self.provider_for(&item.draft.account).await?;
         if provider.sender_identity().await.map_err(error)? != item.draft.account {
             return Err("Reconnect the original sender account".into());
         }
@@ -886,9 +981,6 @@ impl Correspondence {
     }
     pub async fn tick(&self) -> Result<(), String> {
         let _guard = self.gate.lock().await;
-        if !self.is_connected() {
-            return Ok(());
-        }
         let items = self.database.outbox()?;
         if !items
             .iter()
@@ -896,45 +988,63 @@ impl Correspondence {
         {
             return Ok(());
         }
-        let provider = self.provider()?;
-        let identity = provider.sender_identity().await.map_err(error)?;
+        // Grouped by account and processed independently: one account's
+        // disconnected/rate-limited provider must never block another
+        // account's queued sends.
+        let mut by_account: HashMap<String, Vec<OutboxItem>> = HashMap::new();
         for item in items {
-            if item.draft.account != identity {
-                self.database.connection()?.execute("UPDATE outbox_messages SET error='Paused: reconnect the original sender account to continue.' WHERE id=?1 AND state IN ('undo_pending','ready')", [&item.id]).map_err(error)?;
+            by_account
+                .entry(item.draft.account.clone())
+                .or_default()
+                .push(item);
+        }
+        for (account, items) in by_account {
+            let Ok(provider) = self.provider_for(&account).await else {
                 continue;
-            }
-            if item.state == "uncertain" {
-                if item.deadline <= now() {
-                    self.database
-                        .connection()?
-                        .execute(
-                            "UPDATE outbox_messages SET deadline=?1 WHERE id=?2",
-                            params![now() + 60_000, item.id],
-                        )
-                        .map_err(error)?;
-                    let _ = self.reconcile(&item.id).await;
+            };
+            let Ok(identity) = provider.sender_identity().await else {
+                continue;
+            };
+            for item in items {
+                if item.draft.account != identity {
+                    self.database.connection()?.execute("UPDATE outbox_messages SET error='Paused: reconnect the original sender account to continue.' WHERE id=?1 AND state IN ('undo_pending','ready')", [&item.id]).map_err(error)?;
+                    continue;
                 }
-                continue;
-            }
-            if !["undo_pending", "ready"].contains(&item.state.as_str()) || item.deadline > now() {
-                continue;
-            }
-            // Obtain authorization before claiming delivery; transport errors after the claim are uncertain.
-            let request = provider.prepare_send().await.map_err(error)?;
-            let sender = &provider;
-            let sent = self
-                .dispatch_due(&item, now(), |raw, thread| async move {
-                    sender.deliver_once(request, &raw, thread.as_deref()).await
-                })
-                .await?;
-            if let Some(sent) = sent {
-                if let Ok(messages) = provider.get_thread(&sent.thread_id).await {
-                    if let Ok(normalized) = messages
-                        .iter()
-                        .map(crate::mime::normalize)
-                        .collect::<Result<Vec<_>, _>>()
-                    {
-                        self.database.upsert_gmail_thread(&identity, &normalized)?;
+                if item.state == "uncertain" {
+                    if item.deadline <= now() {
+                        self.database
+                            .connection()?
+                            .execute(
+                                "UPDATE outbox_messages SET deadline=?1 WHERE id=?2",
+                                params![now() + 60_000, item.id],
+                            )
+                            .map_err(error)?;
+                        let _ = self.reconcile(&item.id).await;
+                    }
+                    continue;
+                }
+                if !["undo_pending", "ready"].contains(&item.state.as_str())
+                    || item.deadline > now()
+                {
+                    continue;
+                }
+                // Obtain authorization before claiming delivery; transport errors after the claim are uncertain.
+                let request = provider.prepare_send().await.map_err(error)?;
+                let sender = &provider;
+                let sent = self
+                    .dispatch_due(&item, now(), |raw, thread| async move {
+                        sender.deliver_once(request, &raw, thread.as_deref()).await
+                    })
+                    .await?;
+                if let Some(sent) = sent {
+                    if let Ok(messages) = provider.get_thread(&sent.thread_id).await {
+                        if let Ok(normalized) = messages
+                            .iter()
+                            .map(crate::mime::normalize)
+                            .collect::<Result<Vec<_>, _>>()
+                        {
+                            self.database.upsert_gmail_thread(&identity, &normalized)?;
+                        }
                     }
                 }
             }
@@ -1003,7 +1113,8 @@ mod tests {
         db
     }
     fn saved(db: &Database) -> Draft {
-        let mut d = db.create_draft("new", None).unwrap();
+        let account = db.compose_identity().unwrap();
+        let mut d = db.create_draft("new", None, &account).unwrap();
         d.to = "Jane <jane@example.com>".into();
         d.subject = "Hello".into();
         d.body = "Saved work ✓".into();
@@ -1145,15 +1256,88 @@ mod tests {
                 [source.to_string()],
             )
             .unwrap();
-        let reply = db.create_draft("replyAll", Some("source".into())).unwrap();
+        let reply = db
+            .create_draft("replyAll", Some("source".into()), "you@example.com")
+            .unwrap();
         assert_eq!(reply.to, "reply@example.com, colleague@example.com");
         assert_eq!(reply.cc, "cc@example.com");
         assert_eq!(reply.thread_id, Some("thread".into()));
-        let forward = db.create_draft("forward", Some("source".into())).unwrap();
+        let forward = db
+            .create_draft("forward", Some("source".into()), "you@example.com")
+            .unwrap();
         assert!(forward.to.is_empty());
         assert!(forward.reply_id.is_none());
         assert!(forward.thread_id.is_none());
         assert_eq!(forward.subject, "Fwd: Topic");
+    }
+    #[test]
+    fn reply_drafts_are_stamped_with_the_passed_account_not_the_global_compose_identity() {
+        let db = database();
+        // Simulate a different account being "active" for new messages than
+        // the one this reply must actually send from.
+        db.set_compose_identity("active@example.com").unwrap();
+        let source = serde_json::json!({"id":"source-b","threadId":"thread-b","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<source-b@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
+        db.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO message_metadata VALUES ('source-b',?1)",
+                [source.to_string()],
+            )
+            .unwrap();
+        let reply = db
+            .create_draft("reply", Some("source-b".into()), "you@example.com")
+            .unwrap();
+        assert_eq!(reply.account, "you@example.com");
+    }
+    #[test]
+    fn only_new_messages_can_change_their_sending_account() {
+        let db = database();
+        let d = saved(&db);
+        let updated = db.set_draft_account(&d.id, "other@example.com").unwrap();
+        assert_eq!(updated.account, "other@example.com");
+        assert!(updated.revision > d.revision);
+
+        let source = serde_json::json!({"id":"source-c","threadId":"thread-c","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<source-c@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
+        db.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO message_metadata VALUES ('source-c',?1)",
+                [source.to_string()],
+            )
+            .unwrap();
+        let reply = db
+            .create_draft("reply", Some("source-c".into()), "you@example.com")
+            .unwrap();
+        assert!(db.set_draft_account(&reply.id, "nope@example.com").is_err());
+    }
+    #[test]
+    fn queuing_a_draft_no_longer_depends_on_which_account_is_currently_active() {
+        let db = database();
+        // The globally "active" compose identity differs from the drafted
+        // account; queuing must still succeed, since replying from a
+        // non-active account is exactly what multi-account send-as needs.
+        db.set_compose_identity("active@example.com").unwrap();
+        let mut d = db.create_draft("new", None, "you@example.com").unwrap();
+        d.to = "Jane <jane@example.com>".into();
+        d.subject = "Hello".into();
+        d.body = "Body".into();
+        let d = db.save_draft(d).unwrap();
+        let item = db.queue(&d.id, d.revision, Path::new("/unused")).unwrap();
+        assert_eq!(item.draft.account, "you@example.com");
+    }
+    #[test]
+    fn queuing_rejects_a_draft_whose_account_needs_reauth() {
+        let db = database();
+        db.adopt_account("you@example.com").unwrap();
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE accounts SET status='needs_reauth' WHERE email='you@example.com'",
+                [],
+            )
+            .unwrap();
+        let d = saved(&db);
+        assert!(db.queue(&d.id, d.revision, Path::new("/unused")).is_err());
     }
     #[test]
     fn migrations_preserve_existing_mail_and_are_repeatable() {
@@ -1165,7 +1349,8 @@ mod tests {
     fn service() -> Correspondence {
         Correspondence {
             database: Arc::new(database()),
-            auth: None,
+            primary: None,
+            additional_accounts: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             root: PathBuf::from("/unused"),
             gate: Arc::new(tokio::sync::Mutex::new(())),
             edits: Arc::new(tokio::sync::Mutex::new(())),
