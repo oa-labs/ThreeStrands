@@ -209,7 +209,9 @@ function describeMutation(template: MutationTemplate, count: number, labelName?:
   const many = count > 1;
   switch (template.kind) {
     case "archive":
-      return many ? `Archived ${count} conversations` : "Conversation archived";
+      return template.value
+        ? (many ? `Archived ${count} conversations` : "Conversation archived")
+        : (many ? `Marked ${count} conversations as not done` : "Conversation marked as not done");
     case "trash":
       return template.value
         ? (many ? `Moved ${count} conversations to trash` : "Conversation moved to trash")
@@ -644,6 +646,7 @@ export function App() {
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     selectedId,
+    selectedArchived: selected?.archived ?? false,
     openInbox: () => {
       correspondence.context.openInbox();
       setQuery("");
@@ -658,6 +661,7 @@ export function App() {
       setSelectedId(threads[next]?.id ?? null);
     },
     archiveSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: true }),
+    markNotDoneSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: false }),
     trashSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "trash", value: true }),
     setLabelSelected: (labelId, value) => mutateIds(labelTargetIds ?? [], { kind: "label", labelId, value }),
     toggleReadSelected: () =>
@@ -986,13 +990,21 @@ export function App() {
                     <Tag size={17} />
                   </ActionButton>
                 </HoverTooltip>
-                <HoverTooltip label="Archive" shortcut="e" placement="bottom">
-                  <ActionButton label="Archive" shortcut="e" onClick={() => executeById("thread.archive")}>
-                    <Archive size={17} />
-                  </ActionButton>
-                </HoverTooltip>
-                <HoverTooltip label="Trash" shortcut="⇧3" placement="bottom">
-                  <ActionButton label="Trash" shortcut="⇧3" onClick={() => executeById("thread.trash")}>
+                {selected?.archived ? (
+                  <HoverTooltip label="Mark not done" shortcut="Shift+E" placement="bottom">
+                    <ActionButton label="Mark not done" shortcut="Shift+E" onClick={() => executeById("thread.unarchive")}>
+                      <Inbox size={17} />
+                    </ActionButton>
+                  </HoverTooltip>
+                ) : (
+                  <HoverTooltip label="Archive" shortcut="e" placement="bottom">
+                    <ActionButton label="Archive" shortcut="e" onClick={() => executeById("thread.archive")}>
+                      <Archive size={17} />
+                    </ActionButton>
+                  </HoverTooltip>
+                )}
+                <HoverTooltip label="Trash" shortcut="#" placement="bottom">
+                  <ActionButton label="Trash" shortcut="#" onClick={() => executeById("thread.trash")}>
                     <Trash2 size={17} />
                   </ActionButton>
                 </HoverTooltip>

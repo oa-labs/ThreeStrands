@@ -12,6 +12,7 @@ import {
 function noopContext(): CommandContext {
   return {
     selectedId: null,
+    selectedArchived: false,
     composerActive: false,
     canUndoSend: false,
     compose: () => {},
@@ -27,6 +28,7 @@ function noopContext(): CommandContext {
     selectNext: () => {},
     selectPrevious: () => {},
     archiveSelected: async () => ({}),
+    markNotDoneSelected: async () => ({}),
     trashSelected: async () => ({}),
     setLabelSelected: async () => ({}),
     toggleReadSelected: async () => ({}),
@@ -68,6 +70,20 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "mailbox.inbox")?.keys).toEqual(["g then i"]);
     expect(commands.find((command) => command.id === "drafts.open")?.keys).toEqual(["g then d"]);
     expect(commands.find((command) => command.id === "labels.open")?.keys).toEqual(["l"]);
+  });
+
+  it("registers the conversation triage shortcuts", () => {
+    expect(commands.find((command) => command.id === "thread.archive")?.keys).toEqual(["e"]);
+    expect(commands.find((command) => command.id === "thread.unarchive")?.keys).toEqual(["Shift+e"]);
+    expect(commands.find((command) => command.id === "thread.star")?.keys).toEqual(["s"]);
+    expect(commands.find((command) => command.id === "thread.read")?.keys).toEqual(["u"]);
+    expect(commands.find((command) => command.id === "thread.trash")?.keys).toEqual(["#"]);
+  });
+
+  it("matches the displayed hash shortcut on US and symbol-producing keyboards", () => {
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "#", shiftKey: true, code: "Digit3" }), "#")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "3", shiftKey: true, code: "Digit3" }), "#")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "3", code: "Digit3" }), "#")).toBe(false);
   });
 
   it("registers the common shortcut-help key", () => {

@@ -147,12 +147,30 @@ impl Database {
     /// `account_id` merges every account when `None` — the unified inbox —
     /// or scopes to just that account when set.
     pub fn list_threads(&self, account_id: Option<&str>) -> Result<Vec<Thread>, String> {
+        self.list_threads_where(account_id, "archived = 0 AND trashed = 0")
+    }
+
+    /// Gmail's "All Mail": everything except Trash (there's no local Spam
+    /// state to exclude alongside it).
+    pub fn list_all_mail(&self, account_id: Option<&str>) -> Result<Vec<Thread>, String> {
+        self.list_threads_where(account_id, "trashed = 0")
+    }
+
+    pub fn list_trash(&self, account_id: Option<&str>) -> Result<Vec<Thread>, String> {
+        self.list_threads_where(account_id, "trashed = 1")
+    }
+
+    fn list_threads_where(
+        &self,
+        account_id: Option<&str>,
+        filter: &str,
+    ) -> Result<Vec<Thread>, String> {
         let connection = self.connection()?;
         let sql = format!(
             "SELECT id, provider_thread_id, subject, snippet, participants_json,
                     last_message_at, unread, starred, archived, labels_json, trashed, account_id
              FROM threads
-             WHERE archived = 0 AND trashed = 0 {}
+             WHERE {filter} {}
              ORDER BY last_message_at DESC",
             if account_id.is_some() {
                 "AND account_id = ?1"
@@ -1497,5 +1515,67 @@ mod tests {
         assert_eq!(scoped.len(), 1);
         assert_eq!(scoped[0].id, "work@example.com:t1");
         assert_eq!(scoped[0].account_id, "work@example.com");
+    }
+
+    #[test]
+    fn list_all_mail_excludes_trash_but_keeps_archived() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[
+                    message("m1", "inbox", "2026-01-01T00:00:00Z", "body"),
+                    message("m2", "archived", "2026-01-02T00:00:00Z", "body"),
+                    message("m3", "trashed", "2026-01-03T00:00:00Z", "body"),
+                ],
+            )
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: "work@example.com:archived".into(),
+                value: true,
+            })
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Trash {
+                thread_id: "work@example.com:trashed".into(),
+                value: true,
+            })
+            .unwrap();
+
+        let all_mail = database.list_all_mail(None).unwrap();
+        let ids: Vec<_> = all_mail.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains(&"work@example.com:inbox"));
+        assert!(ids.contains(&"work@example.com:archived"));
+        assert!(!ids.contains(&"work@example.com:trashed"));
+    }
+
+    #[test]
+    fn list_trash_only_returns_trashed_threads() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[
+                    message("m1", "inbox", "2026-01-01T00:00:00Z", "body"),
+                    message("m2", "trashed", "2026-01-02T00:00:00Z", "body"),
+                ],
+            )
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Trash {
+                thread_id: "work@example.com:trashed".into(),
+                value: true,
+            })
+            .unwrap();
+
+        let trash = database.list_trash(None).unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].id, "work@example.com:trashed");
+
+        let scoped = database
+            .list_trash(Some("personal@example.com"))
+            .unwrap();
+        assert!(scoped.is_empty());
     }
 }

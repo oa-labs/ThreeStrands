@@ -1,5 +1,6 @@
 export type CommandContext = {
   selectedId: string | null;
+  selectedArchived: boolean;
   composerActive: boolean;
   closing?: boolean;
   canUndoSend: boolean;
@@ -16,6 +17,7 @@ export type CommandContext = {
   selectNext(): void;
   selectPrevious(): void;
   archiveSelected(): Promise<CommandResult>;
+  markNotDoneSelected(): Promise<CommandResult>;
   trashSelected(): Promise<CommandResult>;
   setLabelSelected(labelId: string, value: boolean): Promise<CommandResult>;
   toggleReadSelected(): Promise<CommandResult>;
@@ -97,6 +99,15 @@ export const commands: Command[] = [
     undo: undoResult,
   },
   {
+    id: "thread.unarchive",
+    title: "Mark not done",
+    keys: ["Shift+e"],
+    group: "Triage",
+    enabled: (context) => context.selectedId !== null && context.selectedArchived && !context.composerActive,
+    run: (context) => context.markNotDoneSelected(),
+    undo: undoResult,
+  },
+  {
     id: "thread.check",
     title: "Select for batch actions",
     keys: ["x"],
@@ -107,7 +118,7 @@ export const commands: Command[] = [
   {
     id: "thread.trash",
     title: "Trash",
-    keys: ["Shift+3"],
+    keys: ["#"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
     run: (context) => context.trashSelected(),
@@ -254,9 +265,15 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   if (expectsMod) base = base.slice(4);
   const expectsShift = base.startsWith("Shift+");
   if (expectsShift) base = base.slice(6);
+  const shiftedSymbolCode = base === "#"
+    ? "Digit3"
+    : base === "!"
+      ? "Digit1"
+      : null;
   const implicitSymbolShift = event.shiftKey && (
     (base === "+" && event.key === "+") ||
-    (base === "=" && event.key === "=")
+    (base === "=" && event.key === "=") ||
+    (shiftedSymbolCode !== null && (event.key === base || event.code === shiftedSymbolCode))
   );
   const questionMark = base === "?" && (
     event.key === "?" || (event.key === "/" && event.shiftKey)
@@ -265,7 +282,10 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   const shiftMatches = expectsShift
     ? event.shiftKey
     : base === "?" || implicitSymbolShift || !event.shiftKey;
-  const baseMatches = questionMark || shiftedDigit || event.key.toLocaleLowerCase() === base.toLocaleLowerCase();
+  const shiftedSymbol = shiftedSymbolCode !== null && (
+    event.key === base || (event.shiftKey && event.code === shiftedSymbolCode)
+  );
+  const baseMatches = questionMark || shiftedDigit || shiftedSymbol || event.key.toLocaleLowerCase() === base.toLocaleLowerCase();
   return baseMatches
     && shiftMatches
     && (event.ctrlKey || event.metaKey) === expectsMod

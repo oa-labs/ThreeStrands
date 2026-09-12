@@ -14,7 +14,7 @@ This document tracks implementation against the Phase 1 exit criteria in
   variants applied to a checked set of conversations.
 - Durable mutation records with idempotent UUIDs.
 - Shared command registry for buttons, keyboard shortcuts, and command palette.
-- Keyboard navigation with `j`, `k`, `e`, `Shift+3`, `u`, `s`, `x`, `/`, and
+- Keyboard navigation with `j`, `k`, `e`, `Shift+e`, `u`, `s`, `#`, `x`, `/`, and
   `Cmd/Ctrl+K`.
 - Undo affordance for archive, trash, read/unread, star, and label changes,
   including multi-conversation batch actions.

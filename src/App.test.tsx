@@ -60,6 +60,26 @@ describe("archive notice", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
+  it("marks an archived conversation not done with Shift+e", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    await archiveSelected();
+    const search = screen.getByRole("textbox", { name: "Search mail" });
+    fireEvent.change(search, { target: { value: "Welcome" } });
+    const includeArchived = await screen.findByRole("button", { name: "Include archived or trashed mail in search" });
+    await act(async () => {
+      includeArchived.click();
+    });
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Conversation marked as not done");
+  });
+
   it("undoes an archive and optimistically restores the conversation", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
@@ -172,7 +192,7 @@ describe("trash and batch actions", () => {
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
 
     await act(async () => {
-      screen.getByRole("button", { name: "Trash (⇧3)" }).click();
+      screen.getByRole("button", { name: "Trash (#)" }).click();
     });
     expect(await screen.findByRole("status")).toHaveTextContent("Conversation moved to trash");
     expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
