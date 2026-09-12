@@ -118,7 +118,7 @@ at least an hour per day in email and prefers keyboard workflows.
 
 ### Next
 
-- multiple accounts and unified inbox;
+- [multiple accounts and a unified inbox](docs/multi-account.md);
 - send later;
 - unsubscribe and sender blocking;
 - calendar sidebar and availability sharing;
