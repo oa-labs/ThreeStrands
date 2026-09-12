@@ -22,6 +22,8 @@ export type CommandContext = {
   refresh(): void;
   openDiagnostics(): void;
   openLabels(): void;
+  openPalette(): void;
+  openShortcutHelp(): void;
   increaseFontSize(): void;
   decreaseFontSize(): void;
 };
@@ -103,6 +105,22 @@ export const commands: Command[] = [
     run: (context) => context.focusSearch(),
   },
   {
+    id: "palette.open",
+    title: "Command palette",
+    keys: ["Mod+k"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => context.openPalette(),
+  },
+  {
+    id: "shortcuts.open",
+    title: "Keyboard shortcuts",
+    keys: ["?"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => context.openShortcutHelp(),
+  },
+  {
     id: "mail.refresh",
     title: "Refresh mail",
     keys: ["Shift+r"],
@@ -146,8 +164,15 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
     (base === "+" && event.key === "+") ||
     (base === "=" && event.key === "=")
   );
-  return event.key.toLocaleLowerCase() === base.toLocaleLowerCase()
-    && (event.shiftKey === expectsShift || implicitSymbolShift)
+  const questionMark = base === "?" && (
+    event.key === "?" || (event.key === "/" && event.shiftKey)
+  );
+  const shiftMatches = expectsShift
+    ? event.shiftKey
+    : base === "?" || implicitSymbolShift || !event.shiftKey;
+  const baseMatches = questionMark || event.key.toLocaleLowerCase() === base.toLocaleLowerCase();
+  return baseMatches
+    && shiftMatches
     && (event.ctrlKey || event.metaKey) === expectsMod
     && !event.altKey;
 }

@@ -52,6 +52,35 @@ test("changes the app font size with desktop shortcuts and restores it", async (
   await expect(page.locator(".message-body").first()).toHaveCSS("font-size", "16.5px");
 });
 
+test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+
+  await page.keyboard.press("Shift+/");
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeVisible();
+  await expect(help.getByRole("heading", { name: "Navigation" })).toBeVisible();
+  await expect(help).toContainText("Go to Inbox");
+  await expect(help).toContainText("Manage labels");
+  await expect(help).toContainText("New message");
+  await expect(help).toContainText("Command palette");
+  await expect(help).toContainText("Refresh mail");
+
+  await page.keyboard.press("Escape");
+  await expect(help).not.toBeVisible();
+
+  const search = page.getByRole("textbox", { name: "Search mail" });
+  await search.focus();
+  await page.keyboard.type("?");
+  await expect(search).toHaveValue("?");
+  await expect(help).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Keyboard shortcuts (?)" }).click();
+  await expect(help).toBeVisible();
+  await page.locator(".modal-backdrop").click({ position: { x: 5, y: 5 } });
+  await expect(help).not.toBeVisible();
+});
+
 test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();

@@ -9,6 +9,7 @@ import {
   ReplyAll,
   Forward,
   Inbox,
+  Keyboard,
   Mail,
   MailOpen,
   Moon,
@@ -134,7 +135,6 @@ function HighlightedSnippet({ thread }: { thread: Thread }) {
 
 function useShortcutHandler(
   context: CommandContext,
-  openPalette: () => void,
 ) {
   const contextRef = useRef(context);
   contextRef.current = context;
@@ -156,7 +156,7 @@ function useShortcutHandler(
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         clearPendingStep();
         event.preventDefault();
-        openPalette();
+        currentContext.openPalette();
         return;
       }
       const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
@@ -216,7 +216,7 @@ function useShortcutHandler(
       window.removeEventListener("keydown", onKeyDown);
       clearPendingStep();
     };
-  }, [openPalette]);
+  }, []);
 }
 
 export function App() {
@@ -242,6 +242,7 @@ export function App() {
   const [hasMoreResults, setHasMoreResults] = useState(false);
   const [loading, setLoading] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -419,12 +420,13 @@ export function App() {
     },
     openDiagnostics: () => setDiagnosticsOpen(true),
     openLabels: () => setLabelsOpen(true),
+    openPalette: () => setPaletteOpen(true),
+    openShortcutHelp: () => setShortcutHelpOpen(true),
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
   }), [adjustFontScale, loadThreads, mutate, query, selected, selectedId, selectedIndex, threads, correspondence.context]);
 
-  const openPalette = useCallback(() => setPaletteOpen(true), []);
-  useShortcutHandler(context, openPalette);
+  useShortcutHandler(context);
 
   return (
     <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
@@ -454,6 +456,14 @@ export function App() {
           onClick={toggleTheme}
         >
           {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+        </button>
+        <button
+          className="nav-button"
+          aria-label="Keyboard shortcuts (?)"
+          title="Keyboard shortcuts (?)"
+          onClick={() => setShortcutHelpOpen(true)}
+        >
+          <Keyboard size={19} />
         </button>
         <button
           className="nav-button"
@@ -603,6 +613,9 @@ export function App() {
       {correspondence.overlay}
       {paletteOpen ? (
         <CommandPalette context={context} onClose={() => setPaletteOpen(false)} />
+      ) : null}
+      {shortcutHelpOpen ? (
+        <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} />
       ) : null}
       {diagnosticsOpen ? (
         <Diagnostics status={syncStatus} onClose={() => setDiagnosticsOpen(false)} />
@@ -766,6 +779,52 @@ function CommandPalette({
         ))}
       </div>
     </Modal>
+  );
+}
+
+const shortcutGroupOrder = ["Navigation", "Triage", "Compose", "Application"] as const;
+
+function ShortcutHelp({ onClose }: { onClose(): void }) {
+  const shortcutCommands = commands.filter((command) => command.keys.length > 0);
+  return (
+    <Modal title="Keyboard shortcuts" className="shortcut-help-modal" onClose={onClose}>
+      <p className="shortcut-help-intro">Use Dispatch without leaving the keyboard.</p>
+      <div className="shortcut-help-groups">
+        {shortcutGroupOrder.map((group) => {
+          const groupCommands = shortcutCommands.filter((command) => command.group === group);
+          if (groupCommands.length === 0) return null;
+          return (
+            <section key={group} aria-labelledby={`shortcut-group-${group.toLowerCase()}`}>
+              <h3 id={`shortcut-group-${group.toLowerCase()}`}>{group}</h3>
+              <dl>
+                {groupCommands.map((command) => (
+                  <div key={command.id}>
+                    <dt>{command.title}</dt>
+                    <dd>
+                      {command.keys.map((key) => <ShortcutKeys key={key} shortcut={key} />)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
+function ShortcutKeys({ shortcut }: { shortcut: string }) {
+  const steps = shortcutSteps(shortcut);
+  return (
+    <span className="shortcut-keys">
+      {steps.map((step, index) => (
+        <span key={step}>
+          {index > 0 ? <small>then</small> : null}
+          <kbd>{step.replace("Mod", "⌘/Ctrl").replaceAll("+", " + ")}</kbd>
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -973,10 +1032,12 @@ function AccountManager({
 }
 
 function Modal({
+  className,
   children,
   onClose,
   title,
 }: {
+  className?: string;
   children: React.ReactNode;
   onClose(): void;
   title: string;
@@ -993,7 +1054,7 @@ function Modal({
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
         ref={panelRef as RefObject<HTMLDivElement>}
-        className="modal"
+        className={`modal${className ? ` ${className}` : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
