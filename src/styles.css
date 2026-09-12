@@ -154,6 +154,23 @@ button { color: inherit; }
   background: conic-gradient(#4285F4, #34A853, #EA4335, #FBBC05, #4285F4);
 }
 
+.active-account-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
 .sidebar-spacer { flex: 1; }
 .nav-button, .icon-button, .modal header button {
   width: 34px;
@@ -595,10 +612,6 @@ kbd {
 .toast button { border: 0; color: var(--link); background: transparent; cursor: pointer; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-
-@media (min-width: 1150px) {
-  .action-button span { display: inline; }
-}
 
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 input::placeholder { color: var(--muted); opacity: 1; }

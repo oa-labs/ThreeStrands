@@ -372,6 +372,9 @@ export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+  const activeAccount = accounts.length > 1 && activeAccountId
+    ? accounts.find((account) => account.email === activeAccountId) ?? null
+    : null;
   const accountsRequest = useRef(0);
   const refreshAccounts = useCallback(() => {
     // Guards against an earlier-issued refresh resolving after a later one
@@ -816,6 +819,12 @@ export function App() {
               <span className="eyebrow">Inbox</span>
               <h1>{threads.length} conversations</h1>
             </div>
+            {activeAccount ? (
+              <span className="active-account-badge" title={activeAccount.email}>
+                <span className="account-dot" aria-hidden="true" style={{ background: activeAccount.color }} />
+                {activeAccount.displayName ?? activeAccount.email}
+              </span>
+            ) : null}
           </div>
           <button
             className="icon-button"
@@ -942,35 +951,49 @@ export function App() {
           <>
             <header className="reader-header">
               <div>
-                <span className="eyebrow">{detail.thread.labels.join(" · ")}</span>
+                <span className="eyebrow">
+                  {detail.thread.labels.map((id) => labels.find((label) => label.id === id)?.name ?? id).join(" · ")}
+                </span>
                 <h2>{detail.thread.subject}</h2>
               </div>
               <div className="reader-actions">
-                <ActionButton
-                  label={selected?.starred ? "Unstar" : "Star"}
-                  shortcut="s"
-                  onClick={() => executeById("thread.star")}
-                >
-                  <Star size={17} fill={selected?.starred ? "currentColor" : "none"} />
-                </ActionButton>
-                <ActionButton
+                <HoverTooltip label={selected?.starred ? "Unstar" : "Star"} shortcut="s" placement="bottom">
+                  <ActionButton
+                    label={selected?.starred ? "Unstar" : "Star"}
+                    shortcut="s"
+                    onClick={() => executeById("thread.star")}
+                  >
+                    <Star size={17} fill={selected?.starred ? "currentColor" : "none"} />
+                  </ActionButton>
+                </HoverTooltip>
+                <HoverTooltip
                   label={selected?.unread ? "Mark read" : "Mark unread"}
                   shortcut="u"
-                  onClick={() => executeById("thread.read")}
+                  placement="bottom"
                 >
-                  {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
-                </ActionButton>
+                  <ActionButton
+                    label={selected?.unread ? "Mark read" : "Mark unread"}
+                    shortcut="u"
+                    onClick={() => executeById("thread.read")}
+                  >
+                    {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
+                  </ActionButton>
+                </HoverTooltip>
                 <HoverTooltip label="Manage Labels" shortcut="L" placement="bottom">
                   <ActionButton label="Labels" shortcut="l" onClick={() => executeById("labels.open")}>
                     <Tag size={17} />
                   </ActionButton>
                 </HoverTooltip>
-                <ActionButton label="Archive" shortcut="e" onClick={() => executeById("thread.archive")}>
-                  <Archive size={17} />
-                </ActionButton>
-                <ActionButton label="Trash" shortcut="⇧3" onClick={() => executeById("thread.trash")}>
-                  <Trash2 size={17} />
-                </ActionButton>
+                <HoverTooltip label="Archive" shortcut="e" placement="bottom">
+                  <ActionButton label="Archive" shortcut="e" onClick={() => executeById("thread.archive")}>
+                    <Archive size={17} />
+                  </ActionButton>
+                </HoverTooltip>
+                <HoverTooltip label="Trash" shortcut="⇧3" placement="bottom">
+                  <ActionButton label="Trash" shortcut="⇧3" onClick={() => executeById("thread.trash")}>
+                    <Trash2 size={17} />
+                  </ActionButton>
+                </HoverTooltip>
               </div>
             </header>
             <div className="reply-toolbar" aria-label="Correspondence actions">
