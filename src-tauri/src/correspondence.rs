@@ -1079,9 +1079,9 @@ mod tests {
         d.body_html = "<p><strong>Formatted</strong> message</p>".into();
         let raw = build_mime(&d, "rich-id", Path::new("/unused")).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
-        assert_eq!(parsed.body_text(0), Some("Formatted message"));
+        assert_eq!(parsed.body_text(0).as_deref(), Some("Formatted message"));
         assert_eq!(
-            parsed.body_html(0),
+            parsed.body_html(0).as_deref(),
             Some("<p><strong>Formatted</strong> message</p>")
         );
     }
