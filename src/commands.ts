@@ -7,6 +7,7 @@ export type CommandContext = {
   reply(): void;
   replyAll(): void;
   forward(): void;
+  openInbox(): void;
   openDrafts(): void;
   openOutbox(): void;
   sendDraft(): void;
@@ -37,7 +38,8 @@ export const commands: Command[] = [
   { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => c.reply() },
   { id: "draft.replyAll", title: "Reply all", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => c.replyAll() },
   { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => c.forward() },
-  { id: "drafts.open", title: "Open drafts", keys: [], group: "Compose", enabled: () => true, run: (c) => c.openDrafts() },
+  { id: "mailbox.inbox", title: "Go to Inbox", keys: ["g then i"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => c.openInbox() },
+  { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => c.openDrafts() },
   { id: "outbox.open", title: "Open outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => c.openOutbox() },
   { id: "draft.send", title: "Send draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => c.sendDraft() },
   { id: "draft.attach", title: "Attach files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => c.attachFiles() },
@@ -123,6 +125,10 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
     && event.shiftKey === parts.includes("Shift")
     && (event.ctrlKey || event.metaKey) === parts.includes("Mod")
     && !event.altKey;
+}
+
+export function shortcutSteps(key: string): string[] {
+  return key.split(/\s+then\s+/i);
 }
 
 export function isEditableTarget(target: EventTarget | null): boolean {

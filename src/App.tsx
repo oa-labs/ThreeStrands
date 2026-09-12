@@ -30,7 +30,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { commands, isEditableTarget, matchesShortcut, type CommandContext } from "./commands";
+import {
+  commands,
+  isEditableTarget,
+  matchesShortcut,
+  shortcutSteps,
+  type CommandContext,
+} from "./commands";
 import {
   clearLocalCrashReports,
   crashReportingEnabled,
@@ -63,27 +69,82 @@ function useShortcutHandler(
   context: CommandContext,
   openPalette: () => void,
 ) {
+  const pendingStep = useRef<string | null>(null);
+  const pendingTimeout = useRef<number | null>(null);
+
   useEffect(() => {
+    const clearPendingStep = () => {
+      pendingStep.current = null;
+      if (pendingTimeout.current !== null) {
+        window.clearTimeout(pendingTimeout.current);
+        pendingTimeout.current = null;
+      }
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (context.closing || event.isComposing || event.defaultPrevented) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        clearPendingStep();
         event.preventDefault();
         openPalette();
         return;
       }
       const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && context.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
-      if (!sendShortcut && (isEditableTarget(event.target) || document.querySelector('[role="dialog"]'))) return;
+      const dialog = document.querySelector('[role="dialog"]');
+      const allowsMailboxNavigation = dialog?.classList.contains("correspondence-list");
+      if (!sendShortcut && (isEditableTarget(event.target) || (dialog && !allowsMailboxNavigation))) {
+        clearPendingStep();
+        return;
+      }
+
+      if (pendingStep.current) {
+        const command = commands.find(
+          (candidate) =>
+            candidate.enabled(context) &&
+            candidate.keys.some((key) => {
+              const steps = shortcutSteps(key);
+              return steps.length === 2 &&
+                steps[0].toLocaleLowerCase() === pendingStep.current &&
+                matchesShortcut(event, steps[1]);
+            }),
+        );
+        clearPendingStep();
+        if (command) {
+          event.preventDefault();
+          command.run(context);
+          return;
+        }
+      }
+
       const command = commands.find(
         (candidate) =>
           candidate.enabled(context) &&
-          candidate.keys.some((key) => matchesShortcut(event, key)),
+          candidate.keys.some((key) => {
+            const steps = shortcutSteps(key);
+            return steps.length === 1 && matchesShortcut(event, steps[0]);
+          }),
       );
-      if (!command) return;
+      if (command) {
+        event.preventDefault();
+        command.run(context);
+        return;
+      }
+
+      const prefix = commands
+        .filter((candidate) => candidate.enabled(context))
+        .flatMap((candidate) => candidate.keys)
+        .map(shortcutSteps)
+        .find((steps) => steps.length === 2 && matchesShortcut(event, steps[0]));
+      if (!prefix) return;
       event.preventDefault();
-      command.run(context);
+      pendingStep.current = prefix[0].toLocaleLowerCase();
+      pendingTimeout.current = window.setTimeout(clearPendingStep, 1000);
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      clearPendingStep();
+    };
   }, [context, openPalette]);
 }
 
@@ -221,6 +282,11 @@ export function App() {
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     selectedId,
+    openInbox: () => {
+      correspondence.context.openInbox();
+      setQuery("");
+      void loadThreads("");
+    },
     selectNext: () => {
       const next = Math.min(selectedIndex + 1, threads.length - 1);
       setSelectedId(threads[next]?.id ?? null);
@@ -257,9 +323,16 @@ export function App() {
     <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <button className="brand" aria-label="Account" onClick={() => setAccountOpen(true)}>D</button>
-        <button className="nav-button active" aria-label="Inbox"><Inbox size={19} /></button>
+        <button
+          className="nav-button active"
+          aria-label="Inbox (g then i)"
+          title="Inbox (g then i)"
+          onClick={context.openInbox}
+        >
+          <Inbox size={19} />
+        </button>
         <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={context.compose}><Pencil size={19} /></button>
-        <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount})`} title="Drafts" onClick={context.openDrafts}><FileText size={19} /></button>
+        <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount}) (g then d)`} title="Drafts (g then d)" onClick={context.openDrafts}><FileText size={19} /></button>
         <button className="nav-button" aria-label={`Outbox (${correspondence.outboxCount})`} title="Outbox" onClick={context.openOutbox}><Send size={19} /></button>
         <div className="sidebar-spacer" />
         <button
