@@ -10,8 +10,9 @@ use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
-    time::timeout,
+    time::{timeout, Instant},
 };
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 const SERVICE: &str = "app.dispatch.mail";
@@ -27,6 +28,8 @@ const SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify 
 /// by the real address the moment it's learned, via `GoogleAuth::rekey_to`.
 const LEGACY_KEY: &str = "default";
 const PENDING_KEY: &str = "pending";
+/// Returned when a newer sign-in attempt superseded this one.
+const CANCELED: &str = "Sign-in was canceled by a newer attempt.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tokens {
@@ -150,8 +153,14 @@ impl GoogleAuth {
     /// already represents a real address, the authorized account must match
     /// it — reconnecting one account can never silently adopt another
     /// account's tokens. Returns the authorized email.
-    pub async fn authorize(&self) -> Result<String, String> {
-        let tokens = self.run_pkce_flow().await?;
+    ///
+    /// `cancel` lets a caller abandon this attempt from the outside — e.g.
+    /// because the user started a newer "add account"/"reconnect" flow
+    /// before finishing (or closing) the browser tab this one opened. Without
+    /// it, an abandoned flow would sit waiting on the loopback listener for
+    /// the full timeout, silently blocking any retry that shares its slot.
+    pub async fn authorize(&self, cancel: &CancellationToken) -> Result<String, String> {
+        let tokens = self.run_pkce_flow(cancel).await?;
         let email = fetch_email(&self.client, &tokens.access_token).await?;
         self.accept_identity(&email)?;
         self.save(&tokens)?;
@@ -171,7 +180,7 @@ impl GoogleAuth {
         self.rekey_to(email)
     }
 
-    async fn run_pkce_flow(&self) -> Result<Tokens, String> {
+    async fn run_pkce_flow(&self, cancel: &CancellationToken) -> Result<Tokens, String> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(display)?;
         let redirect_uri = format!(
             "http://127.0.0.1:{}/oauth/callback",
@@ -194,24 +203,7 @@ impl GoogleAuth {
             .append_pair("prompt", "consent");
         open::that(authorization.as_str()).map_err(display)?;
 
-        let (mut stream, _) = timeout(Duration::from_secs(300), listener.accept())
-            .await
-            .map_err(|_| "OAuth callback timed out".to_string())?
-            .map_err(display)?;
-        let mut request = vec![0_u8; 16 * 1024];
-        let count = timeout(Duration::from_secs(10), stream.read(&mut request))
-            .await
-            .map_err(|_| "OAuth callback was incomplete".to_string())?
-            .map_err(display)?;
-        let first_line = String::from_utf8_lossy(&request[..count])
-            .lines()
-            .next()
-            .ok_or_else(|| "Invalid OAuth callback".to_string())?
-            .to_string();
-        let target = first_line
-            .split_whitespace()
-            .nth(1)
-            .ok_or_else(|| "Invalid OAuth callback".to_string())?;
+        let (mut stream, target) = self.accept_callback(&listener, cancel).await?;
         let callback = Url::parse(&format!("http://localhost{target}")).map_err(display)?;
         let values = callback
             .query_pairs()
@@ -240,6 +232,55 @@ impl GoogleAuth {
         );
         let _ = stream.write_all(response.as_bytes()).await;
         result
+    }
+
+    /// Accepts loopback connections until one is actually the browser's
+    /// redirect to `/oauth/callback`, instead of trusting whichever
+    /// connection happens to land first. Browsers routinely open extra
+    /// connections against a page they just navigated to — a favicon
+    /// request, a speculative preconnect — and treating one of those as
+    /// *the* callback made sign-in either fail outright or, worse, sit
+    /// waiting on a follow-up read that never comes until it times out. Any
+    /// non-matching connection gets a quick 404 and is dropped so the real
+    /// one still gets a chance within the overall deadline.
+    async fn accept_callback(
+        &self,
+        listener: &TcpListener,
+        cancel: &CancellationToken,
+    ) -> Result<(tokio::net::TcpStream, String), String> {
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err("OAuth callback timed out".to_string());
+            }
+            let (mut stream, _) = tokio::select! {
+                _ = cancel.cancelled() => return Err(CANCELED.to_string()),
+                result = timeout(remaining, listener.accept()) => {
+                    result.map_err(|_| "OAuth callback timed out".to_string())?.map_err(display)?
+                }
+            };
+            let mut request = vec![0_u8; 16 * 1024];
+            let read = tokio::select! {
+                _ = cancel.cancelled() => return Err(CANCELED.to_string()),
+                result = timeout(Duration::from_secs(5), stream.read(&mut request)) => result,
+            };
+            let Ok(Ok(count)) = read else {
+                // Incomplete or silent connection (e.g. a preconnect that
+                // never sends a request) — not the callback; keep waiting.
+                continue;
+            };
+            let target = String::from_utf8_lossy(&request[..count])
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1).map(str::to_string));
+            if let Some(target) = target.filter(|path| path.starts_with("/oauth/callback")) {
+                return Ok((stream, target));
+            }
+            let _ = stream
+                .write_all(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n")
+                .await;
+        }
     }
 
     async fn exchange_code(

@@ -372,8 +372,20 @@ export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+  const accountsRequest = useRef(0);
   const refreshAccounts = useCallback(() => {
-    void mailClient.listAccounts().then(setAccounts).catch(() => setAccounts([]));
+    // Guards against an earlier-issued refresh resolving after a later one
+    // (e.g. two account edits in quick succession) and clobbering it with
+    // stale data.
+    const requestId = ++accountsRequest.current;
+    return mailClient
+      .listAccounts()
+      .then((next) => {
+        if (requestId === accountsRequest.current) setAccounts(next);
+      })
+      .catch(() => {
+        if (requestId === accountsRequest.current) setAccounts([]);
+      });
   }, []);
   const [notice, setNotice] = useNotice();
   const lastUndo = useRef<{ command: Command; result: CommandResult } | null>(null);
@@ -1064,17 +1076,17 @@ export function App() {
             setAuthStatus(await mailClient.googleAuthStatus());
             await loadThreads(query);
             setLabels(await mailClient.listLabels());
-            refreshAccounts();
+            await refreshAccounts();
           }}
           onDisconnectAccount={async () => {
             await mailClient.disconnectGoogle();
             setAuthStatus(await mailClient.googleAuthStatus());
-            refreshAccounts();
+            await refreshAccounts();
           }}
           accounts={accounts}
           onAddAccount={async () => {
             await mailClient.addAccount();
-            refreshAccounts();
+            await refreshAccounts();
           }}
           onRemoveAccount={async (email) => {
             await mailClient.removeAccount(email);
@@ -1082,20 +1094,20 @@ export function App() {
               setActiveAccountId(null);
               void loadThreads(query, null);
             }
-            refreshAccounts();
+            await refreshAccounts();
             setAuthStatus(await mailClient.googleAuthStatus());
           }}
           onReconnectAccount={async (email) => {
             await mailClient.reconnectAccount(email);
-            refreshAccounts();
+            await refreshAccounts();
           }}
           onSetAccountColor={async (email, color) => {
             await mailClient.setAccountColor(email, color);
-            refreshAccounts();
+            await refreshAccounts();
           }}
           onReorderAccounts={async (emails) => {
             await mailClient.reorderAccounts(emails);
-            refreshAccounts();
+            await refreshAccounts();
           }}
         />
       ) : null}
@@ -1773,15 +1785,15 @@ function AccountsSettings({
                 >
                   <ChevronDown size={14} />
                 </button>
-                <input
-                  type="color"
-                  aria-label={`Color for ${account.email}`}
-                  value={account.color}
-                  disabled={busyEmail !== null}
-                  onChange={(event) => {
-                    const color = event.target.value;
-                    act(account.email, () => onSetColor(account.email, color));
-                  }}
+                <AccountColorInput
+                  email={account.email}
+                  color={account.color}
+                  onCommit={(color) =>
+                    onSetColor(account.email, color).catch((reason: unknown) => {
+                      setError(reason instanceof Error ? reason.message : String(reason));
+                      throw reason;
+                    })
+                  }
                 />
                 {account.status === "needs_reauth" ? (
                   <button
@@ -1811,6 +1823,58 @@ function AccountsSettings({
       ) : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
+  );
+}
+
+/**
+ * A color swatch that saves on its own debounced schedule instead of on
+ * every drag tick. `<input type="color">` fires `onChange` continuously
+ * while the native picker is open, not just once on commit — driving that
+ * straight into a save-and-disable cycle (the previous implementation) could
+ * disable the input mid-drag and drop the rest of the gesture, so only the
+ * first flicker of color ever got saved. Local `value` gives smooth
+ * dragging; `color` (the saved value) is only adopted once no locally
+ * committed save is still in flight, so a slow save can't snap the swatch
+ * back to a stale color out from under the user.
+ */
+function AccountColorInput({
+  email,
+  color,
+  onCommit,
+}: {
+  email: string;
+  color: string;
+  onCommit(color: string): Promise<void>;
+}) {
+  const [value, setValue] = useState(color);
+  const pendingCount = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (pendingCount.current === 0) setValue(color);
+  }, [color]);
+
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  return (
+    <input
+      type="color"
+      aria-label={`Color for ${email}`}
+      value={value}
+      onChange={(event) => {
+        const next = event.target.value;
+        setValue(next);
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => {
+          pendingCount.current++;
+          onCommit(next)
+            .catch(() => {})
+            .finally(() => { pendingCount.current--; });
+        }, 200);
+      }}
+    />
   );
 }
 

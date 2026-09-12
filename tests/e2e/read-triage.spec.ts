@@ -154,6 +154,43 @@ test("switches accounts from the keyboard and palette, and removing one leaves t
   await expect(page.getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
 });
 
+test("the account color picker keeps the last color picked, even while dragging rapidly", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  const swatch = settings.locator('input[aria-label="Color for demo@example.com"]');
+  const initial = await swatch.inputValue();
+
+  // `<input type="color">` fires `input` continuously while its native
+  // picker is open, not just once on commit — simulate a drag through
+  // several intermediate colors landing on a final one. Setting `.value`
+  // through the native property setter (rather than the plain JS property,
+  // which React's controlled-input tracking treats as a no-op) is required
+  // for React to see each change as real, same as a genuine picker drag.
+  for (const value of ["#111111", "#222222", "#333333", "#abcdef"]) {
+    await swatch.evaluate((input: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, value);
+    await page.waitForTimeout(50);
+  }
+
+  await expect(swatch).toHaveValue("#abcdef");
+  // Give the debounced save well past its window to land.
+  await page.waitForTimeout(500);
+  await expect(swatch).toHaveValue("#abcdef");
+
+  // Reopening the panel re-fetches from the store; the final pick, not an
+  // intermediate flicker, must be what was actually saved.
+  await page.keyboard.press("Escape");
+  await expect(settings).not.toBeVisible();
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await expect(settings).toBeVisible();
+  await expect(settings.locator('input[aria-label="Color for demo@example.com"]')).toHaveValue("#abcdef");
+  expect(initial).not.toBe("#abcdef");
+});
+
 test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();

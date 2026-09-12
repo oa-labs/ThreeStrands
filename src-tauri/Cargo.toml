@@ -32,5 +32,6 @@ tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["net", "sync", "time", "io-util", "macros", "rt-multi-thread"] }
+tokio-util = { version = "0.7", default-features = false }
 url = "2"
 uuid = { version = "1", features = ["v4"] }

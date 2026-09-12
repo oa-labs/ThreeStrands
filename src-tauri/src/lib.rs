@@ -18,6 +18,7 @@ use models::{
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
+use tokio_util::sync::CancellationToken;
 
 /// An account beyond the primary: its own credentials and the task running
 /// its own sync loop. Removing the account aborts `poll_task`. Shared with
@@ -46,7 +47,97 @@ struct AppState {
     /// `add_account`.
     additional_accounts: Arc<tokio::sync::Mutex<HashMap<String, ConnectedAccount>>>,
     correspondence: correspondence::Correspondence,
+    /// Serializes interactive "sign in with Google" flows (connect/add/
+    /// reconnect) so two never race two loopback listeners at once — without
+    /// blocking unrelated work like outbox delivery, which used to share a
+    /// lock with these. A new attempt cancels whichever one it replaces
+    /// rather than queuing behind it, so a browser tab closed without
+    /// finishing never silently blocks the next "Add account" click.
+    authorize_slot: AuthorizeSlot,
     exiting: std::sync::atomic::AtomicBool,
+}
+
+#[derive(Clone, Default)]
+struct AuthorizeSlot(Arc<tokio::sync::Mutex<Option<CancellationToken>>>);
+
+impl AuthorizeSlot {
+    /// Cancels any interactive sign-in flow currently in progress and claims
+    /// the slot for a new one, returning the token this flow should race
+    /// against.
+    async fn claim(&self) -> CancellationToken {
+        let mut slot = self.0.lock().await;
+        if let Some(previous) = slot.take() {
+            previous.cancel();
+        }
+        let token = CancellationToken::new();
+        *slot = Some(token.clone());
+        token
+    }
+
+    /// Releases the slot, but only if a newer attempt hasn't already claimed
+    /// it (which would have canceled `token`) — otherwise this would clear a
+    /// slot that isn't this flow's anymore.
+    async fn release(&self, token: &CancellationToken) {
+        let mut slot = self.0.lock().await;
+        if !token.is_cancelled() {
+            *slot = None;
+        }
+    }
+}
+
+/// Runs `auth.authorize()` behind the app-wide sign-in slot, canceling
+/// whichever attempt it replaces and always releasing the slot afterward.
+async fn authorize_interactively(state: &AppState, auth: &GoogleAuth) -> Result<String, String> {
+    let token = state.authorize_slot.claim().await;
+    let result = auth.authorize(&token).await;
+    state.authorize_slot.release(&token).await;
+    result
+}
+
+#[cfg(test)]
+mod authorize_slot_tests {
+    use super::AuthorizeSlot;
+
+    #[tokio::test]
+    async fn claiming_the_slot_cancels_whatever_it_replaces() {
+        let slot = AuthorizeSlot::default();
+        let first = slot.claim().await;
+        assert!(!first.is_cancelled());
+        let second = slot.claim().await;
+        assert!(
+            first.is_cancelled(),
+            "a new claim must cancel the stale one"
+        );
+        assert!(!second.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn releasing_a_superseded_token_does_not_clobber_the_newer_claim() {
+        let slot = AuthorizeSlot::default();
+        let first = slot.claim().await;
+        let second = slot.claim().await;
+        // `first` was canceled by `second`'s claim, so its (belated) release
+        // must be a no-op rather than clearing `second`'s slot out from
+        // under it.
+        slot.release(&first).await;
+        assert!(!second.is_cancelled());
+        slot.release(&second).await;
+        // The slot is free again now that its rightful owner released it.
+        let third = slot.claim().await;
+        assert!(!third.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn releasing_the_current_claim_frees_the_slot_for_reuse() {
+        let slot = AuthorizeSlot::default();
+        let first = slot.claim().await;
+        slot.release(&first).await;
+        let second = slot.claim().await;
+        assert!(
+            !second.is_cancelled(),
+            "a fresh claim must not start canceled"
+        );
+    }
 }
 
 fn primary_account_id(state: &AppState) -> String {
@@ -184,13 +275,8 @@ fn google_auth_status(state: State<'_, AppState>) -> AuthStatus {
 
 #[tauri::command]
 async fn connect_google(state: State<'_, AppState>) -> Result<SyncStatus, String> {
-    let _guard = state.correspondence.gate.lock().await;
-    state
-        .auth
-        .as_ref()
-        .ok_or_else(not_configured)?
-        .authorize()
-        .await?;
+    let auth = state.auth.clone().ok_or_else(not_configured)?;
+    authorize_interactively(&state, &auth).await?;
     let _ = state.correspondence.refresh_identity().await;
     state.sync.as_ref().ok_or_else(not_configured)?.sync().await
 }
@@ -208,10 +294,9 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, String> {
 
 #[tauri::command]
 async fn add_account(state: State<'_, AppState>) -> Result<Account, String> {
-    let _guard = state.correspondence.gate.lock().await;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let auth = config.pending_account();
-    let email = auth.authorize().await?;
+    let email = authorize_interactively(&state, &auth).await?;
     let account = state.database.adopt_account(&email)?;
     let connected = spawn_synced_account(state.database.clone(), auth);
     state
@@ -241,7 +326,6 @@ async fn remove_account(email: String, state: State<'_, AppState>) -> Result<(),
 
 #[tauri::command]
 async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<Account, String> {
-    let _guard = state.correspondence.gate.lock().await;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let is_primary = state
         .auth
@@ -255,7 +339,7 @@ async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<
             None => config.account(&email),
         }
     };
-    auth.authorize().await?;
+    authorize_interactively(&state, &auth).await?;
     if !is_primary {
         // Self-heal: an account already in the `accounts` table should
         // always have a live poller from startup, but reconnecting is a
@@ -445,6 +529,7 @@ pub fn run() {
                 sync,
                 additional_accounts,
                 correspondence,
+                authorize_slot: AuthorizeSlot::default(),
                 exiting: std::sync::atomic::AtomicBool::new(false),
             });
             Ok(())
