@@ -55,6 +55,7 @@ export function useCorrespondence(sourceId?: string) {
     closing,
     composerActive: Boolean(active),
     compose: () => { void start("new"); }, reply: () => { void start("reply"); }, replyAll: () => { void start("replyAll"); }, forward: () => { void start("forward"); },
+    openInbox: () => { setActive(null); setView(null); },
     openDrafts: () => { void show("drafts"); }, openOutbox: () => { void show("outbox"); },
     sendDraft: () => editor.current?.send(), attachFiles: () => editor.current?.attach(),
     undoSend: () => { void undo(); }, canUndoSend: Boolean(pending),

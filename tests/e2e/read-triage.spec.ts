@@ -15,6 +15,8 @@ test("processes the inbox from the keyboard", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "2 conversations" })).toBeVisible();
   await expect(page.getByRole("option", { selected: true })).toContainText("Your inbox stays local");
   await expect(page.getByRole("heading", { name: "Your inbox stays local" })).toBeVisible();
+
+  await expect(page.getByRole("status")).toBeHidden({ timeout: 10_000 });
 });
 
 test("searches and opens the command palette", async ({ page }) => {
@@ -26,6 +28,23 @@ test("searches and opens the command palette", async ({ page }) => {
 
   await page.keyboard.press("ControlOrMeta+k");
   await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
+});
+
+test("opens Superhuman-compatible folder destinations", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+
+  await page.keyboard.press("g");
+  await page.keyboard.press("d");
+  await expect(page.getByRole("dialog", { name: "Drafts" })).toBeVisible();
+
+  await page.keyboard.press("g");
+  await page.keyboard.press("i");
+  await expect(page.getByRole("dialog", { name: "Drafts" })).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+
+  await page.keyboard.press("l");
+  await expect(page.getByRole("dialog", { name: "Manage labels" })).toBeVisible();
 });
 
 test("switches themes and remembers the choice after reload", async ({ page }) => {

@@ -30,7 +30,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { commands, isEditableTarget, matchesShortcut, type CommandContext } from "./commands";
+import {
+  commands,
+  isEditableTarget,
+  matchesShortcut,
+  shortcutSteps,
+  type CommandContext,
+} from "./commands";
 import {
   clearLocalCrashReports,
   crashReportingEnabled,
@@ -54,6 +60,39 @@ import { applyTheme, readTheme, saveTheme } from "./theme";
 
 type Notice = { message: string; undo?: () => void };
 
+export const NOTICE_TIMEOUT_MS = 6000;
+
+let noticeSequence = 0;
+
+function useNotice() {
+  const [notice, setCurrent] = useState<(Notice & { key: number }) | null>(null);
+  const timeout = useRef<number | null>(null);
+
+  const clearTimer = useCallback(() => {
+    if (timeout.current === null) return;
+    window.clearTimeout(timeout.current);
+    timeout.current = null;
+  }, []);
+
+  const setNotice = useCallback((next: Notice | null) => {
+    clearTimer();
+    if (!next) {
+      setCurrent(null);
+      return;
+    }
+    const key = ++noticeSequence;
+    setCurrent({ ...next, key });
+    timeout.current = window.setTimeout(() => {
+      timeout.current = null;
+      setCurrent((shown) => (shown?.key === key ? null : shown));
+    }, NOTICE_TIMEOUT_MS);
+  }, [clearTimer]);
+
+  useEffect(() => clearTimer, [clearTimer]);
+
+  return [notice, setNotice] as const;
+}
+
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
@@ -63,28 +102,86 @@ function useShortcutHandler(
   context: CommandContext,
   openPalette: () => void,
 ) {
+  const contextRef = useRef(context);
+  contextRef.current = context;
+  const pendingStep = useRef<string | null>(null);
+  const pendingTimeout = useRef<number | null>(null);
+
   useEffect(() => {
+    const clearPendingStep = () => {
+      pendingStep.current = null;
+      if (pendingTimeout.current !== null) {
+        window.clearTimeout(pendingTimeout.current);
+        pendingTimeout.current = null;
+      }
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (context.closing || event.isComposing || event.defaultPrevented) return;
+      const currentContext = contextRef.current;
+      if (currentContext.closing || event.isComposing || event.defaultPrevented) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        clearPendingStep();
         event.preventDefault();
         openPalette();
         return;
       }
-      const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && context.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
-      if (!sendShortcut && (isEditableTarget(event.target) || document.querySelector('[role="dialog"]'))) return;
+      const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
+      const dialog = document.querySelector('[role="dialog"]');
+      const allowsMailboxNavigation = dialog?.classList.contains("correspondence-list");
+      if (!sendShortcut && (isEditableTarget(event.target) || (dialog && !allowsMailboxNavigation))) {
+        clearPendingStep();
+        return;
+      }
+
+      if (pendingStep.current) {
+        const command = commands.find(
+          (candidate) =>
+            candidate.enabled(currentContext) &&
+            candidate.keys.some((key) => {
+              const steps = shortcutSteps(key);
+              return steps.length === 2 &&
+                steps[0].toLocaleLowerCase() === pendingStep.current &&
+                matchesShortcut(event, steps[1]);
+            }),
+        );
+        clearPendingStep();
+        if (command) {
+          event.preventDefault();
+          command.run(currentContext);
+          return;
+        }
+      }
+
       const command = commands.find(
         (candidate) =>
-          candidate.enabled(context) &&
-          candidate.keys.some((key) => matchesShortcut(event, key)),
+          candidate.enabled(currentContext) &&
+          candidate.keys.some((key) => {
+            const steps = shortcutSteps(key);
+            return steps.length === 1 && matchesShortcut(event, steps[0]);
+          }),
       );
-      if (!command) return;
+      if (command) {
+        event.preventDefault();
+        command.run(currentContext);
+        return;
+      }
+
+      const prefix = commands
+        .filter((candidate) => candidate.enabled(currentContext))
+        .flatMap((candidate) => candidate.keys)
+        .map(shortcutSteps)
+        .find((steps) => steps.length === 2 && matchesShortcut(event, steps[0]));
+      if (!prefix) return;
       event.preventDefault();
-      command.run(context);
+      pendingStep.current = prefix[0].toLocaleLowerCase();
+      pendingTimeout.current = window.setTimeout(clearPendingStep, 1000);
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [context, openPalette]);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      clearPendingStep();
+    };
+  }, [openPalette]);
 }
 
 export function App() {
@@ -109,7 +206,7 @@ export function App() {
   const [labels, setLabels] = useState<Label[]>([]);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const [notice, setNotice] = useNotice();
   const searchRef = useRef<HTMLInputElement>(null);
 
   const loadThreads = useCallback(async (search: string) => {
@@ -221,7 +318,7 @@ export function App() {
       ].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)));
       setNotice({ message: "Change could not be saved" });
     }
-  }, [loadThreads, query, threads, selectedId]);
+  }, [loadThreads, query, threads, selectedId, setNotice]);
 
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
@@ -229,6 +326,11 @@ export function App() {
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     selectedId,
+    openInbox: () => {
+      correspondence.context.openInbox();
+      setQuery("");
+      void loadThreads("");
+    },
     selectNext: () => {
       const next = Math.min(selectedIndex + 1, threads.length - 1);
       setSelectedId(threads[next]?.id ?? null);
@@ -265,9 +367,16 @@ export function App() {
     <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <button className="brand" aria-label="Account" onClick={() => setAccountOpen(true)}>D</button>
-        <button className="nav-button active" aria-label="Inbox"><Inbox size={19} /></button>
+        <button
+          className="nav-button active"
+          aria-label="Inbox (g then i)"
+          title="Inbox (g then i)"
+          onClick={context.openInbox}
+        >
+          <Inbox size={19} />
+        </button>
         <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={context.compose}><Pencil size={19} /></button>
-        <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount})`} title="Drafts" onClick={context.openDrafts}><FileText size={19} /></button>
+        <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount}) (g then d)`} title="Drafts (g then d)" onClick={context.openDrafts}><FileText size={19} /></button>
         <button className="nav-button" aria-label={`Outbox (${correspondence.outboxCount})`} title="Outbox" onClick={context.openOutbox}><Send size={19} /></button>
         <div className="sidebar-spacer" />
         <button
@@ -362,7 +471,7 @@ export function App() {
                 >
                   {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
                 </ActionButton>
-                <ActionButton label="Labels" shortcut="v" onClick={context.openLabels}>
+                <ActionButton label="Labels" shortcut="l" onClick={context.openLabels}>
                   <Tag size={17} />
                 </ActionButton>
                 <ActionButton label="Archive" shortcut="e" onClick={context.archiveSelected}>
