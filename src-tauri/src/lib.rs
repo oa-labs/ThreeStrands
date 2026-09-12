@@ -83,6 +83,29 @@ async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatus, String> 
 }
 
 #[tauri::command]
+async fn flush_pending_mutations(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+    match state.sync.as_ref() {
+        Some(service) => service.flush_pending().await,
+        None => state.database.sync_status(),
+    }
+}
+
+fn spawn_pending_flush(handle: &tauri::AppHandle) {
+    if !GoogleAuth::available() {
+        return;
+    }
+    let Some(state) = handle.try_state::<AppState>() else {
+        return;
+    };
+    let Some(service) = state.sync.clone() else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        let _ = service.flush_pending().await;
+    });
+}
+
+#[tauri::command]
 fn google_auth_status(state: State<'_, AppState>) -> AuthStatus {
     AuthStatus {
         configured: state.auth.is_some(),
@@ -230,6 +253,7 @@ pub fn run() {
             mutate_thread,
             sync_status,
             sync_account,
+            flush_pending_mutations,
             google_auth_status,
             connect_google,
             disconnect_google,
@@ -254,6 +278,10 @@ pub fn run() {
                         }
                     }
                 }
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::Focused(false),
+                    ..
+                } => spawn_pending_flush(handle),
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     if let Some(state) = handle.try_state::<AppState>() {
                         if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {

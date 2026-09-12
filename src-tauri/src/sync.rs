@@ -37,6 +37,23 @@ impl SyncService {
         self.database.sync_status()
     }
 
+    pub async fn flush_pending(&self) -> Result<SyncStatus, String> {
+        if self.database.sync_status()?.pending_mutations == 0 {
+            return self.database.sync_status();
+        }
+        if !GoogleAuth::available() {
+            return self.database.sync_status();
+        }
+        let _guard = self.gate.lock().await;
+        let provider = GmailClient::new(self.auth.clone());
+        if let Err(error) = flush_pending_with(self.database.as_ref(), &provider).await {
+            let message = error.to_string();
+            self.database.fail_sync(&message)?;
+            return Err(message);
+        }
+        self.database.sync_status()
+    }
+
     pub async fn labels(&self) -> Result<Vec<Label>, String> {
         GmailClient::new(self.auth.clone())
             .list_labels()
@@ -96,6 +113,21 @@ fn validate_label_name(name: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+pub async fn flush_pending_with(
+    database: &Database,
+    provider: &(impl GmailProvider + ?Sized),
+) -> ProviderResult<()> {
+    if database
+        .sync_status()
+        .map_err(ProviderError::Other)?
+        .pending_mutations
+        == 0
+    {
+        return Ok(());
+    }
+    deliver_mutations(database, provider).await
 }
 
 pub async fn sync_with(
@@ -257,6 +289,7 @@ mod tests {
     struct ContractProvider {
         invalidate_stale_cursor: AtomicBool,
         full_lists: AtomicUsize,
+        modifies: AtomicUsize,
         fail_mutation: bool,
     }
 
@@ -265,6 +298,7 @@ mod tests {
             Self {
                 invalidate_stale_cursor: AtomicBool::new(false),
                 full_lists: AtomicUsize::new(0),
+                modifies: AtomicUsize::new(0),
                 fail_mutation: false,
             }
         }
@@ -336,6 +370,7 @@ mod tests {
             _add: &[String],
             _remove: &[String],
         ) -> ProviderResult<()> {
+            self.modifies.fetch_add(1, Ordering::SeqCst);
             if self.fail_mutation {
                 Err(ProviderError::RateLimited)
             } else {
@@ -401,5 +436,30 @@ mod tests {
             Err(ProviderError::RateLimited)
         ));
         assert_eq!(database.sync_status().unwrap().pending_mutations, 1);
+    }
+
+    #[tokio::test]
+    async fn inactivity_flush_skips_provider_when_nothing_is_pending() {
+        let database = Database::open_memory();
+        let provider = ContractProvider::normal();
+        flush_pending_with(&database, &provider).await.unwrap();
+        assert_eq!(provider.modifies.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.full_lists.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn inactivity_flush_delivers_pending_mutations_without_listing() {
+        let database = Database::open_memory();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+        let provider = ContractProvider::normal();
+        flush_pending_with(&database, &provider).await.unwrap();
+        assert_eq!(provider.modifies.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.full_lists.load(Ordering::SeqCst), 0);
+        assert_eq!(database.sync_status().unwrap().pending_mutations, 0);
     }
 }

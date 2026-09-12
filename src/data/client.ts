@@ -17,6 +17,7 @@ export interface MailClient extends CorrespondenceClient {
   searchThreads(request: SearchThreadsRequest): Promise<Thread[]>;
   mutateThread(mutation: ThreadMutation): Promise<void>;
   sync(): Promise<SyncStatus>;
+  flushPending(): Promise<SyncStatus>;
   syncStatus(): Promise<SyncStatus>;
   googleAuthStatus(): Promise<AuthStatus>;
   connectGoogle(): Promise<SyncStatus>;
@@ -38,6 +39,7 @@ const tauriClient: MailClient = {
   searchThreads: (request) => invoke("search_threads", { request }),
   mutateThread: (mutation) => invoke("mutate_thread", { mutation }),
   sync: () => invoke("sync_account"),
+  flushPending: () => invoke("flush_pending_mutations"),
   syncStatus: () => invoke("sync_status"),
   googleAuthStatus: () => invoke("google_auth_status"),
   connectGoogle: () => invoke("connect_google"),

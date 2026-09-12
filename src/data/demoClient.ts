@@ -146,6 +146,9 @@ export const demoClient: MailClient = {
     status.lastSuccessfulSync = new Date().toISOString();
     return { ...status };
   },
+  async flushPending() {
+    return { ...status };
+  },
   async syncStatus() {
     return { ...status };
   },

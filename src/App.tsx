@@ -147,6 +147,22 @@ export function App() {
   }, [selectedId, threads]);
 
   useEffect(() => {
+    const flushIfInactive = () => {
+      if (document.visibilityState === "visible" && document.hasFocus()) return;
+      void mailClient.flushPending().then(setSyncStatus).catch(() => {});
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flushIfInactive();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", flushIfInactive);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", flushIfInactive);
+    };
+  }, []);
+
+  useEffect(() => {
     const timeout = window.setTimeout(() => void loadThreads(query), 180);
     return () => window.clearTimeout(timeout);
   }, [query, loadThreads]);
