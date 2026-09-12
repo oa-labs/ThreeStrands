@@ -57,6 +57,33 @@ test("attachment selection and removal survive autosave; invalid recipients keep
   await expect(composer).toBeVisible();
 });
 
+test("composer size is resizable and restored after reload", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New message" });
+  const handle = composer.getByRole("button", { name: "Resize compose window" });
+  const initial = await composer.boundingBox();
+  const grip = await handle.boundingBox();
+  expect(initial).not.toBeNull();
+  expect(grip).not.toBeNull();
+
+  await page.mouse.move(grip!.x + grip!.width / 2, grip!.y + grip!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grip!.x + grip!.width / 2 + 80, grip!.y + grip!.height / 2 + 60);
+  await page.mouse.up();
+
+  const resized = await composer.boundingBox();
+  expect(resized!.width).toBeCloseTo(initial!.width + 80, 0);
+  expect(resized!.height).toBeCloseTo(initial!.height + 60, 0);
+  await composer.getByRole("button", { name: "Save and close draft" }).click();
+
+  await page.reload();
+  await page.getByRole("button", { name: "New message (c)" }).click();
+  const restored = await page.getByRole("dialog", { name: "New message" }).boundingBox();
+  expect(restored!.width).toBeCloseTo(resized!.width, 0);
+  expect(restored!.height).toBeCloseTo(resized!.height, 0);
+});
+
 test("the command palette can send from a composer and the outbox records simulated delivery", async ({ page }) => {
   await page.clock.install();
   await page.goto("/");
