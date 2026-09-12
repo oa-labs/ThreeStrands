@@ -104,6 +104,34 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 
+const SEARCH_PAGE_SIZE = 50;
+
+// Matches the \u{1}/\u{2} markers the backend's FTS5 `snippet()` call wraps
+// hits in (see search_threads in src-tauri/src/db.rs). Rendered as React
+// elements rather than HTML so a match can never inject markup.
+const MATCH_START = "";
+const MATCH_END = "";
+
+function HighlightedSnippet({ thread }: { thread: Thread }) {
+  const raw = thread.matchSnippet;
+  if (!raw) return <>{thread.snippet}</>;
+  const segments = raw.split(MATCH_START);
+  return (
+    <>
+      {segments[0]}
+      {segments.slice(1).map((segment, index) => {
+        const [match, ...rest] = segment.split(MATCH_END);
+        return (
+          <span key={index}>
+            <mark>{match}</mark>
+            {rest.join(MATCH_END)}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 function useShortcutHandler(
   context: CommandContext,
   openPalette: () => void,
@@ -210,6 +238,8 @@ export function App() {
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const correspondence = useCorrespondence(detail?.messages.at(-1)?.id);
   const [query, setQuery] = useState("");
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [hasMoreResults, setHasMoreResults] = useState(false);
   const [loading, setLoading] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -222,16 +252,35 @@ export function App() {
   const searchRef = useRef<HTMLInputElement>(null);
 
   const loadThreads = useCallback(async (search: string) => {
-    const next = search.trim()
-      ? await mailClient.searchThreads({ query: search })
+    const trimmed = search.trim();
+    const next = trimmed
+      ? await mailClient.searchThreads({
+          query: trimmed,
+          limit: SEARCH_PAGE_SIZE,
+          includeArchived,
+        })
       : await mailClient.listThreads();
     setThreads(next);
+    setHasMoreResults(trimmed ? next.length === SEARCH_PAGE_SIZE : false);
     setSelectedId((current) =>
       current && next.some((thread) => thread.id === current)
         ? current
         : (next[0]?.id ?? null),
     );
-  }, []);
+  }, [includeArchived]);
+
+  const loadMoreResults = useCallback(async () => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    const next = await mailClient.searchThreads({
+      query: trimmed,
+      limit: SEARCH_PAGE_SIZE,
+      offset: threads.length,
+      includeArchived,
+    });
+    setThreads((current) => [...current, ...next]);
+    setHasMoreResults(next.length === SEARCH_PAGE_SIZE);
+  }, [query, threads.length, includeArchived]);
 
   useEffect(() => {
     if (correspondence.sentCount > 0) void loadThreads(query);
@@ -439,6 +488,18 @@ export function App() {
             placeholder="Search mail"
             aria-label="Search mail"
           />
+          {query.trim() ? (
+            <button
+              type="button"
+              className={`search-toggle ${includeArchived ? "active" : ""}`}
+              aria-pressed={includeArchived}
+              aria-label="Include archived mail in search"
+              title="Include archived mail in search"
+              onClick={() => setIncludeArchived((current) => !current)}
+            >
+              <Archive size={14} />
+            </button>
+          ) : null}
           <kbd>/</kbd>
         </label>
         <div className="thread-list" role="listbox" aria-label="Conversations">
@@ -459,11 +520,16 @@ export function App() {
                   <time>{timeFormatter.format(new Date(thread.lastMessageAt))}</time>
                 </span>
                 <span className="thread-subject">{thread.subject}</span>
-                <span className="thread-snippet">{thread.snippet}</span>
+                <span className="thread-snippet"><HighlightedSnippet thread={thread} /></span>
               </span>
               {thread.starred ? <Star className="starred" size={15} fill="currentColor" /> : null}
             </button>
           ))}
+          {hasMoreResults ? (
+            <button className="load-more" onClick={() => void loadMoreResults()}>
+              Load more results
+            </button>
+          ) : null}
         </div>
       </section>
 

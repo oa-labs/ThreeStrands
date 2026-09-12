@@ -218,6 +218,20 @@ h2 { font-size: calc(22px * var(--font-scale)); }
   color: var(--text);
   background: transparent;
 }
+.search-toggle {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.search-toggle:hover { color: var(--text); background: var(--selected); }
+.search-toggle.active { color: var(--accent); background: var(--selected); }
 kbd {
   padding: 2px 5px;
   border: 1px solid var(--border-strong);
@@ -250,8 +264,22 @@ kbd {
 .thread-meta time { flex: 0 0 auto; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
 .thread-subject { overflow: hidden; font-size: calc(13px * var(--font-scale)); font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
 .thread-snippet { overflow: hidden; color: var(--muted); font-size: calc(12px * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
+.thread-snippet mark { color: var(--text); background: var(--accent-soft, color-mix(in srgb, var(--accent) 30%, transparent)); border-radius: 2px; }
 .starred { color: var(--star); }
 .empty { color: var(--muted); text-align: center; padding: 30px; }
+.load-more {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 6px 10px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: calc(12px * var(--font-scale));
+}
+.load-more:hover { color: var(--text); background: var(--hover); }
 
 .reader { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--reader); }
 .reader-header { flex-shrink: 0; border-bottom: 1px solid var(--border); }

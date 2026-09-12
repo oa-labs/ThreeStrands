@@ -9,6 +9,8 @@ export type Thread = {
   starred: boolean;
   archived: boolean;
   labels: string[];
+  /** FTS5 match excerpt with hits wrapped in MATCH_START/MATCH_END markers. Only set on search results. */
+  matchSnippet?: string | null;
 };
 
 export type Message = {
@@ -29,6 +31,8 @@ export type ThreadDetail = {
 export type SearchThreadsRequest = {
   query: string;
   limit?: number;
+  offset?: number;
+  includeArchived?: boolean;
 };
 
 export type ThreadMutation =

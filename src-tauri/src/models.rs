@@ -13,6 +13,9 @@ pub struct Thread {
     pub starred: bool,
     pub archived: bool,
     pub labels: Vec<String>,
+    /// Match excerpt from the FTS5 index, wrapping hits in `\u{1}`/`\u{2}`
+    /// markers. Only populated by `search_threads`; `None` elsewhere.
+    pub match_snippet: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +42,8 @@ pub struct ThreadDetail {
 pub struct SearchThreadsRequest {
     pub query: String,
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
+    pub include_archived: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -179,21 +179,48 @@ impl Database {
         }
         let connection = self.connection()?;
         let limit = request.limit.unwrap_or(50).min(200) as i64;
+        let offset = request.offset.unwrap_or(0) as i64;
         let query = fts_query(&request.query);
-        let mut statement = connection
-            .prepare(
-                "SELECT t.id, t.provider_thread_id, t.subject, t.snippet,
-                        t.participants_json, t.last_message_at, t.unread, t.starred,
-                        t.archived, t.labels_json
-                 FROM thread_search s
-                 JOIN threads t ON t.id = s.thread_id
-                 WHERE thread_search MATCH ?1 AND t.archived = 0
-                 ORDER BY rank, t.last_message_at DESC
-                 LIMIT ?2",
-            )
-            .map_err(display_error)?;
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let archived_filter = if request.include_archived.unwrap_or(false) {
+            ""
+        } else {
+            "AND t.archived = 0"
+        };
+        // -1 asks FTS5 to excerpt whichever column has the most matches, so a
+        // hit on the body or a recipient still produces a relevant snippet.
+        // The match itself is wrapped in \u{1}/\u{2} rather than HTML markup
+        // so the frontend can highlight it without ever parsing untrusted HTML.
+        let sql = format!(
+            "SELECT t.id, t.provider_thread_id, t.subject, t.snippet,
+                    t.participants_json, t.last_message_at, t.unread, t.starred,
+                    t.archived, t.labels_json,
+                    snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet
+             FROM thread_search s
+             JOIN threads t ON t.id = s.thread_id
+             WHERE thread_search MATCH ?1 {archived_filter}
+             ORDER BY rank, t.last_message_at DESC
+             LIMIT ?2 OFFSET ?3"
+        );
+        let mut statement = connection.prepare(&sql).map_err(display_error)?;
         let rows = statement
-            .query_map(params![query, limit], thread_from_row)
+            .query_map(params![query, limit, offset], |row| {
+                Ok(Thread {
+                    id: row.get(0)?,
+                    provider_thread_id: row.get(1)?,
+                    subject: row.get(2)?,
+                    snippet: row.get(3)?,
+                    participants: decode_json(row.get::<_, String>(4)?)?,
+                    last_message_at: row.get(5)?,
+                    unread: row.get(6)?,
+                    starred: row.get(7)?,
+                    archived: row.get(8)?,
+                    labels: decode_json(row.get::<_, String>(9)?)?,
+                    match_snippet: row.get(10)?,
+                })
+            })
             .map_err(display_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
     }
@@ -394,13 +421,28 @@ impl Database {
     }
 
     pub fn delete_gmail_thread(&self, provider_thread_id: &str) -> Result<(), String> {
-        self.connection()?
-            .execute(
-                "DELETE FROM threads WHERE provider_thread_id = ?1",
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        let thread_id: Option<String> = transaction
+            .query_row(
+                "SELECT id FROM threads WHERE provider_thread_id = ?1",
                 [provider_thread_id],
+                |row| row.get(0),
             )
-            .map(|_| ())
-            .map_err(display_error)
+            .optional()
+            .map_err(display_error)?;
+        if let Some(thread_id) = thread_id {
+            transaction
+                .execute(
+                    "DELETE FROM thread_search WHERE thread_id = ?1",
+                    [&thread_id],
+                )
+                .map_err(display_error)?;
+            transaction
+                .execute("DELETE FROM threads WHERE id = ?1", [&thread_id])
+                .map_err(display_error)?;
+        }
+        transaction.commit().map_err(display_error)
     }
 
     pub fn upsert_gmail_thread(&self, messages: &[NormalizedMessage]) -> Result<(), String> {
@@ -414,6 +456,17 @@ impl Database {
             .collect();
         participants.sort();
         participants.dedup();
+        // Indexed separately from `participants`: recipients should be
+        // searchable even though they aren't shown in the thread list's
+        // "From" line.
+        let mut search_participants: Vec<String> = messages
+            .iter()
+            .flat_map(|message| {
+                std::iter::once(message.from.clone()).chain(message.to.iter().cloned())
+            })
+            .collect();
+        search_participants.sort();
+        search_participants.dedup();
         let mut labels: Vec<String> = messages
             .iter()
             .flat_map(|message| message.labels.iter().cloned())
@@ -489,7 +542,7 @@ impl Database {
                     thread_id,
                     latest.subject,
                     latest.snippet,
-                    participants.join(" "),
+                    search_participants.join(" "),
                     body
                 ],
             )
@@ -573,6 +626,7 @@ fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         starred: row.get(7)?,
         archived: row.get(8)?,
         labels: decode_json(row.get::<_, String>(9)?)?,
+        match_snippet: None,
     })
 }
 
@@ -586,12 +640,26 @@ fn decode_json(value: String) -> rusqlite::Result<Vec<String>> {
     })
 }
 
+/// Builds an FTS5 MATCH expression, ANDing together every unquoted word and
+/// every "quoted phrase" as a prefix match. `input.split('"')` alternates
+/// unquoted segments (even indices) with quoted ones (odd indices); an
+/// unterminated trailing quote is simply treated as still-quoted.
 fn fts_query(input: &str) -> String {
-    input
-        .split_whitespace()
-        .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" AND ")
+    let mut terms: Vec<String> = Vec::new();
+    for (index, segment) in input.split('"').enumerate() {
+        if index % 2 == 0 {
+            for word in segment.split_whitespace() {
+                terms.push(format!("\"{}\"*", word));
+            }
+        } else {
+            let words: Vec<&str> = segment.split_whitespace().collect();
+            if words.is_empty() {
+                continue;
+            }
+            terms.push(format!("\"{}\"*", words.join(" ")));
+        }
+    }
+    terms.join(" AND ")
 }
 
 fn seed_if_empty(connection: &Connection) -> rusqlite::Result<()> {
@@ -691,9 +759,128 @@ mod tests {
             .search_threads(&SearchThreadsRequest {
                 query: "keyboard".into(),
                 limit: None,
+                offset: None,
+                include_archived: None,
             })
             .unwrap();
         assert_eq!(result[0].id, "welcome");
+        assert!(result[0].match_snippet.is_some());
+    }
+
+    #[test]
+    fn phrase_search_requires_contiguous_words() {
+        let database = database();
+        let matches = database
+            .search_threads(&SearchThreadsRequest {
+                query: "\"keeps your mail\"".into(),
+                limit: None,
+                offset: None,
+                include_archived: None,
+            })
+            .unwrap();
+        assert_eq!(matches[0].id, "welcome");
+
+        let no_matches = database
+            .search_threads(&SearchThreadsRequest {
+                query: "\"mail your keeps\"".into(),
+                limit: None,
+                offset: None,
+                include_archived: None,
+            })
+            .unwrap();
+        assert!(no_matches.is_empty());
+    }
+
+    #[test]
+    fn search_excludes_archived_unless_requested() {
+        let database = database();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+
+        let hidden = database
+            .search_threads(&SearchThreadsRequest {
+                query: "keyboard".into(),
+                limit: None,
+                offset: None,
+                include_archived: None,
+            })
+            .unwrap();
+        assert!(hidden.is_empty());
+
+        let shown = database
+            .search_threads(&SearchThreadsRequest {
+                query: "keyboard".into(),
+                limit: None,
+                offset: None,
+                include_archived: Some(true),
+            })
+            .unwrap();
+        assert_eq!(shown[0].id, "welcome");
+    }
+
+    #[test]
+    fn search_supports_offset_pagination() {
+        let database = database();
+        for (id, date) in [
+            ("alpha", "2026-01-01T00:00:00Z"),
+            ("beta", "2026-01-02T00:00:00Z"),
+        ] {
+            database
+                .upsert_gmail_thread(&[NormalizedMessage {
+                    id: format!("{id}-message"),
+                    thread_id: id.into(),
+                    subject: "Pagination test".into(),
+                    from: "sender@example.com".into(),
+                    to: vec!["recipient@example.com".into()],
+                    date: date.into(),
+                    body_html: String::new(),
+                    body_text: "unique-pagination-term".into(),
+                    snippet: "unique-pagination-term".into(),
+                    labels: vec!["INBOX".into()],
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
+        }
+
+        let first_page = database
+            .search_threads(&SearchThreadsRequest {
+                query: "unique-pagination-term".into(),
+                limit: Some(1),
+                offset: None,
+                include_archived: None,
+            })
+            .unwrap();
+        let second_page = database
+            .search_threads(&SearchThreadsRequest {
+                query: "unique-pagination-term".into(),
+                limit: Some(1),
+                offset: Some(1),
+                include_archived: None,
+            })
+            .unwrap();
+        assert_eq!(first_page.len(), 1);
+        assert_eq!(second_page.len(), 1);
+        assert_ne!(first_page[0].id, second_page[0].id);
+    }
+
+    #[test]
+    fn deleting_a_thread_also_removes_its_search_index_row() {
+        let database = database();
+        database.delete_gmail_thread("demo-welcome").unwrap();
+        let remaining: i64 = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM thread_search WHERE thread_id = 'welcome'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
     }
 
     #[test]

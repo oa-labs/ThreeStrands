@@ -81,6 +81,36 @@ function visible(): Thread[] {
     .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
 }
 
+/**
+ * Splits a query into quoted phrases and standalone words, mirroring the
+ * FTS5 query builder in `src-tauri/src/db.rs` well enough for the demo/test
+ * build: `query.split('"')` alternates unquoted segments (even indices) with
+ * quoted ones (odd indices), and an unterminated trailing quote is treated
+ * as still-quoted.
+ */
+function parseQueryParts(query: string): { phrases: string[]; words: string[] } {
+  const phrases: string[] = [];
+  const words: string[] = [];
+  query.split('"').forEach((segment, index) => {
+    const normalized = segment.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    if (index % 2 === 0) {
+      words.push(...normalized);
+    } else if (normalized.length > 0) {
+      phrases.push(normalized.join(" "));
+    }
+  });
+  return { phrases, words };
+}
+
+function matchesQuery(haystack: string, query: string): boolean {
+  const normalizedHaystack = haystack.toLocaleLowerCase();
+  const { phrases, words } = parseQueryParts(query);
+  return (
+    phrases.every((phrase) => normalizedHaystack.includes(phrase)) &&
+    words.every((word) => normalizedHaystack.includes(word))
+  );
+}
+
 function update(mutation: ThreadMutation) {
   threads = threads.map((thread) => {
     if (thread.id !== mutation.threadId) return thread;
@@ -125,18 +155,17 @@ export const demoClient: MailClient = {
     };
     return detail;
   },
-  async searchThreads({ query, limit = 50 }) {
-    const normalized = query.trim().toLocaleLowerCase();
-    if (!normalized) return this.listThreads();
+  async searchThreads({ query, limit = 50, offset = 0, includeArchived = false }) {
+    if (!query.trim()) return this.listThreads();
+    const pool = includeArchived
+      ? [...threads].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
+      : visible();
     return structuredClone(
-      visible()
+      pool
         .filter((thread) =>
-          [thread.subject, thread.snippet, ...thread.participants]
-            .join(" ")
-            .toLocaleLowerCase()
-            .includes(normalized),
+          matchesQuery([thread.subject, thread.snippet, ...thread.participants].join(" "), query),
         )
-        .slice(0, limit),
+        .slice(offset, offset + limit),
     );
   },
   async mutateThread(mutation) {
