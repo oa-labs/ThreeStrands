@@ -101,6 +101,8 @@ fn spawn_pending_flush(handle: &tauri::AppHandle) {
         return;
     };
     tauri::async_runtime::spawn(async move {
+        // Wait for an in-flight mutate_thread IPC to land in SQLite.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         let _ = service.flush_pending().await;
     });
 }

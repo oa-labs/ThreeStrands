@@ -147,9 +147,13 @@ export function App() {
   }, [selectedId, threads]);
 
   useEffect(() => {
+    let timer = 0;
     const flushIfInactive = () => {
-      if (document.visibilityState === "visible" && document.hasFocus()) return;
-      void mailClient.flushPending().then(setSyncStatus).catch(() => {});
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (document.visibilityState === "visible" && document.hasFocus()) return;
+        void mailClient.flushPending().then(setSyncStatus).catch(() => {});
+      }, 150);
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flushIfInactive();
@@ -157,6 +161,7 @@ export function App() {
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("blur", flushIfInactive);
     return () => {
+      window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("blur", flushIfInactive);
     };
@@ -206,6 +211,9 @@ export function App() {
     try {
       await mailClient.mutateThread(mutation);
       if (mutation.kind !== "archive") await loadThreads(query);
+      if (document.visibilityState !== "visible" || !document.hasFocus()) {
+        void mailClient.flushPending().then(setSyncStatus).catch(() => {});
+      }
     } catch {
       setThreads((current) => [
         ...current.filter((thread) => thread.id !== previous.id),
