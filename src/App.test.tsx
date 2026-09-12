@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, NOTICE_TIMEOUT_MS } from "./App";
 import { mailClient } from "./data/client";
+import { FOREGROUND_DEBOUNCE_MS, FOREGROUND_IDLE_MS } from "./foregroundRefresh";
 
 const demoThreadIds = ["welcome", "roadmap", "privacy"];
 
@@ -261,5 +262,52 @@ describe("Escape dismissal", () => {
       expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument(),
     );
     expect(composer).toBeInTheDocument();
+  });
+});
+
+describe("foreground mail refresh", () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  it("checks for new mail after the window has been in the background", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const sync = vi.spyOn(mailClient, "sync");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    sync.mockClear();
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(FOREGROUND_IDLE_MS);
+    });
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(FOREGROUND_DEBOUNCE_MS);
+    });
+
+    expect(sync).toHaveBeenCalled();
+  });
+
+  it("does not sync on a brief focus flicker", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const sync = vi.spyOn(mailClient, "sync");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    sync.mockClear();
+
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+      await vi.advanceTimersByTimeAsync(200);
+      window.dispatchEvent(new Event("focus"));
+      await vi.advanceTimersByTimeAsync(FOREGROUND_DEBOUNCE_MS);
+    });
+
+    expect(sync).not.toHaveBeenCalled();
   });
 });

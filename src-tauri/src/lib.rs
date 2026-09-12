@@ -108,6 +108,21 @@ fn spawn_pending_flush(handle: &tauri::AppHandle) {
     });
 }
 
+fn spawn_foreground_sync(handle: &tauri::AppHandle) {
+    if !GoogleAuth::available() {
+        return;
+    }
+    let Some(state) = handle.try_state::<AppState>() else {
+        return;
+    };
+    let Some(service) = state.sync.clone() else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        let _ = service.sync_if_stale().await;
+    });
+}
+
 #[tauri::command]
 fn google_auth_status(state: State<'_, AppState>) -> AuthStatus {
     AuthStatus {
@@ -294,9 +309,15 @@ pub fn run() {
                     }
                 }
                 tauri::RunEvent::WindowEvent {
-                    event: tauri::WindowEvent::Focused(false),
+                    event: tauri::WindowEvent::Focused(focused),
                     ..
-                } => spawn_pending_flush(handle),
+                } => {
+                    if *focused {
+                        spawn_foreground_sync(handle);
+                    } else {
+                        spawn_pending_flush(handle);
+                    }
+                }
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     if let Some(state) = handle.try_state::<AppState>() {
                         if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
@@ -305,18 +326,8 @@ pub fn run() {
                         }
                     }
                 }
+                tauri::RunEvent::Resumed => spawn_foreground_sync(handle),
                 _ => {}
-            }
-            if matches!(event, tauri::RunEvent::Resumed) {
-                if let Some(state) = handle.try_state::<AppState>() {
-                    if GoogleAuth::available() {
-                        if let Some(service) = state.sync.clone() {
-                            tauri::async_runtime::spawn(async move {
-                                let _ = service.sync().await;
-                            });
-                        }
-                    }
-                }
             }
         });
 }
