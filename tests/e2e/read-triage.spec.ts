@@ -192,6 +192,24 @@ test("the account color picker keeps the last color picked, even while dragging 
   expect(initial).not.toBe("#abcdef");
 });
 
+test("prompts to connect a Gmail account when none are connected", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.locator("li", { hasText: "demo@example.com" }).getByRole("button", { name: "Remove" }).click();
+  await expect(settings.locator(".accounts-list li")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(settings).not.toBeVisible();
+
+  await expect(page.getByText("Connect your Gmail account to start syncing mail.")).toBeVisible();
+  await page.getByRole("button", { name: "Connect Gmail" }).click();
+  await expect(settings).toBeVisible();
+  await expect(settings.getByText("Google OAuth is not configured")).toBeVisible();
+});
+
 test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();

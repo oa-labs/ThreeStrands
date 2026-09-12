@@ -96,7 +96,9 @@ const status: SyncStatus = {
 };
 
 function visible(accountId?: string): Thread[] {
+  const connected = new Set(accounts.map((account) => account.email));
   return threads
+    .filter((thread) => connected.has(thread.accountId))
     .filter((thread) => !thread.archived && !thread.trashed)
     .filter((thread) => !accountId || accountId === "all" || thread.accountId === accountId)
     .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));

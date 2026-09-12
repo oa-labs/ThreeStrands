@@ -882,7 +882,19 @@ export function App() {
         </label>
         <div className="thread-list" role="listbox" aria-label="Conversations">
           {loading ? <p className="empty">Loading inbox…</p> : null}
-          {!loading && threads.length === 0 ? <p className="empty">Inbox zero.</p> : null}
+          {!loading && threads.length === 0 ? (
+            accounts.length === 0 ? (
+              <div className="connect-account-cta">
+                <Mail size={28} />
+                <p>Connect your Gmail account to start syncing mail.</p>
+                <button type="button" onClick={() => openSettingsAt("account")}>
+                  Connect Gmail
+                </button>
+              </div>
+            ) : (
+              <p className="empty">Inbox zero.</p>
+            )
+          ) : null}
           {threads.map((thread) => (
             <button
               key={thread.id}
