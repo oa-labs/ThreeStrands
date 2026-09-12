@@ -14,6 +14,12 @@ import {
   type ComposerPosition,
   type ComposerSize,
 } from "./composerLayout";
+import {
+  applyFormattingShortcut,
+  formattingShortcutFor,
+  plainTextToHtml,
+  sanitizeComposeHtml,
+} from "./richText";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
 export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(): void; attach(): void; close(): void };
@@ -35,6 +41,8 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
   const [moving, setMoving] = useState(false);
   const [viewportSize, setViewportSize] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
   const panel = useRef<HTMLDivElement>(null);
+  const bodyEditor = useRef<HTMLDivElement>(null);
+  const initialBodyHtml = useRef(sanitizeComposeHtml(initial.bodyHtml || plainTextToHtml(initial.body)));
   const moveDrag = useRef<{ x: number; y: number; position: ComposerPosition; pointerId: number } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
@@ -64,6 +72,17 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush().catch(() => {}); }, 300);
   }
+  function editBody(editor: HTMLElement) {
+    latest.current = {
+      ...latest.current,
+      body: editor.innerText,
+      bodyHtml: sanitizeComposeHtml(editor.innerHTML),
+    };
+    generation.current++;
+    setDraft(latest.current); setStatus("Unsaved changes");
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => { void flush().catch(() => {}); }, 300);
+  }
   async function run(action: () => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true; setBusy(true); setError("");
@@ -82,7 +101,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
   useEffect(() => {
     mounted.current = true;
     const previous = document.activeElement as HTMLElement | null;
-    panel.current?.querySelector<HTMLElement>(initial.mode === "new" || initial.mode === "forward" ? '[name="to"]' : "textarea")?.focus();
+    panel.current?.querySelector<HTMLElement>(initial.mode === "new" || initial.mode === "forward" ? '[name="to"]' : '[contenteditable="true"]')?.focus();
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (generation.current !== savedGeneration.current) { event.preventDefault(); event.returnValue = ""; }
     };
@@ -158,7 +177,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
         if (event.key === "Tab") {
-          const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex="0"]') ?? []);
+          const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [contenteditable="true"], [tabindex="0"]') ?? []);
           const first = controls[0], last = controls.at(-1);
           if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
           if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -177,7 +196,32 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
         <button className="text-button" aria-expanded={showCopies} onClick={() => setShowCopies(!showCopies)}>Cc / Bcc</button>
         {showCopies && <>{(["cc", "bcc"] as const).map((field) => <label className="compose-field" key={field}><span>{field === "cc" ? "Cc" : "Bcc"}</span><input aria-label={field === "cc" ? "Cc" : "Bcc"} value={draft[field]} onChange={(e) => edit(field, e.target.value)} disabled={busy} /></label>)}</>}
         <label className="compose-field"><span>Subject</span><input aria-label="Subject" value={draft.subject} onChange={(e) => edit("subject", e.target.value)} disabled={busy} /></label>
-        <textarea aria-label="Message body" value={draft.body} onChange={(e) => edit("body", e.target.value)} disabled={busy} placeholder="Write your message…" />
+        <div
+          ref={bodyEditor}
+          className="compose-body"
+          role="textbox"
+          aria-label="Message body"
+          aria-multiline="true"
+          aria-disabled={busy}
+          contentEditable={!busy}
+          suppressContentEditableWarning
+          data-placeholder="Write your message…"
+          dangerouslySetInnerHTML={{ __html: initialBodyHtml.current }}
+          onInput={(event) => editBody(event.currentTarget)}
+          onPaste={(event) => {
+            event.preventDefault();
+            document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
+          }}
+          onKeyDown={(event) => {
+            const shortcut = formattingShortcutFor(event.nativeEvent);
+            if (!shortcut) return;
+            if (applyFormattingShortcut(event.currentTarget, shortcut)) {
+              event.preventDefault();
+              event.stopPropagation();
+              editBody(event.currentTarget);
+            }
+          }}
+        />
         {draft.attachments.length > 0 && <ul className="attachment-list">{draft.attachments.map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={14} /></button></li>)}</ul>}
         {error && <div className="compose-error" role="alert">{error} <button onClick={() => void run(async () => { await flush(); })}>Retry save</button></div>}
       </div>

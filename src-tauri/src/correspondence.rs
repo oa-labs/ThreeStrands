@@ -89,6 +89,8 @@ pub struct Draft {
     pub bcc: String,
     pub subject: String,
     pub body: String,
+    #[serde(default)]
+    pub body_html: String,
     pub attachments: Vec<Attachment>,
     pub updated_at: i64,
 }
@@ -265,6 +267,7 @@ impl Database {
             bcc: String::new(),
             subject: String::new(),
             body: String::new(),
+            body_html: String::new(),
             attachments: vec![],
             updated_at: now(),
         };
@@ -366,7 +369,7 @@ impl Database {
     pub fn save_draft(&self, mut draft: Draft) -> Result<Draft, String> {
         let old = self.draft(&draft.id)?;
         // Only editable fields cross the trust boundary; routing and file locators are native-owned.
-        if draft.body.len() > 2 * 1024 * 1024
+        if draft.body.len() + draft.body_html.len() > 2 * 1024 * 1024
             || draft.subject.len() > 998
             || draft.to.len() + draft.cc.len() + draft.bcc.len() > 32000
         {
@@ -561,6 +564,9 @@ fn build_mime(d: &Draft, id: &str, root: &Path) -> Result<Vec<u8>, String> {
         .subject(d.subject.clone())
         .text_body(d.body.clone())
         .message_id(format!("{id}@dispatch.local"));
+    if !d.body_html.trim().is_empty() {
+        builder = builder.html_body(d.body_html.clone());
+    }
     if let Some(reply) = &d.reply_id {
         if reply.contains(['\r', '\n']) || d.references.iter().any(|r| r.contains(['\r', '\n'])) {
             return Err("Invalid reply headers".into());
@@ -569,7 +575,7 @@ fn build_mime(d: &Draft, id: &str, root: &Path) -> Result<Vec<u8>, String> {
             .in_reply_to(reply.clone())
             .references(d.references.clone());
     }
-    let mut size = d.body.len();
+    let mut size = d.body.len() + d.body_html.len();
     for attachment in &d.attachments {
         if !attachment.ready {
             return Err(format!(
@@ -1064,6 +1070,20 @@ mod tests {
         assert_eq!(attachment.contents(), bytes);
         assert_eq!(attachment.attachment_name(), Some("résumé.bin"));
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn mime_includes_rich_html_and_plain_text_fallback() {
+        let db = database();
+        let mut d = saved(&db);
+        d.body = "Formatted message".into();
+        d.body_html = "<p><strong>Formatted</strong> message</p>".into();
+        let raw = build_mime(&d, "rich-id", Path::new("/unused")).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(parsed.body_text(0), Some("Formatted message"));
+        assert_eq!(
+            parsed.body_html(0),
+            Some("<p><strong>Formatted</strong> message</p>")
+        );
     }
     #[test]
     fn reply_all_excludes_self_preserves_cc_and_forward_is_not_a_reply() {

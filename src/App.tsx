@@ -48,6 +48,7 @@ import {
   setCrashReportingEnabled,
 } from "./crashReporting";
 import { mailClient } from "./data/client";
+import { formattingShortcuts } from "./richText";
 import type {
   AuthStatus,
   Label,
@@ -898,7 +899,15 @@ function CommandPalette({
 const shortcutGroupOrder = ["Navigation", "Triage", "Compose", "Application"] as const;
 
 function ShortcutHelp({ onClose }: { onClose(): void }) {
-  const shortcutCommands = commands.filter((command) => command.keys.length > 0);
+  const shortcutCommands = [
+    ...commands.filter((command) => command.keys.length > 0),
+    ...formattingShortcuts.map((shortcut) => ({
+      id: shortcut.id,
+      title: shortcut.title,
+      keys: [shortcut.key],
+      group: "Compose" as const,
+    })),
+  ];
   return (
     <Modal title="Keyboard shortcuts" className="shortcut-help-modal" onClose={onClose}>
       <p className="shortcut-help-intro">Use Dispatch without leaving the keyboard.</p>
