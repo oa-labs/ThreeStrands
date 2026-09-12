@@ -535,6 +535,8 @@ weeks without data-loss incidents.
 
 ### Phase 2 — compose and workflow (4–6 weeks)
 
+Detailed correspondence implementation: [compose, drafts, safe sending, attachments, and keyboard integration](docs/phase-2-compose.md).
+
 - draft, reply, forward, attachment upload, and safe send;
 - delayed undo send, snooze, conditional follow-up, snippets;
 - deterministic Split Inbox and offline mutation queue; and

@@ -13,6 +13,8 @@ test("processes the inbox from the keyboard", async ({ page }) => {
   await page.keyboard.press("e");
   await expect(page.getByRole("status")).toContainText("Conversation archived");
   await expect(page.getByRole("heading", { name: "2 conversations" })).toBeVisible();
+  await expect(page.getByRole("option", { selected: true })).toContainText("Your inbox stays local");
+  await expect(page.getByRole("heading", { name: "Your inbox stays local" })).toBeVisible();
 });
 
 test("searches and opens the command palette", async ({ page }) => {
@@ -65,4 +67,19 @@ test("resizes the inbox with pointer and keyboard and restores the preferred wid
   await expect(divider).toHaveAttribute("aria-valuenow", "280");
   await divider.dblclick();
   await expect(divider).toHaveAttribute("aria-valuenow", "400");
+});
+
+test("keeps the theme toggle on screen with a long email", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 600 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/");
+  await expect(page.getByTestId("message-body")).toBeVisible();
+  await page.getByTestId("message-body").evaluate((body) => {
+    body.innerHTML = '<p>A long email paragraph.</p>'.repeat(150);
+  });
+  const toggle = page.getByRole("button", { name: "Switch to light mode" });
+  await expect(toggle).toBeInViewport();
+  await toggle.click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator(".message-stack")).toHaveJSProperty("scrollTop", 0);
 });

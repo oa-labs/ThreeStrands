@@ -157,6 +157,12 @@ export function App() {
       current.map(applyLocal).filter((thread) => !thread.archived),
     );
     if (mutation.kind === "archive") {
+      if (mutation.value && selectedId === mutation.threadId) {
+        const currentIndex = threads.findIndex((thread) => thread.id === mutation.threadId);
+        const remaining = threads.filter((thread) => thread.id !== mutation.threadId);
+        const nextIndex = Math.min(currentIndex, remaining.length - 1);
+        setSelectedId(remaining[nextIndex]?.id ?? null);
+      }
       setNotice({
         message: "Conversation archived",
         undo: () => {
@@ -178,7 +184,7 @@ export function App() {
       ].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)));
       setNotice({ message: "Change could not be saved" });
     }
-  }, [loadThreads, query, threads]);
+  }, [loadThreads, query, threads, selectedId]);
 
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
