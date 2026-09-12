@@ -322,11 +322,12 @@ impl Database {
         let mut statement = connection
             .prepare("SELECT id FROM messages WHERE thread_id = ?1 ORDER BY sent_at")
             .map_err(display_error)?;
-        statement
+        let ids = statement
             .query_map([thread_id], |row| row.get(0))
             .map_err(display_error)?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(display_error)
+            .map_err(display_error)?;
+        Ok(ids)
     }
 
     /// `account_id` merges every account when `None` — the unified inbox —
