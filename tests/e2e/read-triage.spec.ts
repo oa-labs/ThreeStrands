@@ -15,6 +15,8 @@ test("processes the inbox from the keyboard", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "2 conversations" })).toBeVisible();
   await expect(page.getByRole("option", { selected: true })).toContainText("Your inbox stays local");
   await expect(page.getByRole("heading", { name: "Your inbox stays local" })).toBeVisible();
+
+  await expect(page.getByRole("status")).toBeHidden({ timeout: 10_000 });
 });
 
 test("searches and opens the command palette", async ({ page }) => {
