@@ -28,6 +28,19 @@ test("searches and opens the command palette", async ({ page }) => {
   await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
 });
 
+test("opens Superhuman-compatible folder destinations", async ({ page }) => {
+  await page.goto("/");
+
+  await page.keyboard.press("g");
+  await page.keyboard.press("d");
+  await expect(page.getByRole("dialog", { name: "Drafts" })).toBeVisible();
+
+  await page.keyboard.press("g");
+  await page.keyboard.press("i");
+  await expect(page.getByRole("dialog", { name: "Drafts" })).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+});
+
 test("switches themes and remembers the choice after reload", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/");
