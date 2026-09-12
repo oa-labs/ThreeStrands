@@ -142,9 +142,12 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   if (expectsMod) base = base.slice(4);
   const expectsShift = base.startsWith("Shift+");
   if (expectsShift) base = base.slice(6);
-  const implicitPlusShift = base === "+" && event.key === "+";
+  const implicitSymbolShift = event.shiftKey && (
+    (base === "+" && event.key === "+") ||
+    (base === "=" && event.key === "=")
+  );
   return event.key.toLocaleLowerCase() === base.toLocaleLowerCase()
-    && (event.shiftKey === expectsShift || implicitPlusShift)
+    && (event.shiftKey === expectsShift || implicitSymbolShift)
     && (event.ctrlKey || event.metaKey) === expectsMod
     && !event.altKey;
 }
