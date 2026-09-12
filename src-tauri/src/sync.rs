@@ -1,4 +1,8 @@
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex as StdMutex},
+    time::{Duration, Instant},
+};
 
 use tokio::sync::Mutex;
 
@@ -10,11 +14,24 @@ use crate::{
     models::{Label, SyncStatus, ThreadMutation},
 };
 
+/// Floor used by adaptive polling and by resume/foreground catch-up.
+pub const MIN_POLL_INTERVAL: Duration = Duration::from_secs(15);
+const MAX_POLL_INTERVAL: Duration = Duration::from_secs(300);
+
 #[derive(Clone)]
 pub struct SyncService {
     database: Arc<Database>,
     auth: GoogleAuth,
     gate: Arc<Mutex<()>>,
+    last_attempt: Arc<StdMutex<Option<Instant>>>,
+}
+
+pub fn should_skip_stale_sync(
+    last_attempt: Option<Instant>,
+    now: Instant,
+    min_age: Duration,
+) -> bool {
+    last_attempt.is_some_and(|attempt| now.saturating_duration_since(attempt) < min_age)
 }
 
 impl SyncService {
@@ -23,18 +40,33 @@ impl SyncService {
             database,
             auth,
             gate: Arc::new(Mutex::new(())),
+            last_attempt: Arc::new(StdMutex::new(None)),
         }
     }
 
     pub async fn sync(&self) -> Result<SyncStatus, String> {
         let _guard = self.gate.lock().await;
         let provider = GmailClient::new(self.auth.clone());
-        if let Err(error) = sync_with(self.database.as_ref(), &provider).await {
+        let result = sync_with(self.database.as_ref(), &provider).await;
+        if let Ok(mut last_attempt) = self.last_attempt.lock() {
+            *last_attempt = Some(Instant::now());
+        }
+        if let Err(error) = result {
             let message = error.to_string();
             self.database.fail_sync(&message)?;
             return Err(message);
         }
         self.database.sync_status()
+    }
+
+    /// Incremental catch-up for OS resume / window focus. Skips if polling
+    /// or another catch-up already ran within [`MIN_POLL_INTERVAL`].
+    pub async fn sync_if_stale(&self) -> Result<SyncStatus, String> {
+        let last_attempt = self.last_attempt.lock().ok().and_then(|guard| *guard);
+        if should_skip_stale_sync(last_attempt, Instant::now(), MIN_POLL_INTERVAL) {
+            return self.database.sync_status();
+        }
+        self.sync().await
     }
 
     pub async fn flush_pending(&self) -> Result<SyncStatus, String> {
@@ -85,7 +117,7 @@ impl SyncService {
     }
 
     pub async fn polling_loop(self) {
-        let mut delay = Duration::from_secs(15);
+        let mut delay = MIN_POLL_INTERVAL;
         loop {
             tokio::time::sleep(delay).await;
             if !GoogleAuth::available() {
@@ -98,9 +130,9 @@ impl SyncService {
                 .map(|status| status.pending_mutations)
                 .unwrap_or_default();
             delay = match self.sync().await {
-                Ok(status) if before > 0 || status.pending_mutations > 0 => Duration::from_secs(15),
-                Ok(_) => (delay * 2).min(Duration::from_secs(300)),
-                Err(error) if error.contains("rate limit") => Duration::from_secs(300),
+                Ok(status) if before > 0 || status.pending_mutations > 0 => MIN_POLL_INTERVAL,
+                Ok(_) => (delay * 2).min(MAX_POLL_INTERVAL),
+                Err(error) if error.contains("rate limit") => MAX_POLL_INTERVAL,
                 Err(_) => Duration::from_secs(60),
             };
         }
@@ -479,6 +511,22 @@ mod tests {
             mutation_labels(&mutation),
             (vec!["INBOX".to_string()], vec!["TRASH".to_string()]),
         );
+    }
+
+    #[test]
+    fn resume_catch_up_skips_inside_the_poll_interval() {
+        let start = Instant::now();
+        assert!(should_skip_stale_sync(
+            Some(start),
+            start + Duration::from_secs(1),
+            MIN_POLL_INTERVAL,
+        ));
+        assert!(!should_skip_stale_sync(
+            Some(start),
+            start + MIN_POLL_INTERVAL,
+            MIN_POLL_INTERVAL,
+        ));
+        assert!(!should_skip_stale_sync(None, start, MIN_POLL_INTERVAL));
     }
 
     #[tokio::test]
