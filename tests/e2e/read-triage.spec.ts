@@ -30,6 +30,7 @@ test("searches and opens the command palette", async ({ page }) => {
 
 test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
 
   await page.keyboard.press("g");
   await page.keyboard.press("d");
