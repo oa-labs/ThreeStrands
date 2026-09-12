@@ -69,6 +69,8 @@ function useShortcutHandler(
   context: CommandContext,
   openPalette: () => void,
 ) {
+  const contextRef = useRef(context);
+  contextRef.current = context;
   const pendingStep = useRef<string | null>(null);
   const pendingTimeout = useRef<number | null>(null);
 
@@ -82,14 +84,15 @@ function useShortcutHandler(
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (context.closing || event.isComposing || event.defaultPrevented) return;
+      const currentContext = contextRef.current;
+      if (currentContext.closing || event.isComposing || event.defaultPrevented) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         clearPendingStep();
         event.preventDefault();
         openPalette();
         return;
       }
-      const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && context.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
+      const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
       const dialog = document.querySelector('[role="dialog"]');
       const allowsMailboxNavigation = dialog?.classList.contains("correspondence-list");
       if (!sendShortcut && (isEditableTarget(event.target) || (dialog && !allowsMailboxNavigation))) {
@@ -100,7 +103,7 @@ function useShortcutHandler(
       if (pendingStep.current) {
         const command = commands.find(
           (candidate) =>
-            candidate.enabled(context) &&
+            candidate.enabled(currentContext) &&
             candidate.keys.some((key) => {
               const steps = shortcutSteps(key);
               return steps.length === 2 &&
@@ -111,14 +114,14 @@ function useShortcutHandler(
         clearPendingStep();
         if (command) {
           event.preventDefault();
-          command.run(context);
+          command.run(currentContext);
           return;
         }
       }
 
       const command = commands.find(
         (candidate) =>
-          candidate.enabled(context) &&
+          candidate.enabled(currentContext) &&
           candidate.keys.some((key) => {
             const steps = shortcutSteps(key);
             return steps.length === 1 && matchesShortcut(event, steps[0]);
@@ -126,12 +129,12 @@ function useShortcutHandler(
       );
       if (command) {
         event.preventDefault();
-        command.run(context);
+        command.run(currentContext);
         return;
       }
 
       const prefix = commands
-        .filter((candidate) => candidate.enabled(context))
+        .filter((candidate) => candidate.enabled(currentContext))
         .flatMap((candidate) => candidate.keys)
         .map(shortcutSteps)
         .find((steps) => steps.length === 2 && matchesShortcut(event, steps[0]));
@@ -145,7 +148,7 @@ function useShortcutHandler(
       window.removeEventListener("keydown", onKeyDown);
       clearPendingStep();
     };
-  }, [context, openPalette]);
+  }, [openPalette]);
 }
 
 export function App() {
