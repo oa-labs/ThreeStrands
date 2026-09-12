@@ -47,6 +47,32 @@ test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await expect(page.getByRole("dialog", { name: "Manage labels" })).toBeVisible();
 });
 
+test("shows folder labels and shortcuts on hover", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Inbox (g then i)" }).hover();
+  const inboxTooltip = page.getByRole("tooltip").filter({ hasText: "Inbox" });
+  await expect(inboxTooltip).toBeVisible();
+  await expect(inboxTooltip.locator("strong")).toHaveText("Inbox");
+  await expect(inboxTooltip.locator("kbd")).toHaveText("G I");
+
+  await page.getByRole("button", { name: /Drafts .*g then d/ }).hover();
+  const draftsTooltip = page.getByRole("tooltip").filter({ hasText: "Drafts" });
+  await expect(draftsTooltip).toBeVisible();
+  await expect(draftsTooltip.locator("kbd")).toHaveText("G D");
+
+  await page.getByRole("button", { name: "Labels (l)" }).hover();
+  const labelsTooltip = page.getByRole("tooltip").filter({ hasText: "Manage Labels" });
+  await expect(labelsTooltip).toBeVisible();
+  await expect(labelsTooltip.locator("kbd")).toHaveText("L");
+
+  await page.getByRole("button", { name: /Outbox/ }).hover();
+  const outboxTooltip = page.getByRole("tooltip").filter({ hasText: "Outbox" });
+  await expect(outboxTooltip).toBeVisible();
+  await expect(outboxTooltip.locator("kbd")).toHaveCount(0);
+});
+
 test("switches themes and remembers the choice after reload", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/");

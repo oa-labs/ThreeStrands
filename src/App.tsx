@@ -359,17 +359,22 @@ export function App() {
     <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <button className="brand" aria-label="Account" onClick={() => setAccountOpen(true)}>D</button>
-        <button
-          className="nav-button active"
-          aria-label="Inbox (g then i)"
-          title="Inbox (g then i)"
-          onClick={context.openInbox}
-        >
-          <Inbox size={19} />
-        </button>
+        <HoverTooltip label="Inbox" shortcut="G I">
+          <button
+            className="nav-button active"
+            aria-label="Inbox (g then i)"
+            onClick={context.openInbox}
+          >
+            <Inbox size={19} />
+          </button>
+        </HoverTooltip>
         <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={context.compose}><Pencil size={19} /></button>
-        <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount}) (g then d)`} title="Drafts (g then d)" onClick={context.openDrafts}><FileText size={19} /></button>
-        <button className="nav-button" aria-label={`Outbox (${correspondence.outboxCount})`} title="Outbox" onClick={context.openOutbox}><Send size={19} /></button>
+        <HoverTooltip label="Drafts" shortcut="G D">
+          <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount}) (g then d)`} onClick={context.openDrafts}><FileText size={19} /></button>
+        </HoverTooltip>
+        <HoverTooltip label="Outbox">
+          <button className="nav-button" aria-label={`Outbox (${correspondence.outboxCount})`} onClick={context.openOutbox}><Send size={19} /></button>
+        </HoverTooltip>
         <div className="sidebar-spacer" />
         <button
           className="nav-button"
@@ -463,9 +468,11 @@ export function App() {
                 >
                   {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
                 </ActionButton>
-                <ActionButton label="Labels" shortcut="l" onClick={context.openLabels}>
-                  <Tag size={17} />
-                </ActionButton>
+                <HoverTooltip label="Manage Labels" shortcut="L" placement="bottom">
+                  <ActionButton label="Labels" shortcut="l" onClick={context.openLabels}>
+                    <Tag size={17} />
+                  </ActionButton>
+                </HoverTooltip>
                 <ActionButton label="Archive" shortcut="e" onClick={context.archiveSelected}>
                   <Archive size={17} />
                 </ActionButton>
@@ -586,6 +593,28 @@ function AddressWithCopy({ address }: { address: string }) {
       >
         {copied ? <Check size={12} /> : <Copy size={12} />}
       </button>
+    </span>
+  );
+}
+
+function HoverTooltip({
+  children,
+  label,
+  placement = "right",
+  shortcut,
+}: {
+  children: React.ReactNode;
+  label: string;
+  placement?: "right" | "bottom";
+  shortcut?: string;
+}) {
+  return (
+    <span className={`tooltip-anchor tooltip-${placement}`}>
+      {children}
+      <span className="hover-tooltip" role="tooltip">
+        <strong>{label}</strong>
+        {shortcut ? <kbd>{shortcut}</kbd> : null}
+      </span>
     </span>
   );
 }
