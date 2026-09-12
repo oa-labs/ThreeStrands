@@ -54,6 +54,39 @@ import { applyTheme, readTheme, saveTheme } from "./theme";
 
 type Notice = { message: string; undo?: () => void };
 
+export const NOTICE_TIMEOUT_MS = 6000;
+
+let noticeSequence = 0;
+
+function useNotice() {
+  const [notice, setCurrent] = useState<(Notice & { key: number }) | null>(null);
+  const timeout = useRef<number | null>(null);
+
+  const clearTimer = useCallback(() => {
+    if (timeout.current === null) return;
+    window.clearTimeout(timeout.current);
+    timeout.current = null;
+  }, []);
+
+  const setNotice = useCallback((next: Notice | null) => {
+    clearTimer();
+    if (!next) {
+      setCurrent(null);
+      return;
+    }
+    const key = ++noticeSequence;
+    setCurrent({ ...next, key });
+    timeout.current = window.setTimeout(() => {
+      timeout.current = null;
+      setCurrent((shown) => (shown?.key === key ? null : shown));
+    }, NOTICE_TIMEOUT_MS);
+  }, [clearTimer]);
+
+  useEffect(() => clearTimer, [clearTimer]);
+
+  return [notice, setNotice] as const;
+}
+
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
@@ -109,7 +142,7 @@ export function App() {
   const [labels, setLabels] = useState<Label[]>([]);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const [notice, setNotice] = useNotice();
   const searchRef = useRef<HTMLInputElement>(null);
 
   const loadThreads = useCallback(async (search: string) => {
@@ -213,7 +246,7 @@ export function App() {
       ].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)));
       setNotice({ message: "Change could not be saved" });
     }
-  }, [loadThreads, query, threads, selectedId]);
+  }, [loadThreads, query, threads, selectedId, setNotice]);
 
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
