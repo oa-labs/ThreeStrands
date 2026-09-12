@@ -156,8 +156,11 @@ describe("archive notice", () => {
 });
 
 describe("Escape dismissal", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.removeItem("dispatch.demoCorrespondence");
+    for (const threadId of demoThreadIds) {
+      await mailClient.mutateThread({ kind: "archive", threadId, value: false });
+    }
   });
 
   afterEach(cleanup);
