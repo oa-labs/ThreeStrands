@@ -9,8 +9,15 @@ use uuid::Uuid;
 
 use crate::mime::NormalizedMessage;
 use crate::models::{
-    Message, SearchThreadsRequest, SyncStatus, Thread, ThreadDetail, ThreadMutation,
+    Account, Message, SearchThreadsRequest, SyncStatus, Thread, ThreadDetail, ThreadMutation,
 };
+
+/// Assigned to newly connected accounts in rotation, so each has a distinct
+/// color for switcher/thread-row indicators without asking the user to pick
+/// one up front.
+const ACCOUNT_COLORS: [&str; 8] = [
+    "#4285F4", "#34A853", "#EA4335", "#FBBC05", "#9C27B0", "#00ACC1", "#FF7043", "#5C6BC0",
+];
 
 #[derive(Debug, Clone)]
 pub struct PendingMutation {
@@ -84,6 +91,16 @@ CREATE TABLE IF NOT EXISTS sync_state (
 );
 
 INSERT OR IGNORE INTO sync_state(account_id) VALUES ('default');
+
+CREATE TABLE IF NOT EXISTS accounts (
+    email TEXT PRIMARY KEY,
+    display_name TEXT,
+    color TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('connected', 'needs_reauth')),
+    sort_order INTEGER NOT NULL,
+    connected_at TEXT NOT NULL,
+    last_synced_at TEXT
+);
 "#;
 
 pub struct Database(Mutex<Connection>);
@@ -620,6 +637,136 @@ impl Database {
             .map(|_| ())
             .map_err(display_error)
     }
+
+    pub fn list_accounts(&self) -> Result<Vec<Account>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT email, display_name, color, status, sort_order, connected_at, last_synced_at
+                 FROM accounts ORDER BY sort_order",
+            )
+            .map_err(display_error)?;
+        let rows = statement
+            .query_map([], account_from_row)
+            .map_err(display_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
+    }
+
+    /// Ensures an `accounts` row exists for `email`, marking it connected
+    /// either way, and folds any pre-multi-account local state (the
+    /// `sync_state`/`mutations` rows still keyed by the literal `'default'`)
+    /// onto it. Idempotent: safe to call on every successful identity
+    /// refresh, not just the first one.
+    pub fn adopt_account(&self, email: &str) -> Result<Account, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        let exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ?1)",
+                [email],
+                |row| row.get(0),
+            )
+            .map_err(display_error)?;
+        if exists {
+            transaction
+                .execute(
+                    "UPDATE accounts SET status = 'connected' WHERE email = ?1",
+                    [email],
+                )
+                .map_err(display_error)?;
+        } else {
+            let sort_order: i64 = transaction
+                .query_row(
+                    "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM accounts",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(display_error)?;
+            let color = ACCOUNT_COLORS[(sort_order as usize) % ACCOUNT_COLORS.len()];
+            transaction
+                .execute(
+                    "INSERT INTO accounts(email, color, status, sort_order, connected_at)
+                     VALUES (?1, ?2, 'connected', ?3, ?4)",
+                    params![email, color, sort_order, Utc::now().to_rfc3339()],
+                )
+                .map_err(display_error)?;
+        }
+        transaction
+            .execute(
+                "UPDATE sync_state SET account_id = ?1 WHERE account_id = 'default'",
+                [email],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "UPDATE mutations SET account_id = ?1 WHERE account_id = 'default'",
+                [email],
+            )
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)?;
+        drop(connection);
+        self.get_account(email)?
+            .ok_or_else(|| "Account not found".to_string())
+    }
+
+    pub fn get_account(&self, email: &str) -> Result<Option<Account>, String> {
+        self.connection()?
+            .query_row(
+                "SELECT email, display_name, color, status, sort_order, connected_at, last_synced_at
+                 FROM accounts WHERE email = ?1",
+                [email],
+                account_from_row,
+            )
+            .optional()
+            .map_err(display_error)
+    }
+
+    pub fn remove_account(&self, email: &str) -> Result<(), String> {
+        self.connection()?
+            .execute("DELETE FROM accounts WHERE email = ?1", [email])
+            .map(|_| ())
+            .map_err(display_error)
+    }
+
+    pub fn set_account_color(&self, email: &str, color: &str) -> Result<(), String> {
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE accounts SET color = ?1 WHERE email = ?2",
+                params![color, email],
+            )
+            .map_err(display_error)?;
+        if changed == 0 {
+            return Err("Account not found".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn reorder_accounts(&self, ordered_emails: &[String]) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        for (index, email) in ordered_emails.iter().enumerate() {
+            transaction
+                .execute(
+                    "UPDATE accounts SET sort_order = ?1 WHERE email = ?2",
+                    params![index as i64, email],
+                )
+                .map_err(display_error)?;
+        }
+        transaction.commit().map_err(display_error)
+    }
+}
+
+fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
+    Ok(Account {
+        email: row.get(0)?,
+        display_name: row.get(1)?,
+        color: row.get(2)?,
+        status: row.get(3)?,
+        sort_order: row.get(4)?,
+        connected_at: row.get(5)?,
+        last_synced_at: row.get(6)?,
+    })
 }
 
 fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
@@ -976,5 +1123,94 @@ mod tests {
         database.finish_sync("old-cursor").unwrap();
         database.begin_full_sync().unwrap();
         assert_eq!(database.cursor().unwrap(), None);
+    }
+
+    #[test]
+    fn adopting_an_account_creates_it_and_rewrites_legacy_default_state() {
+        let database = database();
+        database
+            .mutate_thread(&ThreadMutation::Star {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+
+        let account = database.adopt_account("you@gmail.com").unwrap();
+        assert_eq!(account.email, "you@gmail.com");
+        assert_eq!(account.status, "connected");
+        assert_eq!(account.sort_order, 0);
+
+        let connection = database.connection().unwrap();
+        let sync_account_id: String = connection
+            .query_row(
+                "SELECT account_id FROM sync_state WHERE account_id = 'you@gmail.com'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(sync_account_id, "you@gmail.com");
+        let mutation_account_id: String = connection
+            .query_row("SELECT account_id FROM mutations", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mutation_account_id, "you@gmail.com");
+    }
+
+    #[test]
+    fn adopting_the_same_account_twice_does_not_duplicate_it() {
+        let database = database();
+        database.adopt_account("you@gmail.com").unwrap();
+        database.adopt_account("you@gmail.com").unwrap();
+        assert_eq!(database.list_accounts().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn accounts_get_increasing_sort_order_and_rotating_colors() {
+        let database = database();
+        let first = database.adopt_account("first@gmail.com").unwrap();
+        let second = database.adopt_account("second@gmail.com").unwrap();
+        assert_eq!(first.sort_order, 0);
+        assert_eq!(second.sort_order, 1);
+        assert_ne!(first.color, second.color);
+    }
+
+    #[test]
+    fn removing_an_account_deletes_its_row() {
+        let database = database();
+        database.adopt_account("you@gmail.com").unwrap();
+        database.remove_account("you@gmail.com").unwrap();
+        assert!(database.list_accounts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_account_color_updates_an_existing_account_and_rejects_an_unknown_one() {
+        let database = database();
+        database.adopt_account("you@gmail.com").unwrap();
+        database
+            .set_account_color("you@gmail.com", "#123456")
+            .unwrap();
+        assert_eq!(
+            database
+                .get_account("you@gmail.com")
+                .unwrap()
+                .unwrap()
+                .color,
+            "#123456"
+        );
+        assert!(database
+            .set_account_color("missing@gmail.com", "#123456")
+            .is_err());
+    }
+
+    #[test]
+    fn reorder_accounts_updates_sort_order_by_position() {
+        let database = database();
+        database.adopt_account("first@gmail.com").unwrap();
+        database.adopt_account("second@gmail.com").unwrap();
+        database
+            .reorder_accounts(&["second@gmail.com".into(), "first@gmail.com".into()])
+            .unwrap();
+        let accounts = database.list_accounts().unwrap();
+        assert_eq!(accounts[0].email, "second@gmail.com");
+        assert_eq!(accounts[1].email, "first@gmail.com");
     }
 }

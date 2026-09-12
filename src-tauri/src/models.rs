@@ -126,3 +126,15 @@ pub struct AuthStatus {
     pub configured: bool,
     pub connected: bool,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub email: String,
+    pub display_name: Option<String>,
+    pub color: String,
+    pub status: String,
+    pub sort_order: i64,
+    pub connected_at: String,
+    pub last_synced_at: Option<String>,
+}

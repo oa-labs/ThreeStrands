@@ -1,4 +1,4 @@
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -15,31 +15,18 @@ use tokio::{
 use url::Url;
 
 const SERVICE: &str = "app.dispatch.mail";
-const TOKEN_KEY: &str = "google-oauth-default";
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const PROFILE_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 const SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels";
 
-// There is only ever one Google account per app instance (fixed SERVICE/TOKEN_KEY above),
-// so an in-memory cache can live at process scope. This is what keeps `access_token()` and
-// `available()` from hitting the OS keychain on every Gmail API call and every poll tick.
-static TOKEN_CACHE: OnceLock<Mutex<Option<Tokens>>> = OnceLock::new();
-static AVAILABLE_CACHE: OnceLock<Mutex<Option<bool>>> = OnceLock::new();
-
-fn token_cache() -> &'static Mutex<Option<Tokens>> {
-    TOKEN_CACHE.get_or_init(|| Mutex::new(None))
-}
-
-fn available_cache() -> &'static Mutex<Option<bool>> {
-    AVAILABLE_CACHE.get_or_init(|| Mutex::new(None))
-}
-
-#[derive(Clone)]
-pub struct GoogleAuth {
-    client: Client,
-    client_id: String,
-    client_secret: String,
-}
+/// Keychain keys used before an account's real Gmail address is known.
+/// `LEGACY_KEY` names a pre-upgrade install's one connected account, still
+/// stored under the fixed key used before multi-account support existed.
+/// `PENDING_KEY` names an in-progress "add account" flow. Both are replaced
+/// by the real address the moment it's learned, via `GoogleAuth::rekey_to`.
+const LEGACY_KEY: &str = "default";
+const PENDING_KEY: &str = "pending";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tokens {
@@ -55,7 +42,23 @@ struct TokenResponse {
     expires_in: u64,
 }
 
-impl GoogleAuth {
+#[derive(Deserialize)]
+struct Profile {
+    #[serde(rename = "emailAddress")]
+    email_address: String,
+}
+
+/// The app's shared Google OAuth client credentials. One Google Cloud OAuth
+/// client is used for every connected account; only the token and consent
+/// are per-account, so this is what constructs a [`GoogleAuth`] for each one.
+#[derive(Clone)]
+pub struct GoogleAuthConfig {
+    client: Client,
+    client_id: String,
+    client_secret: String,
+}
+
+impl GoogleAuthConfig {
     pub fn from_environment() -> Result<Self, String> {
         let client_id = std::env::var("DISPATCH_GOOGLE_CLIENT_ID")
             .ok()
@@ -80,19 +83,95 @@ impl GoogleAuth {
         })
     }
 
-    pub fn available() -> bool {
-        let cached = *available_cache().lock().unwrap();
+    /// The account representing a pre-upgrade install's single connected
+    /// identity (or a brand-new "Continue with Google" flow before
+    /// multi-account UI existed), before it has learned its real Gmail
+    /// address.
+    pub fn legacy_account(&self) -> GoogleAuth {
+        self.keyed(LEGACY_KEY)
+    }
+
+    /// A fresh account for an in-progress "add account" flow. `authorize()`
+    /// rekeys it to the account's real address once sign-in completes.
+    pub fn pending_account(&self) -> GoogleAuth {
+        self.keyed(PENDING_KEY)
+    }
+
+    /// An account already known by its real Gmail address, e.g. to
+    /// reconnect or remove it.
+    pub fn account(&self, email: &str) -> GoogleAuth {
+        self.keyed(email)
+    }
+
+    fn keyed(&self, key: &str) -> GoogleAuth {
+        GoogleAuth {
+            client: self.client.clone(),
+            client_id: self.client_id.clone(),
+            client_secret: self.client_secret.clone(),
+            key: Arc::new(Mutex::new(key.to_string())),
+            token_cache: Arc::new(Mutex::new(None)),
+            available_cache: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct GoogleAuth {
+    client: Client,
+    client_id: String,
+    client_secret: String,
+    key: Arc<Mutex<String>>,
+    token_cache: Arc<Mutex<Option<Tokens>>>,
+    available_cache: Arc<Mutex<Option<bool>>>,
+}
+
+impl GoogleAuth {
+    /// The Gmail address this instance represents, once known; otherwise the
+    /// placeholder key (`"default"`/`"pending"`) it was constructed with.
+    pub fn key(&self) -> String {
+        self.key.lock().unwrap().clone()
+    }
+
+    pub fn available(&self) -> bool {
+        let cached = *self.available_cache.lock().unwrap();
         if let Some(value) = cached {
             return value;
         }
-        let value = Self::entry()
+        let value = self
+            .entry()
             .and_then(|entry| entry.get_password().map_err(|error| error.to_string()))
             .is_ok();
-        *available_cache().lock().unwrap() = Some(value);
+        *self.available_cache.lock().unwrap() = Some(value);
         value
     }
 
-    pub async fn authorize(&self) -> Result<(), String> {
+    /// Runs the interactive PKCE flow and learns which Gmail address just
+    /// authorized, so the user never has to type an email. If this instance
+    /// already represents a real address, the authorized account must match
+    /// it — reconnecting one account can never silently adopt another
+    /// account's tokens. Returns the authorized email.
+    pub async fn authorize(&self) -> Result<String, String> {
+        let tokens = self.run_pkce_flow().await?;
+        let email = fetch_email(&self.client, &tokens.access_token).await?;
+        self.accept_identity(&email)?;
+        self.save(&tokens)?;
+        Ok(email)
+    }
+
+    /// Confirms this instance represents `email`, rekeying its keychain entry
+    /// from a placeholder if this is the first time it's been identified.
+    /// Errors if it already represents a different real address.
+    pub fn accept_identity(&self, email: &str) -> Result<(), String> {
+        let current = self.key();
+        if current != LEGACY_KEY && current != PENDING_KEY && current != email {
+            return Err(format!(
+                "Signed in as {email}, but this reconnects {current}. Choose {current} in the browser and try again."
+            ));
+        }
+        self.rekey_to(email)
+    }
+
+    async fn run_pkce_flow(&self) -> Result<Tokens, String> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(display)?;
         let redirect_uri = format!(
             "http://127.0.0.1:{}/oauth/callback",
@@ -168,7 +247,7 @@ impl GoogleAuth {
         code: &str,
         verifier: &str,
         redirect_uri: &str,
-    ) -> Result<(), String> {
+    ) -> Result<Tokens, String> {
         let response = self
             .client
             .post(TOKEN_URL)
@@ -185,7 +264,7 @@ impl GoogleAuth {
             .map_err(display)?;
         let response = checked(response).await?;
         let token: TokenResponse = response.json().await.map_err(display)?;
-        self.save(&Tokens {
+        Ok(Tokens {
             access_token: token.access_token,
             refresh_token: token.refresh_token,
             expires_at: now() + token.expires_in.saturating_sub(60),
@@ -221,11 +300,11 @@ impl GoogleAuth {
         Ok(tokens.access_token)
     }
 
-    pub fn disconnect() -> Result<(), String> {
-        match Self::entry()?.delete_credential() {
+    pub fn disconnect(&self) -> Result<(), String> {
+        match self.entry()?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {
-                *token_cache().lock().unwrap() = None;
-                *available_cache().lock().unwrap() = Some(false);
+                *self.token_cache.lock().unwrap() = None;
+                *self.available_cache.lock().unwrap() = Some(false);
                 Ok(())
             }
             Err(error) => Err(error.to_string()),
@@ -233,27 +312,62 @@ impl GoogleAuth {
     }
 
     fn load(&self) -> Result<Tokens, String> {
-        let cached = token_cache().lock().unwrap().clone();
+        let cached = self.token_cache.lock().unwrap().clone();
         if let Some(tokens) = cached {
             return Ok(tokens);
         }
-        let value = Self::entry()?.get_password().map_err(display)?;
+        let value = self.entry()?.get_password().map_err(display)?;
         let tokens: Tokens = serde_json::from_str(&value).map_err(display)?;
-        *token_cache().lock().unwrap() = Some(tokens.clone());
+        *self.token_cache.lock().unwrap() = Some(tokens.clone());
         Ok(tokens)
     }
 
     fn save(&self, tokens: &Tokens) -> Result<(), String> {
         let value = serde_json::to_string(tokens).map_err(display)?;
-        Self::entry()?.set_password(&value).map_err(display)?;
-        *token_cache().lock().unwrap() = Some(tokens.clone());
-        *available_cache().lock().unwrap() = Some(true);
+        self.entry()?.set_password(&value).map_err(display)?;
+        *self.token_cache.lock().unwrap() = Some(tokens.clone());
+        *self.available_cache.lock().unwrap() = Some(true);
         Ok(())
     }
 
-    fn entry() -> Result<Entry, String> {
-        Entry::new(SERVICE, TOKEN_KEY).map_err(display)
+    /// Moves this account's keychain entry to `email`'s key if it isn't
+    /// there already. A cheap no-op once already rekeyed.
+    fn rekey_to(&self, email: &str) -> Result<(), String> {
+        let mut key = self.key.lock().unwrap();
+        if *key == email {
+            return Ok(());
+        }
+        if let Ok(old_entry) = Entry::new(SERVICE, key.as_str()) {
+            if let Ok(secret) = old_entry.get_password() {
+                if let Ok(new_entry) = Entry::new(SERVICE, email) {
+                    new_entry.set_password(&secret).map_err(display)?;
+                }
+                let _ = old_entry.delete_credential();
+            }
+        }
+        *key = email.to_string();
+        // The cached tokens/availability were read under the old key; drop
+        // them so the next check/load reads through the new one.
+        *self.token_cache.lock().unwrap() = None;
+        *self.available_cache.lock().unwrap() = None;
+        Ok(())
     }
+
+    fn entry(&self) -> Result<Entry, String> {
+        Entry::new(SERVICE, &self.key()).map_err(display)
+    }
+}
+
+async fn fetch_email(client: &Client, access_token: &str) -> Result<String, String> {
+    let response = client
+        .get(PROFILE_URL)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(display)?;
+    let response = checked(response).await?;
+    let profile: Profile = response.json().await.map_err(display)?;
+    Ok(profile.email_address)
 }
 
 async fn checked(response: reqwest::Response) -> Result<reqwest::Response, String> {
@@ -281,4 +395,33 @@ fn now() -> u64 {
 
 fn display(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> GoogleAuthConfig {
+        GoogleAuthConfig {
+            client: Client::new(),
+            client_id: "test-client-id".into(),
+            client_secret: "test-client-secret".into(),
+        }
+    }
+
+    // Deliberately does not exercise the accepting path: that would rekey
+    // and touch the OS keychain, which isn't available in a sandboxed test
+    // environment. The rejection path never reaches the keychain.
+    #[test]
+    fn accept_identity_rejects_a_different_already_known_account() {
+        let auth = config().account("work@example.com");
+        assert!(auth.accept_identity("personal@example.com").is_err());
+        assert_eq!(auth.key(), "work@example.com");
+    }
+
+    #[test]
+    fn accept_identity_is_a_no_op_when_the_identity_already_matches() {
+        let auth = config().account("work@example.com");
+        assert!(auth.accept_identity("work@example.com").is_ok());
+    }
 }

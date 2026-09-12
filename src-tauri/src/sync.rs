@@ -44,6 +44,11 @@ impl SyncService {
         }
     }
 
+    /// Whether this service's account currently has usable Google credentials.
+    pub fn is_connected(&self) -> bool {
+        self.auth.available()
+    }
+
     pub async fn sync(&self) -> Result<SyncStatus, String> {
         let _guard = self.gate.lock().await;
         let provider = GmailClient::new(self.auth.clone());
@@ -73,7 +78,7 @@ impl SyncService {
         if self.database.sync_status()?.pending_mutations == 0 {
             return self.database.sync_status();
         }
-        if !GoogleAuth::available() {
+        if !self.auth.available() {
             return self.database.sync_status();
         }
         let _guard = self.gate.lock().await;
@@ -120,7 +125,7 @@ impl SyncService {
         let mut delay = MIN_POLL_INTERVAL;
         loop {
             tokio::time::sleep(delay).await;
-            if !GoogleAuth::available() {
+            if !self.auth.available() {
                 delay = Duration::from_secs(30);
                 continue;
             }

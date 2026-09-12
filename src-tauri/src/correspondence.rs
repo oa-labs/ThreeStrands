@@ -548,8 +548,10 @@ impl Database {
             .map_err(error)?
             > 0)
     }
-    pub fn pause_ready_sends(&self) -> Result<(), String> {
-        self.connection()?.execute("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE state IN ('undo_pending','ready')",[]).map_err(error)?;
+    /// Pauses undo-pending/ready outbox items for one account, so removing a
+    /// connected account never pauses another account's in-flight sends.
+    pub fn pause_ready_sends_for(&self, account: &str) -> Result<(), String> {
+        self.connection()?.execute("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE account=?1 AND state IN ('undo_pending','ready')",[account]).map_err(error)?;
         Ok(())
     }
 }
@@ -625,9 +627,16 @@ impl Correspondence {
             self.auth.clone().ok_or("Google OAuth is not configured")?,
         ))
     }
+    pub fn is_connected(&self) -> bool {
+        self.auth.as_ref().is_some_and(GoogleAuth::available)
+    }
     pub async fn refresh_identity(&self) -> Result<String, String> {
         let identity = self.provider()?.sender_identity().await.map_err(error)?;
         self.database.set_compose_identity(&identity)?;
+        if let Some(auth) = &self.auth {
+            auth.accept_identity(&identity)?;
+        }
+        self.database.adopt_account(&identity)?;
         Ok(identity)
     }
     pub async fn request(&self, request: Request) -> Result<serde_json::Value, String> {
@@ -862,7 +871,7 @@ impl Correspondence {
     }
     pub async fn tick(&self) -> Result<(), String> {
         let _guard = self.gate.lock().await;
-        if !GoogleAuth::available() {
+        if !self.is_connected() {
             return Ok(());
         }
         let items = self.database.outbox()?;
@@ -1019,6 +1028,23 @@ mod tests {
         assert_eq!(restored.body, d.body);
         assert!(restored.revision > d.revision);
         assert!(db.cancel_send(&item.id, false).is_err());
+    }
+    #[test]
+    fn pausing_ready_sends_for_one_account_never_touches_another_accounts_outbox() {
+        let db = database();
+        let a = saved(&db);
+        let item_a = db.queue(&a.id, a.revision, Path::new("/unused")).unwrap();
+
+        db.set_compose_identity("other@example.com").unwrap();
+        let b = saved(&db);
+        let item_b = db.queue(&b.id, b.revision, Path::new("/unused")).unwrap();
+
+        db.pause_ready_sends_for("you@example.com").unwrap();
+
+        let outbox = db.outbox().unwrap();
+        let state_of = |id: &str| outbox.iter().find(|o| o.id == id).unwrap().state.clone();
+        assert_eq!(state_of(&item_a.id), "failed");
+        assert_eq!(state_of(&item_b.id), "undo_pending");
     }
     #[test]
     fn restart_keeps_drafts_and_never_retries_an_interrupted_send() {
