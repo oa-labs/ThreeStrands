@@ -14,7 +14,7 @@ test("saves an offline draft, restores after reload, sends once, and undoes", as
   await page.reload();
   await page.getByRole("button", { name: "Drafts (1)" }).click();
   await page.getByRole("button", { name: /Offline draft/ }).click();
-  await expect(composer.getByRole("textbox", { name: "Message body" })).toHaveValue("Hello j k e r a f — these are text, not inbox actions.");
+  await expect(composer.getByRole("textbox", { name: "Message body" })).toHaveText("Hello j k e r a f — these are text, not inbox actions.");
   await page.keyboard.press("ControlOrMeta+Enter");
   await expect(composer).not.toBeVisible();
   await page.getByRole("button", { name: "Undo send", exact: true }).click();
@@ -39,6 +39,41 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   const forward = page.getByRole("dialog", { name: "Forward message" });
   await expect(forward.getByRole("textbox", { name: "To", exact: true })).toHaveValue("");
   await expect(forward.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: Welcome to Dispatch");
+});
+
+test("Superhuman formatting shortcuts edit rich compose content and appear in help", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New message" });
+  const body = composer.getByRole("textbox", { name: "Message body" });
+
+  await body.fill("Bold text");
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+b");
+  await expect(body.locator("b, strong")).toHaveText("Bold text");
+
+  await body.fill("Dispatch");
+  await body.press("ControlOrMeta+a");
+  page.once("dialog", (dialog) => dialog.accept("https://dispatch.local"));
+  await body.press("ControlOrMeta+k");
+  await expect(body.locator("a")).toHaveAttribute("href", "https://dispatch.local");
+
+  await body.fill("One");
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+Shift+7");
+  await expect(body.locator("ol > li")).toHaveText("One");
+
+  await body.fill("Quoted");
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+Shift+9");
+  await expect(body.locator("blockquote")).toHaveText("Quoted");
+
+  await composer.getByRole("button", { name: "Save and close draft" }).click();
+  await page.getByRole("button", { name: "Keyboard shortcuts (?)" }).click();
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help.getByText("Bold", { exact: true })).toBeVisible();
+  await expect(help.getByText("Hyperlink", { exact: true })).toBeVisible();
+  await expect(help.getByText("Decrease indent", { exact: true })).toBeVisible();
 });
 
 test("attachment selection and removal survive autosave; invalid recipients keep the draft", async ({ page }) => {

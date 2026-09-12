@@ -215,10 +215,11 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   const questionMark = base === "?" && (
     event.key === "?" || (event.key === "/" && event.shiftKey)
   );
+  const shiftedDigit = expectsShift && /^\d$/.test(base) && event.code === `Digit${base}`;
   const shiftMatches = expectsShift
     ? event.shiftKey
     : base === "?" || implicitSymbolShift || !event.shiftKey;
-  const baseMatches = questionMark || event.key.toLocaleLowerCase() === base.toLocaleLowerCase();
+  const baseMatches = questionMark || shiftedDigit || event.key.toLocaleLowerCase() === base.toLocaleLowerCase();
   return baseMatches
     && shiftMatches
     && (event.ctrlKey || event.metaKey) === expectsMod
