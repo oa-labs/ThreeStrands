@@ -430,7 +430,7 @@ export function App() {
                 >
                   {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
                 </ActionButton>
-                <ActionButton label="Labels" shortcut="v" onClick={context.openLabels}>
+                <ActionButton label="Labels" shortcut="l" onClick={context.openLabels}>
                   <Tag size={17} />
                 </ActionButton>
                 <ActionButton label="Archive" shortcut="e" onClick={context.archiveSelected}>

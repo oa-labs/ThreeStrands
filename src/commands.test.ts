@@ -20,6 +20,7 @@ describe("command registry", () => {
   it("registers Superhuman folder chords for matching destinations", () => {
     expect(commands.find((command) => command.id === "mailbox.inbox")?.keys).toEqual(["g then i"]);
     expect(commands.find((command) => command.id === "drafts.open")?.keys).toEqual(["g then d"]);
+    expect(commands.find((command) => command.id === "labels.open")?.keys).toEqual(["l"]);
   });
 
   it("splits sequential shortcuts into independently matchable steps", () => {

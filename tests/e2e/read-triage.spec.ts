@@ -40,6 +40,9 @@ test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await page.keyboard.press("i");
   await expect(page.getByRole("dialog", { name: "Drafts" })).not.toBeVisible();
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+
+  await page.keyboard.press("l");
+  await expect(page.getByRole("dialog", { name: "Manage labels" })).toBeVisible();
 });
 
 test("switches themes and remembers the choice after reload", async ({ page }) => {

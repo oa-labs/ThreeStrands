@@ -87,7 +87,7 @@ export const commands: Command[] = [
   {
     id: "labels.open",
     title: "Manage labels",
-    keys: ["v"],
+    keys: ["l"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
     run: (context) => context.openLabels(),
