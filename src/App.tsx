@@ -23,7 +23,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  type RefObject,
   type CSSProperties,
   useCallback,
   useEffect,
@@ -67,6 +66,7 @@ import {
 } from "./fontScale";
 
 import { applyTheme, readTheme, saveTheme } from "./theme";
+import { useEscapeDismiss } from "./useEscapeDismiss";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -1095,18 +1095,10 @@ function Modal({
   onClose(): void;
   title: string;
 }) {
-  const panelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [onClose]);
+  useEscapeDismiss(onClose);
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
-        ref={panelRef as RefObject<HTMLDivElement>}
         className={`modal${className ? ` ${className}` : ""}`}
         role="dialog"
         aria-modal="true"

@@ -14,6 +14,7 @@ import {
   type ComposerPosition,
   type ComposerSize,
 } from "./composerLayout";
+import { useEscapeDismiss } from "./useEscapeDismiss";
 
 export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(): void; attach(): void; close(): void };
 
@@ -93,6 +94,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+  useEscapeDismiss(close);
 
   const visibleSize = preferredSize ? clampComposerSize(preferredSize, viewportSize) : null;
   useLayoutEffect(() => {
@@ -155,7 +157,6 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; onClose(): vo
       style={Object.keys(frameStyle).length ? frameStyle : undefined}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
-        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
         if (event.key === "Tab") {
           const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex="0"]') ?? []);
           const first = controls[0], last = controls.at(-1);

@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, NOTICE_TIMEOUT_MS } from "./App";
 import { mailClient } from "./data/client";
@@ -152,5 +152,61 @@ describe("archive notice", () => {
     expect(clearTimeout).toHaveBeenCalledWith(dismissTimer);
     setTimeout.mockRestore();
     clearTimeout.mockRestore();
+  });
+});
+
+describe("Escape dismissal", () => {
+  beforeEach(async () => {
+    localStorage.removeItem("dispatch.demoCorrespondence");
+    for (const threadId of demoThreadIds) {
+      await mailClient.mutateThread({ kind: "archive", threadId, value: false });
+    }
+  });
+
+  afterEach(cleanup);
+
+  it("closes the composer when focus is in a field", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+
+    const recipient = await screen.findByRole("textbox", { name: "To" });
+    recipient.focus();
+    fireEvent.keyDown(recipient, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "New message" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("region", { name: "Conversation" })).toBeInTheDocument();
+  });
+
+  it("closes the drafts window without closing the inbox", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    fireEvent.click(screen.getByRole("button", { name: /Drafts \(0\)/ }));
+
+    const drafts = await screen.findByRole("dialog", { name: "Drafts" });
+    fireEvent.keyDown(drafts, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Drafts" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+  });
+
+  it("closes only the topmost popup when overlays are stacked", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+    const composer = await screen.findByRole("dialog", { name: "New message" });
+    fireEvent.click(screen.getByRole("button", { name: "Command palette" }));
+
+    const filter = await screen.findByRole("textbox", { name: "Filter commands" });
+    fireEvent.keyDown(filter, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument(),
+    );
+    expect(composer).toBeInTheDocument();
   });
 });
