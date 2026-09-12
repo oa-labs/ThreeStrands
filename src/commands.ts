@@ -25,6 +25,7 @@ export type CommandContext = {
   openLabels(): void;
   openPalette(): void;
   openShortcutHelp(): void;
+  openSettings(): void;
   increaseFontSize(): void;
   decreaseFontSize(): void;
   canUndoAction: boolean;
@@ -154,6 +155,14 @@ export const commands: Command[] = [
     group: "Application",
     enabled: () => true,
     run: (context) => complete(context.openDiagnostics),
+  },
+  {
+    id: "settings.open",
+    title: "Open settings",
+    keys: ["Mod+,"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => complete(context.openSettings),
   },
   {
     id: "font.increase",

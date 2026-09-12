@@ -1,3 +1,4 @@
+mod ai;
 mod auth;
 mod correspondence;
 mod db;
@@ -181,6 +182,16 @@ async fn delete_label(id: String, state: State<'_, AppState>) -> Result<(), Stri
         .await
 }
 
+#[tauri::command]
+fn ai_api_key_configured() -> bool {
+    ai::configured()
+}
+
+#[tauri::command]
+fn set_ai_api_key(key: String) -> Result<(), String> {
+    ai::set(&key)
+}
+
 fn not_configured() -> String {
     "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_ID and \
      DISPATCH_GOOGLE_CLIENT_SECRET from a Desktop app credential."
@@ -263,6 +274,8 @@ pub fn run() {
             create_label,
             update_label,
             delete_label,
+            ai_api_key_configured,
+            set_ai_api_key,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Dispatch")

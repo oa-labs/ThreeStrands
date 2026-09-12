@@ -17,6 +17,7 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  Settings as SettingsIcon,
   Star,
   Tag,
   Trash2,
@@ -61,12 +62,34 @@ import { SafeMessage } from "./SafeMessage";
 import {
   applyFontScale,
   changeFontScale,
+  FONT_SCALE_STEP,
+  MAX_FONT_SCALE,
+  MIN_FONT_SCALE,
   readFontScale,
   saveFontScale,
 } from "./fontScale";
 
-import { applyTheme, readTheme, saveTheme } from "./theme";
+import { applyTheme, effectiveTheme, readTheme, saveTheme, type Theme } from "./theme";
+import { applyFontFamily, FONT_FAMILY_OPTIONS, readFontFamily, saveFontFamily, type FontFamily } from "./settings";
+import {
+  AI_PROVIDER_OPTIONS,
+  clearAiApiKey,
+  isAiApiKeyConfigured,
+  readAiEndpoint,
+  readAiFeatures,
+  readAiModel,
+  readAiProvider,
+  saveAiEndpoint,
+  saveAiFeatures,
+  saveAiModel,
+  saveAiProvider,
+  setAiApiKey,
+  type AiFeatureFlags,
+  type AiProvider,
+} from "./aiSettings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+
+type SettingsSection = "appearance" | "account" | "ai" | "privacy";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -227,10 +250,21 @@ export function App() {
   const inboxSize = useInboxWidth();
   const [theme, setTheme] = useState(readTheme);
   const [fontScale, setFontScale] = useState(readFontScale);
+  const [fontFamily, setFontFamily] = useState(readFontFamily);
   useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => applyFontScale(fontScale), [fontScale]);
+  useEffect(() => applyFontFamily(fontFamily), [fontFamily]);
+  useEffect(() => {
+    if (theme !== "system") return;
+    const query = window.matchMedia?.("(prefers-color-scheme: light)");
+    if (!query) return;
+    const handleChange = () => applyTheme("system");
+    query.addEventListener("change", handleChange);
+    return () => query.removeEventListener("change", handleChange);
+  }, [theme]);
+  const effectiveThemeValue = effectiveTheme(theme);
   const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
+    const next = effectiveThemeValue === "dark" ? "light" : "dark";
     saveTheme(next);
     setTheme(next);
   };
@@ -249,7 +283,8 @@ export function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [labels, setLabels] = useState<Label[]>([]);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
@@ -413,6 +448,11 @@ export function App() {
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
 
+  const openSettingsAt = useCallback((section: SettingsSection) => {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }, []);
+
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     selectedId,
@@ -455,11 +495,12 @@ export function App() {
     openLabels: () => setLabelsOpen(true),
     openPalette: () => setPaletteOpen(true),
     openShortcutHelp: () => setShortcutHelpOpen(true),
+    openSettings: () => openSettingsAt("appearance"),
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
     undoLastAction: () => { void undoLastAction(); },
-  }), [adjustFontScale, canUndoAction, loadThreads, mutate, query, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
+  }), [adjustFontScale, canUndoAction, loadThreads, mutate, openSettingsAt, query, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context).then((result) => {
@@ -481,7 +522,7 @@ export function App() {
   return (
     <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
-        <button className="brand" aria-label="Account" onClick={() => setAccountOpen(true)}>D</button>
+        <button className="brand" aria-label="Account" onClick={() => openSettingsAt("account")}>D</button>
         <HoverTooltip label="Inbox" shortcut="G I">
           <button
             className="nav-button active"
@@ -501,11 +542,11 @@ export function App() {
         <div className="sidebar-spacer" />
         <button
           className="nav-button"
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
+          title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
           onClick={toggleTheme}
         >
-          {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+          {effectiveThemeValue === "dark" ? <Sun size={19} /> : <Moon size={19} />}
         </button>
         <button
           className="nav-button"
@@ -521,6 +562,14 @@ export function App() {
           onClick={() => executeById("palette.open")}
         >
           <CommandIcon size={19} />
+        </button>
+        <button
+          className="nav-button"
+          aria-label="Settings (⌘,)"
+          title="Settings (⌘,)"
+          onClick={() => executeById("settings.open")}
+        >
+          <SettingsIcon size={19} />
         </button>
       </nav>
 
@@ -696,18 +745,29 @@ export function App() {
           }}
         />
       ) : null}
-      {accountOpen ? (
-        <AccountManager
-          status={authStatus}
-          onClose={() => setAccountOpen(false)}
-          onConnect={async () => {
+      {settingsOpen ? (
+        <Settings
+          section={settingsSection}
+          onSectionChange={setSettingsSection}
+          onClose={() => setSettingsOpen(false)}
+          theme={theme}
+          onThemeChange={(next) => {
+            saveTheme(next);
+            setTheme(next);
+          }}
+          fontScale={fontScale}
+          onFontScaleChange={(value) => setFontScale(saveFontScale(value))}
+          fontFamily={fontFamily}
+          onFontFamilyChange={(value) => setFontFamily(saveFontFamily(value))}
+          authStatus={authStatus}
+          onConnectAccount={async () => {
             const status = await mailClient.connectGoogle();
             setSyncStatus(status);
             setAuthStatus(await mailClient.googleAuthStatus());
             await loadThreads(query);
             setLabels(await mailClient.listLabels());
           }}
-          onDisconnect={async () => {
+          onDisconnectAccount={async () => {
             await mailClient.disconnectGoogle();
             setAuthStatus(await mailClient.googleAuthStatus());
           }}
@@ -888,8 +948,6 @@ function Diagnostics({
   status: SyncStatus | null;
   onClose(): void;
 }) {
-  const [reporting, setReporting] = useState(crashReportingEnabled);
-  const [reportCount, setReportCount] = useState(() => localCrashReports().length);
   return (
     <Modal title="Sync diagnostics" onClose={onClose}>
       <dl className="diagnostics">
@@ -900,32 +958,6 @@ function Diagnostics({
         <dt>Pending mutations</dt><dd>{status?.pendingMutations ?? 0}</dd>
         <dt>Last error</dt><dd>{status?.error ?? "None"}</dd>
       </dl>
-      <div className="reporting-settings">
-        <label>
-          <input
-            type="checkbox"
-            checked={reporting}
-            onChange={(event) => {
-              setReporting(event.target.checked);
-              setCrashReportingEnabled(event.target.checked);
-            }}
-          />
-          Share sanitized crash reports
-        </label>
-        <span>
-          Disabled by default. Email addresses and URLs are redacted.{" "}
-          Policy: <code>docs/crash-reporting.md</code>
-        </span>
-        <button
-          disabled={reportCount === 0}
-          onClick={() => {
-            clearLocalCrashReports();
-            setReportCount(0);
-          }}
-        >
-          Clear {reportCount} local {reportCount === 1 ? "report" : "reports"}
-        </button>
-      </div>
     </Modal>
   );
 }
@@ -1027,14 +1059,152 @@ function LabelManager({
   );
 }
 
-function AccountManager({
-  status,
+const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
+  { id: "appearance", label: "Appearance" },
+  { id: "account", label: "Account" },
+  { id: "ai", label: "AI provider" },
+  { id: "privacy", label: "Privacy" },
+];
+
+function Settings({
+  section,
+  onSectionChange,
   onClose,
+  theme,
+  onThemeChange,
+  fontScale,
+  onFontScaleChange,
+  fontFamily,
+  onFontFamilyChange,
+  authStatus,
+  onConnectAccount,
+  onDisconnectAccount,
+}: {
+  section: SettingsSection;
+  onSectionChange(section: SettingsSection): void;
+  onClose(): void;
+  theme: Theme;
+  onThemeChange(theme: Theme): void;
+  fontScale: number;
+  onFontScaleChange(value: number): void;
+  fontFamily: FontFamily;
+  onFontFamilyChange(value: FontFamily): void;
+  authStatus: AuthStatus | null;
+  onConnectAccount(): Promise<void>;
+  onDisconnectAccount(): Promise<void>;
+}) {
+  return (
+    <Modal title="Settings" className="settings-modal" onClose={onClose}>
+      <div className="settings-body">
+        <nav className="settings-nav" aria-label="Settings sections">
+          {SETTINGS_SECTIONS.map((item) => (
+            <button
+              key={item.id}
+              className={item.id === section ? "active" : ""}
+              aria-current={item.id === section}
+              onClick={() => onSectionChange(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-panel">
+          {section === "appearance" ? (
+            <AppearanceSettings
+              theme={theme}
+              onThemeChange={onThemeChange}
+              fontScale={fontScale}
+              onFontScaleChange={onFontScaleChange}
+              fontFamily={fontFamily}
+              onFontFamilyChange={onFontFamilyChange}
+            />
+          ) : null}
+          {section === "account" ? (
+            <AccountSettings
+              status={authStatus}
+              onConnect={onConnectAccount}
+              onDisconnect={onDisconnectAccount}
+            />
+          ) : null}
+          {section === "ai" ? <AiProviderSettings /> : null}
+          {section === "privacy" ? <PrivacySettings /> : null}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function AppearanceSettings({
+  theme,
+  onThemeChange,
+  fontScale,
+  onFontScaleChange,
+  fontFamily,
+  onFontFamilyChange,
+}: {
+  theme: Theme;
+  onThemeChange(theme: Theme): void;
+  fontScale: number;
+  onFontScaleChange(value: number): void;
+  fontFamily: FontFamily;
+  onFontFamilyChange(value: FontFamily): void;
+}) {
+  const themeOptions: { value: Theme; label: string }[] = [
+    { value: "system", label: "Match system" },
+    { value: "light", label: "Light" },
+    { value: "dark", label: "Dark" },
+  ];
+  return (
+    <section className="settings-section" aria-label="Appearance">
+      <h3>Theme</h3>
+      <div className="settings-radio-row" role="radiogroup" aria-label="Theme">
+        {themeOptions.map((option) => (
+          <label key={option.value}>
+            <input
+              type="radio"
+              name="theme"
+              checked={theme === option.value}
+              onChange={() => onThemeChange(option.value)}
+            />
+            {option.label}
+          </label>
+        ))}
+      </div>
+
+      <h3>Font size</h3>
+      <div className="settings-row">
+        <input
+          type="range"
+          min={MIN_FONT_SCALE}
+          max={MAX_FONT_SCALE}
+          step={FONT_SCALE_STEP}
+          value={fontScale}
+          aria-label="Font size"
+          onChange={(event) => onFontScaleChange(Number(event.target.value))}
+        />
+        <span>{fontScale}%</span>
+      </div>
+
+      <h3>Font family</h3>
+      <select
+        aria-label="Font family"
+        value={fontFamily}
+        onChange={(event) => onFontFamilyChange(event.target.value as FontFamily)}
+      >
+        {FONT_FAMILY_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </section>
+  );
+}
+
+function AccountSettings({
+  status,
   onConnect,
   onDisconnect,
 }: {
   status: AuthStatus | null;
-  onClose(): void;
   onConnect(): Promise<void>;
   onDisconnect(): Promise<void>;
 }) {
@@ -1050,37 +1220,220 @@ function AccountManager({
       .finally(() => setBusy(false));
   };
   return (
-    <Modal title="Google account" onClose={onClose}>
-      <div className="account-manager">
-        {!status?.configured ? (
-          <>
-            <strong>Google OAuth is not configured</strong>
-            <p>
-              Set <code>DISPATCH_GOOGLE_CLIENT_ID</code> and{" "}
-              <code>DISPATCH_GOOGLE_CLIENT_SECRET</code> from a Google Desktop
-              app credential, then restart Dispatch.
-            </p>
-          </>
-        ) : status.connected ? (
-          <>
-            <strong>Gmail is connected</strong>
-            <p>Credentials are stored in the operating-system keychain.</p>
-            <button disabled={busy} onClick={() => act(onDisconnect)}>
-              Disconnect Gmail
+    <section className="settings-section account-manager" aria-label="Account">
+      {!status?.configured ? (
+        <>
+          <strong>Google OAuth is not configured</strong>
+          <p>
+            Set <code>DISPATCH_GOOGLE_CLIENT_ID</code> and{" "}
+            <code>DISPATCH_GOOGLE_CLIENT_SECRET</code> from a Google Desktop
+            app credential, then restart Dispatch.
+          </p>
+        </>
+      ) : status.connected ? (
+        <>
+          <strong>Gmail is connected</strong>
+          <p>Credentials are stored in the operating-system keychain.</p>
+          <button disabled={busy} onClick={() => act(onDisconnect)}>
+            Disconnect Gmail
+          </button>
+        </>
+      ) : (
+        <>
+          <strong>Connect Gmail</strong>
+          <p>Authorization opens in your browser and returns over a local loopback port.</p>
+          <button disabled={busy} onClick={() => act(onConnect)}>
+            {busy ? "Waiting for Google…" : "Continue with Google"}
+          </button>
+        </>
+      )}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+const AI_MODEL_PLACEHOLDERS: Record<AiProvider, string> = {
+  none: "",
+  openai: "gpt-4o",
+  anthropic: "claude-sonnet-5",
+  custom: "model name",
+};
+
+function AiProviderSettings() {
+  const [provider, setProvider] = useState(readAiProvider);
+  const [model, setModel] = useState(readAiModel);
+  const [endpoint, setEndpoint] = useState(readAiEndpoint);
+  const [features, setFeatures] = useState<AiFeatureFlags>(readAiFeatures);
+  const [keyConfigured, setKeyConfigured] = useState(false);
+  const [keyInput, setKeyInput] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void isAiApiKeyConfigured().then(setKeyConfigured);
+  }, []);
+
+  const updateFeature = (flag: keyof AiFeatureFlags, value: boolean) => {
+    setFeatures((current) => {
+      const next = { ...current, [flag]: value };
+      saveAiFeatures(next);
+      return next;
+    });
+  };
+
+  return (
+    <section className="settings-section" aria-label="AI provider">
+      <p className="settings-hint">
+        Disabled by default. Dispatch only sends thread content to your chosen
+        provider for the features you turn on below, using your own API key.
+      </p>
+
+      <label className="settings-field">
+        <span>Provider</span>
+        <select
+          value={provider}
+          onChange={(event) => {
+            const next = event.target.value as AiProvider;
+            setProvider(next);
+            saveAiProvider(next);
+          }}
+        >
+          {AI_PROVIDER_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+
+      {provider !== "none" ? (
+        <>
+          <label className="settings-field">
+            <span>Model</span>
+            <input
+              value={model}
+              placeholder={AI_MODEL_PLACEHOLDERS[provider]}
+              onChange={(event) => {
+                setModel(event.target.value);
+                saveAiModel(event.target.value);
+              }}
+            />
+          </label>
+
+          {provider === "custom" ? (
+            <label className="settings-field">
+              <span>Endpoint URL</span>
+              <input
+                value={endpoint}
+                placeholder="https://api.example.com/v1"
+                onChange={(event) => {
+                  setEndpoint(event.target.value);
+                  saveAiEndpoint(event.target.value);
+                }}
+              />
+            </label>
+          ) : null}
+
+          <label className="settings-field">
+            <span>API key</span>
+            <input
+              type="password"
+              value={keyInput}
+              placeholder={keyConfigured ? "Saved to keychain" : "Paste API key"}
+              onChange={(event) => setKeyInput(event.target.value)}
+            />
+          </label>
+          <div className="settings-row">
+            <button
+              disabled={busy || !keyInput.trim()}
+              onClick={() => {
+                setBusy(true);
+                void setAiApiKey(keyInput)
+                  .then(() => {
+                    setKeyInput("");
+                    return isAiApiKeyConfigured();
+                  })
+                  .then(setKeyConfigured)
+                  .finally(() => setBusy(false));
+              }}
+            >
+              Save key
             </button>
-          </>
-        ) : (
-          <>
-            <strong>Connect Gmail</strong>
-            <p>Authorization opens in your browser and returns over a local loopback port.</p>
-            <button disabled={busy} onClick={() => act(onConnect)}>
-              {busy ? "Waiting for Google…" : "Continue with Google"}
+            <button
+              disabled={busy || !keyConfigured}
+              onClick={() => {
+                setBusy(true);
+                void clearAiApiKey()
+                  .then(() => isAiApiKeyConfigured())
+                  .then(setKeyConfigured)
+                  .finally(() => setBusy(false));
+              }}
+            >
+              Remove key
             </button>
-          </>
-        )}
-        {error ? <p className="form-error" role="alert">{error}</p> : null}
-      </div>
-    </Modal>
+          </div>
+          <span className="settings-hint">
+            Stored in your OS keychain, never in the mail database.
+          </span>
+
+          <h3>Features</h3>
+          <label className="settings-checkbox">
+            <input
+              type="checkbox"
+              checked={features.draftAssist}
+              onChange={(event) => updateFeature("draftAssist", event.target.checked)}
+            />
+            Draft assist
+          </label>
+          <label className="settings-checkbox">
+            <input
+              type="checkbox"
+              checked={features.summarize}
+              onChange={(event) => updateFeature("summarize", event.target.checked)}
+            />
+            Thread summaries
+          </label>
+          <label className="settings-checkbox">
+            <input
+              type="checkbox"
+              checked={features.classify}
+              onChange={(event) => updateFeature("classify", event.target.checked)}
+            />
+            Split Inbox classification
+          </label>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function PrivacySettings() {
+  const [reporting, setReporting] = useState(crashReportingEnabled);
+  const [reportCount, setReportCount] = useState(() => localCrashReports().length);
+  return (
+    <section className="settings-section" aria-label="Privacy">
+      <label className="settings-checkbox">
+        <input
+          type="checkbox"
+          checked={reporting}
+          onChange={(event) => {
+            setReporting(event.target.checked);
+            setCrashReportingEnabled(event.target.checked);
+          }}
+        />
+        Share sanitized crash reports
+      </label>
+      <span className="settings-hint">
+        Disabled by default. Email addresses and URLs are redacted.{" "}
+        Policy: <code>docs/crash-reporting.md</code>
+      </span>
+      <button
+        disabled={reportCount === 0}
+        onClick={() => {
+          clearLocalCrashReports();
+          setReportCount(0);
+        }}
+      >
+        Clear {reportCount} local {reportCount === 1 ? "report" : "reports"}
+      </button>
+    </section>
   );
 }
 

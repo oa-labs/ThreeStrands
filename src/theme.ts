@@ -1,18 +1,27 @@
-export type Theme = "light" | "dark";
+export type Theme = "light" | "dark" | "system";
+export type EffectiveTheme = "light" | "dark";
 const storageKey = "dispatch.theme";
+
+function systemTheme(): EffectiveTheme {
+  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+export function effectiveTheme(theme: Theme): EffectiveTheme {
+  return theme === "system" ? systemTheme() : theme;
+}
 
 export function readTheme(): Theme {
   try {
     const saved = localStorage.getItem(storageKey);
-    if (saved === "light" || saved === "dark") return saved;
+    if (saved === "light" || saved === "dark" || saved === "system") return saved;
   } catch {
     // A blocked storage backend should not prevent the app from opening.
   }
-  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return "system";
 }
 
 export function applyTheme(theme: Theme) {
-  document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.theme = effectiveTheme(theme);
 }
 
 export function saveTheme(theme: Theme) {
