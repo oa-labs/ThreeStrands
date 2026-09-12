@@ -22,6 +22,8 @@ export type CommandContext = {
   refresh(): void;
   openDiagnostics(): void;
   openLabels(): void;
+  increaseFontSize(): void;
+  decreaseFontSize(): void;
 };
 
 export type Command = {
@@ -116,14 +118,34 @@ export const commands: Command[] = [
     enabled: () => true,
     run: (context) => context.openDiagnostics(),
   },
+  {
+    id: "font.increase",
+    title: "Increase font size",
+    keys: ["Mod+=", "Mod++"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => context.increaseFontSize(),
+  },
+  {
+    id: "font.decrease",
+    title: "Decrease font size",
+    keys: ["Mod+-"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => context.decreaseFontSize(),
+  },
 ];
 
 export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
-  const parts = key.split("+");
-  const base = parts.at(-1)!;
+  let base = key;
+  const expectsMod = base.startsWith("Mod+");
+  if (expectsMod) base = base.slice(4);
+  const expectsShift = base.startsWith("Shift+");
+  if (expectsShift) base = base.slice(6);
+  const implicitPlusShift = base === "+" && event.key === "+";
   return event.key.toLocaleLowerCase() === base.toLocaleLowerCase()
-    && event.shiftKey === parts.includes("Shift")
-    && (event.ctrlKey || event.metaKey) === parts.includes("Mod")
+    && (event.shiftKey === expectsShift || implicitPlusShift)
+    && (event.ctrlKey || event.metaKey) === expectsMod
     && !event.altKey;
 }
 
