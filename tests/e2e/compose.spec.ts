@@ -62,26 +62,63 @@ test("composer size is resizable and restored after reload", async ({ page }) =>
   await page.getByRole("button", { name: "New message (c)" }).click();
   const composer = page.getByRole("dialog", { name: "New message" });
   const handle = composer.getByRole("button", { name: "Resize compose window" });
+  const body = composer.getByRole("textbox", { name: "Message body" });
   const initial = await composer.boundingBox();
+  const initialBody = await body.boundingBox();
   const grip = await handle.boundingBox();
   expect(initial).not.toBeNull();
   expect(grip).not.toBeNull();
+  expect(initialBody).not.toBeNull();
 
   await page.mouse.move(grip!.x + grip!.width / 2, grip!.y + grip!.height / 2);
   await page.mouse.down();
-  await page.mouse.move(grip!.x + grip!.width / 2 + 80, grip!.y + grip!.height / 2 + 60);
+  await page.mouse.move(grip!.x + grip!.width / 2 + 80, grip!.y + grip!.height / 2 + 120);
   await page.mouse.up();
 
   const resized = await composer.boundingBox();
+  const resizedBody = await body.boundingBox();
+  const footer = await composer.getByRole("button", { name: /^Send / }).boundingBox();
   expect(resized!.width).toBeCloseTo(initial!.width + 80, 0);
-  expect(resized!.height).toBeCloseTo(initial!.height + 60, 0);
+  expect(resized!.height).toBeCloseTo(initial!.height + 120, 0);
+  expect(resizedBody!.height).toBeGreaterThan(initialBody!.height + 40);
+  expect(footer!.y - (resizedBody!.y + resizedBody!.height)).toBeLessThan(24);
+  await composer.getByRole("button", { name: "Save and close draft" }).click();
+
+  await page.reload();
+  await page.getByRole("button", { name: "New message (c)" }).click();
+  const restored = page.getByRole("dialog", { name: "New message" });
+  const restoredBox = await restored.boundingBox();
+  const restoredBody = await restored.getByRole("textbox", { name: "Message body" }).boundingBox();
+  expect(restoredBox!.width).toBeCloseTo(resized!.width, 0);
+  expect(restoredBox!.height).toBeCloseTo(resized!.height, 0);
+  expect(restoredBody!.height).toBeCloseTo(resizedBody!.height, 0);
+});
+
+test("composer position is movable and restored after reload", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New message" });
+  const title = composer.getByRole("heading", { name: "New message" });
+  const initial = await composer.boundingBox();
+  const handle = await title.boundingBox();
+  expect(initial).not.toBeNull();
+  expect(handle).not.toBeNull();
+
+  await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + handle!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle!.x + handle!.width / 2 - 120, handle!.y + handle!.height / 2 - 80);
+  await page.mouse.up();
+
+  const moved = await composer.boundingBox();
+  expect(moved!.x).toBeCloseTo(initial!.x - 120, 0);
+  expect(moved!.y).toBeCloseTo(initial!.y - 80, 0);
   await composer.getByRole("button", { name: "Save and close draft" }).click();
 
   await page.reload();
   await page.getByRole("button", { name: "New message (c)" }).click();
   const restored = await page.getByRole("dialog", { name: "New message" }).boundingBox();
-  expect(restored!.width).toBeCloseTo(resized!.width, 0);
-  expect(restored!.height).toBeCloseTo(resized!.height, 0);
+  expect(restored!.x).toBeCloseTo(moved!.x, 0);
+  expect(restored!.y).toBeCloseTo(moved!.y, 0);
 });
 
 test("the command palette can send from a composer and the outbox records simulated delivery", async ({ page }) => {
