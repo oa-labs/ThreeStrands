@@ -51,6 +51,7 @@ import {
   setCrashReportingEnabled,
 } from "./crashReporting";
 import { mailClient } from "./data/client";
+import { createForegroundRefreshController } from "./foregroundRefresh";
 import { formattingShortcuts } from "./richText";
 import type {
   AuthStatus,
@@ -431,6 +432,25 @@ export function App() {
     mailClient.getThread(selectedId).then(setDetail);
   }, [selectedId, threads]);
 
+  const refreshMail = useCallback(() => {
+    setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
+    void mailClient.sync()
+      .then((status) => {
+        setSyncStatus(status);
+        void loadThreads(query);
+      })
+      .catch(() => {
+        void mailClient.syncStatus()
+          .then((status) => setSyncStatus(status))
+          .catch(() => {
+            setSyncStatus((current) => current ? { ...current, state: "error" } : current);
+          });
+      });
+  }, [loadThreads, query]);
+
+  const refreshMailRef = useRef(refreshMail);
+  refreshMailRef.current = refreshMail;
+
   useEffect(() => {
     let timer = 0;
     const flushIfInactive = () => {
@@ -440,15 +460,33 @@ export function App() {
         void mailClient.flushPending().then(setSyncStatus).catch(() => {});
       }, 150);
     };
+    const catchUp = createForegroundRefreshController(() => {
+      refreshMailRef.current();
+    });
     const onVisibility = () => {
-      if (document.visibilityState === "hidden") flushIfInactive();
+      if (document.visibilityState === "hidden") {
+        catchUp.onBackground();
+        flushIfInactive();
+      } else {
+        catchUp.onForeground();
+      }
     };
+    const onBlur = () => {
+      catchUp.onBackground();
+      flushIfInactive();
+    };
+    const onFocus = () => catchUp.onForeground();
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("blur", flushIfInactive);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onFocus);
     return () => {
       window.clearTimeout(timer);
+      catchUp.dispose();
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("blur", flushIfInactive);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onFocus);
     };
   }, []);
 
@@ -607,13 +645,7 @@ export function App() {
       });
     },
     focusSearch: () => searchRef.current?.focus(),
-    refresh: () => {
-      setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
-      void mailClient.sync().then((status) => {
-        setSyncStatus(status);
-        void loadThreads(query);
-      });
-    },
+    refresh: refreshMail,
     openDiagnostics: () => setDiagnosticsOpen(true),
     openLabels: () => setLabelTargetIds(selected ? [selected.id] : null),
     openPalette: () => setPaletteOpen(true),
@@ -623,7 +655,7 @@ export function App() {
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
     undoLastAction: () => { void undoLastAction(); },
-  }), [adjustFontScale, canUndoAction, labelTargetIds, loadThreads, mutateIds, openSettingsAt, query, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
+  }), [adjustFontScale, canUndoAction, labelTargetIds, loadThreads, mutateIds, openSettingsAt, query, refreshMail, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context).then((result) => {
