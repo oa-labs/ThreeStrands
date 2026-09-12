@@ -13,6 +13,7 @@ const initialThreads: Thread[] = [
     unread: true,
     starred: false,
     archived: false,
+    trashed: false,
     labels: ["INBOX"],
   },
   {
@@ -25,6 +26,7 @@ const initialThreads: Thread[] = [
     unread: false,
     starred: true,
     archived: false,
+    trashed: false,
     labels: ["INBOX", "STARRED"],
   },
   {
@@ -37,6 +39,7 @@ const initialThreads: Thread[] = [
     unread: false,
     starred: false,
     archived: false,
+    trashed: false,
     labels: ["INBOX"],
   },
 ];
@@ -77,7 +80,7 @@ const status: SyncStatus = {
 
 function visible(): Thread[] {
   return threads
-    .filter((thread) => !thread.archived)
+    .filter((thread) => !thread.archived && !thread.trashed)
     .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
 }
 
@@ -117,6 +120,8 @@ function update(mutation: ThreadMutation) {
     switch (mutation.kind) {
       case "archive":
         return { ...thread, archived: mutation.value };
+      case "trash":
+        return { ...thread, trashed: mutation.value };
       case "read":
         return { ...thread, unread: !mutation.value };
       case "star":

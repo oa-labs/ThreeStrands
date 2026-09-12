@@ -10,11 +10,14 @@ This document tracks implementation against the Phase 1 exit criteria in
 - SQLite schema for threads, messages, sync state, and durable mutations.
 - SQLite FTS5 search over thread metadata and cached body text.
 - Typed Tauri commands for list, detail, search, mutation, and sync status.
-- Optimistic archive, read/unread, and star actions.
+- Optimistic archive, trash, read/unread, and star actions, plus batch
+  variants applied to a checked set of conversations.
 - Durable mutation records with idempotent UUIDs.
 - Shared command registry for buttons, keyboard shortcuts, and command palette.
-- Keyboard navigation with `j`, `k`, `e`, `u`, `s`, `/`, and `Cmd/Ctrl+K`.
-- Undo affordance for archive.
+- Keyboard navigation with `j`, `k`, `e`, `Shift+3`, `u`, `s`, `x`, `/`, and
+  `Cmd/Ctrl+K`.
+- Undo affordance for archive, trash, read/unread, star, and label changes,
+  including multi-conversation batch actions.
 - HTML allowlist sanitization with remote images, forms, scripts, inline styles,
   and SVG blocked.
 - Browser development mode backed by deterministic fixtures.
@@ -34,12 +37,16 @@ This document tracks implementation against the Phase 1 exit criteria in
   synchronization. Expired/invalid history cursors trigger a complete import;
   the import cursor is captured before listing and history is replayed
   afterwards to close the snapshot race.
-- Durable Gmail delivery for archive, read/unread, star, and arbitrary label
-  changes. Identical pending changes are coalesced; interrupted `running`
-  records return to `pending` on startup; acknowledged and rejected changes
-  are recorded separately.
+- Durable Gmail delivery for archive, trash, read/unread, star, and arbitrary
+  label changes (trash/untrash move the thread across `INBOX`/`TRASH`
+  together, matching Gmail's own trash semantics). Identical pending changes
+  are coalesced; interrupted `running` records return to `pending` on
+  startup; acknowledged and rejected changes are recorded separately.
 - Typed commands for Google connection status/connect/disconnect, manual sync,
-  label list/create/rename/delete, and label thread mutations.
+  label list/create/rename/delete, and label thread mutations. The label
+  manager only exposes user-created labels for per-thread/per-batch toggling;
+  Gmail's system labels (`INBOX`, `TRASH`, `SPAM`, `UNREAD`, `STARRED`,
+  `CATEGORY_*`, …) stay behind the dedicated archive/trash/star/read actions.
 - Adaptive background polling while connected, plus catch-up on Tauri startup
   and desktop resume events.
 - Native tests for nested MIME normalization and malformed provider data,

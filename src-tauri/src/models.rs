@@ -12,6 +12,7 @@ pub struct Thread {
     pub unread: bool,
     pub starred: bool,
     pub archived: bool,
+    pub trashed: bool,
     pub labels: Vec<String>,
     /// Match excerpt from the FTS5 index, wrapping hits in `\u{1}`/`\u{2}`
     /// markers. Only populated by `search_threads`; `None` elsewhere.
@@ -57,6 +58,10 @@ pub enum ThreadMutation {
         thread_id: String,
         value: bool,
     },
+    Trash {
+        thread_id: String,
+        value: bool,
+    },
     Read {
         thread_id: String,
         value: bool,
@@ -76,6 +81,7 @@ impl ThreadMutation {
     pub fn thread_id(&self) -> &str {
         match self {
             Self::Archive { thread_id, .. }
+            | Self::Trash { thread_id, .. }
             | Self::Read { thread_id, .. }
             | Self::Star { thread_id, .. }
             | Self::Label { thread_id, .. } => thread_id,

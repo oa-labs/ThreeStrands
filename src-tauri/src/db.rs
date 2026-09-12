@@ -124,9 +124,9 @@ impl Database {
         let mut statement = connection
             .prepare(
                 "SELECT id, provider_thread_id, subject, snippet, participants_json,
-                        last_message_at, unread, starred, archived, labels_json
+                        last_message_at, unread, starred, archived, labels_json, trashed
                  FROM threads
-                 WHERE archived = 0
+                 WHERE archived = 0 AND trashed = 0
                  ORDER BY last_message_at DESC",
             )
             .map_err(display_error)?;
@@ -141,7 +141,7 @@ impl Database {
         let thread = connection
             .query_row(
                 "SELECT id, provider_thread_id, subject, snippet, participants_json,
-                        last_message_at, unread, starred, archived, labels_json
+                        last_message_at, unread, starred, archived, labels_json, trashed
                  FROM threads WHERE id = ?1",
                 [id],
                 thread_from_row,
@@ -184,10 +184,13 @@ impl Database {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
+        // Trashed threads are hidden alongside archived ones by default; the
+        // same "include archived" search toggle reveals both, since neither
+        // belongs in the everyday inbox view.
         let archived_filter = if request.include_archived.unwrap_or(false) {
             ""
         } else {
-            "AND t.archived = 0"
+            "AND t.archived = 0 AND t.trashed = 0"
         };
         // -1 asks FTS5 to excerpt whichever column has the most matches, so a
         // hit on the body or a recipient still produces a relevant snippet.
@@ -196,7 +199,7 @@ impl Database {
         let sql = format!(
             "SELECT t.id, t.provider_thread_id, t.subject, t.snippet,
                     t.participants_json, t.last_message_at, t.unread, t.starred,
-                    t.archived, t.labels_json,
+                    t.archived, t.labels_json, t.trashed,
                     snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet
              FROM thread_search s
              JOIN threads t ON t.id = s.thread_id
@@ -218,7 +221,8 @@ impl Database {
                     starred: row.get(7)?,
                     archived: row.get(8)?,
                     labels: decode_json(row.get::<_, String>(9)?)?,
-                    match_snippet: row.get(10)?,
+                    trashed: row.get(10)?,
+                    match_snippet: row.get(11)?,
                 })
             })
             .map_err(display_error)?;
@@ -230,6 +234,7 @@ impl Database {
         let transaction = connection.transaction().map_err(display_error)?;
         let (kind, value) = match mutation {
             ThreadMutation::Archive { value, .. } => ("archive", *value),
+            ThreadMutation::Trash { value, .. } => ("trash", *value),
             ThreadMutation::Read { value, .. } => ("read", *value),
             ThreadMutation::Star { value, .. } => ("star", *value),
             ThreadMutation::Label { value, .. } => ("label", *value),
@@ -278,6 +283,7 @@ impl Database {
             _ => {
                 let column = match mutation {
                     ThreadMutation::Archive { .. } => "archived",
+                    ThreadMutation::Trash { .. } => "trashed",
                     ThreadMutation::Read { .. } => "unread",
                     ThreadMutation::Star { .. } => "starred",
                     ThreadMutation::Label { .. } => unreachable!(),
@@ -476,20 +482,21 @@ impl Database {
         let unread = labels.iter().any(|label| label == "UNREAD");
         let starred = labels.iter().any(|label| label == "STARRED");
         let archived = !labels.iter().any(|label| label == "INBOX");
+        let trashed = labels.iter().any(|label| label == "TRASH");
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         transaction
             .execute(
                 "INSERT INTO threads(
                     id, provider_thread_id, subject, snippet, participants_json,
-                    last_message_at, unread, starred, archived, labels_json
-                 ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    last_message_at, unread, starred, archived, labels_json, trashed
+                 ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(id) DO UPDATE SET
                     subject=excluded.subject, snippet=excluded.snippet,
                     participants_json=excluded.participants_json,
                     last_message_at=excluded.last_message_at, unread=excluded.unread,
                     starred=excluded.starred, archived=excluded.archived,
-                    labels_json=excluded.labels_json",
+                    labels_json=excluded.labels_json, trashed=excluded.trashed",
                 params![
                     thread_id,
                     latest.subject,
@@ -500,6 +507,7 @@ impl Database {
                     starred,
                     archived,
                     serde_json::to_string(&labels).map_err(display_error)?,
+                    trashed,
                 ],
             )
             .map_err(display_error)?;
@@ -626,6 +634,7 @@ fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         starred: row.get(7)?,
         archived: row.get(8)?,
         labels: decode_json(row.get::<_, String>(9)?)?,
+        trashed: row.get(10)?,
         match_snippet: None,
     })
 }
@@ -708,7 +717,7 @@ fn insert_demo(
     let participants = serde_json::to_string(&[participant]).expect("static data serializes");
     let labels = serde_json::to_string(&["INBOX"]).expect("static data serializes");
     transaction.execute(
-        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
+        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0)",
         params![
             id,
             format!("demo-{id}"),
@@ -881,6 +890,42 @@ mod tests {
             )
             .unwrap();
         assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn trashing_a_thread_hides_it_from_the_inbox_and_search() {
+        let database = database();
+        database
+            .mutate_thread(&ThreadMutation::Trash {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+        assert!(!database
+            .list_threads()
+            .unwrap()
+            .iter()
+            .any(|thread| thread.id == "welcome"));
+
+        let hidden = database
+            .search_threads(&SearchThreadsRequest {
+                query: "keyboard".into(),
+                limit: None,
+                offset: None,
+                include_archived: None,
+            })
+            .unwrap();
+        assert!(hidden.is_empty());
+
+        let shown = database
+            .search_threads(&SearchThreadsRequest {
+                query: "keyboard".into(),
+                limit: None,
+                offset: None,
+                include_archived: Some(true),
+            })
+            .unwrap();
+        assert!(shown[0].trashed);
     }
 
     #[test]

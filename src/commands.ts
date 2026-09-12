@@ -16,9 +16,11 @@ export type CommandContext = {
   selectNext(): void;
   selectPrevious(): void;
   archiveSelected(): Promise<CommandResult>;
+  trashSelected(): Promise<CommandResult>;
   setLabelSelected(labelId: string, value: boolean): Promise<CommandResult>;
-  toggleReadSelected(): void;
-  toggleStarSelected(): void;
+  toggleReadSelected(): Promise<CommandResult>;
+  toggleStarSelected(): Promise<CommandResult>;
+  toggleCheckedSelected(): void;
   focusSearch(): void;
   refresh(): void;
   openDiagnostics(): void;
@@ -52,7 +54,7 @@ const complete = async (action: () => void): Promise<CommandResult> => {
   return {};
 };
 
-const undoResult = async (result: CommandResult): Promise<void> => {
+export const undoResult = async (result: CommandResult): Promise<void> => {
   await result.undoAction?.();
 };
 
@@ -93,12 +95,30 @@ export const commands: Command[] = [
     undo: undoResult,
   },
   {
+    id: "thread.check",
+    title: "Select for batch actions",
+    keys: ["x"],
+    group: "Triage",
+    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    run: (context) => complete(context.toggleCheckedSelected),
+  },
+  {
+    id: "thread.trash",
+    title: "Trash",
+    keys: ["Shift+3"],
+    group: "Triage",
+    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    run: (context) => context.trashSelected(),
+    undo: undoResult,
+  },
+  {
     id: "thread.read",
     title: "Toggle read",
     keys: ["u"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
-    run: (context) => complete(context.toggleReadSelected),
+    run: (context) => context.toggleReadSelected(),
+    undo: undoResult,
   },
   {
     id: "thread.star",
@@ -106,7 +126,8 @@ export const commands: Command[] = [
     keys: ["s"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
-    run: (context) => complete(context.toggleStarSelected),
+    run: (context) => context.toggleStarSelected(),
+    undo: undoResult,
   },
   {
     id: "labels.open",

@@ -258,8 +258,19 @@ async fn deliver_mutations(
 }
 
 fn mutation_labels(mutation: &PendingMutation) -> (Vec<String>, Vec<String>) {
+    // Trashing/untrashing moves the thread across INBOX as well as TRASH,
+    // matching Gmail's own trash/untrash behavior, so it needs both arrays
+    // rather than the single label toggle the other mutation kinds use.
+    if let ThreadMutation::Trash { value, .. } = &mutation.mutation {
+        return if *value {
+            (vec!["TRASH".to_string()], vec!["INBOX".to_string()])
+        } else {
+            (vec!["INBOX".to_string()], vec!["TRASH".to_string()])
+        };
+    }
     let (label, value) = match &mutation.mutation {
         ThreadMutation::Archive { value, .. } => ("INBOX", !value),
+        ThreadMutation::Trash { .. } => unreachable!(),
         ThreadMutation::Read { value, .. } => ("UNREAD", !value),
         ThreadMutation::Star { value, .. } => ("STARRED", *value),
         ThreadMutation::Label {
@@ -436,6 +447,38 @@ mod tests {
             Err(ProviderError::RateLimited)
         ));
         assert_eq!(database.sync_status().unwrap().pending_mutations, 1);
+    }
+
+    #[test]
+    fn trashing_adds_trash_and_removes_inbox() {
+        let mutation = PendingMutation {
+            id: "m1".into(),
+            provider_thread_id: "gmail-thread".into(),
+            mutation: ThreadMutation::Trash {
+                thread_id: "welcome".into(),
+                value: true,
+            },
+        };
+        assert_eq!(
+            mutation_labels(&mutation),
+            (vec!["TRASH".to_string()], vec!["INBOX".to_string()]),
+        );
+    }
+
+    #[test]
+    fn untrashing_restores_inbox_and_removes_trash() {
+        let mutation = PendingMutation {
+            id: "m1".into(),
+            provider_thread_id: "gmail-thread".into(),
+            mutation: ThreadMutation::Trash {
+                thread_id: "welcome".into(),
+                value: false,
+            },
+        };
+        assert_eq!(
+            mutation_labels(&mutation),
+            (vec!["INBOX".to_string()], vec!["TRASH".to_string()]),
+        );
     }
 
     #[tokio::test]

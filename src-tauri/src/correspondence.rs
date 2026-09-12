@@ -51,6 +51,14 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 3 {
+        tx.execute_batch(
+            "ALTER TABLE threads ADD COLUMN trashed INTEGER NOT NULL DEFAULT 0;
+            CREATE INDEX IF NOT EXISTS threads_trashed ON threads(trashed);
+            PRAGMA user_version=3;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection

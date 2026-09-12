@@ -1,6 +1,7 @@
 import {
   Archive,
   Check,
+  CheckSquare,
   Command as CommandIcon,
   Copy,
   FileText,
@@ -18,6 +19,7 @@ import {
   RefreshCw,
   Search,
   Settings as SettingsIcon,
+  Square,
   Star,
   Tag,
   Trash2,
@@ -37,6 +39,7 @@ import {
   labelCommand,
   matchesShortcut,
   shortcutSteps,
+  undoResult,
   type Command,
   type CommandContext,
   type CommandResult,
@@ -160,6 +163,72 @@ function HighlightedSnippet({ thread }: { thread: Thread }) {
   );
 }
 
+type MutationTemplate =
+  | { kind: "archive"; value: boolean }
+  | { kind: "trash"; value: boolean }
+  | { kind: "read"; value: boolean }
+  | { kind: "star"; value: boolean }
+  | { kind: "label"; labelId: string; value: boolean };
+
+function buildThreadMutation(threadId: string, template: MutationTemplate): ThreadMutation {
+  return template.kind === "label"
+    ? { kind: "label", threadId, labelId: template.labelId, value: template.value }
+    : { kind: template.kind, threadId, value: template.value };
+}
+
+function applyMutationTemplate(thread: Thread, template: MutationTemplate): Thread {
+  switch (template.kind) {
+    case "archive":
+      return { ...thread, archived: template.value };
+    case "trash":
+      return { ...thread, trashed: template.value };
+    case "read":
+      return { ...thread, unread: !template.value };
+    case "star":
+      return { ...thread, starred: template.value };
+    case "label": {
+      const next = new Set(thread.labels);
+      if (template.value) next.add(template.labelId);
+      else next.delete(template.labelId);
+      return { ...thread, labels: [...next] };
+    }
+  }
+}
+
+function invertMutationTemplate(template: MutationTemplate): MutationTemplate {
+  return { ...template, value: !template.value } as MutationTemplate;
+}
+
+function describeMutation(template: MutationTemplate, count: number, labelName?: string): string {
+  const many = count > 1;
+  switch (template.kind) {
+    case "archive":
+      return many ? `Archived ${count} conversations` : "Conversation archived";
+    case "trash":
+      return template.value
+        ? (many ? `Moved ${count} conversations to trash` : "Conversation moved to trash")
+        : (many ? `Restored ${count} conversations from trash` : "Conversation restored from trash");
+    case "star":
+      return template.value
+        ? (many ? `Starred ${count} conversations` : "Starred")
+        : (many ? `Unstarred ${count} conversations` : "Unstarred");
+    case "read":
+      return template.value
+        ? (many ? `Marked ${count} conversations as read` : "Marked as read")
+        : (many ? `Marked ${count} conversations as unread` : "Marked as unread");
+    case "label": {
+      const name = labelName ?? "Label";
+      return template.value
+        ? (many ? `${name} added to ${count} conversations` : `${name} added`)
+        : (many ? `${name} removed from ${count} conversations` : `${name} removed`);
+    }
+  }
+}
+
+function sortByRecency(threads: Thread[]): Thread[] {
+  return [...threads].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+}
+
 function useShortcutHandler(
   context: CommandContext,
   execute: (command: Command) => void,
@@ -274,6 +343,7 @@ export function App() {
   }, []);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const correspondence = useCorrespondence(detail?.messages.at(-1)?.id);
   const [query, setQuery] = useState("");
@@ -283,7 +353,7 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [labelsOpen, setLabelsOpen] = useState(false);
+  const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [labels, setLabels] = useState<Label[]>([]);
@@ -293,6 +363,7 @@ export function App() {
   const lastUndo = useRef<{ command: Command; result: CommandResult } | null>(null);
   const [canUndoAction, setCanUndoAction] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const undoLastAction = useCallback(async () => {
     const pending = lastUndo.current;
@@ -386,65 +457,114 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [query, loadThreads]);
 
-  const mutate = useCallback(async (mutation: ThreadMutation): Promise<CommandResult> => {
-    const previous = threads.find((thread) => thread.id === mutation.threadId);
-    if (!previous) return {};
+  useEffect(() => {
+    // The toggle itself is only reachable while searching; reset it with the
+    // search box so a stale "include archived" flag can't linger over into
+    // the plain inbox view, where the backend always excludes archived mail.
+    if (!query.trim()) setIncludeArchived(false);
+  }, [query]);
 
-    const applyLocal = (thread: Thread): Thread => {
-      if (thread.id !== mutation.threadId) return thread;
-      if (mutation.kind === "archive") return { ...thread, archived: mutation.value };
-      if (mutation.kind === "read") return { ...thread, unread: !mutation.value };
-      if (mutation.kind === "star") return { ...thread, starred: mutation.value };
-      const threadLabels = new Set(thread.labels);
-      if (mutation.value) threadLabels.add(mutation.labelId);
-      else threadLabels.delete(mutation.labelId);
-      return { ...thread, labels: [...threadLabels] };
-    };
+  useEffect(() => {
+    setCheckedIds(new Set());
+  }, [query, includeArchived]);
 
-    setThreads((current) =>
-      current.map(applyLocal).filter((thread) => !thread.archived),
+  useEffect(() => {
+    setCheckedIds((current) => {
+      if (current.size === 0) return current;
+      const next = new Set([...current].filter((id) => threads.some((thread) => thread.id === id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [threads]);
+
+  useEscapeDismiss(() => {
+    setCheckedIds((current) => (current.size > 0 ? new Set() : current));
+  });
+
+  const mutateIds = useCallback(async (ids: string[], template: MutationTemplate): Promise<CommandResult> => {
+    const targetIds = ids.filter((id) => threads.some((thread) => thread.id === id));
+    if (targetIds.length === 0) return {};
+    const previous = new Map(
+      threads.filter((thread) => targetIds.includes(thread.id)).map((thread) => [thread.id, thread] as const),
     );
-    if (mutation.kind === "archive") {
-      if (mutation.value && selectedId === mutation.threadId) {
-        const currentIndex = threads.findIndex((thread) => thread.id === mutation.threadId);
-        const remaining = threads.filter((thread) => thread.id !== mutation.threadId);
-        const nextIndex = Math.min(currentIndex, remaining.length - 1);
-        setSelectedId(remaining[nextIndex]?.id ?? null);
-      }
+    const removesFromView =
+      (template.kind === "archive" || template.kind === "trash") && template.value && !includeArchived;
+
+    setThreads((current) => {
+      const mapped = current.map((thread) =>
+        previous.has(thread.id) ? applyMutationTemplate(thread, template) : thread,
+      );
+      return removesFromView ? mapped.filter((thread) => !targetIds.includes(thread.id)) : mapped;
+    });
+
+    if (removesFromView && selectedId && targetIds.includes(selectedId)) {
+      const currentIndex = threads.findIndex((thread) => thread.id === selectedId);
+      const remaining = threads.filter((thread) => !targetIds.includes(thread.id));
+      const nextIndex = Math.min(currentIndex, remaining.length - 1);
+      setSelectedId(remaining[nextIndex]?.id ?? null);
     }
 
-    try {
-      await mailClient.mutateThread(mutation);
-      if (mutation.kind !== "archive") await loadThreads(query);
-      if (document.visibilityState !== "visible" || !document.hasFocus()) {
-        void mailClient.flushPending().then(setSyncStatus).catch(() => {});
-      }
-      const undoMutation = { ...mutation, value: !mutation.value } as ThreadMutation;
-      return {
-        message: mutation.kind === "archive"
-          ? "Conversation archived"
-          : mutation.kind === "label"
-            ? `${labels.find((label) => label.id === mutation.labelId)?.name ?? "Label"} ${mutation.value ? "added" : "removed"}`
-            : undefined,
-        undoAction: async () => {
-          setThreads((current) => [
-            ...current.filter((thread) => thread.id !== previous.id),
-            previous,
-          ].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)));
-          if (mutation.kind === "archive") setSelectedId(previous.id);
-          await mailClient.mutateThread(undoMutation);
-          await loadThreads(query);
-        },
-      };
-    } catch {
-      setThreads((current) => [
-        ...current.filter((thread) => thread.id !== previous.id),
-        previous,
-      ].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)));
+    setCheckedIds((current) => {
+      if (current.size === 0) return current;
+      const next = new Set(current);
+      targetIds.forEach((id) => next.delete(id));
+      return next.size === current.size ? current : next;
+    });
+
+    const settled = await Promise.allSettled(
+      targetIds.map((id) => mailClient.mutateThread(buildThreadMutation(id, template))),
+    );
+    const failedIds = targetIds.filter((_, index) => settled[index].status === "rejected");
+    const succeededIds = targetIds.filter((id) => !failedIds.includes(id));
+
+    if (failedIds.length > 0) {
+      setThreads((current) => {
+        const restored = failedIds
+          .map((id) => previous.get(id))
+          .filter((thread): thread is Thread => Boolean(thread));
+        return sortByRecency([...current.filter((thread) => !failedIds.includes(thread.id)), ...restored]);
+      });
+    }
+
+    if (template.kind !== "archive" && template.kind !== "trash") await loadThreads(query);
+    if (document.visibilityState !== "visible" || !document.hasFocus()) {
+      void mailClient.flushPending().then(setSyncStatus).catch(() => {});
+    }
+
+    if (succeededIds.length === 0) {
       setNotice({ message: "Change could not be saved" });
       return {};
     }
-  }, [labels, loadThreads, query, threads, selectedId, setNotice]);
+
+    const labelName = template.kind === "label"
+      ? labels.find((label) => label.id === template.labelId)?.name
+      : undefined;
+    const definite = describeMutation(template, succeededIds.length, labelName);
+    const singleToggle = (template.kind === "star" || template.kind === "read")
+      && succeededIds.length === 1 && failedIds.length === 0;
+    const message = singleToggle
+      ? undefined
+      : failedIds.length > 0
+        ? `${definite} — ${failedIds.length} could not be saved`
+        : definite;
+    const undoTemplate = invertMutationTemplate(template);
+
+    return {
+      message,
+      undoAction: async () => {
+        setThreads((current) => {
+          const restored = succeededIds
+            .map((id) => previous.get(id))
+            .filter((thread): thread is Thread => Boolean(thread));
+          return sortByRecency([...current.filter((thread) => !succeededIds.includes(thread.id)), ...restored]);
+        });
+        if (removesFromView && succeededIds.length === 1) setSelectedId(succeededIds[0]);
+        await Promise.allSettled(
+          succeededIds.map((id) => mailClient.mutateThread(buildThreadMutation(id, undoTemplate))),
+        );
+        await loadThreads(query);
+      },
+    };
+  }, [threads, includeArchived, selectedId, loadThreads, query, labels, setNotice]);
 
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
@@ -470,19 +590,21 @@ export function App() {
       const next = Math.max(selectedIndex - 1, 0);
       setSelectedId(threads[next]?.id ?? null);
     },
-    archiveSelected: () => {
-      if (selected) return mutate({ kind: "archive", threadId: selected.id, value: true });
-      return Promise.resolve({});
-    },
-    setLabelSelected: (labelId, value) => {
-      if (selected) return mutate({ kind: "label", threadId: selected.id, labelId, value });
-      return Promise.resolve({});
-    },
-    toggleReadSelected: () => {
-      if (selected) void mutate({ kind: "read", threadId: selected.id, value: selected.unread });
-    },
-    toggleStarSelected: () => {
-      if (selected) void mutate({ kind: "star", threadId: selected.id, value: !selected.starred });
+    archiveSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: true }),
+    trashSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "trash", value: true }),
+    setLabelSelected: (labelId, value) => mutateIds(labelTargetIds ?? [], { kind: "label", labelId, value }),
+    toggleReadSelected: () =>
+      mutateIds(selected ? [selected.id] : [], { kind: "read", value: selected?.unread ?? false }),
+    toggleStarSelected: () =>
+      mutateIds(selected ? [selected.id] : [], { kind: "star", value: !(selected?.starred ?? true) }),
+    toggleCheckedSelected: () => {
+      if (!selected) return;
+      setCheckedIds((current) => {
+        const next = new Set(current);
+        if (next.has(selected.id)) next.delete(selected.id);
+        else next.add(selected.id);
+        return next;
+      });
     },
     focusSearch: () => searchRef.current?.focus(),
     refresh: () => {
@@ -493,7 +615,7 @@ export function App() {
       });
     },
     openDiagnostics: () => setDiagnosticsOpen(true),
-    openLabels: () => setLabelsOpen(true),
+    openLabels: () => setLabelTargetIds(selected ? [selected.id] : null),
     openPalette: () => setPaletteOpen(true),
     openShortcutHelp: () => setShortcutHelpOpen(true),
     openSettings: () => openSettingsAt("appearance"),
@@ -501,7 +623,7 @@ export function App() {
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
     undoLastAction: () => { void undoLastAction(); },
-  }), [adjustFontScale, canUndoAction, loadThreads, mutate, openSettingsAt, query, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
+  }), [adjustFontScale, canUndoAction, labelTargetIds, loadThreads, mutateIds, openSettingsAt, query, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context).then((result) => {
@@ -519,6 +641,23 @@ export function App() {
     if (command?.enabled(context)) executeCommand(command);
   }, [context, executeCommand]);
   useShortcutHandler(context, executeCommand);
+
+  const runOnSelection = useCallback((title: string, template: MutationTemplate) => {
+    executeCommand({
+      id: "selection.batch",
+      title,
+      keys: [],
+      group: "Triage",
+      enabled: () => true,
+      run: () => mutateIds([...checkedIds], template),
+      undo: undoResult,
+    });
+  }, [checkedIds, executeCommand, mutateIds]);
+
+  useEffect(() => {
+    if (!selectAllRef.current) return;
+    selectAllRef.current.indeterminate = checkedIds.size > 0 && checkedIds.size < threads.length;
+  }, [checkedIds, threads.length]);
 
   return (
     <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
@@ -577,9 +716,24 @@ export function App() {
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
         <InboxResizeHandle {...inboxSize} />
         <header className="thread-header">
-          <div>
-            <span className="eyebrow">Inbox</span>
-            <h1>{threads.length} conversations</h1>
+          <div className="thread-header-title">
+            {threads.length > 0 ? (
+              <label className="select-all">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={threads.length > 0 && checkedIds.size === threads.length}
+                  aria-label="Select all conversations"
+                  onChange={(event) =>
+                    setCheckedIds(event.target.checked ? new Set(threads.map((thread) => thread.id)) : new Set())
+                  }
+                />
+              </label>
+            ) : null}
+            <div>
+              <span className="eyebrow">Inbox</span>
+              <h1>{threads.length} conversations</h1>
+            </div>
           </div>
           <button
             className="icon-button"
@@ -589,6 +743,39 @@ export function App() {
             <RefreshCw size={17} className={syncStatus?.state === "syncing" ? "spin" : ""} />
           </button>
         </header>
+        {checkedIds.size > 0 ? (
+          <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
+            <span className="batch-count">{checkedIds.size} selected</span>
+            <ActionButton label="Archive" onClick={() => runOnSelection("Archive", { kind: "archive", value: true })}>
+              <Archive size={16} />
+            </ActionButton>
+            <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
+              <Trash2 size={16} />
+            </ActionButton>
+            <ActionButton label="Mark read" onClick={() => runOnSelection("Mark read", { kind: "read", value: true })}>
+              <MailOpen size={16} />
+            </ActionButton>
+            <ActionButton label="Mark unread" onClick={() => runOnSelection("Mark unread", { kind: "read", value: false })}>
+              <Mail size={16} />
+            </ActionButton>
+            <ActionButton label="Star" onClick={() => runOnSelection("Star", { kind: "star", value: true })}>
+              <Star size={16} />
+            </ActionButton>
+            <ActionButton label="Unstar" onClick={() => runOnSelection("Unstar", { kind: "star", value: false })}>
+              <Star size={16} />
+            </ActionButton>
+            <ActionButton label="Labels" onClick={() => setLabelTargetIds([...checkedIds])}>
+              <Tag size={16} />
+            </ActionButton>
+            <button
+              className="icon-button"
+              aria-label="Clear selection"
+              onClick={() => setCheckedIds(new Set())}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        ) : null}
         <label className="search-box">
           <Search size={16} />
           <input
@@ -603,8 +790,8 @@ export function App() {
               type="button"
               className={`search-toggle ${includeArchived ? "active" : ""}`}
               aria-pressed={includeArchived}
-              aria-label="Include archived mail in search"
-              title="Include archived mail in search"
+              aria-label="Include archived or trashed mail in search"
+              title="Include archived or trashed mail in search"
               onClick={() => setIncludeArchived((current) => !current)}
             >
               <Archive size={14} />
@@ -623,6 +810,22 @@ export function App() {
               className={`thread-row ${thread.id === selectedId ? "selected" : ""}`}
               onClick={() => setSelectedId(thread.id)}
             >
+              <span
+                className={`row-check ${checkedIds.has(thread.id) ? "checked" : ""}`}
+                aria-hidden="true"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setCheckedIds((current) => {
+                    const next = new Set(current);
+                    if (next.has(thread.id)) next.delete(thread.id);
+                    else next.add(thread.id);
+                    return next;
+                  });
+                }}
+              >
+                {checkedIds.has(thread.id) ? <CheckSquare size={16} /> : <Square size={16} />}
+              </span>
+              {checkedIds.has(thread.id) ? <span className="sr-only">Selected for batch actions</span> : null}
               <span className={`unread-dot ${thread.unread ? "visible" : ""}`} />
               <span className="thread-content">
                 <span className="thread-meta">
@@ -674,6 +877,9 @@ export function App() {
                 <ActionButton label="Archive" shortcut="e" onClick={() => executeById("thread.archive")}>
                   <Archive size={17} />
                 </ActionButton>
+                <ActionButton label="Trash" shortcut="⇧3" onClick={() => executeById("thread.trash")}>
+                  <Trash2 size={17} />
+                </ActionButton>
               </div>
             </header>
             <div className="reply-toolbar" aria-label="Correspondence actions">
@@ -720,11 +926,18 @@ export function App() {
       {diagnosticsOpen ? (
         <Diagnostics status={syncStatus} onClose={() => setDiagnosticsOpen(false)} />
       ) : null}
-      {labelsOpen && selected ? (
+      {labelTargetIds && labelTargetIds.length > 0 ? (
         <LabelManager
           labels={labels}
-          thread={selected}
-          onClose={() => setLabelsOpen(false)}
+          checkedLabelIds={new Set(
+            labels
+              .filter((label) => label.kind === "user")
+              .filter((label) =>
+                labelTargetIds.every((id) => threads.find((thread) => thread.id === id)?.labels.includes(label.id)),
+              )
+              .map((label) => label.id),
+          )}
+          onClose={() => setLabelTargetIds(null)}
           onCreate={async (name) => {
             const label = await mailClient.createLabel(name);
             setLabels((current) => [...current, label]);
@@ -841,11 +1054,11 @@ function ActionButton({
   children: React.ReactNode;
   label: string;
   onClick(): void;
-  shortcut: string;
+  shortcut?: string;
 }) {
   return (
-    <button className="action-button" aria-label={`${label} (${shortcut})`} onClick={onClick}>
-      {children}<span>{label}</span><kbd>{shortcut}</kbd>
+    <button className="action-button" aria-label={shortcut ? `${label} (${shortcut})` : label} onClick={onClick}>
+      {children}<span>{label}</span>{shortcut ? <kbd>{shortcut}</kbd> : null}
     </button>
   );
 }
@@ -973,7 +1186,7 @@ function Diagnostics({
 
 function LabelManager({
   labels,
-  thread,
+  checkedLabelIds,
   onClose,
   onCreate,
   onDelete,
@@ -981,7 +1194,7 @@ function LabelManager({
   onToggle,
 }: {
   labels: Label[];
-  thread: Thread;
+  checkedLabelIds: Set<string>;
   onClose(): void;
   onCreate(name: string): Promise<void>;
   onDelete(id: string): Promise<void>;
@@ -1012,35 +1225,36 @@ function LabelManager({
         <button type="submit" disabled={!name.trim() || busy}>Create</button>
       </form>
       <div className="label-list">
-        {labels.map((label) => (
+        {labels.filter((label) => label.kind === "user").map((label) => (
           <div key={label.id}>
             <label>
               <input
                 type="checkbox"
-                checked={thread.labels.includes(label.id)}
+                checked={checkedLabelIds.has(label.id)}
                 onChange={(event) => onToggle(label.id, event.target.checked)}
               />
               <span className="label-color" style={{ background: label.color ?? "#64646d" }} />
               {label.name}
             </label>
-            {label.kind === "user" ? (
-              <span className="label-actions">
-                <button
-                  aria-label={`Rename ${label.name}`}
-                  onClick={() => {
-                    setRenaming(label);
-                    setRenameValue(label.name);
-                  }}
-                >
-                  <Pencil size={14} />
-                </button>
-                <button aria-label={`Delete ${label.name}`} onClick={() => void onDelete(label.id)}>
-                  <Trash2 size={14} />
-                </button>
-              </span>
-            ) : null}
+            <span className="label-actions">
+              <button
+                aria-label={`Rename ${label.name}`}
+                onClick={() => {
+                  setRenaming(label);
+                  setRenameValue(label.name);
+                }}
+              >
+                <Pencil size={14} />
+              </button>
+              <button aria-label={`Delete ${label.name}`} onClick={() => void onDelete(label.id)}>
+                <Trash2 size={14} />
+              </button>
+            </span>
           </div>
         ))}
+        {labels.every((label) => label.kind !== "user") ? (
+          <p className="empty">No labels yet. Create one below.</p>
+        ) : null}
       </div>
       {renaming ? (
         <form

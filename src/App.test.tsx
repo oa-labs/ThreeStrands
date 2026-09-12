@@ -155,6 +155,59 @@ describe("archive notice", () => {
   });
 });
 
+describe("trash and batch actions", () => {
+  beforeEach(async () => {
+    for (const threadId of demoThreadIds) {
+      await mailClient.mutateThread({ kind: "archive", threadId, value: false });
+      await mailClient.mutateThread({ kind: "trash", threadId, value: false });
+      await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
+    }
+  });
+
+  afterEach(cleanup);
+
+  it("moves the open conversation to trash and can undo it", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Trash (⇧3)" }).click();
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent("Conversation moved to trash");
+    expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Undo" }).click();
+    });
+    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+  });
+
+  it("archives every conversation checked for batch actions", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "x" }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j" }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "x" }));
+    });
+    expect(await screen.findByText("2 selected")).toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Archive" }).click();
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Archived 2 conversations");
+    expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Phase 1: read and triage" })).not.toBeInTheDocument();
+  });
+});
+
 describe("Escape dismissal", () => {
   beforeEach(async () => {
     localStorage.removeItem("dispatch.demoCorrespondence");

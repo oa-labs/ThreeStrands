@@ -8,6 +8,7 @@ export type Thread = {
   unread: boolean;
   starred: boolean;
   archived: boolean;
+  trashed: boolean;
   labels: string[];
   /** FTS5 match excerpt with hits wrapped in MATCH_START/MATCH_END markers. Only set on search results. */
   matchSnippet?: string | null;
@@ -37,6 +38,7 @@ export type SearchThreadsRequest = {
 
 export type ThreadMutation =
   | { kind: "archive"; threadId: string; value: boolean }
+  | { kind: "trash"; threadId: string; value: boolean }
   | { kind: "read"; threadId: string; value: boolean }
   | { kind: "star"; threadId: string; value: boolean }
   | { kind: "label"; threadId: string; labelId: string; value: boolean };
