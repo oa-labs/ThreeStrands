@@ -15,7 +15,8 @@ export type CommandContext = {
   undoSend(): void;
   selectNext(): void;
   selectPrevious(): void;
-  archiveSelected(): void;
+  archiveSelected(): Promise<CommandResult>;
+  setLabelSelected(labelId: string, value: boolean): Promise<CommandResult>;
   toggleReadSelected(): void;
   toggleStarSelected(): void;
   focusSearch(): void;
@@ -26,6 +27,13 @@ export type CommandContext = {
   openShortcutHelp(): void;
   increaseFontSize(): void;
   decreaseFontSize(): void;
+  canUndoAction: boolean;
+  undoLastAction(): void;
+};
+
+export type CommandResult = {
+  message?: string;
+  undoAction?: () => Promise<void>;
 };
 
 export type Command = {
@@ -34,27 +42,37 @@ export type Command = {
   keys: string[];
   group: "Navigation" | "Triage" | "Application" | "Compose";
   enabled(context: CommandContext): boolean;
-  run(context: CommandContext): void;
+  run(context: CommandContext): Promise<CommandResult>;
+  undo?: (result: CommandResult) => Promise<void>;
+};
+
+const complete = async (action: () => void): Promise<CommandResult> => {
+  action();
+  return {};
+};
+
+const undoResult = async (result: CommandResult): Promise<void> => {
+  await result.undoAction?.();
 };
 
 export const commands: Command[] = [
-  { id: "draft.new", title: "New message", keys: ["c"], group: "Compose", enabled: () => true, run: (c) => c.compose() },
-  { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => c.reply() },
-  { id: "draft.replyAll", title: "Reply all", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => c.replyAll() },
-  { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => c.forward() },
-  { id: "mailbox.inbox", title: "Go to Inbox", keys: ["g then i"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => c.openInbox() },
-  { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => c.openDrafts() },
-  { id: "outbox.open", title: "Open outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => c.openOutbox() },
-  { id: "draft.send", title: "Send draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => c.sendDraft() },
-  { id: "draft.attach", title: "Attach files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => c.attachFiles() },
-  { id: "send.undo", title: "Undo send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => c.undoSend() },
+  { id: "draft.new", title: "New message", keys: ["c"], group: "Compose", enabled: () => true, run: (c) => complete(c.compose) },
+  { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => complete(c.reply) },
+  { id: "draft.replyAll", title: "Reply all", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => complete(c.replyAll) },
+  { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => complete(c.forward) },
+  { id: "mailbox.inbox", title: "Go to Inbox", keys: ["g then i"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openInbox) },
+  { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openDrafts) },
+  { id: "outbox.open", title: "Open outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => complete(c.openOutbox) },
+  { id: "draft.send", title: "Send draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
+  { id: "draft.attach", title: "Attach files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
+  { id: "send.undo", title: "Undo send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {
     id: "thread.next",
     title: "Next conversation",
     keys: ["j", "ArrowDown"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
-    run: (context) => context.selectNext(),
+    run: (context) => complete(context.selectNext),
   },
   {
     id: "thread.previous",
@@ -62,7 +80,7 @@ export const commands: Command[] = [
     keys: ["k", "ArrowUp"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
-    run: (context) => context.selectPrevious(),
+    run: (context) => complete(context.selectPrevious),
   },
   {
     id: "thread.archive",
@@ -71,6 +89,7 @@ export const commands: Command[] = [
     group: "Triage",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
     run: (context) => context.archiveSelected(),
+    undo: undoResult,
   },
   {
     id: "thread.read",
@@ -78,7 +97,7 @@ export const commands: Command[] = [
     keys: ["u"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
-    run: (context) => context.toggleReadSelected(),
+    run: (context) => complete(context.toggleReadSelected),
   },
   {
     id: "thread.star",
@@ -86,7 +105,7 @@ export const commands: Command[] = [
     keys: ["s"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
-    run: (context) => context.toggleStarSelected(),
+    run: (context) => complete(context.toggleStarSelected),
   },
   {
     id: "labels.open",
@@ -94,7 +113,7 @@ export const commands: Command[] = [
     keys: ["l"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
-    run: (context) => context.openLabels(),
+    run: (context) => complete(context.openLabels),
   },
   {
     id: "search.focus",
@@ -102,7 +121,7 @@ export const commands: Command[] = [
     keys: ["/"],
     group: "Application",
     enabled: () => true,
-    run: (context) => context.focusSearch(),
+    run: (context) => complete(context.focusSearch),
   },
   {
     id: "palette.open",
@@ -110,7 +129,7 @@ export const commands: Command[] = [
     keys: ["Mod+k"],
     group: "Application",
     enabled: () => true,
-    run: (context) => context.openPalette(),
+    run: (context) => complete(context.openPalette),
   },
   {
     id: "shortcuts.open",
@@ -118,7 +137,7 @@ export const commands: Command[] = [
     keys: ["?"],
     group: "Application",
     enabled: () => true,
-    run: (context) => context.openShortcutHelp(),
+    run: (context) => complete(context.openShortcutHelp),
   },
   {
     id: "mail.refresh",
@@ -126,7 +145,7 @@ export const commands: Command[] = [
     keys: ["Shift+r"],
     group: "Application",
     enabled: () => true,
-    run: (context) => context.refresh(),
+    run: (context) => complete(context.refresh),
   },
   {
     id: "diagnostics.open",
@@ -134,7 +153,7 @@ export const commands: Command[] = [
     keys: [],
     group: "Application",
     enabled: () => true,
-    run: (context) => context.openDiagnostics(),
+    run: (context) => complete(context.openDiagnostics),
   },
   {
     id: "font.increase",
@@ -142,7 +161,7 @@ export const commands: Command[] = [
     keys: ["Mod+=", "Mod++"],
     group: "Application",
     enabled: () => true,
-    run: (context) => context.increaseFontSize(),
+    run: (context) => complete(context.increaseFontSize),
   },
   {
     id: "font.decrease",
@@ -150,9 +169,29 @@ export const commands: Command[] = [
     keys: ["Mod+-"],
     group: "Application",
     enabled: () => true,
-    run: (context) => context.decreaseFontSize(),
+    run: (context) => complete(context.decreaseFontSize),
+  },
+  {
+    id: "action.undo",
+    title: "Undo last action",
+    keys: ["z", "Mod+z"],
+    group: "Application",
+    enabled: (context) => context.canUndoAction && !context.composerActive,
+    run: (context) => complete(context.undoLastAction),
   },
 ];
+
+export function labelCommand(labelId: string, labelName: string, value: boolean): Command {
+  return {
+    id: value ? "thread.label.add" : "thread.label.remove",
+    title: `${value ? "Add" : "Remove"} label ${labelName}`,
+    keys: [],
+    group: "Triage",
+    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    run: (context) => context.setLabelSelected(labelId, value),
+    undo: undoResult,
+  };
+}
 
 export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   let base = key;

@@ -34,9 +34,12 @@ import {
 import {
   commands,
   isEditableTarget,
+  labelCommand,
   matchesShortcut,
   shortcutSteps,
+  type Command,
   type CommandContext,
+  type CommandResult,
 } from "./commands";
 import {
   clearLocalCrashReports,
@@ -135,6 +138,7 @@ function HighlightedSnippet({ thread }: { thread: Thread }) {
 
 function useShortcutHandler(
   context: CommandContext,
+  execute: (command: Command) => void,
 ) {
   const contextRef = useRef(context);
   contextRef.current = context;
@@ -182,7 +186,7 @@ function useShortcutHandler(
         clearPendingStep();
         if (command) {
           event.preventDefault();
-          command.run(currentContext);
+          execute(command);
           return;
         }
       }
@@ -197,7 +201,7 @@ function useShortcutHandler(
       );
       if (command) {
         event.preventDefault();
-        command.run(currentContext);
+        execute(command);
         return;
       }
 
@@ -216,7 +220,7 @@ function useShortcutHandler(
       window.removeEventListener("keydown", onKeyDown);
       clearPendingStep();
     };
-  }, []);
+  }, [execute]);
 }
 
 export function App() {
@@ -250,7 +254,22 @@ export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [notice, setNotice] = useNotice();
+  const lastUndo = useRef<{ command: Command; result: CommandResult } | null>(null);
+  const [canUndoAction, setCanUndoAction] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  const undoLastAction = useCallback(async () => {
+    const pending = lastUndo.current;
+    if (!pending?.command.undo) return;
+    lastUndo.current = null;
+    setCanUndoAction(false);
+    setNotice(null);
+    try {
+      await pending.command.undo(pending.result);
+    } catch {
+      setNotice({ message: "Undo could not be saved" });
+    }
+  }, [setNotice]);
 
   const loadThreads = useCallback(async (search: string) => {
     const trimmed = search.trim();
@@ -331,9 +350,9 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [query, loadThreads]);
 
-  const mutate = useCallback(async (mutation: ThreadMutation) => {
+  const mutate = useCallback(async (mutation: ThreadMutation): Promise<CommandResult> => {
     const previous = threads.find((thread) => thread.id === mutation.threadId);
-    if (!previous) return;
+    if (!previous) return {};
 
     const applyLocal = (thread: Thread): Thread => {
       if (thread.id !== mutation.threadId) return thread;
@@ -356,15 +375,6 @@ export function App() {
         const nextIndex = Math.min(currentIndex, remaining.length - 1);
         setSelectedId(remaining[nextIndex]?.id ?? null);
       }
-      setNotice({
-        message: "Conversation archived",
-        undo: () => {
-          void mailClient
-            .mutateThread({ ...mutation, value: false })
-            .then(() => loadThreads(query));
-          setNotice(null);
-        },
-      });
     }
 
     try {
@@ -373,14 +383,32 @@ export function App() {
       if (document.visibilityState !== "visible" || !document.hasFocus()) {
         void mailClient.flushPending().then(setSyncStatus).catch(() => {});
       }
+      const undoMutation = { ...mutation, value: !mutation.value } as ThreadMutation;
+      return {
+        message: mutation.kind === "archive"
+          ? "Conversation archived"
+          : mutation.kind === "label"
+            ? `${labels.find((label) => label.id === mutation.labelId)?.name ?? "Label"} ${mutation.value ? "added" : "removed"}`
+            : undefined,
+        undoAction: async () => {
+          setThreads((current) => [
+            ...current.filter((thread) => thread.id !== previous.id),
+            previous,
+          ].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)));
+          if (mutation.kind === "archive") setSelectedId(previous.id);
+          await mailClient.mutateThread(undoMutation);
+          await loadThreads(query);
+        },
+      };
     } catch {
       setThreads((current) => [
         ...current.filter((thread) => thread.id !== previous.id),
         previous,
       ].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)));
       setNotice({ message: "Change could not be saved" });
+      return {};
     }
-  }, [loadThreads, query, threads, selectedId, setNotice]);
+  }, [labels, loadThreads, query, threads, selectedId, setNotice]);
 
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
@@ -402,7 +430,12 @@ export function App() {
       setSelectedId(threads[next]?.id ?? null);
     },
     archiveSelected: () => {
-      if (selected) void mutate({ kind: "archive", threadId: selected.id, value: true });
+      if (selected) return mutate({ kind: "archive", threadId: selected.id, value: true });
+      return Promise.resolve({});
+    },
+    setLabelSelected: (labelId, value) => {
+      if (selected) return mutate({ kind: "label", threadId: selected.id, labelId, value });
+      return Promise.resolve({});
     },
     toggleReadSelected: () => {
       if (selected) void mutate({ kind: "read", threadId: selected.id, value: selected.unread });
@@ -424,9 +457,26 @@ export function App() {
     openShortcutHelp: () => setShortcutHelpOpen(true),
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
-  }), [adjustFontScale, loadThreads, mutate, query, selected, selectedId, selectedIndex, threads, correspondence.context]);
+    canUndoAction,
+    undoLastAction: () => { void undoLastAction(); },
+  }), [adjustFontScale, canUndoAction, loadThreads, mutate, query, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
 
-  useShortcutHandler(context);
+  const executeCommand = useCallback((command: Command) => {
+    void command.run(context).then((result) => {
+      if (!command.undo || !result.undoAction) return;
+      lastUndo.current = { command, result };
+      setCanUndoAction(true);
+      setNotice({
+        message: result.message ?? command.title,
+        undo: () => { void undoLastAction(); },
+      });
+    });
+  }, [context, setNotice, undoLastAction]);
+  const executeById = useCallback((id: string) => {
+    const command = commands.find((candidate) => candidate.id === id);
+    if (command?.enabled(context)) executeCommand(command);
+  }, [context, executeCommand]);
+  useShortcutHandler(context, executeCommand);
 
   return (
     <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
@@ -436,17 +486,17 @@ export function App() {
           <button
             className="nav-button active"
             aria-label="Inbox (g then i)"
-            onClick={context.openInbox}
+            onClick={() => executeById("mailbox.inbox")}
           >
             <Inbox size={19} />
           </button>
         </HoverTooltip>
-        <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={context.compose}><Pencil size={19} /></button>
+        <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
         <HoverTooltip label="Drafts" shortcut="G D">
-          <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount}) (g then d)`} onClick={context.openDrafts}><FileText size={19} /></button>
+          <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount}) (g then d)`} onClick={() => executeById("drafts.open")}><FileText size={19} /></button>
         </HoverTooltip>
         <HoverTooltip label="Outbox">
-          <button className="nav-button" aria-label={`Outbox (${correspondence.outboxCount})`} onClick={context.openOutbox}><Send size={19} /></button>
+          <button className="nav-button" aria-label={`Outbox (${correspondence.outboxCount})`} onClick={() => executeById("outbox.open")}><Send size={19} /></button>
         </HoverTooltip>
         <div className="sidebar-spacer" />
         <button
@@ -461,14 +511,14 @@ export function App() {
           className="nav-button"
           aria-label="Keyboard shortcuts (?)"
           title="Keyboard shortcuts (?)"
-          onClick={() => setShortcutHelpOpen(true)}
+          onClick={() => executeById("shortcuts.open")}
         >
           <Keyboard size={19} />
         </button>
         <button
           className="nav-button"
           aria-label="Command palette"
-          onClick={() => setPaletteOpen(true)}
+          onClick={() => executeById("palette.open")}
         >
           <CommandIcon size={19} />
         </button>
@@ -484,7 +534,7 @@ export function App() {
           <button
             className="icon-button"
             aria-label="Refresh mail"
-            onClick={context.refresh}
+            onClick={() => executeById("mail.refresh")}
           >
             <RefreshCw size={17} className={syncStatus?.state === "syncing" ? "spin" : ""} />
           </button>
@@ -555,31 +605,31 @@ export function App() {
                 <ActionButton
                   label={selected?.starred ? "Unstar" : "Star"}
                   shortcut="s"
-                  onClick={context.toggleStarSelected}
+                  onClick={() => executeById("thread.star")}
                 >
                   <Star size={17} fill={selected?.starred ? "currentColor" : "none"} />
                 </ActionButton>
                 <ActionButton
                   label={selected?.unread ? "Mark read" : "Mark unread"}
                   shortcut="u"
-                  onClick={context.toggleReadSelected}
+                  onClick={() => executeById("thread.read")}
                 >
                   {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
                 </ActionButton>
                 <HoverTooltip label="Manage Labels" shortcut="L" placement="bottom">
-                  <ActionButton label="Labels" shortcut="l" onClick={context.openLabels}>
+                  <ActionButton label="Labels" shortcut="l" onClick={() => executeById("labels.open")}>
                     <Tag size={17} />
                   </ActionButton>
                 </HoverTooltip>
-                <ActionButton label="Archive" shortcut="e" onClick={context.archiveSelected}>
+                <ActionButton label="Archive" shortcut="e" onClick={() => executeById("thread.archive")}>
                   <Archive size={17} />
                 </ActionButton>
               </div>
             </header>
             <div className="reply-toolbar" aria-label="Correspondence actions">
-              <ActionButton label="Reply" shortcut="r" onClick={context.reply}><Reply size={16} /></ActionButton>
-              <ActionButton label="Reply all" shortcut="a" onClick={context.replyAll}><ReplyAll size={16} /></ActionButton>
-              <ActionButton label="Forward" shortcut="f" onClick={context.forward}><Forward size={16} /></ActionButton>
+              <ActionButton label="Reply" shortcut="r" onClick={() => executeById("draft.reply")}><Reply size={16} /></ActionButton>
+              <ActionButton label="Reply all" shortcut="a" onClick={() => executeById("draft.replyAll")}><ReplyAll size={16} /></ActionButton>
+              <ActionButton label="Forward" shortcut="f" onClick={() => executeById("draft.forward")}><Forward size={16} /></ActionButton>
             </div>
             <div className="message-stack">
               {detail.messages.map((message) => (
@@ -612,7 +662,7 @@ export function App() {
 
       {correspondence.overlay}
       {paletteOpen ? (
-        <CommandPalette context={context} onClose={() => setPaletteOpen(false)} />
+        <CommandPalette context={context} execute={executeCommand} onClose={() => setPaletteOpen(false)} />
       ) : null}
       {shortcutHelpOpen ? (
         <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} />
@@ -640,9 +690,10 @@ export function App() {
               current.map((label) => label.id === id ? { ...label, ...updated } : label),
             );
           }}
-          onToggle={(labelId, value) =>
-            mutate({ kind: "label", threadId: selected.id, labelId, value })
-          }
+          onToggle={(labelId, value) => {
+            const label = labels.find((candidate) => candidate.id === labelId);
+            executeCommand(labelCommand(labelId, label?.name ?? "Label", value));
+          }}
         />
       ) : null}
       {accountOpen ? (
@@ -740,9 +791,11 @@ function ActionButton({
 
 function CommandPalette({
   context,
+  execute,
   onClose,
 }: {
   context: CommandContext;
+  execute(command: Command): void;
   onClose(): void;
 }) {
   const [filter, setFilter] = useState("");
@@ -769,7 +822,7 @@ function CommandPalette({
             key={command.id}
             disabled={!command.enabled(context)}
             onClick={() => {
-              command.run(context);
+              execute(command);
               onClose();
             }}
           >

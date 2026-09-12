@@ -29,6 +29,14 @@ describe("command registry", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "/", shiftKey: true }), "?")).toBe(true);
   });
 
+  it("registers both last-action undo shortcuts", () => {
+    const undo = commands.find((command) => command.id === "action.undo");
+    expect(undo?.keys).toEqual(["z", "Mod+z"]);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Z" }), "z")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "z", ctrlKey: true }), "Mod+z")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "z", metaKey: true }), "Mod+z")).toBe(true);
+  });
+
   it("splits sequential shortcuts into independently matchable steps", () => {
     const [prefix, destination] = shortcutSteps("g then d");
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "g" }), prefix)).toBe(true);

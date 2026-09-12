@@ -65,6 +65,7 @@ test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) =>
   await expect(help).toContainText("New message");
   await expect(help).toContainText("Command palette");
   await expect(help).toContainText("Refresh mail");
+  await expect(help).toContainText("Undo last action");
 
   await page.keyboard.press("Escape");
   await expect(help).not.toBeVisible();

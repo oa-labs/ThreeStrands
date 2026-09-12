@@ -22,6 +22,7 @@ describe("archive notice", () => {
   beforeEach(async () => {
     for (const threadId of demoThreadIds) {
       await mailClient.mutateThread({ kind: "archive", threadId, value: false });
+      await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
     }
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
@@ -56,6 +57,66 @@ describe("archive notice", () => {
     });
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("undoes an archive and optimistically restores the conversation", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    await archiveSelected();
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    await act(async () => {
+      undo.click();
+    });
+
+    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("undoes the last action with the Superhuman Z shortcut", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    await archiveSelected();
+    await screen.findByRole("status");
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "z" }));
+    });
+
+    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+  });
+
+  it("undoes adding and removing a label", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await act(async () => {
+      screen.getByRole("button", { name: "Labels (l)" }).click();
+    });
+    const work = await screen.findByRole("checkbox", { name: "Work" });
+
+    await act(async () => {
+      work.click();
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent("Work added");
+    expect(work).toBeChecked();
+    await act(async () => {
+      screen.getByRole("button", { name: "Undo" }).click();
+    });
+    await waitFor(() => expect(work).not.toBeChecked());
+
+    await act(async () => {
+      work.click();
+    });
+    await screen.findByText("Work added");
+    await act(async () => {
+      work.click();
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent("Work removed");
+    expect(work).not.toBeChecked();
+    await act(async () => {
+      screen.getByRole("button", { name: "Undo" }).click();
+    });
+    await waitFor(() => expect(work).toBeChecked());
   });
 
   it("keeps a replacement notice on screen for its own full timeout", async () => {
