@@ -82,6 +82,78 @@ test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) =>
   await expect(help).not.toBeVisible();
 });
 
+test("switches accounts from the keyboard and palette, and removing one leaves the other unaffected", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+
+  // Connect a second account from Settings → Accounts.
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await expect(settings).toBeVisible();
+  await settings.getByRole("button", { name: "Add another account" }).click();
+  await expect(settings.locator(".accounts-list li")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await expect(settings).not.toBeVisible();
+
+  // The sidebar brand button becomes a switcher once a second account exists.
+  const switcher = page.getByRole("button", { name: "Switch account" });
+  await expect(switcher).toBeVisible();
+
+  // Cmd/Ctrl+2 scopes to the new (empty) account; Cmd/Ctrl+1 returns to the first.
+  await page.keyboard.press("ControlOrMeta+2");
+  await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+1");
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+
+  // The command palette offers the same switching, discoverable like any other command.
+  await page.keyboard.press("ControlOrMeta+k");
+  let palette = page.getByRole("dialog", { name: "Command palette" });
+  await palette.getByRole("button", { name: /Switch to demo-2@example.com/ }).click();
+  await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+k");
+  palette = page.getByRole("dialog", { name: "Command palette" });
+  await palette.getByRole("button", { name: /Show all accounts/ }).click();
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+
+  // A new message offers a From selector once more than one account is connected.
+  await page.keyboard.press("c");
+  const composer = page.getByRole("dialog", { name: "New message" });
+  const from = composer.getByRole("combobox", { name: "Send from" });
+  await expect(from).toHaveValue("demo@example.com");
+  await from.selectOption("demo-2@example.com");
+  await expect(from).toHaveValue("demo-2@example.com");
+  await composer.getByRole("button", { name: "Discard draft" }).click();
+  await expect(composer).not.toBeVisible();
+
+  // Shortcut help documents the new per-account bindings.
+  await page.keyboard.press("Shift+/");
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toContainText("Switch to demo@example.com");
+  await expect(help).toContainText("Switch to demo-2@example.com");
+  await page.keyboard.press("Escape");
+  await expect(help).not.toBeVisible();
+
+  // The sidebar switcher lists both accounts and shows per-thread account dots.
+  await switcher.click();
+  const menu = page.getByRole("menu", { name: "Accounts" });
+  await expect(menu.getByRole("menuitemradio", { name: /demo-2@example.com/ })).toBeVisible();
+  await menu.getByRole("menuitemradio", { name: "All accounts" }).click();
+  await expect(page.locator(".thread-row .account-dot").first()).toBeVisible();
+
+  // Removing the second account leaves the first one's shortcuts and inbox unaffected.
+  await switcher.click();
+  await page.getByRole("button", { name: "Manage accounts…" }).click();
+  await expect(settings).toBeVisible();
+  await settings.locator("li", { hasText: "demo-2@example.com" }).getByRole("button", { name: "Remove" }).click();
+  await expect(settings.locator(".accounts-list li")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(settings).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+  await page.keyboard.press("j");
+  await expect(page.getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
+});
+
 test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();

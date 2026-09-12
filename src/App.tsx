@@ -1571,7 +1571,6 @@ function Settings({
           {section === "accounts" ? (
             <AccountsSettings
               accounts={accounts}
-              primaryConnected={authStatus?.connected ?? false}
               onAdd={onAddAccount}
               onRemove={onRemoveAccount}
               onReconnect={onReconnectAccount}
@@ -1707,7 +1706,6 @@ function AccountSettings({
 
 function AccountsSettings({
   accounts,
-  primaryConnected,
   onAdd,
   onRemove,
   onReconnect,
@@ -1715,7 +1713,6 @@ function AccountsSettings({
   onReorder,
 }: {
   accounts: Account[];
-  primaryConnected: boolean;
   onAdd(): Promise<void>;
   onRemove(email: string): Promise<void>;
   onReconnect(email: string): Promise<void>;
@@ -1807,7 +1804,7 @@ function AccountsSettings({
           ))}
         </ul>
       )}
-      {primaryConnected ? (
+      {accounts.length > 0 ? (
         <button type="button" disabled={busyEmail !== null} onClick={() => act("__add__", onAdd)}>
           {busyEmail === "__add__" ? "Waiting for Google…" : "Add another account"}
         </button>
