@@ -32,8 +32,9 @@ test("searches and opens the command palette", async ({ page }) => {
 
 test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) => {
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
 
-  await page.keyboard.press("?");
+  await page.keyboard.press("Shift+/");
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(help).toBeVisible();
   await expect(help.getByRole("heading", { name: "Navigation" })).toBeVisible();

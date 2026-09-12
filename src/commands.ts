@@ -143,7 +143,9 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   const shiftMatches = expectsShift
     ? event.shiftKey
     : base === "?" || !event.shiftKey;
-  return event.key.toLocaleLowerCase() === base.toLocaleLowerCase()
+  const baseMatches = event.key.toLocaleLowerCase() === base.toLocaleLowerCase()
+    || (base === "?" && event.key === "/" && event.shiftKey);
+  return baseMatches
     && shiftMatches
     && (event.ctrlKey || event.metaKey) === parts.includes("Mod")
     && !event.altKey;

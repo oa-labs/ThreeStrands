@@ -26,6 +26,7 @@ describe("command registry", () => {
   it("registers the common shortcut-help key", () => {
     expect(commands.find((command) => command.id === "shortcuts.open")?.keys).toEqual(["?"]);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "?", shiftKey: true }), "?")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "/", shiftKey: true }), "?")).toBe(true);
   });
 
   it("splits sequential shortcuts into independently matchable steps", () => {
