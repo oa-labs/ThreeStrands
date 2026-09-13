@@ -425,8 +425,12 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
-  const [summaryPending, setSummaryPending] = useState(false);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
+  // Keyed by thread id, not a single flag, so summarizing thread A in the
+  // background doesn't show "Summarizing…" (or clear it) on thread B just
+  // because B is what's currently on screen when A's request settles.
+  const summarizingRef = useRef<Set<string>>(new Set());
+  const [summarizingIds, setSummarizingIds] = useState<Set<string>>(new Set());
+  const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
   const refreshAiAvailability = useCallback(() => {
     const enabled = readAiProvider() !== "none" && readAiFeatures().summarize;
     if (!enabled) {
@@ -548,7 +552,9 @@ export function App() {
   useEffect(() => {
     setOlderMessagesExpanded(false);
     setSummaryExpanded(false);
-    setSummaryError(null);
+    // Pending/error state deliberately isn't reset here — it's keyed by
+    // thread id (see `summarizingRef`/`summaryErrors`) so it stays correct
+    // for whichever thread it actually belongs to when you navigate back.
   }, [selectedId]);
 
   useEffect(() => {
@@ -751,6 +757,8 @@ export function App() {
   const latestMessage = detail?.messages.at(-1) ?? null;
   const canUnsubscribe = Boolean(latestMessage?.unsubscribe?.methods.length);
   const unsubscribeMessage = detail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
+  const summaryPending = detail ? summarizingIds.has(detail.thread.id) : false;
+  const summaryError = detail ? summaryErrors[detail.thread.id] ?? null : null;
 
   const mutateIdsRef = useRef(mutateIds);
   mutateIdsRef.current = mutateIds;
@@ -791,13 +799,27 @@ export function App() {
     setSettingsOpen(true);
   }, []);
 
-  /** Always calls the provider, even when a summary is already cached — used
-   * for both the first generation and an explicit "Regenerate". */
+  /**
+   * Always calls the provider, even when a summary is already cached — used
+   * for both the first generation and an explicit "Regenerate". Guarded by
+   * `summarizingRef` (checked and updated synchronously, not via state) so
+   * pressing "i" or Regenerate repeatedly for the same thread while a
+   * request is already in flight doesn't fire duplicate provider calls; a
+   * different thread can still summarize concurrently in the background.
+   */
   const runSummarize = useCallback(async () => {
     if (!selected) return;
-    setSummaryError(null);
+    const threadId = selected.id;
+    if (summarizingRef.current.has(threadId)) return;
+    summarizingRef.current.add(threadId);
+    setSummarizingIds(new Set(summarizingRef.current));
     setSummaryExpanded(true);
-    setSummaryPending(true);
+    setSummaryErrors((current) => {
+      if (!(threadId in current)) return current;
+      const next = { ...current };
+      delete next[threadId];
+      return next;
+    });
     try {
       const provider = readAiProvider();
       const model = resolveAiModel(provider, readAiModel());
@@ -806,16 +828,16 @@ export function App() {
       if (provider === "custom" && !endpoint) {
         throw new Error("Set an endpoint URL in AI settings before summarizing.");
       }
-      const result = await mailClient.summarizeThread(selected.id, provider, model, endpoint);
+      const result = await mailClient.summarizeThread(threadId, provider, model, endpoint);
       setThreads((current) =>
         current.map((thread) =>
-          thread.id === selected.id
+          thread.id === threadId
             ? { ...thread, summary: result.summary, summaryGeneratedAt: result.generatedAt }
             : thread,
         ),
       );
       setDetail((current) =>
-        current && current.thread.id === selected.id
+        current && current.thread.id === threadId
           ? {
               ...current,
               thread: { ...current.thread, summary: result.summary, summaryGeneratedAt: result.generatedAt },
@@ -823,9 +845,13 @@ export function App() {
           : current,
       );
     } catch (error) {
-      setSummaryError(error instanceof Error ? error.message : String(error));
+      setSummaryErrors((current) => ({
+        ...current,
+        [threadId]: error instanceof Error ? error.message : String(error),
+      }));
     } finally {
-      setSummaryPending(false);
+      summarizingRef.current.delete(threadId);
+      setSummarizingIds(new Set(summarizingRef.current));
     }
   }, [selected]);
 
