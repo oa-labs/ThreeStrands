@@ -11,7 +11,7 @@ use crate::mime::NormalizedMessage;
 use crate::mime::UnsubscribeMetadata;
 use crate::models::{
     Account, Message, SearchThreadsRequest, SyncStatus, Thread, ThreadDetail, ThreadMutation,
-    UnsubscribeMethod, UnsubscribeTarget,
+    ThreadPage, UnsubscribeMethod, UnsubscribeTarget,
 };
 
 /// Assigned to newly connected accounts in rotation, so each has a distinct
@@ -127,6 +127,7 @@ impl Database {
             )
             .map_err(display_error)?;
         crate::correspondence::migrate(&mut connection)?;
+        ensure_query_indexes(&connection).map_err(display_error)?;
         seed_if_empty(&connection).map_err(display_error)?;
         Ok(Self(Mutex::new(connection)))
     }
@@ -136,6 +137,7 @@ impl Database {
         let mut connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(SCHEMA).unwrap();
         crate::correspondence::migrate(&mut connection).unwrap();
+        ensure_query_indexes(&connection).unwrap();
         seed_if_empty(&connection).unwrap();
         Self(Mutex::new(connection))
     }
@@ -161,6 +163,33 @@ impl Database {
 
     pub fn list_trash(&self, account_id: Option<&str>) -> Result<Vec<Thread>, String> {
         self.list_threads_where(account_id, "trashed = 1")
+    }
+
+    pub fn list_threads_page(
+        &self,
+        account_id: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ThreadPage, String> {
+        self.list_threads_page_where(account_id, "archived = 0 AND trashed = 0", offset, limit)
+    }
+
+    pub fn list_all_mail_page(
+        &self,
+        account_id: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ThreadPage, String> {
+        self.list_threads_page_where(account_id, "trashed = 0", offset, limit)
+    }
+
+    pub fn list_trash_page(
+        &self,
+        account_id: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ThreadPage, String> {
+        self.list_threads_page_where(account_id, "trashed = 1", offset, limit)
     }
 
     fn list_threads_where(
@@ -192,6 +221,47 @@ impl Database {
                 .map_err(display_error)?,
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
+    }
+
+    fn list_threads_page_where(
+        &self,
+        account_id: Option<&str>,
+        filter: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ThreadPage, String> {
+        let connection = self.connection()?;
+        let page_limit = limit.min(200);
+        let fetch_limit = page_limit.saturating_add(1) as i64;
+        let sql = format!(
+            "SELECT id, provider_thread_id, subject, snippet, participants_json,
+                    last_message_at, unread, starred, archived, labels_json, trashed, account_id,
+                    summary, summary_generated_at
+             FROM threads
+             WHERE {filter} {}
+             ORDER BY last_message_at DESC
+             LIMIT ?{} OFFSET ?{}",
+            if account_id.is_some() {
+                "AND account_id = ?1"
+            } else {
+                ""
+            },
+            if account_id.is_some() { 2 } else { 1 },
+            if account_id.is_some() { 3 } else { 2 },
+        );
+        let mut statement = connection.prepare(&sql).map_err(display_error)?;
+        let rows = match account_id {
+            Some(id) => statement
+                .query_map(params![id, fetch_limit, offset as i64], thread_from_row)
+                .map_err(display_error)?,
+            None => statement
+                .query_map(params![fetch_limit, offset as i64], thread_from_row)
+                .map_err(display_error)?,
+        };
+        let mut threads = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
+        let has_more = threads.len() > page_limit;
+        threads.truncate(page_limit);
+        Ok(ThreadPage { threads, has_more })
     }
 
     pub fn get_thread(&self, id: &str) -> Result<ThreadDetail, String> {
@@ -426,9 +496,10 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
     }
 
-    pub fn mutate_thread(&self, mutation: &ThreadMutation) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
+    fn apply_mutation(
+        transaction: &Transaction<'_>,
+        mutation: &ThreadMutation,
+    ) -> Result<(), String> {
         let (kind, value) = match mutation {
             ThreadMutation::Archive { value, .. } => ("archive", *value),
             ThreadMutation::Trash { value, .. } => ("trash", *value),
@@ -593,6 +664,25 @@ impl Database {
                 )
                 .map_err(display_error)?;
         }
+        Ok(())
+    }
+
+    pub fn mutate_thread(&self, mutation: &ThreadMutation) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        Self::apply_mutation(&transaction, mutation)?;
+        transaction.commit().map_err(display_error)
+    }
+
+    pub fn mutate_threads(&self, mutations: &[ThreadMutation]) -> Result<(), String> {
+        if mutations.is_empty() {
+            return Ok(());
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        for mutation in mutations {
+            Self::apply_mutation(&transaction, mutation)?;
+        }
         transaction.commit().map_err(display_error)
     }
 
@@ -725,8 +815,8 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
-    pub fn upsert_gmail_thread(
-        &self,
+    fn apply_gmail_thread(
+        transaction: &Transaction<'_>,
         account_id: &str,
         messages: &[NormalizedMessage],
     ) -> Result<(), String> {
@@ -762,8 +852,6 @@ impl Database {
         let starred = labels.iter().any(|label| label == "STARRED");
         let archived = !labels.iter().any(|label| label == "INBOX");
         let trashed = labels.iter().any(|label| label == "TRASH");
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
         transaction
             .execute(
                 "INSERT INTO threads(
@@ -844,6 +932,30 @@ impl Database {
                 ],
             )
             .map_err(display_error)?;
+        Ok(())
+    }
+
+    pub fn upsert_gmail_thread(
+        &self,
+        account_id: &str,
+        messages: &[NormalizedMessage],
+    ) -> Result<(), String> {
+        self.upsert_gmail_threads(account_id, &[messages.to_vec()])
+    }
+
+    pub fn upsert_gmail_threads(
+        &self,
+        account_id: &str,
+        message_groups: &[Vec<NormalizedMessage>],
+    ) -> Result<(), String> {
+        if message_groups.is_empty() {
+            return Ok(());
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        for messages in message_groups {
+            Self::apply_gmail_thread(&transaction, account_id, messages)?;
+        }
         transaction.commit().map_err(display_error)
     }
 
@@ -1051,6 +1163,17 @@ impl Database {
         }
         transaction.commit().map_err(display_error)
     }
+}
+
+fn ensure_query_indexes(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "CREATE INDEX IF NOT EXISTS threads_account_mailbox_order
+         ON threads(account_id, trashed, archived, last_message_at DESC);
+         CREATE INDEX IF NOT EXISTS threads_mailbox_order
+         ON threads(trashed, archived, last_message_at DESC);
+         CREATE INDEX IF NOT EXISTS mutations_account_pending
+         ON mutations(account_id, state, created_at);",
+    )
 }
 
 fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
@@ -1359,6 +1482,49 @@ mod tests {
     }
 
     #[test]
+    fn mailbox_pages_report_remaining_rows() {
+        let database = database();
+        let first = database.list_threads_page(None, 0, 1).unwrap();
+        let second = database.list_threads_page(None, 1, 1).unwrap();
+        assert_eq!(first.threads.len(), 1);
+        assert!(first.has_more);
+        assert_eq!(second.threads.len(), 1);
+        assert!(!second.has_more);
+    }
+
+    #[test]
+    fn batch_mutations_commit_together() {
+        let database = database();
+        database
+            .mutate_threads(&[
+                ThreadMutation::Star {
+                    thread_id: "welcome".into(),
+                    value: true,
+                },
+                ThreadMutation::Star {
+                    thread_id: "roadmap".into(),
+                    value: false,
+                },
+            ])
+            .unwrap();
+        let threads = database.list_threads(None).unwrap();
+        assert!(
+            threads
+                .iter()
+                .find(|thread| thread.id == "welcome")
+                .unwrap()
+                .starred
+        );
+        assert!(
+            !threads
+                .iter()
+                .find(|thread| thread.id == "roadmap")
+                .unwrap()
+                .starred
+        );
+    }
+
+    #[test]
     fn deleting_a_thread_also_removes_its_search_index_row() {
         let database = database();
         database
@@ -1568,12 +1734,19 @@ mod tests {
         assert_eq!(before.summary_generated_at, None);
 
         database
-            .set_thread_summary("welcome", "- Point one\n- Point two", "2026-03-05T16:30:00Z")
+            .set_thread_summary(
+                "welcome",
+                "- Point one\n- Point two",
+                "2026-03-05T16:30:00Z",
+            )
             .unwrap();
 
         let after = database.get_thread("welcome").unwrap().thread;
         assert_eq!(after.summary.as_deref(), Some("- Point one\n- Point two"));
-        assert_eq!(after.summary_generated_at.as_deref(), Some("2026-03-05T16:30:00Z"));
+        assert_eq!(
+            after.summary_generated_at.as_deref(),
+            Some("2026-03-05T16:30:00Z")
+        );
     }
 
     fn message(id: &str, thread_id: &str, date: &str, body: &str) -> NormalizedMessage {

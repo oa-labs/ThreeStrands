@@ -64,6 +64,8 @@ pub struct SummarizeRequest {
 /// window or run up an outsized bill for a shortcut meant to save a click.
 const MAX_MESSAGES: usize = 15;
 const MAX_BODY_CHARS: usize = 6000;
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 const SYSTEM_PROMPT: &str = "You summarize email threads for a mail client. Reply with 2 to 5 short plain-text bullet lines capturing the key facts, decisions, and any action items. Each line must start with \"- \". Do not use markdown formatting, headings, or a preamble - output only the bullet lines.";
 
@@ -127,7 +129,7 @@ async fn call_openai_compatible(
             {"role": "user", "content": prompt},
         ],
     });
-    let response = reqwest::Client::new()
+    let response = ai_client()?
         .post(format!("{base_url}/chat/completions"))
         .bearer_auth(api_key)
         .json(&body)
@@ -146,7 +148,7 @@ async fn call_anthropic(model: &str, prompt: &str, api_key: &str) -> Result<Stri
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": prompt}],
     });
-    let response = reqwest::Client::new()
+    let response = ai_client()?
         .post("https://api.anthropic.com/v1/messages")
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
@@ -157,6 +159,14 @@ async fn call_anthropic(model: &str, prompt: &str, api_key: &str) -> Result<Stri
     let response = checked(response).await?;
     let text = response.text().await.map_err(display)?;
     parse_anthropic_content(&text)
+}
+
+fn ai_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .map_err(display)
 }
 
 fn parse_openai_content(body: &str) -> Result<String, String> {
@@ -216,7 +226,10 @@ mod tests {
 
     #[test]
     fn base_url_resolves_known_providers() {
-        assert_eq!(base_url("openai", None).unwrap(), "https://api.openai.com/v1");
+        assert_eq!(
+            base_url("openai", None).unwrap(),
+            "https://api.openai.com/v1"
+        );
         assert_eq!(
             base_url("openrouter", None).unwrap(),
             "https://openrouter.ai/api/v1"
@@ -240,7 +253,10 @@ mod tests {
     #[test]
     fn parses_openai_style_response() {
         let body = r#"{"choices":[{"message":{"content":"- Point one\n- Point two"}}]}"#;
-        assert_eq!(parse_openai_content(body).unwrap(), "- Point one\n- Point two");
+        assert_eq!(
+            parse_openai_content(body).unwrap(),
+            "- Point one\n- Point two"
+        );
     }
 
     #[test]

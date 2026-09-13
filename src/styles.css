@@ -320,6 +320,8 @@ kbd {
   text-align: left;
   background: transparent;
   cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: 72px;
 }
 .thread-row:hover { background: var(--hover); }
 .thread-row.selected { background: var(--selected); box-shadow: inset 2px 0 var(--accent); }

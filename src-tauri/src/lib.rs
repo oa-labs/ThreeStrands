@@ -17,7 +17,7 @@ use chrono::Utc;
 use db::Database;
 use models::{
     Account, AuthStatus, CreateLabelRequest, Label, SearchThreadsRequest, SummaryResult,
-    SyncStatus, Thread, ThreadDetail, ThreadMutation, UpdateLabelRequest,
+    SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, UpdateLabelRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -213,6 +213,42 @@ fn list_trash(
 }
 
 #[tauri::command]
+fn list_threads_page(
+    account_id: Option<String>,
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<ThreadPage, String> {
+    state
+        .database
+        .list_threads_page(account_id.as_deref(), offset, limit)
+}
+
+#[tauri::command]
+fn list_all_mail_page(
+    account_id: Option<String>,
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<ThreadPage, String> {
+    state
+        .database
+        .list_all_mail_page(account_id.as_deref(), offset, limit)
+}
+
+#[tauri::command]
+fn list_trash_page(
+    account_id: Option<String>,
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<ThreadPage, String> {
+    state
+        .database
+        .list_trash_page(account_id.as_deref(), offset, limit)
+}
+
+#[tauri::command]
 fn get_thread(id: String, state: State<'_, AppState>) -> Result<ThreadDetail, String> {
     state.database.get_thread(&id)
 }
@@ -231,6 +267,14 @@ fn search_threads(
 #[tauri::command]
 fn mutate_thread(mutation: ThreadMutation, state: State<'_, AppState>) -> Result<(), String> {
     state.database.mutate_thread(&mutation)
+}
+
+#[tauri::command]
+fn mutate_threads(
+    mutations: Vec<ThreadMutation>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.database.mutate_threads(&mutations)
 }
 
 #[tauri::command]
@@ -624,9 +668,13 @@ pub fn run() {
             list_threads,
             list_all_mail,
             list_trash,
+            list_threads_page,
+            list_all_mail_page,
+            list_trash_page,
             get_thread,
             search_threads,
             mutate_thread,
+            mutate_threads,
             unsubscribe,
             sync_status,
             sync_account,

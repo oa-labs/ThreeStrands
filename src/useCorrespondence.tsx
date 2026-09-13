@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { X } from "lucide-react";
@@ -24,7 +24,7 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     try { const [d, o] = await Promise.all([mailClient.listDrafts(), mailClient.listOutbox()]); setDrafts(d); setOutbox(o); }
     finally { refreshing.current = false; }
   }, []);
-  useEffect(() => { void refresh().catch((e) => setError(String(e))); const timer = setInterval(() => { setClock(Date.now()); void refresh().catch(() => {}); }, 1000); return () => clearInterval(timer); }, [refresh]);
+  useEffect(() => { void refresh().catch((e) => setError(String(e))); }, [refresh]);
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     const listener = listen("compose-before-exit", async () => {
@@ -68,15 +68,37 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   }, [refresh]);
   useEffect(() => { if (closing) document.querySelector<HTMLElement>(".exit-notice")?.focus(); }, [closing]);
   const pending = outbox.find((o) => ["undo_pending", "ready"].includes(o.state));
-  const context = {
+  const pendingId = pending?.id ?? null;
+  const hasActiveDelivery = outbox.some((o) => ["undo_pending", "ready", "sending"].includes(o.state));
+  useEffect(() => {
+    if (!hasActiveDelivery) return;
+    const timer = window.setInterval(() => {
+      setClock(Date.now());
+      void refresh().catch(() => {});
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveDelivery, refresh]);
+
+  const compose = useCallback(() => { void start("new"); }, [start]);
+  const reply = useCallback(() => { void start("reply"); }, [start]);
+  const replyAll = useCallback(() => { void start("replyAll"); }, [start]);
+  const forward = useCallback(() => { void start("forward"); }, [start]);
+  const openInbox = useCallback(() => { setActive(null); }, []);
+  const openDrafts = useCallback(() => { void openList(); }, [openList]);
+  const openOutbox = useCallback(() => { void openList(); }, [openList]);
+  const sendDraft = useCallback(() => editor.current?.send(), []);
+  const attachFiles = useCallback(() => editor.current?.attach(), []);
+  const undoSend = useCallback(() => { void undo(); }, [undo]);
+  const composerActive = Boolean(active);
+
+  const context = useMemo(() => ({
     closing,
-    composerActive: Boolean(active),
-    compose: () => { void start("new"); }, reply: () => { void start("reply"); }, replyAll: () => { void start("replyAll"); }, forward: () => { void start("forward"); },
-    openInbox: () => { setActive(null); },
-    openDrafts: () => { void openList(); }, openOutbox: () => { void openList(); },
-    sendDraft: () => editor.current?.send(), attachFiles: () => editor.current?.attach(),
-    undoSend: () => { void undo(); }, canUndoSend: Boolean(pending),
-  };
+    composerActive,
+    compose, reply, replyAll, forward, openInbox, openDrafts, openOutbox,
+    sendDraft, attachFiles, undoSend, canUndoSend: pendingId !== null,
+  }), [attachFiles, closing, compose, composerActive, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, undoSend, pendingId]);
+  const openDraft = useCallback((draft: Draft) => setActive(draft), []);
+  const undoSendItem = useCallback((id: string) => { void undo(id); }, [undo]);
   return {
     context,
     drafts,
@@ -85,8 +107,8 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     sentCount: outbox.filter((o) => o.state === "sent").length,
     draftCount: drafts.length,
     outboxCount: outbox.filter((o) => !["sent", "canceled"].includes(o.state)).length,
-    openDraft: (draft: Draft) => setActive(draft),
-    undoSendItem: (id: string) => { void undo(id); },
+    openDraft,
+    undoSendItem,
     restoreFailedSend,
     reconcileSend,
     overlay: <>

@@ -10,7 +10,7 @@ use crate::{
     auth::GoogleAuth,
     db::{Database, PendingMutation},
     gmail::{GmailClient, GmailProvider, ProviderError, ProviderResult},
-    mime::normalize,
+    mime::{normalize, NormalizedMessage},
     models::{Label, SyncStatus, ThreadMutation},
 };
 
@@ -221,9 +221,7 @@ async fn full_sync_attempt(
     let mut page = None;
     loop {
         let result = provider.list_threads(page.as_deref()).await?;
-        for id in result.thread_ids {
-            ingest_thread(database, account_id, provider, &id).await?;
-        }
+        ingest_threads(database, account_id, provider, result.thread_ids).await?;
         page = result.next_page_token;
         if page.is_none() {
             break;
@@ -248,37 +246,52 @@ async fn incremental_sync(
             break result.history_id;
         }
     };
-    for id in changed {
-        ingest_thread(database, account_id, provider, &id).await?;
-    }
+    ingest_threads(
+        database,
+        account_id,
+        provider,
+        changed.into_iter().collect(),
+    )
+    .await?;
     database
         .finish_sync(account_id, &final_cursor)
         .map_err(ProviderError::Other)
 }
 
-async fn ingest_thread(
+async fn ingest_threads(
     database: &Database,
     account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
-    id: &str,
+    ids: Vec<String>,
 ) -> ProviderResult<()> {
-    let messages = match provider.get_thread(id).await {
-        Ok(messages) => messages,
-        Err(ProviderError::NotFound) => {
-            return database
-                .delete_gmail_thread(account_id, id)
-                .map_err(ProviderError::Other)
-        }
-        Err(error) => return Err(error),
-    };
-    let normalized = messages
-        .iter()
-        .map(normalize)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(ProviderError::Other)?;
+    let mut normalized_threads: Vec<Vec<NormalizedMessage>> = Vec::with_capacity(ids.len());
+    let mut deleted = Vec::new();
+    for id in ids {
+        let messages = match provider.get_thread(&id).await {
+            Ok(messages) => messages,
+            Err(ProviderError::NotFound) => {
+                deleted.push(id);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        normalized_threads.push(
+            messages
+                .iter()
+                .map(normalize)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(ProviderError::Other)?,
+        );
+    }
     database
-        .upsert_gmail_thread(account_id, &normalized)
-        .map_err(ProviderError::Other)
+        .upsert_gmail_threads(account_id, &normalized_threads)
+        .map_err(ProviderError::Other)?;
+    for id in deleted {
+        database
+            .delete_gmail_thread(account_id, &id)
+            .map_err(ProviderError::Other)?;
+    }
+    Ok(())
 }
 
 async fn deliver_mutations(

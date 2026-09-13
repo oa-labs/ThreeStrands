@@ -73,7 +73,11 @@ pub struct GmailClient {
 impl GmailClient {
     pub fn new(auth: GoogleAuth) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(45))
+                .build()
+                .expect("valid Gmail HTTP client configuration"),
             auth,
             next_thread_fetch: Arc::new(Mutex::new(Instant::now())),
         }

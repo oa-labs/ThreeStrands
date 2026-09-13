@@ -7,6 +7,7 @@ import type {
   SyncStatus,
   Thread,
   ThreadDetail,
+  ThreadPage,
   ThreadMutation,
   UnsubscribeResult,
 } from "../domain";
@@ -206,6 +207,18 @@ export const demoClient: MailClient = {
   async listTrash(accountId) {
     return structuredClone(visibleTrash(accountId));
   },
+  async listThreadsPage(accountId, offset, limit): Promise<ThreadPage> {
+    const items = visible(accountId);
+    return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
+  },
+  async listAllMailPage(accountId, offset, limit): Promise<ThreadPage> {
+    const items = visibleAllMail(accountId);
+    return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
+  },
+  async listTrashPage(accountId, offset, limit): Promise<ThreadPage> {
+    const items = visibleTrash(accountId);
+    return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
+  },
   async getThread(id) {
     const thread = threads.find((candidate) => candidate.id === id);
     if (!thread) throw new Error("Thread not found");
@@ -259,6 +272,9 @@ export const demoClient: MailClient = {
   },
   async mutateThread(mutation) {
     update(mutation);
+  },
+  async mutateThreads(mutations) {
+    mutations.forEach(update);
   },
   async unsubscribe(messageId): Promise<UnsubscribeResult> {
     if (!messageId.endsWith("-message") || !messageId.startsWith("welcome")) {

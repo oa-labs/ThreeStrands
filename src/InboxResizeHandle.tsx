@@ -23,6 +23,16 @@ export function useInboxWidth() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(storageKey, String(preferredWidth));
+      } catch {
+        // Retain the width for this session if persistence is unavailable.
+      }
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [preferredWidth]);
   // Keep room for the reader without overwriting the user's preferred width
   // when the app window temporarily becomes smaller.
   const maxWidth = Math.max(minimumWidth, Math.min(maximumWidth, viewportWidth - 58 - 420));
@@ -30,11 +40,6 @@ export function useInboxWidth() {
   const resize = (next: number) => {
     const clamped = Math.round(Math.max(minimumWidth, Math.min(maxWidth, next)));
     setPreferredWidth(clamped);
-    try {
-      localStorage.setItem(storageKey, String(clamped));
-    } catch {
-      // Retain the width for this session if persistence is unavailable.
-    }
   };
   return { width, maxWidth, resize };
 }

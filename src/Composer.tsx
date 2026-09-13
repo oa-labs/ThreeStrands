@@ -129,23 +129,30 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
         ? current
         : { width: rect.width, height: rect.height }
     ));
-  });
+  }, [visibleSize?.width, visibleSize?.height, viewportSize.height, viewportSize.width]);
+  useEffect(() => {
+    if (!preferredSize) return;
+    const timer = window.setTimeout(() => saveComposerSize(preferredSize), 150);
+    return () => window.clearTimeout(timer);
+  }, [preferredSize]);
+  useEffect(() => {
+    if (!preferredPosition) return;
+    const timer = window.setTimeout(() => saveComposerPosition(preferredPosition), 150);
+    return () => window.clearTimeout(timer);
+  }, [preferredPosition]);
   const layoutSize = visibleSize ?? measuredSize ?? { width: minimumComposerWidth, height: minimumComposerHeight };
   const visiblePosition = preferredPosition ? clampComposerPosition(preferredPosition, layoutSize, viewportSize) : null;
   const resize = (size: ComposerSize) => {
     const next = clampComposerSize(size, viewportSize);
     setPreferredSize(next);
-    saveComposerSize(next);
     if (preferredPosition) {
       const nextPosition = clampComposerPosition(preferredPosition, next, viewportSize);
       setPreferredPosition(nextPosition);
-      saveComposerPosition(nextPosition);
     }
   };
   const move = (position: ComposerPosition) => {
     const next = clampComposerPosition(position, layoutSize, viewportSize);
     setPreferredPosition(next);
-    saveComposerPosition(next);
   };
   function onHeaderPointerDown(event: PointerEvent<HTMLElement>) {
     if (event.button !== 0) return;

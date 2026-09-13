@@ -24,6 +24,13 @@ pub struct Thread {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ThreadPage {
+    pub threads: Vec<Thread>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: String,
     pub thread_id: String,

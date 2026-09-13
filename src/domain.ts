@@ -47,6 +47,11 @@ export type ThreadDetail = {
   messages: Message[];
 };
 
+export type ThreadPage = {
+  threads: Thread[];
+  hasMore: boolean;
+};
+
 export type SummaryResult = {
   summary: string;
   generatedAt: string;

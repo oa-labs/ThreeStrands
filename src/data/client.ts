@@ -8,6 +8,7 @@ import type {
   SyncStatus,
   Thread,
   ThreadDetail,
+  ThreadPage,
   ThreadMutation,
   UnsubscribeResult,
 } from "../domain";
@@ -22,6 +23,9 @@ export interface MailClient extends CorrespondenceClient {
   listAllMail(accountId?: string): Promise<Thread[]>;
   /** Only trashed threads. */
   listTrash(accountId?: string): Promise<Thread[]>;
+  listThreadsPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
+  listAllMailPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
+  listTrashPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   getThread(id: string): Promise<ThreadDetail>;
   summarizeThread(
     threadId: string,
@@ -31,6 +35,7 @@ export interface MailClient extends CorrespondenceClient {
   ): Promise<SummaryResult>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   mutateThread(mutation: ThreadMutation): Promise<void>;
+  mutateThreads(mutations: ThreadMutation[]): Promise<void>;
   unsubscribe(messageId: string): Promise<UnsubscribeResult>;
   sync(): Promise<SyncStatus>;
   flushPending(): Promise<SyncStatus>;
@@ -59,11 +64,15 @@ const tauriClient: MailClient = {
   listThreads: (accountId) => invoke("list_threads", { accountId }),
   listAllMail: (accountId) => invoke("list_all_mail", { accountId }),
   listTrash: (accountId) => invoke("list_trash", { accountId }),
+  listThreadsPage: (accountId, offset, limit) => invoke("list_threads_page", { accountId, offset, limit }),
+  listAllMailPage: (accountId, offset, limit) => invoke("list_all_mail_page", { accountId, offset, limit }),
+  listTrashPage: (accountId, offset, limit) => invoke("list_trash_page", { accountId, offset, limit }),
   getThread: (id) => invoke("get_thread", { id }),
   summarizeThread: (threadId, provider, model, endpoint) =>
     invoke("ai_summarize_thread", { threadId, provider, model, endpoint }),
   searchThreads: (request, accountId) => invoke("search_threads", { request, accountId }),
   mutateThread: (mutation) => invoke("mutate_thread", { mutation }),
+  mutateThreads: (mutations) => invoke("mutate_threads", { mutations }),
   unsubscribe: (messageId) => invoke("unsubscribe", { messageId }),
   sync: () => invoke("sync_account"),
   flushPending: () => invoke("flush_pending_mutations"),

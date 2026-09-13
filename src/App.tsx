@@ -37,6 +37,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  memo,
   useMemo,
   useRef,
   useState,
@@ -199,6 +200,58 @@ function HighlightedSnippet({ thread }: { thread: Thread }) {
     </>
   );
 }
+
+const ThreadRow = memo(function ThreadRow({
+  thread,
+  selected,
+  checked,
+  accountColor,
+  showAccount,
+  onSelect,
+  onToggleCheck,
+}: {
+  thread: Thread;
+  selected: boolean;
+  checked: boolean;
+  accountColor?: string;
+  showAccount: boolean;
+  onSelect(id: string): void;
+  onToggleCheck(id: string): void;
+}) {
+  return (
+    <button
+      role="option"
+      aria-selected={selected}
+      className={`thread-row ${selected ? "selected" : ""}`}
+      onClick={() => onSelect(thread.id)}
+    >
+      <span
+        className={`row-check ${checked ? "checked" : ""}`}
+        aria-hidden="true"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleCheck(thread.id);
+        }}
+      >
+        {checked ? <CheckSquare size={16} /> : <Square size={16} />}
+      </span>
+      {checked ? <span className="sr-only">Selected for batch actions</span> : null}
+      <span className={`unread-dot ${thread.unread ? "visible" : ""}`} />
+      <span className="thread-content">
+        <span className="thread-meta">
+          <span className="thread-sender">
+            {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
+            <strong>{thread.participants.join(", ")}</strong>
+          </span>
+          <time>{timeFormatter.format(new Date(thread.lastMessageAt))}</time>
+        </span>
+        <span className="thread-subject">{thread.subject}</span>
+        <span className="thread-snippet"><HighlightedSnippet thread={thread} /></span>
+      </span>
+      {thread.starred ? <Star className="starred" size={15} fill="currentColor" /> : null}
+    </button>
+  );
+});
 
 type MutationTemplate =
   | { kind: "archive"; value: boolean }
@@ -407,11 +460,12 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
+  const visibleDetail = detail?.thread.id === selectedId ? detail : null;
   const [olderMessagesExpanded, setOlderMessagesExpanded] = useState(false);
   const latestMessageRef = useRef<HTMLElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const correspondence = useCorrespondence(accounts, detail?.messages.at(-1)?.id, detail?.thread.accountId);
+  const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId);
   const [query, setQuery] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
   const [hasMoreResults, setHasMoreResults] = useState(false);
@@ -437,7 +491,9 @@ export function App() {
       setAiSummaryAvailable(false);
       return;
     }
-    void isAiApiKeyConfigured().then(setAiSummaryAvailable);
+    void isAiApiKeyConfigured()
+      .then(setAiSummaryAvailable)
+      .catch(() => setAiSummaryAvailable(false));
   }, []);
   useEffect(() => {
     // Also covers the initial mount, since `settingsOpen` starts `false`.
@@ -448,8 +504,14 @@ export function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
   const [mailbox, setMailbox] = useState<MailboxKind>("inbox");
+  const [mailboxError, setMailboxError] = useState("");
+  const [detailLoading, setDetailLoading] = useState(false);
   const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "trash";
   const accountsRequest = useRef(0);
+  const threadsRequest = useRef(0);
+  const detailRequest = useRef(0);
+  const loadingMore = useRef(false);
+  const [loadingMoreState, setLoadingMoreState] = useState(false);
   const refreshAccounts = useCallback(() => {
     // Guards against an earlier-issued refresh resolving after a later one
     // (e.g. two account edits in quick succession) and clobbering it with
@@ -484,70 +546,118 @@ export function App() {
   }, [setNotice]);
 
   const loadThreads = useCallback(async (search: string, accountOverride?: string | null, mailboxOverride?: MailboxKind) => {
+    const requestId = ++threadsRequest.current;
     const box = mailboxOverride ?? mailbox;
     if (box === "drafts" || box === "outbox") {
       setThreads([]);
       setSelectedId(null);
       setHasMoreResults(false);
+      setMailboxError("");
       return;
     }
+    setMailboxError("");
     const trimmed = search.trim();
     const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
-    const next = box === "inbox" && trimmed
-      ? await mailClient.searchThreads({
-          query: trimmed,
-          limit: SEARCH_PAGE_SIZE,
-          includeArchived,
-        }, accountId)
-      : box === "allMail"
-        ? await mailClient.listAllMail(accountId)
-        : box === "trash"
-          ? await mailClient.listTrash(accountId)
-          : await mailClient.listThreads(accountId);
-    setThreads(next);
-    setHasMoreResults(box === "inbox" && trimmed ? next.length === SEARCH_PAGE_SIZE : false);
-    setSelectedId((current) =>
-      current && next.some((thread) => thread.id === current)
-        ? current
-        : (next[0]?.id ?? null),
-    );
+    try {
+      const page = box === "inbox" && trimmed
+        ? await mailClient.searchThreads({
+            query: trimmed,
+            limit: SEARCH_PAGE_SIZE,
+            includeArchived,
+          }, accountId).then((threads) => ({ threads, hasMore: threads.length === SEARCH_PAGE_SIZE }))
+        : box === "allMail"
+          ? await mailClient.listAllMailPage(accountId, 0, SEARCH_PAGE_SIZE)
+          : box === "trash"
+            ? await mailClient.listTrashPage(accountId, 0, SEARCH_PAGE_SIZE)
+            : await mailClient.listThreadsPage(accountId, 0, SEARCH_PAGE_SIZE);
+      if (requestId !== threadsRequest.current) return;
+      setMailboxError("");
+      setThreads(page.threads);
+      setHasMoreResults(page.hasMore);
+      setSelectedId((current) =>
+        current && page.threads.some((thread) => thread.id === current)
+          ? current
+          : (page.threads[0]?.id ?? null),
+      );
+    } catch (error) {
+      if (requestId !== threadsRequest.current) return;
+      setMailboxError(error instanceof Error ? error.message : String(error));
+    }
   }, [includeArchived, activeAccountId, mailbox]);
 
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
-    if (!trimmed) return;
-    const next = await mailClient.searchThreads({
-      query: trimmed,
-      limit: SEARCH_PAGE_SIZE,
-      offset: threads.length,
-      includeArchived,
-    }, activeAccountId ?? undefined);
-    setThreads((current) => [...current, ...next]);
-    setHasMoreResults(next.length === SEARCH_PAGE_SIZE);
-  }, [query, threads.length, includeArchived, activeAccountId]);
+    if ((mailbox === "drafts" || mailbox === "outbox") || loadingMore.current) return;
+    loadingMore.current = true;
+    setLoadingMoreState(true);
+    const requestId = threadsRequest.current;
+    try {
+      const accountId = activeAccountId ?? undefined;
+      const page = trimmed
+        ? await mailClient.searchThreads({
+            query: trimmed,
+            limit: SEARCH_PAGE_SIZE,
+            offset: threads.length,
+            includeArchived,
+          }, accountId).then((items) => ({ threads: items, hasMore: items.length === SEARCH_PAGE_SIZE }))
+        : mailbox === "allMail"
+          ? await mailClient.listAllMailPage(accountId, threads.length, SEARCH_PAGE_SIZE)
+          : mailbox === "trash"
+            ? await mailClient.listTrashPage(accountId, threads.length, SEARCH_PAGE_SIZE)
+            : await mailClient.listThreadsPage(accountId, threads.length, SEARCH_PAGE_SIZE);
+      if (requestId !== threadsRequest.current) return;
+      setThreads((current) => [...current, ...page.threads]);
+      setHasMoreResults(page.hasMore);
+    } catch (error) {
+      if (requestId === threadsRequest.current) {
+        setMailboxError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      loadingMore.current = false;
+      setLoadingMoreState(false);
+    }
+  }, [query, threads.length, includeArchived, activeAccountId, mailbox]);
 
   useEffect(() => {
     if (correspondence.sentCount > 0) void loadThreads(query);
   }, [correspondence.sentCount, loadThreads]);
 
   useEffect(() => {
-    Promise.all([loadThreads(""), mailClient.syncStatus(), mailClient.googleAuthStatus()])
-      .then(([, status, auth]) => {
+    Promise.all([mailClient.syncStatus(), mailClient.googleAuthStatus()])
+      .then(([status, auth]) => {
         setSyncStatus(status);
         setAuthStatus(auth);
-        void mailClient.listLabels().then(setLabels).catch(() => setLabels([]));
-        refreshAccounts();
       })
-      .finally(() => setLoading(false));
-  }, [loadThreads]);
+      .catch(() => {
+        setSyncStatus((current) => current ? { ...current, state: "error" } : current);
+      });
+    void mailClient.listLabels().then(setLabels).catch(() => setLabels([]));
+    void refreshAccounts();
+  }, [refreshAccounts]);
 
   useEffect(() => {
+    const requestId = ++detailRequest.current;
     if (!selectedId) {
       setDetail(null);
+      setDetailLoading(false);
       return;
     }
-    mailClient.getThread(selectedId).then(setDetail);
-  }, [selectedId, threads]);
+    setDetail(null);
+    setDetailLoading(true);
+    void mailClient.getThread(selectedId)
+      .then((next) => {
+        if (requestId !== detailRequest.current || next.thread.id !== selectedId) return;
+        setDetail(next);
+      })
+      .catch((error) => {
+        if (requestId !== detailRequest.current) return;
+        setDetail(null);
+        setNotice({ message: `Could not open conversation: ${error instanceof Error ? error.message : String(error)}` });
+      })
+      .finally(() => {
+        if (requestId === detailRequest.current) setDetailLoading(false);
+      });
+  }, [selectedId, setNotice]);
 
   useEffect(() => {
     setOlderMessagesExpanded(false);
@@ -558,9 +668,9 @@ export function App() {
   }, [selectedId]);
 
   useEffect(() => {
-    if (!detail) return;
+    if (!visibleDetail) return;
     latestMessageRef.current?.scrollIntoView?.({ block: "start" });
-  }, [detail]);
+  }, [visibleDetail]);
 
   useLayoutEffect(() => {
     // Collapsing older messages can shrink the stack below the current scroll
@@ -632,7 +742,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => void loadThreads(query), 180);
+    // Invalidate an in-flight request as soon as the view inputs change. The
+    // debounce below is intentionally only for starting the replacement
+    // request; it must not leave an older search eligible to paint.
+    ++threadsRequest.current;
+    const timeout = window.setTimeout(() => {
+      void loadThreads(query).finally(() => setLoading(false));
+    }, query.trim() ? 180 : 0);
     return () => window.clearTimeout(timeout);
   }, [query, loadThreads]);
 
@@ -665,6 +781,7 @@ export function App() {
     const previous = new Map(
       threads.filter((thread) => targetIds.includes(thread.id)).map((thread) => [thread.id, thread] as const),
     );
+    const previousDetail = detail && targetIds.includes(detail.thread.id) ? detail : null;
     const removesFromView = mailbox === "trash"
       ? template.kind === "trash" && !template.value
       : mailbox === "allMail"
@@ -678,6 +795,16 @@ export function App() {
         previous.has(thread.id) ? applyMutationTemplate(thread, template) : thread,
       );
       return removesFromView ? mapped.filter((thread) => !targetIds.includes(thread.id)) : mapped;
+    });
+    setDetail((current) => {
+      if (!current || !targetIds.includes(current.thread.id)) return current;
+      const messages = template.kind === "read"
+        ? current.messages.map((message, index) => ({
+            ...message,
+            unread: template.value ? false : index === current.messages.length - 1,
+          }))
+        : current.messages;
+      return { ...current, thread: applyMutationTemplate(current.thread, template), messages };
     });
 
     if (removesFromView && selectedId && targetIds.includes(selectedId)) {
@@ -694,10 +821,12 @@ export function App() {
       return next.size === current.size ? current : next;
     });
 
-    const settled = await Promise.allSettled(
-      targetIds.map((id) => mailClient.mutateThread(buildThreadMutation(id, template))),
-    );
-    const failedIds = targetIds.filter((_, index) => settled[index].status === "rejected");
+    let failedIds: string[] = [];
+    try {
+      await mailClient.mutateThreads(targetIds.map((id) => buildThreadMutation(id, template)));
+    } catch {
+      failedIds = targetIds;
+    }
     const succeededIds = targetIds.filter((id) => !failedIds.includes(id));
 
     if (failedIds.length > 0) {
@@ -707,6 +836,7 @@ export function App() {
           .filter((thread): thread is Thread => Boolean(thread));
         return sortByRecency([...current.filter((thread) => !failedIds.includes(thread.id)), ...restored]);
       });
+      if (previousDetail && failedIds.includes(previousDetail.thread.id)) setDetail(previousDetail);
     }
 
     if (template.kind !== "archive" && template.kind !== "trash" && template.kind !== "spam") {
@@ -744,21 +874,32 @@ export function App() {
           return sortByRecency([...current.filter((thread) => !succeededIds.includes(thread.id)), ...restored]);
         });
         if (removesFromView && succeededIds.length === 1) setSelectedId(succeededIds[0]);
-        await Promise.allSettled(
-          succeededIds.map((id) => mailClient.mutateThread(buildThreadMutation(id, undoTemplate))),
-        );
+        await mailClient.mutateThreads(succeededIds.map((id) => buildThreadMutation(id, undoTemplate)));
         await loadThreads(query);
       },
     };
-  }, [threads, includeArchived, mailbox, selectedId, loadThreads, query, labels, setNotice]);
+  }, [threads, detail, includeArchived, mailbox, selectedId, loadThreads, query, labels, setNotice]);
 
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
-  const latestMessage = detail?.messages.at(-1) ?? null;
+  const accountColors = useMemo(
+    () => new Map(accounts.map((account) => [account.email, account.color] as const)),
+    [accounts],
+  );
+  const selectThread = useCallback((id: string) => setSelectedId(id), []);
+  const toggleChecked = useCallback((id: string) => {
+    setCheckedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const latestMessage = visibleDetail?.messages.at(-1) ?? null;
   const canUnsubscribe = Boolean(latestMessage?.unsubscribe?.methods.length);
-  const unsubscribeMessage = detail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
-  const summaryPending = detail ? summarizingIds.has(detail.thread.id) : false;
-  const summaryError = detail ? summaryErrors[detail.thread.id] ?? null : null;
+  const unsubscribeMessage = visibleDetail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
+  const summaryPending = visibleDetail ? summarizingIds.has(visibleDetail.thread.id) : false;
+  const summaryError = visibleDetail ? summaryErrors[visibleDetail.thread.id] ?? null : null;
 
   const mutateIdsRef = useRef(mutateIds);
   mutateIdsRef.current = mutateIds;
@@ -766,7 +907,7 @@ export function App() {
   useEffect(() => {
     if (
       !selectedId
-      || detail?.thread.id !== selectedId
+      || visibleDetail?.thread.id !== selectedId
       || !selected?.unread
       || !isThreadMailbox
     ) return;
@@ -775,7 +916,7 @@ export function App() {
       void mutateIdsRef.current([selectedId], { kind: "read", value: true });
     }, autoReadDelaySeconds * 1000);
     return () => window.clearTimeout(timer);
-  }, [autoReadDelaySeconds, detail?.thread.id, isThreadMailbox, selected?.unread, selectedId]);
+  }, [autoReadDelaySeconds, isThreadMailbox, selected?.unread, selectedId, visibleDetail?.thread.id]);
 
   const confirmUnsubscribe = useCallback(async () => {
     if (!unsubscribeMessageId) return;
@@ -866,31 +1007,30 @@ export function App() {
       correspondence.context.openInbox();
       setQuery("");
       setMailbox("inbox");
-      void loadThreads("", undefined, "inbox");
     },
     openAllMail: () => {
       correspondence.context.openInbox();
       setQuery("");
       setMailbox("allMail");
-      void loadThreads("", undefined, "allMail");
     },
     openTrash: () => {
       correspondence.context.openInbox();
       setQuery("");
       setMailbox("trash");
-      void loadThreads("", undefined, "trash");
     },
     openDrafts: () => {
       correspondence.context.openDrafts();
       setQuery("");
       setMailbox("drafts");
-      void loadThreads("", undefined, "drafts");
+      setSelectedId(null);
+      setDetail(null);
     },
     openOutbox: () => {
       correspondence.context.openOutbox();
       setQuery("");
       setMailbox("outbox");
-      void loadThreads("", undefined, "outbox");
+      setSelectedId(null);
+      setDetail(null);
     },
     selectNext: () => {
       const next = Math.min(selectedIndex + 1, threads.length - 1);
@@ -934,7 +1074,7 @@ export function App() {
     aiSummaryAvailable,
     summarizeSelected: async () => {
       if (!selected) return {};
-      const cached = detail?.thread.id === selected.id ? detail.thread : null;
+      const cached = visibleDetail?.thread.id === selected.id ? visibleDetail.thread : null;
       if (cached?.summary) {
         setSummaryExpanded((current) => !current);
         return {};
@@ -955,24 +1095,26 @@ export function App() {
     undoLastAction: () => { void undoLastAction(); },
     switchAccount: (email) => {
       setActiveAccountId(email);
-      void loadThreads(query, email);
     },
     showAllAccounts: () => {
       setActiveAccountId(null);
-      void loadThreads(query, null);
     },
-  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, detail, labelTargetIds, latestMessage, loadThreads, mailbox, mutateIds, openSettingsAt, query, refreshMail, runSummarize, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
+  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, refreshMail, runSummarize, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
-    void command.run(context).then((result) => {
-      if (!command.undo || !result.undoAction) return;
-      lastUndo.current = { command, result };
-      setCanUndoAction(true);
-      setNotice({
-        message: result.message ?? command.title,
-        undo: () => { void undoLastAction(); },
+    void command.run(context)
+      .then((result) => {
+        if (!command.undo || !result.undoAction) return;
+        lastUndo.current = { command, result };
+        setCanUndoAction(true);
+        setNotice({
+          message: result.message ?? command.title,
+          undo: () => { void undoLastAction(); },
+        });
+      })
+      .catch((error: unknown) => {
+        setNotice({ message: error instanceof Error ? error.message : String(error) });
       });
-    });
   }, [context, setNotice, undoLastAction]);
   const executeById = useCallback((id: string) => {
     const command = commands.find((candidate) => candidate.id === id);
@@ -1219,6 +1361,7 @@ export function App() {
           ) : (
             <>
           {loading ? <p className="empty">Loading inbox…</p> : null}
+          {mailboxError ? <p className="empty mailbox-error" role="alert">{mailboxError}</p> : null}
           {!loading && threads.length === 0 ? (
             accounts.length === 0 ? (
               <div className="connect-account-cta">
@@ -1233,53 +1376,20 @@ export function App() {
             )
           ) : null}
           {threads.map((thread) => (
-            <button
+            <ThreadRow
               key={thread.id}
-              role="option"
-              aria-selected={thread.id === selectedId}
-              className={`thread-row ${thread.id === selectedId ? "selected" : ""}`}
-              onClick={() => setSelectedId(thread.id)}
-            >
-              <span
-                className={`row-check ${checkedIds.has(thread.id) ? "checked" : ""}`}
-                aria-hidden="true"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setCheckedIds((current) => {
-                    const next = new Set(current);
-                    if (next.has(thread.id)) next.delete(thread.id);
-                    else next.add(thread.id);
-                    return next;
-                  });
-                }}
-              >
-                {checkedIds.has(thread.id) ? <CheckSquare size={16} /> : <Square size={16} />}
-              </span>
-              {checkedIds.has(thread.id) ? <span className="sr-only">Selected for batch actions</span> : null}
-              <span className={`unread-dot ${thread.unread ? "visible" : ""}`} />
-              <span className="thread-content">
-                <span className="thread-meta">
-                  <span className="thread-sender">
-                    {accounts.length > 1 ? (
-                      <span
-                        className="account-dot"
-                        aria-hidden="true"
-                        style={{ background: accounts.find((account) => account.email === thread.accountId)?.color }}
-                      />
-                    ) : null}
-                    <strong>{thread.participants.join(", ")}</strong>
-                  </span>
-                  <time>{timeFormatter.format(new Date(thread.lastMessageAt))}</time>
-                </span>
-                <span className="thread-subject">{thread.subject}</span>
-                <span className="thread-snippet"><HighlightedSnippet thread={thread} /></span>
-              </span>
-              {thread.starred ? <Star className="starred" size={15} fill="currentColor" /> : null}
-            </button>
+              thread={thread}
+              selected={thread.id === selectedId}
+              checked={checkedIds.has(thread.id)}
+              showAccount={accounts.length > 1}
+              accountColor={accountColors.get(thread.accountId)}
+              onSelect={selectThread}
+              onToggleCheck={toggleChecked}
+            />
           ))}
           {hasMoreResults ? (
-            <button className="load-more" onClick={() => void loadMoreResults()}>
-              Load more results
+            <button className="load-more" onClick={() => void loadMoreResults()} disabled={loadingMoreState}>
+              {loadingMoreState ? "Loading…" : "Load more results"}
             </button>
           ) : null}
             </>
@@ -1288,19 +1398,19 @@ export function App() {
       </section>
 
       <section className="reader" aria-label="Conversation">
-        {detail ? (
+        {visibleDetail ? (
           <>
             <header className="reader-header">
               <div>
                 <span className="eyebrow">
-                  {sortLabelIdsForDisplay(detail.thread.labels)
+                  {sortLabelIdsForDisplay(visibleDetail.thread.labels)
                     .map((id) => {
                       const label = labels.find((candidate) => candidate.id === id);
                       return label ? formatLabelName(label) : id;
                     })
                     .join(" · ")}
                 </span>
-                <h2>{detail.thread.subject}</h2>
+                <h2>{visibleDetail.thread.subject}</h2>
               </div>
               <div className="reader-actions">
                 <HoverTooltip label={selected?.starred ? "Unstar" : "Star"} shortcut="s" placement="bottom">
@@ -1375,7 +1485,7 @@ export function App() {
               <ActionButton label="Reply all" shortcut="a" onClick={() => executeById("draft.replyAll")}><ReplyAll size={16} /></ActionButton>
               <ActionButton label="Forward" shortcut="f" onClick={() => executeById("draft.forward")}><Forward size={16} /></ActionButton>
             </div>
-            {detail.thread.summary || summaryPending || summaryError ? (
+            {visibleDetail.thread.summary || summaryPending || summaryError ? (
               <div
                 className={`thread-summary ${summaryExpanded ? "thread-summary-expanded" : "thread-summary-collapsed"}`}
               >
@@ -1391,19 +1501,19 @@ export function App() {
                       Try again
                     </button>
                   </div>
-                ) : summaryExpanded && detail.thread.summary ? (
+                ) : summaryExpanded && visibleDetail.thread.summary ? (
                   <div className="thread-summary-body">
                     <div className="thread-summary-heading">
                       <Sparkles size={14} />
                       <span>Summary</span>
                     </div>
                     <ul>
-                      {summaryLines(detail.thread.summary).map((line, index) => (
+                      {summaryLines(visibleDetail.thread.summary).map((line, index) => (
                         <li key={index}>{line}</li>
                       ))}
                     </ul>
-                    {detail.thread.summaryGeneratedAt
-                    && detail.thread.lastMessageAt > detail.thread.summaryGeneratedAt ? (
+                    {visibleDetail.thread.summaryGeneratedAt
+                    && visibleDetail.thread.lastMessageAt > visibleDetail.thread.summaryGeneratedAt ? (
                       <p className="thread-summary-stale">New messages since this summary.</p>
                     ) : null}
                     <div className="thread-summary-actions">
@@ -1417,14 +1527,14 @@ export function App() {
                       </button>
                     </div>
                   </div>
-                ) : detail.thread.summary ? (
+                ) : visibleDetail.thread.summary ? (
                   <button
                     type="button"
                     className="thread-summary-pill"
                     onClick={() => setSummaryExpanded(true)}
                   >
                     <Sparkles size={14} />
-                    <span className="thread-summary-preview">{summaryPreview(detail.thread.summary)}</span>
+                    <span className="thread-summary-preview">{summaryPreview(visibleDetail.thread.summary)}</span>
                     <span className="thread-summary-expand">
                       Expand Summary
                       <ChevronDown size={14} />
@@ -1434,8 +1544,8 @@ export function App() {
               </div>
             ) : null}
             <div className="message-stack" ref={messageStackRef}>
-              {detail.messages.map((message, index) => {
-                const isLatest = index === detail.messages.length - 1;
+              {visibleDetail.messages.map((message, index) => {
+                const isLatest = index === visibleDetail.messages.length - 1;
                 const isExpanded = isLatest || message.unread || olderMessagesExpanded;
                 if (!isExpanded) {
                   return (
@@ -1484,6 +1594,10 @@ export function App() {
               })}
             </div>
           </>
+        ) : detailLoading ? (
+          <div className="reader-empty" role="status">
+            <p>Loading conversation…</p>
+          </div>
         ) : (
           <div className="reader-empty">
             <Mail size={28} />
