@@ -1862,7 +1862,7 @@ function LabelManager({
                   } else if (event.key === "ArrowDown") {
                     event.preventDefault();
                     moveLabelFocus(label.id, 1);
-                  } else if (event.key === " " || event.key === "Spacebar") {
+                  } else if (event.key === " " || event.key === "Spacebar" || event.key === "Space" || event.code === "Space") {
                     event.preventDefault();
                     onToggle(label.id, !checkedLabelIds.has(label.id));
                   }
