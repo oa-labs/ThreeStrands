@@ -4,12 +4,14 @@ import type {
   AuthStatus,
   Label,
   SearchThreadsRequest,
+  SummaryResult,
   SyncStatus,
   Thread,
   ThreadDetail,
   ThreadMutation,
   UnsubscribeResult,
 } from "../domain";
+import type { AiProvider } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
 import { demoClient } from "./demoClient";
 
@@ -21,6 +23,12 @@ export interface MailClient extends CorrespondenceClient {
   /** Only trashed threads. */
   listTrash(accountId?: string): Promise<Thread[]>;
   getThread(id: string): Promise<ThreadDetail>;
+  summarizeThread(
+    threadId: string,
+    provider: AiProvider,
+    model: string,
+    endpoint: string | null,
+  ): Promise<SummaryResult>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   mutateThread(mutation: ThreadMutation): Promise<void>;
   unsubscribe(messageId: string): Promise<UnsubscribeResult>;
@@ -52,6 +60,8 @@ const tauriClient: MailClient = {
   listAllMail: (accountId) => invoke("list_all_mail", { accountId }),
   listTrash: (accountId) => invoke("list_trash", { accountId }),
   getThread: (id) => invoke("get_thread", { id }),
+  summarizeThread: (threadId, provider, model, endpoint) =>
+    invoke("ai_summarize_thread", { threadId, provider, model, endpoint }),
   searchThreads: (request, accountId) => invoke("search_threads", { request, accountId }),
   mutateThread: (mutation) => invoke("mutate_thread", { mutation }),
   unsubscribe: (messageId) => invoke("unsubscribe", { messageId }),

@@ -13,6 +13,8 @@ export type Thread = {
   accountId: string;
   /** FTS5 match excerpt with hits wrapped in MATCH_START/MATCH_END markers. Only set on search results. */
   matchSnippet?: string | null;
+  summary: string | null;
+  summaryGeneratedAt: string | null;
 };
 
 export type Message = {
@@ -43,6 +45,11 @@ export type UnsubscribeResult = {
 export type ThreadDetail = {
   thread: Thread;
   messages: Message[];
+};
+
+export type SummaryResult = {
+  summary: string;
+  generatedAt: string;
 };
 
 export type SearchThreadsRequest = {

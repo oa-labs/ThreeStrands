@@ -103,6 +103,14 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 7 {
+        tx.execute_batch(
+            "ALTER TABLE threads ADD COLUMN summary TEXT;
+            ALTER TABLE threads ADD COLUMN summary_generated_at TEXT;
+            PRAGMA user_version=7;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection

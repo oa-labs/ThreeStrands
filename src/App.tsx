@@ -24,6 +24,7 @@ import {
   Search,
   Settings as SettingsIcon,
   ShieldAlert,
+  Sparkles,
   Square,
   Star,
   Tag,
@@ -102,6 +103,7 @@ import {
   type FontFamily,
 } from "./settings";
 import {
+  AI_MODEL_PLACEHOLDERS,
   AI_PROVIDER_OPTIONS,
   clearAiApiKey,
   isAiApiKeyConfigured,
@@ -109,6 +111,7 @@ import {
   readAiFeatures,
   readAiModel,
   readAiProvider,
+  resolveAiModel,
   saveAiEndpoint,
   saveAiFeatures,
   saveAiModel,
@@ -420,6 +423,22 @@ export function App() {
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
+  const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const [summaryPending, setSummaryPending] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const refreshAiAvailability = useCallback(() => {
+    const enabled = readAiProvider() !== "none" && readAiFeatures().summarize;
+    if (!enabled) {
+      setAiSummaryAvailable(false);
+      return;
+    }
+    void isAiApiKeyConfigured().then(setAiSummaryAvailable);
+  }, []);
+  useEffect(() => {
+    // Also covers the initial mount, since `settingsOpen` starts `false`.
+    if (!settingsOpen) refreshAiAvailability();
+  }, [settingsOpen, refreshAiAvailability]);
   const [labels, setLabels] = useState<Label[]>([]);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
@@ -528,6 +547,8 @@ export function App() {
 
   useEffect(() => {
     setOlderMessagesExpanded(false);
+    setSummaryExpanded(false);
+    setSummaryError(null);
   }, [selectedId]);
 
   useEffect(() => {
@@ -770,6 +791,44 @@ export function App() {
     setSettingsOpen(true);
   }, []);
 
+  /** Always calls the provider, even when a summary is already cached — used
+   * for both the first generation and an explicit "Regenerate". */
+  const runSummarize = useCallback(async () => {
+    if (!selected) return;
+    setSummaryError(null);
+    setSummaryExpanded(true);
+    setSummaryPending(true);
+    try {
+      const provider = readAiProvider();
+      const model = resolveAiModel(provider, readAiModel());
+      if (!model) throw new Error("Set a model in AI settings before summarizing.");
+      const endpoint = provider === "custom" ? readAiEndpoint().trim() : null;
+      if (provider === "custom" && !endpoint) {
+        throw new Error("Set an endpoint URL in AI settings before summarizing.");
+      }
+      const result = await mailClient.summarizeThread(selected.id, provider, model, endpoint);
+      setThreads((current) =>
+        current.map((thread) =>
+          thread.id === selected.id
+            ? { ...thread, summary: result.summary, summaryGeneratedAt: result.generatedAt }
+            : thread,
+        ),
+      );
+      setDetail((current) =>
+        current && current.thread.id === selected.id
+          ? {
+              ...current,
+              thread: { ...current.thread, summary: result.summary, summaryGeneratedAt: result.generatedAt },
+            }
+          : current,
+      );
+    } catch (error) {
+      setSummaryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSummaryPending(false);
+    }
+  }, [selected]);
+
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     mailbox,
@@ -846,6 +905,17 @@ export function App() {
       });
     },
     toggleOlderMessagesExpanded: () => setOlderMessagesExpanded((current) => !current),
+    aiSummaryAvailable,
+    summarizeSelected: async () => {
+      if (!selected) return {};
+      const cached = detail?.thread.id === selected.id ? detail.thread : null;
+      if (cached?.summary) {
+        setSummaryExpanded((current) => !current);
+        return {};
+      }
+      await runSummarize();
+      return {};
+    },
     focusSearch: () => searchRef.current?.focus(),
     refresh: refreshMail,
     openDiagnostics: () => setDiagnosticsOpen(true),
@@ -865,7 +935,7 @@ export function App() {
       setActiveAccountId(null);
       void loadThreads(query, null);
     },
-  }), [adjustFontScale, canUnsubscribe, canUndoAction, labelTargetIds, latestMessage, loadThreads, mailbox, mutateIds, openSettingsAt, query, refreshMail, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
+  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, detail, labelTargetIds, latestMessage, loadThreads, mailbox, mutateIds, openSettingsAt, query, refreshMail, runSummarize, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context).then((result) => {
@@ -1279,6 +1349,64 @@ export function App() {
               <ActionButton label="Reply all" shortcut="a" onClick={() => executeById("draft.replyAll")}><ReplyAll size={16} /></ActionButton>
               <ActionButton label="Forward" shortcut="f" onClick={() => executeById("draft.forward")}><Forward size={16} /></ActionButton>
             </div>
+            {detail.thread.summary || summaryPending || summaryError ? (
+              <div
+                className={`thread-summary ${summaryExpanded ? "thread-summary-expanded" : "thread-summary-collapsed"}`}
+              >
+                {summaryPending ? (
+                  <div className="thread-summary-pending">
+                    <Sparkles size={14} />
+                    <span>Summarizing…</span>
+                  </div>
+                ) : summaryError ? (
+                  <div className="thread-summary-error">
+                    <span>{summaryError}</span>
+                    <button type="button" onClick={() => void runSummarize()}>
+                      Try again
+                    </button>
+                  </div>
+                ) : summaryExpanded && detail.thread.summary ? (
+                  <div className="thread-summary-body">
+                    <div className="thread-summary-heading">
+                      <Sparkles size={14} />
+                      <span>Summary</span>
+                    </div>
+                    <ul>
+                      {summaryLines(detail.thread.summary).map((line, index) => (
+                        <li key={index}>{line}</li>
+                      ))}
+                    </ul>
+                    {detail.thread.summaryGeneratedAt
+                    && detail.thread.lastMessageAt > detail.thread.summaryGeneratedAt ? (
+                      <p className="thread-summary-stale">New messages since this summary.</p>
+                    ) : null}
+                    <div className="thread-summary-actions">
+                      <button type="button" onClick={() => setSummaryExpanded(false)}>
+                        <ChevronUp size={14} />
+                        Collapse Summary
+                      </button>
+                      <button type="button" onClick={() => void runSummarize()}>
+                        <RefreshCw size={13} />
+                        Regenerate
+                      </button>
+                    </div>
+                  </div>
+                ) : detail.thread.summary ? (
+                  <button
+                    type="button"
+                    className="thread-summary-pill"
+                    onClick={() => setSummaryExpanded(true)}
+                  >
+                    <Sparkles size={14} />
+                    <span className="thread-summary-preview">{summaryPreview(detail.thread.summary)}</span>
+                    <span className="thread-summary-expand">
+                      Expand Summary
+                      <ChevronDown size={14} />
+                    </span>
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             <div className="message-stack" ref={messageStackRef}>
               {detail.messages.map((message, index) => {
                 const isLatest = index === detail.messages.length - 1;
@@ -1417,6 +1545,7 @@ export function App() {
           onAutoReadDelayChange={(value) => setAutoReadDelaySeconds(saveAutoReadDelaySeconds(value))}
           loadRemoteImages={loadRemoteImages}
           onLoadRemoteImagesChange={(value) => setLoadRemoteImages(saveLoadRemoteImages(value))}
+          onAiConfigChange={refreshAiAvailability}
           authStatus={authStatus}
           onConnectAccount={async () => {
             const status = await mailClient.connectGoogle();
@@ -1519,6 +1648,19 @@ function parseAddress(value: string): { name: string; email: string } {
 function messageSnippet(bodyText: string, maxLength = 140): string {
   const collapsed = decodeHtmlEntities(bodyText).replace(/\s+/g, " ").trim();
   return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength).trimEnd()}…` : collapsed;
+}
+
+function summaryLines(summary: string): string[] {
+  return summary
+    .split("\n")
+    .map((line) => line.replace(/^[-•]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function summaryPreview(summary: string, maxLength = 90): string {
+  const [first] = summaryLines(summary);
+  if (!first) return "";
+  return first.length > maxLength ? `${first.slice(0, maxLength).trimEnd()}…` : first;
 }
 
 const MESSAGE_DATE_MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -1940,6 +2082,7 @@ function Settings({
   onAutoReadDelayChange,
   loadRemoteImages,
   onLoadRemoteImagesChange,
+  onAiConfigChange,
   authStatus,
   onConnectAccount,
   onDisconnectAccount,
@@ -1963,6 +2106,7 @@ function Settings({
   onAutoReadDelayChange(value: number): void;
   loadRemoteImages: boolean;
   onLoadRemoteImagesChange(value: boolean): void;
+  onAiConfigChange(): void;
   authStatus: AuthStatus | null;
   onConnectAccount(): Promise<void>;
   onDisconnectAccount(): Promise<void>;
@@ -2022,7 +2166,7 @@ function Settings({
               onReorder={onReorderAccounts}
             />
           ) : null}
-          {section === "ai" ? <AiProviderSettings /> : null}
+          {section === "ai" ? <AiProviderSettings onChange={onAiConfigChange} /> : null}
           {section === "privacy" ? (
             <PrivacySettings
               loadRemoteImages={loadRemoteImages}
@@ -2351,16 +2495,7 @@ function AccountColorInput({
   );
 }
 
-const AI_MODEL_PLACEHOLDERS: Record<AiProvider, string> = {
-  none: "",
-  openai: "gpt-4o",
-  anthropic: "claude-sonnet-5",
-  openrouter: "openai/gpt-4o",
-  fireworks: "accounts/fireworks/models/llama-v3p1-70b-instruct",
-  custom: "model name",
-};
-
-function AiProviderSettings() {
+function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const [provider, setProvider] = useState(readAiProvider);
   const [model, setModel] = useState(readAiModel);
   const [endpoint, setEndpoint] = useState(readAiEndpoint);
@@ -2379,6 +2514,7 @@ function AiProviderSettings() {
       saveAiFeatures(next);
       return next;
     });
+    onChange?.();
   };
 
   return (
@@ -2396,6 +2532,7 @@ function AiProviderSettings() {
             const next = event.target.value as AiProvider;
             setProvider(next);
             saveAiProvider(next);
+            onChange?.();
           }}
         >
           {AI_PROVIDER_OPTIONS.map((option) => (
@@ -2452,6 +2589,7 @@ function AiProviderSettings() {
                     return isAiApiKeyConfigured();
                   })
                   .then(setKeyConfigured)
+                  .then(() => onChange?.())
                   .finally(() => setBusy(false));
               }}
             >
@@ -2464,6 +2602,7 @@ function AiProviderSettings() {
                 void clearAiApiKey()
                   .then(() => isAiApiKeyConfigured())
                   .then(setKeyConfigured)
+                  .then(() => onChange?.())
                   .finally(() => setBusy(false));
               }}
             >

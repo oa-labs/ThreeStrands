@@ -711,6 +711,78 @@ input::placeholder { color: var(--muted); opacity: 1; }
 
 .reply-toolbar { display: flex; gap: 8px; padding: 10px 22px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .reply-toolbar .action-button span { display: inline; }
+
+.thread-summary { padding: 0 22px 14px; flex-shrink: 0; }
+.thread-summary-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.thread-summary-pill:hover { background: var(--hover); }
+.thread-summary-pill svg { flex: 0 0 auto; color: var(--accent); }
+.thread-summary-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.thread-summary-expand {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: calc(12px * var(--font-scale));
+}
+.thread-summary-body, .thread-summary-pending, .thread-summary-error {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--raised);
+}
+.thread-summary-pending, .thread-summary-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.thread-summary-pending svg { color: var(--accent); }
+.thread-summary-error { justify-content: space-between; color: var(--error); }
+.thread-summary-error button { flex: 0 0 auto; }
+.thread-summary-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.thread-summary-body ul { margin: 10px 0; padding-left: 20px; }
+.thread-summary-body li { margin: 4px 0; }
+.thread-summary-stale { margin: 6px 0 0; color: var(--muted); font-size: calc(12px * var(--font-scale)); }
+.thread-summary-actions { display: flex; gap: 8px; margin-top: 10px; }
+.thread-summary-actions button, .thread-summary-error button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.thread-summary-actions button:hover, .thread-summary-error button:hover { background: var(--hover); }
 .compose-backdrop { position: fixed; inset: 0; z-index: 8; background: var(--overlay); display: grid; place-items: center; padding: 24px; }
 .composer, .correspondence-list { display: flex; flex-direction: column; width: min(720px, 100%); max-height: calc(100vh - 48px); border: 1px solid var(--border-strong); border-radius: 14px; background: var(--raised); box-shadow: 0 24px 80px var(--shadow); overflow: hidden; }
 .composer { position: relative; max-width: calc(100vw - 48px); }

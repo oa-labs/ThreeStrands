@@ -43,6 +43,8 @@ function noopContext(): CommandContext {
     toggleStarSelected: async () => ({}),
     toggleCheckedSelected: () => {},
     toggleOlderMessagesExpanded: () => {},
+    aiSummaryAvailable: false,
+    summarizeSelected: async () => ({}),
     focusSearch: () => {},
     refresh: () => {},
     openDiagnostics: () => {},
@@ -92,6 +94,20 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "draft.reply")?.enabled(context)).toBe(false);
     context.mailbox = "inbox";
     expect(commands.find((command) => command.id === "thread.archive")?.enabled(context)).toBe(true);
+  });
+
+  it("gates AI summarize on a thread selection, thread mailbox, and AI availability", () => {
+    const context = noopContext();
+    expect(commands.find((command) => command.id === "thread.summarize")?.enabled(context)).toBe(false);
+    context.selectedId = "thread-1";
+    expect(commands.find((command) => command.id === "thread.summarize")?.enabled(context)).toBe(false);
+    context.aiSummaryAvailable = true;
+    expect(commands.find((command) => command.id === "thread.summarize")?.enabled(context)).toBe(true);
+    context.mailbox = "drafts";
+    expect(commands.find((command) => command.id === "thread.summarize")?.enabled(context)).toBe(false);
+    context.mailbox = "inbox";
+    context.composerActive = true;
+    expect(commands.find((command) => command.id === "thread.summarize")?.enabled(context)).toBe(false);
   });
 
   it("gates the trash/restore toggle on whether the selected thread is already trashed", () => {

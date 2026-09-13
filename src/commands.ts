@@ -34,6 +34,8 @@ export type CommandContext = {
   toggleStarSelected(): Promise<CommandResult>;
   toggleCheckedSelected(): void;
   toggleOlderMessagesExpanded(): void;
+  aiSummaryAvailable: boolean;
+  summarizeSelected(): Promise<CommandResult>;
   focusSearch(): void;
   refresh(): void;
   openDiagnostics(): void;
@@ -195,6 +197,15 @@ export const commands: Command[] = [
     group: "Triage",
     enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => complete(context.toggleOlderMessagesExpanded),
+  },
+  {
+    id: "thread.summarize",
+    title: "Summarize with AI",
+    keys: ["i"],
+    group: "Triage",
+    enabled: (context) =>
+      context.selectedId !== null && isThreadMailbox(context) && !context.composerActive && context.aiSummaryAvailable,
+    run: (context) => context.summarizeSelected(),
   },
   {
     id: "labels.open",

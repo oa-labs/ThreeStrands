@@ -18,6 +18,8 @@ pub struct Thread {
     /// Match excerpt from the FTS5 index, wrapping hits in `\u{1}`/`\u{2}`
     /// markers. Only populated by `search_threads`; `None` elsewhere.
     pub match_snippet: Option<String>,
+    pub summary: Option<String>,
+    pub summary_generated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +71,13 @@ pub struct UnsubscribeResult {
 pub struct ThreadDetail {
     pub thread: Thread,
     pub messages: Vec<Message>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryResult {
+    pub summary: String,
+    pub generated_at: String,
 }
 
 #[derive(Debug, Deserialize)]

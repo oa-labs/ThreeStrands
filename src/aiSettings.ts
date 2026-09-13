@@ -23,6 +23,26 @@ export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
   classify: false,
 };
 
+export const AI_MODEL_PLACEHOLDERS: Record<AiProvider, string> = {
+  none: "",
+  openai: "gpt-4o",
+  anthropic: "claude-sonnet-5",
+  openrouter: "openai/gpt-4o",
+  fireworks: "accounts/fireworks/models/llama-v3p1-70b-instruct",
+  custom: "model name",
+};
+
+/**
+ * A blank model field falls back to a sensible default for every provider
+ * except `custom`, where there's no way to guess a real model name — the
+ * placeholder there ("model name") is just a hint, not a usable value.
+ */
+export function resolveAiModel(provider: AiProvider, model: string): string {
+  const trimmed = model.trim();
+  if (trimmed) return trimmed;
+  return provider === "custom" ? "" : AI_MODEL_PLACEHOLDERS[provider];
+}
+
 const PROVIDER_KEY = "dispatch.settings.ai.provider";
 const MODEL_KEY = "dispatch.settings.ai.model";
 const ENDPOINT_KEY = "dispatch.settings.ai.endpoint";

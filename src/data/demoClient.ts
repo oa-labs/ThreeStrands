@@ -3,6 +3,7 @@ import type { MailClient } from "./client";
 import type {
   Account,
   Label,
+  SummaryResult,
   SyncStatus,
   Thread,
   ThreadDetail,
@@ -26,6 +27,8 @@ const initialThreads: Thread[] = [
     trashed: false,
     labels: ["INBOX"],
     accountId: DEMO_ACCOUNT_ID,
+    summary: null,
+    summaryGeneratedAt: null,
   },
   {
     id: "roadmap",
@@ -40,6 +43,8 @@ const initialThreads: Thread[] = [
     trashed: false,
     labels: ["INBOX", "STARRED"],
     accountId: DEMO_ACCOUNT_ID,
+    summary: null,
+    summaryGeneratedAt: null,
   },
   {
     id: "privacy",
@@ -54,6 +59,8 @@ const initialThreads: Thread[] = [
     trashed: false,
     labels: ["INBOX"],
     accountId: DEMO_ACCOUNT_ID,
+    summary: null,
+    summaryGeneratedAt: null,
   },
 ];
 
@@ -219,6 +226,21 @@ export const demoClient: MailClient = {
       ],
     };
     return detail;
+  },
+  async summarizeThread(threadId): Promise<SummaryResult> {
+    const thread = threads.find((candidate) => candidate.id === threadId);
+    if (!thread) throw new Error("Thread not found");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const summary = [
+      `- ${thread.subject}`,
+      `- Latest message from ${thread.participants[0] ?? "a participant"}`,
+      `- ${thread.snippet}`,
+    ].join("\n");
+    const generatedAt = new Date().toISOString();
+    threads = threads.map((candidate) =>
+      candidate.id === threadId ? { ...candidate, summary, summaryGeneratedAt: generatedAt } : candidate,
+    );
+    return { summary, generatedAt };
   },
   async searchThreads({ query, limit = 50, offset = 0, includeArchived = false }, accountId) {
     if (!query.trim()) return this.listThreads(accountId);

@@ -13,10 +13,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use auth::{GoogleAuth, GoogleAuthConfig};
+use chrono::Utc;
 use db::Database;
 use models::{
-    Account, AuthStatus, CreateLabelRequest, Label, SearchThreadsRequest, SyncStatus, Thread,
-    ThreadDetail, ThreadMutation, UpdateLabelRequest,
+    Account, AuthStatus, CreateLabelRequest, Label, SearchThreadsRequest, SummaryResult,
+    SyncStatus, Thread, ThreadDetail, ThreadMutation, UpdateLabelRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -470,6 +471,42 @@ fn set_ai_api_key(key: String) -> Result<(), String> {
     ai::set(&key)
 }
 
+#[tauri::command]
+async fn ai_summarize_thread(
+    thread_id: String,
+    provider: String,
+    model: String,
+    endpoint: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<SummaryResult, String> {
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
+    let detail = state.database.get_thread(&thread_id)?;
+    let request = ai::SummarizeRequest {
+        provider,
+        model,
+        endpoint,
+        subject: detail.thread.subject,
+        messages: detail
+            .messages
+            .into_iter()
+            .map(|message| ai::ThreadMessageInput {
+                sender: message.sender,
+                sent_at: message.sent_at,
+                body_text: message.body_text,
+            })
+            .collect(),
+    };
+    let summary = ai::summarize(request, &api_key).await?;
+    let generated_at = Utc::now().to_rfc3339();
+    state
+        .database
+        .set_thread_summary(&thread_id, &summary, &generated_at)?;
+    Ok(SummaryResult {
+        summary,
+        generated_at,
+    })
+}
+
 fn not_configured() -> String {
     "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_ID and \
      DISPATCH_GOOGLE_CLIENT_SECRET from a Desktop app credential."
@@ -609,6 +646,7 @@ pub fn run() {
             delete_label,
             ai_api_key_configured,
             set_ai_api_key,
+            ai_summarize_thread,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Dispatch")

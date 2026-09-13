@@ -32,6 +32,16 @@ function providerContract(name: string, client: MailClient) {
       });
       await client.deleteLabel(label.id);
     });
+
+    it("summarizes a thread and persists the result", async () => {
+      const threads = await client.listThreads();
+      const thread = threads[0]!;
+      const result = await client.summarizeThread(thread.id, "openai", "gpt-4o", null);
+      expect(result.summary.length).toBeGreaterThan(0);
+      const detail = await client.getThread(thread.id);
+      expect(detail.thread.summary).toBe(result.summary);
+      expect(detail.thread.summaryGeneratedAt).toBe(result.generatedAt);
+    });
   });
 }
 

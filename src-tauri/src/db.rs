@@ -171,7 +171,8 @@ impl Database {
         let connection = self.connection()?;
         let sql = format!(
             "SELECT id, provider_thread_id, subject, snippet, participants_json,
-                    last_message_at, unread, starred, archived, labels_json, trashed, account_id
+                    last_message_at, unread, starred, archived, labels_json, trashed, account_id,
+                    summary, summary_generated_at
              FROM threads
              WHERE {filter} {}
              ORDER BY last_message_at DESC",
@@ -198,7 +199,8 @@ impl Database {
         let thread = connection
             .query_row(
                 "SELECT id, provider_thread_id, subject, snippet, participants_json,
-                        last_message_at, unread, starred, archived, labels_json, trashed, account_id
+                        last_message_at, unread, starred, archived, labels_json, trashed, account_id,
+                        summary, summary_generated_at
                  FROM threads WHERE id = ?1",
                 [id],
                 thread_from_row,
@@ -234,6 +236,21 @@ impl Database {
             .map_err(display_error)?;
         let messages = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
         Ok(ThreadDetail { thread, messages })
+    }
+
+    pub fn set_thread_summary(
+        &self,
+        thread_id: &str,
+        summary: &str,
+        generated_at: &str,
+    ) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "UPDATE threads SET summary = ?1, summary_generated_at = ?2 WHERE id = ?3",
+                params![summary, generated_at, thread_id],
+            )
+            .map_err(display_error)?;
+        Ok(())
     }
 
     /// Resolves the unsubscribe URL from locally cached message metadata and
@@ -370,6 +387,7 @@ impl Database {
             "SELECT t.id, t.provider_thread_id, t.subject, t.snippet,
                     t.participants_json, t.last_message_at, t.unread, t.starred,
                     t.archived, t.labels_json, t.trashed, t.account_id,
+                    t.summary, t.summary_generated_at,
                     snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet
              FROM thread_search s
              JOIN threads t ON t.id = s.thread_id
@@ -392,7 +410,9 @@ impl Database {
                 labels: decode_json(row.get::<_, String>(9)?)?,
                 trashed: row.get(10)?,
                 account_id: row.get(11)?,
-                match_snippet: row.get(12)?,
+                summary: row.get(12)?,
+                summary_generated_at: row.get(13)?,
+                match_snippet: row.get(14)?,
             })
         };
         let rows = match account_id {
@@ -1067,6 +1087,8 @@ fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         labels: decode_json(row.get::<_, String>(9)?)?,
         trashed: row.get(10)?,
         account_id: row.get(11)?,
+        summary: row.get(12)?,
+        summary_generated_at: row.get(13)?,
         match_snippet: None,
     })
 }
@@ -1149,7 +1171,7 @@ fn insert_demo(
     let participants = serde_json::to_string(&[participant]).expect("static data serializes");
     let labels = serde_json::to_string(&["INBOX"]).expect("static data serializes");
     transaction.execute(
-        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0, 'default')",
+        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0, 'default', NULL, NULL)",
         params![
             id,
             format!("demo-{id}"),
@@ -1536,6 +1558,22 @@ mod tests {
         let accounts = database.list_accounts().unwrap();
         assert_eq!(accounts[0].email, "second@gmail.com");
         assert_eq!(accounts[1].email, "first@gmail.com");
+    }
+
+    #[test]
+    fn thread_summary_round_trips_through_get_thread() {
+        let database = database();
+        let before = database.get_thread("welcome").unwrap().thread;
+        assert_eq!(before.summary, None);
+        assert_eq!(before.summary_generated_at, None);
+
+        database
+            .set_thread_summary("welcome", "- Point one\n- Point two", "2026-03-05T16:30:00Z")
+            .unwrap();
+
+        let after = database.get_thread("welcome").unwrap().thread;
+        assert_eq!(after.summary.as_deref(), Some("- Point one\n- Point two"));
+        assert_eq!(after.summary_generated_at.as_deref(), Some("2026-03-05T16:30:00Z"));
     }
 
     fn message(id: &str, thread_id: &str, date: &str, body: &str) -> NormalizedMessage {
