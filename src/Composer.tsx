@@ -156,7 +156,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   };
   function onHeaderPointerDown(event: PointerEvent<HTMLElement>) {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest("button")) return;
+    if ((event.target as Element).closest("button, input, select, textarea, a, label, [contenteditable], [role='button']")) return;
     event.preventDefault();
     const rect = panel.current?.getBoundingClientRect();
     if (!rect) return;

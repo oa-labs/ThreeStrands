@@ -548,6 +548,13 @@ export function App() {
         if (requestId === accountsRequest.current) setAccounts([]);
       });
   }, []);
+  useEffect(() => {
+    // Accounts sync in the background for as long as the app runs, so a
+    // status/last-synced snapshot fetched once at mount goes stale quickly.
+    // Re-fetch on every open rather than only after an explicit account
+    // action, so the panel reflects sync progress that happened meanwhile.
+    if (settingsOpen) void refreshAccounts();
+  }, [settingsOpen, refreshAccounts]);
   const [notice, setNotice] = useNotice();
   const recordTriageEvent = useCallback((event: TriageEvent) => {
     // Instrumentation is deliberately best-effort: a local telemetry write
