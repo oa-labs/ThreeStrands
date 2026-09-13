@@ -478,6 +478,9 @@ export function App() {
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const visibleDetail = detail?.thread.id === selectedId ? detail : null;
+  const selectedThread = threads.find((thread) => thread.id === selectedId);
+  const selectedThreadLastMessageAt = selectedThread?.lastMessageAt;
+  const selectedThreadSnippet = selectedThread?.snippet;
   const [olderMessagesExpanded, setOlderMessagesExpanded] = useState(false);
   const latestMessageRef = useRef<HTMLElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement>(null);
@@ -666,7 +669,9 @@ export function App() {
       setDetailLoading(false);
       return;
     }
-    setDetail(null);
+    // Keep the existing conversation visible while refreshing it after a
+    // send. Clear immediately only when the user selected a different thread.
+    setDetail((current) => current?.thread.id === selectedId ? current : null);
     setDetailLoading(true);
     void mailClient.getThread(selectedId)
       .then((next) => {
@@ -681,7 +686,7 @@ export function App() {
       .finally(() => {
         if (requestId === detailRequest.current) setDetailLoading(false);
       });
-  }, [selectedId, setNotice]);
+  }, [selectedId, selectedThreadLastMessageAt, selectedThreadSnippet, setNotice]);
 
   useEffect(() => {
     setOlderMessagesExpanded(false);
@@ -1721,6 +1726,12 @@ export function App() {
               {visibleDetail.messages.map((message, index) => {
                 const isLatest = index === visibleDetail.messages.length - 1;
                 const isExpanded = isLatest || message.unread || olderMessagesExpanded;
+                const parsedSender = parseAddress(message.sender);
+                const senderAccount = accounts.find(
+                  (account) => account.email.toLocaleLowerCase() === parsedSender.email.toLocaleLowerCase(),
+                );
+                const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
+                const senderFirstName = senderName.trim().split(/\s+/)[0] || senderName;
                 if (!isExpanded) {
                   return (
                     <button
@@ -1729,8 +1740,7 @@ export function App() {
                       key={message.id}
                       onClick={() => setOlderMessagesExpanded(true)}
                     >
-                      <div className="avatar">{message.sender.charAt(0)}</div>
-                      <span className="message-collapsed-sender">{parseAddress(message.sender).name}</span>
+                      <span className="message-collapsed-sender">{senderFirstName}</span>
                       <span className="message-collapsed-snippet">{messageSnippet(message.bodyText)}</span>
                       <time>{formatMessageDate(message.sentAt)}</time>
                       <ChevronDown size={14} className="message-collapsed-chevron" />
@@ -1745,10 +1755,9 @@ export function App() {
                     ref={isLatest ? (node: HTMLElement | null) => { latestMessageRef.current = node; } : undefined}
                   >
                     <header>
-                      <div className="avatar">{message.sender.charAt(0)}</div>
                       <div className="message-header-details">
                         <div className="message-sender-row">
-                          <strong><AddressWithCopy address={message.sender} /></strong>
+                          <strong><AddressWithCopy address={message.sender} displayName={senderFirstName} /></strong>
                           <time>{formatMessageDate(message.sentAt)}</time>
                         </div>
                         <div className="message-recipients">
@@ -1909,9 +1918,10 @@ export function App() {
   );
 }
 
-function AddressWithCopy({ address }: { address: string }) {
+function AddressWithCopy({ address, displayName }: { address: string; displayName?: string }) {
   const [copied, setCopied] = useState(false);
-  const parsed = parseAddress(address);
+  const parsedAddress = parseAddress(address);
+  const parsed = displayName ? { ...parsedAddress, name: displayName } : parsedAddress;
 
   const handleCopy = async (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -1943,7 +1953,7 @@ function parseAddress(value: string): { name: string; email: string } {
   const openBracket = trimmed.lastIndexOf("<");
   const closeBracket = trimmed.lastIndexOf(">");
 
-  if (openBracket > 0 && closeBracket > openBracket) {
+  if (openBracket >= 0 && closeBracket > openBracket) {
     const email = trimmed.slice(openBracket + 1, closeBracket).trim();
     const name = trimmed
       .slice(0, openBracket)
