@@ -254,6 +254,44 @@ test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await expect(page.getByRole("dialog", { name: "Manage labels" })).toBeVisible();
 });
 
+test("marks an unread conversation read after the configured delay", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("dispatch.settings.autoReadDelaySeconds", "60");
+  });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+
+  const welcome = page.getByRole("option").filter({ hasText: "Welcome to Dispatch" });
+  await expect(welcome.locator(".unread-dot")).toHaveClass(/visible/);
+
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Reading", exact: true }).click();
+  await settings.getByRole("spinbutton", { name: "Auto-read delay" }).fill("1");
+  await page.keyboard.press("Escape");
+
+  await expect(welcome.locator(".unread-dot")).not.toHaveClass(/visible/, { timeout: 3_000 });
+  await expect(page.getByRole("button", { name: "Mark unread" })).toBeVisible();
+});
+
+test("loads message images according to the privacy setting", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+
+  const messageBody = page.getByTestId("message-body");
+  await expect(messageBody.locator("img")).not.toHaveAttribute("src");
+  await expect(page.getByText("Images are blocked in this message.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Privacy", exact: true }).click();
+  await settings.getByRole("checkbox", { name: "Load remote images automatically" }).check();
+  await page.keyboard.press("Escape");
+
+  await expect(messageBody.locator("img")).toHaveAttribute("src", "https://example.invalid/tracker.gif");
+  await expect(page.getByText("Images are blocked in this message.")).not.toBeVisible();
+});
+
 test("archived and trashed threads move between Inbox, All Mail, and Trash", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();

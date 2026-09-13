@@ -122,6 +122,8 @@ button { color: inherit; }
 .account-icon:hover { transform: scale(1.07); }
 .account-icon.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--accent); }
 .account-icon.all-accounts { background: conic-gradient(#4285F4, #34A853, #EA4335, #FBBC05, #4285F4); }
+.account-icon.dragging { opacity: 0.4; }
+.account-icon.drag-over { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--text); }
 
 .sidebar-spacer { flex: 1; }
 .nav-button, .icon-button, .modal header button {
@@ -656,6 +658,8 @@ kbd {
 .settings-field { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; width: 100%; font-size: calc(13px * var(--font-scale)); }
 .settings-field > span { color: var(--muted); }
 .settings-field input { width: 100%; }
+.settings-field-inline { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.settings-field.settings-field-inline input { width: 76px; }
 .settings-row { display: flex; align-items: center; gap: 10px; }
 .settings-radio-row { display: flex; gap: 16px; font-size: calc(13px * var(--font-scale)); }
 .settings-radio-row label, .settings-checkbox { display: flex; align-items: center; gap: 7px; font-size: calc(13px * var(--font-scale)); }

@@ -87,7 +87,19 @@ import {
 } from "./fontScale";
 
 import { applyTheme, effectiveTheme, readTheme, saveTheme, type Theme } from "./theme";
-import { applyFontFamily, FONT_FAMILY_OPTIONS, readFontFamily, saveFontFamily, type FontFamily } from "./settings";
+import {
+  applyFontFamily,
+  FONT_FAMILY_OPTIONS,
+  MAX_AUTO_READ_DELAY_SECONDS,
+  MIN_AUTO_READ_DELAY_SECONDS,
+  readAutoReadDelaySeconds,
+  readFontFamily,
+  readLoadRemoteImages,
+  saveAutoReadDelaySeconds,
+  saveFontFamily,
+  saveLoadRemoteImages,
+  type FontFamily,
+} from "./settings";
 import {
   AI_PROVIDER_OPTIONS,
   clearAiApiKey,
@@ -106,7 +118,7 @@ import {
 } from "./aiSettings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
-type SettingsSection = "appearance" | "account" | "accounts" | "ai" | "privacy";
+type SettingsSection = "appearance" | "reading" | "account" | "accounts" | "ai" | "privacy";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -365,6 +377,8 @@ export function App() {
   const [theme, setTheme] = useState(readTheme);
   const [fontScale, setFontScale] = useState(readFontScale);
   const [fontFamily, setFontFamily] = useState(readFontFamily);
+  const [autoReadDelaySeconds, setAutoReadDelaySeconds] = useState(readAutoReadDelaySeconds);
+  const [loadRemoteImages, setLoadRemoteImages] = useState(readLoadRemoteImages);
   useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => applyFontScale(fontScale), [fontScale]);
   useEffect(() => applyFontFamily(fontFamily), [fontFamily]);
@@ -716,6 +730,23 @@ export function App() {
   const canUnsubscribe = Boolean(latestMessage?.unsubscribe?.methods.length);
   const unsubscribeMessage = detail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
 
+  const mutateIdsRef = useRef(mutateIds);
+  mutateIdsRef.current = mutateIds;
+
+  useEffect(() => {
+    if (
+      !selectedId
+      || detail?.thread.id !== selectedId
+      || !selected?.unread
+      || !isThreadMailbox
+    ) return;
+
+    const timer = window.setTimeout(() => {
+      void mutateIdsRef.current([selectedId], { kind: "read", value: true });
+    }, autoReadDelaySeconds * 1000);
+    return () => window.clearTimeout(timer);
+  }, [autoReadDelaySeconds, detail?.thread.id, isThreadMailbox, selected?.unread, selectedId]);
+
   const confirmUnsubscribe = useCallback(async () => {
     if (!unsubscribeMessageId) return;
     try {
@@ -884,6 +915,9 @@ export function App() {
           activeAccountId={activeAccountId}
           onSwitch={context.switchAccount}
           onShowAll={context.showAllAccounts}
+          onReorder={(emails) => {
+            void mailClient.reorderAccounts(emails).then(refreshAccounts);
+          }}
         />
         <div className="sidebar-nav">
           <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
@@ -1284,7 +1318,7 @@ export function App() {
                         </div>
                       </div>
                     </header>
-                    <SafeMessage html={message.bodyHtml} text={message.bodyText} />
+                    <SafeMessage html={message.bodyHtml} text={message.bodyText} loadImages={loadRemoteImages} />
                   </article>
                 );
               })}
@@ -1373,6 +1407,10 @@ export function App() {
           onFontScaleChange={(value) => setFontScale(saveFontScale(value))}
           fontFamily={fontFamily}
           onFontFamilyChange={(value) => setFontFamily(saveFontFamily(value))}
+          autoReadDelaySeconds={autoReadDelaySeconds}
+          onAutoReadDelayChange={(value) => setAutoReadDelaySeconds(saveAutoReadDelaySeconds(value))}
+          loadRemoteImages={loadRemoteImages}
+          onLoadRemoteImagesChange={(value) => setLoadRemoteImages(saveLoadRemoteImages(value))}
           authStatus={authStatus}
           onConnectAccount={async () => {
             const status = await mailClient.connectGoogle();
@@ -1489,13 +1527,33 @@ function AccountSwitcher({
   activeAccountId,
   onSwitch,
   onShowAll,
+  onReorder,
 }: {
   accounts: Account[];
   activeAccountId: string | null;
   onSwitch(email: string): void;
   onShowAll(): void;
+  onReorder(emails: string[]): void;
 }) {
+  const [draggedEmail, setDraggedEmail] = useState<string | null>(null);
+  const [dragOverEmail, setDragOverEmail] = useState<string | null>(null);
+
   if (accounts.length <= 1) return null;
+
+  const handleDrop = (targetEmail: string) => {
+    if (draggedEmail && draggedEmail !== targetEmail) {
+      const from = accounts.findIndex((account) => account.email === draggedEmail);
+      const to = accounts.findIndex((account) => account.email === targetEmail);
+      if (from !== -1 && to !== -1) {
+        const next = [...accounts];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved!);
+        onReorder(next.map((account) => account.email));
+      }
+    }
+    setDraggedEmail(null);
+    setDragOverEmail(null);
+  };
 
   return (
     <div className="account-rail" role="radiogroup" aria-label="Filter by account">
@@ -1518,9 +1576,32 @@ function AccountSwitcher({
               role="radio"
               aria-checked={activeAccountId === account.email}
               aria-label={name}
-              className={`account-icon ${activeAccountId === account.email ? "active" : ""}`}
+              draggable
+              className={`account-icon ${activeAccountId === account.email ? "active" : ""} ${draggedEmail === account.email ? "dragging" : ""} ${dragOverEmail === account.email && draggedEmail !== account.email ? "drag-over" : ""}`}
               style={{ background: account.color }}
               onClick={() => onSwitch(account.email)}
+              onDragStart={(event) => {
+                setDraggedEmail(account.email);
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", account.email);
+              }}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                if (draggedEmail && draggedEmail !== account.email) setDragOverEmail(account.email);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDragLeave={() => setDragOverEmail((current) => (current === account.email ? null : current))}
+              onDrop={(event) => {
+                event.preventDefault();
+                handleDrop(account.email);
+              }}
+              onDragEnd={() => {
+                setDraggedEmail(null);
+                setDragOverEmail(null);
+              }}
             >
               {name.charAt(0).toUpperCase()}
             </button>
@@ -1800,6 +1881,7 @@ function LabelManager({
 
 const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
+  { id: "reading", label: "Reading" },
   { id: "account", label: "Account" },
   { id: "accounts", label: "Accounts" },
   { id: "ai", label: "AI provider" },
@@ -1816,6 +1898,10 @@ function Settings({
   onFontScaleChange,
   fontFamily,
   onFontFamilyChange,
+  autoReadDelaySeconds,
+  onAutoReadDelayChange,
+  loadRemoteImages,
+  onLoadRemoteImagesChange,
   authStatus,
   onConnectAccount,
   onDisconnectAccount,
@@ -1835,6 +1921,10 @@ function Settings({
   onFontScaleChange(value: number): void;
   fontFamily: FontFamily;
   onFontFamilyChange(value: FontFamily): void;
+  autoReadDelaySeconds: number;
+  onAutoReadDelayChange(value: number): void;
+  loadRemoteImages: boolean;
+  onLoadRemoteImagesChange(value: boolean): void;
   authStatus: AuthStatus | null;
   onConnectAccount(): Promise<void>;
   onDisconnectAccount(): Promise<void>;
@@ -1871,6 +1961,12 @@ function Settings({
               onFontFamilyChange={onFontFamilyChange}
             />
           ) : null}
+          {section === "reading" ? (
+            <ReadingSettings
+              autoReadDelaySeconds={autoReadDelaySeconds}
+              onAutoReadDelayChange={onAutoReadDelayChange}
+            />
+          ) : null}
           {section === "account" ? (
             <AccountSettings
               status={authStatus}
@@ -1889,7 +1985,12 @@ function Settings({
             />
           ) : null}
           {section === "ai" ? <AiProviderSettings /> : null}
-          {section === "privacy" ? <PrivacySettings /> : null}
+          {section === "privacy" ? (
+            <PrivacySettings
+              loadRemoteImages={loadRemoteImages}
+              onLoadRemoteImagesChange={onLoadRemoteImagesChange}
+            />
+          ) : null}
         </div>
       </div>
     </Modal>
@@ -1957,6 +2058,42 @@ function AppearanceSettings({
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
+    </section>
+  );
+}
+
+function ReadingSettings({
+  autoReadDelaySeconds,
+  onAutoReadDelayChange,
+}: {
+  autoReadDelaySeconds: number;
+  onAutoReadDelayChange(value: number): void;
+}) {
+  return (
+    <section className="settings-section" aria-label="Reading">
+      <h3>Mark as read</h3>
+      <label className="settings-field settings-field-inline">
+        <span>After opening a conversation</span>
+        <div className="settings-row">
+          <input
+            type="number"
+            min={MIN_AUTO_READ_DELAY_SECONDS}
+            max={MAX_AUTO_READ_DELAY_SECONDS}
+            step="1"
+            value={autoReadDelaySeconds}
+            aria-label="Auto-read delay"
+            onChange={(event) => {
+              if (event.target.value === "") return;
+              const next = Number(event.target.value);
+              if (Number.isFinite(next)) onAutoReadDelayChange(next);
+            }}
+          />
+          <span>seconds</span>
+        </div>
+      </label>
+      <p className="settings-hint">
+        Set to 0 to mark conversations read immediately. The timer resets when you open a different conversation.
+      </p>
     </section>
   );
 }
@@ -2328,11 +2465,31 @@ function AiProviderSettings() {
   );
 }
 
-function PrivacySettings() {
+function PrivacySettings({
+  loadRemoteImages,
+  onLoadRemoteImagesChange,
+}: {
+  loadRemoteImages: boolean;
+  onLoadRemoteImagesChange(value: boolean): void;
+}) {
   const [reporting, setReporting] = useState(crashReportingEnabled);
   const [reportCount, setReportCount] = useState(() => localCrashReports().length);
   return (
     <section className="settings-section" aria-label="Privacy">
+      <h3>Message images</h3>
+      <label className="settings-checkbox">
+        <input
+          type="checkbox"
+          checked={loadRemoteImages}
+          onChange={(event) => onLoadRemoteImagesChange(event.target.checked)}
+        />
+        Load remote images automatically
+      </label>
+      <span className="settings-hint">
+        When disabled, images stay blocked until you choose Load images in a message.
+      </span>
+
+      <h3>Crash reports</h3>
       <label className="settings-checkbox">
         <input
           type="checkbox"

@@ -89,6 +89,14 @@ it("blocks images by default and reveals them once the reader asks to load them"
   expect(screen.queryByText("Load images")).not.toBeInTheDocument();
 });
 
+it("loads images automatically when configured", () => {
+  render(<SafeMessage html="<img src='https://example.com/logo.png'>" loadImages />);
+
+  expect(screen.getByTestId("message-body").querySelector("img")?.getAttribute("src"))
+    .toBe("https://example.com/logo.png");
+  expect(screen.queryByText("Load images")).not.toBeInTheDocument();
+});
+
 it("opens web links separately and rejects unsafe or relative navigation", () => {
   const sanitized = sanitizeMessageHtml('<a href="https://example.com">Web</a><a href="javascript:alert(1)">Bad</a><a href="/settings">Relative</a>');
   const container = document.createElement("div");

@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 type SafeMessageProps = {
   html: string;
   text?: string;
+  loadImages?: boolean;
 };
 
 const allowedTags = [
@@ -117,8 +118,9 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
   return container.innerHTML;
 }
 
-export function SafeMessage({ html, text = "" }: SafeMessageProps) {
-  const [imagesAllowed, setImagesAllowed] = useState(false);
+export function SafeMessage({ html, text = "", loadImages = false }: SafeMessageProps) {
+  const [imagesAllowedForMessage, setImagesAllowedForMessage] = useState(false);
+  const imagesAllowed = loadImages || imagesAllowedForMessage;
   const sanitized = useMemo(() => sanitizeMessageHtml(html, { allowImages: imagesAllowed }), [html, imagesAllowed]);
   const hasContent = useMemo(() => {
     const container = document.createElement("div");
@@ -136,7 +138,7 @@ export function SafeMessage({ html, text = "" }: SafeMessageProps) {
       {hasBlockedImages ? (
         <div className="message-images-notice">
           <span>Images are blocked in this message.</span>
-          <button type="button" onClick={() => setImagesAllowed(true)}>
+          <button type="button" onClick={() => setImagesAllowedForMessage(true)}>
             <Image size={14} /> Load images
           </button>
         </div>
