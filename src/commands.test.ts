@@ -85,6 +85,11 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "labels.open")?.keys).toEqual(["l"]);
   });
 
+  it("binds reply to r and reply all to a", () => {
+    expect(commands.find((command) => command.id === "draft.reply")?.keys).toEqual(["r"]);
+    expect(commands.find((command) => command.id === "draft.replyAll")?.keys).toEqual(["a"]);
+  });
+
   it("gates triage and reply commands to thread-based mailboxes", () => {
     const context = noopContext();
     context.selectedId = "thread-1";
