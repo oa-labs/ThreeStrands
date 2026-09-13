@@ -332,6 +332,15 @@ export const demoClient: MailClient = {
     account.status = "connected";
     return structuredClone(account);
   },
+  async setAccountDisplayName(email, displayName) {
+    const account = accounts.find((candidate) => candidate.email === email);
+    if (!account) throw new Error("Account not found");
+    const normalized = displayName?.trim() || null;
+    if (normalized && (normalized.length > 200 || Array.from(normalized).some((character) => /[\u0000-\u001f\u007f]/.test(character)))) {
+      throw new Error("Sender name must be 200 characters or fewer and cannot contain control characters");
+    }
+    account.displayName = normalized;
+  },
   async setAccountColor(email, color) {
     const account = accounts.find((candidate) => candidate.email === email);
     if (!account) throw new Error("Account not found");

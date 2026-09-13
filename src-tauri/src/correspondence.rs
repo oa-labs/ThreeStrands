@@ -571,7 +571,10 @@ impl Database {
             return Err("Reconnect the draft's account before sending".into());
         }
         let operation_id = Uuid::new_v4().to_string();
-        let raw = build_mime(&d, &operation_id, root)?;
+        let sender_name = self
+            .get_account(&d.account)?
+            .and_then(|account| account.display_name);
+        let raw = build_mime(&d, sender_name.as_deref(), &operation_id, root)?;
         let item = OutboxItem {
             id: operation_id,
             draft: d.clone(),
@@ -651,7 +654,12 @@ impl Database {
     }
 }
 
-fn build_mime(d: &Draft, id: &str, root: &Path) -> Result<Vec<u8>, String> {
+fn build_mime(
+    d: &Draft,
+    sender_name: Option<&str>,
+    id: &str,
+    root: &Path,
+) -> Result<Vec<u8>, String> {
     if d.subject.contains(['\r', '\n']) {
         return Err("Subject cannot contain newlines".into());
     }
@@ -661,8 +669,13 @@ fn build_mime(d: &Draft, id: &str, root: &Path) -> Result<Vec<u8>, String> {
     if to.len() + cc.len() + bcc.len() == 0 {
         return Err("Add at least one recipient".into());
     }
-    let mut builder = MessageBuilder::new()
-        .from(d.account.clone())
+    let builder = MessageBuilder::new();
+    let builder = if let Some(name) = sender_name {
+        builder.from((name.to_string(), d.account.clone()))
+    } else {
+        builder.from(d.account.clone())
+    };
+    let mut builder = builder
         .to(to)
         .cc(cc)
         .bcc(bcc)
@@ -1148,6 +1161,7 @@ mod tests {
     fn database() -> Database {
         let db = Database::open_memory();
         db.set_compose_identity("you@example.com").unwrap();
+        db.adopt_account("you@example.com").unwrap();
         db
     }
     fn saved(db: &Database) -> Draft {
@@ -1177,8 +1191,27 @@ mod tests {
     #[test]
     fn queue_is_durable_unique_and_cancel_restores_the_snapshot() {
         let db = database();
+        db.set_account_display_name("you@example.com", Some("Joel Reed"))
+            .unwrap();
         let d = saved(&db);
         let item = db.queue(&d.id, d.revision, Path::new("/unused")).unwrap();
+        let raw: Vec<u8> = db
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT raw FROM outbox_messages WHERE id=?1",
+                [&item.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(
+            parsed
+                .from()
+                .and_then(|from| from.first())
+                .and_then(|from| from.name()),
+            Some("Joel Reed")
+        );
         assert!(item.deadline > now());
         assert_eq!(
             db.queue(&d.id, d.revision, Path::new("/unused"))
@@ -1260,9 +1293,23 @@ mod tests {
             message_id: None,
             provider_id: None,
         });
-        let raw = build_mime(&d, "test-id", &root).unwrap();
+        let raw = build_mime(&d, Some("Joel Reed"), "test-id", &root).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
         assert_eq!(parsed.message_id(), Some("test-id@dispatch.local"));
+        assert_eq!(
+            parsed
+                .from()
+                .and_then(|from| from.first())
+                .and_then(|from| from.name()),
+            Some("Joel Reed")
+        );
+        assert_eq!(
+            parsed
+                .from()
+                .and_then(|from| from.first())
+                .and_then(|from| from.address()),
+            Some(d.account.as_str())
+        );
         assert!(parsed.body_text(0).unwrap().contains("Saved work ✓"));
         let attachment = parsed.attachment(0).unwrap();
         assert_eq!(attachment.contents(), bytes);
@@ -1275,7 +1322,7 @@ mod tests {
         let mut d = saved(&db);
         d.body = "Formatted message".into();
         d.body_html = "<p><strong>Formatted</strong> message</p>".into();
-        let raw = build_mime(&d, "rich-id", Path::new("/unused")).unwrap();
+        let raw = build_mime(&d, None, "rich-id", Path::new("/unused")).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
         assert_eq!(parsed.body_text(0).as_deref(), Some("Formatted message"));
         assert_eq!(
@@ -1523,8 +1570,8 @@ mod tests {
             message_id: None,
             provider_id: None,
         });
-        assert!(build_mime(&d, "id", Path::new("/unused")).is_err());
+        assert!(build_mime(&d, None, "id", Path::new("/unused")).is_err());
         d.attachments[0].ready = true;
-        assert!(build_mime(&d, "id", Path::new("/unused")).is_err());
+        assert!(build_mime(&d, None, "id", Path::new("/unused")).is_err());
     }
 }

@@ -924,14 +924,23 @@ impl Database {
     }
 
     pub fn finish_sync(&self, account_id: &str, cursor: &str) -> Result<(), String> {
-        self.connection()?
+        let now = Utc::now().to_rfc3339();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        transaction
             .execute(
                 "UPDATE sync_state SET cursor = ?1, last_successful_sync = ?2, last_error = NULL
                  WHERE account_id = ?3",
-                params![cursor, Utc::now().to_rfc3339(), account_id],
+                params![cursor, now, account_id],
             )
-            .map(|_| ())
-            .map_err(display_error)
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "UPDATE accounts SET last_synced_at = ?1 WHERE email = ?2",
+                params![now, account_id],
+            )
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)
     }
 
     pub fn fail_sync(&self, account_id: &str, error: &str) -> Result<(), String> {
@@ -1339,6 +1348,33 @@ impl Database {
             .execute(
                 "UPDATE accounts SET color = ?1 WHERE email = ?2",
                 params![color, email],
+            )
+            .map_err(display_error)?;
+        if changed == 0 {
+            return Err("Account not found".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn set_account_display_name(
+        &self,
+        email: &str,
+        display_name: Option<&str>,
+    ) -> Result<(), String> {
+        let normalized = display_name.map(str::trim).filter(|name| !name.is_empty());
+        if normalized
+            .is_some_and(|name| name.chars().count() > 200 || name.chars().any(char::is_control))
+        {
+            return Err(
+                "Sender name must be 200 characters or fewer and cannot contain control characters"
+                    .into(),
+            );
+        }
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE accounts SET display_name = ?1 WHERE email = ?2",
+                params![normalized, email],
             )
             .map_err(display_error)?;
         if changed == 0 {
@@ -2123,6 +2159,42 @@ mod tests {
     }
 
     #[test]
+    fn sender_display_name_can_be_saved_cleared_and_cannot_inject_headers() {
+        let database = database();
+        database.adopt_account("you@gmail.com").unwrap();
+        database
+            .set_account_display_name("you@gmail.com", Some("  Joel Reed  "))
+            .unwrap();
+        assert_eq!(
+            database
+                .get_account("you@gmail.com")
+                .unwrap()
+                .unwrap()
+                .display_name
+                .as_deref(),
+            Some("Joel Reed")
+        );
+
+        assert!(database
+            .set_account_display_name("you@gmail.com", Some("Joel\r\nBcc: attacker@example.com"))
+            .is_err());
+        database
+            .set_account_display_name("you@gmail.com", Some("  "))
+            .unwrap();
+        assert_eq!(
+            database
+                .get_account("you@gmail.com")
+                .unwrap()
+                .unwrap()
+                .display_name,
+            None
+        );
+        assert!(database
+            .set_account_display_name("missing@gmail.com", Some("Nobody"))
+            .is_err());
+    }
+
+    #[test]
     fn reorder_accounts_updates_sort_order_by_position() {
         let database = database();
         database.adopt_account("first@gmail.com").unwrap();
@@ -2347,6 +2419,27 @@ mod tests {
             Some("work-cursor")
         );
         assert_eq!(database.cursor("personal@example.com").unwrap(), None);
+    }
+
+    #[test]
+    fn finish_sync_stamps_the_account_last_synced_at() {
+        let database = database();
+        database.adopt_account("work@example.com").unwrap();
+        database.adopt_account("personal@example.com").unwrap();
+        database
+            .finish_sync("work@example.com", "work-cursor")
+            .unwrap();
+        let accounts = database.list_accounts().unwrap();
+        let work = accounts
+            .iter()
+            .find(|account| account.email == "work@example.com")
+            .unwrap();
+        assert!(work.last_synced_at.is_some());
+        let personal = accounts
+            .iter()
+            .find(|account| account.email == "personal@example.com")
+            .unwrap();
+        assert_eq!(personal.last_synced_at, None);
     }
 
     #[test]

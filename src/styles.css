@@ -599,24 +599,35 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .accounts-empty { display: grid; justify-items: center; gap: 5px; width: 100%; padding: 28px 16px; border: 1px dashed var(--border-strong); border-radius: 9px; text-align: center; }
 .accounts-empty-icon { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 4px; border-radius: 50%; color: var(--muted); background: var(--hover); }
 .accounts-empty p { margin: 0; }
-.accounts-list { display: flex; flex-direction: column; gap: 8px; width: 100%; margin: 2px 0 0; padding: 0; list-style: none; }
-.account-card { display: flex; align-items: center; gap: 11px; width: 100%; padding: 11px; border: 1px solid var(--border); border-radius: 9px; }
-.account-card:hover { border-color: var(--border-strong); background: var(--hover); }
-.account-card-avatar { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 50%; color: white; font-size: calc(13px * var(--font-scale)); font-weight: 700; }
-.account-card-details { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
-.account-card-details strong, .account-card-details > span:not(.account-status) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-card-details > span:not(.account-status) { color: var(--muted); font-size: calc(12px * var(--font-scale)); }
-.account-status { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
-.account-status.connected { color: var(--secondary); }
-.account-status.needs_reauth { color: var(--error); }
+.accounts-list { display: flex; flex-direction: column; gap: 10px; width: 100%; margin: 2px 0 0; padding: 0; list-style: none; }
+.account-card { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; transition: border-color .1s ease; }
+.account-card:hover { border-color: var(--border-strong); }
+.account-card-row { display: flex; align-items: center; gap: 12px; }
+.account-card-avatar { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%; color: white; font-size: calc(13px * var(--font-scale)); font-weight: 700; }
+.account-card-identity { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.account-card-heading { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.account-card-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-card-email { overflow: hidden; color: var(--muted); font-size: calc(12px * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
+.account-card-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding-top: 10px; border-top: 1px solid var(--border); }
+.account-sender-name { display: flex; align-items: center; gap: 6px; }
+.account-sender-name input { width: min(220px, 100%); min-width: 0; }
+.account-sender-name button { white-space: nowrap; }
+.account-status { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 20px; color: var(--muted); background: var(--hover); font-size: calc(11px * var(--font-scale)); }
+.account-status.connected { color: var(--secondary); background: color-mix(in srgb, var(--secondary) 12%, transparent); }
+.account-status.needs_reauth { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
 .accounts-footnote { width: 100%; margin: 2px 0 0; color: var(--muted); font-size: calc(11px * var(--font-scale)); line-height: 1.45; }
-.accounts-list-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
-.accounts-list-actions button { display: inline-flex; align-items: center; padding: 5px 8px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: calc(12px * var(--font-scale)); cursor: pointer; }
-.accounts-list-actions button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
-.accounts-list-actions button:disabled { opacity: .4; }
-.accounts-list-actions .danger-action { color: var(--error); }
+.accounts-list-actions { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
+.accounts-manager .accounts-list-actions button { display: inline-flex; align-items: center; padding: 5px 8px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: calc(12px * var(--font-scale)); cursor: pointer; }
+.accounts-manager .accounts-list-actions button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.accounts-manager .accounts-list-actions button:disabled { opacity: .4; }
+.account-reorder { display: inline-flex; align-items: center; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 7px; }
+.account-reorder button { border-radius: 0 !important; }
+.account-reorder button:first-child { border-right: 1px solid var(--border); }
+.account-color-swatch { display: inline-flex; padding: 3px; border: 1px solid var(--border-strong); border-radius: 7px; line-height: 0; cursor: pointer; }
+.accounts-list-actions input[type="color"] { width: 20px; height: 20px; padding: 0; border: 0; background: none; cursor: pointer; }
+.account-action-button { border: 1px solid var(--border-strong) !important; border-radius: 7px !important; }
+.accounts-list-actions .danger-action { color: var(--error); border-color: color-mix(in srgb, var(--error) 40%, var(--border-strong)) !important; }
 .accounts-list-actions .danger-action:hover:not(:disabled) { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
-.accounts-list-actions input[type="color"] { width: 22px; height: 22px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: none; cursor: pointer; }
 .form-error { color: var(--error) !important; }
 .unsubscribe-content { padding: 10px 20px 22px; }
 .unsubscribe-content > p { margin: 0 0 12px; line-height: 1.5; }
@@ -706,7 +717,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .reply-toolbar { display: flex; gap: 8px; padding: 10px 22px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .reply-toolbar .action-button span { display: inline; }
 
-.thread-summary { padding: 0 22px 14px; flex-shrink: 0; }
+.thread-summary { padding: 10px 22px 0px; flex-shrink: 0; }
 .thread-summary-pill {
   display: flex;
   align-items: center;

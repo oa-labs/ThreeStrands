@@ -198,6 +198,30 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await expect(page.getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
 });
 
+test("saves an independent sender name for each account", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Add account" }).click();
+
+  const personalName = settings.getByRole("textbox", { name: "Sender name for demo@example.com" });
+  await personalName.fill("Joel Reed");
+  await settings.locator(".account-card").filter({ hasText: "demo@example.com" }).getByRole("button", { name: "Save name" }).click();
+
+  const workName = settings.getByRole("textbox", { name: "Sender name for demo-2@example.com" });
+  await workName.fill("Joel at Work");
+  await settings.locator(".account-card").filter({ hasText: "demo-2@example.com" }).getByRole("button", { name: "Save name" }).click();
+
+  await expect(personalName).toHaveValue("Joel Reed");
+  await expect(workName).toHaveValue("Joel at Work");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await expect(settings.getByRole("textbox", { name: "Sender name for demo@example.com" })).toHaveValue("Joel Reed");
+  await expect(settings.getByRole("textbox", { name: "Sender name for demo-2@example.com" })).toHaveValue("Joel at Work");
+});
+
 test("reorders navbar accounts by dragging their icons", async ({ page }) => {
   await page.goto("/");
 

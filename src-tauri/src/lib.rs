@@ -472,6 +472,17 @@ fn set_account_color(
 }
 
 #[tauri::command]
+fn set_account_display_name(
+    email: String,
+    display_name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .database
+        .set_account_display_name(&email, display_name.as_deref())
+}
+
+#[tauri::command]
 fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
     state.database.reorder_accounts(&emails)
 }
@@ -719,6 +730,7 @@ pub fn run() {
             add_account,
             remove_account,
             reconnect_account,
+            set_account_display_name,
             set_account_color,
             reorder_accounts,
             list_labels,

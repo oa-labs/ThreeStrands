@@ -1897,6 +1897,10 @@ export function App() {
             await refreshAccounts();
             setAuthStatus(await mailClient.googleAuthStatus());
           }}
+          onSetAccountDisplayName={async (email, displayName) => {
+            await mailClient.setAccountDisplayName(email, displayName);
+            await refreshAccounts();
+          }}
           onSetAccountColor={async (email, color) => {
             await mailClient.setAccountColor(email, color);
             await refreshAccounts();
@@ -2414,6 +2418,7 @@ function Settings({
   onAddAccount,
   onRemoveAccount,
   onReconnectAccount,
+  onSetAccountDisplayName,
   onSetAccountColor,
   onReorderAccounts,
 }: {
@@ -2436,6 +2441,7 @@ function Settings({
   onAddAccount(): Promise<void>;
   onRemoveAccount(email: string): Promise<void>;
   onReconnectAccount(email: string): Promise<void>;
+  onSetAccountDisplayName(email: string, displayName: string | null): Promise<void>;
   onSetAccountColor(email: string, color: string): Promise<void>;
   onReorderAccounts(emails: string[]): Promise<void>;
 }) {
@@ -2478,6 +2484,7 @@ function Settings({
               onAdd={onAddAccount}
               onRemove={onRemoveAccount}
               onReconnect={onReconnectAccount}
+              onSetDisplayName={onSetAccountDisplayName}
               onSetColor={onSetAccountColor}
               onReorder={onReorderAccounts}
             />
@@ -2602,6 +2609,7 @@ function AccountsSettings({
   onAdd,
   onRemove,
   onReconnect,
+  onSetDisplayName,
   onSetColor,
   onReorder,
 }: {
@@ -2610,6 +2618,7 @@ function AccountsSettings({
   onAdd(): Promise<void>;
   onRemove(email: string): Promise<void>;
   onReconnect(email: string): Promise<void>;
+  onSetDisplayName(email: string, displayName: string | null): Promise<void>;
   onSetColor(email: string, color: string): Promise<void>;
   onReorder(emails: string[]): Promise<void>;
 }) {
@@ -2675,64 +2684,86 @@ function AccountsSettings({
         <ul className="accounts-list">
           {accounts.map((account, index) => (
             <li className="account-card" key={account.email}>
-              <span className="account-card-avatar" aria-hidden="true" style={{ background: account.color }}>
-                {(account.displayName ?? account.email).charAt(0).toUpperCase()}
-              </span>
-              <div className="account-card-details">
-                <strong>{account.displayName ?? account.email}</strong>
-                {account.displayName ? <span>{account.email}</span> : null}
-                <span className={`account-status ${account.status}`}>
-                  {account.status === "needs_reauth" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
-                  {account.status === "needs_reauth" ? "Needs reconnect" : "Connected"}
-                  <span aria-hidden="true"> · </span>
-                  {account.lastSyncedAt ? `Last synced ${timeFormatter.format(new Date(account.lastSyncedAt))}` : "Not synced yet"}
+              <div className="account-card-row">
+                <span className="account-card-avatar" aria-hidden="true" style={{ background: account.color }}>
+                  {(account.displayName ?? account.email).charAt(0).toUpperCase()}
                 </span>
+                <div className="account-card-identity">
+                  <div className="account-card-heading">
+                    <strong>{account.displayName ?? account.email}</strong>
+                    <span className={`account-status ${account.status}`}>
+                      {account.status === "needs_reauth" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
+                      {account.status === "needs_reauth" ? "Needs reconnect" : "Connected"}
+                    </span>
+                  </div>
+                  <span className="account-card-email">
+                    {account.displayName ? `${account.email} · ` : null}
+                    {account.lastSyncedAt ? `Last synced ${timeFormatter.format(new Date(account.lastSyncedAt))}` : "Not synced yet"}
+                  </span>
+                </div>
               </div>
-              <span className="accounts-list-actions">
-                <button
-                  type="button"
-                  aria-label={`Move ${account.email} up`}
-                  disabled={index === 0 || busyEmail !== null}
-                  onClick={() => move(index, -1)}
-                >
-                  <ChevronUp size={14} />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Move ${account.email} down`}
-                  disabled={index === accounts.length - 1 || busyEmail !== null}
-                  onClick={() => move(index, 1)}
-                >
-                  <ChevronDown size={14} />
-                </button>
-                <AccountColorInput
+              <div className="account-card-controls">
+                <AccountSenderNameInput
                   email={account.email}
-                  color={account.color}
-                  onCommit={(color) =>
-                    onSetColor(account.email, color).catch((reason: unknown) => {
+                  name={account.displayName}
+                  onCommit={(name) =>
+                    onSetDisplayName(account.email, name).catch((reason: unknown) => {
                       setError(reason instanceof Error ? reason.message : String(reason));
                       throw reason;
                     })
                   }
                 />
-                {account.status === "needs_reauth" ? (
+                <span className="accounts-list-actions">
+                  <span className="account-reorder">
+                    <button
+                      type="button"
+                      aria-label={`Move ${account.email} up`}
+                      disabled={index === 0 || busyEmail !== null}
+                      onClick={() => move(index, -1)}
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move ${account.email} down`}
+                      disabled={index === accounts.length - 1 || busyEmail !== null}
+                      onClick={() => move(index, 1)}
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                  </span>
+                  <label className="account-color-swatch" title={`Color for ${account.email}`}>
+                    <AccountColorInput
+                      email={account.email}
+                      color={account.color}
+                      onCommit={(color) =>
+                        onSetColor(account.email, color).catch((reason: unknown) => {
+                          setError(reason instanceof Error ? reason.message : String(reason));
+                          throw reason;
+                        })
+                      }
+                    />
+                  </label>
+                  {account.status === "needs_reauth" ? (
+                    <button
+                      type="button"
+                      className="account-action-button"
+                      disabled={busyEmail !== null}
+                      onClick={() => act(account.email, () => onReconnect(account.email))}
+                    >
+                      Reconnect
+                    </button>
+                  ) : null}
                   <button
                     type="button"
+                    className="account-action-button danger-action"
                     disabled={busyEmail !== null}
-                    onClick={() => act(account.email, () => onReconnect(account.email))}
+                    onClick={() => act(account.email, () => onRemove(account.email))}
                   >
-                    Reconnect
+                    Disconnect
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="danger-action"
-                  disabled={busyEmail !== null}
-                  onClick={() => act(account.email, () => onRemove(account.email))}
-                >
-                  Disconnect
-                </button>
-              </span>
+                </span>
+              </div>
             </li>
           ))}
         </ul>
@@ -2742,6 +2773,47 @@ function AccountsSettings({
       </p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
+  );
+}
+
+function AccountSenderNameInput({
+  email,
+  name,
+  onCommit,
+}: {
+  email: string;
+  name: string | null;
+  onCommit(name: string | null): Promise<void>;
+}) {
+  const [value, setValue] = useState(name ?? "");
+  const [saving, setSaving] = useState(false);
+  const normalized = value.trim();
+  const saved = name?.trim() ?? "";
+
+  useEffect(() => setValue(name ?? ""), [name]);
+
+  return (
+    <form
+      className="account-sender-name"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (saving || normalized === saved) return;
+        setSaving(true);
+        void onCommit(normalized || null).finally(() => setSaving(false));
+      }}
+    >
+      <input
+        aria-label={`Sender name for ${email}`}
+        value={value}
+        maxLength={200}
+        placeholder="Sender name"
+        disabled={saving}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <button type="submit" disabled={saving || normalized === saved}>
+        {saving ? "Saving…" : "Save name"}
+      </button>
+    </form>
   );
 }
 
