@@ -1,20 +1,8 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Paperclip, Send, X, Trash2 } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem } from "./correspondence";
 import type { Account } from "./domain";
-import {
-  clampComposerPosition,
-  clampComposerSize,
-  minimumComposerHeight,
-  minimumComposerWidth,
-  readComposerPosition,
-  readComposerSize,
-  saveComposerPosition,
-  saveComposerSize,
-  type ComposerPosition,
-  type ComposerSize,
-} from "./composerLayout";
 import {
   applyFormattingShortcut,
   formattingShortcutFor,
@@ -36,15 +24,9 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [showCopies, setShowCopies] = useState(Boolean(initial.cc || initial.bcc));
-  const [preferredSize, setPreferredSize] = useState(readComposerSize);
-  const [preferredPosition, setPreferredPosition] = useState(readComposerPosition);
-  const [measuredSize, setMeasuredSize] = useState<ComposerSize | null>(null);
-  const [moving, setMoving] = useState(false);
-  const [viewportSize, setViewportSize] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
   const panel = useRef<HTMLDivElement>(null);
   const bodyEditor = useRef<HTMLDivElement>(null);
   const initialBodyHtml = useRef(sanitizeComposeHtml(initial.bodyHtml || plainTextToHtml(initial.body)));
-  const moveDrag = useRef<{ x: number; y: number; position: ComposerPosition; pointerId: number } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
 
@@ -113,79 +95,8 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     window.addEventListener("beforeunload", beforeUnload);
     return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); window.removeEventListener("beforeunload", beforeUnload); previous?.focus(); };
   }, [initial.mode]);
-  useEffect(() => {
-    const onResize = () => setViewportSize({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
   useEscapeDismiss(close);
-
-  const visibleSize = preferredSize ? clampComposerSize(preferredSize, viewportSize) : null;
-  useLayoutEffect(() => {
-    const rect = panel.current?.getBoundingClientRect();
-    if (!rect) return;
-    setMeasuredSize((current) => (
-      current && Math.round(current.width) === Math.round(rect.width) && Math.round(current.height) === Math.round(rect.height)
-        ? current
-        : { width: rect.width, height: rect.height }
-    ));
-  }, [visibleSize?.width, visibleSize?.height, viewportSize.height, viewportSize.width]);
-  useEffect(() => {
-    if (!preferredSize) return;
-    const timer = window.setTimeout(() => saveComposerSize(preferredSize), 150);
-    return () => window.clearTimeout(timer);
-  }, [preferredSize]);
-  useEffect(() => {
-    if (!preferredPosition) return;
-    const timer = window.setTimeout(() => saveComposerPosition(preferredPosition), 150);
-    return () => window.clearTimeout(timer);
-  }, [preferredPosition]);
-  const layoutSize = visibleSize ?? measuredSize ?? { width: minimumComposerWidth, height: minimumComposerHeight };
-  const visiblePosition = preferredPosition ? clampComposerPosition(preferredPosition, layoutSize, viewportSize) : null;
-  const resize = (size: ComposerSize) => {
-    const next = clampComposerSize(size, viewportSize);
-    setPreferredSize(next);
-    if (preferredPosition) {
-      const nextPosition = clampComposerPosition(preferredPosition, next, viewportSize);
-      setPreferredPosition(nextPosition);
-    }
-  };
-  const move = (position: ComposerPosition) => {
-    const next = clampComposerPosition(position, layoutSize, viewportSize);
-    setPreferredPosition(next);
-  };
-  function onHeaderPointerDown(event: PointerEvent<HTMLElement>) {
-    if (event.button !== 0) return;
-    if ((event.target as Element).closest("button, input, select, textarea, a, label, [contenteditable], [role='button']")) return;
-    event.preventDefault();
-    const rect = panel.current?.getBoundingClientRect();
-    if (!rect) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    moveDrag.current = { x: event.clientX, y: event.clientY, position: { x: rect.left, y: rect.top }, pointerId: event.pointerId };
-    setMoving(true);
-  }
-  function onHeaderPointerMove(event: PointerEvent<HTMLElement>) {
-    if (moveDrag.current?.pointerId !== event.pointerId) return;
-    move({
-      x: moveDrag.current.position.x + event.clientX - moveDrag.current.x,
-      y: moveDrag.current.position.y + event.clientY - moveDrag.current.y,
-    });
-  }
-  function endHeaderDrag(event: PointerEvent<HTMLElement>) {
-    if (moveDrag.current?.pointerId !== event.pointerId) return;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-    moveDrag.current = null;
-    setMoving(false);
-  }
-
-  const frameStyle = {
-    ...(visibleSize ? { width: visibleSize.width, height: visibleSize.height } : {}),
-    ...(visiblePosition ? { left: visiblePosition.x, top: visiblePosition.y } : {}),
-  } as CSSProperties;
-
-  return <div className="compose-backdrop">
-    <div ref={panel} className={`composer${visibleSize ? " sized" : ""}${visiblePosition ? " placed" : ""}`} role="dialog" aria-modal="true" aria-label={initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
-      style={Object.keys(frameStyle).length ? frameStyle : undefined}
+  return <div ref={panel} className="composer composer-inline" role="dialog" aria-label={initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
         if (event.key === "Tab") {
@@ -195,14 +106,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
           if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
         }
       }}>
-      <header
-        className={`composer-header${moving ? " dragging" : ""}`}
-        title="Drag to move"
-        onPointerDown={onHeaderPointerDown}
-        onPointerMove={onHeaderPointerMove}
-        onPointerUp={endHeaderDrag}
-        onLostPointerCapture={() => { moveDrag.current = null; setMoving(false); }}
-      ><div><h2>{initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply all" : "Reply"}</h2>{initial.mode === "new" && accounts.length > 1 ? (
+      <header className="composer-header"><div><h2>{initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply all" : "Reply"}</h2>{initial.mode === "new" && accounts.length > 1 ? (
         <label className="compose-from"><span>From</span><select aria-label="Send from" value={draft.account} disabled={busy} onChange={(e) => changeAccount(e.target.value)}>
           {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
         </select></label>
@@ -243,77 +147,5 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
       </div>
       <footer><button className="send-button" onClick={send} disabled={busy}><Send size={16} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button onClick={attach} disabled={busy} aria-label="Attach files"><Paperclip size={17} /></button><span className="save-status" role="status">{status}</span><button disabled={busy} aria-label="Discard draft" onClick={() => void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); })}><Trash2 size={16} /></button></footer>
       <p className="compose-note">Drafts are saved on this device. Send has a 10-second undo window.{!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}</p>
-      <ComposerResizeHandle
-        panel={panel}
-        size={visibleSize}
-        onResize={resize}
-      />
-    </div>
   </div>;
 });
-
-function ComposerResizeHandle({
-  panel,
-  size,
-  onResize,
-}: {
-  panel: React.RefObject<HTMLDivElement | null>;
-  size: ComposerSize | null;
-  onResize(size: ComposerSize): void;
-}) {
-  const drag = useRef<{ x: number; y: number; size: ComposerSize; pointerId: number } | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const currentSize = () => size ?? {
-    width: panel.current?.getBoundingClientRect().width ?? minimumComposerWidth,
-    height: panel.current?.getBoundingClientRect().height ?? minimumComposerHeight,
-  };
-
-  return <div
-    className={`composer-resizer${dragging ? " dragging" : ""}`}
-    role="button"
-    tabIndex={0}
-    aria-label="Resize compose window"
-    title="Drag to resize. Use arrow keys to adjust."
-    onPointerDown={(event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      event.currentTarget.focus();
-      event.currentTarget.setPointerCapture(event.pointerId);
-      drag.current = { x: event.clientX, y: event.clientY, size: currentSize(), pointerId: event.pointerId };
-      setDragging(true);
-    }}
-    onPointerMove={(event) => {
-      if (drag.current?.pointerId === event.pointerId) {
-        onResize({
-          width: drag.current.size.width + event.clientX - drag.current.x,
-          height: drag.current.size.height + event.clientY - drag.current.y,
-        });
-      }
-    }}
-    onPointerUp={(event) => {
-      if (drag.current?.pointerId === event.pointerId) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-        drag.current = null;
-        setDragging(false);
-      }
-    }}
-    onLostPointerCapture={() => {
-      drag.current = null;
-      setDragging(false);
-    }}
-    onKeyDown={(event) => {
-      const step = event.shiftKey ? 40 : 10;
-      const current = currentSize();
-      const next = event.key === "ArrowLeft" ? { ...current, width: current.width - step }
-        : event.key === "ArrowRight" ? { ...current, width: current.width + step }
-        : event.key === "ArrowUp" ? { ...current, height: current.height - step }
-        : event.key === "ArrowDown" ? { ...current, height: current.height + step }
-        : null;
-      if (next) {
-        event.preventDefault();
-        event.stopPropagation();
-        onResize(next);
-      }
-    }}
-  />;
-}

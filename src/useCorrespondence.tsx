@@ -99,6 +99,16 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   }), [attachFiles, closing, compose, composerActive, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, undoSend, pendingId]);
   const openDraft = useCallback((draft: Draft) => setActive(draft), []);
   const undoSendItem = useCallback((id: string) => { void undo(id); }, [undo]);
+  const composer = active ? (
+    <Composer
+      key={active.id}
+      ref={editor}
+      draft={active}
+      accounts={accounts}
+      onClose={() => { setActive(null); void refresh(); }}
+      onQueued={() => { setActive(null); void refresh(); }}
+    />
+  ) : null;
   return {
     context,
     drafts,
@@ -111,8 +121,9 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     undoSendItem,
     restoreFailedSend,
     reconcileSend,
+    activeDraft: active,
+    composer,
     overlay: <>
-      {active && <Composer key={active.id} ref={editor} draft={active} accounts={accounts} onClose={() => { setActive(null); void refresh(); }} onQueued={() => { setActive(null); void refresh(); }} />}
       {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button onClick={() => void undo(pending.id)}>Undo send</button></div>}
       {closing && <div className="exit-backdrop"><div className="exit-notice" tabIndex={-1} role="dialog" aria-modal="true" aria-label="Closing Dispatch" onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Tab") { e.preventDefault(); e.currentTarget.querySelector("button")?.focus(); } }}><span>Saving drafts and finishing pending delivery before closing… Queued mail remains saved for the next launch.</span>{pending && <button onClick={() => void undo(pending.id)}>Undo queued send</button>}</div></div>}
       {error && <div className="compose-notice" role="alert">{error}<button aria-label="Dismiss compose error" onClick={() => setError("")}><X size={16} /></button></div>}

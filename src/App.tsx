@@ -486,6 +486,11 @@ export function App() {
   const messageStackRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId);
+  const composerBelongsToVisibleThread = Boolean(
+    correspondence.activeDraft
+    && correspondence.activeDraft.mode !== "new"
+    && visibleDetail?.messages.some((message) => message.id === correspondence.activeDraft?.sourceId),
+  );
   const [query, setQuery] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
   const [hasMoreResults, setHasMoreResults] = useState(false);
@@ -1584,7 +1589,11 @@ export function App() {
       </section>
 
       <section className="reader" aria-label="Conversation">
-        {visibleDetail ? (
+        {correspondence.activeDraft && !composerBelongsToVisibleThread ? (
+          <div className="message-stack draft-message-stack">
+            {correspondence.composer}
+          </div>
+        ) : visibleDetail ? (
           <>
             <header className="reader-header">
               <div>
@@ -1790,6 +1799,7 @@ export function App() {
                   </article>
                 );
               })}
+              {composerBelongsToVisibleThread ? correspondence.composer : null}
             </div>
           </>
         ) : detailLoading ? (

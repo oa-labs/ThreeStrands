@@ -39,7 +39,7 @@ describe("Composer From selector", () => {
     vi.restoreAllMocks();
   });
 
-  it("does not let header dragging cancel the selector and changes the sending account", async () => {
+  it("keeps native pointer interaction and changes the sending account inline", async () => {
     vi.spyOn(mailClient, "setDraftAccount").mockResolvedValue({
       ...draft,
       revision: 1,

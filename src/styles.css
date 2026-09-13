@@ -788,15 +788,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
   cursor: pointer;
 }
 .thread-summary-actions button:hover, .thread-summary-error button:hover { background: var(--hover); }
-.compose-backdrop { position: fixed; inset: 0; z-index: 8; background: var(--overlay); display: grid; place-items: center; padding: 24px; }
 .composer, .correspondence-list { display: flex; flex-direction: column; width: min(720px, 100%); max-height: calc(100vh - 48px); border: 1px solid var(--border-strong); border-radius: 14px; background: var(--raised); box-shadow: 0 24px 80px var(--shadow); overflow: hidden; }
-.composer { position: relative; max-width: calc(100vw - 48px); }
-.composer.placed { position: absolute; margin: 0; }
+.composer { position: relative; max-width: 840px; margin: 0 auto; }
+.composer-inline { width: 100%; max-height: none; flex-shrink: 0; box-shadow: 0 2px 12px var(--shadow); }
+.draft-message-stack { flex: 1; }
+.message-stack > .composer:not(:first-child) { margin-top: 24px; }
 .composer > header, .correspondence-list > header { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.composer-header { cursor: grab; touch-action: none; user-select: none; }
-.composer-header.dragging { cursor: grabbing; }
-.composer-header .icon-button { cursor: pointer; }
-.compose-backdrop:has(.composer-header.dragging) { cursor: grabbing; user-select: none; }
 .composer h2, .correspondence-list h2 { margin: 0; font-size: calc(18px * var(--font-scale)); }
 .composer header span { display: block; margin-top: 5px; color: var(--muted); font-size: calc(12px * var(--font-scale)); }
 .compose-from { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
@@ -810,7 +807,6 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
 .compose-body ol, .compose-body ul { margin: .5em 0; padding-left: 2em; }
-.composer.sized .compose-body { flex: 1 1 auto; min-height: 120px; height: auto; }
 .composer button, .correspondence-list button, .send-notice button, .compose-notice button { cursor: pointer; }
 .composer .text-button { padding: 8px 0; border: 0; background: transparent; color: var(--link); font-size: calc(12px * var(--font-scale)); flex-shrink: 0; align-self: flex-start; }
 .composer footer { display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--border); flex-shrink: 0; }
@@ -819,31 +815,6 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .composer button:disabled { opacity: .5; cursor: default; }
 .save-status { margin-left: auto; font-size: calc(11px * var(--font-scale)); color: var(--muted); }
 .compose-note { flex-shrink: 0; margin: 0; padding: 0 22px 14px; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
-.composer-resizer {
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  width: 20px;
-  height: 20px;
-  z-index: 2;
-  cursor: nwse-resize;
-  touch-action: none;
-  user-select: none;
-}
-.composer-resizer::after {
-  content: "";
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  width: 9px;
-  height: 9px;
-  border-right: 2px solid var(--muted);
-  border-bottom: 2px solid var(--muted);
-}
-.composer-resizer:hover::after, .composer-resizer:focus-visible::after,
-.composer-resizer.dragging::after { border-color: var(--accent); }
-.composer-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
-.compose-backdrop:has(.composer-resizer.dragging) { cursor: nwse-resize; user-select: none; }
 .compose-error { padding: 12px 0; color: var(--error); font-size: calc(13px * var(--font-scale)); }
 .attachment-list { margin: 0 0 14px; padding: 0; list-style: none; flex-shrink: 0; }
 .attachment-list li { display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--input); border-radius: 6px; margin-top: 6px; font-size: calc(13px * var(--font-scale)); }
