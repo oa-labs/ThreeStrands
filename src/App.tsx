@@ -14,11 +14,13 @@ import {
   Inbox,
   Keyboard,
   Mail,
+  Mails,
   MailOpen,
   Moon,
   Sun,
   Pencil,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings as SettingsIcon,
   ShieldAlert,
@@ -49,6 +51,7 @@ import {
   type Command,
   type CommandContext,
   type CommandResult,
+  type MailboxKind,
 } from "./commands";
 import {
   clearLocalCrashReports,
@@ -70,7 +73,7 @@ import type {
   Message,
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
-import { useCorrespondence } from "./useCorrespondence";
+import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import { SafeMessage } from "./SafeMessage";
 import {
   applyFontScale,
@@ -145,6 +148,14 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 const SEARCH_PAGE_SIZE = 50;
+
+const MAILBOX_TITLES: Record<MailboxKind, string> = {
+  inbox: "Inbox",
+  allMail: "All Mail",
+  trash: "Trash",
+  drafts: "Drafts",
+  outbox: "Outbox",
+};
 
 // Matches the \u{1}/\u{2} markers the backend's FTS5 `snippet()` call wraps
 // hits in (see search_threads in src-tauri/src/db.rs). Rendered as React
@@ -394,6 +405,8 @@ export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+  const [mailbox, setMailbox] = useState<MailboxKind>("inbox");
+  const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "trash";
   const accountsRequest = useRef(0);
   const refreshAccounts = useCallback(() => {
     // Guards against an earlier-issued refresh resolving after a later one
@@ -428,24 +441,35 @@ export function App() {
     }
   }, [setNotice]);
 
-  const loadThreads = useCallback(async (search: string, accountOverride?: string | null) => {
+  const loadThreads = useCallback(async (search: string, accountOverride?: string | null, mailboxOverride?: MailboxKind) => {
+    const box = mailboxOverride ?? mailbox;
+    if (box === "drafts" || box === "outbox") {
+      setThreads([]);
+      setSelectedId(null);
+      setHasMoreResults(false);
+      return;
+    }
     const trimmed = search.trim();
     const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
-    const next = trimmed
+    const next = box === "inbox" && trimmed
       ? await mailClient.searchThreads({
           query: trimmed,
           limit: SEARCH_PAGE_SIZE,
           includeArchived,
         }, accountId)
-      : await mailClient.listThreads(accountId);
+      : box === "allMail"
+        ? await mailClient.listAllMail(accountId)
+        : box === "trash"
+          ? await mailClient.listTrash(accountId)
+          : await mailClient.listThreads(accountId);
     setThreads(next);
-    setHasMoreResults(trimmed ? next.length === SEARCH_PAGE_SIZE : false);
+    setHasMoreResults(box === "inbox" && trimmed ? next.length === SEARCH_PAGE_SIZE : false);
     setSelectedId((current) =>
       current && next.some((thread) => thread.id === current)
         ? current
         : (next[0]?.id ?? null),
     );
-  }, [includeArchived, activeAccountId]);
+  }, [includeArchived, activeAccountId, mailbox]);
 
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
@@ -575,10 +599,13 @@ export function App() {
     const previous = new Map(
       threads.filter((thread) => targetIds.includes(thread.id)).map((thread) => [thread.id, thread] as const),
     );
-    const removesFromView =
-      (template.kind === "archive" || template.kind === "trash" || template.kind === "spam")
-        && template.value
-        && !includeArchived;
+    const removesFromView = mailbox === "trash"
+      ? template.kind === "trash" && !template.value
+      : mailbox === "allMail"
+        ? template.kind === "trash" && template.value
+        : (template.kind === "archive" || template.kind === "trash" || template.kind === "spam")
+            && template.value
+            && !includeArchived;
 
     setThreads((current) => {
       const mapped = current.map((thread) =>
@@ -657,7 +684,7 @@ export function App() {
         await loadThreads(query);
       },
     };
-  }, [threads, includeArchived, selectedId, loadThreads, query, labels, setNotice]);
+  }, [threads, includeArchived, mailbox, selectedId, loadThreads, query, labels, setNotice]);
 
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
@@ -689,13 +716,40 @@ export function App() {
 
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
+    mailbox,
     selectedId,
     selectedArchived: selected?.archived ?? false,
+    selectedTrashed: selected?.trashed ?? false,
     canUnsubscribe,
     openInbox: () => {
       correspondence.context.openInbox();
       setQuery("");
-      void loadThreads("");
+      setMailbox("inbox");
+      void loadThreads("", undefined, "inbox");
+    },
+    openAllMail: () => {
+      correspondence.context.openInbox();
+      setQuery("");
+      setMailbox("allMail");
+      void loadThreads("", undefined, "allMail");
+    },
+    openTrash: () => {
+      correspondence.context.openInbox();
+      setQuery("");
+      setMailbox("trash");
+      void loadThreads("", undefined, "trash");
+    },
+    openDrafts: () => {
+      correspondence.context.openDrafts();
+      setQuery("");
+      setMailbox("drafts");
+      void loadThreads("", undefined, "drafts");
+    },
+    openOutbox: () => {
+      correspondence.context.openOutbox();
+      setQuery("");
+      setMailbox("outbox");
+      void loadThreads("", undefined, "outbox");
     },
     selectNext: () => {
       const next = Math.min(selectedIndex + 1, threads.length - 1);
@@ -711,6 +765,15 @@ export function App() {
       if (latestMessage?.unsubscribe?.methods.length) setUnsubscribeMessageId(latestMessage.id);
     },
     trashSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "trash", value: true }),
+    restoreSelected: async () => {
+      if (!selected) return {};
+      // Matches Gmail: restoring from Trash always lands back in the Inbox,
+      // regardless of whether the thread was archived before it was trashed.
+      const wasArchived = selected.archived;
+      const result = await mutateIds([selected.id], { kind: "trash", value: false });
+      if (wasArchived) await mutateIds([selected.id], { kind: "archive", value: false });
+      return result;
+    },
     markSpamSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "spam", value: true }),
     setLabelSelected: (labelId, value) => mutateIds(labelTargetIds ?? [], { kind: "label", labelId, value }),
     toggleReadSelected: () =>
@@ -745,7 +808,7 @@ export function App() {
       setActiveAccountId(null);
       void loadThreads(query, null);
     },
-  }), [adjustFontScale, canUnsubscribe, canUndoAction, labelTargetIds, latestMessage, loadThreads, mutateIds, openSettingsAt, query, refreshMail, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
+  }), [adjustFontScale, canUnsubscribe, canUndoAction, labelTargetIds, latestMessage, loadThreads, mailbox, mutateIds, openSettingsAt, query, refreshMail, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context).then((result) => {
@@ -799,19 +862,49 @@ export function App() {
         />
         <HoverTooltip label="Inbox" shortcut="G I">
           <button
-            className="nav-button active"
+            className={`nav-button ${mailbox === "inbox" ? "active" : ""}`}
             aria-label="Inbox (g then i)"
             onClick={() => executeById("mailbox.inbox")}
           >
             <Inbox size={19} />
           </button>
         </HoverTooltip>
+        <HoverTooltip label="All Mail" shortcut="G A">
+          <button
+            className={`nav-button ${mailbox === "allMail" ? "active" : ""}`}
+            aria-label="All Mail (g then a)"
+            onClick={() => executeById("mailbox.allMail")}
+          >
+            <Mails size={19} />
+          </button>
+        </HoverTooltip>
+        <HoverTooltip label="Trash" shortcut="G T">
+          <button
+            className={`nav-button ${mailbox === "trash" ? "active" : ""}`}
+            aria-label="Trash (g then t)"
+            onClick={() => executeById("mailbox.trash")}
+          >
+            <Trash2 size={19} />
+          </button>
+        </HoverTooltip>
         <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
         <HoverTooltip label="Drafts" shortcut="G D">
-          <button className="nav-button" aria-label={`Drafts (${correspondence.draftCount}) (g then d)`} onClick={() => executeById("drafts.open")}><FileText size={19} /></button>
+          <button
+            className={`nav-button ${mailbox === "drafts" ? "active" : ""}`}
+            aria-label={`Drafts (${correspondence.draftCount}) (g then d)`}
+            onClick={() => executeById("drafts.open")}
+          >
+            <FileText size={19} />
+          </button>
         </HoverTooltip>
         <HoverTooltip label="Outbox">
-          <button className="nav-button" aria-label={`Outbox (${correspondence.outboxCount})`} onClick={() => executeById("outbox.open")}><Send size={19} /></button>
+          <button
+            className={`nav-button ${mailbox === "outbox" ? "active" : ""}`}
+            aria-label={`Outbox (${correspondence.outboxCount})`}
+            onClick={() => executeById("outbox.open")}
+          >
+            <Send size={19} />
+          </button>
         </HoverTooltip>
         <div className="sidebar-spacer" />
         <button
@@ -851,7 +944,7 @@ export function App() {
         <InboxResizeHandle {...inboxSize} />
         <header className="thread-header">
           <div className="thread-header-title">
-            {checkedIds.size > 0 ? (
+            {isThreadMailbox && checkedIds.size > 0 ? (
               <label className="select-all">
                 <input
                   ref={selectAllRef}
@@ -865,8 +958,14 @@ export function App() {
               </label>
             ) : null}
             <div>
-              <span className="eyebrow">Inbox</span>
-              <h1>{threads.length} conversations</h1>
+              <span className="eyebrow">{MAILBOX_TITLES[mailbox]}</span>
+              <h1>
+                {mailbox === "drafts"
+                  ? `${correspondence.drafts.length} drafts`
+                  : mailbox === "outbox"
+                    ? `${correspondence.outbox.filter((item) => item.state !== "canceled").length} outgoing`
+                    : `${threads.length} conversations`}
+              </h1>
             </div>
           </div>
           <button
@@ -877,18 +976,26 @@ export function App() {
             <RefreshCw size={17} className={syncStatus?.state === "syncing" ? "spin" : ""} />
           </button>
         </header>
-        {checkedIds.size > 0 ? (
+        {isThreadMailbox && checkedIds.size > 0 ? (
           <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
             <span className="batch-count">{checkedIds.size} selected</span>
-            <ActionButton label="Archive" onClick={() => runOnSelection("Archive", { kind: "archive", value: true })}>
-              <Archive size={16} />
-            </ActionButton>
-            <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
-              <Trash2 size={16} />
-            </ActionButton>
-            <ActionButton label="Mark spam" onClick={() => runOnSelection("Mark spam", { kind: "spam", value: true })}>
-              <ShieldAlert size={16} />
-            </ActionButton>
+            {mailbox === "trash" ? (
+              <ActionButton label="Restore" onClick={() => runOnSelection("Restore", { kind: "trash", value: false })}>
+                <RotateCcw size={16} />
+              </ActionButton>
+            ) : (
+              <>
+                <ActionButton label="Archive" onClick={() => runOnSelection("Archive", { kind: "archive", value: true })}>
+                  <Archive size={16} />
+                </ActionButton>
+                <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
+                  <Trash2 size={16} />
+                </ActionButton>
+                <ActionButton label="Mark spam" onClick={() => runOnSelection("Mark spam", { kind: "spam", value: true })}>
+                  <ShieldAlert size={16} />
+                </ActionButton>
+              </>
+            )}
             <ActionButton label="Mark read" onClick={() => runOnSelection("Mark read", { kind: "read", value: true })}>
               <MailOpen size={16} />
             </ActionButton>
@@ -913,30 +1020,44 @@ export function App() {
             </button>
           </div>
         ) : null}
-        <label className="search-box">
-          <Search size={16} />
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search mail"
-            aria-label="Search mail"
-          />
-          {query.trim() ? (
-            <button
-              type="button"
-              className={`search-toggle ${includeArchived ? "active" : ""}`}
-              aria-pressed={includeArchived}
-              aria-label="Include archived or trashed mail in search"
-              title="Include archived or trashed mail in search"
-              onClick={() => setIncludeArchived((current) => !current)}
-            >
-              <Archive size={14} />
-            </button>
-          ) : null}
-          <kbd>/</kbd>
-        </label>
-        <div className="thread-list" role="listbox" aria-label="Conversations">
+        {mailbox === "inbox" ? (
+          <label className="search-box">
+            <Search size={16} />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search mail"
+              aria-label="Search mail"
+            />
+            {query.trim() ? (
+              <button
+                type="button"
+                className={`search-toggle ${includeArchived ? "active" : ""}`}
+                aria-pressed={includeArchived}
+                aria-label="Include archived or trashed mail in search"
+                title="Include archived or trashed mail in search"
+                onClick={() => setIncludeArchived((current) => !current)}
+              >
+                <Archive size={14} />
+              </button>
+            ) : null}
+            <kbd>/</kbd>
+          </label>
+        ) : null}
+        <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={MAILBOX_TITLES[mailbox]}>
+          {mailbox === "drafts" ? (
+            <DraftsList drafts={correspondence.drafts} onOpen={correspondence.openDraft} />
+          ) : mailbox === "outbox" ? (
+            <OutboxList
+              outbox={correspondence.outbox}
+              clock={correspondence.clock}
+              onUndo={correspondence.undoSendItem}
+              onRestore={correspondence.restoreFailedSend}
+              onReconcile={correspondence.reconcileSend}
+            />
+          ) : (
+            <>
           {loading ? <p className="empty">Loading inbox…</p> : null}
           {!loading && threads.length === 0 ? (
             accounts.length === 0 ? (
@@ -1001,6 +1122,8 @@ export function App() {
               Load more results
             </button>
           ) : null}
+            </>
+          )}
         </div>
       </section>
 
@@ -1049,7 +1172,7 @@ export function App() {
                     <Tag size={17} />
                   </ActionButton>
                 </HoverTooltip>
-                {selected?.archived ? (
+                {mailbox === "trash" ? null : selected?.archived ? (
                   <HoverTooltip label="Mark not done" shortcut="Shift+E" placement="bottom">
                     <ActionButton label="Mark not done" shortcut="Shift+E" onClick={() => executeById("thread.unarchive")}>
                       <Inbox size={17} />
@@ -1062,11 +1185,19 @@ export function App() {
                     </ActionButton>
                   </HoverTooltip>
                 )}
-                <HoverTooltip label="Trash" shortcut="#" placement="bottom">
-                  <ActionButton label="Trash" shortcut="#" onClick={() => executeById("thread.trash")}>
-                    <Trash2 size={17} />
-                  </ActionButton>
-                </HoverTooltip>
+                {mailbox === "trash" ? (
+                  <HoverTooltip label="Restore" placement="bottom">
+                    <ActionButton label="Restore" onClick={() => executeById("thread.untrash")}>
+                      <RotateCcw size={17} />
+                    </ActionButton>
+                  </HoverTooltip>
+                ) : (
+                  <HoverTooltip label="Trash" shortcut="#" placement="bottom">
+                    <ActionButton label="Trash" shortcut="#" onClick={() => executeById("thread.trash")}>
+                      <Trash2 size={17} />
+                    </ActionButton>
+                  </HoverTooltip>
+                )}
                 <HoverTooltip label="Mark spam" shortcut="!" placement="bottom">
                   <ActionButton label="Mark spam" shortcut="!" onClick={() => executeById("thread.spam")}>
                     <ShieldAlert size={17} />
@@ -1106,7 +1237,16 @@ export function App() {
             </div>
           </>
         ) : (
-          <div className="reader-empty"><Mail size={28} /><p>Select a conversation</p></div>
+          <div className="reader-empty">
+            <Mail size={28} />
+            <p>
+              {mailbox === "drafts"
+                ? "Select a draft to open it for editing"
+                : mailbox === "outbox"
+                  ? "Delivery details are shown in the list"
+                  : "Select a conversation"}
+            </p>
+          </div>
         )}
       </section>
 
@@ -1200,11 +1340,10 @@ export function App() {
           }}
           onRemoveAccount={async (email) => {
             await mailClient.removeAccount(email);
-            if (activeAccountId === email) {
-              setActiveAccountId(null);
-              void loadThreads(query, null);
-            }
+            const wasActive = activeAccountId === email;
+            if (wasActive) setActiveAccountId(null);
             await refreshAccounts();
+            void loadThreads(query, wasActive ? null : undefined);
             setAuthStatus(await mailClient.googleAuthStatus());
           }}
           onReconnectAccount={async (email) => {

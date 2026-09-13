@@ -1,6 +1,10 @@
+export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox";
+
 export type CommandContext = {
+  mailbox: MailboxKind;
   selectedId: string | null;
   selectedArchived: boolean;
+  selectedTrashed: boolean;
   canUnsubscribe: boolean;
   composerActive: boolean;
   closing?: boolean;
@@ -10,6 +14,8 @@ export type CommandContext = {
   replyAll(): void;
   forward(): void;
   openInbox(): void;
+  openAllMail(): void;
+  openTrash(): void;
   openDrafts(): void;
   openOutbox(): void;
   sendDraft(): void;
@@ -21,6 +27,7 @@ export type CommandContext = {
   markNotDoneSelected(): Promise<CommandResult>;
   unsubscribeSelected(): void;
   trashSelected(): Promise<CommandResult>;
+  restoreSelected(): Promise<CommandResult>;
   markSpamSelected(): Promise<CommandResult>;
   setLabelSelected(labelId: string, value: boolean): Promise<CommandResult>;
   toggleReadSelected(): Promise<CommandResult>;
@@ -65,12 +72,18 @@ export const undoResult = async (result: CommandResult): Promise<void> => {
   await result.undoAction?.();
 };
 
+/** Triage/reply commands only make sense against a real thread selection. */
+const isThreadMailbox = (context: CommandContext): boolean =>
+  context.mailbox !== "drafts" && context.mailbox !== "outbox";
+
 export const commands: Command[] = [
   { id: "draft.new", title: "New message", keys: ["c"], group: "Compose", enabled: () => true, run: (c) => complete(c.compose) },
-  { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => complete(c.reply) },
-  { id: "draft.replyAll", title: "Reply all", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => complete(c.replyAll) },
-  { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && !c.composerActive, run: (c) => complete(c.forward) },
+  { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.reply) },
+  { id: "draft.replyAll", title: "Reply all", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.replyAll) },
+  { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.forward) },
   { id: "mailbox.inbox", title: "Go to Inbox", keys: ["g then i"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openInbox) },
+  { id: "mailbox.allMail", title: "Go to All Mail", keys: ["g then a"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openAllMail) },
+  { id: "mailbox.trash", title: "Go to Trash", keys: ["g then t"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openTrash) },
   { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openDrafts) },
   { id: "outbox.open", title: "Open outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => complete(c.openOutbox) },
   { id: "draft.send", title: "Send draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
@@ -97,7 +110,7 @@ export const commands: Command[] = [
     title: "Archive",
     keys: ["e"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.archiveSelected(),
     undo: undoResult,
   },
@@ -106,7 +119,8 @@ export const commands: Command[] = [
     title: "Mark not done",
     keys: ["Shift+e"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && context.selectedArchived && !context.composerActive,
+    enabled: (context) =>
+      context.selectedId !== null && context.selectedArchived && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.markNotDoneSelected(),
     undo: undoResult,
   },
@@ -115,7 +129,7 @@ export const commands: Command[] = [
     title: "Select for batch actions",
     keys: ["x"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => complete(context.toggleCheckedSelected),
   },
   {
@@ -123,8 +137,19 @@ export const commands: Command[] = [
     title: "Trash",
     keys: ["#"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) =>
+      context.selectedId !== null && !context.selectedTrashed && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.trashSelected(),
+    undo: undoResult,
+  },
+  {
+    id: "thread.untrash",
+    title: "Restore",
+    keys: [],
+    group: "Triage",
+    enabled: (context) =>
+      context.selectedId !== null && context.selectedTrashed && isThreadMailbox(context) && !context.composerActive,
+    run: (context) => context.restoreSelected(),
     undo: undoResult,
   },
   {
@@ -132,7 +157,7 @@ export const commands: Command[] = [
     title: "Mark spam",
     keys: ["!"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.markSpamSelected(),
     undo: undoResult,
   },
@@ -141,7 +166,7 @@ export const commands: Command[] = [
     title: "Toggle read",
     keys: ["u"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.toggleReadSelected(),
     undo: undoResult,
   },
@@ -150,7 +175,7 @@ export const commands: Command[] = [
     title: "Unsubscribe",
     keys: ["Mod+u"],
     group: "Triage",
-    enabled: (context) => context.canUnsubscribe && !context.composerActive,
+    enabled: (context) => context.canUnsubscribe && isThreadMailbox(context) && !context.composerActive,
     run: (context) => complete(context.unsubscribeSelected),
   },
   {
@@ -158,7 +183,7 @@ export const commands: Command[] = [
     title: "Toggle star",
     keys: ["s"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.toggleStarSelected(),
     undo: undoResult,
   },
@@ -167,7 +192,7 @@ export const commands: Command[] = [
     title: "Manage labels",
     keys: ["l"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => complete(context.openLabels),
   },
   {
@@ -250,7 +275,7 @@ export function labelCommand(labelId: string, labelName: string, value: boolean)
     title: `${value ? "Add" : "Remove"} label ${labelName}`,
     keys: [],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.setLabelSelected(labelId, value),
     undo: undoResult,
   };

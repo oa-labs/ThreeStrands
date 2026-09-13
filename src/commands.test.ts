@@ -11,8 +11,10 @@ import {
 
 function noopContext(): CommandContext {
   return {
+    mailbox: "inbox",
     selectedId: null,
     selectedArchived: false,
+    selectedTrashed: false,
     canUnsubscribe: false,
     composerActive: false,
     canUndoSend: false,
@@ -21,6 +23,8 @@ function noopContext(): CommandContext {
     replyAll: () => {},
     forward: () => {},
     openInbox: () => {},
+    openAllMail: () => {},
+    openTrash: () => {},
     openDrafts: () => {},
     openOutbox: () => {},
     sendDraft: () => {},
@@ -32,6 +36,7 @@ function noopContext(): CommandContext {
     markNotDoneSelected: async () => ({}),
     unsubscribeSelected: () => {},
     trashSelected: async () => ({}),
+    restoreSelected: async () => ({}),
     markSpamSelected: async () => ({}),
     setLabelSelected: async () => ({}),
     toggleReadSelected: async () => ({}),
@@ -71,8 +76,31 @@ describe("command registry", () => {
 
   it("registers Superhuman folder chords for matching destinations", () => {
     expect(commands.find((command) => command.id === "mailbox.inbox")?.keys).toEqual(["g then i"]);
+    expect(commands.find((command) => command.id === "mailbox.allMail")?.keys).toEqual(["g then a"]);
+    expect(commands.find((command) => command.id === "mailbox.trash")?.keys).toEqual(["g then t"]);
     expect(commands.find((command) => command.id === "drafts.open")?.keys).toEqual(["g then d"]);
     expect(commands.find((command) => command.id === "labels.open")?.keys).toEqual(["l"]);
+  });
+
+  it("gates triage and reply commands to thread-based mailboxes", () => {
+    const context = noopContext();
+    context.selectedId = "thread-1";
+    context.mailbox = "drafts";
+    expect(commands.find((command) => command.id === "thread.archive")?.enabled(context)).toBe(false);
+    expect(commands.find((command) => command.id === "thread.trash")?.enabled(context)).toBe(false);
+    expect(commands.find((command) => command.id === "draft.reply")?.enabled(context)).toBe(false);
+    context.mailbox = "inbox";
+    expect(commands.find((command) => command.id === "thread.archive")?.enabled(context)).toBe(true);
+  });
+
+  it("gates the trash/restore toggle on whether the selected thread is already trashed", () => {
+    const context = noopContext();
+    context.selectedId = "thread-1";
+    expect(commands.find((command) => command.id === "thread.trash")?.enabled(context)).toBe(true);
+    expect(commands.find((command) => command.id === "thread.untrash")?.enabled(context)).toBe(false);
+    context.selectedTrashed = true;
+    expect(commands.find((command) => command.id === "thread.trash")?.enabled(context)).toBe(false);
+    expect(commands.find((command) => command.id === "thread.untrash")?.enabled(context)).toBe(true);
   });
 
   it("registers the conversation triage shortcuts", () => {

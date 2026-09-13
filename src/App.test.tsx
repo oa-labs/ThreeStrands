@@ -297,18 +297,16 @@ describe("Escape dismissal", () => {
     expect(screen.getByRole("region", { name: "Conversation" })).toBeInTheDocument();
   });
 
-  it("closes the drafts window without closing the inbox", async () => {
+  it("switches to the inline Drafts view and back to the inbox without losing state", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
     fireEvent.click(screen.getByRole("button", { name: /Drafts \(0\)/ }));
 
-    const drafts = await screen.findByRole("dialog", { name: "Drafts" });
-    fireEvent.keyDown(drafts, { key: "Escape" });
+    expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Drafts" })).not.toBeInTheDocument(),
-    );
-    expect(screen.getByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Inbox (g then i)" }));
+    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
   });
 
   it("closes only the topmost popup when overlays are stacked", async () => {

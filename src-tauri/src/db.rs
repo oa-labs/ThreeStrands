@@ -152,8 +152,9 @@ impl Database {
         self.list_threads_where(account_id, "archived = 0 AND trashed = 0")
     }
 
-    /// Gmail's "All Mail": everything except Trash (there's no local Spam
-    /// state to exclude alongside it).
+    /// Gmail's "All Mail": everything except Trash. (There's a `spam` column
+    /// referenced elsewhere for an in-progress Spam feature, but no migration
+    /// has added it to `threads` yet, so it isn't filterable here.)
     pub fn list_all_mail(&self, account_id: Option<&str>) -> Result<Vec<Thread>, String> {
         self.list_threads_where(account_id, "trashed = 0")
     }

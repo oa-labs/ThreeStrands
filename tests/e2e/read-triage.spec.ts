@@ -228,18 +228,64 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
 test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  const eyebrow = page.locator(".thread-header .eyebrow");
 
   await page.keyboard.press("g");
   await page.keyboard.press("d");
-  await expect(page.getByRole("dialog", { name: "Drafts" })).toBeVisible();
+  await expect(eyebrow).toHaveText("Drafts");
+  await expect(page.getByRole("heading", { name: "0 drafts" })).toBeVisible();
+
+  await page.keyboard.press("g");
+  await page.keyboard.press("a");
+  await expect(eyebrow).toHaveText("All Mail");
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+
+  await page.keyboard.press("g");
+  await page.keyboard.press("t");
+  await expect(eyebrow).toHaveText("Trash");
+  await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
 
   await page.keyboard.press("g");
   await page.keyboard.press("i");
-  await expect(page.getByRole("dialog", { name: "Drafts" })).not.toBeVisible();
+  await expect(eyebrow).toHaveText("Inbox");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
   await page.keyboard.press("l");
   await expect(page.getByRole("dialog", { name: "Manage labels" })).toBeVisible();
+});
+
+test("archived and trashed threads move between Inbox, All Mail, and Trash", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+  const roadmap = /Phase 1: read and triage/;
+
+  await page.getByRole("option", { name: roadmap }).click();
+  await page.keyboard.press("e");
+  await expect(page.getByRole("heading", { name: "2 conversations" })).toBeVisible();
+
+  // Archived, so it's gone from Inbox but still shows in All Mail.
+  await page.keyboard.press("g");
+  await page.keyboard.press("a");
+  await expect(page.getByRole("option", { name: roadmap })).toBeVisible();
+
+  // Trash it from All Mail; it leaves All Mail and lands in Trash.
+  await page.getByRole("option", { name: roadmap }).click();
+  await page.keyboard.press("#");
+  await expect(page.getByRole("option", { name: roadmap })).not.toBeVisible();
+
+  await page.keyboard.press("g");
+  await page.keyboard.press("t");
+  await expect(page.getByRole("option", { name: roadmap })).toBeVisible();
+
+  // Restoring from Trash returns it to the Inbox.
+  await page.getByRole("option", { name: roadmap }).click();
+  await page.getByRole("button", { name: "Restore" }).click();
+  await expect(page.getByRole("option", { name: roadmap })).not.toBeVisible();
+
+  await page.keyboard.press("g");
+  await page.keyboard.press("i");
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+  await expect(page.getByRole("option", { name: roadmap })).toBeVisible();
 });
 
 test("shows folder labels and shortcuts on hover", async ({ page }) => {

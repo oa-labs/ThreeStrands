@@ -168,7 +168,7 @@ test("the command palette can send from a composer and the outbox records simula
   await expect(page.getByRole("dialog", { name: "New message" })).not.toBeVisible();
   await page.clock.fastForward(11000);
   await page.getByRole("button", { name: /Outbox \(/ }).click();
-  await expect(page.getByRole("dialog", { name: "Outbox" })).toContainText("sent");
+  await expect(page.getByRole("list", { name: "Outbox" })).toContainText("sent");
 });
 
 for (const theme of ["light", "dark"] as const) {
