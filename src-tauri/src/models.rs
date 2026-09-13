@@ -94,6 +94,10 @@ pub enum ThreadMutation {
         thread_id: String,
         value: bool,
     },
+    Spam {
+        thread_id: String,
+        value: bool,
+    },
     Read {
         thread_id: String,
         value: bool,
@@ -114,6 +118,7 @@ impl ThreadMutation {
         match self {
             Self::Archive { thread_id, .. }
             | Self::Trash { thread_id, .. }
+            | Self::Spam { thread_id, .. }
             | Self::Read { thread_id, .. }
             | Self::Star { thread_id, .. }
             | Self::Label { thread_id, .. } => thread_id,

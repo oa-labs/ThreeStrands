@@ -21,6 +21,7 @@ import {
   RefreshCw,
   Search,
   Settings as SettingsIcon,
+  ShieldAlert,
   Square,
   Star,
   Tag,
@@ -174,6 +175,7 @@ function HighlightedSnippet({ thread }: { thread: Thread }) {
 type MutationTemplate =
   | { kind: "archive"; value: boolean }
   | { kind: "trash"; value: boolean }
+  | { kind: "spam"; value: boolean }
   | { kind: "read"; value: boolean }
   | { kind: "star"; value: boolean }
   | { kind: "label"; labelId: string; value: boolean };
@@ -190,6 +192,17 @@ function applyMutationTemplate(thread: Thread, template: MutationTemplate): Thre
       return { ...thread, archived: template.value };
     case "trash":
       return { ...thread, trashed: template.value };
+    case "spam": {
+      const next = new Set(thread.labels);
+      if (template.value) {
+        next.add("SPAM");
+        next.delete("INBOX");
+      } else {
+        next.delete("SPAM");
+        next.add("INBOX");
+      }
+      return { ...thread, archived: template.value, labels: [...next] };
+    }
     case "read":
       return { ...thread, unread: !template.value };
     case "star":
@@ -218,6 +231,10 @@ function describeMutation(template: MutationTemplate, count: number, labelName?:
       return template.value
         ? (many ? `Moved ${count} conversations to trash` : "Conversation moved to trash")
         : (many ? `Restored ${count} conversations from trash` : "Conversation restored from trash");
+    case "spam":
+      return template.value
+        ? (many ? `Marked ${count} conversations as spam` : "Conversation marked as spam")
+        : (many ? `Restored ${count} conversations from spam` : "Conversation restored from spam");
     case "star":
       return template.value
         ? (many ? `Starred ${count} conversations` : "Starred")
@@ -559,7 +576,9 @@ export function App() {
       threads.filter((thread) => targetIds.includes(thread.id)).map((thread) => [thread.id, thread] as const),
     );
     const removesFromView =
-      (template.kind === "archive" || template.kind === "trash") && template.value && !includeArchived;
+      (template.kind === "archive" || template.kind === "trash" || template.kind === "spam")
+        && template.value
+        && !includeArchived;
 
     setThreads((current) => {
       const mapped = current.map((thread) =>
@@ -597,7 +616,9 @@ export function App() {
       });
     }
 
-    if (template.kind !== "archive" && template.kind !== "trash") await loadThreads(query);
+    if (template.kind !== "archive" && template.kind !== "trash" && template.kind !== "spam") {
+      await loadThreads(query);
+    }
     if (document.visibilityState !== "visible" || !document.hasFocus()) {
       void mailClient.flushPending().then(setSyncStatus).catch(() => {});
     }
@@ -690,6 +711,7 @@ export function App() {
       if (latestMessage?.unsubscribe?.methods.length) setUnsubscribeMessageId(latestMessage.id);
     },
     trashSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "trash", value: true }),
+    markSpamSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "spam", value: true }),
     setLabelSelected: (labelId, value) => mutateIds(labelTargetIds ?? [], { kind: "label", labelId, value }),
     toggleReadSelected: () =>
       mutateIds(selected ? [selected.id] : [], { kind: "read", value: selected?.unread ?? false }),
@@ -863,6 +885,9 @@ export function App() {
             </ActionButton>
             <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
               <Trash2 size={16} />
+            </ActionButton>
+            <ActionButton label="Mark spam" onClick={() => runOnSelection("Mark spam", { kind: "spam", value: true })}>
+              <ShieldAlert size={16} />
             </ActionButton>
             <ActionButton label="Mark read" onClick={() => runOnSelection("Mark read", { kind: "read", value: true })}>
               <MailOpen size={16} />
@@ -1040,6 +1065,11 @@ export function App() {
                 <HoverTooltip label="Trash" shortcut="#" placement="bottom">
                   <ActionButton label="Trash" shortcut="#" onClick={() => executeById("thread.trash")}>
                     <Trash2 size={17} />
+                  </ActionButton>
+                </HoverTooltip>
+                <HoverTooltip label="Mark spam" shortcut="!" placement="bottom">
+                  <ActionButton label="Mark spam" shortcut="!" onClick={() => executeById("thread.spam")}>
+                    <ShieldAlert size={17} />
                   </ActionButton>
                 </HoverTooltip>
               </div>

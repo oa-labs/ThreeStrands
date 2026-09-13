@@ -23,6 +23,7 @@ describe("archive notice", () => {
   beforeEach(async () => {
     for (const threadId of demoThreadIds) {
       await mailClient.mutateThread({ kind: "archive", threadId, value: false });
+      await mailClient.mutateThread({ kind: "spam", threadId, value: false });
       await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
     }
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -201,6 +202,7 @@ describe("trash and batch actions", () => {
     for (const threadId of demoThreadIds) {
       await mailClient.mutateThread({ kind: "archive", threadId, value: false });
       await mailClient.mutateThread({ kind: "trash", threadId, value: false });
+      await mailClient.mutateThread({ kind: "spam", threadId, value: false });
       await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
     }
   });
@@ -215,6 +217,26 @@ describe("trash and batch actions", () => {
       screen.getByRole("button", { name: "Trash (#)" }).click();
     });
     expect(await screen.findByRole("status")).toHaveTextContent("Conversation moved to trash");
+    expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Undo" }).click();
+    });
+    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+  });
+
+  it("marks the open conversation as spam with ! and can undo it", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "!",
+        code: "Digit1",
+        shiftKey: true,
+      }));
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent("Conversation marked as spam");
     expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
 
     await act(async () => {
@@ -254,6 +276,7 @@ describe("Escape dismissal", () => {
     localStorage.removeItem("dispatch.demoCorrespondence");
     for (const threadId of demoThreadIds) {
       await mailClient.mutateThread({ kind: "archive", threadId, value: false });
+      await mailClient.mutateThread({ kind: "spam", threadId, value: false });
     }
   });
 

@@ -32,6 +32,7 @@ function noopContext(): CommandContext {
     markNotDoneSelected: async () => ({}),
     unsubscribeSelected: () => {},
     trashSelected: async () => ({}),
+    markSpamSelected: async () => ({}),
     setLabelSelected: async () => ({}),
     toggleReadSelected: async () => ({}),
     toggleStarSelected: async () => ({}),
@@ -80,6 +81,7 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "thread.star")?.keys).toEqual(["s"]);
     expect(commands.find((command) => command.id === "thread.read")?.keys).toEqual(["u"]);
     expect(commands.find((command) => command.id === "thread.trash")?.keys).toEqual(["#"]);
+    expect(commands.find((command) => command.id === "thread.spam")?.keys).toEqual(["!"]);
     expect(commands.find((command) => command.id === "thread.unsubscribe")?.keys).toEqual(["Mod+u"]);
   });
 
@@ -93,6 +95,12 @@ describe("command registry", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "#", shiftKey: true, code: "Digit3" }), "#")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "3", shiftKey: true, code: "Digit3" }), "#")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "3", code: "Digit3" }), "#")).toBe(false);
+  });
+
+  it("matches the spam shortcut on US and symbol-producing keyboards", () => {
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "!", shiftKey: true, code: "Digit1" }), "!")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "1", shiftKey: true, code: "Digit1" }), "!")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "1", code: "Digit1" }), "!")).toBe(false);
   });
 
   it("registers the common shortcut-help key", () => {
