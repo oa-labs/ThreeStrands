@@ -520,6 +520,7 @@ kbd {
 }
 .message-images-notice button:hover { background: var(--hover); border-color: var(--border-strong); }
 .message-body { color: var(--body-text); font-size: calc(15px * var(--font-scale)); line-height: 1.7; overflow-wrap: anywhere; overflow-x: auto; }
+.message-body [hidden] { display: none !important; }
 .message-body img { max-width: 100%; height: auto; }
 .message-body img:not([src]) { display: inline-block; min-width: 24px; min-height: 24px; border: 1px dashed var(--border); background: var(--hover); vertical-align: middle; }
 .message-body-plain { white-space: pre-wrap; }

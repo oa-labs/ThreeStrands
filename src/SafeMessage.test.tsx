@@ -49,6 +49,43 @@ describe("SafeMessage", () => {
     expect(sanitized).toContain("Hello");
   });
 
+  it("keeps newsletter preheaders hidden and preserves safe email dimensions", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <div class="preview" style="display:none;font-size:1px;max-height:0;overflow:hidden">
+        The summer heat is slowly making its retreat.
+      </div>
+      <table width="100%"><tr><td width="550">
+        <img src="https://example.com/avatar.gif" width="40" height="40" style="width:40px;height:40px">
+        <img src="https://example.com/hero.png" width="550" height="183.207">
+      </td></tr></table>
+    `, { allowImages: true });
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+
+    expect(container.querySelector("div")?.hidden).toBe(true);
+    expect(container.querySelector("table")?.getAttribute("width")).toBe("100%");
+    expect(container.querySelector("td")?.getAttribute("width")).toBe("550");
+    expect(container.querySelectorAll("img")[0].getAttribute("width")).toBe("40");
+    expect(container.querySelectorAll("img")[0].getAttribute("height")).toBe("40");
+    expect(container.querySelectorAll("img")[1].getAttribute("width")).toBe("550");
+    expect(container.querySelectorAll("img")[1].getAttribute("height")).toBe("183.207");
+  });
+
+  it("rejects unsafe or layout-breaking dimensions", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <div width="500">Text</div>
+      <table width="120%"><tr><td width="100000"><img src="https://example.com/a.png" width="calc(100vw)" height="100%"></td></tr></table>
+    `, { allowImages: true });
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+
+    expect(container.querySelector("div")?.hasAttribute("width")).toBe(false);
+    expect(container.querySelector("table")?.hasAttribute("width")).toBe(false);
+    expect(container.querySelector("td")?.hasAttribute("width")).toBe(false);
+    expect(container.querySelector("img")?.hasAttribute("width")).toBe(false);
+    expect(container.querySelector("img")?.hasAttribute("height")).toBe(false);
+  });
+
   it("renders safe message formatting", () => {
     render(<SafeMessage html="<p>Hello <strong>friend</strong></p>" />);
     expect(screen.getByTestId("message-body")).toHaveTextContent("Hello friend");

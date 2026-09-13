@@ -37,6 +37,18 @@ const safeStyles: Record<string, RegExp> = {
 
 const safeImageSrc = /^(https?:|data:image\/)/i;
 const blockedSrcAttr = "data-blocked-src";
+const dimensionAttributeTags = new Set(["img", "table", "td", "th"]);
+
+function safeDimension(value: string, allowPercent: boolean): string | null {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)(%)?$/);
+  if (!match) return null;
+
+  const amount = Number(match[1]);
+  const isPercent = match[2] === "%";
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  if (isPercent) return allowPercent && amount <= 100 ? `${amount}%` : null;
+  return amount <= 4096 ? `${amount}` : null;
+}
 
 export function decodeHtmlEntities(text: string): string {
   const container = document.createElement("textarea");
@@ -52,7 +64,7 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
   const { allowImages = false } = options;
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
-    ALLOWED_ATTR: ["align", "alt", "colspan", "dir", "href", "rowspan", "src", "start", "style", "title", "valign"],
+    ALLOWED_ATTR: ["align", "alt", "colspan", "dir", "height", "hidden", "href", "rowspan", "src", "start", "style", "title", "valign", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     FORBID_TAGS: ["form", "script", "style", "svg"],
@@ -62,11 +74,32 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
   fragment.querySelectorAll<HTMLElement>("*").forEach((element) => {
     const original = element.style;
     const declarations: string[] = [];
+    // Email preview text is commonly kept in the body for inbox snippets and
+    // hidden inline. Preserve that intent without retaining arbitrary CSS.
+    if (original.display.trim().toLowerCase() === "none"
+      || ["hidden", "collapse"].includes(original.visibility.trim().toLowerCase())) {
+      element.setAttribute("hidden", "");
+    }
     for (const [property, pattern] of Object.entries(safeStyles)) {
       const value = original.getPropertyValue(property).trim().toLowerCase();
       if (pattern.test(value)) declarations.push(`${property}: ${value}`);
     }
     const tag = element.tagName.toLowerCase();
+    if (!dimensionAttributeTags.has(tag)) element.removeAttribute("width");
+    if (tag !== "img") element.removeAttribute("height");
+
+    const width = element.getAttribute("width");
+    if (width !== null) {
+      const safeWidth = safeDimension(width, true);
+      if (safeWidth === null) element.removeAttribute("width");
+      else element.setAttribute("width", safeWidth);
+    }
+    const height = element.getAttribute("height");
+    if (height !== null) {
+      const safeHeight = safeDimension(height, false);
+      if (safeHeight === null) element.removeAttribute("height");
+      else element.setAttribute("height", safeHeight);
+    }
     // Empty spacer cells carry no content, so zero their spacing outright
     // instead of just capping it, rather than let it render as a dead gap.
     const isEmptyCell = (tag === "td" || tag === "th") && element.children.length === 0 && isBlank(element);
