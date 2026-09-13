@@ -1,6 +1,8 @@
 import {
   Archive,
+  AlertCircle,
   Check,
+  CheckCircle2,
   CheckSquare,
   ChevronDown,
   ChevronUp,
@@ -17,6 +19,7 @@ import {
   Mails,
   MailOpen,
   Moon,
+  Plus,
   Sun,
   Pencil,
   RefreshCw,
@@ -123,7 +126,7 @@ import {
 } from "./aiSettings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
-type SettingsSection = "appearance" | "reading" | "account" | "accounts" | "ai" | "privacy";
+type SettingsSection = "appearance" | "reading" | "accounts" | "ai" | "privacy";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -1367,8 +1370,8 @@ export function App() {
               <div className="connect-account-cta">
                 <Mail size={28} />
                 <p>Connect your Gmail account to start syncing mail.</p>
-                <button type="button" onClick={() => openSettingsAt("account")}>
-                  Connect Gmail
+                <button type="button" onClick={() => openSettingsAt("accounts")}>
+                  Add account
                 </button>
               </div>
             ) : (
@@ -1687,22 +1690,10 @@ export function App() {
           onLoadRemoteImagesChange={(value) => setLoadRemoteImages(saveLoadRemoteImages(value))}
           onAiConfigChange={refreshAiAvailability}
           authStatus={authStatus}
-          onConnectAccount={async () => {
-            const status = await mailClient.connectGoogle();
-            setSyncStatus(status);
-            setAuthStatus(await mailClient.googleAuthStatus());
-            await loadThreads(query);
-            setLabels(await mailClient.listLabels());
-            await refreshAccounts();
-          }}
-          onDisconnectAccount={async () => {
-            await mailClient.disconnectGoogle();
-            setAuthStatus(await mailClient.googleAuthStatus());
-            await refreshAccounts();
-          }}
           accounts={accounts}
           onAddAccount={async () => {
             await mailClient.addAccount();
+            setAuthStatus(await mailClient.googleAuthStatus());
             await refreshAccounts();
           }}
           onRemoveAccount={async (email) => {
@@ -1716,6 +1707,7 @@ export function App() {
           onReconnectAccount={async (email) => {
             await mailClient.reconnectAccount(email);
             await refreshAccounts();
+            setAuthStatus(await mailClient.googleAuthStatus());
           }}
           onSetAccountColor={async (email, color) => {
             await mailClient.setAccountColor(email, color);
@@ -2202,7 +2194,6 @@ function LabelManager({
 const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "reading", label: "Reading" },
-  { id: "account", label: "Account" },
   { id: "accounts", label: "Accounts" },
   { id: "ai", label: "AI provider" },
   { id: "privacy", label: "Privacy" },
@@ -2224,8 +2215,6 @@ function Settings({
   onLoadRemoteImagesChange,
   onAiConfigChange,
   authStatus,
-  onConnectAccount,
-  onDisconnectAccount,
   accounts,
   onAddAccount,
   onRemoveAccount,
@@ -2248,8 +2237,6 @@ function Settings({
   onLoadRemoteImagesChange(value: boolean): void;
   onAiConfigChange(): void;
   authStatus: AuthStatus | null;
-  onConnectAccount(): Promise<void>;
-  onDisconnectAccount(): Promise<void>;
   accounts: Account[];
   onAddAccount(): Promise<void>;
   onRemoveAccount(email: string): Promise<void>;
@@ -2289,15 +2276,9 @@ function Settings({
               onAutoReadDelayChange={onAutoReadDelayChange}
             />
           ) : null}
-          {section === "account" ? (
-            <AccountSettings
-              status={authStatus}
-              onConnect={onConnectAccount}
-              onDisconnect={onDisconnectAccount}
-            />
-          ) : null}
           {section === "accounts" ? (
             <AccountsSettings
+              authStatus={authStatus}
               accounts={accounts}
               onAdd={onAddAccount}
               onRemove={onRemoveAccount}
@@ -2420,60 +2401,8 @@ function ReadingSettings({
   );
 }
 
-function AccountSettings({
-  status,
-  onConnect,
-  onDisconnect,
-}: {
-  status: AuthStatus | null;
-  onConnect(): Promise<void>;
-  onDisconnect(): Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const act = (operation: () => Promise<void>) => {
-    setBusy(true);
-    setError(null);
-    void operation()
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : String(reason)),
-      )
-      .finally(() => setBusy(false));
-  };
-  return (
-    <section className="settings-section account-manager" aria-label="Account">
-      {!status?.configured ? (
-        <>
-          <strong>Google OAuth is not configured</strong>
-          <p>
-            Set <code>DISPATCH_GOOGLE_CLIENT_ID</code> and{" "}
-            <code>DISPATCH_GOOGLE_CLIENT_SECRET</code> from a Google Desktop
-            app credential, then restart Dispatch.
-          </p>
-        </>
-      ) : status.connected ? (
-        <>
-          <strong>Gmail is connected</strong>
-          <p>Credentials are stored in the operating-system keychain.</p>
-          <button disabled={busy} onClick={() => act(onDisconnect)}>
-            Disconnect Gmail
-          </button>
-        </>
-      ) : (
-        <>
-          <strong>Connect Gmail</strong>
-          <p>Authorization opens in your browser and returns over a local loopback port.</p>
-          <button disabled={busy} onClick={() => act(onConnect)}>
-            {busy ? "Waiting for Google…" : "Continue with Google"}
-          </button>
-        </>
-      )}
-      {error ? <p className="form-error" role="alert">{error}</p> : null}
-    </section>
-  );
-}
-
 function AccountsSettings({
+  authStatus,
   accounts,
   onAdd,
   onRemove,
@@ -2481,6 +2410,7 @@ function AccountsSettings({
   onSetColor,
   onReorder,
 }: {
+  authStatus: AuthStatus | null;
   accounts: Account[];
   onAdd(): Promise<void>;
   onRemove(email: string): Promise<void>;
@@ -2509,22 +2439,60 @@ function AccountsSettings({
 
   return (
     <section className="settings-section accounts-manager" aria-label="Accounts">
-      <p>
-        The inbox merges every connected account by default. Switch to one account,
-        show all again, or jump straight to an account with <kbd>⌘1</kbd>–<kbd>⌘9</kbd>
-        from the sidebar switcher or command palette.
-      </p>
+      <div className="accounts-manager-header">
+        <div>
+          <h3>Connected accounts</h3>
+          <p>
+            Dispatch keeps accounts separate and merges their inboxes by default.
+            Use the sidebar or command palette to filter to one account.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="primary-action settings-add-account"
+          disabled={busyEmail !== null}
+          onClick={() => act("__add__", onAdd)}
+        >
+          <Plus size={15} />
+          {busyEmail === "__add__" ? "Waiting for Google…" : "Add account"}
+        </button>
+      </div>
+      {accounts.length === 0 && authStatus && !authStatus.configured ? (
+        <div className="accounts-config-notice">
+          <AlertCircle size={16} />
+          <div>
+            <strong>Google OAuth is not configured</strong>
+            <p>
+              Set <code>DISPATCH_GOOGLE_CLIENT_ID</code> and{" "}
+              <code>DISPATCH_GOOGLE_CLIENT_SECRET</code> from a Google Desktop
+              app credential, then restart Dispatch.
+            </p>
+          </div>
+        </div>
+      ) : null}
       {accounts.length === 0 ? (
-        <p>Connect a Gmail account from the Account tab to get started.</p>
+        <div className="accounts-empty">
+          <span className="accounts-empty-icon"><Mail size={18} /></span>
+          <strong>No accounts connected</strong>
+          <p>Add a Gmail account to start syncing mail on this device.</p>
+        </div>
       ) : (
         <ul className="accounts-list">
           {accounts.map((account, index) => (
-            <li key={account.email}>
-              <span className="account-dot" aria-hidden="true" style={{ background: account.color }} />
-              <span className="accounts-list-email">
-                {account.email}
-                {account.status === "needs_reauth" ? <em> · needs reconnect</em> : null}
+            <li className="account-card" key={account.email}>
+              <span className="account-card-avatar" aria-hidden="true" style={{ background: account.color }}>
+                {(account.displayName ?? account.email).charAt(0).toUpperCase()}
               </span>
+              <div className="account-card-details">
+                <strong>{account.displayName ?? account.email}</strong>
+                {account.displayName ? <span>{account.email}</span> : null}
+                <span className={`account-status ${account.status}`}>
+                  {account.status === "needs_reauth" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
+                  {account.status === "needs_reauth" ? "Needs reconnect" : "Connected"}
+                  <span aria-hidden="true"> · </span>
+                  {account.lastSyncedAt ? `Last synced ${timeFormatter.format(new Date(account.lastSyncedAt))}` : "Not synced yet"}
+                </span>
+              </div>
               <span className="accounts-list-actions">
                 <button
                   type="button"
@@ -2563,21 +2531,20 @@ function AccountsSettings({
                 ) : null}
                 <button
                   type="button"
+                  className="danger-action"
                   disabled={busyEmail !== null}
                   onClick={() => act(account.email, () => onRemove(account.email))}
                 >
-                  Remove
+                  Disconnect
                 </button>
               </span>
             </li>
           ))}
         </ul>
       )}
-      {accounts.length > 0 ? (
-        <button type="button" disabled={busyEmail !== null} onClick={() => act("__add__", onAdd)}>
-          {busyEmail === "__add__" ? "Waiting for Google…" : "Add another account"}
-        </button>
-      ) : null}
+      <p className="accounts-footnote">
+        Disconnecting removes this account and its local Dispatch cache. Gmail and the account itself are not changed.
+      </p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
   );

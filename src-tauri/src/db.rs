@@ -165,6 +165,18 @@ impl Database {
         self.list_threads_where(account_id, "trashed = 1")
     }
 
+    /// Unread thread count across every account's inbox, for the Dock badge.
+    pub fn count_unread_inbox(&self) -> Result<i64, String> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM threads WHERE archived = 0 AND trashed = 0 AND unread = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
     pub fn list_threads_page(
         &self,
         account_id: Option<&str>,

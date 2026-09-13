@@ -606,6 +606,20 @@ pub fn run() {
                     service.polling_loop().await;
                 });
             }
+            {
+                let database = database.clone();
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        if let Ok(count) = database.count_unread_inbox() {
+                            if let Some(window) = handle.get_webview_window("main") {
+                                let _ = window.set_badge_count((count > 0).then_some(count));
+                            }
+                        }
+                        tokio::time::sleep(sync::MIN_POLL_INTERVAL).await;
+                    }
+                });
+            }
             let root = data_dir.join("attachments");
             std::fs::create_dir_all(&root)?;
             let additional_accounts = Arc::new(tokio::sync::Mutex::new(HashMap::new()));

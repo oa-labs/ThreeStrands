@@ -97,7 +97,7 @@ test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) =>
   await expect(help).not.toBeVisible();
 });
 
-test("switches accounts from the keyboard and palette, and removing one leaves the other unaffected", async ({ page }) => {
+test("switches accounts from the keyboard and palette, and disconnecting one leaves the other unaffected", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
@@ -106,7 +106,7 @@ test("switches accounts from the keyboard and palette, and removing one leaves t
   const settings = page.getByRole("dialog", { name: "Settings" });
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Accounts", exact: true }).click();
-  await settings.getByRole("button", { name: "Add another account" }).click();
+  await settings.getByRole("button", { name: "Add account" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
@@ -158,7 +158,7 @@ test("switches accounts from the keyboard and palette, and removing one leaves t
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Accounts", exact: true }).click();
-  await settings.locator("li", { hasText: "demo-2@example.com" }).getByRole("button", { name: "Remove" }).click();
+  await settings.locator("li", { hasText: "demo-2@example.com" }).getByRole("button", { name: "Disconnect" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
@@ -214,15 +214,15 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Accounts", exact: true }).click();
-  await settings.locator("li", { hasText: "demo@example.com" }).getByRole("button", { name: "Remove" }).click();
+  await settings.locator("li", { hasText: "demo@example.com" }).getByRole("button", { name: "Disconnect" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
 
   await expect(page.getByText("Connect your Gmail account to start syncing mail.")).toBeVisible();
-  await page.getByRole("button", { name: "Connect Gmail" }).click();
+  await page.getByRole("button", { name: "Add account" }).click();
   await expect(settings).toBeVisible();
-  await expect(settings.getByText("Google OAuth is not configured")).toBeVisible();
+  await expect(settings.locator(".accounts-list li")).toHaveCount(1);
 });
 
 test("opens Superhuman-compatible folder destinations", async ({ page }) => {
