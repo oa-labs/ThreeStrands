@@ -860,84 +860,88 @@ export function App() {
           onSwitch={context.switchAccount}
           onShowAll={context.showAllAccounts}
         />
-        <HoverTooltip label="Inbox" shortcut="G I">
-          <button
-            className={`nav-button ${mailbox === "inbox" ? "active" : ""}`}
-            aria-label="Inbox (g then i)"
-            onClick={() => executeById("mailbox.inbox")}
-          >
-            <Inbox size={19} />
-          </button>
-        </HoverTooltip>
-        <HoverTooltip label="All Mail" shortcut="G A">
-          <button
-            className={`nav-button ${mailbox === "allMail" ? "active" : ""}`}
-            aria-label="All Mail (g then a)"
-            onClick={() => executeById("mailbox.allMail")}
-          >
-            <Mails size={19} />
-          </button>
-        </HoverTooltip>
-        <HoverTooltip label="Trash" shortcut="G T">
-          <button
-            className={`nav-button ${mailbox === "trash" ? "active" : ""}`}
-            aria-label="Trash (g then t)"
-            onClick={() => executeById("mailbox.trash")}
-          >
-            <Trash2 size={19} />
-          </button>
-        </HoverTooltip>
-        <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
-        <HoverTooltip label="Drafts" shortcut="G D">
-          <button
-            className={`nav-button ${mailbox === "drafts" ? "active" : ""}`}
-            aria-label={`Drafts (${correspondence.draftCount}) (g then d)`}
-            onClick={() => executeById("drafts.open")}
-          >
-            <FileText size={19} />
-          </button>
-        </HoverTooltip>
-        <HoverTooltip label="Outbox">
-          <button
-            className={`nav-button ${mailbox === "outbox" ? "active" : ""}`}
-            aria-label={`Outbox (${correspondence.outboxCount})`}
-            onClick={() => executeById("outbox.open")}
-          >
-            <Send size={19} />
-          </button>
-        </HoverTooltip>
+        <div className="sidebar-nav">
+          <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
+          <HoverTooltip label="Inbox" shortcut="G I">
+            <button
+              className={`nav-button ${mailbox === "inbox" ? "active" : ""}`}
+              aria-label="Inbox (g then i)"
+              onClick={() => executeById("mailbox.inbox")}
+            >
+              <Inbox size={19} />
+            </button>
+          </HoverTooltip>
+          <HoverTooltip label="All Mail" shortcut="G A">
+            <button
+              className={`nav-button ${mailbox === "allMail" ? "active" : ""}`}
+              aria-label="All Mail (g then a)"
+              onClick={() => executeById("mailbox.allMail")}
+            >
+              <Mails size={19} />
+            </button>
+          </HoverTooltip>
+          <HoverTooltip label="Drafts" shortcut="G D">
+            <button
+              className={`nav-button ${mailbox === "drafts" ? "active" : ""}`}
+              aria-label={`Drafts (${correspondence.draftCount}) (g then d)`}
+              onClick={() => executeById("drafts.open")}
+            >
+              <FileText size={19} />
+            </button>
+          </HoverTooltip>
+          <HoverTooltip label="Outbox">
+            <button
+              className={`nav-button ${mailbox === "outbox" ? "active" : ""}`}
+              aria-label={`Outbox (${correspondence.outboxCount})`}
+              onClick={() => executeById("outbox.open")}
+            >
+              <Send size={19} />
+            </button>
+          </HoverTooltip>
+          <HoverTooltip label="Trash" shortcut="G T">
+            <button
+              className={`nav-button ${mailbox === "trash" ? "active" : ""}`}
+              aria-label="Trash (g then t)"
+              onClick={() => executeById("mailbox.trash")}
+            >
+              <Trash2 size={19} />
+            </button>
+          </HoverTooltip>
+        </div>
         <div className="sidebar-spacer" />
-        <button
-          className="nav-button"
-          aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
-          title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
-          onClick={toggleTheme}
-        >
-          {effectiveThemeValue === "dark" ? <Sun size={19} /> : <Moon size={19} />}
-        </button>
-        <button
-          className="nav-button"
-          aria-label="Keyboard shortcuts (?)"
-          title="Keyboard shortcuts (?)"
-          onClick={() => executeById("shortcuts.open")}
-        >
-          <Keyboard size={19} />
-        </button>
-        <button
-          className="nav-button"
-          aria-label="Command palette"
-          onClick={() => executeById("palette.open")}
-        >
-          <CommandIcon size={19} />
-        </button>
-        <button
-          className="nav-button"
-          aria-label="Settings (⌘,)"
-          title="Settings (⌘,)"
-          onClick={() => executeById("settings.open")}
-        >
-          <SettingsIcon size={19} />
-        </button>
+        <div className="sidebar-nav">
+          <button
+            className="nav-button"
+            aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
+            title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
+            onClick={toggleTheme}
+          >
+            {effectiveThemeValue === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+          </button>
+          <button
+            className="nav-button"
+            aria-label="Keyboard shortcuts (?)"
+            title="Keyboard shortcuts (?)"
+            onClick={() => executeById("shortcuts.open")}
+          >
+            <Keyboard size={19} />
+          </button>
+          <button
+            className="nav-button"
+            aria-label="Command palette"
+            onClick={() => executeById("palette.open")}
+          >
+            <CommandIcon size={19} />
+          </button>
+          <button
+            className="nav-button"
+            aria-label="Settings (⌘,)"
+            title="Settings (⌘,)"
+            onClick={() => executeById("settings.open")}
+          >
+            <SettingsIcon size={19} />
+          </button>
+        </div>
       </nav>
 
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
