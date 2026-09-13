@@ -381,7 +381,7 @@ kbd {
 }
 .action-button:hover { border-color: var(--border); background: var(--hover); }
 .action-button span { display: none; }
-.message-stack { min-height: 0; overflow: auto; padding: 28px clamp(28px, 5vw, 72px); }
+.message-stack { min-height: 0; overflow: auto; overflow-anchor: none; padding: 28px clamp(28px, 5vw, 72px); }
 .message { max-width: 840px; margin: 0 auto; }
 .message > header { display: flex; align-items: flex-start; width: 100%; gap: 10px; padding-bottom: 24px; }
 .message-header-details { display: flex; min-width: 0; flex: 1; flex-direction: column; font-size: calc(13px * var(--font-scale)); }

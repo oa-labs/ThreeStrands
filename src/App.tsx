@@ -35,6 +35,7 @@ import {
   type CSSProperties,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -165,8 +166,8 @@ const MATCH_END = "";
 
 function HighlightedSnippet({ thread }: { thread: Thread }) {
   const raw = thread.matchSnippet;
-  if (!raw) return <>{thread.snippet}</>;
-  const segments = raw.split(MATCH_START);
+  if (!raw) return <>{decodeHtmlEntities(thread.snippet)}</>;
+  const segments = decodeHtmlEntities(raw).split(MATCH_START);
   return (
     <>
       {segments[0]}
@@ -390,6 +391,7 @@ export function App() {
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const [olderMessagesExpanded, setOlderMessagesExpanded] = useState(false);
   const latestMessageRef = useRef<HTMLElement | null>(null);
+  const messageStackRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const correspondence = useCorrespondence(accounts, detail?.messages.at(-1)?.id, detail?.thread.accountId);
   const [query, setQuery] = useState("");
@@ -517,6 +519,17 @@ export function App() {
     if (!detail) return;
     latestMessageRef.current?.scrollIntoView?.({ block: "start" });
   }, [detail]);
+
+  useLayoutEffect(() => {
+    // Collapsing older messages can shrink the stack below the current scroll
+    // offset; Chrome's scroll anchoring sometimes fails to re-clamp it when
+    // tall <article> nodes are replaced by short collapsed rows, leaving the
+    // pane scrolled past its content (blank space) until the user scrolls.
+    const node = messageStackRef.current;
+    if (!node) return;
+    const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
+    if (node.scrollTop > maxScrollTop) node.scrollTop = maxScrollTop;
+  }, [olderMessagesExpanded]);
 
   const refreshMail = useCallback(() => {
     setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
@@ -1226,7 +1239,7 @@ export function App() {
               <ActionButton label="Reply all" shortcut="a" onClick={() => executeById("draft.replyAll")}><ReplyAll size={16} /></ActionButton>
               <ActionButton label="Forward" shortcut="f" onClick={() => executeById("draft.forward")}><Forward size={16} /></ActionButton>
             </div>
-            <div className="message-stack">
+            <div className="message-stack" ref={messageStackRef}>
               {detail.messages.map((message, index) => {
                 const isLatest = index === detail.messages.length - 1;
                 if (!isLatest && !olderMessagesExpanded) {
