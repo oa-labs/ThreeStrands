@@ -21,6 +21,13 @@ describe("AI provider preferences", () => {
     expect(readAiProvider()).toBe("openai");
   });
 
+  it("restores OpenRouter and Fireworks as first-class providers", () => {
+    saveAiProvider("openrouter");
+    expect(readAiProvider()).toBe("openrouter");
+    saveAiProvider("fireworks");
+    expect(readAiProvider()).toBe("fireworks");
+  });
+
   it("ignores an invalid stored provider", () => {
     localStorage.setItem("dispatch.settings.ai.provider", "not-a-provider");
     expect(readAiProvider()).toBe("none");

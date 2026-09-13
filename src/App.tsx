@@ -62,6 +62,7 @@ import {
 } from "./crashReporting";
 import { mailClient } from "./data/client";
 import { createForegroundRefreshController } from "./foregroundRefresh";
+import { formatLabelName, sortLabelIdsForDisplay } from "./labels";
 import { formattingShortcuts } from "./richText";
 import type {
   Account,
@@ -1196,7 +1197,12 @@ export function App() {
             <header className="reader-header">
               <div>
                 <span className="eyebrow">
-                  {detail.thread.labels.map((id) => labels.find((label) => label.id === id)?.name ?? id).join(" · ")}
+                  {sortLabelIdsForDisplay(detail.thread.labels)
+                    .map((id) => {
+                      const label = labels.find((candidate) => candidate.id === id);
+                      return label ? formatLabelName(label) : id;
+                    })
+                    .join(" · ")}
                 </span>
                 <h2>{detail.thread.subject}</h2>
               </div>
@@ -1802,6 +1808,23 @@ function LabelManager({
   const [renaming, setRenaming] = useState<Label | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const userLabels = labels.filter((label) => label.kind === "user");
+  const labelInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    const firstLabel = userLabels[0];
+    if (!firstLabel) return;
+    labelInputRefs.current[firstLabel.id]?.focus();
+  }, [userLabels.length]);
+
+  const moveLabelFocus = (labelId: string, direction: -1 | 1) => {
+    const currentIndex = userLabels.findIndex((label) => label.id === labelId);
+    if (currentIndex === -1) return;
+    const nextIndex = Math.max(0, Math.min(userLabels.length - 1, currentIndex + direction));
+    if (nextIndex === currentIndex) return;
+    labelInputRefs.current[userLabels[nextIndex]?.id ?? ""]?.focus();
+  };
+
   return (
     <Modal title="Manage labels" onClose={onClose}>
       <form
@@ -1822,13 +1845,28 @@ function LabelManager({
         <button type="submit" disabled={!name.trim() || busy}>Create</button>
       </form>
       <div className="label-list">
-        {labels.filter((label) => label.kind === "user").map((label) => (
+        {userLabels.map((label) => (
           <div key={label.id}>
             <label>
               <input
+                ref={(input) => {
+                  labelInputRefs.current[label.id] = input;
+                }}
                 type="checkbox"
                 checked={checkedLabelIds.has(label.id)}
                 onChange={(event) => onToggle(label.id, event.target.checked)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    moveLabelFocus(label.id, -1);
+                  } else if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    moveLabelFocus(label.id, 1);
+                  } else if (event.key === " " || event.key === "Spacebar") {
+                    event.preventDefault();
+                    onToggle(label.id, !checkedLabelIds.has(label.id));
+                  }
+                }}
               />
               <span className="label-color" style={{ background: label.color ?? "#64646d" }} />
               {label.name}
@@ -2317,6 +2355,8 @@ const AI_MODEL_PLACEHOLDERS: Record<AiProvider, string> = {
   none: "",
   openai: "gpt-4o",
   anthropic: "claude-sonnet-5",
+  openrouter: "openai/gpt-4o",
+  fireworks: "accounts/fireworks/models/llama-v3p1-70b-instruct",
   custom: "model name",
 };
 

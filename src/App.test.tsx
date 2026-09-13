@@ -161,6 +161,32 @@ describe("archive notice", () => {
     await waitFor(() => expect(work).toBeChecked());
   });
 
+  it("moves through labels with arrow keys and toggles the focused label with space", async () => {
+    const keyboardLabel = await mailClient.createLabel("Keyboard navigation");
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+      await act(async () => {
+        screen.getByRole("button", { name: "Labels (l)" }).click();
+      });
+
+      const work = await screen.findByRole("checkbox", { name: "Work" });
+      const keyboard = await screen.findByRole("checkbox", { name: "Keyboard navigation" });
+      expect(work).toHaveFocus();
+
+      fireEvent.keyDown(work, { key: "ArrowDown" });
+      expect(keyboard).toHaveFocus();
+      fireEvent.keyDown(keyboard, { key: "ArrowUp" });
+      expect(work).toHaveFocus();
+
+      fireEvent.keyDown(work, { key: "ArrowDown" });
+      fireEvent.keyDown(keyboard, { key: " ", code: "Space" });
+      await waitFor(() => expect(keyboard).toBeChecked());
+    } finally {
+      await mailClient.deleteLabel(keyboardLabel.id);
+    }
+  });
+
   it("keeps a replacement notice on screen for its own full timeout", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });

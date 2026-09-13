@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type AiProvider = "none" | "openai" | "anthropic" | "custom";
+export type AiProvider = "none" | "openai" | "anthropic" | "openrouter" | "fireworks" | "custom";
 
 export type AiFeatureFlags = {
   draftAssist: boolean;
@@ -12,6 +12,8 @@ export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] = [
   { value: "none", label: "None" },
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "fireworks", label: "Fireworks" },
   { value: "custom", label: "Custom endpoint" },
 ];
 
@@ -29,7 +31,14 @@ const FEATURES_KEY = "dispatch.settings.ai.features";
 export function readAiProvider(): AiProvider {
   try {
     const saved = localStorage.getItem(PROVIDER_KEY);
-    if (saved === "none" || saved === "openai" || saved === "anthropic" || saved === "custom") {
+    if (
+      saved === "none" ||
+      saved === "openai" ||
+      saved === "anthropic" ||
+      saved === "openrouter" ||
+      saved === "fireworks" ||
+      saved === "custom"
+    ) {
       return saved;
     }
   } catch {
