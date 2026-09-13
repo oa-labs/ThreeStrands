@@ -80,6 +80,26 @@ describe("archive notice", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Conversation marked as not done");
   });
 
+  it("confirms and sends unsubscribe with Cmd+u", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    expect(await screen.findByRole("button", { name: "Unsubscribe (⌘U)" })).toBeVisible();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "u", metaKey: true }));
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Unsubscribe" });
+    expect(dialog).toHaveTextContent("dispatch.example");
+    expect(dialog).toHaveTextContent("one-click request");
+    await act(async () => {
+      screen.getByRole("button", { name: "Send one-click request" }).click();
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Unsubscribe request sent");
+    expect(screen.queryByRole("dialog", { name: "Unsubscribe" })).not.toBeInTheDocument();
+  });
+
   it("undoes an archive and optimistically restores the conversation", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });

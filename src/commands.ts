@@ -1,6 +1,7 @@
 export type CommandContext = {
   selectedId: string | null;
   selectedArchived: boolean;
+  canUnsubscribe: boolean;
   composerActive: boolean;
   closing?: boolean;
   canUndoSend: boolean;
@@ -18,6 +19,7 @@ export type CommandContext = {
   selectPrevious(): void;
   archiveSelected(): Promise<CommandResult>;
   markNotDoneSelected(): Promise<CommandResult>;
+  unsubscribeSelected(): void;
   trashSelected(): Promise<CommandResult>;
   setLabelSelected(labelId: string, value: boolean): Promise<CommandResult>;
   toggleReadSelected(): Promise<CommandResult>;
@@ -132,6 +134,14 @@ export const commands: Command[] = [
     enabled: (context) => context.selectedId !== null && !context.composerActive,
     run: (context) => context.toggleReadSelected(),
     undo: undoResult,
+  },
+  {
+    id: "thread.unsubscribe",
+    title: "Unsubscribe",
+    keys: ["Mod+u"],
+    group: "Triage",
+    enabled: (context) => context.canUnsubscribe && !context.composerActive,
+    run: (context) => complete(context.unsubscribeSelected),
   },
   {
     id: "thread.star",

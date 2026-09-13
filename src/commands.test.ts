@@ -13,6 +13,7 @@ function noopContext(): CommandContext {
   return {
     selectedId: null,
     selectedArchived: false,
+    canUnsubscribe: false,
     composerActive: false,
     canUndoSend: false,
     compose: () => {},
@@ -29,6 +30,7 @@ function noopContext(): CommandContext {
     selectPrevious: () => {},
     archiveSelected: async () => ({}),
     markNotDoneSelected: async () => ({}),
+    unsubscribeSelected: () => {},
     trashSelected: async () => ({}),
     setLabelSelected: async () => ({}),
     toggleReadSelected: async () => ({}),
@@ -78,6 +80,13 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "thread.star")?.keys).toEqual(["s"]);
     expect(commands.find((command) => command.id === "thread.read")?.keys).toEqual(["u"]);
     expect(commands.find((command) => command.id === "thread.trash")?.keys).toEqual(["#"]);
+    expect(commands.find((command) => command.id === "thread.unsubscribe")?.keys).toEqual(["Mod+u"]);
+  });
+
+  it("matches unsubscribe only with the desktop modifier", () => {
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "u", metaKey: true }), "Mod+u")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "u", ctrlKey: true }), "Mod+u")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "u" }), "Mod+u")).toBe(false);
   });
 
   it("matches the displayed hash shortcut on US and symbol-producing keyboards", () => {

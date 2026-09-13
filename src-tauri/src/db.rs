@@ -8,8 +8,10 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use uuid::Uuid;
 
 use crate::mime::NormalizedMessage;
+use crate::mime::UnsubscribeMetadata;
 use crate::models::{
     Account, Message, SearchThreadsRequest, SyncStatus, Thread, ThreadDetail, ThreadMutation,
+    UnsubscribeMethod, UnsubscribeTarget,
 };
 
 /// Assigned to newly connected accounts in rotation, so each has a distinct
@@ -206,7 +208,8 @@ impl Database {
 
         let mut statement = connection
             .prepare(
-                "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text
+                "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
+                        unsubscribe_json
                  FROM messages WHERE thread_id = ?1 ORDER BY sent_at",
             )
             .map_err(display_error)?;
@@ -220,11 +223,98 @@ impl Database {
                     sent_at: row.get(4)?,
                     body_html: row.get(5)?,
                     body_text: row.get(6)?,
+                    unsubscribe: row
+                        .get::<_, Option<String>>(7)?
+                        .and_then(|value| serde_json::from_str::<UnsubscribeMetadata>(&value).ok())
+                        .map(|value| value.info()),
                 })
             })
             .map_err(display_error)?;
         let messages = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
         Ok(ThreadDetail { thread, messages })
+    }
+
+    /// Resolves the unsubscribe URL from locally cached message metadata and
+    /// records the attempt before any external side effect occurs. The
+    /// webview supplies only the stable message ID, never an arbitrary URL.
+    pub fn begin_unsubscribe(&self, message_id: &str) -> Result<UnsubscribeTarget, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        let (thread_id, metadata_json): (String, Option<String>) = transaction
+            .query_row(
+                "SELECT thread_id, unsubscribe_json FROM messages WHERE id = ?1",
+                [message_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(display_error)?
+            .ok_or_else(|| "Message not found".to_string())?;
+        let metadata = metadata_json
+            .ok_or_else(|| "This message has no unsubscribe option".to_string())
+            .and_then(|value| {
+                serde_json::from_str::<UnsubscribeMetadata>(&value).map_err(display_error)
+            })?;
+        let (method, url) = if let Some(url) = metadata.one_click_url {
+            (UnsubscribeMethod::OneClick, url)
+        } else if let Some(url) = metadata.mailto_url {
+            (UnsubscribeMethod::Mailto, url)
+        } else if let Some(url) = metadata.web_url {
+            (UnsubscribeMethod::Web, url)
+        } else {
+            return Err("This message has no usable unsubscribe option".to_string());
+        };
+        let request_id = Uuid::new_v4().to_string();
+        transaction
+            .execute(
+                "INSERT INTO unsubscribe_requests(
+                    id, message_id, thread_id, method, state, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, 'pending', ?5)",
+                params![
+                    request_id,
+                    message_id,
+                    thread_id,
+                    unsubscribe_method_name(&method),
+                    Utc::now().to_rfc3339(),
+                ],
+            )
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)?;
+        Ok(UnsubscribeTarget {
+            request_id,
+            method,
+            url,
+        })
+    }
+
+    pub fn finish_unsubscribe(
+        &self,
+        request_id: &str,
+        state: &str,
+        http_status: Option<u16>,
+        error: Option<&str>,
+    ) -> Result<(), String> {
+        if !matches!(state, "succeeded" | "opened" | "failed") {
+            return Err("Invalid unsubscribe request state".to_string());
+        }
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE unsubscribe_requests
+                 SET state = ?1, http_status = ?2, completed_at = ?3, last_error = ?4
+                 WHERE id = ?5 AND state = 'pending'",
+                params![
+                    state,
+                    http_status,
+                    Utc::now().to_rfc3339(),
+                    error,
+                    request_id
+                ],
+            )
+            .map_err(display_error)?;
+        if changed == 0 {
+            return Err("Unsubscribe request was not pending".to_string());
+        }
+        Ok(())
     }
 
     /// `account_id` merges every account when `None` — the unified inbox —
@@ -625,8 +715,9 @@ impl Database {
             transaction
                 .execute(
                     "INSERT INTO messages(
-                        id, thread_id, sender, recipients_json, sent_at, body_html, body_text
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
+                        unsubscribe_json
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         message.id,
                         thread_id,
@@ -635,6 +726,11 @@ impl Database {
                         message.date,
                         message.body_html,
                         message.body_text,
+                        message
+                            .unsubscribe
+                            .as_ref()
+                            .map(|value| serde_json::to_string(value).map_err(display_error))
+                            .transpose()?,
                     ],
                 )
                 .map_err(display_error)?;
@@ -873,6 +969,14 @@ fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
     })
 }
 
+fn unsubscribe_method_name(method: &UnsubscribeMethod) -> &'static str {
+    match method {
+        UnsubscribeMethod::OneClick => "oneClick",
+        UnsubscribeMethod::Mailto => "mailto",
+        UnsubscribeMethod::Web => "web",
+    }
+}
+
 fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
     Ok(Thread {
         id: row.get(0)?,
@@ -983,7 +1087,9 @@ fn insert_demo(
         ],
     )?;
     transaction.execute(
-        "INSERT INTO messages VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO messages(
+            id, thread_id, sender, recipients_json, sent_at, body_html, body_text
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             format!("{id}-message"),
             id,
@@ -1120,6 +1226,7 @@ mod tests {
                         snippet: "unique-pagination-term".into(),
                         labels: vec!["INBOX".into()],
                         metadata_json: "{}".into(),
+                        unsubscribe: None,
                     }],
                 )
                 .unwrap();
@@ -1367,7 +1474,61 @@ mod tests {
             snippet: body.into(),
             labels: vec!["INBOX".into()],
             metadata_json: "{}".into(),
+            unsubscribe: None,
         }
+    }
+
+    #[test]
+    fn unsubscribe_metadata_is_exposed_and_attempts_are_recorded() {
+        let database = database();
+        let mut normalized = message(
+            "newsletter-message",
+            "newsletter",
+            "2026-01-01T00:00:00Z",
+            "body",
+        );
+        normalized.unsubscribe = Some(UnsubscribeMetadata {
+            one_click_url: Some("https://lists.example/one-click".into()),
+            mailto_url: Some("mailto:list@example.com?subject=unsubscribe".into()),
+            web_url: Some("https://lists.example/preferences".into()),
+            list_id: Some("news.example".into()),
+        });
+        database
+            .upsert_gmail_thread("work@example.com", &[normalized])
+            .unwrap();
+
+        let detail = database.get_thread("work@example.com:newsletter").unwrap();
+        let info = detail.messages[0].unsubscribe.as_ref().unwrap();
+        assert_eq!(info.methods.len(), 3);
+        assert_eq!(info.list_id.as_deref(), Some("news.example"));
+
+        let target = database.begin_unsubscribe("newsletter-message").unwrap();
+        assert!(matches!(target.method, UnsubscribeMethod::OneClick));
+        assert_eq!(target.url, "https://lists.example/one-click");
+        let pending: String = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT state FROM unsubscribe_requests WHERE id = ?1",
+                [&target.request_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, "pending");
+
+        database
+            .finish_unsubscribe(&target.request_id, "succeeded", Some(204), None)
+            .unwrap();
+        let completed: (String, Option<i64>) = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT state, http_status FROM unsubscribe_requests WHERE id = ?1",
+                [&target.request_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(completed, ("succeeded".into(), Some(204)));
     }
 
     #[test]
@@ -1523,11 +1684,19 @@ mod tests {
         database
             .upsert_gmail_thread(
                 "work@example.com",
-                &[
-                    message("m1", "inbox", "2026-01-01T00:00:00Z", "body"),
-                    message("m2", "archived", "2026-01-02T00:00:00Z", "body"),
-                    message("m3", "trashed", "2026-01-03T00:00:00Z", "body"),
-                ],
+                &[message("m1", "inbox", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m2", "archived", "2026-01-02T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m3", "trashed", "2026-01-03T00:00:00Z", "body")],
             )
             .unwrap();
         database
@@ -1556,10 +1725,13 @@ mod tests {
         database
             .upsert_gmail_thread(
                 "work@example.com",
-                &[
-                    message("m1", "inbox", "2026-01-01T00:00:00Z", "body"),
-                    message("m2", "trashed", "2026-01-02T00:00:00Z", "body"),
-                ],
+                &[message("m1", "inbox", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m2", "trashed", "2026-01-02T00:00:00Z", "body")],
             )
             .unwrap();
         database
@@ -1573,9 +1745,7 @@ mod tests {
         assert_eq!(trash.len(), 1);
         assert_eq!(trash[0].id, "work@example.com:trashed");
 
-        let scoped = database
-            .list_trash(Some("personal@example.com"))
-            .unwrap();
+        let scoped = database.list_trash(Some("personal@example.com")).unwrap();
         assert!(scoped.is_empty());
     }
 }

@@ -14,6 +14,7 @@ The correspondence portion of [the Phase 2 plan](phase-2-compose.md) is implemen
 - Restart recovery preserves drafts and queued work, gives interrupted undo windows a fresh grace period, and marks interrupted in-flight delivery uncertain. Normal close flushes drafts, keeps undo available, and waits for an active send acknowledgement before exiting.
 - Native file selection and managed attachment copies, MIME multipart construction, removal, and on-demand retrieval of forwarded attachments. Unavailable attachments block Send until downloaded or removed. Copies persist independently of their original files. Limits are conservatively capped at 18 MB of files and 24 MB of encoded MIME.
 - Shared command actions, modifier-aware shortcuts, compose focus handling, IME suppression, and accessible save/error announcements. Themes and the minimum supported window size are covered by browser checks.
+- Unsubscribe metadata extraction from synchronized message headers, with confirmation, RFC 8058 one-click POSTs, and safe mailto/web fallbacks. Attempts are recorded locally; arbitrary URLs are never accepted from the webview.
 
 | Action | Shortcut |
 | --- | --- |
@@ -25,6 +26,7 @@ The correspondence portion of [the Phase 2 plan](phase-2-compose.md) is implemen
 | Send from composer | `Cmd/Ctrl+Enter` |
 | Save and close composer | `Escape` |
 | Command palette | `Cmd/Ctrl+K` |
+| Unsubscribe (when advertised by the message) | `Cmd/Ctrl+U` |
 
 Attach files, Drafts, Outbox, and Undo Send are available in the command palette. Reply targets the latest displayed message. The native file picker is used from Rust; the webview does not receive arbitrary filesystem access.
 

@@ -73,6 +73,26 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 5 {
+        tx.execute_batch(
+            "ALTER TABLE messages ADD COLUMN unsubscribe_json TEXT;
+            CREATE TABLE IF NOT EXISTS unsubscribe_requests(
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                method TEXT NOT NULL,
+                state TEXT NOT NULL CHECK(state IN ('pending', 'succeeded', 'opened', 'failed')),
+                http_status INTEGER,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                last_error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS unsubscribe_requests_message
+                ON unsubscribe_requests(message_id, created_at);
+            PRAGMA user_version=5;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection

@@ -30,6 +30,37 @@ pub struct Message {
     pub sent_at: String,
     pub body_html: String,
     pub body_text: String,
+    pub unsubscribe: Option<UnsubscribeInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsubscribeInfo {
+    pub methods: Vec<UnsubscribeMethod>,
+    pub list_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnsubscribeMethod {
+    OneClick,
+    Mailto,
+    Web,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnsubscribeTarget {
+    pub request_id: String,
+    pub method: UnsubscribeMethod,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsubscribeResult {
+    pub method: UnsubscribeMethod,
+    pub outcome: String,
+    pub http_status: Option<u16>,
 }
 
 #[derive(Debug, Serialize)]

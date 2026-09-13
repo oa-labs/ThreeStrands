@@ -23,6 +23,20 @@ export type Message = {
   sentAt: string;
   bodyHtml: string;
   bodyText: string;
+  unsubscribe?: UnsubscribeInfo | null;
+};
+
+export type UnsubscribeMethod = "oneClick" | "mailto" | "web";
+
+export type UnsubscribeInfo = {
+  methods: UnsubscribeMethod[];
+  listId: string | null;
+};
+
+export type UnsubscribeResult = {
+  method: UnsubscribeMethod;
+  outcome: "requested" | "opened";
+  httpStatus: number | null;
 };
 
 export type ThreadDetail = {

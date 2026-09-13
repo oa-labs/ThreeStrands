@@ -8,6 +8,7 @@ import type {
   Thread,
   ThreadDetail,
   ThreadMutation,
+  UnsubscribeResult,
 } from "../domain";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
 import { demoClient } from "./demoClient";
@@ -15,9 +16,14 @@ import { demoClient } from "./demoClient";
 export interface MailClient extends CorrespondenceClient {
   /** Omitted or `"all"` merges every connected account; a specific email scopes to just it. */
   listThreads(accountId?: string): Promise<Thread[]>;
+  /** Everything except Trash — archived and inbox threads both included. */
+  listAllMail(accountId?: string): Promise<Thread[]>;
+  /** Only trashed threads. */
+  listTrash(accountId?: string): Promise<Thread[]>;
   getThread(id: string): Promise<ThreadDetail>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   mutateThread(mutation: ThreadMutation): Promise<void>;
+  unsubscribe(messageId: string): Promise<UnsubscribeResult>;
   sync(): Promise<SyncStatus>;
   flushPending(): Promise<SyncStatus>;
   syncStatus(): Promise<SyncStatus>;
@@ -43,9 +49,12 @@ function isTauri(): boolean {
 const tauriClient: MailClient = {
   ...nativeCorrespondence,
   listThreads: (accountId) => invoke("list_threads", { accountId }),
+  listAllMail: (accountId) => invoke("list_all_mail", { accountId }),
+  listTrash: (accountId) => invoke("list_trash", { accountId }),
   getThread: (id) => invoke("get_thread", { id }),
   searchThreads: (request, accountId) => invoke("search_threads", { request, accountId }),
   mutateThread: (mutation) => invoke("mutate_thread", { mutation }),
+  unsubscribe: (messageId) => invoke("unsubscribe", { messageId }),
   sync: () => invoke("sync_account"),
   flushPending: () => invoke("flush_pending_mutations"),
   syncStatus: () => invoke("sync_status"),

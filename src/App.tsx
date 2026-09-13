@@ -25,6 +25,7 @@ import {
   Star,
   Tag,
   Trash2,
+  Unlink,
   X,
 } from "lucide-react";
 import {
@@ -65,6 +66,7 @@ import type {
   Thread,
   ThreadDetail,
   ThreadMutation,
+  Message,
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { useCorrespondence } from "./useCorrespondence";
@@ -366,6 +368,7 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -637,6 +640,26 @@ export function App() {
 
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
+  const latestMessage = detail?.messages.at(-1) ?? null;
+  const canUnsubscribe = Boolean(latestMessage?.unsubscribe?.methods.length);
+  const unsubscribeMessage = detail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
+
+  const confirmUnsubscribe = useCallback(async () => {
+    if (!unsubscribeMessageId) return;
+    try {
+      const result = await mailClient.unsubscribe(unsubscribeMessageId);
+      setUnsubscribeMessageId(null);
+      setNotice({
+        message: result.outcome === "requested"
+          ? "Unsubscribe request sent"
+          : "Opened unsubscribe option",
+      });
+    } catch (reason: unknown) {
+      setNotice({
+        message: `Unsubscribe failed: ${reason instanceof Error ? reason.message : String(reason)}`,
+      });
+    }
+  }, [setNotice, unsubscribeMessageId]);
 
   const openSettingsAt = useCallback((section: SettingsSection) => {
     setSettingsSection(section);
@@ -647,6 +670,7 @@ export function App() {
     ...correspondence.context,
     selectedId,
     selectedArchived: selected?.archived ?? false,
+    canUnsubscribe,
     openInbox: () => {
       correspondence.context.openInbox();
       setQuery("");
@@ -662,6 +686,9 @@ export function App() {
     },
     archiveSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: true }),
     markNotDoneSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: false }),
+    unsubscribeSelected: () => {
+      if (latestMessage?.unsubscribe?.methods.length) setUnsubscribeMessageId(latestMessage.id);
+    },
     trashSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "trash", value: true }),
     setLabelSelected: (labelId, value) => mutateIds(labelTargetIds ?? [], { kind: "label", labelId, value }),
     toggleReadSelected: () =>
@@ -696,7 +723,7 @@ export function App() {
       setActiveAccountId(null);
       void loadThreads(query, null);
     },
-  }), [adjustFontScale, canUndoAction, labelTargetIds, loadThreads, mutateIds, openSettingsAt, query, refreshMail, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
+  }), [adjustFontScale, canUnsubscribe, canUndoAction, labelTargetIds, latestMessage, loadThreads, mutateIds, openSettingsAt, query, refreshMail, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context).then((result) => {
@@ -985,6 +1012,13 @@ export function App() {
                     {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
                   </ActionButton>
                 </HoverTooltip>
+                {canUnsubscribe ? (
+                  <HoverTooltip label="Unsubscribe" shortcut="⌘U" placement="bottom">
+                    <ActionButton label="Unsubscribe" shortcut="⌘U" onClick={() => executeById("thread.unsubscribe")}>
+                      <Unlink size={17} />
+                    </ActionButton>
+                  </HoverTooltip>
+                ) : null}
                 <HoverTooltip label="Manage Labels" shortcut="L" placement="bottom">
                   <ActionButton label="Labels" shortcut="l" onClick={() => executeById("labels.open")}>
                     <Tag size={17} />
@@ -1047,6 +1081,13 @@ export function App() {
       </section>
 
       {correspondence.overlay}
+      {unsubscribeMessage ? (
+        <UnsubscribeConfirm
+          message={unsubscribeMessage}
+          onClose={() => setUnsubscribeMessageId(null)}
+          onConfirm={confirmUnsubscribe}
+        />
+      ) : null}
       {paletteOpen ? (
         <CommandPalette
           context={context}
@@ -2082,6 +2123,57 @@ function PrivacySettings() {
         Clear {reportCount} local {reportCount === 1 ? "report" : "reports"}
       </button>
     </section>
+  );
+}
+
+function UnsubscribeConfirm({
+  message,
+  onClose,
+  onConfirm,
+}: {
+  message: Message;
+  onClose(): void;
+  onConfirm(): Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const method = message.unsubscribe?.methods[0];
+  const sender = parseAddress(message.sender);
+  const action = method === "oneClick"
+    ? "Send one-click request"
+    : method === "mailto"
+      ? "Open unsubscribe email"
+      : "Open unsubscribe page";
+
+  return (
+    <Modal title="Unsubscribe" className="unsubscribe-modal" onClose={onClose}>
+      <div className="unsubscribe-content">
+        <p>
+          Unsubscribe from <strong>{sender.name}</strong>?
+          {message.unsubscribe?.listId ? <span className="unsubscribe-list">{message.unsubscribe.listId}</span> : null}
+        </p>
+        <p className="unsubscribe-explanation">
+          {method === "oneClick"
+            ? "Dispatch will send the sender's one-click request without opening a web page."
+            : method === "mailto"
+              ? "Dispatch will open a new email in your default mail handler. You will still need to send it."
+              : "Dispatch will open the sender's unsubscribe page in your default browser."}
+        </p>
+        <div className="unsubscribe-actions">
+          <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button
+            type="button"
+            className="primary-action"
+            disabled={busy || !method}
+            onClick={() => {
+              setBusy(true);
+              void onConfirm().finally(() => setBusy(false));
+            }}
+          >
+            {busy ? "Working…" : action}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -6,6 +6,8 @@ mod gmail;
 mod mime;
 mod models;
 mod sync;
+#[path = "unsubscribe.rs"]
+mod unsubscribe_service;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -194,6 +196,22 @@ fn list_threads(
 }
 
 #[tauri::command]
+fn list_all_mail(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Thread>, String> {
+    state.database.list_all_mail(account_id.as_deref())
+}
+
+#[tauri::command]
+fn list_trash(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Thread>, String> {
+    state.database.list_trash(account_id.as_deref())
+}
+
+#[tauri::command]
 fn get_thread(id: String, state: State<'_, AppState>) -> Result<ThreadDetail, String> {
     state.database.get_thread(&id)
 }
@@ -212,6 +230,35 @@ fn search_threads(
 #[tauri::command]
 fn mutate_thread(mutation: ThreadMutation, state: State<'_, AppState>) -> Result<(), String> {
     state.database.mutate_thread(&mutation)
+}
+
+#[tauri::command]
+async fn unsubscribe(
+    message_id: String,
+    state: State<'_, AppState>,
+) -> Result<models::UnsubscribeResult, String> {
+    let target = state.database.begin_unsubscribe(&message_id)?;
+    match unsubscribe_service::execute(&target).await {
+        Ok(result) => {
+            state.database.finish_unsubscribe(
+                &target.request_id,
+                if result.outcome == "opened" {
+                    "opened"
+                } else {
+                    "succeeded"
+                },
+                result.http_status,
+                None,
+            )?;
+            Ok(result)
+        }
+        Err(error) => {
+            state
+                .database
+                .finish_unsubscribe(&target.request_id, "failed", None, Some(&error))?;
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -538,9 +585,12 @@ pub fn run() {
             correspondence_request,
             finish_exit,
             list_threads,
+            list_all_mail,
+            list_trash,
             get_thread,
             search_threads,
             mutate_thread,
+            unsubscribe,
             sync_status,
             sync_account,
             flush_pending_mutations,

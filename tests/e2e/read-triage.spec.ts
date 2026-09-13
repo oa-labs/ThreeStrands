@@ -19,6 +19,21 @@ test("processes the inbox from the keyboard", async ({ page }) => {
   await expect(page.getByRole("status")).toBeHidden({ timeout: 10_000 });
 });
 
+test("confirms unsubscribe with Cmd/Ctrl+U when the message advertises one-click support", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+
+  await page.keyboard.press("ControlOrMeta+u");
+  const dialog = page.getByRole("dialog", { name: "Unsubscribe" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("dispatch.example");
+  await expect(dialog).toContainText("one-click request");
+
+  await dialog.getByRole("button", { name: "Send one-click request" }).click();
+  await expect(page.getByRole("status")).toContainText("Unsubscribe request sent");
+  await expect(dialog).not.toBeVisible();
+});
+
 test("searches and opens the command palette", async ({ page }) => {
   await page.goto("/");
   await page.keyboard.press("/");

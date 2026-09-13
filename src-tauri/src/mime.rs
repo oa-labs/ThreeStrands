@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +46,34 @@ pub struct MimeBody {
     pub size: u64,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsubscribeMetadata {
+    pub one_click_url: Option<String>,
+    pub mailto_url: Option<String>,
+    pub web_url: Option<String>,
+    pub list_id: Option<String>,
+}
+
+impl UnsubscribeMetadata {
+    pub fn info(&self) -> crate::models::UnsubscribeInfo {
+        let mut methods = Vec::new();
+        if self.one_click_url.is_some() {
+            methods.push(crate::models::UnsubscribeMethod::OneClick);
+        }
+        if self.mailto_url.is_some() {
+            methods.push(crate::models::UnsubscribeMethod::Mailto);
+        }
+        if self.web_url.is_some() {
+            methods.push(crate::models::UnsubscribeMethod::Web);
+        }
+        crate::models::UnsubscribeInfo {
+            methods,
+            list_id: self.list_id.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct NormalizedMessage {
     pub id: String,
@@ -58,12 +87,14 @@ pub struct NormalizedMessage {
     pub snippet: String,
     pub labels: Vec<String>,
     pub metadata_json: String,
+    pub unsubscribe: Option<UnsubscribeMetadata>,
 }
 
 pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
     let mut html = None;
     let mut text = None;
     select_bodies(&message.payload, &mut html, &mut text)?;
+    let unsubscribe = unsubscribe_metadata(&message.payload);
     Ok(NormalizedMessage {
         id: message.id.clone(),
         thread_id: message.thread_id.clone(),
@@ -82,6 +113,7 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
         snippet: message.snippet.clone(),
         labels: message.label_ids.clone(),
         metadata_json: serde_json::to_string(message).map_err(|e| e.to_string())?,
+        unsubscribe,
     })
 }
 
@@ -119,6 +151,79 @@ fn header<'a>(part: &'a MimePart, name: &str) -> Option<&'a str> {
         .iter()
         .find(|header| header.name.eq_ignore_ascii_case(name))
         .map(|header| header.value.as_str())
+}
+
+fn unsubscribe_metadata(part: &MimePart) -> Option<UnsubscribeMetadata> {
+    let urls = parse_list_urls(header(part, "List-Unsubscribe")?);
+    if urls.is_empty() {
+        return None;
+    }
+    let one_click_enabled = header(part, "List-Unsubscribe-Post").is_some_and(|value| {
+        value
+            .trim()
+            .eq_ignore_ascii_case("List-Unsubscribe=One-Click")
+    }) && header(part, "Authentication-Results")
+        .is_some_and(|value| value.to_ascii_lowercase().contains("dkim=pass"));
+    let one_click_url = urls
+        .iter()
+        .find(|url| one_click_enabled && is_https(url))
+        .map(Url::to_string);
+    let mailto_url = urls
+        .iter()
+        .find(|url| url.scheme().eq_ignore_ascii_case("mailto"))
+        .map(Url::to_string);
+    let web_url = urls
+        .iter()
+        .find(|url| is_https(url) && Some(url.as_str()) != one_click_url.as_deref())
+        .map(Url::to_string);
+    if one_click_url.is_none() && mailto_url.is_none() && web_url.is_none() {
+        return None;
+    }
+    Some(UnsubscribeMetadata {
+        one_click_url,
+        mailto_url,
+        web_url,
+        list_id: header(part, "List-ID")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+    })
+}
+
+fn parse_list_urls(value: &str) -> Vec<Url> {
+    let mut urls = Vec::new();
+    let mut rest = value;
+    loop {
+        let Some(start) = rest.find('<') else { break };
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('>') else {
+            break;
+        };
+        let candidate: String = after_start[..end]
+            .chars()
+            .filter(|character| !character.is_ascii_whitespace())
+            .collect();
+        let Ok(url) = Url::parse(&candidate) else {
+            break;
+        };
+        if !matches!(
+            url.scheme().to_ascii_lowercase().as_str(),
+            "https" | "mailto"
+        ) {
+            break;
+        }
+        if url.username().is_empty() && url.password().is_none() {
+            urls.push(url);
+        }
+        rest = &after_start[end + 1..];
+    }
+    urls
+}
+
+fn is_https(url: &Url) -> bool {
+    url.scheme().eq_ignore_ascii_case("https")
+        && url.host_str().is_some()
+        && url.port().is_none_or(|port| port == 443)
 }
 
 fn split_addresses(value: &str) -> Vec<String> {
@@ -213,5 +318,66 @@ mod tests {
         };
         message.payload.body.data = Some("%%%".into());
         assert!(normalize(&message).is_err());
+    }
+
+    #[test]
+    fn extracts_authenticated_one_click_and_safe_fallbacks_in_header_order() {
+        let mut message = GmailMessage {
+            id: "m".into(),
+            thread_id: "t".into(),
+            label_ids: vec![],
+            snippet: String::new(),
+            internal_date: String::new(),
+            payload: part("text/plain", "ok"),
+        };
+        message.payload.headers = vec![
+            MimeHeader { name: "List-Unsubscribe".into(), value: "<https://list.example/one>, <mailto:list@example.com?subject=unsubscribe>, <https://list.example/preferences>".into() },
+            MimeHeader { name: "List-Unsubscribe-Post".into(), value: "List-Unsubscribe=One-Click".into() },
+            MimeHeader { name: "Authentication-Results".into(), value: "mx.example; dkim=pass header.i=@example".into() },
+            MimeHeader { name: "List-ID".into(), value: "news.example".into() },
+        ];
+        let normalized = normalize(&message).unwrap();
+        let metadata = normalized.unsubscribe.unwrap();
+        assert_eq!(
+            metadata.one_click_url.as_deref(),
+            Some("https://list.example/one")
+        );
+        assert_eq!(
+            metadata.mailto_url.as_deref(),
+            Some("mailto:list@example.com?subject=unsubscribe")
+        );
+        assert_eq!(
+            metadata.web_url.as_deref(),
+            Some("https://list.example/preferences")
+        );
+        assert_eq!(metadata.list_id.as_deref(), Some("news.example"));
+    }
+
+    #[test]
+    fn does_not_offer_one_click_without_authenticated_dkim() {
+        let mut message = GmailMessage {
+            id: "m".into(),
+            thread_id: "t".into(),
+            label_ids: vec![],
+            snippet: String::new(),
+            internal_date: String::new(),
+            payload: part("text/plain", "ok"),
+        };
+        message.payload.headers = vec![
+            MimeHeader {
+                name: "List-Unsubscribe".into(),
+                value: "<https://list.example/one>".into(),
+            },
+            MimeHeader {
+                name: "List-Unsubscribe-Post".into(),
+                value: "List-Unsubscribe=One-Click".into(),
+            },
+        ];
+        let metadata = normalize(&message).unwrap().unsubscribe.unwrap();
+        assert!(metadata.one_click_url.is_none());
+        assert_eq!(
+            metadata.web_url.as_deref(),
+            Some("https://list.example/one")
+        );
     }
 }

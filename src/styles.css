@@ -572,6 +572,14 @@ kbd {
 .accounts-list-actions button:disabled { opacity: .4; }
 .accounts-list-actions input[type="color"] { width: 22px; height: 22px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: none; cursor: pointer; }
 .form-error { color: var(--error) !important; }
+.unsubscribe-content { padding: 10px 20px 22px; }
+.unsubscribe-content > p { margin: 0 0 12px; line-height: 1.5; }
+.unsubscribe-list { display: block; margin-top: 4px; color: var(--muted); font-size: calc(12px * var(--font-scale)); }
+.unsubscribe-explanation { color: var(--muted); font-size: calc(13px * var(--font-scale)); }
+.unsubscribe-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.unsubscribe-actions button { padding: 8px 11px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--hover); cursor: pointer; }
+.unsubscribe-actions button:disabled { opacity: .5; cursor: default; }
+.unsubscribe-actions .primary-action { border-color: var(--primary-border); background: var(--primary); }
 
 .settings-modal { width: min(640px, calc(100vw - 40px)); max-height: 78vh; }
 .settings-body { display: grid; grid-template-columns: 150px minmax(0, 1fr); min-height: 0; }

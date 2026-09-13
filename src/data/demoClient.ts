@@ -1,6 +1,14 @@
 import { demoCorrespondence } from "./demoCorrespondence";
 import type { MailClient } from "./client";
-import type { Account, Label, SyncStatus, Thread, ThreadDetail, ThreadMutation } from "../domain";
+import type {
+  Account,
+  Label,
+  SyncStatus,
+  Thread,
+  ThreadDetail,
+  ThreadMutation,
+  UnsubscribeResult,
+} from "../domain";
 
 const DEMO_ACCOUNT_ID = "demo@example.com";
 
@@ -95,13 +103,26 @@ const status: SyncStatus = {
   error: null,
 };
 
-function visible(accountId?: string): Thread[] {
+function visibleWhere(accountId: string | undefined, predicate: (thread: Thread) => boolean): Thread[] {
   const connected = new Set(accounts.map((account) => account.email));
   return threads
     .filter((thread) => connected.has(thread.accountId))
-    .filter((thread) => !thread.archived && !thread.trashed)
+    .filter(predicate)
     .filter((thread) => !accountId || accountId === "all" || thread.accountId === accountId)
     .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+}
+
+function visible(accountId?: string): Thread[] {
+  return visibleWhere(accountId, (thread) => !thread.archived && !thread.trashed);
+}
+
+/** Gmail's "All Mail": everything except Trash. */
+function visibleAllMail(accountId?: string): Thread[] {
+  return visibleWhere(accountId, (thread) => !thread.trashed);
+}
+
+function visibleTrash(accountId?: string): Thread[] {
+  return visibleWhere(accountId, (thread) => thread.trashed);
 }
 
 /**
@@ -161,6 +182,12 @@ export const demoClient: MailClient = {
   async listThreads(accountId) {
     return structuredClone(visible(accountId));
   },
+  async listAllMail(accountId) {
+    return structuredClone(visibleAllMail(accountId));
+  },
+  async listTrash(accountId) {
+    return structuredClone(visibleTrash(accountId));
+  },
   async getThread(id) {
     const thread = threads.find((candidate) => candidate.id === id);
     if (!thread) throw new Error("Thread not found");
@@ -175,6 +202,7 @@ export const demoClient: MailClient = {
           sentAt: thread.lastMessageAt,
           bodyHtml: details[id] ?? `<p>${thread.snippet}</p>`,
           bodyText: thread.snippet,
+          unsubscribe: id === "welcome" ? { methods: ["oneClick"], listId: "dispatch.example" } : null,
         },
       ],
     };
@@ -197,6 +225,12 @@ export const demoClient: MailClient = {
   },
   async mutateThread(mutation) {
     update(mutation);
+  },
+  async unsubscribe(messageId): Promise<UnsubscribeResult> {
+    if (!messageId.endsWith("-message") || !messageId.startsWith("welcome")) {
+      throw new Error("This message has no unsubscribe option");
+    }
+    return { method: "oneClick", outcome: "requested", httpStatus: 200 };
   },
   async sync() {
     status.lastSuccessfulSync = new Date().toISOString();
