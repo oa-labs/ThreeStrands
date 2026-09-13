@@ -11,7 +11,8 @@ use crate::mime::NormalizedMessage;
 use crate::mime::UnsubscribeMetadata;
 use crate::models::{
     Account, Message, SearchThreadsRequest, SyncStatus, Thread, ThreadDetail, ThreadMutation,
-    ThreadPage, UnsubscribeMethod, UnsubscribeTarget,
+    ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
+    UnsubscribeMethod, UnsubscribeTarget,
 };
 
 /// Assigned to newly connected accounts in rotation, so each has a distinct
@@ -111,6 +112,31 @@ CREATE TABLE IF NOT EXISTS accounts (
     connected_at TEXT NOT NULL,
     last_synced_at TEXT
 );
+
+-- Raw, local-only interaction observations. Keeping the event log lets us
+-- revise the quick-dismissal threshold and ranking later without having to
+-- recollect the user's behavior.
+CREATE TABLE IF NOT EXISTS triage_events (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    sender_email TEXT NOT NULL,
+    sender_domain TEXT NOT NULL,
+    event_kind TEXT NOT NULL CHECK(event_kind IN ('open', 'close', 'disposition', 'restore', 'response')),
+    context TEXT NOT NULL CHECK(context IN ('inbox', 'other')),
+    action TEXT CHECK(action IS NULL OR action IN ('archive', 'trash')),
+    opened INTEGER NOT NULL DEFAULT 0,
+    dwell_ms INTEGER,
+    scrolled INTEGER NOT NULL DEFAULT 0,
+    batch INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS triage_events_account_sender
+ON triage_events(account_id, sender_email, created_at);
+
+CREATE INDEX IF NOT EXISTS triage_events_account_time
+ON triage_events(account_id, created_at);
 "#;
 
 pub struct Database(Mutex<Connection>);
@@ -318,6 +344,153 @@ impl Database {
             .map_err(display_error)?;
         let messages = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
         Ok(ThreadDetail { thread, messages })
+    }
+
+    /// Records a local-only interaction observation. Sender identity is
+    /// resolved from the cached thread rather than accepted from the webview,
+    /// so the event cannot accidentally be attributed to another account or
+    /// sender.
+    pub fn record_triage_event(&self, event: &TriageEvent) -> Result<(), String> {
+        match (&event.kind, &event.action) {
+            (
+                TriageEventKind::Open | TriageEventKind::Close | TriageEventKind::Response,
+                Some(_),
+            ) => {
+                return Err("Open and close triage events cannot have an action".into());
+            }
+            (TriageEventKind::Disposition | TriageEventKind::Restore, None) => {
+                return Err("Disposition and restore triage events require an action".into());
+            }
+            _ => {}
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        let Some((account_id, sender_email, sender_domain)) =
+            sender_identity_for_thread(&transaction, &event.thread_id)?
+        else {
+            // A thread can disappear between the optimistic UI action and
+            // this best-effort observation. That should never affect mail.
+            return Ok(());
+        };
+        let created_at = Utc::now().to_rfc3339();
+        let dwell_ms = event.dwell_ms.map(|value| value.clamp(0, 86_400_000));
+        transaction
+            .execute(
+                "INSERT INTO triage_events(
+                    id, account_id, thread_id, sender_email, sender_domain,
+                    event_kind, context, action, opened, dwell_ms, scrolled,
+                    batch, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    account_id,
+                    event.thread_id,
+                    sender_email,
+                    sender_domain,
+                    triage_event_kind_name(&event.kind),
+                    triage_context_name(&event.context),
+                    event.action.as_ref().map(triage_action_name),
+                    event.opened,
+                    dwell_ms,
+                    event.scrolled,
+                    event.batch,
+                    created_at,
+                ],
+            )
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)
+    }
+
+    /// Returns the current top sender candidates for one account. This is a
+    /// derived view over raw events: the limit is intentionally bounded for a
+    /// future UI, while the underlying observations remain available locally.
+    pub fn list_triage_sender_stats(
+        &self,
+        account_id: &str,
+        limit: usize,
+    ) -> Result<Vec<TriageSenderStats>, String> {
+        let connection = self.connection()?;
+        let limit = limit.clamp(1, 100) as i64;
+        let mut statement = connection
+            .prepare(
+                "WITH stats AS (
+                    SELECT
+                        account_id,
+                        sender_email,
+                        sender_domain,
+                        SUM(CASE WHEN event_kind = 'open' AND context = 'inbox'
+                                 THEN 1 ELSE 0 END) AS exposure_count,
+                        SUM(CASE WHEN event_kind = 'close' AND context = 'inbox'
+                                      AND (scrolled = 1 OR COALESCE(dwell_ms, 0) > 1000)
+                                 THEN 1 ELSE 0 END) AS engaged_view_count,
+                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                 THEN 1 ELSE 0 END) AS disposition_count,
+                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                      AND action = 'archive'
+                                 THEN 1 ELSE 0 END) AS archive_count,
+                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                      AND action = 'trash'
+                                 THEN 1 ELSE 0 END) AS trash_count,
+                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                      AND action IN ('archive', 'trash')
+                                      AND opened = 1 AND batch = 0 AND scrolled = 0
+                                      AND dwell_ms BETWEEN 0 AND 1000
+                                 THEN 1 ELSE 0 END) AS quick_disposition_count,
+                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                      AND batch = 1
+                                 THEN 1 ELSE 0 END) AS batch_disposition_count,
+                        SUM(CASE WHEN event_kind = 'restore' AND context = 'inbox'
+                                 THEN 1 ELSE 0 END) AS restore_count,
+                        SUM(CASE WHEN event_kind = 'response' AND context = 'inbox'
+                                 THEN 1 ELSE 0 END) AS response_count,
+                        MAX(created_at) AS last_seen_at
+                    FROM triage_events
+                    WHERE account_id = ?1
+                    GROUP BY account_id, sender_email, sender_domain
+                )
+                SELECT account_id, sender_email, sender_domain,
+                       exposure_count, engaged_view_count, disposition_count,
+                       archive_count, trash_count, quick_disposition_count,
+                       batch_disposition_count, restore_count, response_count, last_seen_at
+                FROM stats
+                WHERE exposure_count > 0 OR disposition_count > 0
+                ORDER BY quick_disposition_count DESC,
+                         CASE WHEN disposition_count > 0
+                              THEN CAST(quick_disposition_count AS REAL) / disposition_count
+                              ELSE 0 END DESC,
+                         disposition_count DESC,
+                         last_seen_at DESC
+                LIMIT ?2",
+            )
+            .map_err(display_error)?;
+        let rows = statement
+            .query_map(params![account_id, limit], |row| {
+                let exposure_count: i64 = row.get(3)?;
+                let disposition_count: i64 = row.get(5)?;
+                let quick_disposition_count: i64 = row.get(8)?;
+                Ok(TriageSenderStats {
+                    account_id: row.get(0)?,
+                    sender_email: row.get(1)?,
+                    sender_domain: row.get(2)?,
+                    exposure_count,
+                    engaged_view_count: row.get(4)?,
+                    disposition_count,
+                    archive_count: row.get(6)?,
+                    trash_count: row.get(7)?,
+                    quick_disposition_count,
+                    batch_disposition_count: row.get(9)?,
+                    restore_count: row.get(10)?,
+                    response_count: row.get(11)?,
+                    quick_disposition_rate: if disposition_count > 0 {
+                        quick_disposition_count as f64 / disposition_count as f64
+                    } else {
+                        0.0
+                    },
+                    last_seen_at: row.get(12)?,
+                })
+            })
+            .map_err(display_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
     }
 
     pub fn set_thread_summary(
@@ -1115,6 +1288,12 @@ impl Database {
                 [email],
             )
             .map_err(display_error)?;
+        transaction
+            .execute(
+                "UPDATE triage_events SET account_id = ?1 WHERE account_id = 'default'",
+                [email],
+            )
+            .map_err(display_error)?;
         // Accounts adopted directly (not migrated from a 'default' row)
         // still need their own cursor row.
         transaction
@@ -1142,10 +1321,16 @@ impl Database {
     }
 
     pub fn remove_account(&self, email: &str) -> Result<(), String> {
-        self.connection()?
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        transaction
+            .execute("DELETE FROM triage_events WHERE account_id = ?1", [email])
+            .map_err(display_error)?;
+        transaction
             .execute("DELETE FROM accounts WHERE email = ?1", [email])
             .map(|_| ())
-            .map_err(display_error)
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)
     }
 
     pub fn set_account_color(&self, email: &str, color: &str) -> Result<(), String> {
@@ -1186,6 +1371,96 @@ fn ensure_query_indexes(connection: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS mutations_account_pending
          ON mutations(account_id, state, created_at);",
     )
+}
+
+fn sender_identity_for_thread(
+    transaction: &Transaction<'_>,
+    thread_id: &str,
+) -> Result<Option<(String, String, String)>, String> {
+    let account_id: Option<String> = transaction
+        .query_row(
+            "SELECT account_id FROM threads WHERE id = ?1",
+            [thread_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(display_error)?;
+    let Some(account_id) = account_id else {
+        return Ok(None);
+    };
+
+    let mut statement = transaction
+        .prepare(
+            "SELECT sender FROM messages
+             WHERE thread_id = ?1
+             ORDER BY sent_at DESC, id DESC",
+        )
+        .map_err(display_error)?;
+    let rows = statement
+        .query_map([thread_id], |row| row.get::<_, String>(0))
+        .map_err(display_error)?;
+    let account_email = normalize_sender(&account_id).0;
+    let mut fallback = None;
+    for row in rows {
+        let sender = row.map_err(display_error)?;
+        let (email, domain) = normalize_sender(&sender);
+        if email.is_empty() {
+            continue;
+        }
+        if fallback.is_none() {
+            fallback = Some((email.clone(), domain.clone()));
+        }
+        if account_email.is_empty() || email != account_email {
+            return Ok(Some((account_id, email, domain)));
+        }
+    }
+    if account_email.is_empty() {
+        Ok(fallback.map(|(email, domain)| (account_id, email, domain)))
+    } else {
+        // A sent-only thread has no sender preference to learn from.
+        Ok(None)
+    }
+}
+
+fn normalize_sender(value: &str) -> (String, String) {
+    let trimmed = value.trim();
+    let candidate = match (trimmed.rfind('<'), trimmed.rfind('>')) {
+        (Some(open), Some(close)) if close > open => &trimmed[open + 1..close],
+        _ => trimmed,
+    };
+    let email = candidate
+        .trim()
+        .trim_matches(|character| character == '"' || character == '\'')
+        .to_ascii_lowercase();
+    let domain = email
+        .rsplit_once('@')
+        .map(|(_, domain)| domain.to_string())
+        .unwrap_or_default();
+    (email, domain)
+}
+
+fn triage_event_kind_name(kind: &TriageEventKind) -> &'static str {
+    match kind {
+        TriageEventKind::Open => "open",
+        TriageEventKind::Close => "close",
+        TriageEventKind::Disposition => "disposition",
+        TriageEventKind::Restore => "restore",
+        TriageEventKind::Response => "response",
+    }
+}
+
+fn triage_context_name(context: &TriageContext) -> &'static str {
+    match context {
+        TriageContext::Inbox => "inbox",
+        TriageContext::Other => "other",
+    }
+}
+
+fn triage_action_name(action: &TriageAction) -> &'static str {
+    match action {
+        TriageAction::Archive => "archive",
+        TriageAction::Trash => "trash",
+    }
 }
 
 fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
@@ -1369,6 +1644,128 @@ mod tests {
             .unwrap();
         assert_eq!(result[0].id, "welcome");
         assert!(result[0].match_snippet.is_some());
+    }
+
+    #[test]
+    fn triage_events_attribute_senders_and_rank_quick_dismissals() {
+        let database = database();
+        let mut quick_message = message(
+            "quick-message",
+            "quick-thread",
+            "2026-01-01T00:00:00Z",
+            "quick body",
+        );
+        quick_message.from = "Noise <Newsletter@Example.com>".into();
+        database
+            .upsert_gmail_thread("work@example.com", &[quick_message])
+            .unwrap();
+
+        let mut engaged_message = message(
+            "engaged-message",
+            "engaged-thread",
+            "2026-01-02T00:00:00Z",
+            "engaged body",
+        );
+        engaged_message.from = "A Person <person@example.com>".into();
+        database
+            .upsert_gmail_thread("work@example.com", &[engaged_message])
+            .unwrap();
+
+        for _ in 0..2 {
+            database
+                .record_triage_event(&TriageEvent {
+                    thread_id: "work@example.com:quick-thread".into(),
+                    kind: TriageEventKind::Open,
+                    context: TriageContext::Inbox,
+                    action: None,
+                    opened: false,
+                    dwell_ms: None,
+                    scrolled: false,
+                    batch: false,
+                })
+                .unwrap();
+            database
+                .record_triage_event(&TriageEvent {
+                    thread_id: "work@example.com:quick-thread".into(),
+                    kind: TriageEventKind::Disposition,
+                    context: TriageContext::Inbox,
+                    action: Some(TriageAction::Archive),
+                    opened: true,
+                    dwell_ms: Some(400),
+                    scrolled: false,
+                    batch: false,
+                })
+                .unwrap();
+        }
+        database
+            .record_triage_event(&TriageEvent {
+                thread_id: "work@example.com:quick-thread".into(),
+                kind: TriageEventKind::Response,
+                context: TriageContext::Inbox,
+                action: None,
+                opened: true,
+                dwell_ms: None,
+                scrolled: false,
+                batch: false,
+            })
+            .unwrap();
+        database
+            .record_triage_event(&TriageEvent {
+                thread_id: "work@example.com:engaged-thread".into(),
+                kind: TriageEventKind::Open,
+                context: TriageContext::Inbox,
+                action: None,
+                opened: false,
+                dwell_ms: None,
+                scrolled: false,
+                batch: false,
+            })
+            .unwrap();
+        database
+            .record_triage_event(&TriageEvent {
+                thread_id: "work@example.com:engaged-thread".into(),
+                kind: TriageEventKind::Close,
+                context: TriageContext::Inbox,
+                action: None,
+                opened: false,
+                dwell_ms: Some(2400),
+                scrolled: true,
+                batch: false,
+            })
+            .unwrap();
+
+        let stats = database
+            .list_triage_sender_stats("work@example.com", 100)
+            .unwrap();
+        assert_eq!(stats[0].sender_email, "newsletter@example.com");
+        assert_eq!(stats[0].sender_domain, "example.com");
+        assert_eq!(stats[0].exposure_count, 2);
+        assert_eq!(stats[0].archive_count, 2);
+        assert_eq!(stats[0].quick_disposition_count, 2);
+        assert_eq!(stats[0].quick_disposition_rate, 1.0);
+        assert_eq!(stats[0].response_count, 1);
+        assert_eq!(stats[1].sender_email, "person@example.com");
+        assert_eq!(stats[1].engaged_view_count, 1);
+        assert_eq!(stats[1].quick_disposition_count, 0);
+
+        // Context is retained in the raw log but does not contaminate the
+        // inbox-derived candidate stats.
+        database
+            .record_triage_event(&TriageEvent {
+                thread_id: "work@example.com:quick-thread".into(),
+                kind: TriageEventKind::Disposition,
+                context: TriageContext::Other,
+                action: Some(TriageAction::Trash),
+                opened: true,
+                dwell_ms: Some(100),
+                scrolled: false,
+                batch: false,
+            })
+            .unwrap();
+        let stats = database
+            .list_triage_sender_stats("work@example.com", 100)
+            .unwrap();
+        assert_eq!(stats[0].trash_count, 0);
     }
 
     #[test]

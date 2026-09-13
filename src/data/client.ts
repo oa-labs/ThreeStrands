@@ -10,6 +10,8 @@ import type {
   ThreadDetail,
   ThreadPage,
   ThreadMutation,
+  TriageEvent,
+  TriageSenderStats,
   UnsubscribeResult,
 } from "../domain";
 import type { AiProvider } from "../aiSettings";
@@ -36,6 +38,8 @@ export interface MailClient extends CorrespondenceClient {
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   mutateThread(mutation: ThreadMutation): Promise<void>;
   mutateThreads(mutations: ThreadMutation[]): Promise<void>;
+  recordTriageEvent(event: TriageEvent): Promise<void>;
+  listTriageSenderStats(accountId: string, limit?: number): Promise<TriageSenderStats[]>;
   unsubscribe(messageId: string): Promise<UnsubscribeResult>;
   sync(): Promise<SyncStatus>;
   flushPending(): Promise<SyncStatus>;
@@ -73,6 +77,8 @@ const tauriClient: MailClient = {
   searchThreads: (request, accountId) => invoke("search_threads", { request, accountId }),
   mutateThread: (mutation) => invoke("mutate_thread", { mutation }),
   mutateThreads: (mutations) => invoke("mutate_threads", { mutations }),
+  recordTriageEvent: (event) => invoke("record_triage_event", { event }),
+  listTriageSenderStats: (accountId, limit) => invoke("list_triage_sender_stats", { accountId, limit }),
   unsubscribe: (messageId) => invoke("unsubscribe", { messageId }),
   sync: () => invoke("sync_account"),
   flushPending: () => invoke("flush_pending_mutations"),

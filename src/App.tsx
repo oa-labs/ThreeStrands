@@ -77,6 +77,7 @@ import type {
   Thread,
   ThreadDetail,
   ThreadMutation,
+  TriageEvent,
   Message,
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
@@ -125,6 +126,13 @@ import {
   type AiProvider,
 } from "./aiSettings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+import {
+  buildTriageCloseEvent,
+  buildTriageDispositionEvent,
+  pauseTriageSession,
+  resumeTriageSession,
+  type TriageSession,
+} from "./triage";
 
 type SettingsSection = "appearance" | "reading" | "accounts" | "ai" | "privacy";
 
@@ -340,6 +348,12 @@ function sortByRecency(threads: Thread[]): Thread[] {
   return [...threads].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
 }
 
+function triageNow(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
 function useShortcutHandler(
   context: CommandContext,
   execute: (command: Command) => void,
@@ -513,6 +527,8 @@ export function App() {
   const accountsRequest = useRef(0);
   const threadsRequest = useRef(0);
   const detailRequest = useRef(0);
+  const triageSessionRef = useRef<TriageSession | null>(null);
+  const triageCloseTimerRef = useRef<number | null>(null);
   const loadingMore = useRef(false);
   const [loadingMoreState, setLoadingMoreState] = useState(false);
   const refreshAccounts = useCallback(() => {
@@ -530,6 +546,11 @@ export function App() {
       });
   }, []);
   const [notice, setNotice] = useNotice();
+  const recordTriageEvent = useCallback((event: TriageEvent) => {
+    // Instrumentation is deliberately best-effort: a local telemetry write
+    // must never make a mail action or navigation fail.
+    void mailClient.recordTriageEvent(event).catch(() => {});
+  }, []);
   const lastUndo = useRef<{ command: Command; result: CommandResult } | null>(null);
   const [canUndoAction, setCanUndoAction] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -675,6 +696,67 @@ export function App() {
     latestMessageRef.current?.scrollIntoView?.({ block: "start" });
   }, [visibleDetail]);
 
+  useEffect(() => {
+    if (!visibleDetail) return;
+    const threadId = visibleDetail.thread.id;
+    const context: TriageEvent["context"] = mailbox === "inbox" && !includeArchived ? "inbox" : "other";
+    if (triageCloseTimerRef.current !== null) {
+      window.clearTimeout(triageCloseTimerRef.current);
+      triageCloseTimerRef.current = null;
+    }
+    const existing = triageSessionRef.current;
+    if (existing && (existing.threadId !== threadId || existing.context !== context)) {
+      recordTriageEvent(buildTriageCloseEvent(existing, triageNow()));
+      triageSessionRef.current = null;
+    }
+    const session = triageSessionRef.current ?? {
+      threadId,
+      context,
+      startedAt: triageNow(),
+      activeElapsedMs: 0,
+      active: true,
+      scrolled: false,
+    };
+    if (triageSessionRef.current !== session) {
+      triageSessionRef.current = session;
+      recordTriageEvent({
+        threadId: session.threadId,
+        kind: "open",
+        context: session.context,
+      });
+    }
+
+    const messageStack = messageStackRef.current;
+    const onScroll = () => {
+      if (messageStack && messageStack.scrollTop > 8) session.scrolled = true;
+    };
+    const onPause = () => pauseTriageSession(session, triageNow());
+    const onResume = () => resumeTriageSession(session, triageNow());
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") onPause();
+      else onResume();
+    };
+    messageStack?.addEventListener("scroll", onScroll, { passive: true });
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("blur", onPause);
+    window.addEventListener("focus", onResume);
+    return () => {
+      messageStack?.removeEventListener("scroll", onScroll);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("blur", onPause);
+      window.removeEventListener("focus", onResume);
+      if (triageSessionRef.current !== session) return;
+      // React Strict Mode replays effects immediately in development. Delay
+      // the close one tick so the next setup can reuse the same session.
+      triageCloseTimerRef.current = window.setTimeout(() => {
+        triageCloseTimerRef.current = null;
+        if (triageSessionRef.current !== session) return;
+        recordTriageEvent(buildTriageCloseEvent(session, triageNow()));
+        triageSessionRef.current = null;
+      }, 0);
+    };
+  }, [includeArchived, mailbox, recordTriageEvent, visibleDetail?.thread.id]);
+
   useLayoutEffect(() => {
     // Collapsing older messages can shrink the stack below the current scroll
     // offset; Chrome's scroll anchoring sometimes fails to re-clamp it when
@@ -781,6 +863,30 @@ export function App() {
   const mutateIds = useCallback(async (ids: string[], template: MutationTemplate): Promise<CommandResult> => {
     const targetIds = ids.filter((id) => threads.some((thread) => thread.id === id));
     if (targetIds.length === 0) return {};
+    const triageContext: TriageEvent["context"] = mailbox === "inbox" && !includeArchived ? "inbox" : "other";
+    const triageEvents = template.kind === "archive" || template.kind === "trash"
+      ? new Map(targetIds.map((threadId) => {
+          const event = template.value
+            ? buildTriageDispositionEvent({
+                threadId,
+                action: template.kind,
+                context: triageContext,
+                session: triageSessionRef.current,
+                now: triageNow(),
+                batch: targetIds.length > 1,
+              })
+            : {
+                threadId,
+                kind: "restore" as const,
+                context: triageSessionRef.current?.threadId === threadId
+                  ? triageSessionRef.current.context
+                  : triageContext,
+                action: template.kind,
+                batch: targetIds.length > 1,
+              } satisfies TriageEvent;
+          return [threadId, event] as const;
+        }))
+      : null;
     const previous = new Map(
       threads.filter((thread) => targetIds.includes(thread.id)).map((thread) => [thread.id, thread] as const),
     );
@@ -832,6 +938,13 @@ export function App() {
     }
     const succeededIds = targetIds.filter((id) => !failedIds.includes(id));
 
+    if (triageEvents) {
+      succeededIds.forEach((id) => {
+        const event = triageEvents.get(id);
+        if (event) recordTriageEvent(event);
+      });
+    }
+
     if (failedIds.length > 0) {
       setThreads((current) => {
         const restored = failedIds
@@ -878,10 +991,23 @@ export function App() {
         });
         if (removesFromView && succeededIds.length === 1) setSelectedId(succeededIds[0]);
         await mailClient.mutateThreads(succeededIds.map((id) => buildThreadMutation(id, undoTemplate)));
+        if (triageEvents) {
+          succeededIds.forEach((id) => {
+            const event = triageEvents.get(id);
+            if (!event || event.kind !== "disposition") return;
+            recordTriageEvent({
+              threadId: id,
+              kind: "restore",
+              context: event.context,
+              action: event.action,
+              batch: event.batch,
+            });
+          });
+        }
         await loadThreads(query);
       },
     };
-  }, [threads, detail, includeArchived, mailbox, selectedId, loadThreads, query, labels, setNotice]);
+  }, [threads, detail, includeArchived, mailbox, selectedId, loadThreads, query, labels, recordTriageEvent, setNotice]);
 
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
@@ -1064,6 +1190,36 @@ export function App() {
       mutateIds(selected ? [selected.id] : [], { kind: "read", value: selected?.unread ?? false }),
     toggleStarSelected: () =>
       mutateIds(selected ? [selected.id] : [], { kind: "star", value: !(selected?.starred ?? true) }),
+    reply: () => {
+      if (selected) {
+        recordTriageEvent({
+          threadId: selected.id,
+          kind: "response",
+          context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
+        });
+      }
+      correspondence.context.reply();
+    },
+    replyAll: () => {
+      if (selected) {
+        recordTriageEvent({
+          threadId: selected.id,
+          kind: "response",
+          context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
+        });
+      }
+      correspondence.context.replyAll();
+    },
+    forward: () => {
+      if (selected) {
+        recordTriageEvent({
+          threadId: selected.id,
+          kind: "response",
+          context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
+        });
+      }
+      correspondence.context.forward();
+    },
     toggleCheckedSelected: () => {
       if (!selected) return;
       setCheckedIds((current) => {
@@ -1102,7 +1258,7 @@ export function App() {
     showAllAccounts: () => {
       setActiveAccountId(null);
     },
-  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, refreshMail, runSummarize, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)

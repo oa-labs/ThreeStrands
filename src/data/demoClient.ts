@@ -9,6 +9,8 @@ import type {
   ThreadDetail,
   ThreadPage,
   ThreadMutation,
+  TriageEvent,
+  TriageSenderStats,
   UnsubscribeResult,
 } from "../domain";
 
@@ -275,6 +277,10 @@ export const demoClient: MailClient = {
   },
   async mutateThreads(mutations) {
     mutations.forEach(update);
+  },
+  async recordTriageEvent(_event: TriageEvent) {},
+  async listTriageSenderStats(_accountId: string, _limit?: number): Promise<TriageSenderStats[]> {
+    return [];
   },
   async unsubscribe(messageId): Promise<UnsubscribeResult> {
     if (!messageId.endsWith("-message") || !messageId.startsWith("welcome")) {

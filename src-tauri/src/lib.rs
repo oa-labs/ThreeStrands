@@ -17,7 +17,8 @@ use chrono::Utc;
 use db::Database;
 use models::{
     Account, AuthStatus, CreateLabelRequest, Label, SearchThreadsRequest, SummaryResult,
-    SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, UpdateLabelRequest,
+    SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats,
+    UpdateLabelRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -275,6 +276,22 @@ fn mutate_threads(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     state.database.mutate_threads(&mutations)
+}
+
+#[tauri::command]
+fn record_triage_event(event: TriageEvent, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.record_triage_event(&event)
+}
+
+#[tauri::command]
+fn list_triage_sender_stats(
+    account_id: String,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<TriageSenderStats>, String> {
+    state
+        .database
+        .list_triage_sender_stats(&account_id, limit.unwrap_or(100))
 }
 
 #[tauri::command]
@@ -689,6 +706,8 @@ pub fn run() {
             search_threads,
             mutate_thread,
             mutate_threads,
+            record_triage_event,
+            list_triage_sender_stats,
             unsubscribe,
             sync_status,
             sync_account,

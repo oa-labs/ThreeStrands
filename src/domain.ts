@@ -47,6 +47,34 @@ export type ThreadDetail = {
   messages: Message[];
 };
 
+export type TriageEvent = {
+  threadId: string;
+  kind: "open" | "close" | "disposition" | "restore" | "response";
+  context: "inbox" | "other";
+  action?: "archive" | "trash";
+  opened?: boolean;
+  dwellMs?: number | null;
+  scrolled?: boolean;
+  batch?: boolean;
+};
+
+export type TriageSenderStats = {
+  accountId: string;
+  senderEmail: string;
+  senderDomain: string;
+  exposureCount: number;
+  engagedViewCount: number;
+  dispositionCount: number;
+  archiveCount: number;
+  trashCount: number;
+  quickDispositionCount: number;
+  batchDispositionCount: number;
+  restoreCount: number;
+  responseCount: number;
+  quickDispositionRate: number;
+  lastSeenAt: string;
+};
+
 export type ThreadPage = {
   threads: Thread[];
   hasMore: boolean;

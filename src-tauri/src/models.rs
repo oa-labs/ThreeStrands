@@ -80,6 +80,67 @@ pub struct ThreadDetail {
     pub messages: Vec<Message>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TriageEventKind {
+    Open,
+    Close,
+    Disposition,
+    Restore,
+    Response,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TriageContext {
+    Inbox,
+    Other,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TriageAction {
+    Archive,
+    Trash,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriageEvent {
+    pub thread_id: String,
+    pub kind: TriageEventKind,
+    pub context: TriageContext,
+    #[serde(default)]
+    pub action: Option<TriageAction>,
+    #[serde(default)]
+    pub opened: bool,
+    #[serde(default)]
+    pub dwell_ms: Option<i64>,
+    #[serde(default)]
+    pub scrolled: bool,
+    #[serde(default)]
+    pub batch: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriageSenderStats {
+    pub account_id: String,
+    pub sender_email: String,
+    pub sender_domain: String,
+    pub exposure_count: i64,
+    pub engaged_view_count: i64,
+    pub disposition_count: i64,
+    pub archive_count: i64,
+    pub trash_count: i64,
+    pub quick_disposition_count: i64,
+    pub batch_disposition_count: i64,
+    pub restore_count: i64,
+    pub response_count: i64,
+    pub quick_disposition_rate: f64,
+    pub last_seen_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SummaryResult {
