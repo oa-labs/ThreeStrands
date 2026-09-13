@@ -213,6 +213,7 @@ export const demoClient: MailClient = {
           sentAt: thread.lastMessageAt,
           bodyHtml: details[id] ?? `<p>${thread.snippet}</p>`,
           bodyText: thread.snippet,
+          unread: thread.unread,
           unsubscribe: id === "welcome" ? { methods: ["oneClick"], listId: "dispatch.example" } : null,
         },
       ],

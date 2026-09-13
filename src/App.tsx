@@ -1242,7 +1242,8 @@ export function App() {
             <div className="message-stack" ref={messageStackRef}>
               {detail.messages.map((message, index) => {
                 const isLatest = index === detail.messages.length - 1;
-                if (!isLatest && !olderMessagesExpanded) {
+                const isExpanded = isLatest || message.unread || olderMessagesExpanded;
+                if (!isExpanded) {
                   return (
                     <button
                       type="button"
@@ -1253,14 +1254,15 @@ export function App() {
                       <div className="avatar">{message.sender.charAt(0)}</div>
                       <span className="message-collapsed-sender">{parseAddress(message.sender).name}</span>
                       <span className="message-collapsed-snippet">{messageSnippet(message.bodyText)}</span>
-                      <time>{new Date(message.sentAt).toLocaleString()}</time>
+                      <time>{formatMessageDate(message.sentAt)}</time>
                       <ChevronDown size={14} className="message-collapsed-chevron" />
                     </button>
                   );
                 }
+                const variant = isLatest ? "message-current" : message.unread ? "" : "message-older";
                 return (
                   <article
-                    className="message"
+                    className={`message ${variant}`}
                     key={message.id}
                     ref={isLatest ? (node: HTMLElement | null) => { latestMessageRef.current = node; } : undefined}
                   >
@@ -1269,7 +1271,7 @@ export function App() {
                       <div className="message-header-details">
                         <div className="message-sender-row">
                           <strong><AddressWithCopy address={message.sender} /></strong>
-                          <time>{new Date(message.sentAt).toLocaleString()}</time>
+                          <time>{formatMessageDate(message.sentAt)}</time>
                         </div>
                         <div className="message-recipients">
                           to{" "}
@@ -1473,6 +1475,13 @@ function parseAddress(value: string): { name: string; email: string } {
 function messageSnippet(bodyText: string, maxLength = 140): string {
   const collapsed = decodeHtmlEntities(bodyText).replace(/\s+/g, " ").trim();
   return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength).trimEnd()}…` : collapsed;
+}
+
+const MESSAGE_DATE_MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+function formatMessageDate(sentAt: string): string {
+  const date = new Date(sentAt);
+  return `${MESSAGE_DATE_MONTHS[date.getMonth()]} ${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function AccountSwitcher({

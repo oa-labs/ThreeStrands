@@ -30,6 +30,7 @@ pub struct Message {
     pub sent_at: String,
     pub body_html: String,
     pub body_text: String,
+    pub unread: bool,
     pub unsubscribe: Option<UnsubscribeInfo>,
 }
 

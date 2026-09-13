@@ -210,7 +210,7 @@ impl Database {
         let mut statement = connection
             .prepare(
                 "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
-                        unsubscribe_json
+                        unsubscribe_json, unread
                  FROM messages WHERE thread_id = ?1 ORDER BY sent_at",
             )
             .map_err(display_error)?;
@@ -228,6 +228,7 @@ impl Database {
                         .get::<_, Option<String>>(7)?
                         .and_then(|value| serde_json::from_str::<UnsubscribeMetadata>(&value).ok())
                         .map(|value| value.info()),
+                    unread: row.get::<_, i64>(8)? != 0,
                 })
             })
             .map_err(display_error)?;
@@ -484,17 +485,46 @@ impl Database {
                     )
                     .map_err(display_error)?
             }
+            ThreadMutation::Read { thread_id, value } => {
+                let changed = transaction
+                    .execute(
+                        "UPDATE threads SET unread = ?1 WHERE id = ?2",
+                        params![!value, thread_id],
+                    )
+                    .map_err(display_error)?;
+                // Mirrors Gmail: marking read clears every message in the
+                // thread, but marking unread only brings back the most
+                // recent message as unread, not the whole history.
+                transaction
+                    .execute(
+                        "UPDATE messages SET unread = 0 WHERE thread_id = ?1",
+                        [thread_id],
+                    )
+                    .map_err(display_error)?;
+                if !value {
+                    transaction
+                        .execute(
+                            "UPDATE messages SET unread = 1
+                             WHERE thread_id = ?1 AND sent_at = (
+                                 SELECT MAX(sent_at) FROM messages WHERE thread_id = ?1
+                             )",
+                            [thread_id],
+                        )
+                        .map_err(display_error)?;
+                }
+                changed
+            }
             _ => {
                 let column = match mutation {
                     ThreadMutation::Archive { .. } => "archived",
                     ThreadMutation::Trash { .. } => "trashed",
                     ThreadMutation::Spam { .. } => unreachable!(),
-                    ThreadMutation::Read { .. } => "unread",
+                    ThreadMutation::Read { .. } => unreachable!(),
                     ThreadMutation::Star { .. } => "starred",
                     ThreadMutation::Label { .. } => unreachable!(),
                 };
                 let stored_value = match mutation {
-                    ThreadMutation::Read { .. } => !value,
+                    ThreadMutation::Read { .. } => unreachable!(),
                     ThreadMutation::Spam { .. } => unreachable!(),
                     _ => value,
                 };
@@ -756,12 +786,13 @@ impl Database {
             transaction.execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", params![message.id, message.metadata_json]).map_err(display_error)?;
             body.push_str(&message.body_text);
             body.push(' ');
+            let message_unread = message.labels.iter().any(|label| label == "UNREAD");
             transaction
                 .execute(
                     "INSERT INTO messages(
                         id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
-                        unsubscribe_json
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        unsubscribe_json, unread
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     params![
                         message.id,
                         thread_id,
@@ -775,6 +806,7 @@ impl Database {
                             .as_ref()
                             .map(|value| serde_json::to_string(value).map_err(display_error))
                             .transpose()?,
+                        message_unread,
                     ],
                 )
                 .map_err(display_error)?;
@@ -1132,8 +1164,8 @@ fn insert_demo(
     )?;
     transaction.execute(
         "INSERT INTO messages(
-            id, thread_id, sender, recipients_json, sent_at, body_html, body_text
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            id, thread_id, sender, recipients_json, sent_at, body_html, body_text, unread
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             format!("{id}-message"),
             id,
@@ -1142,6 +1174,7 @@ fn insert_demo(
             sent_at,
             body,
             snippet,
+            unread,
         ],
     )?;
     transaction.execute(

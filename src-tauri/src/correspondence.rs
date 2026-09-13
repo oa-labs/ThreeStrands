@@ -93,6 +93,16 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 6 {
+        // Gmail tracks UNREAD per message, not just per thread; existing rows
+        // default to read since we can't retroactively know their state, and
+        // the next sync backfills the real value from each message's labels.
+        tx.execute_batch(
+            "ALTER TABLE messages ADD COLUMN unread INTEGER NOT NULL DEFAULT 0;
+            PRAGMA user_version=6;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection

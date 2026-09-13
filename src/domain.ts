@@ -23,6 +23,7 @@ export type Message = {
   sentAt: string;
   bodyHtml: string;
   bodyText: string;
+  unread: boolean;
   unsubscribe?: UnsubscribeInfo | null;
 };
 
