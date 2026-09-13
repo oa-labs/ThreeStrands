@@ -48,10 +48,10 @@ specific identity, triaging one client's mail before a call).
    convention browsers use for tabs. These are ordinary entries in the
    existing command registry (`commands.ts`, `PLAN.MD` §9), so they inherit
    remapping, the palette, and shortcut help for free.
-4. **Settings → Accounts.** A new section beside Appearance/Account/AI/Privacy
+4. **Settings → Accounts.** A dedicated section beside Appearance/Reading/AI/Privacy
    in the existing Settings modal (`App.tsx:1285`). Lists every account with
    status (Connected / Needs re-auth / Syncing), last sync time, a color
-   swatch, reorder, Reconnect, and Remove. Remove explains explicitly that it
+   swatch, reorder, Reconnect, and Disconnect. Disconnect explains explicitly that it
    deletes the local cache for that account while leaving Gmail untouched —
    consistent with the local-first framing in `PLAN.MD` §12.
 5. **Composer identity.** A From selector appears only when more than one

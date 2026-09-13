@@ -222,6 +222,7 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
   await expect(page.getByText("Connect your Gmail account to start syncing mail.")).toBeVisible();
   await page.getByRole("button", { name: "Add account" }).click();
   await expect(settings).toBeVisible();
+  await settings.getByRole("button", { name: "Add account" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(1);
 });
 
