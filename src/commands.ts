@@ -33,6 +33,7 @@ export type CommandContext = {
   toggleReadSelected(): Promise<CommandResult>;
   toggleStarSelected(): Promise<CommandResult>;
   toggleCheckedSelected(): void;
+  toggleOlderMessagesExpanded(): void;
   focusSearch(): void;
   refresh(): void;
   openDiagnostics(): void;
@@ -186,6 +187,14 @@ export const commands: Command[] = [
     enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.toggleStarSelected(),
     undo: undoResult,
+  },
+  {
+    id: "thread.toggleOlderMessages",
+    title: "Expand message",
+    keys: ["o"],
+    group: "Triage",
+    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
+    run: (context) => complete(context.toggleOlderMessagesExpanded),
   },
   {
     id: "labels.open",

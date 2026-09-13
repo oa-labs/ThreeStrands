@@ -440,6 +440,41 @@ kbd {
 }
 .address-copy:hover { background: var(--hover); color: var(--text); }
 .message + .message { margin-top: 32px; padding-top: 28px; border-top: 1px solid var(--border); }
+.message-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 4px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.message-collapsed:hover { background: var(--hover); }
+.message-collapsed .avatar { width: 28px; height: 28px; font-size: calc(12px * var(--font-scale)); flex: 0 0 auto; }
+.message-collapsed-sender {
+  flex: 0 0 auto;
+  max-width: 200px;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.message-collapsed-snippet {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.message-collapsed time { flex: 0 0 auto; color: var(--muted); font-size: calc(11px * var(--font-scale)); white-space: nowrap; }
+.message-collapsed-chevron { flex: 0 0 auto; color: var(--muted); transform: rotate(-90deg); }
+.message-collapsed + .message-collapsed { margin-top: 0; padding-top: 10px; border-top: 1px solid var(--border); }
 .message-images-notice {
   display: flex;
   align-items: center;

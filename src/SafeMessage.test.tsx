@@ -72,6 +72,11 @@ it("renders plain text literally when HTML is absent or stripped", () => {
   expect(body).toHaveClass("message-body-plain");
 });
 
+it("decodes entities in the plain text fallback", () => {
+  render(<SafeMessage html="" text="Tom &#39;s message &amp; details" />);
+  expect(screen.getByTestId("message-body")).toHaveTextContent("Tom 's message & details");
+});
+
 it("blocks images by default and reveals them once the reader asks to load them", () => {
   render(<SafeMessage html="<img src='https://tracker.invalid/pixel.gif'>" />);
   const body = screen.getByTestId("message-body");

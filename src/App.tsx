@@ -74,7 +74,7 @@ import type {
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
-import { SafeMessage } from "./SafeMessage";
+import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import {
   applyFontScale,
   changeFontScale,
@@ -388,6 +388,8 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
+  const [olderMessagesExpanded, setOlderMessagesExpanded] = useState(false);
+  const latestMessageRef = useRef<HTMLElement | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const correspondence = useCorrespondence(accounts, detail?.messages.at(-1)?.id, detail?.thread.accountId);
   const [query, setQuery] = useState("");
@@ -506,6 +508,15 @@ export function App() {
     }
     mailClient.getThread(selectedId).then(setDetail);
   }, [selectedId, threads]);
+
+  useEffect(() => {
+    setOlderMessagesExpanded(false);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!detail) return;
+    latestMessageRef.current?.scrollIntoView?.({ block: "start" });
+  }, [detail]);
 
   const refreshMail = useCallback(() => {
     setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
@@ -789,6 +800,7 @@ export function App() {
         return next;
       });
     },
+    toggleOlderMessagesExpanded: () => setOlderMessagesExpanded((current) => !current),
     focusSearch: () => searchRef.current?.focus(),
     refresh: refreshMail,
     openDiagnostics: () => setDiagnosticsOpen(true),
@@ -1073,7 +1085,7 @@ export function App() {
                 </button>
               </div>
             ) : (
-              <p className="empty">Inbox zero.</p>
+              <p className="empty">{mailbox === "trash" ? "No trashed messages." : "Inbox zero."}</p>
             )
           ) : null}
           {threads.map((thread) => (
@@ -1215,29 +1227,52 @@ export function App() {
               <ActionButton label="Forward" shortcut="f" onClick={() => executeById("draft.forward")}><Forward size={16} /></ActionButton>
             </div>
             <div className="message-stack">
-              {detail.messages.map((message) => (
-                <article className="message" key={message.id}>
-                  <header>
-                    <div className="avatar">{message.sender.charAt(0)}</div>
-                    <div className="message-header-details">
-                      <div className="message-sender-row">
-                        <strong><AddressWithCopy address={message.sender} /></strong>
-                        <time>{new Date(message.sentAt).toLocaleString()}</time>
+              {detail.messages.map((message, index) => {
+                const isLatest = index === detail.messages.length - 1;
+                if (!isLatest && !olderMessagesExpanded) {
+                  return (
+                    <button
+                      type="button"
+                      className="message message-collapsed"
+                      key={message.id}
+                      onClick={() => setOlderMessagesExpanded(true)}
+                    >
+                      <div className="avatar">{message.sender.charAt(0)}</div>
+                      <span className="message-collapsed-sender">{parseAddress(message.sender).name}</span>
+                      <span className="message-collapsed-snippet">{messageSnippet(message.bodyText)}</span>
+                      <time>{new Date(message.sentAt).toLocaleString()}</time>
+                      <ChevronDown size={14} className="message-collapsed-chevron" />
+                    </button>
+                  );
+                }
+                return (
+                  <article
+                    className="message"
+                    key={message.id}
+                    ref={isLatest ? (node: HTMLElement | null) => { latestMessageRef.current = node; } : undefined}
+                  >
+                    <header>
+                      <div className="avatar">{message.sender.charAt(0)}</div>
+                      <div className="message-header-details">
+                        <div className="message-sender-row">
+                          <strong><AddressWithCopy address={message.sender} /></strong>
+                          <time>{new Date(message.sentAt).toLocaleString()}</time>
+                        </div>
+                        <div className="message-recipients">
+                          to{" "}
+                          {message.recipients.map((recipient, recipientIndex) => (
+                            <span key={recipient}>
+                              {recipientIndex > 0 ? ", " : ""}
+                              <AddressWithCopy address={recipient} />
+                            </span>
+                          ))}
+                        </div>
                       </div>
-                      <div className="message-recipients">
-                        to{" "}
-                        {message.recipients.map((recipient, index) => (
-                          <span key={recipient}>
-                            {index > 0 ? ", " : ""}
-                            <AddressWithCopy address={recipient} />
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </header>
-                  <SafeMessage html={message.bodyHtml} text={message.bodyText} />
-                </article>
-              ))}
+                    </header>
+                    <SafeMessage html={message.bodyHtml} text={message.bodyText} />
+                  </article>
+                );
+              })}
             </div>
           </>
         ) : (
@@ -1420,6 +1455,11 @@ function parseAddress(value: string): { name: string; email: string } {
   }
 
   return { name: trimmed, email: trimmed };
+}
+
+function messageSnippet(bodyText: string, maxLength = 140): string {
+  const collapsed = decodeHtmlEntities(bodyText).replace(/\s+/g, " ").trim();
+  return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength).trimEnd()}…` : collapsed;
 }
 
 function AccountSwitcher({

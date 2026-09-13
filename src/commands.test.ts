@@ -42,6 +42,7 @@ function noopContext(): CommandContext {
     toggleReadSelected: async () => ({}),
     toggleStarSelected: async () => ({}),
     toggleCheckedSelected: () => {},
+    toggleOlderMessagesExpanded: () => {},
     focusSearch: () => {},
     refresh: () => {},
     openDiagnostics: () => {},

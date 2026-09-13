@@ -37,6 +37,12 @@ const safeStyles: Record<string, RegExp> = {
 const safeImageSrc = /^(https?:|data:image\/)/i;
 const blockedSrcAttr = "data-blocked-src";
 
+export function decodeHtmlEntities(text: string): string {
+  const container = document.createElement("textarea");
+  container.innerHTML = text;
+  return container.value;
+}
+
 function isBlank(element: Element): boolean {
   return (element.textContent ?? "").replace(/\s+/g, "") === "";
 }
@@ -122,7 +128,7 @@ export function SafeMessage({ html, text = "" }: SafeMessageProps) {
   const hasBlockedImages = !imagesAllowed && sanitized.includes(blockedSrcAttr);
 
   if (!hasContent) {
-    return <div className="message-body message-body-plain" data-testid="message-body">{text || "No message content."}</div>;
+    return <div className="message-body message-body-plain" data-testid="message-body">{decodeHtmlEntities(text) || "No message content."}</div>;
   }
 
   return (
