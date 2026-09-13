@@ -308,11 +308,32 @@ export function SafeMessage({
       event.preventDefault();
       void openUrl(href);
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      // Keyboard events do not cross iframe boundaries. Forward input from
+      // this read-only document so every global application shortcut keeps
+      // working after the reader clicks or tabs into an email body.
+      const forwarded = new KeyboardEvent("keydown", {
+        key: event.key,
+        code: event.code,
+        location: event.location,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey,
+        repeat: event.repeat,
+        isComposing: event.isComposing,
+        bubbles: true,
+        cancelable: true,
+      });
+      if (!window.dispatchEvent(forwarded)) event.preventDefault();
+    };
     frameDoc.addEventListener("click", onClick);
+    frameDoc.addEventListener("keydown", onKeyDown);
 
     cleanupRef.current = () => {
       observer?.disconnect();
       frameDoc.removeEventListener("click", onClick);
+      frameDoc.removeEventListener("keydown", onKeyDown);
     };
   }, []);
 

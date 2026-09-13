@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SafeMessage, sanitizeMessageHtml } from "./SafeMessage";
 
 afterEach(cleanup);
@@ -94,6 +94,31 @@ describe("SafeMessage", () => {
     expect(frame.srcdoc).toContain("<p>Hello <strong>friend</strong></p>");
     expect(frame.srcdoc).toContain("Content-Security-Policy");
     expect(frame.srcdoc).toContain("script-src 'none'");
+  });
+
+  it("forwards keyboard events from the message iframe to the application window", () => {
+    render(<SafeMessage html="<p>Hello friend</p>" />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    fireEvent.load(frame);
+    const shortcut = vi.fn((event: KeyboardEvent) => event.preventDefault());
+    window.addEventListener("keydown", shortcut);
+
+    const accepted = fireEvent.keyDown(frame.contentDocument!.body, {
+      key: "K",
+      code: "KeyK",
+      metaKey: true,
+      shiftKey: true,
+    });
+
+    expect(shortcut).toHaveBeenCalledTimes(1);
+    expect(shortcut.mock.calls[0][0]).toMatchObject({
+      key: "K",
+      code: "KeyK",
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(accepted).toBe(false);
+    window.removeEventListener("keydown", shortcut);
   });
 });
 

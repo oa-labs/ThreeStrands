@@ -25,6 +25,7 @@ test("saves an offline draft, restores after reload, sends once, and undoes", as
 test("reply shortcuts keep inbox actions out of the composer and forwarding starts unaddressed", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await page.getByTitle("Message content").contentFrame().locator("body").click();
   await page.keyboard.press("r");
   const reply = page.getByRole("dialog", { name: "Reply message" });
   await expect(reply).toBeVisible();
@@ -36,6 +37,7 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await expect(reply).not.toBeVisible();
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
+  await page.getByTitle("Message content").contentFrame().locator("body").click();
   await page.keyboard.press("a");
   const replyAll = page.getByRole("dialog", { name: "Reply message" });
   await expect(replyAll.getByRole("heading", { name: "Reply all" })).toBeVisible();
