@@ -649,7 +649,7 @@ kbd {
 .unsubscribe-actions button:disabled { opacity: .5; cursor: default; }
 .unsubscribe-actions .primary-action { border-color: var(--primary-border); background: var(--primary); }
 
-.settings-modal { width: min(640px, calc(100vw - 40px)); max-height: 78vh; }
+.settings-modal { width: min(840px, calc(100vw - 40px)); max-height: 78vh; }
 .settings-body { display: grid; grid-template-columns: 150px minmax(0, 1fr); min-height: 0; }
 .settings-nav { display: flex; flex-direction: column; gap: 2px; padding: 4px 10px 16px; border-right: 1px solid var(--border); }
 .settings-nav button { padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--secondary); text-align: left; cursor: pointer; font-size: calc(13px * var(--font-scale)); }
