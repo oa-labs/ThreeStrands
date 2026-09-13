@@ -168,6 +168,32 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await expect(page.getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
 });
 
+test("reorders navbar accounts by dragging their icons", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Add account" }).click();
+  await page.keyboard.press("Escape");
+
+  const rail = page.getByRole("radiogroup", { name: "Filter by account" });
+  const personal = rail.getByRole("radio", { name: "demo@example.com" });
+  const work = rail.getByRole("radio", { name: "demo-2@example.com" });
+  await expect(rail.getByRole("radio")).toHaveCount(3);
+
+  await work.dragTo(personal);
+  await expect.poll(async () => rail.getByRole("radio").evaluateAll((icons) =>
+    icons.map((icon) => icon.getAttribute("aria-label")),
+  )).toEqual(["All accounts", "demo-2@example.com", "demo@example.com"]);
+
+  // Reordering also updates the sort-order-based account shortcuts.
+  await page.keyboard.press("ControlOrMeta+1");
+  await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+2");
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+});
+
 test("the account color picker keeps the last color picked, even while dragging rapidly", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();

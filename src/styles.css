@@ -116,9 +116,11 @@ button { color: inherit; }
   color: white;
   font-size: calc(12px * var(--font-scale));
   font-weight: 700;
-  cursor: pointer;
+  cursor: grab;
   transition: box-shadow 120ms ease, transform 120ms ease;
 }
+.account-icon:active { cursor: grabbing; }
+.account-icon.all-accounts { cursor: pointer; }
 .account-icon:hover { transform: scale(1.07); }
 .account-icon.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--accent); }
 .account-icon.all-accounts { background: conic-gradient(#4285F4, #34A853, #EA4335, #FBBC05, #4285F4); }

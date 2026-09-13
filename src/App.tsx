@@ -1300,6 +1300,23 @@ export function App() {
     });
   }, [checkedIds, executeCommand, mutateIds]);
 
+  const reorderNavbarAccounts = useCallback((emails: string[]) => {
+    const accountsByEmail = new Map(accounts.map((account) => [account.email, account]));
+    const reordered = emails
+      .map((email) => accountsByEmail.get(email))
+      .filter((account): account is Account => account !== undefined);
+    if (reordered.length !== accounts.length) return;
+
+    // Move the icons immediately; listAccounts then confirms the persisted order.
+    setAccounts(reordered);
+    void mailClient.reorderAccounts(emails)
+      .then(refreshAccounts)
+      .catch(() => {
+        setAccounts(accounts);
+        setNotice({ message: "Account order could not be saved" });
+      });
+  }, [accounts, refreshAccounts, setNotice]);
+
   useEffect(() => {
     if (!selectAllRef.current) return;
     selectAllRef.current.indeterminate = checkedIds.size > 0 && checkedIds.size < threads.length;
@@ -1313,9 +1330,7 @@ export function App() {
           activeAccountId={activeAccountId}
           onSwitch={context.switchAccount}
           onShowAll={context.showAllAccounts}
-          onReorder={(emails) => {
-            void mailClient.reorderAccounts(emails).then(refreshAccounts);
-          }}
+          onReorder={reorderNavbarAccounts}
         />
         <div className="sidebar-nav">
           <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
@@ -1973,12 +1988,20 @@ function AccountSwitcher({
 }) {
   const [draggedEmail, setDraggedEmail] = useState<string | null>(null);
   const [dragOverEmail, setDragOverEmail] = useState<string | null>(null);
+  const draggedEmailRef = useRef<string | null>(null);
 
   if (accounts.length <= 1) return null;
 
-  const handleDrop = (targetEmail: string) => {
-    if (draggedEmail && draggedEmail !== targetEmail) {
-      const from = accounts.findIndex((account) => account.email === draggedEmail);
+  const clearDragState = () => {
+    draggedEmailRef.current = null;
+    setDraggedEmail(null);
+    setDragOverEmail(null);
+  };
+
+  const handleDrop = (targetEmail: string, transferredEmail: string) => {
+    const sourceEmail = draggedEmailRef.current ?? transferredEmail;
+    if (sourceEmail && sourceEmail !== targetEmail) {
+      const from = accounts.findIndex((account) => account.email === sourceEmail);
       const to = accounts.findIndex((account) => account.email === targetEmail);
       if (from !== -1 && to !== -1) {
         const next = [...accounts];
@@ -1987,8 +2010,7 @@ function AccountSwitcher({
         onReorder(next.map((account) => account.email));
       }
     }
-    setDraggedEmail(null);
-    setDragOverEmail(null);
+    clearDragState();
   };
 
   return (
@@ -2012,11 +2034,13 @@ function AccountSwitcher({
               role="radio"
               aria-checked={activeAccountId === account.email}
               aria-label={name}
+              title="Drag to reorder accounts"
               draggable
               className={`account-icon ${activeAccountId === account.email ? "active" : ""} ${draggedEmail === account.email ? "dragging" : ""} ${dragOverEmail === account.email && draggedEmail !== account.email ? "drag-over" : ""}`}
               style={{ background: account.color }}
               onClick={() => onSwitch(account.email)}
               onDragStart={(event) => {
+                draggedEmailRef.current = account.email;
                 setDraggedEmail(account.email);
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("text/plain", account.email);
@@ -2032,12 +2056,9 @@ function AccountSwitcher({
               onDragLeave={() => setDragOverEmail((current) => (current === account.email ? null : current))}
               onDrop={(event) => {
                 event.preventDefault();
-                handleDrop(account.email);
+                handleDrop(account.email, event.dataTransfer.getData("text/plain"));
               }}
-              onDragEnd={() => {
-                setDraggedEmail(null);
-                setDragOverEmail(null);
-              }}
+              onDragEnd={clearDragState}
             >
               {name.charAt(0).toUpperCase()}
             </button>
