@@ -1,12 +1,114 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import DOMPurify from "dompurify";
 import { Image } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FONT_FAMILY_STACKS, type FontFamily } from "./settings";
 
 type SafeMessageProps = {
   html: string;
   text?: string;
   loadImages?: boolean;
+  theme?: "light" | "dark";
+  fontScale?: number;
+  fontFamily?: FontFamily;
+  tone?: "default" | "current" | "muted";
 };
+
+// Styling for the isolated message document (see buildMessageDocument). This
+// mirrors the palette and .message-body content rules in styles.css — kept
+// here instead of styles.css because the iframe doesn't load the app's
+// stylesheet, so this is the single source of truth for message content look.
+const MESSAGE_DOCUMENT_STYLES = `
+:root {
+  color-scheme: dark;
+  --text: #e8e8eb;
+  --hover: #24242a;
+  --code: #1b1b20;
+  --border: #303037;
+  --muted: #92929c;
+  --secondary: #aaaab2;
+  --body-text: #d2d2d7;
+  --link: #aaa6ff;
+  --quote-border: #66617f;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --text: #24242c;
+  --hover: #e9e9f1;
+  --code: #f1f1f6;
+  --border: #d8d8e2;
+  --muted: #626273;
+  --secondary: #5e5e70;
+  --body-text: #353541;
+  --link: #5942b5;
+  --quote-border: #aaa1c7;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--body-text);
+  font-size: calc(15px * var(--font-scale, 1));
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+}
+body[data-tone="current"] { color: var(--text); }
+body[data-tone="muted"] { color: var(--muted); }
+[hidden] { display: none; }
+img { max-width: 100%; height: auto; }
+img:not([src]) { display: inline-block; min-width: 24px; min-height: 24px; border: 1px dashed var(--border); background: var(--hover); vertical-align: middle; }
+body > :first-child { margin-top: 0; }
+body > :last-child { margin-bottom: 0; }
+p { margin: 0 0 1em; }
+h1, h2, h3, h4, h5, h6 { margin: 1.3em 0 .5em; line-height: 1.3; color: var(--text); }
+h1 { font-size: 1.6em; }
+h2 { font-size: 1.35em; }
+h3 { font-size: 1.15em; }
+ul, ol { padding-inline-start: 1.6em; }
+li + li { margin-top: .25em; }
+table { max-width: 100%; border-collapse: collapse; font-size: inherit; }
+td, th { padding: 6px 10px; vertical-align: top; }
+th { text-align: start; }
+caption { text-align: start; font-weight: 600; margin-bottom: .5em; }
+pre { max-width: 100%; overflow-x: auto; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--code); line-height: 1.5; }
+code { font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; }
+:not(pre) > code { padding: 2px 4px; border-radius: 4px; background: var(--code); }
+hr { margin: 1.5em 0; border: 0; border-top: 1px solid var(--border); }
+a { color: var(--link); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
+blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--quote-border); color: var(--secondary); }
+`;
+
+const MESSAGE_DOCUMENT_CSP = [
+  "default-src 'none'",
+  "script-src 'none'",
+  "style-src 'unsafe-inline'",
+  "img-src https: data:",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+
+function buildMessageDocument(bodyHtml: string, options: {
+  theme: "light" | "dark";
+  fontScale: number;
+  fontFamily: FontFamily;
+  tone: "default" | "current" | "muted";
+}): string {
+  const { theme, fontScale, fontFamily, tone } = options;
+  return `<!doctype html>
+<html data-theme="${theme}">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${MESSAGE_DOCUMENT_CSP}">
+<style>${MESSAGE_DOCUMENT_STYLES}</style>
+</head>
+<body data-tone="${tone}" style="font-family: ${FONT_FAMILY_STACKS[fontFamily]}; --font-scale: ${fontScale};">
+${bodyHtml}
+</body>
+</html>`;
+}
 
 const allowedTags = [
   "a", "b", "blockquote", "br", "caption", "code", "col", "colgroup",
@@ -151,7 +253,15 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
   return container.innerHTML;
 }
 
-export function SafeMessage({ html, text = "", loadImages = false }: SafeMessageProps) {
+export function SafeMessage({
+  html,
+  text = "",
+  loadImages = false,
+  theme = "dark",
+  fontScale = 1,
+  fontFamily = "system",
+  tone = "default",
+}: SafeMessageProps) {
   const [imagesAllowedForMessage, setImagesAllowedForMessage] = useState(false);
   const imagesAllowed = loadImages || imagesAllowedForMessage;
   const sanitized = useMemo(() => sanitizeMessageHtml(html, { allowImages: imagesAllowed }), [html, imagesAllowed]);
@@ -161,6 +271,52 @@ export function SafeMessage({ html, text = "", loadImages = false }: SafeMessage
     return Boolean(container.textContent?.trim()) || container.querySelector("img") !== null;
   }, [sanitized]);
   const hasBlockedImages = !imagesAllowed && sanitized.includes(blockedSrcAttr);
+
+  const doc = useMemo(
+    () => buildMessageDocument(sanitized, { theme, fontScale, fontFamily, tone }),
+    [sanitized, theme, fontScale, fontFamily, tone],
+  );
+
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const [frameHeight, setFrameHeight] = useState(0);
+
+  const handleLoad = useCallback(() => {
+    cleanupRef.current?.();
+    cleanupRef.current = null;
+
+    const frame = frameRef.current;
+    const frameDoc = frame?.contentDocument;
+    if (!frameDoc) return;
+
+    const resize = () => {
+      const height = frameDoc.documentElement?.scrollHeight ?? frameDoc.body?.scrollHeight ?? 0;
+      setFrameHeight(height);
+    };
+    resize();
+
+    let observer: ResizeObserver | undefined;
+    if (frameDoc.body && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(resize);
+      observer.observe(frameDoc.body);
+    }
+
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const href = target?.closest("a")?.getAttribute("href");
+      if (!href) return;
+      event.preventDefault();
+      void openUrl(href);
+    };
+    frameDoc.addEventListener("click", onClick);
+
+    cleanupRef.current = () => {
+      observer?.disconnect();
+      frameDoc.removeEventListener("click", onClick);
+    };
+  }, []);
+
+  useEffect(() => () => cleanupRef.current?.(), []);
 
   if (!hasContent) {
     return <div className="message-body message-body-plain" data-testid="message-body">{decodeHtmlEntities(text) || "No message content."}</div>;
@@ -176,7 +332,17 @@ export function SafeMessage({ html, text = "", loadImages = false }: SafeMessage
           </button>
         </div>
       ) : null}
-      <div className="message-body" data-testid="message-body" dangerouslySetInnerHTML={{ __html: sanitized }} />
+      <iframe
+        ref={frameRef}
+        data-testid="message-body"
+        className="message-body"
+        title="Message content"
+        sandbox="allow-same-origin"
+        referrerPolicy="no-referrer"
+        srcDoc={doc}
+        onLoad={handleLoad}
+        style={{ height: frameHeight }}
+      />
     </>
   );
 }

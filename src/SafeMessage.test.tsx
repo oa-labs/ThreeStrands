@@ -86,10 +86,14 @@ describe("SafeMessage", () => {
     expect(container.querySelector("img")?.hasAttribute("height")).toBe(false);
   });
 
-  it("renders safe message formatting", () => {
+  it("renders safe message formatting inside a sandboxed, CSP-scoped iframe", () => {
     render(<SafeMessage html="<p>Hello <strong>friend</strong></p>" />);
-    expect(screen.getByTestId("message-body")).toHaveTextContent("Hello friend");
-    expect(screen.getByText("friend").tagName).toBe("STRONG");
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    expect(frame.tagName).toBe("IFRAME");
+    expect(frame.getAttribute("sandbox")).toBe("allow-same-origin");
+    expect(frame.srcdoc).toContain("<p>Hello <strong>friend</strong></p>");
+    expect(frame.srcdoc).toContain("Content-Security-Policy");
+    expect(frame.srcdoc).toContain("script-src 'none'");
   });
 });
 
@@ -116,21 +120,22 @@ it("decodes entities in the plain text fallback", () => {
 
 it("blocks images by default and reveals them once the reader asks to load them", () => {
   render(<SafeMessage html="<img src='https://tracker.invalid/pixel.gif'>" />);
-  const body = screen.getByTestId("message-body");
-  expect(body.querySelector("img")?.hasAttribute("src")).toBe(false);
+  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+  expect(frame.srcdoc).toContain('data-blocked-src="https://tracker.invalid/pixel.gif"');
   expect(screen.getByText("Load images")).toBeInTheDocument();
 
   fireEvent.click(screen.getByText("Load images"));
 
-  expect(screen.getByTestId("message-body").querySelector("img")?.getAttribute("src")).toBe("https://tracker.invalid/pixel.gif");
+  expect((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc)
+    .toContain('src="https://tracker.invalid/pixel.gif"');
   expect(screen.queryByText("Load images")).not.toBeInTheDocument();
 });
 
 it("loads images automatically when configured", () => {
   render(<SafeMessage html="<img src='https://example.com/logo.png'>" loadImages />);
 
-  expect(screen.getByTestId("message-body").querySelector("img")?.getAttribute("src"))
-    .toBe("https://example.com/logo.png");
+  expect((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc)
+    .toContain('src="https://example.com/logo.png"');
   expect(screen.queryByText("Load images")).not.toBeInTheDocument();
 });
 

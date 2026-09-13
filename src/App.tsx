@@ -1762,7 +1762,15 @@ export function App() {
                         </div>
                       </div>
                     </header>
-                    <SafeMessage html={message.bodyHtml} text={message.bodyText} loadImages={loadRemoteImages} />
+                    <SafeMessage
+                      html={message.bodyHtml}
+                      text={message.bodyText}
+                      loadImages={loadRemoteImages}
+                      theme={effectiveThemeValue}
+                      fontScale={fontScale}
+                      fontFamily={fontFamily}
+                      tone={isLatest ? "current" : message.unread ? "default" : "muted"}
+                    />
                   </article>
                 );
               })}

@@ -19,6 +19,36 @@ test("processes the inbox from the keyboard", async ({ page }) => {
   await expect(page.getByRole("status")).toBeHidden({ timeout: 10_000 });
 });
 
+test("keeps an email address popover open while moving to its copy button", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async () => undefined },
+    });
+  });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+
+  const address = page.locator(".message-sender-row .address").first();
+  const popover = address.locator(".address-popover");
+  const copy = address.getByRole("button", { name: "Copy hello@dispatch.local" });
+
+  await address.hover();
+  await expect(popover).toBeVisible();
+
+  const addressBox = await address.boundingBox();
+  const popoverBox = await popover.boundingBox();
+  expect(addressBox).not.toBeNull();
+  expect(popoverBox).not.toBeNull();
+  if (!addressBox || !popoverBox) return;
+
+  await page.mouse.move(popoverBox.x + 4, (addressBox.y + addressBox.height + popoverBox.y) / 2);
+  await expect(popover).toBeVisible();
+  await copy.hover();
+  await copy.click();
+  await expect(address.getByRole("button", { name: "Copied" })).toBeVisible();
+});
+
 test("confirms unsubscribe with Cmd/Ctrl+U when the message advertises one-click support", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();

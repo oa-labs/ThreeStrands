@@ -4,7 +4,7 @@ const FONT_FAMILY_KEY = "dispatch.settings.fontFamily";
 
 export const DEFAULT_FONT_FAMILY: FontFamily = "system";
 
-const FONT_FAMILY_STACKS: Record<FontFamily, string> = {
+export const FONT_FAMILY_STACKS: Record<FontFamily, string> = {
   system: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   serif: 'Iowan Old Style, Palatino Linotype, "Georgia", serif',
   mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',

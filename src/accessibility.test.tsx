@@ -8,6 +8,10 @@ describe("read and triage accessibility", () => {
     const { container } = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
     const result = await axe.run(container, {
+      // Message bodies render in a sandboxed iframe (see SafeMessage.tsx) whose
+      // content is untrusted, sanitized email HTML axe doesn't need to police;
+      // jsdom also doesn't support the cross-frame messaging axe needs to reach in.
+      iframes: false,
       runOnly: {
         type: "tag",
         values: ["wcag2a", "wcag2aa", "wcag21aa"],
