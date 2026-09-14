@@ -525,6 +525,10 @@ export function App() {
     if (!settingsOpen) refreshAiAvailability();
   }, [settingsOpen, refreshAiAvailability]);
   const [labels, setLabels] = useState<Label[]>([]);
+  // Gmail user-label ids (for example `Label_18`) are only meaningful within
+  // an account. Keep the catalogs separate so the same id in two accounts
+  // cannot be displayed with the wrong account's label name.
+  const [labelsByAccount, setLabelsByAccount] = useState<Record<string, Label[]>>({});
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
@@ -673,6 +677,24 @@ export function App() {
     void mailClient.listLabels().then(setLabels).catch(() => setLabels([]));
     void refreshAccounts();
   }, [refreshAccounts]);
+
+  useEffect(() => {
+    const accountId = detail?.thread.accountId;
+    if (!accountId || labelsByAccount[accountId]) return;
+    let current = true;
+    void mailClient
+      .listLabels(accountId)
+      .then((accountLabels) => {
+        if (!current) return;
+        setLabelsByAccount((catalogs) => ({ ...catalogs, [accountId]: accountLabels }));
+      })
+      .catch(() => {
+        // Leave the catalog unset so selecting this account again can retry.
+      });
+    return () => {
+      current = false;
+    };
+  }, [detail?.thread.accountId, labelsByAccount]);
 
   useEffect(() => {
     const requestId = ++detailRequest.current;
@@ -1600,9 +1622,14 @@ export function App() {
                 <span className="eyebrow">
                   {sortLabelIdsForDisplay(visibleDetail.thread.labels)
                     .map((id) => {
-                      const label = labels.find((candidate) => candidate.id === id);
+                      const accountLabels = labelsByAccount[visibleDetail.thread.accountId];
+                      const label = accountLabels?.find((candidate) => candidate.id === id);
+                      // Opaque Gmail user-label ids are not useful UI. Wait for
+                      // the account catalog instead of briefly flashing Label_18.
+                      if (!label && /^label_\d+$/i.test(id)) return null;
                       return label ? formatLabelName(label) : id;
                     })
+                    .filter((label): label is string => label !== null)
                     .join(" · ")}
                 </span>
                 <h2>{visibleDetail.thread.subject}</h2>

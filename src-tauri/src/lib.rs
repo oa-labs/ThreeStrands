@@ -15,6 +15,7 @@ use std::sync::Arc;
 use auth::{GoogleAuth, GoogleAuthConfig};
 use chrono::Utc;
 use db::Database;
+use gmail::{GmailClient, GmailProvider};
 use models::{
     Account, AuthStatus, CreateLabelRequest, Label, SearchThreadsRequest, SummaryResult,
     SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats,
@@ -488,13 +489,35 @@ fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> Result<(
 }
 
 #[tauri::command]
-async fn list_labels(state: State<'_, AppState>) -> Result<Vec<Label>, String> {
-    state
-        .sync
-        .as_ref()
-        .ok_or_else(not_configured)?
-        .labels()
+async fn list_labels(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Label>, String> {
+    let auth = match account_id.as_deref() {
+        None => state.auth.clone().ok_or_else(not_configured)?,
+        Some(account_id)
+            if state
+                .auth
+                .as_ref()
+                .is_some_and(|auth| auth.key() == account_id) =>
+        {
+            state.auth.clone().expect("primary account matched")
+        }
+        Some(account_id) => state
+            .additional_accounts
+            .lock()
+            .await
+            .get(account_id)
+            .map(|account| account.auth.clone())
+            .ok_or_else(|| {
+                format!("{account_id} is not connected. Reconnect it before continuing.")
+            })?,
+    };
+
+    GmailClient::new(auth)
+        .list_labels()
         .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

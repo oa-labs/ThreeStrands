@@ -54,7 +54,8 @@ export interface MailClient extends CorrespondenceClient {
   setAccountDisplayName(email: string, displayName: string | null): Promise<void>;
   setAccountColor(email: string, color: string): Promise<void>;
   reorderAccounts(emails: string[]): Promise<void>;
-  listLabels(): Promise<Label[]>;
+  /** Lists labels for the primary account, or for the specified account when provided. */
+  listLabels(accountId?: string): Promise<Label[]>;
   createLabel(name: string): Promise<Label>;
   updateLabel(id: string, name: string): Promise<Label>;
   deleteLabel(id: string): Promise<void>;
@@ -94,7 +95,7 @@ const tauriClient: MailClient = {
   setAccountDisplayName: (email, displayName) => invoke("set_account_display_name", { email, displayName }),
   setAccountColor: (email, color) => invoke("set_account_color", { email, color }),
   reorderAccounts: (emails) => invoke("reorder_accounts", { emails }),
-  listLabels: () => invoke("list_labels"),
+  listLabels: (accountId) => invoke("list_labels", { accountId }),
   createLabel: (name) => invoke("create_label", { request: { name } }),
   updateLabel: (id, name) => invoke("update_label", { request: { id, name } }),
   deleteLabel: (id) => invoke("delete_label", { id }),

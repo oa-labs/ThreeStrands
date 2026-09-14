@@ -102,13 +102,6 @@ impl SyncService {
         self.database.sync_status(&account_id)
     }
 
-    pub async fn labels(&self) -> Result<Vec<Label>, String> {
-        GmailClient::new(self.auth.clone())
-            .list_labels()
-            .await
-            .map_err(|error| error.to_string())
-    }
-
     pub async fn create_label(&self, name: &str) -> Result<Label, String> {
         validate_label_name(name)?;
         GmailClient::new(self.auth.clone())

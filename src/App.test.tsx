@@ -61,6 +61,37 @@ describe("archive notice", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
+  it("resolves opaque Gmail label ids with the conversation account's label catalog", async () => {
+    const originalLabels = await mailClient.listLabels();
+    const listLabels = vi.spyOn(mailClient, "listLabels").mockResolvedValue([
+      ...originalLabels,
+      { id: "Label_18", name: "Projects", kind: "user" },
+    ]);
+    await mailClient.mutateThread({
+      kind: "label",
+      threadId: "welcome",
+      labelId: "Label_18",
+      value: true,
+    });
+
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+      expect(screen.queryByText(/Label_18/i)).not.toBeInTheDocument();
+      expect(await screen.findByText("Inbox · Projects")).toBeInTheDocument();
+      expect(listLabels).toHaveBeenCalledWith("demo@example.com");
+    } finally {
+      await mailClient.mutateThread({
+        kind: "label",
+        threadId: "welcome",
+        labelId: "Label_18",
+        value: false,
+      });
+      listLabels.mockRestore();
+    }
+  });
+
   it("marks an archived conversation not done with Shift+e", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
