@@ -10,7 +10,7 @@ import {
   safeStyles,
 } from "./emailSafeStyles";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
-import { FONT_FAMILY_STACKS, type FontFamily } from "./settings";
+import { fontFamilyStack, type FontFamily } from "./settings";
 
 type SafeMessageProps = {
   html: string;
@@ -131,6 +131,11 @@ function buildMessageDocument(bodyHtml: string, options: {
   emailStyleSheet: string;
 }): string {
   const { theme, fontScale, fontFamily, tone, emailStyleSheet } = options;
+  const fontStyle = fontFamilyStack(fontFamily)
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
   return `<!doctype html>
 <html data-theme="${theme}">
 <head>
@@ -138,7 +143,7 @@ function buildMessageDocument(bodyHtml: string, options: {
 <meta http-equiv="Content-Security-Policy" content="${MESSAGE_DOCUMENT_CSP}">
 <style>${MESSAGE_DOCUMENT_STYLES}</style>
 ${emailStyleSheet ? `<style>${emailStyleSheet}</style>\n` : ""}</head>
-<body data-tone="${tone}" style="font-family: ${FONT_FAMILY_STACKS[fontFamily]}; --font-scale: ${fontScale};">
+<body data-tone="${tone}" style="font-family: ${fontStyle}; --font-scale: ${fontScale};">
 ${bodyHtml}
 </body>
 </html>`;

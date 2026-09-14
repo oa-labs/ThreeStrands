@@ -83,6 +83,7 @@ import type {
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
+import { parseAddress } from "./emailAddress";
 import {
   applyFontScale,
   changeFontScale,
@@ -96,8 +97,8 @@ import {
 import { applyTheme, effectiveTheme, readTheme, saveTheme, type Theme } from "./theme";
 import {
   applyFontFamily,
-  FONT_FAMILY_OPTIONS,
-  FONT_FAMILY_STACKS,
+  DEFAULT_FONT_FAMILY,
+  fontFamilyStack,
   MAX_AUTO_READ_DELAY_SECONDS,
   MIN_AUTO_READ_DELAY_SECONDS,
   readAutoReadDelaySeconds,
@@ -108,6 +109,7 @@ import {
   saveLoadRemoteImages,
   type FontFamily,
 } from "./settings";
+import { listSystemFontFamilies } from "./systemFonts";
 import {
   AI_MODEL_PLACEHOLDERS,
   AI_PROVIDER_OPTIONS,
@@ -253,7 +255,7 @@ const ThreadRow = memo(function ThreadRow({
         <span className="thread-meta">
           <span className="thread-sender">
             {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
-            <strong>{thread.participants.join(", ")}</strong>
+            <strong>{thread.participants.map((participant) => parseAddress(participant).name).join(", ")}</strong>
           </span>
           <time>{timeFormatter.format(new Date(thread.lastMessageAt))}</time>
         </span>
@@ -1998,24 +2000,6 @@ function AddressWithCopy({ address, displayName }: { address: string; displayNam
   );
 }
 
-function parseAddress(value: string): { name: string; email: string } {
-  const trimmed = value.trim();
-  const openBracket = trimmed.lastIndexOf("<");
-  const closeBracket = trimmed.lastIndexOf(">");
-
-  if (openBracket >= 0 && closeBracket > openBracket) {
-    const email = trimmed.slice(openBracket + 1, closeBracket).trim();
-    const name = trimmed
-      .slice(0, openBracket)
-      .trim()
-      .replace(/^("|')|("|')$/g, "")
-      .trim();
-    if (email) return { name: name || email, email };
-  }
-
-  return { name: trimmed, email: trimmed };
-}
-
 function messageSnippet(bodyText: string, maxLength = 140): string {
   const collapsed = decodeHtmlEntities(bodyText).replace(/\s+/g, " ").trim();
   return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength).trimEnd()}…` : collapsed;
@@ -2563,6 +2547,36 @@ function AppearanceSettings({
   fontFamily: FontFamily;
   onFontFamilyChange(value: FontFamily): void;
 }) {
+  const [fontFamilies, setFontFamilies] = useState<string[]>([]);
+  const [fontQuery, setFontQuery] = useState("");
+  const [fontsLoading, setFontsLoading] = useState(true);
+  const [fontLoadFailed, setFontLoadFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setFontsLoading(true);
+    setFontLoadFailed(false);
+    listSystemFontFamilies()
+      .then((families) => {
+        if (!cancelled) setFontFamilies(families);
+      })
+      .catch(() => {
+        if (!cancelled) setFontLoadFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setFontsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const normalizedFontQuery = fontQuery.trim().toLocaleLowerCase();
+  const visibleFontFamilies = fontFamilies.filter((family) =>
+    family.toLocaleLowerCase().includes(normalizedFontQuery)
+  );
+  const showSystemFont = !normalizedFontQuery
+    || "system default".includes(normalizedFontQuery);
+  const selectedFontIsInstalled = fontFamily === DEFAULT_FONT_FAMILY
+    || fontFamilies.includes(fontFamily);
   const themeOptions: { value: Theme; label: string }[] = [
     { value: "system", label: "Match system" },
     { value: "light", label: "Light" },
@@ -2601,24 +2615,68 @@ function AppearanceSettings({
 
       <h3>Default font</h3>
       <p className="settings-hint">Used throughout the app and for unformatted message text.</p>
+      <label className="font-search">
+        <Search size={15} aria-hidden="true" />
+        <input
+          type="search"
+          value={fontQuery}
+          placeholder="Search installed fonts"
+          aria-label="Search installed fonts"
+          onChange={(event) => setFontQuery(event.target.value)}
+        />
+      </label>
       <div className="font-picker" role="radiogroup" aria-label="Default font">
-        {FONT_FAMILY_OPTIONS.map((option) => (
+        {showSystemFont ? (
           <label
-            key={option.value}
-            className={`font-option${fontFamily === option.value ? " selected" : ""}`}
-            style={{ fontFamily: FONT_FAMILY_STACKS[option.value] }}
+            className={`font-option${fontFamily === DEFAULT_FONT_FAMILY ? " selected" : ""}`}
+            style={{ fontFamily: fontFamilyStack(DEFAULT_FONT_FAMILY) }}
           >
             <input
               type="radio"
               name="default-font"
-              value={option.value}
-              checked={fontFamily === option.value}
-              onChange={() => onFontFamilyChange(option.value)}
+              value={DEFAULT_FONT_FAMILY}
+              checked={fontFamily === DEFAULT_FONT_FAMILY}
+              onChange={() => onFontFamilyChange(DEFAULT_FONT_FAMILY)}
             />
-            <span>{option.label}</span>
+            <span>System default</span>
+            <span className="font-option-preview" aria-hidden="true">Aa</span>
+          </label>
+        ) : null}
+        {!fontsLoading && !selectedFontIsInstalled && fontFamily !== DEFAULT_FONT_FAMILY ? (
+          <label
+            className="font-option selected"
+            style={{ fontFamily: fontFamilyStack(fontFamily) }}
+          >
+            <input type="radio" name="default-font" value={fontFamily} checked readOnly />
+            <span>{fontFamily} <small>Unavailable</small></span>
+            <span className="font-option-preview" aria-hidden="true">Aa</span>
+          </label>
+        ) : null}
+        {visibleFontFamilies.map((family) => (
+          <label
+            key={family}
+            className={`font-option${fontFamily === family ? " selected" : ""}`}
+            style={{ fontFamily: fontFamilyStack(family) }}
+          >
+            <input
+              type="radio"
+              name="default-font"
+              value={family}
+              checked={fontFamily === family}
+              onChange={() => onFontFamilyChange(family)}
+            />
+            <span>{family}</span>
             <span className="font-option-preview" aria-hidden="true">Aa</span>
           </label>
         ))}
+        {fontsLoading ? <p className="font-picker-status">Loading installed fonts…</p> : null}
+        {fontLoadFailed ? (
+          <p className="font-picker-status">Installed fonts couldn’t be loaded. System default remains available.</p>
+        ) : null}
+        {!fontsLoading && !fontLoadFailed && !showSystemFont
+          && visibleFontFamilies.length === 0 && normalizedFontQuery ? (
+          <p className="font-picker-status">No installed fonts match “{fontQuery.trim()}”.</p>
+        ) : null}
       </div>
     </section>
   );

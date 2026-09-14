@@ -1,0 +1,54 @@
+import { describe, expect, it } from "vitest";
+import { parseAddress } from "./emailAddress";
+
+describe("parseAddress", () => {
+  it("splits a display name and email out of a From-style header", () => {
+    expect(parseAddress("Jane Doe <jane@example.com>")).toEqual({
+      name: "Jane Doe",
+      email: "jane@example.com",
+    });
+  });
+
+  it("strips surrounding double quotes from the display name", () => {
+    expect(parseAddress('"Doe, Jane" <jane@example.com>')).toEqual({
+      name: "Doe, Jane",
+      email: "jane@example.com",
+    });
+  });
+
+  it("unescapes backslash-escaped quotes and backslashes in a quoted display name", () => {
+    expect(parseAddress('"Jane \\"J\\" Doe" <jane@example.com>')).toEqual({
+      name: 'Jane "J" Doe',
+      email: "jane@example.com",
+    });
+    expect(parseAddress('"C:\\\\Docs" <jane@example.com>')).toEqual({
+      name: "C:\\Docs",
+      email: "jane@example.com",
+    });
+  });
+
+  it("collapses runs of whitespace in the display name", () => {
+    expect(parseAddress("Jane   Doe <jane@example.com>")).toEqual({
+      name: "Jane Doe",
+      email: "jane@example.com",
+    });
+  });
+
+  it("falls back to the email when there is no display name", () => {
+    expect(parseAddress("<jane@example.com>")).toEqual({
+      name: "jane@example.com",
+      email: "jane@example.com",
+    });
+    expect(parseAddress("jane@example.com")).toEqual({
+      name: "jane@example.com",
+      email: "jane@example.com",
+    });
+  });
+
+  it("leaves a name that merely contains an apostrophe untouched", () => {
+    expect(parseAddress("Conan O'Brien <conan@example.com>")).toEqual({
+      name: "Conan O'Brien",
+      email: "conan@example.com",
+    });
+  });
+});

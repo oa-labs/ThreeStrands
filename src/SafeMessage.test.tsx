@@ -103,6 +103,15 @@ describe("SafeMessage", () => {
     expect(frame.srcdoc).not.toContain("overflow-wrap: anywhere");
   });
 
+  it("safely embeds an installed font family name in the message document", () => {
+    render(<SafeMessage html="<p>Hello</p>" fontFamily={'Font"; color: red; "'} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const document = new DOMParser().parseFromString(frame.srcdoc, "text/html");
+
+    expect(document.body.style.fontFamily).toContain('Font\\"; color: red; \\"');
+    expect(document.body.style.color).toBe("");
+  });
+
   it("forwards keyboard events from the message iframe to the application window", () => {
     render(<SafeMessage html="<p>Hello friend</p>" />);
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;

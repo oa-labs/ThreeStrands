@@ -8,6 +8,7 @@ mod mime;
 mod models;
 mod net_safety;
 mod sync;
+mod system_fonts;
 #[path = "unsubscribe.rs"]
 mod unsubscribe_service;
 
@@ -776,6 +777,7 @@ pub fn run() {
             ai_api_key_configured,
             set_ai_api_key,
             ai_summarize_thread,
+            system_fonts::list_system_font_families,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Dispatch")

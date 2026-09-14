@@ -1,42 +1,41 @@
-export type FontFamily =
-  | "system"
-  | "avenir-next"
-  | "helvetica-neue"
-  | "arial"
-  | "georgia"
-  | "times-new-roman"
-  | "verdana"
-  | "menlo";
+export type FontFamily = string;
 
 const FONT_FAMILY_KEY = "dispatch.settings.fontFamily";
+const MAX_FONT_FAMILY_LENGTH = 200;
+const LEGACY_FONT_FAMILIES: Record<string, FontFamily> = {
+  serif: "Georgia",
+  mono: "Menlo",
+  "avenir-next": "Avenir Next",
+  "helvetica-neue": "Helvetica Neue",
+  arial: "Arial",
+  georgia: "Georgia",
+  "times-new-roman": "Times New Roman",
+  verdana: "Verdana",
+  menlo: "Menlo",
+};
 
 export const DEFAULT_FONT_FAMILY: FontFamily = "system";
 
-export const FONT_FAMILY_STACKS: Record<FontFamily, string> = {
-  system: 'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  "avenir-next": '"Avenir Next", Avenir, ui-sans-serif, sans-serif',
-  "helvetica-neue": '"Helvetica Neue", Helvetica, Arial, sans-serif',
-  arial: 'Arial, "Helvetica Neue", sans-serif',
-  georgia: 'Georgia, "Times New Roman", serif',
-  "times-new-roman": '"Times New Roman", Times, serif',
-  verdana: 'Verdana, Geneva, sans-serif',
-  menlo: 'Menlo, Monaco, Consolas, ui-monospace, monospace',
-};
+export const SYSTEM_FONT_STACK =
+  'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
-export const FONT_FAMILY_OPTIONS: { value: FontFamily; label: string }[] = [
-  { value: "system", label: "System default" },
-  { value: "avenir-next", label: "Avenir Next" },
-  { value: "helvetica-neue", label: "Helvetica Neue" },
-  { value: "arial", label: "Arial" },
-  { value: "georgia", label: "Georgia" },
-  { value: "times-new-roman", label: "Times New Roman" },
-  { value: "verdana", label: "Verdana" },
-  { value: "menlo", label: "Menlo" },
-];
+function validFontFamily(value: string | null): value is FontFamily {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return trimmed.length > 0
+    && trimmed.length <= MAX_FONT_FAMILY_LENGTH
+    && !/[\u0000-\u001f\u007f]/.test(trimmed);
+}
 
-const fontFamilies = new Set<FontFamily>(
-  FONT_FAMILY_OPTIONS.map(({ value }) => value),
-);
+function quoteCssString(value: string): string {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+export function fontFamilyStack(value: FontFamily): string {
+  return value === DEFAULT_FONT_FAMILY
+    ? SYSTEM_FONT_STACK
+    : `${quoteCssString(value)}, ${SYSTEM_FONT_STACK}`;
+}
 
 const AUTO_READ_DELAY_SECONDS_KEY = "dispatch.settings.autoReadDelaySeconds";
 
@@ -99,10 +98,9 @@ export function saveLoadRemoteImages(value: boolean): boolean {
 export function readFontFamily(): FontFamily {
   try {
     const saved = localStorage.getItem(FONT_FAMILY_KEY);
-    // Preserve preferences saved by the earlier generic family selector.
-    if (saved === "serif") return "georgia";
-    if (saved === "mono") return "menlo";
-    if (fontFamilies.has(saved as FontFamily)) return saved as FontFamily;
+    // Preserve preferences saved by the earlier generic and curated selectors.
+    if (saved && LEGACY_FONT_FAMILIES[saved]) return LEGACY_FONT_FAMILIES[saved];
+    if (validFontFamily(saved)) return saved.trim();
   } catch {
     // A blocked storage backend should not prevent the app from opening.
   }
@@ -110,15 +108,16 @@ export function readFontFamily(): FontFamily {
 }
 
 export function applyFontFamily(value: FontFamily): void {
-  document.documentElement.style.setProperty("--font-family", FONT_FAMILY_STACKS[value]);
+  document.documentElement.style.setProperty("--font-family", fontFamilyStack(value));
 }
 
 export function saveFontFamily(value: FontFamily): FontFamily {
-  applyFontFamily(value);
+  const next = validFontFamily(value) ? value.trim() : DEFAULT_FONT_FAMILY;
+  applyFontFamily(next);
   try {
-    localStorage.setItem(FONT_FAMILY_KEY, value);
+    localStorage.setItem(FONT_FAMILY_KEY, next);
   } catch {
     // The preference still applies for this session when storage is unavailable.
   }
-  return value;
+  return next;
 }

@@ -22,26 +22,32 @@ describe("font family preference", () => {
 
   it("uses the default and restores a saved preference", () => {
     expect(readFontFamily()).toBe(DEFAULT_FONT_FAMILY);
-    saveFontFamily("georgia");
-    expect(localStorage.getItem("dispatch.settings.fontFamily")).toBe("georgia");
-    expect(readFontFamily()).toBe("georgia");
+    saveFontFamily("Georgia");
+    expect(localStorage.getItem("dispatch.settings.fontFamily")).toBe("Georgia");
+    expect(readFontFamily()).toBe("Georgia");
   });
 
   it("migrates preferences from the generic family selector", () => {
     localStorage.setItem("dispatch.settings.fontFamily", "serif");
-    expect(readFontFamily()).toBe("georgia");
+    expect(readFontFamily()).toBe("Georgia");
     localStorage.setItem("dispatch.settings.fontFamily", "mono");
-    expect(readFontFamily()).toBe("menlo");
+    expect(readFontFamily()).toBe("Menlo");
   });
 
-  it("ignores an invalid stored value", () => {
-    localStorage.setItem("dispatch.settings.fontFamily", "comic-sans");
+  it("ignores an unsafe stored value", () => {
+    localStorage.setItem("dispatch.settings.fontFamily", "Font\nInjected");
     expect(readFontFamily()).toBe(DEFAULT_FONT_FAMILY);
   });
 
   it("applies the preference as a root CSS variable", () => {
-    applyFontFamily("menlo");
-    expect(document.documentElement.style.getPropertyValue("--font-family")).toContain("monospace");
+    applyFontFamily("Menlo");
+    expect(document.documentElement.style.getPropertyValue("--font-family")).toContain('"Menlo"');
+  });
+
+  it("quotes arbitrary installed family names for CSS", () => {
+    saveFontFamily('Font "Special"');
+    expect(document.documentElement.style.getPropertyValue("--font-family"))
+      .toContain('"Font \\"Special\\""');
   });
 });
 

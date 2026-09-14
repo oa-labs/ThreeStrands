@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+fontdb = "0.24"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 mail-builder = "0.5"
 mail-parser = "0.11"
