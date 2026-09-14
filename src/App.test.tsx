@@ -132,6 +132,24 @@ describe("archive notice", () => {
     expect(screen.queryByRole("dialog", { name: "Unsubscribe" })).not.toBeInTheDocument();
   });
 
+  it("keeps a conversation unread after pressing u, instead of the auto-read timer reverting it", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    // Let the conversation's own auto-read timer (armed on open, since it
+    // started unread) run out first so it doesn't interfere with the assertion below.
+    await advance(3000);
+    await screen.findByRole("button", { name: "Mark unread (u)" });
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "u" }));
+    });
+    await screen.findByRole("button", { name: "Mark read (u)" });
+
+    await advance(3000);
+    expect(screen.getByRole("button", { name: "Mark read (u)" })).toBeInTheDocument();
+  });
+
   it("undoes an archive and optimistically restores the conversation", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });

@@ -1075,13 +1075,25 @@ export function App() {
   const mutateIdsRef = useRef(mutateIds);
   mutateIdsRef.current = mutateIds;
 
+  // Tracks the selection the auto-read timer has already considered, so that
+  // explicitly marking the open thread unread again (e.g. pressing "u")
+  // doesn't get silently reverted by this same timer a moment later. Reset
+  // whenever the selection itself changes, so reopening a thread still
+  // re-arms the timer.
+  const autoReadArmedForId = useRef<string | null>(null);
+  useEffect(() => {
+    autoReadArmedForId.current = null;
+  }, [selectedId]);
+
   useEffect(() => {
     if (
       !selectedId
       || visibleDetail?.thread.id !== selectedId
-      || !selected?.unread
       || !isThreadMailbox
+      || autoReadArmedForId.current === selectedId
     ) return;
+    autoReadArmedForId.current = selectedId;
+    if (!selected?.unread) return;
 
     const timer = window.setTimeout(() => {
       void mutateIdsRef.current([selectedId], { kind: "read", value: true });
