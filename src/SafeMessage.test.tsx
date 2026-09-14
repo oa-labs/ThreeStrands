@@ -48,6 +48,21 @@ describe("SafeMessage", () => {
     expect(sanitized).toContain("Hello");
   });
 
+  it("preserves a zero margin/padding given in em/rem/%, not just px, and still caps large values per unit", () => {
+    // A sender zeroing out a browser default (e.g. a <p>'s ~1em margin) in
+    // the same unit as their own font-size is as common as doing it in px.
+    // Dropping "margin-bottom: 0em" let the UA default margin resurface
+    // instead of the zero the sender asked for.
+    const sanitized = sanitizeMessageHtml(`
+      <p style="margin-top:0px;margin-bottom:0em;">Tight</p>
+      <div style="padding-top:1.5em;padding-left:200%;">Padded</div>
+    `);
+    expect(sanitized).toContain("margin-bottom: 0em");
+    expect(sanitized).toContain("padding-top: 1.5em");
+    // 200% is capped down to the unit's max (50%), not dropped outright.
+    expect(sanitized).toContain("padding-left: 50%");
+  });
+
   it("keeps newsletter preheaders hidden and preserves safe email dimensions", () => {
     const sanitized = sanitizeMessageHtml(`
       <div class="preview" style="display:none;font-size:1px;max-height:0;overflow:hidden">

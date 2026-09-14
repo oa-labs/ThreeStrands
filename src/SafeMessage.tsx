@@ -296,10 +296,19 @@ export function sanitizeMessageHtml(html: string): string {
     // Empty spacer cells carry no content, so zero their spacing outright
     // instead of just capping it, rather than let it render as a dead gap.
     const isEmptyCell = (tag === "td" || tag === "th") && element.children.length === 0 && isBlank(element);
+    // Senders often zero out a browser default (e.g. a <p>'s ~1em margin)
+    // using the same unit as their own font-size — "margin-bottom: 0em" is
+    // as common as "0px". Restricting this to px only silently dropped
+    // that reset, letting the UA default margin resurface instead of the
+    // zero the sender asked for. The cap is unit-aware since 1em and 1px
+    // aren't the same amount of space; 0 is always safe regardless of unit.
+    const spacingUnitCaps: Record<string, number> = { px: 32, em: 2, rem: 2, "%": 50 };
     for (const property of ["padding-top", "padding-right", "padding-bottom", "padding-left", "margin-top", "margin-bottom"]) {
       const value = original.getPropertyValue(property).trim();
-      if (/^\d+(\.\d+)?px$/.test(value)) {
-        declarations.push(`${property}: ${isEmptyCell ? 0 : Math.min(parseFloat(value), 32)}px`);
+      const match = value.match(/^(\d+(?:\.\d+)?)(px|em|rem|%)$/);
+      if (match) {
+        const amount = isEmptyCell ? 0 : Math.min(Number(match[1]), spacingUnitCaps[match[2]]);
+        declarations.push(`${property}: ${amount}${match[2]}`);
       }
     }
     element.removeAttribute("style");
