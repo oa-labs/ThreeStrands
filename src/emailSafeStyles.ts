@@ -19,6 +19,14 @@ export const safeBoxShadow = new RegExp(
   "i",
 );
 
+// A sender's font stack affects more than the face itself: its ascent and
+// descent metrics determine where text sits inside the border-built buttons
+// common in HTML email. Keep ordinary local/generic family lists, while
+// excluding CSS functions, escapes, and other syntax that could refer to a
+// value outside this declaration. Embedded/remote fonts remain impossible
+// because @font-face is not admitted by the stylesheet sanitizer or CSP.
+const safeFontFamily = /^(?=.{1,200}$)[a-z0-9 _,'"-]+$/i;
+
 // A bounded CSS length: 0-4 digit px or percent, matching the same shape
 // safeDimension/safeCssLength in SafeMessage.tsx already enforce for the
 // width/height *attributes* dimensionAttributeTags carries. Redefined here
@@ -39,6 +47,7 @@ export const safeStyles: Record<string, RegExp> = {
   "text-align": /^(left|right|center|justify|start|end)$/,
   "font-weight": /^(normal|bold|[1-9]00)$/,
   "font-style": /^(normal|italic|oblique)$/,
+  "font-family": safeFontFamily,
   "text-decoration": /^(none|underline|line-through)( (underline|line-through))?$/,
   "vertical-align": /^(baseline|top|middle|bottom|sub|super|text-top|text-bottom)$/,
   "border-collapse": /^(collapse|separate)$/,

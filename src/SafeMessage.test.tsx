@@ -136,7 +136,7 @@ describe("SafeMessage", () => {
     render(<SafeMessage html="<p>Hello <strong>friend</strong></p>" />);
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
     expect(frame.tagName).toBe("IFRAME");
-    expect(frame.getAttribute("sandbox")).toBe("allow-same-origin");
+    expect(frame.getAttribute("sandbox")).toBe("allow-same-origin allow-scripts");
     expect(frame.srcdoc).toContain("<p>Hello <strong>friend</strong></p>");
     expect(frame.srcdoc).toContain("Content-Security-Policy");
     expect(frame.srcdoc).toContain("script-src 'none'");
@@ -495,6 +495,36 @@ it("keeps font-size (px, em, %) and line-height in em so a sender's heading/labe
   expect(sanitized).toContain("line-height: 1.3em");
   expect(sanitized).toContain("font-size: 12px");
   expect(sanitized).toContain("font-size: 36px");
+});
+
+it("keeps a local font stack so border-built email buttons retain the sender's text metrics", () => {
+  // This is the shape used by Paylocity's CTA: the cell supplies Arial and
+  // the anchor uses a large line-height plus borders to draw the button.
+  // Replacing Arial with the reader's configured font changes its
+  // ascent/descent and makes the label look vertically off-center.
+  const sanitized = sanitizeMessageHtml(`
+    <table><tr>
+      <td style="font-family: Arial, Helvetica, sans-serif">
+        <a href="https://example.com"
+           style="line-height:60px;border-left:20px solid #282b2e;border-right:20px solid #282b2e;border-top:10px solid #282b2e;border-bottom:10px solid #282b2e;background-color:#282b2e;font-size:16px;font-weight:bold;color:#fff;border-radius:20px;text-align:center;text-decoration:none">
+          View Assigned Review(s)
+        </a>
+      </td>
+    </tr></table>
+  `);
+  const container = document.createElement("div");
+  container.innerHTML = sanitized;
+
+  expect(container.querySelector("td")?.style.fontFamily).toBe("arial, helvetica, sans-serif");
+  expect(container.querySelector("a")?.style.lineHeight).toBe("60px");
+});
+
+it("rejects functional font-family values", () => {
+  const sanitized = sanitizeMessageHtml(`
+    <span style="font-family:var(--message-font)">Variable</span>
+    <span style="font-family:url(https://tracker.invalid/font)">Remote</span>
+  `);
+  expect(sanitized).not.toContain("font-family");
 });
 
 it("rejects an unbounded or unit-less font-size", () => {

@@ -730,7 +730,17 @@ export function SafeMessage({
         data-testid="message-body"
         className="message-body"
         title="Message content"
-        sandbox="allow-same-origin"
+        // allow-scripts sounds dangerous for untrusted email HTML, but the
+        // document's own CSP above (script-src 'none') independently blocks
+        // every script in it from running — DOMPurify has also already
+        // stripped <script>, event-handler attributes, and javascript:
+        // URLs. What this flag actually enables is the click/keydown
+        // listeners handleLoad attaches from the parent below: WebKit
+        // refuses to invoke ANY listener bound to a document whose sandbox
+        // omits allow-scripts, including ones added by the parent, which
+        // silently broke every shortcut once the reader clicked or
+        // selected text in the message body (see #handleLoad).
+        sandbox="allow-same-origin allow-scripts"
         referrerPolicy="no-referrer"
         srcDoc={doc}
         onLoad={handleLoad}
