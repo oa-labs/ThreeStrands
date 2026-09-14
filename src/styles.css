@@ -668,6 +668,22 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .settings-row { display: flex; align-items: center; gap: 10px; }
 .settings-radio-row { display: flex; gap: 16px; font-size: calc(13px * var(--font-scale)); }
 .settings-radio-row label, .settings-checkbox { display: flex; align-items: center; gap: 7px; font-size: calc(13px * var(--font-scale)); }
+.font-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.font-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input);
+  cursor: pointer;
+}
+.font-option:hover { border-color: var(--border-strong); background: var(--hover); }
+.font-option.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--focus-glow); }
+.font-option-preview { color: var(--muted); font-size: calc(18px * var(--font-scale)); }
 
 .toast {
   position: fixed;

@@ -2,6 +2,14 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import DOMPurify from "dompurify";
 import { Image } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  backgroundImageUrl,
+  blockedSrcAttr,
+  safeColor,
+  safeImageSrc,
+  safeStyles,
+} from "./emailSafeStyles";
+import { sanitizeStyleSheet } from "./emailStyleSheet";
 import { FONT_FAMILY_STACKS, type FontFamily } from "./settings";
 
 type SafeMessageProps = {
@@ -110,19 +118,35 @@ function buildMessageDocument(bodyHtml: string, options: {
   fontScale: number;
   fontFamily: FontFamily;
   tone: "default" | "current" | "muted";
+  emailStyleSheet: string;
 }): string {
-  const { theme, fontScale, fontFamily, tone } = options;
+  const { theme, fontScale, fontFamily, tone, emailStyleSheet } = options;
   return `<!doctype html>
 <html data-theme="${theme}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${MESSAGE_DOCUMENT_CSP}">
 <style>${MESSAGE_DOCUMENT_STYLES}</style>
-</head>
+${emailStyleSheet ? `<style>${emailStyleSheet}</style>\n` : ""}</head>
 <body data-tone="${tone}" style="font-family: ${FONT_FAMILY_STACKS[fontFamily]}; --font-scale: ${fontScale};">
 ${bodyHtml}
 </body>
 </html>`;
+}
+
+/**
+ * Pulls every <style> block out of the sender's original HTML (before
+ * DOMPurify strips them, same as it always has) and reduces each to the
+ * allowlisted subset sanitizeStyleSheet permits. Parsing with DOMParser
+ * here is inert — it never executes scripts or fetches resources, it's
+ * just a tree we read `<style>` text back out of.
+ */
+export function extractSafeStyleSheet(html: string): string {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return Array.from(doc.querySelectorAll("style"))
+    .map((style) => sanitizeStyleSheet(style.textContent ?? ""))
+    .filter(Boolean)
+    .join("\n");
 }
 
 const allowedTags = [
@@ -141,50 +165,6 @@ const spacerTags = new Set([
   "div", "p", "span", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "dd", "dt",
 ]);
 
-// A CSS color value, shared by background-color, bgcolor, and border colors
-// below. None of these forms can carry a network request or executable code.
-const colorValue = "(#[0-9a-f]{3,8}|rgba?\\([\\d.\\s,%]+\\)|hsla?\\([\\d.\\s,%]+\\)|transparent|currentcolor|[a-z]+)";
-const safeColor = new RegExp(`^${colorValue}$`, "i");
-const safeBorder = new RegExp(
-  `^\\d+(?:\\.\\d+)?px (?:none|solid|dashed|dotted|double|groove|ridge|inset|outset) ${colorValue}$`,
-  "i",
-);
-
-// Keep text formatting without allowing positioning or CSS network requests.
-// color/background-color/border-color are safe to keep as-is since they
-// never carry a network request; senders that set light text without a
-// matching background are rare in practice and this is a legibility
-// tradeoff, not a security one. background-image is handled separately
-// below since it needs the same URL validation and remote-image gating as
-// <img src>.
-const safeStyles: Record<string, RegExp> = {
-  "text-align": /^(left|right|center|justify|start|end)$/,
-  "font-weight": /^(normal|bold|[1-9]00)$/,
-  "font-style": /^(normal|italic|oblique)$/,
-  "text-decoration": /^(none|underline|line-through)( (underline|line-through))?$/,
-  "vertical-align": /^(baseline|top|middle|bottom|sub|super|text-top|text-bottom)$/,
-  "border-collapse": /^(collapse|separate)$/,
-  "color": safeColor,
-  "background-color": safeColor,
-  "line-height": /^(normal|\d+(\.\d+)?(px|%)?)$/,
-  "border": safeBorder,
-  "border-top": safeBorder,
-  "border-right": safeBorder,
-  "border-bottom": safeBorder,
-  "border-left": safeBorder,
-  // Marketing ESPs (Customer.io, Klaviyo, HubSpot, Mailchimp) widely pair a
-  // black background with a screen+difference blend-mode stack to defeat
-  // Gmail's automatic dark-mode color inversion: both blend modes are a
-  // no-op against black, so the pair cancels out to fully transparent in
-  // any renderer that honors mix-blend-mode. Without it, the black
-  // background has nothing to cancel it and renders as an opaque block.
-  "mix-blend-mode": /^(normal|multiply|screen|overlay|darken|lighten|color-dodge|color-burn|hard-light|soft-light|difference|exclusion|hue|saturation|color|luminosity)$/,
-};
-
-const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;
-
-const safeImageSrc = /^(https?:|data:image\/)/i;
-const blockedSrcAttr = "data-blocked-src";
 const dimensionAttributeTags = new Set(["img", "table", "td", "th"]);
 
 function safeDimension(value: string, allowPercent: boolean): string | null {
@@ -219,7 +199,13 @@ function isBlank(element: Element): boolean {
 export function sanitizeMessageHtml(html: string): string {
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
-    ALLOWED_ATTR: ["align", "alt", "bgcolor", "cellpadding", "cellspacing", "colspan", "dir", "height", "hidden", "href", "rowspan", "src", "start", "style", "title", "valign", "width"],
+    // class/id are only useful now that <style> blocks are (narrowly)
+    // supported below — otherwise there's no stylesheet for them to
+    // address. They're plain strings with no special handling anywhere
+    // else in this file: DOMPurify already keeps them from carrying
+    // markup, and the iframe never loads the app's own stylesheet, so a
+    // sender's class name can't collide with anything of ours.
+    ALLOWED_ATTR: ["align", "alt", "bgcolor", "cellpadding", "cellspacing", "class", "colspan", "dir", "height", "hidden", "href", "id", "rowspan", "src", "start", "style", "title", "valign", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     FORBID_TAGS: ["form", "script", "style", "svg"],
@@ -443,10 +429,11 @@ export function SafeMessage({
     () => applyResolvedImages(sanitized, resolvedImages),
     [sanitized, resolvedImages],
   );
+  const emailStyleSheet = useMemo(() => extractSafeStyleSheet(html), [html]);
 
   const doc = useMemo(
-    () => buildMessageDocument(displayHtml, { theme, fontScale, fontFamily, tone }),
-    [displayHtml, theme, fontScale, fontFamily, tone],
+    () => buildMessageDocument(displayHtml, { theme, fontScale, fontFamily, tone, emailStyleSheet }),
+    [displayHtml, theme, fontScale, fontFamily, tone, emailStyleSheet],
   );
 
   const frameRef = useRef<HTMLIFrameElement | null>(null);

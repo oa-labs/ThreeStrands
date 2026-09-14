@@ -122,16 +122,19 @@ describe("SafeMessage", () => {
   });
 });
 
-it("preserves safe formatting while removing CSS requests, positioning, and app classes", () => {
+it("preserves safe formatting and the class attribute while removing CSS requests and positioning", () => {
   const sanitized = sanitizeMessageHtml('<table class="modal"><tr><td style="text-align:center;font-weight:700;padding:200px;background-image:url(https://tracker.invalid);position:fixed;color:black">Invoice</td></tr></table>');
   expect(sanitized).toContain("text-align: center");
   expect(sanitized).toContain("font-weight: 700");
   expect(sanitized).toContain("padding-top: 32px");
   expect(sanitized).toContain("color: black");
+  // class survives now that <style> blocks can target it (see
+  // emailStyleSheet.ts) — it carries no special handling on its own.
+  expect(sanitized).toContain('class="modal"');
   // background-image is gated the same way as <img src> rather than stripped
   // outright, so its URL only survives as an inert blocked-src marker.
   expect(sanitized).toContain('data-blocked-src="https://tracker.invalid"');
-  expect(sanitized).not.toMatch(/style="[^"]*url\(|position|class=/);
+  expect(sanitized).not.toMatch(/style="[^"]*url\(|position/);
 });
 
 it("extracts every distinct blocked-src URL, deduplicated", () => {

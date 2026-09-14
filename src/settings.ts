@@ -1,20 +1,42 @@
-export type FontFamily = "system" | "serif" | "mono";
+export type FontFamily =
+  | "system"
+  | "avenir-next"
+  | "helvetica-neue"
+  | "arial"
+  | "georgia"
+  | "times-new-roman"
+  | "verdana"
+  | "menlo";
 
 const FONT_FAMILY_KEY = "dispatch.settings.fontFamily";
 
 export const DEFAULT_FONT_FAMILY: FontFamily = "system";
 
 export const FONT_FAMILY_STACKS: Record<FontFamily, string> = {
-  system: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  serif: 'Iowan Old Style, Palatino Linotype, "Georgia", serif',
-  mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  system: 'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  "avenir-next": '"Avenir Next", Avenir, ui-sans-serif, sans-serif',
+  "helvetica-neue": '"Helvetica Neue", Helvetica, Arial, sans-serif',
+  arial: 'Arial, "Helvetica Neue", sans-serif',
+  georgia: 'Georgia, "Times New Roman", serif',
+  "times-new-roman": '"Times New Roman", Times, serif',
+  verdana: 'Verdana, Geneva, sans-serif',
+  menlo: 'Menlo, Monaco, Consolas, ui-monospace, monospace',
 };
 
 export const FONT_FAMILY_OPTIONS: { value: FontFamily; label: string }[] = [
   { value: "system", label: "System default" },
-  { value: "serif", label: "Serif" },
-  { value: "mono", label: "Monospace" },
+  { value: "avenir-next", label: "Avenir Next" },
+  { value: "helvetica-neue", label: "Helvetica Neue" },
+  { value: "arial", label: "Arial" },
+  { value: "georgia", label: "Georgia" },
+  { value: "times-new-roman", label: "Times New Roman" },
+  { value: "verdana", label: "Verdana" },
+  { value: "menlo", label: "Menlo" },
 ];
+
+const fontFamilies = new Set<FontFamily>(
+  FONT_FAMILY_OPTIONS.map(({ value }) => value),
+);
 
 const AUTO_READ_DELAY_SECONDS_KEY = "dispatch.settings.autoReadDelaySeconds";
 
@@ -77,7 +99,10 @@ export function saveLoadRemoteImages(value: boolean): boolean {
 export function readFontFamily(): FontFamily {
   try {
     const saved = localStorage.getItem(FONT_FAMILY_KEY);
-    if (saved === "system" || saved === "serif" || saved === "mono") return saved;
+    // Preserve preferences saved by the earlier generic family selector.
+    if (saved === "serif") return "georgia";
+    if (saved === "mono") return "menlo";
+    if (fontFamilies.has(saved as FontFamily)) return saved as FontFamily;
   } catch {
     // A blocked storage backend should not prevent the app from opening.
   }

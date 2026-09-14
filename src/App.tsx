@@ -97,6 +97,7 @@ import { applyTheme, effectiveTheme, readTheme, saveTheme, type Theme } from "./
 import {
   applyFontFamily,
   FONT_FAMILY_OPTIONS,
+  FONT_FAMILY_STACKS,
   MAX_AUTO_READ_DELAY_SECONDS,
   MIN_AUTO_READ_DELAY_SECONDS,
   readAutoReadDelaySeconds,
@@ -2598,16 +2599,27 @@ function AppearanceSettings({
         <span>{fontScale}%</span>
       </div>
 
-      <h3>Font family</h3>
-      <select
-        aria-label="Font family"
-        value={fontFamily}
-        onChange={(event) => onFontFamilyChange(event.target.value as FontFamily)}
-      >
+      <h3>Default font</h3>
+      <p className="settings-hint">Used throughout the app and for unformatted message text.</p>
+      <div className="font-picker" role="radiogroup" aria-label="Default font">
         {FONT_FAMILY_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>{option.label}</option>
+          <label
+            key={option.value}
+            className={`font-option${fontFamily === option.value ? " selected" : ""}`}
+            style={{ fontFamily: FONT_FAMILY_STACKS[option.value] }}
+          >
+            <input
+              type="radio"
+              name="default-font"
+              value={option.value}
+              checked={fontFamily === option.value}
+              onChange={() => onFontFamilyChange(option.value)}
+            />
+            <span>{option.label}</span>
+            <span className="font-option-preview" aria-hidden="true">Aa</span>
+          </label>
         ))}
-      </select>
+      </div>
     </section>
   );
 }

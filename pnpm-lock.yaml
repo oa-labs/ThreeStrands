@@ -178,6 +178,9 @@ importers:
       lucide-react:
         specifier: ^0.468.0
         version: 0.468.0(react@19.3.0)
+      postcss:
+        specifier: ^8.5.28
+        version: 8.5.28
       react:
         specifier: ^19.0.0
         version: 19.3.0

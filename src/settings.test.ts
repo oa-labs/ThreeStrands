@@ -22,9 +22,16 @@ describe("font family preference", () => {
 
   it("uses the default and restores a saved preference", () => {
     expect(readFontFamily()).toBe(DEFAULT_FONT_FAMILY);
-    saveFontFamily("serif");
-    expect(localStorage.getItem("dispatch.settings.fontFamily")).toBe("serif");
-    expect(readFontFamily()).toBe("serif");
+    saveFontFamily("georgia");
+    expect(localStorage.getItem("dispatch.settings.fontFamily")).toBe("georgia");
+    expect(readFontFamily()).toBe("georgia");
+  });
+
+  it("migrates preferences from the generic family selector", () => {
+    localStorage.setItem("dispatch.settings.fontFamily", "serif");
+    expect(readFontFamily()).toBe("georgia");
+    localStorage.setItem("dispatch.settings.fontFamily", "mono");
+    expect(readFontFamily()).toBe("menlo");
   });
 
   it("ignores an invalid stored value", () => {
@@ -33,7 +40,7 @@ describe("font family preference", () => {
   });
 
   it("applies the preference as a root CSS variable", () => {
-    applyFontFamily("mono");
+    applyFontFamily("menlo");
     expect(document.documentElement.style.getPropertyValue("--font-family")).toContain("monospace");
   });
 });
