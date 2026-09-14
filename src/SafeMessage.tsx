@@ -126,11 +126,21 @@ const spacerTags = new Set([
   "div", "p", "span", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "dd", "dt",
 ]);
 
+// A CSS color value, shared by background-color, bgcolor, and border colors
+// below. None of these forms can carry a network request or executable code.
+const colorValue = "(#[0-9a-f]{3,8}|rgba?\\([\\d.\\s,%]+\\)|hsla?\\([\\d.\\s,%]+\\)|transparent|currentcolor|[a-z]+)";
+const safeColor = new RegExp(`^${colorValue}$`, "i");
+const safeBorder = new RegExp(
+  `^\\d+(?:\\.\\d+)?px (?:none|solid|dashed|dotted|double|groove|ridge|inset|outset) ${colorValue}$`,
+  "i",
+);
+
 // Keep text formatting without allowing positioning, hidden content, or CSS
 // network requests. Text color inherits the reader's active theme for
-// legibility; background-color is safe to keep as-is since it never carries
-// a network request. background-image is handled separately below since it
-// needs the same URL validation and remote-image gating as <img src>.
+// legibility; background-color/border-color are safe to keep as-is since
+// they never carry a network request. background-image is handled
+// separately below since it needs the same URL validation and remote-image
+// gating as <img src>.
 const safeStyles: Record<string, RegExp> = {
   "text-align": /^(left|right|center|justify|start|end)$/,
   "font-weight": /^(normal|bold|[1-9]00)$/,
@@ -138,7 +148,13 @@ const safeStyles: Record<string, RegExp> = {
   "text-decoration": /^(none|underline|line-through)( (underline|line-through))?$/,
   "vertical-align": /^(baseline|top|middle|bottom|sub|super|text-top|text-bottom)$/,
   "border-collapse": /^(collapse|separate)$/,
-  "background-color": /^(#[0-9a-f]{3,8}|rgba?\([\d.\s,%]+\)|hsla?\([\d.\s,%]+\)|transparent|currentcolor|[a-z]+)$/,
+  "background-color": safeColor,
+  "line-height": /^(normal|\d+(\.\d+)?(px|%)?)$/,
+  "border": safeBorder,
+  "border-top": safeBorder,
+  "border-right": safeBorder,
+  "border-bottom": safeBorder,
+  "border-left": safeBorder,
 };
 
 const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;
@@ -158,6 +174,14 @@ function safeDimension(value: string, allowPercent: boolean): string | null {
   return amount <= 4096 ? `${amount}` : null;
 }
 
+// Same bounds as safeDimension, but for a CSS length (which carries its own
+// unit) rather than a bare HTML width/height attribute.
+function safeCssLength(value: string, allowPercent: boolean): string | null {
+  const safe = safeDimension(value.trim().replace(/px$/, ""), allowPercent);
+  if (safe === null) return null;
+  return safe.endsWith("%") ? safe : `${safe}px`;
+}
+
 export function decodeHtmlEntities(text: string): string {
   const container = document.createElement("textarea");
   container.innerHTML = text;
@@ -172,7 +196,7 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
   const { allowImages = false } = options;
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
-    ALLOWED_ATTR: ["align", "alt", "colspan", "dir", "height", "hidden", "href", "rowspan", "src", "start", "style", "title", "valign", "width"],
+    ALLOWED_ATTR: ["align", "alt", "bgcolor", "cellpadding", "cellspacing", "colspan", "dir", "height", "hidden", "href", "rowspan", "src", "start", "style", "title", "valign", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     FORBID_TAGS: ["form", "script", "style", "svg"],
@@ -217,6 +241,32 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
       const safeHeight = safeDimension(height, false);
       if (safeHeight === null) element.removeAttribute("height");
       else element.setAttribute("height", safeHeight);
+    }
+    // Some templates size elements via CSS instead of the width/height
+    // attributes above; apply the same bounds either way.
+    if (dimensionAttributeTags.has(tag)) {
+      const styleWidth = original.getPropertyValue("width").trim();
+      const safeWidth = styleWidth ? safeCssLength(styleWidth, true) : null;
+      if (safeWidth) declarations.push(`width: ${safeWidth}`);
+    }
+    if (tag === "img") {
+      const styleHeight = original.getPropertyValue("height").trim();
+      const safeHeight = styleHeight ? safeCssLength(styleHeight, false) : null;
+      if (safeHeight) declarations.push(`height: ${safeHeight}`);
+    }
+    if (tag === "table") {
+      for (const attr of ["cellpadding", "cellspacing"]) {
+        const value = element.getAttribute(attr);
+        if (value === null) continue;
+        if (!/^\d+$/.test(value.trim())) element.removeAttribute(attr);
+        else element.setAttribute(attr, String(Math.min(Number(value), 32)));
+      }
+    }
+    const bgcolor = element.getAttribute("bgcolor");
+    if (bgcolor !== null) {
+      const value = bgcolor.trim().toLowerCase();
+      if (safeColor.test(value)) element.setAttribute("bgcolor", value);
+      else element.removeAttribute("bgcolor");
     }
     // Empty spacer cells carry no content, so zero their spacing outright
     // instead of just capping it, rather than let it render as a dead gap.

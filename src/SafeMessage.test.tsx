@@ -150,6 +150,42 @@ it("restores a background-image only once images are explicitly allowed, with th
   expect(unsafe).not.toContain("background-image");
 });
 
+it("preserves line-height, borders, bgcolor, cellpadding/cellspacing, and CSS width/height", () => {
+  const sanitized = sanitizeMessageHtml(`
+    <table bgcolor="#fff" cellpadding="8" cellspacing="999" style="width:100%">
+      <tr>
+        <td style="line-height:1.5;border-bottom:1px solid #ddd;width:50%">Row</td>
+      </tr>
+    </table>
+    <img src="https://example.com/a.png" style="width:120px;height:9999px">
+  `, { allowImages: true });
+  const container = document.createElement("div");
+  container.innerHTML = sanitized;
+
+  const table = container.querySelector("table")!;
+  expect(table.getAttribute("bgcolor")).toBe("#fff");
+  expect(table.getAttribute("cellpadding")).toBe("8");
+  expect(table.getAttribute("cellspacing")).toBe("32"); // capped
+  expect(table.style.width).toBe("100%");
+
+  const td = container.querySelector("td")!;
+  expect(td.style.lineHeight).toBe("1.5");
+  expect(td.style.borderBottom).toBe("1px solid rgb(221, 221, 221)");
+  expect(td.style.width).toBe("50%");
+
+  const img = container.querySelector("img")!;
+  expect(img.style.width).toBe("120px");
+  expect(img.style.height).toBe(""); // over the 4096px cap, dropped
+});
+
+it("rejects unsafe border and bgcolor values", () => {
+  const sanitized = sanitizeMessageHtml(
+    '<table bgcolor="expression(alert(1))"><tr><td style="border:1px solid url(https://tracker.invalid)">Hi</td></tr></table>',
+  );
+  expect(sanitized).not.toContain("bgcolor");
+  expect(sanitized).not.toContain("border");
+});
+
 it("renders plain text literally when HTML is absent or stripped", () => {
   render(<SafeMessage html="<script>alert(1)</script>" text={'Hello\n\n<script>literal text</script>'} />);
   const body = screen.getByTestId("message-body");
