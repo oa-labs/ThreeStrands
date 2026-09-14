@@ -70,7 +70,7 @@ import {
 } from "./crashReporting";
 import { mailClient } from "./data/client";
 import { createForegroundRefreshController } from "./foregroundRefresh";
-import { formatLabelName, sortLabelIdsForDisplay } from "./labels";
+import { formatLabelName, labelIdsForConversationDisplay } from "./labels";
 import { formattingShortcuts } from "./richText";
 import type {
   Account,
@@ -87,7 +87,7 @@ import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
-import { parseAddress } from "./emailAddress";
+import { parseAddress, simplifyDisplayName } from "./emailAddress";
 import {
   applyFontScale,
   changeFontScale,
@@ -499,7 +499,7 @@ export function App() {
   const selectedThread = threads.find((thread) => thread.id === selectedId);
   const selectedThreadLastMessageAt = selectedThread?.lastMessageAt;
   const selectedThreadSnippet = selectedThread?.snippet;
-  const [olderMessagesExpanded, setOlderMessagesExpanded] = useState(false);
+  const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(new Set());
   const latestMessageRef = useRef<HTMLElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -745,17 +745,18 @@ export function App() {
   }, [selectedId, selectedThreadLastMessageAt, selectedThreadSnippet, setNotice]);
 
   useEffect(() => {
-    setOlderMessagesExpanded(false);
+    setExpandedMessageIds(new Set());
     setSummaryExpanded(false);
     // Pending/error state deliberately isn't reset here — it's keyed by
     // thread id (see `summarizingRef`/`summaryErrors`) so it stays correct
     // for whichever thread it actually belongs to when you navigate back.
   }, [selectedId]);
 
+  const latestDisplayedMessageId = displayedMessages.at(-1)?.id;
   useEffect(() => {
-    if (!visibleDetail) return;
+    if (!visibleDetail || composerBelongsToVisibleThread) return;
     latestMessageRef.current?.scrollIntoView?.({ block: "start" });
-  }, [visibleDetail]);
+  }, [visibleDetail?.thread.id, latestDisplayedMessageId]);
 
   useEffect(() => {
     if (!visibleDetail) return;
@@ -827,7 +828,7 @@ export function App() {
     if (!node) return;
     const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
     if (node.scrollTop > maxScrollTop) node.scrollTop = maxScrollTop;
-  }, [olderMessagesExpanded]);
+  }, [expandedMessageIds]);
 
   const refreshMail = useCallback(() => {
     setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
@@ -1302,7 +1303,11 @@ export function App() {
         return next;
       });
     },
-    toggleOlderMessagesExpanded: () => setOlderMessagesExpanded((current) => !current),
+    toggleOlderMessagesExpanded: () => setExpandedMessageIds((current) => {
+      const olderMessageIds = displayedMessages.slice(0, -1).map((message) => message.id);
+      const allExpanded = olderMessageIds.every((id) => current.has(id));
+      return allExpanded ? new Set() : new Set(olderMessageIds);
+    }),
     pageMessageDown: () => {
       const node = messageStackRef.current;
       if (!node) return;
@@ -1341,7 +1346,7 @@ export function App() {
     showAllAccounts: () => {
       setActiveAccountId(null);
     },
-  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1689,7 +1694,7 @@ export function App() {
             <header className="reader-header">
               <div>
                 <span className="eyebrow">
-                  {sortLabelIdsForDisplay(visibleDetail.thread.labels)
+                  {labelIdsForConversationDisplay(visibleDetail.thread.labels)
                     .map((id) => {
                       const accountLabels = labelsByAccount[visibleDetail.thread.accountId];
                       const label = accountLabels?.find((candidate) => candidate.id === id);
@@ -1837,13 +1842,13 @@ export function App() {
             <div className="message-stack" ref={messageStackRef}>
               {displayedMessages.map((message, index) => {
                 const isLatest = index === displayedMessages.length - 1;
-                const isExpanded = isLatest || message.unread || olderMessagesExpanded;
+                const isExpanded = isLatest || message.unread || expandedMessageIds.has(message.id);
                 const parsedSender = parseAddress(message.sender);
                 const senderAccount = accounts.find(
                   (account) => account.email.toLocaleLowerCase() === parsedSender.email.toLocaleLowerCase(),
                 );
                 const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
-                const senderFirstName = senderName.trim().split(/\s+/)[0] || senderName;
+                const senderFirstName = simplifyDisplayName(senderName);
                 const downloadableAttachments = message.attachments.filter((attachment) => !attachment.inline);
                 if (!isExpanded) {
                   return (
@@ -1851,7 +1856,11 @@ export function App() {
                       type="button"
                       className="message message-collapsed"
                       key={message.id}
-                      onClick={() => setOlderMessagesExpanded(true)}
+                      onClick={() => setExpandedMessageIds((current) => {
+                        const next = new Set(current);
+                        next.add(message.id);
+                        return next;
+                      })}
                     >
                       <span className="message-collapsed-sender">{senderFirstName}</span>
                       <span className="message-collapsed-snippet">{messageSnippet(message.bodyText)}</span>

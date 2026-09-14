@@ -121,6 +121,7 @@ at least an hour per day in email and prefers keyboard workflows.
 - [multiple accounts and a unified inbox](docs/multi-account.md);
 - send later;
 - unsubscribe and sender blocking;
+- [a dedicated address book / contacts management screen](docs/address-book.md);
 - calendar sidebar and availability sharing;
 - Microsoft 365 through Microsoft Graph;
 - optional AI summarize, draft, rewrite, and classification;

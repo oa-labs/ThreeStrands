@@ -88,7 +88,8 @@ describe("Composer recipient autocomplete", () => {
 
     const option = await screen.findByRole("option", { name: /Jane Doe/ });
     fireEvent.mouseDown(option);
-    expect(to).toHaveValue("Jane Doe <jane@example.com>, ");
+    expect(screen.getByRole("button", { name: "Remove Jane Doe" })).toBeInTheDocument();
+    expect(to).toHaveValue("");
   });
 
   it("pins a suggested contact without inserting it into the field", async () => {
@@ -104,5 +105,72 @@ describe("Composer recipient autocomplete", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pin jane@example.com" }));
     expect(pin).toHaveBeenCalledWith("first@example.com", "jane@example.com", "Jane Doe");
     expect(to).toHaveValue("ja");
+  });
+
+  it("offers to pin a brand-new address that has no mail history at all", async () => {
+    vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([]);
+    const pin = vi.spyOn(mailClient, "pinContact").mockResolvedValue();
+    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+
+    fireEvent.change(to, { target: { value: "wife@example.com" } });
+    await vi.advanceTimersByTimeAsync(150);
+
+    const option = await screen.findByRole("option", { name: /Pin wife@example.com as a contact/ });
+    fireEvent.mouseDown(option);
+
+    expect(pin).toHaveBeenCalledWith("first@example.com", "wife@example.com", null);
+    expect(screen.getByRole("button", { name: "Remove wife@example.com" })).toBeInTheDocument();
+    expect(to).toHaveValue("");
+  });
+
+  it("shows a prefilled reply recipient as a badge immediately, with no mail history query needed", () => {
+    vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([]);
+    const prefilled = { ...draft, to: "hello@dispatch.local" };
+    render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+
+    expect(screen.getByRole("button", { name: "Remove hello@dispatch.local" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "To" })).toHaveValue("");
+  });
+
+  it("removes a recipient badge via its remove button and via Backspace on an empty field", () => {
+    const prefilled = { ...draft, to: "a@example.com, b@example.com" };
+    render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove a@example.com" }));
+    expect(screen.queryByRole("button", { name: "Remove a@example.com" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove b@example.com" })).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "To" }), { key: "Backspace" });
+    expect(screen.queryByRole("button", { name: "Remove b@example.com" })).not.toBeInTheDocument();
+  });
+
+  it("drags a recipient badge from To into Cc, moving it rather than copying it", () => {
+    const prefilled = { ...draft, to: "hello@dispatch.local", cc: "" };
+    render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Cc / Bcc" }));
+
+    const chip = screen.getByRole("button", { name: "Remove hello@dispatch.local" }).closest(".recipient-chip");
+    const ccRow = screen.getByRole("textbox", { name: "Cc" }).closest(".recipient-chip-row");
+    expect(chip).toBeTruthy();
+    expect(ccRow).toBeTruthy();
+
+    const store = new Map<string, string>();
+    const dataTransfer = {
+      setData: (type: string, val: string) => store.set(type, val),
+      getData: (type: string) => store.get(type) ?? "",
+      dropEffect: "move",
+      effectAllowed: "move",
+    };
+
+    fireEvent.dragStart(chip!, { dataTransfer });
+    fireEvent.dragOver(ccRow!, { dataTransfer });
+    fireEvent.drop(ccRow!, { dataTransfer });
+    fireEvent.dragEnd(chip!, { dataTransfer });
+
+    expect(screen.queryByRole("button", { name: "Remove hello@dispatch.local" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Cc" }).closest(".compose-field")).toHaveTextContent(
+      "hello@dispatch.local",
+    );
   });
 });

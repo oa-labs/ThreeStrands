@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatLabelName, sortLabelIdsForDisplay } from "./labels";
+import { formatLabelName, labelIdsForConversationDisplay, sortLabelIdsForDisplay } from "./labels";
 
 describe("formatLabelName", () => {
   it("strips the CATEGORY_ prefix from Gmail's system category labels", () => {
@@ -35,5 +35,20 @@ describe("sortLabelIdsForDisplay", () => {
 
   it("handles an empty list", () => {
     expect(sortLabelIdsForDisplay([])).toEqual([]);
+  });
+});
+
+describe("labelIdsForConversationDisplay", () => {
+  it("hides message-level state while retaining conversation labels", () => {
+    expect(labelIdsForConversationDisplay([
+      "SENT",
+      "client",
+      "STARRED",
+      "INBOX",
+      "UNREAD",
+      "CATEGORY_PERSONAL",
+      "DRAFT",
+      "IMPORTANT",
+    ])).toEqual(["INBOX", "CATEGORY_PERSONAL", "client", "IMPORTANT"]);
   });
 });

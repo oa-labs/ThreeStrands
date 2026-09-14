@@ -92,6 +92,49 @@ describe("archive notice", () => {
     }
   });
 
+  it("expands only the older message that was clicked", async () => {
+    const originalDetail = await mailClient.getThread("welcome");
+    const latest = originalDetail.messages[0]!;
+    const getThread = vi.spyOn(mailClient, "getThread").mockResolvedValue({
+      ...originalDetail,
+      messages: [
+        {
+          ...latest,
+          id: "welcome-first",
+          sentAt: "2026-03-03T16:30:00Z",
+          bodyHtml: "<p>First message body</p>",
+          bodyText: "First message snippet",
+          unread: false,
+        },
+        {
+          ...latest,
+          id: "welcome-second",
+          sentAt: "2026-03-04T16:30:00Z",
+          bodyHtml: "<p>Second message body</p>",
+          bodyText: "Second message snippet",
+          unread: false,
+        },
+        { ...latest, unread: false },
+      ],
+    });
+
+    try {
+      const { container } = render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+      expect(container.querySelectorAll("article.message")).toHaveLength(1);
+      expect(container.querySelectorAll("button.message-collapsed")).toHaveLength(2);
+
+      fireEvent.click(screen.getByRole("button", { name: /First message snippet/ }));
+
+      expect(container.querySelectorAll("article.message")).toHaveLength(2);
+      expect(container.querySelectorAll("button.message-collapsed")).toHaveLength(1);
+      expect(screen.getByRole("button", { name: /Second message snippet/ })).toBeInTheDocument();
+    } finally {
+      getThread.mockRestore();
+    }
+  });
+
   it("marks an archived conversation not done with Shift+e", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
@@ -148,6 +191,32 @@ describe("archive notice", () => {
 
     await advance(3000);
     expect(screen.getByRole("button", { name: "Mark read (u)" })).toBeInTheDocument();
+  });
+
+  it("does not scroll away from a reply when the delayed auto-read update runs", async () => {
+    await mailClient.mutateThread({ kind: "read", threadId: "welcome", value: false });
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+      scrollIntoView.mockClear();
+
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "r" }));
+      });
+      await screen.findByRole("dialog", { name: "Reply message" });
+
+      await advance(3000);
+      await screen.findByRole("button", { name: "Mark unread (u)" });
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      if (originalScrollIntoView) HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+    }
   });
 
   it("undoes an archive and optimistically restores the conversation", async () => {

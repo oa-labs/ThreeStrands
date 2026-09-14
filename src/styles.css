@@ -915,8 +915,16 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-field { display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--border); font-size: calc(13px * var(--font-scale)); flex-shrink: 0; }
 .compose-field:focus-within { border-bottom-color: var(--accent); }
 .compose-field > span { width: 50px; flex-shrink: 0; color: var(--muted); }
-.compose-field input { min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: 12px 6px; outline: none; }
+.compose-field input { min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: 10px 6px; outline: none; line-height: 20px; }
 .recipient-field { position: relative; }
+.recipient-chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 6px 0; }
+.recipient-chip-row.drag-over { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 6px; }
+.recipient-chip-row input { flex: 1 1 120px; min-width: 60px; padding: 4px 2px; }
+.recipient-chip { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 3px 4px 3px 9px; border-radius: 999px; background: var(--hover); font-size: calc(12px * var(--font-scale)); cursor: grab; }
+.recipient-chip:active { cursor: grabbing; }
+.recipient-chip-label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipient-chip-remove { display: grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; border: 0; border-radius: 50%; color: var(--muted); background: transparent; cursor: pointer; }
+.recipient-chip-remove:hover { color: var(--text); background: var(--selected); }
 .recipient-suggestions { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; margin: 4px 0 0; padding: 5px; list-style: none; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--raised); box-shadow: 0 12px 32px var(--shadow); max-height: 240px; overflow: auto; }
 .recipient-suggestions li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; border-radius: 6px; cursor: pointer; font-size: calc(13px * var(--font-scale)); }
 .recipient-suggestions li.active, .recipient-suggestions li:hover { background: var(--hover); }
@@ -924,6 +932,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .recipient-suggestion-name small { color: var(--muted); font-size: calc(11px * var(--font-scale)); }
 .recipient-pin-toggle { display: grid; place-items: center; flex-shrink: 0; padding: 4px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; cursor: pointer; }
 .recipient-pin-toggle:hover, .recipient-pin-toggle[aria-pressed="true"] { color: var(--accent); background: var(--hover); }
+.recipient-suggestion-add { gap: 8px; color: var(--muted); border-top: 1px solid var(--border); }
+.recipient-suggestions li:only-child.recipient-suggestion-add { border-top: 0; }
+.recipient-suggestion-add.active, .recipient-suggestion-add:hover { color: var(--text); }
 .compose-body { display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); padding: 12px 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: calc(15px * var(--font-scale)); line-height: 1.4; white-space: pre-wrap; }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }

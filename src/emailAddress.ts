@@ -31,3 +31,18 @@ export function parseAddress(value: string): ParsedAddress {
 
   return { name: normalizeDisplayName(trimmed), email: trimmed };
 }
+
+// Message headers use a compact version of the sender's display name. Most
+// names reduce to their first word, but delegated senders can arrive as a
+// single-quoted organization followed by "via ...". Treat that quoted phrase
+// as one unit instead of displaying a fragment such as "'The".
+export function simplifyDisplayName(value: string): string {
+  const name = value.trim();
+  const quotedName = name.match(/^'(.+)'(?=\s|$)/)?.[1];
+
+  if (quotedName !== undefined) {
+    return quotedName.trim();
+  }
+
+  return name.split(/\s+/)[0] || name;
+}

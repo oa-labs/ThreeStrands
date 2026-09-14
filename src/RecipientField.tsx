@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Pin, PinOff } from "lucide-react";
+import { Pin, PinOff, UserPlus, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactSuggestion } from "./domain";
+import { parseAddress } from "./emailAddress";
 
 type Props = {
   id: "to" | "cc" | "bcc";
@@ -12,57 +13,151 @@ type Props = {
   onChange(value: string): void;
 };
 
-// A single `<input>` holds the whole comma-joined address list; only the
-// segment after the last comma is ever a live suggestion query or swapped
-// out on selection.
-function lastToken(value: string): string {
-  return value.slice(value.lastIndexOf(",") + 1).trimStart();
+type Chip = { email: string; displayName: string | null };
+
+// The one drag in flight in this window, if any. A module-level singleton
+// (not React state) because it coordinates between sibling field instances
+// that otherwise share no state — HTML5 drag events can't read `dataTransfer`
+// during `dragover`, only at `drop`, so the source can't be told "did this
+// land somewhere real?" any other way than the drop target calling back here.
+let dragOrigin: { field: Props["id"]; remove(): void } | null = null;
+
+// A loose "is this a full address yet" check, not RFC 5322 validation — just
+// enough to decide whether a segment is a committed chip or still being
+// typed. The server validates for real at send time.
+function looksComplete(email: string): boolean {
+  const at = email.indexOf("@");
+  if (at <= 0) return false;
+  const domain = email.slice(at + 1);
+  return domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".");
 }
 
-function replaceLastToken(value: string, replacement: string): string {
-  const prefix = value.slice(0, value.lastIndexOf(",") + 1);
-  return `${prefix}${prefix ? " " : ""}${replacement}, `;
+function toChip(segment: string): Chip {
+  const parsed = parseAddress(segment);
+  return { email: parsed.email, displayName: parsed.name !== parsed.email ? parsed.name : null };
+}
+
+function formatChip(chip: Chip): string {
+  return chip.displayName ? `${chip.displayName} <${chip.email}>` : chip.email;
+}
+
+function mergeChip(chips: Chip[], candidate: Chip): Chip[] {
+  if (chips.some((chip) => chip.email.toLowerCase() === candidate.email.toLowerCase())) return chips;
+  return [...chips, candidate];
+}
+
+// The field's whole value is still one comma-joined string (unchanged wire
+// format — the backend and MIME builder never see chips, only this string).
+// A value arriving from outside this component (reply/forward prefill, an
+// account switch, ...) is fully-formed, so even a lone trailing segment with
+// no comma after it should render as a chip if it looks like a complete
+// address; a value this component is itself producing keystroke-by-keystroke
+// never goes through this path (see the `lastEmitted` guard below), so a
+// chip never collapses out from under someone mid-type.
+function parseExternalValue(value: string): { chips: Chip[]; draftText: string } {
+  const segments = value.split(",").map((segment) => segment.trim());
+  const last = segments[segments.length - 1] ?? "";
+  const lastIsComplete = last.length > 0 && looksComplete(parseAddress(last).email);
+  const committed = lastIsComplete ? segments : segments.slice(0, -1);
+  const chips = committed.filter((segment) => segment.length > 0).map(toChip);
+  return { chips, draftText: lastIsComplete ? "" : last };
+}
+
+function serialize(chips: Chip[], draftText: string): string {
+  const formatted = chips.map(formatChip);
+  if (!formatted.length) return draftText;
+  return draftText ? `${formatted.join(", ")}, ${draftText}` : `${formatted.join(", ")}, `;
 }
 
 export function RecipientField({ id, label, value, account, disabled, onChange }: Props) {
+  const lastEmitted = useRef(value);
+  const [chips, setChips] = useState<Chip[]>(() => parseExternalValue(value).chips);
+  const [draftText, setDraftText] = useState(() => parseExternalValue(value).draftText);
   const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
-  const [open, setOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(true);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [dragOver, setDragOver] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestId = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
 
-  function fetchSuggestions(token: string) {
+  useEffect(() => {
+    if (value === lastEmitted.current) return;
+    const parsed = parseExternalValue(value);
+    lastEmitted.current = value;
+    setChips(parsed.chips);
+    setDraftText(parsed.draftText);
+  }, [value]);
+
+  function emit(nextChips: Chip[], nextDraftText: string) {
+    console.log("emit", id, nextChips, JSON.stringify(nextDraftText));
+    const serialized = serialize(nextChips, nextDraftText);
+    lastEmitted.current = serialized;
+    setChips(nextChips);
+    setDraftText(nextDraftText);
+    onChange(serialized);
+  }
+
+  function removeChipAt(index: number) {
+    console.log("removeChipAt", id, index, chips);
+    emit(chips.filter((_, i) => i !== index), draftText);
+  }
+
+  function commitDraftText() {
+    const trimmed = draftText.trim();
+    if (!trimmed) return;
+    emit(mergeChip(chips, toChip(trimmed)), "");
+  }
+
+  const visibleSuggestions = suggestions.filter(
+    (contact) => !chips.some((chip) => chip.email.toLowerCase() === contact.email.toLowerCase()),
+  );
+  const draftEmail = draftText.trim() ? parseAddress(draftText.trim()).email : "";
+  const candidateEmail = draftEmail && looksComplete(draftEmail) ? draftEmail : null;
+  const alreadyKnown = candidateEmail
+    ? visibleSuggestions.some((contact) => contact.email.toLowerCase() === candidateEmail.toLowerCase())
+    : true;
+  // Someone with zero mail history (a brand-new contact) never turns up from
+  // `listContactSuggestions` on its own — this is the only way to pin them.
+  const addCandidate: Chip | null = candidateEmail && !alreadyKnown ? toChip(draftText.trim()) : null;
+  const optionCount = visibleSuggestions.length + (addCandidate ? 1 : 0);
+  const visible = !dismissed && optionCount > 0;
+  const effectiveActiveIndex = optionCount > 0 ? Math.min(Math.max(activeIndex, 0), optionCount - 1) : -1;
+
+  function fetchSuggestions(forToken: string) {
     const thisRequest = ++requestId.current;
     void mailClient
-      .listContactSuggestions(account, token, 8)
+      .listContactSuggestions(account, forToken, 8)
       .then((results) => {
         if (thisRequest !== requestId.current) return;
         setSuggestions(results);
-        setOpen(results.length > 0);
-        setActiveIndex(results.length > 0 ? 0 : -1);
       })
       .catch(() => {});
   }
 
-  function query(nextValue: string) {
+  function query(nextDraftText: string) {
     if (debounce.current) clearTimeout(debounce.current);
-    const token = lastToken(nextValue).trim();
+    const token = nextDraftText.trim();
     if (!token || !account) {
       setSuggestions([]);
-      setOpen(false);
       return;
     }
     debounce.current = setTimeout(() => fetchSuggestions(token), 150);
   }
 
   function select(contact: ContactSuggestion) {
-    const formatted = contact.displayName ? `${contact.displayName} <${contact.email}>` : contact.email;
-    onChange(replaceLastToken(value, formatted));
-    setOpen(false);
-    setSuggestions([]);
+    emit(mergeChip(chips, { email: contact.email, displayName: contact.displayName }), "");
+    setDismissed(true);
+    setActiveIndex(-1);
+    inputRef.current?.focus();
+  }
+
+  function addContact(candidate: Chip) {
+    emit(mergeChip(chips, candidate), "");
+    void mailClient.pinContact(account, candidate.email, candidate.displayName);
+    setDismissed(true);
     setActiveIndex(-1);
     inputRef.current?.focus();
   }
@@ -71,56 +166,159 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
     const action = contact.pinned
       ? mailClient.unpinContact(account, contact.email)
       : mailClient.pinContact(account, contact.email, contact.displayName);
-    void action.then(() => fetchSuggestions(lastToken(value).trim()));
+    void action.then(() => fetchSuggestions(draftText.trim()));
   }
 
   return (
     <label className="compose-field recipient-field">
       <span>{label}</span>
-      <input
-        ref={inputRef}
-        name={id}
-        aria-label={label}
-        aria-autocomplete="list"
-        aria-expanded={open}
-        aria-controls={`${id}-suggestions`}
-        aria-activedescendant={open && activeIndex >= 0 ? `${id}-suggestion-${activeIndex}` : undefined}
-        value={value}
-        disabled={disabled}
-        placeholder={id === "to" ? "Name <email@example.com>" : undefined}
-        onChange={(event) => {
-          onChange(event.target.value);
-          query(event.target.value);
+      <div
+        className={`recipient-chip-row${dragOver ? " drag-over" : ""}`}
+        onDragEnter={(event) => {
+          if (disabled) return;
+          event.preventDefault();
+          setDragOver(true);
         }}
-        onFocus={() => query(value)}
-        onBlur={() => setOpen(false)}
-        onKeyDown={(event) => {
-          if (!open || suggestions.length === 0) return;
-          if (event.key === "ArrowDown") {
-            event.preventDefault();
-            setActiveIndex((index) => (index + 1) % suggestions.length);
-          } else if (event.key === "ArrowUp") {
-            event.preventDefault();
-            setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
-          } else if (event.key === "Enter" && activeIndex >= 0) {
-            event.preventDefault();
-            select(suggestions[activeIndex]);
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            setOpen(false);
+        onDragOver={(event) => {
+          if (disabled) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragOver(false);
+          if (disabled) return;
+          const raw = event.dataTransfer.getData("application/x-dispatch-recipient");
+          console.log("ROW drop", id, "raw=", raw, "dragOrigin=", dragOrigin);
+          const origin = dragOrigin;
+          dragOrigin = null;
+          if (!raw || origin?.field === id) return;
+          let dropped: Chip;
+          try {
+            dropped = JSON.parse(raw);
+          } catch {
+            return;
           }
+          if (!chips.some((chip) => chip.email.toLowerCase() === dropped.email.toLowerCase())) {
+            emit([...chips, dropped], draftText);
+          }
+          origin?.remove();
         }}
-      />
-      {open && (
+      >
+        {chips.map((chip, index) => (
+          <span
+            key={chip.email}
+            className="recipient-chip"
+            draggable={!disabled}
+            onDragStart={(event) => {
+              console.log("CHIP dragstart", id, index);
+              dragOrigin = { field: id, remove: () => removeChipAt(index) };
+              event.dataTransfer.setData("application/x-dispatch-recipient", JSON.stringify(chip));
+              event.dataTransfer.effectAllowed = "move";
+            }}
+            onDragEnd={() => {
+              dragOrigin = null;
+            }}
+          >
+            <span className="recipient-chip-label">{chip.displayName ?? chip.email}</span>
+            {!disabled && (
+              <button
+                type="button"
+                className="recipient-chip-remove"
+                aria-label={`Remove ${chip.displayName ?? chip.email}`}
+                onClick={() => removeChipAt(index)}
+              >
+                <X size={11} />
+              </button>
+            )}
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          name={id}
+          aria-label={label}
+          aria-autocomplete="list"
+          aria-expanded={visible}
+          aria-controls={`${id}-suggestions`}
+          aria-activedescendant={
+            visible && effectiveActiveIndex >= 0
+              ? effectiveActiveIndex < visibleSuggestions.length
+                ? `${id}-suggestion-${effectiveActiveIndex}`
+                : `${id}-suggestion-add`
+              : undefined
+          }
+          value={draftText}
+          disabled={disabled}
+          placeholder={id === "to" && chips.length === 0 ? "Name <email@example.com>" : undefined}
+          onChange={(event) => {
+            emit(chips, event.target.value);
+            setDismissed(false);
+            query(event.target.value);
+          }}
+          onFocus={() => {
+            setDismissed(false);
+            query(draftText);
+          }}
+          onBlur={() => {
+            setDismissed(true);
+            commitDraftText();
+          }}
+          onPaste={(event) => {
+            const pasted = event.clipboardData.getData("text");
+            if (!pasted.includes(",")) return;
+            event.preventDefault();
+            const segments = `${draftText}${pasted}`
+              .split(",")
+              .map((segment) => segment.trim())
+              .filter(Boolean);
+            emit(segments.map(toChip).reduce(mergeChip, chips), "");
+          }}
+          onKeyDown={(event) => {
+            if (event.key === ",") {
+              event.preventDefault();
+              commitDraftText();
+              return;
+            }
+            if (event.key === "Backspace" && draftText === "" && chips.length > 0) {
+              event.preventDefault();
+              removeChipAt(chips.length - 1);
+              return;
+            }
+            if (!visible) {
+              if (event.key === "Enter" && draftText.trim()) {
+                event.preventDefault();
+                commitDraftText();
+              }
+              return;
+            }
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setActiveIndex((optionCount + effectiveActiveIndex + 1) % optionCount);
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setActiveIndex((optionCount + effectiveActiveIndex - 1) % optionCount);
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              if (effectiveActiveIndex < visibleSuggestions.length) select(visibleSuggestions[effectiveActiveIndex]);
+              else if (addCandidate) addContact(addCandidate);
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              setDismissed(true);
+            }
+          }}
+        />
+      </div>
+      {visible && (
         <ul className="recipient-suggestions" role="listbox" id={`${id}-suggestions`} aria-label={`${label} suggestions`}>
-          {suggestions.map((contact, index) => (
+          {visibleSuggestions.map((contact, index) => (
             <li
               key={contact.email}
               id={`${id}-suggestion-${index}`}
               role="option"
-              aria-selected={index === activeIndex}
-              className={index === activeIndex ? "active" : undefined}
+              aria-selected={index === effectiveActiveIndex}
+              className={index === effectiveActiveIndex ? "active" : undefined}
               onMouseEnter={() => setActiveIndex(index)}
               onMouseDown={(event) => {
                 event.preventDefault();
@@ -149,6 +347,22 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
               </button>
             </li>
           ))}
+          {addCandidate && (
+            <li
+              id={`${id}-suggestion-add`}
+              role="option"
+              aria-selected={visibleSuggestions.length === effectiveActiveIndex}
+              className={`recipient-suggestion-add${visibleSuggestions.length === effectiveActiveIndex ? " active" : ""}`}
+              onMouseEnter={() => setActiveIndex(visibleSuggestions.length)}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                addContact(addCandidate);
+              }}
+            >
+              <UserPlus size={13} />
+              <span>Pin {addCandidate.email} as a contact</span>
+            </li>
+          )}
         </ul>
       )}
     </label>

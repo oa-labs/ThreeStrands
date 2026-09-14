@@ -544,7 +544,11 @@ impl Database {
     /// doesn't import Google's address book: every suggestion is mined from
     /// this account's own cached `messages` (who it sent to, who it heard
     /// from), so results are inherently people the user has actually
-    /// corresponded with, plus anything explicitly pinned. Bounded to the
+    /// corresponded with, plus anything explicitly pinned. A sender is
+    /// excluded from the "heard from" side when its message carries
+    /// unsubscribe metadata (List-Unsubscribe/one-click) — that marks
+    /// bulk/automated mail, not a real correspondent — unless the account
+    /// also sent that address mail directly or pinned it. Bounded to the
     /// most recent messages so a large mailbox can't make every keystroke
     /// re-parse years of history.
     pub fn list_contact_suggestions(
@@ -568,7 +572,7 @@ impl Database {
 
         let mut statement = connection
             .prepare(
-                "SELECT m.sender, m.recipients_json, m.sent_at
+                "SELECT m.sender, m.recipients_json, m.sent_at, m.unsubscribe_json
                  FROM messages m JOIN threads t ON t.id = m.thread_id
                  WHERE t.account_id = ?1
                  ORDER BY m.sent_at DESC
@@ -581,12 +585,14 @@ impl Database {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
                 ))
             })
             .map_err(display_error)?;
 
         for row in rows {
-            let (sender, recipients_json, sent_at) = row.map_err(display_error)?;
+            let (sender, recipients_json, sent_at, unsubscribe_json) =
+                row.map_err(display_error)?;
             // Best-effort: a message with an address this parser rejects
             // just contributes nothing to suggestions rather than failing
             // the whole ranking.
@@ -627,7 +633,12 @@ impl Database {
                         entry.last_interacted_at = sent_at.clone();
                     }
                 }
-            } else if !sender_email.is_empty() {
+            } else if !sender_email.is_empty() && unsubscribe_json.is_none() {
+                // A List-Unsubscribe/one-click header marks bulk/automated
+                // mail (newsletters, notifications) — never a real
+                // correspondent, so it must not seed or bump a suggestion.
+                // Doesn't affect an entry already earned by being sent to,
+                // or a manually pinned contact.
                 let entry = by_email.entry(sender_email).or_insert_with(|| Agg {
                     display_name: None,
                     sent_count: 0,
@@ -2147,6 +2158,55 @@ mod tests {
             .unwrap();
         assert_eq!(after_unpin.len(), 1);
         assert_eq!(after_unpin[0].email, "frequent@example.com");
+    }
+
+    #[test]
+    fn contact_suggestions_exclude_automated_senders_unless_sent_to_or_pinned() {
+        let database = database();
+        let mut newsletter = message(
+            "newsletter-message",
+            "newsletter-thread",
+            "2026-01-01T00:00:00Z",
+            "body",
+        );
+        newsletter.from = "Newsletter <newsletter@example.com>".into();
+        newsletter.to = vec!["you@example.com".into()];
+        newsletter.unsubscribe = Some(UnsubscribeMetadata {
+            one_click_url: Some("https://example.com/unsubscribe".into()),
+            mailto_url: None,
+            web_url: None,
+            list_id: None,
+        });
+        database
+            .upsert_gmail_thread("you@example.com", &[newsletter])
+            .unwrap();
+
+        assert!(database
+            .list_contact_suggestions("you@example.com", "", 10)
+            .unwrap()
+            .is_empty());
+
+        // Mailing that same address directly still earns it a suggestion —
+        // the exclusion only blocks the "heard from" side.
+        let mut sent = message(
+            "sent-message",
+            "sent-thread",
+            "2026-01-02T00:00:00Z",
+            "body",
+        );
+        sent.from = "you@example.com".into();
+        sent.to = vec!["newsletter@example.com".into()];
+        database
+            .upsert_gmail_thread("you@example.com", &[sent])
+            .unwrap();
+
+        let suggestions = database
+            .list_contact_suggestions("you@example.com", "", 10)
+            .unwrap();
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].email, "newsletter@example.com");
+        assert_eq!(suggestions[0].sent_count, 1);
+        assert_eq!(suggestions[0].received_count, 0);
     }
 
     #[test]

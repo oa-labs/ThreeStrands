@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAddress } from "./emailAddress";
+import { parseAddress, simplifyDisplayName } from "./emailAddress";
 
 describe("parseAddress", () => {
   it("splits a display name and email out of a From-style header", () => {
@@ -50,5 +50,19 @@ describe("parseAddress", () => {
       name: "Conan O'Brien",
       email: "conan@example.com",
     });
+  });
+});
+
+describe("simplifyDisplayName", () => {
+  it("uses the first word of an ordinary display name", () => {
+    expect(simplifyDisplayName("Jane Doe")).toBe("Jane");
+  });
+
+  it("treats a leading single-quoted name as one word and removes its quotes", () => {
+    expect(simplifyDisplayName("'The Dev Shop LLC' via CS-PMO")).toBe("The Dev Shop LLC");
+  });
+
+  it("does not mistake an apostrophe within a name for wrapping quotes", () => {
+    expect(simplifyDisplayName("Conan O'Brien")).toBe("Conan");
   });
 });
