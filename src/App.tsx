@@ -1873,6 +1873,7 @@ export function App() {
                         } catch {
                           // Use the literal Content-ID when percent encoding is malformed.
                         }
+                        contentId = contentId.trim().replace(/^<|>$/g, "");
                         const embedded = message.attachments.find((attachment) =>
                           attachment.inline
                           && attachment.contentId?.localeCompare(contentId, undefined, { sensitivity: "accent" }) === 0

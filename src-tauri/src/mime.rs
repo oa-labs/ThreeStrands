@@ -133,24 +133,28 @@ fn collect_attachments(
     body_html: &str,
     attachments: &mut Vec<crate::models::MessageAttachment>,
 ) {
-    if !part.filename.is_empty() {
-        let content_id = header(part, "Content-ID")
-            .map(str::trim)
-            .map(|value| value.trim_start_matches('<').trim_end_matches('>'))
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let inline = content_id.as_deref().is_some_and(|content_id| {
-            body_html
-                .to_ascii_lowercase()
-                .contains(&format!("cid:{}", content_id.to_ascii_lowercase()))
-        });
+    let content_id = header(part, "Content-ID")
+        .map(str::trim)
+        .map(|value| value.trim_start_matches('<').trim_end_matches('>'))
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let inline = content_id.as_deref().is_some_and(|content_id| {
+        body_html
+            .to_ascii_lowercase()
+            .contains(&format!("cid:{}", content_id.to_ascii_lowercase()))
+    });
+    if !part.filename.is_empty() || inline {
         attachments.push(crate::models::MessageAttachment {
             id: part
                 .body
                 .attachment_id
                 .clone()
                 .unwrap_or_else(|| format!("part:{path}")),
-            filename: part.filename.clone(),
+            filename: if part.filename.is_empty() {
+                "inline-image".into()
+            } else {
+                part.filename.clone()
+            },
             mime_type: if part.mime_type.is_empty() {
                 "application/octet-stream".into()
             } else {
@@ -176,7 +180,7 @@ pub fn attachment_bytes_from_payload(
             .attachment_id
             .clone()
             .unwrap_or_else(|| format!("part:{path}"));
-        if !part.filename.is_empty() && part_id == id {
+        if (!part.filename.is_empty() || header(part, "Content-ID").is_some()) && part_id == id {
             return Some(part);
         }
         part.parts
@@ -206,7 +210,7 @@ pub fn provider_attachment_id_from_payload(
     attachment_reference: &str,
 ) -> Result<Option<String>, String> {
     fn find(part: &MimePart, path: &str, reference: &str) -> Option<Option<String>> {
-        if !part.filename.is_empty()
+        if (!part.filename.is_empty() || header(part, "Content-ID").is_some())
             && (part.body.attachment_id.as_deref() == Some(reference)
                 || format!("part:{path}") == reference)
         {
@@ -457,7 +461,6 @@ mod tests {
                     "body": { "data": URL_SAFE_NO_PAD.encode("<p>Regards</p><img src=\"cid:Signature.Logo\">") }
                 }, {
                     "mimeType": "image/png",
-                    "filename": "image.png",
                     "headers": [{ "name": "Content-ID", "value": "<signature.logo>" }],
                     "body": { "attachmentId": "gmail-inline-token", "size": 42 }
                 }, {
