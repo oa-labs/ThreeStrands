@@ -43,6 +43,8 @@ function noopContext(): CommandContext {
     toggleStarSelected: async () => ({}),
     toggleCheckedSelected: () => {},
     toggleOlderMessagesExpanded: () => {},
+    pageMessageDown: () => {},
+    pageMessageUp: () => {},
     aiSummaryAvailable: false,
     summarizeSelected: async () => ({}),
     focusSearch: () => {},
@@ -157,6 +159,24 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "shortcuts.open")?.keys).toEqual(["?"]);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "?", shiftKey: true }), "?")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "/", shiftKey: true }), "?")).toBe(true);
+  });
+
+  it("pages the message pane with space, reserving shift+space to page up", () => {
+    const pageDown = commands.find((command) => command.id === "thread.pageDown");
+    const pageUp = commands.find((command) => command.id === "thread.pageUp");
+    expect(pageDown?.keys).toEqual(["Space"]);
+    expect(pageUp?.keys).toEqual(["Shift+Space"]);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: " ", code: "Space" }), "Space")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: " ", code: "Space", shiftKey: true }), "Space")).toBe(false);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: " ", code: "Space", shiftKey: true }), "Shift+Space")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: " ", code: "Space" }), "Shift+Space")).toBe(false);
+  });
+
+  it("only pages the message pane when a thread is open and the composer is closed", () => {
+    const pageDown = commands.find((command) => command.id === "thread.pageDown");
+    expect(pageDown?.enabled({ ...noopContext(), selectedId: null })).toBe(false);
+    expect(pageDown?.enabled({ ...noopContext(), selectedId: "t1", composerActive: true })).toBe(false);
+    expect(pageDown?.enabled({ ...noopContext(), selectedId: "t1" })).toBe(true);
   });
 
   it("registers both last-action undo shortcuts", () => {

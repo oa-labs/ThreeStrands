@@ -34,6 +34,8 @@ export type CommandContext = {
   toggleStarSelected(): Promise<CommandResult>;
   toggleCheckedSelected(): void;
   toggleOlderMessagesExpanded(): void;
+  pageMessageDown(): void;
+  pageMessageUp(): void;
   aiSummaryAvailable: boolean;
   summarizeSelected(): Promise<CommandResult>;
   focusSearch(): void;
@@ -199,6 +201,22 @@ export const commands: Command[] = [
     run: (context) => complete(context.toggleOlderMessagesExpanded),
   },
   {
+    id: "thread.pageDown",
+    title: "Scroll message down",
+    keys: ["Space"],
+    group: "Navigation",
+    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    run: (context) => complete(context.pageMessageDown),
+  },
+  {
+    id: "thread.pageUp",
+    title: "Scroll message up",
+    keys: ["Shift+Space"],
+    group: "Navigation",
+    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    run: (context) => complete(context.pageMessageUp),
+  },
+  {
     id: "thread.summarize",
     title: "Summarize with AI",
     keys: ["i"],
@@ -343,6 +361,7 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   const questionMark = base === "?" && (
     event.key === "?" || (event.key === "/" && event.shiftKey)
   );
+  const spaceKey = base === "Space" && event.code === "Space";
   const shiftedDigit = expectsShift && /^\d$/.test(base) && event.code === `Digit${base}`;
   const shiftMatches = expectsShift
     ? event.shiftKey
@@ -350,7 +369,7 @@ export function matchesShortcut(event: KeyboardEvent, key: string): boolean {
   const shiftedSymbol = shiftedSymbolCode !== null && (
     event.key === base || (event.shiftKey && event.code === shiftedSymbolCode)
   );
-  const baseMatches = questionMark || shiftedDigit || shiftedSymbol || event.key.toLocaleLowerCase() === base.toLocaleLowerCase();
+  const baseMatches = questionMark || spaceKey || shiftedDigit || shiftedSymbol || event.key.toLocaleLowerCase() === base.toLocaleLowerCase();
   return baseMatches
     && shiftMatches
     && (event.ctrlKey || event.metaKey) === expectsMod

@@ -1284,6 +1284,16 @@ export function App() {
       });
     },
     toggleOlderMessagesExpanded: () => setOlderMessagesExpanded((current) => !current),
+    pageMessageDown: () => {
+      const node = messageStackRef.current;
+      if (!node) return;
+      node.scrollBy({ top: node.clientHeight * 0.9, behavior: "smooth" });
+    },
+    pageMessageUp: () => {
+      const node = messageStackRef.current;
+      if (!node) return;
+      node.scrollBy({ top: -node.clientHeight * 0.9, behavior: "smooth" });
+    },
     aiSummaryAvailable,
     summarizeSelected: async () => {
       if (!selected) return {};
