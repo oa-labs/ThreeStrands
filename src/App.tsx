@@ -19,6 +19,9 @@ import {
   Mails,
   MailOpen,
   Moon,
+  Download,
+  ExternalLink,
+  Paperclip,
   Plus,
   Sun,
   Pencil,
@@ -216,6 +219,12 @@ function HighlightedSnippet({ thread }: { thread: Thread }) {
   );
 }
 
+function formatAttachmentSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 const ThreadRow = memo(function ThreadRow({
   thread,
   selected,
@@ -240,15 +249,20 @@ const ThreadRow = memo(function ThreadRow({
       className={`thread-row ${selected ? "selected" : ""}`}
       onClick={() => onSelect(thread.id)}
     >
-      <span
-        className={`row-check ${checked ? "checked" : ""}`}
-        aria-hidden="true"
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggleCheck(thread.id);
-        }}
-      >
-        {checked ? <CheckSquare size={16} /> : <Square size={16} />}
+      <span className="row-leading">
+        <span
+          className={`row-check ${checked ? "checked" : ""}`}
+          aria-hidden="true"
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleCheck(thread.id);
+          }}
+        >
+          {checked ? <CheckSquare size={16} /> : <Square size={16} />}
+        </span>
+        {thread.hasAttachments ? (
+          <Paperclip className="thread-attachment" size={13} aria-label="Has attachments" />
+        ) : null}
       </span>
       {checked ? <span className="sr-only">Selected for batch actions</span> : null}
       <span className={`unread-dot ${thread.unread ? "visible" : ""}`} />
@@ -1815,6 +1829,7 @@ export function App() {
                     >
                       <span className="message-collapsed-sender">{senderFirstName}</span>
                       <span className="message-collapsed-snippet">{messageSnippet(message.bodyText)}</span>
+                      {message.attachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
                       <time>{formatMessageDate(message.sentAt)}</time>
                       <ChevronDown size={14} className="message-collapsed-chevron" />
                     </button>
@@ -1854,6 +1869,42 @@ export function App() {
                       fontFamily={fontFamily}
                       tone={isLatest ? "current" : message.unread ? "default" : "muted"}
                     />
+                    {message.attachments.length > 0 ? (
+                      <div className="message-attachments" aria-label="Attachments">
+                        {message.attachments.map((attachment) => (
+                          <div className="message-attachment" key={attachment.id}>
+                            <button
+                              type="button"
+                              className="attachment-badge"
+                              aria-label={`View ${attachment.filename}`}
+                              onClick={() => {
+                                void mailClient.openAttachment(message.id, attachment.id).catch((reason: unknown) => {
+                                  setNotice({ message: `Could not open attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
+                                });
+                              }}
+                            >
+                              <Paperclip size={14} />
+                              <span>{attachment.filename}</span>
+                              <small>{formatAttachmentSize(attachment.size)}</small>
+                              <ExternalLink size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              className="attachment-download"
+                              aria-label={`Download ${attachment.filename}`}
+                              title={`Download ${attachment.filename}`}
+                              onClick={() => {
+                                void mailClient.saveAttachment(message.id, attachment.id).catch((reason: unknown) => {
+                                  setNotice({ message: `Could not download attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
+                                });
+                              }}
+                            >
+                              <Download size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </article>
                 );
               })}

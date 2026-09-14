@@ -15,6 +15,14 @@ export type Thread = {
   matchSnippet?: string | null;
   summary: string | null;
   summaryGeneratedAt: string | null;
+  hasAttachments: boolean;
+};
+
+export type MessageAttachment = {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
 };
 
 export type Message = {
@@ -27,6 +35,7 @@ export type Message = {
   bodyText: string;
   unread: boolean;
   unsubscribe?: UnsubscribeInfo | null;
+  attachments: MessageAttachment[];
 };
 
 export type UnsubscribeMethod = "oneClick" | "mailto" | "web";

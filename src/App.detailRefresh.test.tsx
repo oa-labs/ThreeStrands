@@ -80,6 +80,7 @@ it("refreshes the open conversation when its inbox row receives a sent reply", a
         bodyText: "Sent reply body",
         unread: false,
         unsubscribe: null,
+        attachments: [],
       }],
     };
   });
