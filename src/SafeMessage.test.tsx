@@ -403,6 +403,23 @@ it("blocks images by default and resolves them through resolveImage once the rea
   expect(resolveImage).toHaveBeenCalledWith("https://tracker.invalid/pixel.gif");
 });
 
+it("resolves embedded cid images automatically while remote images remain blocked", async () => {
+  const resolveImage = vi.fn(async (url: string) => `data:image/png;base64,RESOLVED(${url})`);
+  render(
+    <SafeMessage
+      html="<img src='cid:signature.logo'><img src='https://tracker.invalid/pixel.gif'>"
+      imageCacheKey="message-1"
+      resolveImage={resolveImage}
+    />,
+  );
+
+  await waitFor(() => expect(resolveImage).toHaveBeenCalledWith("cid:signature.logo"));
+  expect(resolveImage).not.toHaveBeenCalledWith("https://tracker.invalid/pixel.gif");
+  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+  expect(frame.srcdoc).toContain("data:image/png;base64,RESOLVED(cid:signature.logo)");
+  expect(frame.srcdoc).toContain('data-blocked-src="https://tracker.invalid/pixel.gif"');
+});
+
 it("loads images automatically through resolveImage when configured", async () => {
   const resolveImage = vi.fn(async (url: string) => `data:image/png;base64,RESOLVED(${url})`);
   render(<SafeMessage html="<img src='https://example.com/logo.png'>" loadImages resolveImage={resolveImage} />);

@@ -286,7 +286,6 @@ export function sanitizeMessageHtml(html: string): string {
     ALLOWED_ATTR: ["align", "alt", "bgcolor", "cellpadding", "cellspacing", "class", "colspan", "dir", "height", "hidden", "href", "id", "rowspan", "src", "start", "style", "title", "valign", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|cid):|data:image\/)/i,
     FORBID_TAGS: ["form", "script", "style", "svg"],
     RETURN_DOM_FRAGMENT: true,
   });

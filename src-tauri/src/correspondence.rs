@@ -119,6 +119,48 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 9 {
+        // Attachment metadata written by older builds did not distinguish
+        // HTML-referenced CID images from downloadable files. Re-normalize
+        // cached Gmail payloads once so signatures are fixed without a full
+        // mailbox resync.
+        let cached_payloads = {
+            let mut statement = tx
+                .prepare("SELECT id, payload FROM message_metadata")
+                .map_err(error)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(error)?;
+            rows
+        };
+        for (id, payload) in cached_payloads {
+            let Ok(message) = serde_json::from_str::<GmailMessage>(&payload) else {
+                continue;
+            };
+            let Ok(normalized) = crate::mime::normalize(&message) else {
+                continue;
+            };
+            tx.execute(
+                "UPDATE messages SET attachments_json=?1 WHERE id=?2",
+                params![json(&normalized.attachments)?, id],
+            )
+            .map_err(error)?;
+        }
+        tx.execute(
+            "UPDATE threads SET has_attachments = EXISTS(
+                SELECT 1 FROM messages m, json_each(m.attachments_json) attachment
+                WHERE m.thread_id = threads.id
+                  AND COALESCE(json_extract(attachment.value, '$.inline'), 0) = 0
+            )",
+            [],
+        )
+        .map_err(error)?;
+        tx.pragma_update(None, "user_version", 9).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection

@@ -1082,9 +1082,12 @@ impl Database {
         let starred = labels.iter().any(|label| label == "STARRED");
         let archived = !labels.iter().any(|label| label == "INBOX");
         let trashed = labels.iter().any(|label| label == "TRASH");
-        let has_attachments = messages
-            .iter()
-            .any(|message| message.attachments.iter().any(|attachment| !attachment.inline));
+        let has_attachments = messages.iter().any(|message| {
+            message
+                .attachments
+                .iter()
+                .any(|attachment| !attachment.inline)
+        });
         transaction
             .execute(
                 "INSERT INTO threads(

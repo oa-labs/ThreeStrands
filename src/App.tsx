@@ -1819,6 +1819,7 @@ export function App() {
                 );
                 const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
                 const senderFirstName = senderName.trim().split(/\s+/)[0] || senderName;
+                const downloadableAttachments = message.attachments.filter((attachment) => !attachment.inline);
                 if (!isExpanded) {
                   return (
                     <button
@@ -1829,7 +1830,7 @@ export function App() {
                     >
                       <span className="message-collapsed-sender">{senderFirstName}</span>
                       <span className="message-collapsed-snippet">{messageSnippet(message.bodyText)}</span>
-                      {message.attachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
+                      {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
                       <time>{formatMessageDate(message.sentAt)}</time>
                       <ChevronDown size={14} className="message-collapsed-chevron" />
                     </button>
@@ -1863,15 +1864,30 @@ export function App() {
                       html={message.bodyHtml}
                       text={message.bodyText}
                       loadImages={loadRemoteImages}
-                      resolveImage={mailClient.fetchRemoteImage}
+                      imageCacheKey={message.id}
+                      resolveImage={(url) => {
+                        if (!/^cid:/i.test(url)) return mailClient.fetchRemoteImage(url);
+                        let contentId = url.slice(4);
+                        try {
+                          contentId = decodeURIComponent(contentId);
+                        } catch {
+                          // Use the literal Content-ID when percent encoding is malformed.
+                        }
+                        const embedded = message.attachments.find((attachment) =>
+                          attachment.inline
+                          && attachment.contentId?.localeCompare(contentId, undefined, { sensitivity: "accent" }) === 0
+                        );
+                        if (!embedded) return Promise.reject(new Error("Embedded image not found"));
+                        return mailClient.fetchAttachmentImage(message.id, embedded.id);
+                      }}
                       theme={effectiveThemeValue}
                       fontScale={fontScale / 100}
                       fontFamily={fontFamily}
                       tone={isLatest ? "current" : message.unread ? "default" : "muted"}
                     />
-                    {message.attachments.length > 0 ? (
+                    {downloadableAttachments.length > 0 ? (
                       <div className="message-attachments" aria-label="Attachments">
-                        {message.attachments.map((attachment) => (
+                        {downloadableAttachments.map((attachment) => (
                           <div className="message-attachment" key={attachment.id}>
                             <button
                               type="button"
@@ -2142,6 +2158,7 @@ export function messagesWithQueuedReplies(detail: ThreadDetail, outbox: OutboxIt
       bodyText: item.draft.body,
       unread: false,
       unsubscribe: null,
+      attachments: [],
     }));
 
   return queuedReplies.length > 0 ? [...detail.messages, ...queuedReplies] : detail.messages;

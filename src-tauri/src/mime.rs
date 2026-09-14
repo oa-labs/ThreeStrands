@@ -162,12 +162,7 @@ fn collect_attachments(
         });
     }
     for (index, child) in part.parts.iter().enumerate() {
-        collect_attachments(
-            child,
-            &format!("{path}.{index}"),
-            body_html,
-            attachments,
-        );
+        collect_attachments(child, &format!("{path}.{index}"), body_html, attachments);
     }
 }
 
@@ -448,6 +443,40 @@ mod tests {
             provider_attachment_id_from_payload(&message, "part:0.0").unwrap(),
             Some("gmail-token".into())
         );
+    }
+
+    #[test]
+    fn marks_html_referenced_content_id_images_as_inline() {
+        let message: GmailMessage = serde_json::from_value(serde_json::json!({
+            "id": "m",
+            "threadId": "t",
+            "payload": {
+                "mimeType": "multipart/related",
+                "parts": [{
+                    "mimeType": "text/html",
+                    "body": { "data": URL_SAFE_NO_PAD.encode("<p>Regards</p><img src=\"cid:Signature.Logo\">") }
+                }, {
+                    "mimeType": "image/png",
+                    "filename": "image.png",
+                    "headers": [{ "name": "Content-ID", "value": "<signature.logo>" }],
+                    "body": { "attachmentId": "gmail-inline-token", "size": 42 }
+                }, {
+                    "mimeType": "application/pdf",
+                    "filename": "invoice.pdf",
+                    "body": { "attachmentId": "gmail-file-token", "size": 99 }
+                }]
+            }
+        }))
+        .unwrap();
+
+        let normalized = normalize(&message).unwrap();
+        assert!(normalized.attachments[0].inline);
+        assert_eq!(
+            normalized.attachments[0].content_id.as_deref(),
+            Some("signature.logo")
+        );
+        assert!(!normalized.attachments[1].inline);
+        assert_eq!(normalized.attachments[1].content_id, None);
     }
 
     #[test]
