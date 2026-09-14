@@ -8,11 +8,23 @@ type SafeMessageProps = {
   html: string;
   text?: string;
   loadImages?: boolean;
+  /**
+   * Fetches a remote image/background URL and resolves to a `data:` URI —
+   * normally the native image proxy (`fetch_remote_image`), which validates
+   * the URL and fetches it on the reader's behalf so the message iframe
+   * never contacts the sender's host directly. Injected rather than
+   * imported so this component stays decoupled from the data layer.
+   */
+  resolveImage?: (url: string) => Promise<string>;
   theme?: "light" | "dark";
   fontScale?: number;
   fontFamily?: FontFamily;
   tone?: "default" | "current" | "muted";
 };
+
+async function defaultResolveImage(): Promise<string> {
+  throw new Error("Image loading is not configured for this SafeMessage instance");
+}
 
 // Styling for the isolated message document (see buildMessageDocument). This
 // mirrors the palette and .message-body content rules in styles.css — kept
@@ -83,7 +95,10 @@ const MESSAGE_DOCUMENT_CSP = [
   "default-src 'none'",
   "script-src 'none'",
   "style-src 'unsafe-inline'",
-  "img-src https: data:",
+  // Only data: — every remote image/background is resolved to one through
+  // the native proxy before it ever reaches this document, so the iframe
+  // itself never needs to make a network request for an image.
+  "img-src data:",
   "frame-src 'none'",
   "object-src 'none'",
   "base-uri 'none'",
@@ -201,8 +216,7 @@ function isBlank(element: Element): boolean {
   return (element.textContent ?? "").replace(/\s+/g, "") === "";
 }
 
-export function sanitizeMessageHtml(html: string, options: { allowImages?: boolean } = {}): string {
-  const { allowImages = false } = options;
+export function sanitizeMessageHtml(html: string): string {
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
     ALLOWED_ATTR: ["align", "alt", "bgcolor", "cellpadding", "cellspacing", "colspan", "dir", "height", "hidden", "href", "rowspan", "src", "start", "style", "title", "valign", "width"],
@@ -225,14 +239,15 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
       const value = original.getPropertyValue(property).trim().toLowerCase();
       if (pattern.test(value)) declarations.push(`${property}: ${value}`);
     }
-    // Same URL scheme check and remote-image gating as <img src>, since a
-    // background-image is just as much a network request as an <img> is.
+    // Same URL scheme check as <img src>. Every remote background, like
+    // every remote <img>, is always parked behind the blocked-src marker
+    // here — resolving it to a real value is the caller's job (see
+    // applyResolvedImages), once the native proxy has fetched it.
     const backgroundImageMatch = original.getPropertyValue("background-image").trim().match(backgroundImageUrl);
     if (backgroundImageMatch) {
       const backgroundUrl = backgroundImageMatch[1] ?? backgroundImageMatch[2] ?? backgroundImageMatch[3] ?? "";
       if (safeImageSrc.test(backgroundUrl) && !/["']/.test(backgroundUrl)) {
-        if (allowImages) declarations.push(`background-image: url("${backgroundUrl}")`);
-        else element.setAttribute(blockedSrcAttr, backgroundUrl);
+        element.setAttribute(blockedSrcAttr, backgroundUrl);
       }
     }
     const tag = element.tagName.toLowerCase();
@@ -302,13 +317,8 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
     if (tag === "img") {
       const src = element.getAttribute("src") ?? "";
       element.removeAttribute("src");
-      if (!safeImageSrc.test(src)) {
-        element.remove();
-      } else if (allowImages) {
-        element.setAttribute("src", src);
-      } else {
-        element.setAttribute(blockedSrcAttr, src);
-      }
+      if (!safeImageSrc.test(src)) element.remove();
+      else element.setAttribute(blockedSrcAttr, src);
     }
   });
 
@@ -328,10 +338,53 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
   return container.innerHTML;
 }
 
+/** Every URL currently parked behind a blocked-src marker, deduplicated. */
+export function extractBlockedImageUrls(html: string): string[] {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  const urls = new Set<string>();
+  container.querySelectorAll(`[${blockedSrcAttr}]`).forEach((element) => {
+    const url = element.getAttribute(blockedSrcAttr);
+    if (url) urls.add(url);
+  });
+  return Array.from(urls);
+}
+
+/**
+ * Fills in whichever blocked-src markers have a resolved `data:` URI
+ * available, leaving any without one (not yet fetched, or the fetch failed)
+ * blocked exactly as sanitizeMessageHtml left them.
+ */
+export function applyResolvedImages(html: string, resolved: ReadonlyMap<string, string>): string {
+  if (resolved.size === 0) return html;
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  container.querySelectorAll<HTMLElement>(`[${blockedSrcAttr}]`).forEach((element) => {
+    const url = element.getAttribute(blockedSrcAttr);
+    const dataUri = url ? resolved.get(url) : undefined;
+    if (!dataUri) return;
+    element.removeAttribute(blockedSrcAttr);
+    if (element.tagName.toLowerCase() === "img") {
+      element.setAttribute("src", dataUri);
+    } else {
+      element.style.setProperty("background-image", `url("${dataUri}")`);
+    }
+  });
+  return container.innerHTML;
+}
+
+// Shared across every SafeMessage instance for the life of the session, so
+// an asset referenced repeatedly (a sender's logo reused across many
+// emails, a tracking pixel repeated within one) is fetched at most once —
+// on top of the native proxy's own cache, this also dedupes concurrent
+// requests for the same URL across separate messages.
+const resolvedImagePromises = new Map<string, Promise<string>>();
+
 export function SafeMessage({
   html,
   text = "",
   loadImages = false,
+  resolveImage = defaultResolveImage,
   theme = "dark",
   fontScale = 1,
   fontFamily = "system",
@@ -339,17 +392,61 @@ export function SafeMessage({
 }: SafeMessageProps) {
   const [imagesAllowedForMessage, setImagesAllowedForMessage] = useState(false);
   const imagesAllowed = loadImages || imagesAllowedForMessage;
-  const sanitized = useMemo(() => sanitizeMessageHtml(html, { allowImages: imagesAllowed }), [html, imagesAllowed]);
+  const sanitized = useMemo(() => sanitizeMessageHtml(html), [html]);
+  const blockedUrls = useMemo(() => extractBlockedImageUrls(sanitized), [sanitized]);
   const hasContent = useMemo(() => {
     const container = document.createElement("div");
     container.innerHTML = sanitized;
     return Boolean(container.textContent?.trim()) || container.querySelector("img") !== null;
   }, [sanitized]);
-  const hasBlockedImages = !imagesAllowed && sanitized.includes(blockedSrcAttr);
+  const hasBlockedImages = !imagesAllowed && blockedUrls.length > 0;
+
+  const [resolvedImages, setResolvedImages] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    if (!imagesAllowed || blockedUrls.length === 0) return;
+    let cancelled = false;
+
+    void Promise.all(blockedUrls.map(async (url) => {
+      let pending = resolvedImagePromises.get(url);
+      if (!pending) {
+        pending = resolveImage(url);
+        resolvedImagePromises.set(url, pending);
+        // Don't let a transient failure permanently poison the shared
+        // cache — a later retry (e.g. a fresh "Load images" click) should
+        // get a real second attempt, not the same rejected promise.
+        pending.catch(() => resolvedImagePromises.delete(url));
+      }
+      try {
+        return [url, await pending] as const;
+      } catch {
+        return null;
+      }
+    })).then((results) => {
+      if (cancelled) return;
+      const resolved = results.filter((entry): entry is readonly [string, string] => entry !== null);
+      if (resolved.length === 0) return;
+      setResolvedImages((previous) => {
+        if (resolved.every(([url, dataUri]) => previous.get(url) === dataUri)) return previous;
+        const next = new Map(previous);
+        for (const [url, dataUri] of resolved) next.set(url, dataUri);
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imagesAllowed, blockedUrls, resolveImage]);
+
+  const displayHtml = useMemo(
+    () => applyResolvedImages(sanitized, resolvedImages),
+    [sanitized, resolvedImages],
+  );
 
   const doc = useMemo(
-    () => buildMessageDocument(sanitized, { theme, fontScale, fontFamily, tone }),
-    [sanitized, theme, fontScale, fontFamily, tone],
+    () => buildMessageDocument(displayHtml, { theme, fontScale, fontFamily, tone }),
+    [displayHtml, theme, fontScale, fontFamily, tone],
   );
 
   const frameRef = useRef<HTMLIFrameElement | null>(null);

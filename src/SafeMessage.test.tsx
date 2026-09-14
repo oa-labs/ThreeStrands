@@ -1,11 +1,11 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SafeMessage, sanitizeMessageHtml } from "./SafeMessage";
+import { SafeMessage, applyResolvedImages, extractBlockedImageUrls, sanitizeMessageHtml } from "./SafeMessage";
 
 afterEach(cleanup);
 
 describe("SafeMessage", () => {
-  it("removes active content and unsafe inline styles, and blocks remote images by default", () => {
+  it("removes active content and always parks remote images behind a blocked-src marker", () => {
     const sanitized = sanitizeMessageHtml(`
       <p style="background:url(https://tracker.invalid)">Hello</p>
       <img src="https://tracker.invalid/open.gif" />
@@ -15,7 +15,9 @@ describe("SafeMessage", () => {
 
     expect(sanitized).toContain("Hello");
     // A background-image is as much a network request as <img src>, so it's
-    // held behind the same block/allow gate instead of a live style.
+    // held behind the same blocked-src marker instead of a live style —
+    // resolving it is the caller's job (see applyResolvedImages), never
+    // something sanitizeMessageHtml itself does.
     expect(sanitized).not.toMatch(/style="[^"]*url\(/);
     expect(sanitized).toContain('data-blocked-src="https://tracker.invalid"');
     expect(sanitized).toContain("<img");
@@ -23,12 +25,6 @@ describe("SafeMessage", () => {
     expect(sanitized).toContain('data-blocked-src="https://tracker.invalid/open.gif"');
     expect(sanitized).not.toContain("<form");
     expect(sanitized).not.toContain("<script");
-  });
-
-  it("loads images only when explicitly allowed", () => {
-    const html = '<img src="https://example.com/logo.png" />';
-    expect(sanitizeMessageHtml(html)).not.toContain(' src="');
-    expect(sanitizeMessageHtml(html, { allowImages: true })).toContain('src="https://example.com/logo.png"');
   });
 
   it("drops images with unsafe or non-image src values", () => {
@@ -61,7 +57,7 @@ describe("SafeMessage", () => {
         <img src="https://example.com/avatar.gif" width="40" height="40" style="width:40px;height:40px">
         <img src="https://example.com/hero.png" width="550" height="183.207">
       </td></tr></table>
-    `, { allowImages: true });
+    `);
     const container = document.createElement("div");
     container.innerHTML = sanitized;
 
@@ -78,7 +74,7 @@ describe("SafeMessage", () => {
     const sanitized = sanitizeMessageHtml(`
       <div width="500">Text</div>
       <table width="120%"><tr><td width="100000"><img src="https://example.com/a.png" width="calc(100vw)" height="100%"></td></tr></table>
-    `, { allowImages: true });
+    `);
     const container = document.createElement("div");
     container.innerHTML = sanitized;
 
@@ -89,7 +85,7 @@ describe("SafeMessage", () => {
     expect(container.querySelector("img")?.hasAttribute("height")).toBe(false);
   });
 
-  it("renders safe message formatting inside a sandboxed, CSP-scoped iframe", () => {
+  it("renders safe message formatting inside a sandboxed, CSP-scoped iframe that only allows data: images", () => {
     render(<SafeMessage html="<p>Hello <strong>friend</strong></p>" />);
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
     expect(frame.tagName).toBe("IFRAME");
@@ -97,6 +93,7 @@ describe("SafeMessage", () => {
     expect(frame.srcdoc).toContain("<p>Hello <strong>friend</strong></p>");
     expect(frame.srcdoc).toContain("Content-Security-Policy");
     expect(frame.srcdoc).toContain("script-src 'none'");
+    expect(frame.srcdoc).toContain("img-src data:");
   });
 
   it("forwards keyboard events from the message iframe to the application window", () => {
@@ -137,18 +134,46 @@ it("preserves safe formatting while removing CSS requests, positioning, and app 
   expect(sanitized).not.toMatch(/style="[^"]*url\(|position|class=/);
 });
 
-it("restores a background-image only once images are explicitly allowed, with the same URL validation as <img src>", () => {
+it("extracts every distinct blocked-src URL, deduplicated", () => {
+  const sanitized = sanitizeMessageHtml(`
+    <img src="https://example.com/a.png">
+    <img src="https://example.com/a.png">
+    <div style="background-image:url(https://example.com/b.png)">Hi</div>
+  `);
+  expect(extractBlockedImageUrls(sanitized).sort()).toEqual([
+    "https://example.com/a.png",
+    "https://example.com/b.png",
+  ]);
+});
+
+it("applyResolvedImages fills in an <img> src and a background-image once resolved, leaving unresolved ones blocked", () => {
+  const sanitized = sanitizeMessageHtml(`
+    <img src="https://example.com/a.png">
+    <div style="background-image:url(https://example.com/b.png)">Hi</div>
+    <img src="https://example.com/still-pending.png">
+  `);
+  const resolved = new Map([
+    ["https://example.com/a.png", "data:image/png;base64,AAA="],
+    ["https://example.com/b.png", "data:image/png;base64,BBB="],
+  ]);
+  const filled = applyResolvedImages(sanitized, resolved);
+  const container = document.createElement("div");
+  container.innerHTML = filled;
+
+  expect(container.querySelectorAll("img")[0].getAttribute("src")).toBe("data:image/png;base64,AAA=");
+  expect(container.querySelector("div")?.style.backgroundImage).toBe('url("data:image/png;base64,BBB=")');
+  expect(container.querySelectorAll("img")[1].hasAttribute("src")).toBe(false);
+  expect(container.querySelectorAll("img")[1].getAttribute("data-blocked-src")).toBe("https://example.com/still-pending.png");
+});
+
+it("restores a background-image only once resolved, with the same URL validation as <img src>", () => {
   const blocked = sanitizeMessageHtml('<div style="background-image:url(https://example.com/hero.png)">Hi</div>');
   expect(blocked).not.toMatch(/style="[^"]*url\(/);
   expect(blocked).toContain('data-blocked-src="https://example.com/hero.png"');
 
-  const allowed = sanitizeMessageHtml('<div style="background-image:url(https://example.com/hero.png)">Hi</div>', { allowImages: true });
-  const container = document.createElement("div");
-  container.innerHTML = allowed;
-  expect(container.querySelector("div")?.style.backgroundImage).toBe('url("https://example.com/hero.png")');
-
-  const unsafe = sanitizeMessageHtml('<div style="background-image:url(javascript:alert(1))">Hi</div>', { allowImages: true });
+  const unsafe = sanitizeMessageHtml('<div style="background-image:url(javascript:alert(1))">Hi</div>');
   expect(unsafe).not.toContain("background-image");
+  expect(unsafe).not.toContain("data-blocked-src");
 });
 
 it("preserves line-height, borders, bgcolor, cellpadding/cellspacing, and CSS width/height", () => {
@@ -159,7 +184,7 @@ it("preserves line-height, borders, bgcolor, cellpadding/cellspacing, and CSS wi
       </tr>
     </table>
     <img src="https://example.com/a.png" style="width:120px;height:9999px">
-  `, { allowImages: true });
+  `);
   const container = document.createElement("div");
   container.innerHTML = sanitized;
 
@@ -222,25 +247,43 @@ it("decodes entities in the plain text fallback", () => {
   expect(screen.getByTestId("message-body")).toHaveTextContent("Tom 's message & details");
 });
 
-it("blocks images by default and reveals them once the reader asks to load them", () => {
-  render(<SafeMessage html="<img src='https://tracker.invalid/pixel.gif'>" />);
-  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
-  expect(frame.srcdoc).toContain('data-blocked-src="https://tracker.invalid/pixel.gif"');
+it("blocks images by default and resolves them through resolveImage once the reader asks to load them", async () => {
+  const resolveImage = vi.fn(async (url: string) => `data:image/gif;base64,RESOLVED(${url})`);
+  render(<SafeMessage html="<img src='https://tracker.invalid/pixel.gif'>" resolveImage={resolveImage} />);
+  const frame = () => screen.getByTestId("message-body") as HTMLIFrameElement;
+  expect(frame().srcdoc).toContain('data-blocked-src="https://tracker.invalid/pixel.gif"');
+  expect(resolveImage).not.toHaveBeenCalled();
   expect(screen.getByText("Load images")).toBeInTheDocument();
 
   fireEvent.click(screen.getByText("Load images"));
-
-  expect((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc)
-    .toContain('src="https://tracker.invalid/pixel.gif"');
   expect(screen.queryByText("Load images")).not.toBeInTheDocument();
+
+  await waitFor(() => {
+    expect(frame().srcdoc).toContain('src="data:image/gif;base64,RESOLVED(https://tracker.invalid/pixel.gif)"');
+  });
+  expect(resolveImage).toHaveBeenCalledWith("https://tracker.invalid/pixel.gif");
 });
 
-it("loads images automatically when configured", () => {
-  render(<SafeMessage html="<img src='https://example.com/logo.png'>" loadImages />);
+it("loads images automatically through resolveImage when configured", async () => {
+  const resolveImage = vi.fn(async (url: string) => `data:image/png;base64,RESOLVED(${url})`);
+  render(<SafeMessage html="<img src='https://example.com/logo.png'>" loadImages resolveImage={resolveImage} />);
 
-  expect((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc)
-    .toContain('src="https://example.com/logo.png"');
   expect(screen.queryByText("Load images")).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc)
+      .toContain('src="data:image/png;base64,RESOLVED(https://example.com/logo.png)"');
+  });
+});
+
+it("leaves an image blocked when resolveImage rejects, rather than crashing", async () => {
+  const resolveImage = vi.fn(async () => {
+    throw new Error("network error");
+  });
+  render(<SafeMessage html="<img src='https://example.com/broken.png'>" loadImages resolveImage={resolveImage} />);
+
+  await waitFor(() => expect(resolveImage).toHaveBeenCalled());
+  expect((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc)
+    .toContain('data-blocked-src="https://example.com/broken.png"');
 });
 
 it("opens web links separately and rejects unsafe or relative navigation", () => {

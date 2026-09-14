@@ -1818,6 +1818,7 @@ export function App() {
                       html={message.bodyHtml}
                       text={message.bodyText}
                       loadImages={loadRemoteImages}
+                      resolveImage={mailClient.fetchRemoteImage}
                       theme={effectiveThemeValue}
                       fontScale={fontScale}
                       fontFamily={fontFamily}

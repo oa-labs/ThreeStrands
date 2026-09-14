@@ -32,7 +32,10 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await expect(page.getByRole("region", { name: "Conversation" }).getByRole("dialog", { name: "Reply message" })).toBeVisible();
   await expect(reply.locator("xpath=parent::*")).toHaveClass(/message-stack/);
   await expect(reply.getByRole("textbox", { name: "To", exact: true })).toHaveValue(/hello@dispatch.local/);
-  await reply.getByRole("textbox", { name: "Message body" }).pressSequentially("jkeraf");
+  const replyBody = reply.getByRole("textbox", { name: "Message body" });
+  await expect(replyBody).toHaveCSS("outline-style", "none");
+  await expect(replyBody).toHaveCSS("padding-top", "12px");
+  await replyBody.pressSequentially("jkeraf");
   await reply.getByRole("button", { name: "Attach files" }).focus();
   await page.keyboard.press("e");
   await page.keyboard.press("Escape");

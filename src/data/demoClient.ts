@@ -221,6 +221,20 @@ export const demoClient: MailClient = {
     const items = visibleTrash(accountId);
     return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
   },
+  // No native backend to proxy through in demo mode, so this fetches
+  // directly from the browser — fine for local dev/preview, where there's
+  // no real reader to protect from a sender's tracking/SSRF attempts.
+  async fetchRemoteImage(url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Failed to fetch image: HTTP ${response.status}`);
+    const blob = await response.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error ?? new Error("Failed to read image"));
+      reader.readAsDataURL(blob);
+    });
+  },
   async getThread(id) {
     const thread = threads.find((candidate) => candidate.id === id);
     if (!thread) throw new Error("Thread not found");
