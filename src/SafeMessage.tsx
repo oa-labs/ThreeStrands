@@ -30,6 +30,10 @@ type SafeMessageProps = {
   tone?: "default" | "current" | "muted";
 };
 
+type QuotedHistoryBoundary =
+  | { node: Element; kind: "element" }
+  | { node: Text; kind: "text"; offset: number };
+
 async function defaultResolveImage(): Promise<string> {
   throw new Error("Image loading is not configured for this SafeMessage instance");
 }
@@ -256,6 +260,18 @@ function isBlank(element: Element): boolean {
   return (element.textContent ?? "").replace(/\s+/g, "") === "";
 }
 
+// A lone non-breaking space (or run of them) inside an otherwise-empty
+// element is a deliberate line-height spacer — templates commonly use
+// "<p>&nbsp;</p>" to reserve a blank line's height between sections since
+// margins are often reset to 0. isBlank() above treats it as whitespace (JS's
+// \s matches U+00A0), which is right for zeroing an empty table cell's
+// padding, but wrong for deciding whether to remove the element entirely:
+// that would delete the sender's spacing outright instead of just rendering
+// it, unlike every other mail client.
+function isPureSpacingChar(element: Element): boolean {
+  return /^\u00A0+$/.test(element.textContent ?? "");
+}
+
 export function sanitizeMessageHtml(html: string): string {
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
@@ -383,7 +399,12 @@ export function sanitizeMessageHtml(html: string): string {
   // ancestors, letting nested spacer stacks collapse in one pass.
   for (const element of Array.from(fragment.querySelectorAll<HTMLElement>("*")).reverse()) {
     if (!fragment.contains(element)) continue;
-    if (spacerTags.has(element.tagName.toLowerCase()) && element.children.length === 0 && isBlank(element)) {
+    if (
+      spacerTags.has(element.tagName.toLowerCase())
+      && element.children.length === 0
+      && isBlank(element)
+      && !isPureSpacingChar(element)
+    ) {
       element.remove();
     }
   }
@@ -391,6 +412,81 @@ export function sanitizeMessageHtml(html: string): string {
   const container = document.createElement("div");
   container.append(fragment);
   return container.innerHTML;
+}
+
+const quotedHistorySelector = [
+  ".gmail_quote",
+  ".protonmail_quote",
+  ".yahoo_quoted",
+  '[id^="yahoo_quoted"]',
+  "#divRplyFwdMsg",
+  ".OutlookMessageHeader",
+  ".moz-cite-prefix",
+  "blockquote",
+].join(", ");
+
+const quotedHistoryMarker = /(?:^|\n)\s*(?:(?:[-—_]{2,})\s*)?(?:original message|forwarded message|begin forwarded message)(?:\s*(?:[-—_]{2,}))?\s*(?:\n|$)/i;
+const wroteMarker = /(?:^|\n)\s*On\s+[^\n]{1,500}\s+wrote:\s*(?:\n|$)/i;
+
+function nodeComesBefore(left: Node, right: Node): boolean {
+  return Boolean(left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+/**
+ * Returns the message HTML before a mail client's quoted-reply section.
+ * The full sanitized HTML remains available to reveal after the reader asks
+ * for it; only this shorter copy is placed in the iframe initially.
+ */
+export function collapseQuotedHistoryHtml(html: string): string | null {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  const candidates: QuotedHistoryBoundary[] = Array.from(
+    container.querySelectorAll(quotedHistorySelector),
+    (node) => ({ node, kind: "element" as const }),
+  );
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let textNode = walker.nextNode();
+  while (textNode) {
+    const text = textNode.textContent ?? "";
+    const marker = quotedHistoryMarker.exec(text) ?? wroteMarker.exec(text);
+    if (marker?.index !== undefined) {
+      candidates.push({ node: textNode as Text, kind: "text", offset: marker.index });
+    }
+    textNode = walker.nextNode();
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((left, right) => {
+    if (left.node === right.node) {
+      const leftOffset = left.kind === "text" ? left.offset : 0;
+      const rightOffset = right.kind === "text" ? right.offset : 0;
+      return leftOffset - rightOffset;
+    }
+    return nodeComesBefore(left.node, right.node) ? -1 : 1;
+  });
+
+  for (const boundary of candidates) {
+    const range = document.createRange();
+    range.setStart(container, 0);
+    if (boundary.kind === "text") range.setEnd(boundary.node, boundary.offset);
+    else range.setEndBefore(boundary.node);
+
+    const visibleContainer = document.createElement("div");
+    visibleContainer.append(range.cloneContents());
+    const hasVisibleContent = Boolean(visibleContainer.textContent?.trim())
+      || visibleContainer.querySelector("img") !== null;
+    if (hasVisibleContent) return visibleContainer.innerHTML;
+  }
+  return null;
+}
+
+/** Returns the part of a plain-text reply before its quoted history. */
+export function collapseQuotedHistoryText(text: string): string | null {
+  const marker = quotedHistoryMarker.exec(text) ?? wroteMarker.exec(text);
+  if (!marker?.index) return null;
+  const visible = text.slice(0, marker.index).trimEnd();
+  return visible.trim() ? visible : null;
 }
 
 /** Every URL currently parked behind a blocked-src marker, deduplicated. */
@@ -446,14 +542,19 @@ export function SafeMessage({
   tone = "default",
 }: SafeMessageProps) {
   const [imagesAllowedForMessage, setImagesAllowedForMessage] = useState(false);
+  const [quotedHistoryExpanded, setQuotedHistoryExpanded] = useState(false);
   const imagesAllowed = loadImages || imagesAllowedForMessage;
   const sanitized = useMemo(() => sanitizeMessageHtml(html), [html]);
-  const blockedUrls = useMemo(() => extractBlockedImageUrls(sanitized), [sanitized]);
+  const collapsedHtml = useMemo(() => collapseQuotedHistoryHtml(sanitized), [sanitized]);
+  const collapsedText = useMemo(() => collapseQuotedHistoryText(text), [text]);
+  const hasCollapsedHistory = collapsedHtml !== null || (!sanitized.trim() && collapsedText !== null);
+  const renderedHtml = !quotedHistoryExpanded && collapsedHtml !== null ? collapsedHtml : sanitized;
+  const blockedUrls = useMemo(() => extractBlockedImageUrls(renderedHtml), [renderedHtml]);
   const hasContent = useMemo(() => {
     const container = document.createElement("div");
-    container.innerHTML = sanitized;
+    container.innerHTML = renderedHtml;
     return Boolean(container.textContent?.trim()) || container.querySelector("img") !== null;
-  }, [sanitized]);
+  }, [renderedHtml]);
   const hasBlockedImages = !imagesAllowed && blockedUrls.length > 0;
 
   const [resolvedImages, setResolvedImages] = useState<Map<string, string>>(new Map());
@@ -495,8 +596,8 @@ export function SafeMessage({
   }, [imagesAllowed, blockedUrls, resolveImage]);
 
   const displayHtml = useMemo(
-    () => applyResolvedImages(sanitized, resolvedImages),
-    [sanitized, resolvedImages],
+    () => applyResolvedImages(renderedHtml, resolvedImages),
+    [renderedHtml, resolvedImages],
   );
   const emailStyleSheet = useMemo(() => extractSafeStyleSheet(html), [html]);
 
@@ -567,12 +668,32 @@ export function SafeMessage({
 
   useEffect(() => () => cleanupRef.current?.(), []);
 
+  useEffect(() => {
+    setQuotedHistoryExpanded(false);
+  }, [html, text]);
+
+  const quotedHistoryButton = hasCollapsedHistory && !quotedHistoryExpanded ? (
+    <button
+      type="button"
+      className="quoted-history-toggle"
+      aria-label="Show quoted content"
+      title="Show quoted content"
+      onClick={() => setQuotedHistoryExpanded(true)}
+    >
+      &hellip;
+    </button>
+  ) : null;
+
   if (!hasContent) {
     const decoded = decodeHtmlEntities(text);
+    const visibleText = !quotedHistoryExpanded && collapsedText !== null ? collapsedText : decoded;
     return (
-      <div className="message-body message-body-plain" data-testid="message-body">
-        {decoded ? linkifyText(decoded) : "No message content."}
-      </div>
+      <>
+        <div className="message-body message-body-plain" data-testid="message-body">
+          {visibleText ? linkifyText(visibleText) : "No message content."}
+        </div>
+        {quotedHistoryButton}
+      </>
     );
   }
 
@@ -597,6 +718,7 @@ export function SafeMessage({
         onLoad={handleLoad}
         style={{ height: frameHeight }}
       />
+      {quotedHistoryButton}
     </>
   );
 }

@@ -281,6 +281,13 @@ kbd {
 }
 
 .thread-list { min-height: 0; flex: 1; overflow-y: auto; padding: 0 8px 16px; }
+.row-leading {
+  display: flex;
+  flex: 0 0 16px;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
 .row-check {
   display: flex;
   flex: 0 0 auto;
@@ -292,6 +299,7 @@ kbd {
   opacity: 0;
   transition: opacity 120ms ease;
 }
+.thread-attachment { flex: 0 0 auto; color: var(--muted); }
 .row-check:hover, .row-check.checked { color: var(--accent); }
 .thread-row:hover .row-check,
 .thread-row:focus-within .row-check,
@@ -463,6 +471,49 @@ kbd {
 .message + .message-current { margin-top: 24px; border-top: none; }
 .message-older .message-sender-row strong { color: var(--muted); }
 .message-current .message-sender-row time { color: var(--secondary); }
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 20px;
+}
+.message-attachment {
+  display: inline-flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--input);
+}
+.attachment-badge,
+.attachment-download {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+.attachment-badge { min-width: 0; gap: 7px; padding: 8px 9px; }
+.attachment-badge span {
+  max-width: 280px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-badge small { color: var(--muted); white-space: nowrap; }
+.attachment-download {
+  justify-content: center;
+  width: 34px;
+  border-left: 1px solid var(--border);
+}
+.attachment-badge:hover, .attachment-download:hover { background: var(--hover); color: var(--text); }
+.attachment-badge:focus-visible, .attachment-download:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .message-collapsed {
   display: flex;
   align-items: center;
@@ -523,6 +574,22 @@ kbd {
 .message-images-notice button:hover { background: var(--hover); border-color: var(--border-strong); }
 iframe.message-body { display: block; width: 100%; border: 0; background: transparent; }
 div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--font-scale)); line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
+.quoted-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 22px;
+  margin-top: 8px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--muted);
+  font: 700 calc(16px * var(--font-scale)) / 1 var(--font-family);
+  cursor: pointer;
+}
+.quoted-history-toggle:hover { color: var(--text); background: var(--raised); }
 .reader-empty { height: 100%; display: grid; place-content: center; justify-items: center; color: var(--muted); }
 
 .modal-backdrop {

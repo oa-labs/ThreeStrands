@@ -88,6 +88,7 @@ pub struct NormalizedMessage {
     pub labels: Vec<String>,
     pub metadata_json: String,
     pub unsubscribe: Option<UnsubscribeMetadata>,
+    pub attachments: Vec<crate::models::MessageAttachment>,
 }
 
 pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
@@ -95,6 +96,8 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
     let mut text = None;
     select_bodies(&message.payload, &mut html, &mut text)?;
     let unsubscribe = unsubscribe_metadata(&message.payload);
+    let mut attachments = Vec::new();
+    collect_attachments(&message.payload, "0", &mut attachments);
     Ok(NormalizedMessage {
         id: message.id.clone(),
         thread_id: message.thread_id.clone(),
@@ -114,7 +117,67 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
         labels: message.label_ids.clone(),
         metadata_json: serde_json::to_string(message).map_err(|e| e.to_string())?,
         unsubscribe,
+        attachments,
     })
+}
+
+fn collect_attachments(
+    part: &MimePart,
+    path: &str,
+    attachments: &mut Vec<crate::models::MessageAttachment>,
+) {
+    if !part.filename.is_empty() {
+        attachments.push(crate::models::MessageAttachment {
+            id: part
+                .body
+                .attachment_id
+                .clone()
+                .unwrap_or_else(|| format!("part:{path}")),
+            filename: part.filename.clone(),
+            mime_type: if part.mime_type.is_empty() {
+                "application/octet-stream".into()
+            } else {
+                part.mime_type.clone()
+            },
+            size: part.body.size,
+        });
+    }
+    for (index, child) in part.parts.iter().enumerate() {
+        collect_attachments(child, &format!("{path}.{index}"), attachments);
+    }
+}
+
+pub fn attachment_bytes_from_payload(
+    message: &GmailMessage,
+    attachment_id: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    fn find<'a>(part: &'a MimePart, path: &str, id: &str) -> Option<&'a MimePart> {
+        let part_id = part
+            .body
+            .attachment_id
+            .clone()
+            .unwrap_or_else(|| format!("part:{path}"));
+        if !part.filename.is_empty() && part_id == id {
+            return Some(part);
+        }
+        part.parts
+            .iter()
+            .enumerate()
+            .find_map(|(index, child)| find(child, &format!("{path}.{index}"), id))
+    }
+
+    let Some(part) = find(&message.payload, "0", attachment_id) else {
+        return Err("Attachment not found".into());
+    };
+    part.body
+        .data
+        .as_deref()
+        .map(|data| {
+            URL_SAFE_NO_PAD
+                .decode(data.trim_end_matches('='))
+                .map_err(|error| format!("Invalid Gmail base64url attachment: {error}"))
+        })
+        .transpose()
 }
 
 fn select_bodies(
@@ -304,6 +367,13 @@ mod tests {
         assert_eq!(normalized.subject, "A subject");
         assert_eq!(normalized.body_text, "plain");
         assert_eq!(normalized.body_html, "<b>html</b>");
+        assert_eq!(normalized.attachments.len(), 1);
+        assert_eq!(normalized.attachments[0].filename, "notes.txt");
+        assert_eq!(normalized.attachments[0].id, "part:0.2");
+        assert_eq!(
+            attachment_bytes_from_payload(&message, "part:0.2").unwrap(),
+            Some(b"attachment".to_vec())
+        );
     }
 
     #[test]

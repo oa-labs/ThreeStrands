@@ -111,6 +111,14 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 8 {
+        tx.execute_batch(
+            "ALTER TABLE threads ADD COLUMN has_attachments INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';
+            PRAGMA user_version=8;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection
@@ -753,7 +761,7 @@ impl Correspondence {
             .get(account)
             .map(|connected| connected.auth.clone())
     }
-    async fn provider_for(&self, account: &str) -> Result<GmailClient, String> {
+    pub(crate) async fn provider_for(&self, account: &str) -> Result<GmailClient, String> {
         Ok(GmailClient::new(self.auth_for(account).await.ok_or_else(
             || format!("{account} is not connected. Reconnect it before continuing."),
         )?))

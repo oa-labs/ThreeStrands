@@ -210,7 +210,7 @@ describe("archive notice", () => {
     await waitFor(() => expect(work).toBeChecked());
   });
 
-  it("moves through labels with arrow keys and toggles the focused label with space", async () => {
+  it("sorts labels alphabetically and supports keyboard navigation", async () => {
     const keyboardLabel = await mailClient.createLabel("Keyboard navigation");
     try {
       render(<App />);
@@ -221,14 +221,15 @@ describe("archive notice", () => {
 
       const work = await screen.findByRole("checkbox", { name: "Work" });
       const keyboard = await screen.findByRole("checkbox", { name: "Keyboard navigation" });
-      expect(work).toHaveFocus();
-
-      fireEvent.keyDown(work, { key: "ArrowDown" });
+      expect(screen.getAllByRole("checkbox").map((checkbox) => checkbox.closest("label")?.textContent?.trim()))
+        .toEqual(["Keyboard navigation", "Work"]);
       expect(keyboard).toHaveFocus();
-      fireEvent.keyDown(keyboard, { key: "ArrowUp" });
-      expect(work).toHaveFocus();
 
-      fireEvent.keyDown(work, { key: "ArrowDown" });
+      fireEvent.keyDown(keyboard, { key: "ArrowDown" });
+      expect(work).toHaveFocus();
+      fireEvent.keyDown(work, { key: "ArrowUp" });
+      expect(keyboard).toHaveFocus();
+
       fireEvent.keyDown(keyboard, { key: " ", code: "Space" });
       await waitFor(() => expect(keyboard).toBeChecked());
     } finally {

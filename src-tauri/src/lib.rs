@@ -267,6 +267,73 @@ async fn fetch_remote_image(url: String, state: State<'_, AppState>) -> Result<S
     image_proxy::fetch(&url, &state.image_cache).await
 }
 
+async fn load_attachment(
+    message_id: &str,
+    attachment_id: &str,
+    state: &AppState,
+) -> Result<(String, Vec<u8>), String> {
+    let (account_id, message) = state.database.attachment_message(message_id)?;
+    let attachment = mime::normalize(&message)?
+        .attachments
+        .into_iter()
+        .find(|attachment| attachment.id == attachment_id)
+        .ok_or("Attachment not found")?;
+    let bytes = match mime::attachment_bytes_from_payload(&message, attachment_id)? {
+        Some(bytes) => bytes,
+        None => state
+            .correspondence
+            .provider_for(&account_id)
+            .await?
+            .attachment_bytes(message_id, attachment_id)
+            .await
+            .map_err(|error| error.to_string())?,
+    };
+    let filename = std::path::Path::new(&attachment.filename)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
+        .unwrap_or("attachment")
+        .to_string();
+    Ok((filename, bytes))
+}
+
+#[tauri::command]
+async fn open_attachment(
+    message_id: String,
+    attachment_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let (filename, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
+    let directory = state
+        .correspondence
+        .root
+        .join("reader")
+        .join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("Unable to prepare attachment: {error}"))?;
+    let path = directory.join(filename);
+    std::fs::write(&path, bytes).map_err(|error| format!("Unable to write attachment: {error}"))?;
+    open::that(path).map_err(|error| format!("Unable to open attachment: {error}"))
+}
+
+#[tauri::command]
+async fn save_attachment(
+    message_id: String,
+    attachment_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let (filename, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
+    let Some(destination) = rfd::AsyncFileDialog::new()
+        .set_file_name(&filename)
+        .save_file()
+        .await
+    else {
+        return Ok(());
+    };
+    std::fs::write(destination.path(), bytes)
+        .map_err(|error| format!("Unable to save attachment: {error}"))
+}
+
 #[tauri::command]
 fn search_threads(
     request: SearchThreadsRequest,
@@ -751,6 +818,8 @@ pub fn run() {
             list_trash_page,
             get_thread,
             fetch_remote_image,
+            open_attachment,
+            save_attachment,
             search_threads,
             mutate_thread,
             mutate_threads,

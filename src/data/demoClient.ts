@@ -32,6 +32,7 @@ const initialThreads: Thread[] = [
     accountId: DEMO_ACCOUNT_ID,
     summary: null,
     summaryGeneratedAt: null,
+    hasAttachments: true,
   },
   {
     id: "roadmap",
@@ -48,6 +49,7 @@ const initialThreads: Thread[] = [
     accountId: DEMO_ACCOUNT_ID,
     summary: null,
     summaryGeneratedAt: null,
+    hasAttachments: false,
   },
   {
     id: "privacy",
@@ -64,6 +66,7 @@ const initialThreads: Thread[] = [
     accountId: DEMO_ACCOUNT_ID,
     summary: null,
     summaryGeneratedAt: null,
+    hasAttachments: false,
   },
 ];
 
@@ -251,10 +254,26 @@ export const demoClient: MailClient = {
           bodyText: thread.snippet,
           unread: thread.unread,
           unsubscribe: id === "welcome" ? { methods: ["oneClick"], listId: "dispatch.example" } : null,
+          attachments: id === "welcome"
+            ? [{ id: "demo-guide", filename: "dispatch-shortcuts.txt", mimeType: "text/plain", size: 94 }]
+            : [],
         },
       ],
     };
     return detail;
+  },
+  async openAttachment(_messageId, _attachmentId) {
+    const url = URL.createObjectURL(new Blob(["Dispatch keyboard shortcuts\n\nj/k: move\ne: archive\ns: star\n"], { type: "text/plain" }));
+    window.open(url, "_blank", "noopener,noreferrer");
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
+  async saveAttachment(_messageId, _attachmentId) {
+    const url = URL.createObjectURL(new Blob(["Dispatch keyboard shortcuts\n\nj/k: move\ne: archive\ns: star\n"], { type: "text/plain" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "dispatch-shortcuts.txt";
+    anchor.click();
+    URL.revokeObjectURL(url);
   },
   async summarizeThread(threadId): Promise<SummaryResult> {
     const thread = threads.find((candidate) => candidate.id === threadId);

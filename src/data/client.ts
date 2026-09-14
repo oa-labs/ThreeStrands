@@ -29,6 +29,8 @@ export interface MailClient extends CorrespondenceClient {
   listAllMailPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   listTrashPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   getThread(id: string): Promise<ThreadDetail>;
+  openAttachment(messageId: string, attachmentId: string): Promise<void>;
+  saveAttachment(messageId: string, attachmentId: string): Promise<void>;
   /** Fetches a remote image on the reader's behalf and resolves to a `data:` URI; see SafeMessage's `resolveImage` prop. */
   fetchRemoteImage(url: string): Promise<string>;
   summarizeThread(
@@ -76,6 +78,8 @@ const tauriClient: MailClient = {
   listAllMailPage: (accountId, offset, limit) => invoke("list_all_mail_page", { accountId, offset, limit }),
   listTrashPage: (accountId, offset, limit) => invoke("list_trash_page", { accountId, offset, limit }),
   getThread: (id) => invoke("get_thread", { id }),
+  openAttachment: (messageId, attachmentId) => invoke("open_attachment", { messageId, attachmentId }),
+  saveAttachment: (messageId, attachmentId) => invoke("save_attachment", { messageId, attachmentId }),
   fetchRemoteImage: (url) => invoke("fetch_remote_image", { url }),
   summarizeThread: (threadId, provider, model, endpoint) =>
     invoke("ai_summarize_thread", { threadId, provider, model, endpoint }),
