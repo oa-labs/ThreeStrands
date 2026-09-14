@@ -33,6 +33,8 @@ export interface MailClient extends CorrespondenceClient {
   saveAttachment(messageId: string, attachmentId: string): Promise<void>;
   /** Fetches a remote image on the reader's behalf and resolves to a `data:` URI; see SafeMessage's `resolveImage` prop. */
   fetchRemoteImage(url: string): Promise<string>;
+  /** Resolves an embedded MIME image to a `data:` URI without contacting a remote sender host. */
+  fetchAttachmentImage(messageId: string, attachmentId: string): Promise<string>;
   summarizeThread(
     threadId: string,
     provider: AiProvider,
@@ -81,6 +83,7 @@ const tauriClient: MailClient = {
   openAttachment: (messageId, attachmentId) => invoke("open_attachment", { messageId, attachmentId }),
   saveAttachment: (messageId, attachmentId) => invoke("save_attachment", { messageId, attachmentId }),
   fetchRemoteImage: (url) => invoke("fetch_remote_image", { url }),
+  fetchAttachmentImage: (messageId, attachmentId) => invoke("fetch_attachment_image", { messageId, attachmentId }),
   summarizeThread: (threadId, provider, model, endpoint) =>
     invoke("ai_summarize_thread", { threadId, provider, model, endpoint }),
   searchThreads: (request, accountId) => invoke("search_threads", { request, accountId }),

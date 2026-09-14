@@ -52,6 +52,10 @@ pub struct MessageAttachment {
     pub filename: String,
     pub mime_type: String,
     pub size: u64,
+    #[serde(default)]
+    pub content_id: Option<String>,
+    #[serde(default)]
+    pub inline: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

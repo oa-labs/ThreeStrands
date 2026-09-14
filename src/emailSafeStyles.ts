@@ -98,5 +98,5 @@ export const safeStyles: Record<string, RegExp> = {
 };
 
 export const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;
-export const safeImageSrc = /^(https?:|data:image\/)/i;
+export const safeImageSrc = /^(https?:|cid:|data:image\/)/i;
 export const blockedSrcAttr = "data-blocked-src";

@@ -24,6 +24,8 @@ type SafeMessageProps = {
    * imported so this component stays decoupled from the data layer.
    */
   resolveImage?: (url: string) => Promise<string>;
+  /** Namespaces embedded `cid:` image cache entries, which are only unique within a message. */
+  imageCacheKey?: string;
   theme?: "light" | "dark";
   fontScale?: number;
   fontFamily?: FontFamily;
@@ -284,6 +286,7 @@ export function sanitizeMessageHtml(html: string): string {
     ALLOWED_ATTR: ["align", "alt", "bgcolor", "cellpadding", "cellspacing", "class", "colspan", "dir", "height", "hidden", "href", "id", "rowspan", "src", "start", "style", "title", "valign", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|cid):|data:image\/)/i,
     FORBID_TAGS: ["form", "script", "style", "svg"],
     RETURN_DOM_FRAGMENT: true,
   });
@@ -378,7 +381,17 @@ export function sanitizeMessageHtml(html: string): string {
     if (tag === "a") {
       const href = element.getAttribute("href") ?? "";
       if (/^(https?:\/\/|mailto:|tel:)/i.test(href)) {
-        element.setAttribute("target", "_blank");
+        // Every click is already intercepted in the frame's own onClick
+        // handler (see handleLoad below), which calls preventDefault and
+        // routes the href through the native opener instead of letting the
+        // browser navigate — a target="_blank" is never meant to be
+        // followed natively. DOMPurify already strips any target the
+        // sender sent (it's not in ALLOWED_ATTR above); this used to add
+        // one back, but WKWebView treats target="_blank" on an anchor
+        // inside this sandboxed iframe (no allow-popups) as a popup
+        // request and can swallow the click before our handler's
+        // preventDefault runs, leaving the link inert. Not setting it
+        // avoids that native short-circuit entirely.
         element.setAttribute("rel", "noopener noreferrer");
       } else {
         element.removeAttribute("href");
@@ -536,6 +549,7 @@ export function SafeMessage({
   text = "",
   loadImages = false,
   resolveImage = defaultResolveImage,
+  imageCacheKey = "",
   theme = "dark",
   fontScale = 1,
   fontFamily = "system",
@@ -550,28 +564,33 @@ export function SafeMessage({
   const hasCollapsedHistory = collapsedHtml !== null || (!sanitized.trim() && collapsedText !== null);
   const renderedHtml = !quotedHistoryExpanded && collapsedHtml !== null ? collapsedHtml : sanitized;
   const blockedUrls = useMemo(() => extractBlockedImageUrls(renderedHtml), [renderedHtml]);
+  const resolvableUrls = useMemo(
+    () => imagesAllowed ? blockedUrls : blockedUrls.filter((url) => /^cid:/i.test(url)),
+    [imagesAllowed, blockedUrls],
+  );
   const hasContent = useMemo(() => {
     const container = document.createElement("div");
     container.innerHTML = renderedHtml;
     return Boolean(container.textContent?.trim()) || container.querySelector("img") !== null;
   }, [renderedHtml]);
-  const hasBlockedImages = !imagesAllowed && blockedUrls.length > 0;
+  const hasBlockedImages = !imagesAllowed && blockedUrls.some((url) => !/^cid:/i.test(url));
 
   const [resolvedImages, setResolvedImages] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
-    if (!imagesAllowed || blockedUrls.length === 0) return;
+    if (resolvableUrls.length === 0) return;
     let cancelled = false;
 
-    void Promise.all(blockedUrls.map(async (url) => {
-      let pending = resolvedImagePromises.get(url);
+    void Promise.all(resolvableUrls.map(async (url) => {
+      const cacheKey = /^cid:/i.test(url) ? `${imageCacheKey}\0${url}` : url;
+      let pending = resolvedImagePromises.get(cacheKey);
       if (!pending) {
         pending = resolveImage(url);
-        resolvedImagePromises.set(url, pending);
+        resolvedImagePromises.set(cacheKey, pending);
         // Don't let a transient failure permanently poison the shared
         // cache — a later retry (e.g. a fresh "Load images" click) should
         // get a real second attempt, not the same rejected promise.
-        pending.catch(() => resolvedImagePromises.delete(url));
+        pending.catch(() => resolvedImagePromises.delete(cacheKey));
       }
       try {
         return [url, await pending] as const;
@@ -593,7 +612,7 @@ export function SafeMessage({
     return () => {
       cancelled = true;
     };
-  }, [imagesAllowed, blockedUrls, resolveImage]);
+  }, [imageCacheKey, resolvableUrls, resolveImage]);
 
   const displayHtml = useMemo(
     () => applyResolvedImages(renderedHtml, resolvedImages),

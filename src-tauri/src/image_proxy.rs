@@ -100,7 +100,10 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
         .map_err(|error| format!("Image request failed: {error}"))?;
 
     if !response.status().is_success() {
-        return Err(format!("Image endpoint returned HTTP {}", response.status()));
+        return Err(format!(
+            "Image endpoint returned HTTP {}",
+            response.status()
+        ));
     }
 
     let content_type = response
@@ -169,7 +172,10 @@ mod tests {
             cache.get("https://example.com/0.png").await.is_none(),
             "oldest entry should be evicted once the cache is full"
         );
-        assert!(cache.get("https://example.com/overflow.png").await.is_some());
+        assert!(cache
+            .get("https://example.com/overflow.png")
+            .await
+            .is_some());
     }
 }
 

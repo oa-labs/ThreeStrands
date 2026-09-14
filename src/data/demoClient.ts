@@ -238,6 +238,9 @@ export const demoClient: MailClient = {
       reader.readAsDataURL(blob);
     });
   },
+  async fetchAttachmentImage(_messageId, _attachmentId) {
+    throw new Error("Embedded attachment images are unavailable in browser preview");
+  },
   async getThread(id) {
     const thread = threads.find((candidate) => candidate.id === id);
     if (!thread) throw new Error("Thread not found");

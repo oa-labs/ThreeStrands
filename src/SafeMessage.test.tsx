@@ -430,7 +430,12 @@ it("opens web links separately and rejects unsafe or relative navigation", () =>
   const container = document.createElement("div");
   container.innerHTML = sanitized;
   const links = container.querySelectorAll("a");
-  expect(links[0].target).toBe("_blank");
+  // No target="_blank": the click handler always intercepts navigation and
+  // routes it through the native opener (see the "clicking a link" test
+  // below), and setting target="_blank" on an anchor inside this sandboxed
+  // iframe (no allow-popups) makes WKWebView treat it as a popup request
+  // that can swallow the click before that handler's preventDefault runs.
+  expect(links[0].hasAttribute("target")).toBe(false);
   expect(links[0].rel).toBe("noopener noreferrer");
   expect(links[1].hasAttribute("href")).toBe(false);
   expect(links[2].hasAttribute("href")).toBe(false);

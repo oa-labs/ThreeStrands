@@ -23,6 +23,8 @@ export type MessageAttachment = {
   filename: string;
   mimeType: string;
   size: number;
+  contentId?: string | null;
+  inline?: boolean;
 };
 
 export type Message = {

@@ -62,7 +62,8 @@ impl Resolve for SsrfSafeResolver {
             if addrs.is_empty() {
                 return Err(Box::new(std::io::Error::other(format!(
                     "{host} has no public address"
-                ))) as Box<dyn std::error::Error + Send + Sync>);
+                )))
+                    as Box<dyn std::error::Error + Send + Sync>);
             }
             Ok(Box::new(addrs.into_iter()) as Addrs)
         })

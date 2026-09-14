@@ -1084,7 +1084,7 @@ impl Database {
         let trashed = labels.iter().any(|label| label == "TRASH");
         let has_attachments = messages
             .iter()
-            .any(|message| !message.attachments.is_empty());
+            .any(|message| message.attachments.iter().any(|attachment| !attachment.inline));
         transaction
             .execute(
                 "INSERT INTO threads(
@@ -2308,6 +2308,8 @@ mod tests {
                 filename: "invoice.pdf".into(),
                 mime_type: "application/pdf".into(),
                 size: 42,
+                content_id: None,
+                inline: false,
             });
         database
             .upsert_gmail_thread("work@example.com", &[normalized])

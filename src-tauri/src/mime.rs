@@ -38,9 +38,10 @@ pub struct MimeHeader {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MimeBody {
     pub data: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "attachment_id")]
     pub attachment_id: Option<String>,
     #[serde(default)]
     pub size: u64,
@@ -97,7 +98,12 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
     select_bodies(&message.payload, &mut html, &mut text)?;
     let unsubscribe = unsubscribe_metadata(&message.payload);
     let mut attachments = Vec::new();
-    collect_attachments(&message.payload, "0", &mut attachments);
+    collect_attachments(
+        &message.payload,
+        "0",
+        html.as_deref().unwrap_or_default(),
+        &mut attachments,
+    );
     Ok(NormalizedMessage {
         id: message.id.clone(),
         thread_id: message.thread_id.clone(),
@@ -124,9 +130,20 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
 fn collect_attachments(
     part: &MimePart,
     path: &str,
+    body_html: &str,
     attachments: &mut Vec<crate::models::MessageAttachment>,
 ) {
     if !part.filename.is_empty() {
+        let content_id = header(part, "Content-ID")
+            .map(str::trim)
+            .map(|value| value.trim_start_matches('<').trim_end_matches('>'))
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let inline = content_id.as_deref().is_some_and(|content_id| {
+            body_html
+                .to_ascii_lowercase()
+                .contains(&format!("cid:{}", content_id.to_ascii_lowercase()))
+        });
         attachments.push(crate::models::MessageAttachment {
             id: part
                 .body
@@ -140,10 +157,17 @@ fn collect_attachments(
                 part.mime_type.clone()
             },
             size: part.body.size,
+            content_id,
+            inline,
         });
     }
     for (index, child) in part.parts.iter().enumerate() {
-        collect_attachments(child, &format!("{path}.{index}"), attachments);
+        collect_attachments(
+            child,
+            &format!("{path}.{index}"),
+            body_html,
+            attachments,
+        );
     }
 }
 
@@ -178,6 +202,29 @@ pub fn attachment_bytes_from_payload(
                 .map_err(|error| format!("Invalid Gmail base64url attachment: {error}"))
         })
         .transpose()
+}
+
+/// Resolves either a Gmail attachment ID or the synthetic MIME-part reference
+/// used by older cached messages to the current provider attachment ID.
+pub fn provider_attachment_id_from_payload(
+    message: &GmailMessage,
+    attachment_reference: &str,
+) -> Result<Option<String>, String> {
+    fn find(part: &MimePart, path: &str, reference: &str) -> Option<Option<String>> {
+        if !part.filename.is_empty()
+            && (part.body.attachment_id.as_deref() == Some(reference)
+                || format!("part:{path}") == reference)
+        {
+            return Some(part.body.attachment_id.clone());
+        }
+        part.parts
+            .iter()
+            .enumerate()
+            .find_map(|(index, child)| find(child, &format!("{path}.{index}"), reference))
+    }
+
+    find(&message.payload, "0", attachment_reference)
+        .ok_or_else(|| "Attachment not found".to_string())
 }
 
 fn select_bodies(
@@ -373,6 +420,33 @@ mod tests {
         assert_eq!(
             attachment_bytes_from_payload(&message, "part:0.2").unwrap(),
             Some(b"attachment".to_vec())
+        );
+    }
+
+    #[test]
+    fn preserves_gmail_attachment_ids_and_resolves_legacy_part_references() {
+        let message: GmailMessage = serde_json::from_value(serde_json::json!({
+            "id": "m",
+            "threadId": "t",
+            "payload": {
+                "mimeType": "multipart/mixed",
+                "parts": [{
+                    "mimeType": "application/pdf",
+                    "filename": "invoice.pdf",
+                    "body": {
+                        "attachmentId": "gmail-token",
+                        "size": 42
+                    }
+                }]
+            }
+        }))
+        .unwrap();
+
+        let normalized = normalize(&message).unwrap();
+        assert_eq!(normalized.attachments[0].id, "gmail-token");
+        assert_eq!(
+            provider_attachment_id_from_payload(&message, "part:0.0").unwrap(),
+            Some("gmail-token".into())
         );
     }
 

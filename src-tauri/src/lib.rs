@@ -271,7 +271,7 @@ async fn load_attachment(
     message_id: &str,
     attachment_id: &str,
     state: &AppState,
-) -> Result<(String, Vec<u8>), String> {
+) -> Result<(String, String, Vec<u8>), String> {
     let (account_id, message) = state.database.attachment_message(message_id)?;
     let attachment = mime::normalize(&message)?
         .attachments
@@ -280,13 +280,26 @@ async fn load_attachment(
         .ok_or("Attachment not found")?;
     let bytes = match mime::attachment_bytes_from_payload(&message, attachment_id)? {
         Some(bytes) => bytes,
-        None => state
-            .correspondence
-            .provider_for(&account_id)
-            .await?
-            .attachment_bytes(message_id, attachment_id)
-            .await
-            .map_err(|error| error.to_string())?,
+        None => {
+            let provider = state.correspondence.provider_for(&account_id).await?;
+            // Builds before MimeBody's Gmail camelCase mapping was fixed cached
+            // remote attachments as `part:<mime path>`. Refresh that message on
+            // demand so those existing rows keep working after an upgrade.
+            let provider_id = if attachment_id.starts_with("part:") {
+                let fresh = provider
+                    .get_message(message_id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                mime::provider_attachment_id_from_payload(&fresh, attachment_id)?
+                    .ok_or("Attachment data is unavailable")?
+            } else {
+                attachment_id.to_string()
+            };
+            provider
+                .attachment_bytes(message_id, &provider_id)
+                .await
+                .map_err(|error| error.to_string())?
+        }
     };
     let filename = std::path::Path::new(&attachment.filename)
         .file_name()
@@ -294,7 +307,29 @@ async fn load_attachment(
         .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
         .unwrap_or("attachment")
         .to_string();
-    Ok((filename, bytes))
+    Ok((filename, attachment.mime_type, bytes))
+}
+
+#[tauri::command]
+async fn fetch_attachment_image(
+    message_id: String,
+    attachment_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    use base64::Engine;
+
+    let (_, mime_type, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
+    let mime_type = mime_type.to_ascii_lowercase();
+    if !matches!(
+        mime_type.as_str(),
+        "image/avif" | "image/gif" | "image/jpeg" | "image/png" | "image/webp"
+    ) {
+        return Err("Embedded attachment is not a supported image".into());
+    }
+    Ok(format!(
+        "data:{mime_type};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 #[tauri::command]
@@ -303,7 +338,7 @@ async fn open_attachment(
     attachment_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let (filename, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
+    let (filename, _, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
     let directory = state
         .correspondence
         .root
@@ -322,7 +357,7 @@ async fn save_attachment(
     attachment_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let (filename, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
+    let (filename, _, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
     let Some(destination) = rfd::AsyncFileDialog::new()
         .set_file_name(&filename)
         .save_file()
@@ -818,6 +853,7 @@ pub fn run() {
             list_trash_page,
             get_thread,
             fetch_remote_image,
+            fetch_attachment_image,
             open_attachment,
             save_attachment,
             search_threads,
