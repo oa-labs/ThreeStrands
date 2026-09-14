@@ -316,6 +316,30 @@ it("opens web links separately and rejects unsafe or relative navigation", () =>
   expect(links[2].hasAttribute("href")).toBe(false);
 });
 
+it("keeps cosmetic text/box formatting: border-radius, box-shadow, text-transform, letter-spacing, white-space, word-break, border-spacing", () => {
+  const sanitized = sanitizeMessageHtml(`
+    <a style="border-radius:24px;box-shadow:1px 2px 4px rgba(153,153,153,0.2);text-decoration:none;" href="https://example.com">Shop now</a>
+    <span style="text-transform:uppercase;letter-spacing:1px;white-space:nowrap;">Amazon</span>
+    <table style="border-spacing:0px;"><tr><td style="word-break:break-word;">Text</td></tr></table>
+  `);
+  expect(sanitized).toContain("border-radius: 24px");
+  expect(sanitized).toContain("box-shadow: 1px 2px 4px rgba(153,153,153,0.2)");
+  expect(sanitized).toContain("text-transform: uppercase");
+  expect(sanitized).toContain("letter-spacing: 1px");
+  expect(sanitized).toContain("white-space: nowrap");
+  expect(sanitized).toContain("word-break: break-word");
+  expect(sanitized).toContain("border-spacing: 0px");
+});
+
+it("rejects unsafe values for the new cosmetic properties instead of passing them through", () => {
+  const sanitized = sanitizeMessageHtml(`
+    <div style="box-shadow:0 0 0 9999px red inset, url(https://tracker.invalid);border-radius:expression(alert(1));">x</div>
+  `);
+  expect(sanitized).not.toContain("box-shadow");
+  expect(sanitized).not.toContain("border-radius");
+  expect(sanitized).not.toContain("url(");
+});
+
 it("keeps a product thumbnail capped at its intended size instead of growing to fill its container", () => {
   // Mirrors an actual Amazon Subscribe & Save template: the image itself
   // carries a responsive `width: 100%` paired with `max-width`/`max-height`

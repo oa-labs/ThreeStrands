@@ -11,6 +11,13 @@ export const safeBorder = new RegExp(
   `^\\d+(?:\\.\\d+)?px (?:none|solid|dashed|dotted|double|groove|ridge|inset|outset) ${colorValue}$`,
   "i",
 );
+// offset-x offset-y blur-radius [spread-radius] color, with an optional
+// leading "inset" — the same shape safeBorder already validates a color
+// against, just with up to four lengths ahead of it instead of one.
+export const safeBoxShadow = new RegExp(
+  `^(inset )?-?\\d{1,3}(?:\\.\\d+)?px -?\\d{1,3}(?:\\.\\d+)?px \\d{1,3}(?:\\.\\d+)?px(?: \\d{1,3}(?:\\.\\d+)?px)? ${colorValue}$`,
+  "i",
+);
 
 // A bounded CSS length: 0-4 digit px or percent, matching the same shape
 // safeDimension/safeCssLength in SafeMessage.tsx already enforce for the
@@ -67,6 +74,16 @@ export const safeStyles: Record<string, RegExp> = {
   // value carries positioning or a network request.
   "display": /^(none|block|inline|inline-block|table|table-cell|table-row|inline-table|flex|inline-flex)$/,
   "visibility": /^(visible|hidden|collapse)$/,
+  // Purely cosmetic text/box formatting: none of these can carry a network
+  // request, reposition an element outside its box, or escape the iframe's
+  // own layout constraints.
+  "border-radius": /^\d{1,4}(?:\.\d+)?(?:px|%)(?:\s+\d{1,4}(?:\.\d+)?(?:px|%)){0,3}$/,
+  "box-shadow": safeBoxShadow,
+  "text-transform": /^(none|uppercase|lowercase|capitalize)$/,
+  "letter-spacing": /^(normal|-?\d{1,3}(?:\.\d+)?px)$/,
+  "white-space": /^(normal|nowrap|pre|pre-wrap|pre-line)$/,
+  "word-break": /^(normal|break-all|keep-all|break-word)$/,
+  "border-spacing": /^\d{1,4}(?:\.\d+)?px(?:\s+\d{1,4}(?:\.\d+)?px)?$/,
 };
 
 export const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;
