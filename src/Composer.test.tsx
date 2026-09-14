@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "./Composer";
 import type { Draft } from "./correspondence";
@@ -54,6 +54,38 @@ describe("Composer From selector", () => {
 
     await waitFor(() => expect(selector).toHaveValue("second@example.com"));
     expect(mailClient.setDraftAccount).toHaveBeenCalledWith("draft-1", "second@example.com");
+  });
+});
+
+describe("Composer pasted images", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("inserts, resizes, and removes an image pasted into the message body", async () => {
+    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message body" });
+    Object.defineProperty(editor, "clientWidth", { configurable: true, value: 800 });
+    const imageFile = new File([new Uint8Array([137, 80, 78, 71])], "screenshot.png", { type: "image/png" });
+
+    fireEvent.paste(editor, {
+      clipboardData: { files: [imageFile], getData: () => "" },
+    });
+
+    const image = await waitFor(() => {
+      const pasted = editor.querySelector<HTMLImageElement>('img[alt="screenshot.png"]');
+      expect(pasted).toBeInTheDocument();
+      return pasted!;
+    });
+    const handle = screen.getByRole("slider", { name: "Resize pasted image" });
+    fireEvent.pointerDown(handle, { clientX: 100 });
+    fireEvent.pointerMove(window, { clientX: 160 });
+    fireEvent.pointerUp(window);
+    expect(image).toHaveAttribute("width", "380");
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove pasted image" }));
+    expect(editor.querySelector("img")).not.toBeInTheDocument();
   });
 });
 
@@ -168,9 +200,9 @@ describe("Composer recipient autocomplete", () => {
     fireEvent.drop(ccRow!, { dataTransfer });
     fireEvent.dragEnd(chip!, { dataTransfer });
 
-    expect(screen.queryByRole("button", { name: "Remove hello@dispatch.local" })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Cc" }).closest(".compose-field")).toHaveTextContent(
-      "hello@dispatch.local",
-    );
+    const toField = screen.getByRole("textbox", { name: "To" }).closest(".compose-field") as HTMLElement;
+    const ccField = screen.getByRole("textbox", { name: "Cc" }).closest(".compose-field") as HTMLElement;
+    expect(within(toField).queryByRole("button", { name: "Remove hello@dispatch.local" })).not.toBeInTheDocument();
+    expect(within(ccField).getByRole("button", { name: "Remove hello@dispatch.local" })).toBeInTheDocument();
   });
 });

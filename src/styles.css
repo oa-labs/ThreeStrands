@@ -939,6 +939,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
 .compose-body ol, .compose-body ul { margin: .5em 0; padding-left: 2em; }
+.compose-image { position: relative; display: inline-block; max-width: 100%; margin: 6px 4px 6px 0; vertical-align: top; line-height: 0; }
+.compose-image img { display: block; width: 100%; max-width: 100%; height: auto; border-radius: 6px; }
+.compose-image:hover img, .compose-image:focus-within img { outline: 2px solid var(--accent); outline-offset: 2px; }
+.compose-image-remove { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1px solid color-mix(in srgb, white 45%, transparent); border-radius: 50%; color: white; background: color-mix(in srgb, black 72%, transparent); font: 20px/1 sans-serif; box-shadow: 0 1px 4px var(--shadow); }
+.compose-image-remove:hover { background: color-mix(in srgb, black 88%, transparent); }
+.compose-image-resize { position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px; border: 2px solid var(--raised); border-radius: 50%; background: var(--accent); box-shadow: 0 1px 3px var(--shadow); cursor: nwse-resize; }
 .composer button, .correspondence-list button, .send-notice button, .compose-notice button { cursor: pointer; }
 .composer .text-button { padding: 8px 0; border: 0; background: transparent; color: var(--link); font-size: calc(12px * var(--font-scale)); flex-shrink: 0; align-self: flex-start; }
 .composer footer { display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--border); flex-shrink: 0; }

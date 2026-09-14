@@ -270,7 +270,11 @@ const ThreadRow = memo(function ThreadRow({
         <span className="thread-meta">
           <span className="thread-sender">
             {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
-            <strong>{thread.participants.map((participant) => parseAddress(participant).name).join(", ")}</strong>
+            <strong>
+              {thread.participants
+                .map((participant) => simplifyDisplayName(parseAddress(participant).name))
+                .join(", ")}
+            </strong>
           </span>
           <time>{timeFormatter.format(new Date(thread.lastMessageAt))}</time>
         </span>

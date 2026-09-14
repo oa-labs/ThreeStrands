@@ -71,8 +71,8 @@ export function plainTextToHtml(text: string): string {
 
 export function sanitizeComposeHtml(html: string): string {
   const clean = DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: ["a", "b", "blockquote", "br", "div", "em", "font", "i", "li", "ol", "p", "span", "strike", "strong", "u", "ul"],
-    ALLOWED_ATTR: ["color", "href", "style"],
+    ALLOWED_TAGS: ["a", "b", "blockquote", "br", "div", "em", "font", "i", "img", "li", "ol", "p", "span", "strike", "strong", "u", "ul"],
+    ALLOWED_ATTR: ["alt", "color", "href", "src", "style", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
   });
@@ -90,5 +90,28 @@ export function sanitizeComposeHtml(html: string): string {
       link.removeAttribute("href");
     }
   });
+  container.querySelectorAll<HTMLImageElement>("img").forEach((image) => {
+    const source = image.getAttribute("src") ?? "";
+    if (!/^data:image\/(?:avif|gif|jpe?g|png|webp);base64,[a-z0-9+/]+=*$/i.test(source)) {
+      image.remove();
+      return;
+    }
+    const width = Number.parseInt(image.getAttribute("width") ?? "", 10);
+    if (Number.isFinite(width)) image.setAttribute("width", String(Math.min(Math.max(width, 80), 2000)));
+    else image.removeAttribute("width");
+    image.removeAttribute("style");
+    if (!image.getAttribute("alt")) image.setAttribute("alt", "Pasted image");
+  });
   return container.innerHTML;
+}
+
+/** Removes compose-only image controls before a draft is saved or sent. */
+export function serializeComposeHtml(editor: HTMLElement): string {
+  const clone = editor.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll<HTMLElement>("[data-compose-image]").forEach((wrapper) => {
+    const image = wrapper.querySelector("img");
+    if (image) wrapper.replaceWith(image);
+    else wrapper.remove();
+  });
+  return sanitizeComposeHtml(clone.innerHTML);
 }

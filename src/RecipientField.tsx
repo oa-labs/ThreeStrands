@@ -92,7 +92,6 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
   }, [value]);
 
   function emit(nextChips: Chip[], nextDraftText: string) {
-    console.log("emit", id, nextChips, JSON.stringify(nextDraftText));
     const serialized = serialize(nextChips, nextDraftText);
     lastEmitted.current = serialized;
     setChips(nextChips);
@@ -101,7 +100,6 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
   }
 
   function removeChipAt(index: number) {
-    console.log("removeChipAt", id, index, chips);
     emit(chips.filter((_, i) => i !== index), draftText);
   }
 
@@ -190,7 +188,6 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
           setDragOver(false);
           if (disabled) return;
           const raw = event.dataTransfer.getData("application/x-dispatch-recipient");
-          console.log("ROW drop", id, "raw=", raw, "dragOrigin=", dragOrigin);
           const origin = dragOrigin;
           dragOrigin = null;
           if (!raw || origin?.field === id) return;
@@ -212,7 +209,6 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
             className="recipient-chip"
             draggable={!disabled}
             onDragStart={(event) => {
-              console.log("CHIP dragstart", id, index);
               dragOrigin = { field: id, remove: () => removeChipAt(index) };
               event.dataTransfer.setData("application/x-dispatch-recipient", JSON.stringify(chip));
               event.dataTransfer.effectAllowed = "move";

@@ -5,6 +5,7 @@ import {
   formattingShortcuts,
   plainTextToHtml,
   sanitizeComposeHtml,
+  serializeComposeHtml,
 } from "./richText";
 
 const event = (key: string, options: KeyboardEventInit = {}) =>
@@ -78,4 +79,12 @@ it("converts plain drafts and sanitizes rich compose HTML", () => {
   expect(plainTextToHtml("Hello\nworld")).toBe("Hello<br>world");
   expect(sanitizeComposeHtml('<b>Hi</b><script>alert(1)</script><a href="javascript:alert(1)">bad</a>'))
     .toBe("<b>Hi</b><a>bad</a>");
+});
+
+it("keeps safe pasted images and strips compose-only image controls", () => {
+  const editor = document.createElement("div");
+  editor.innerHTML = '<span data-compose-image="true"><img src="data:image/png;base64,aGVsbG8=" alt="Screenshot" width="320"><button>remove</button><span data-compose-image-resize></span></span>';
+
+  expect(serializeComposeHtml(editor)).toBe('<img src="data:image/png;base64,aGVsbG8=" alt="Screenshot" width="320">');
+  expect(sanitizeComposeHtml('<img src="javascript:alert(1)"><img src="data:text/html;base64,aGk=">')).toBe("");
 });

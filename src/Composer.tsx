@@ -9,6 +9,7 @@ import {
   formattingShortcutFor,
   plainTextToHtml,
   sanitizeComposeHtml,
+  serializeComposeHtml,
 } from "./richText";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
@@ -57,10 +58,13 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     timer.current = setTimeout(() => { void flush().catch(() => {}); }, 300);
   }
   function editBody(editor: HTMLElement) {
+    const html = serializeComposeHtml(editor);
+    const textOnly = editor.cloneNode(true) as HTMLElement;
+    textOnly.querySelectorAll("[data-compose-image-remove], [data-compose-image-resize]").forEach((control) => control.remove());
     latest.current = {
       ...latest.current,
-      body: editor.innerText,
-      bodyHtml: sanitizeComposeHtml(editor.innerHTML),
+      body: textOnly.innerText,
+      bodyHtml: html,
     };
     generation.current++;
     setDraft(latest.current); setStatus("Unsaved changes");
@@ -80,6 +84,68 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     if (email === latest.current.account) return;
     void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); latest.current = next; setDraft(next); });
   }
+  function decorateImage(image: HTMLImageElement) {
+    if (image.closest("[data-compose-image]")) return;
+    const wrapper = document.createElement("span");
+    wrapper.className = "compose-image";
+    wrapper.dataset.composeImage = "true";
+    wrapper.contentEditable = "false";
+    if (image.width) wrapper.style.width = `${image.width}px`;
+    image.before(wrapper);
+    wrapper.append(image);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "compose-image-remove";
+    remove.dataset.composeImageRemove = "true";
+    remove.setAttribute("aria-label", "Remove pasted image");
+    remove.title = "Remove image";
+    remove.textContent = "×";
+    wrapper.append(remove);
+
+    const resize = document.createElement("span");
+    resize.className = "compose-image-resize";
+    resize.dataset.composeImageResize = "true";
+    resize.setAttribute("role", "slider");
+    resize.setAttribute("aria-label", "Resize pasted image");
+    resize.setAttribute("aria-valuemin", "80");
+    resize.setAttribute("aria-valuemax", "2000");
+    resize.setAttribute("aria-valuenow", String(image.width || 320));
+    resize.tabIndex = 0;
+    resize.title = "Drag to resize";
+    wrapper.append(resize);
+  }
+  function insertPastedImage(file: File, range: Range | null) {
+    const reader = new FileReader();
+    reader.onerror = () => setError(`Could not paste ${file.name || "image"}.`);
+    reader.onload = () => {
+      if (!mounted.current || typeof reader.result !== "string" || !bodyEditor.current) return;
+      const image = document.createElement("img");
+      image.src = reader.result;
+      image.alt = file.name || "Pasted image";
+      decorateImage(image);
+      const wrapper = image.closest<HTMLElement>("[data-compose-image]")!;
+
+      const insertion = range && bodyEditor.current.contains(range.commonAncestorContainer) ? range : document.createRange();
+      if (!range || !bodyEditor.current.contains(range.commonAncestorContainer)) insertion.selectNodeContents(bodyEditor.current);
+      insertion.collapse(false);
+      insertion.deleteContents();
+      insertion.insertNode(wrapper);
+      const spacer = document.createTextNode("\u00a0");
+      wrapper.after(spacer);
+      const caret = document.createRange();
+      caret.setStartAfter(spacer); caret.collapse(true);
+      window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(caret);
+      image.onload = () => {
+        const available = bodyEditor.current?.clientWidth ?? image.naturalWidth;
+        const width = Math.max(80, Math.min(image.naturalWidth, available));
+        if (width) { image.setAttribute("width", String(Math.round(width))); wrapper.style.width = `${Math.round(width)}px`; }
+        editBody(bodyEditor.current!);
+      };
+      editBody(bodyEditor.current);
+    };
+    reader.readAsDataURL(file);
+  }
   useImperativeHandle(ref, () => ({ flush, send, attach, close, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
@@ -89,6 +155,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   useEffect(() => {
     mounted.current = true;
     const previous = document.activeElement as HTMLElement | null;
+    bodyEditor.current?.querySelectorAll<HTMLImageElement>("img").forEach(decorateImage);
     panel.current?.querySelector<HTMLElement>(initial.mode === "new" || initial.mode === "forward" ? '[name="to"]' : '[contenteditable="true"]')?.focus();
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (generation.current !== savedGeneration.current) { event.preventDefault(); event.returnValue = ""; }
@@ -130,10 +197,64 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
           dangerouslySetInnerHTML={{ __html: initialBodyHtml.current }}
           onInput={(event) => editBody(event.currentTarget)}
           onPaste={(event) => {
+            const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+            if (images.length) {
+              event.preventDefault();
+              const selection = window.getSelection();
+              const range = selection?.rangeCount && event.currentTarget.contains(selection.anchorNode) ? selection.getRangeAt(0).cloneRange() : null;
+              images.forEach((image) => insertPastedImage(image, range?.cloneRange() ?? null));
+              return;
+            }
             event.preventDefault();
             document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
           }}
+          onClick={(event) => {
+            const remove = (event.target as Element).closest<HTMLElement>("[data-compose-image-remove]");
+            if (!remove) return;
+            remove.closest("[data-compose-image]")?.remove();
+            editBody(event.currentTarget);
+            event.currentTarget.focus();
+          }}
+          onPointerDown={(event) => {
+            const handle = (event.target as Element).closest<HTMLElement>("[data-compose-image-resize]");
+            const wrapper = handle?.closest<HTMLElement>("[data-compose-image]");
+            const image = wrapper?.querySelector("img");
+            if (!handle || !wrapper || !image) return;
+            event.preventDefault();
+            const editor = event.currentTarget;
+            const startX = event.clientX;
+            const startWidth = wrapper.getBoundingClientRect().width || image.width || 320;
+            const maximum = Math.max(80, editor.clientWidth);
+            const move = (moveEvent: PointerEvent) => {
+              const width = Math.round(Math.min(Math.max(startWidth + moveEvent.clientX - startX, 80), maximum));
+              wrapper.style.width = `${width}px`;
+              image.setAttribute("width", String(width));
+              handle.setAttribute("aria-valuenow", String(width));
+            };
+            const finish = () => {
+              window.removeEventListener("pointermove", move);
+              window.removeEventListener("pointerup", finish);
+              editBody(editor);
+            };
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", finish, { once: true });
+          }}
           onKeyDown={(event) => {
+            const resize = (event.target as Element).closest<HTMLElement>("[data-compose-image-resize]");
+            if (resize && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
+              const wrapper = resize.closest<HTMLElement>("[data-compose-image]");
+              const image = wrapper?.querySelector("img");
+              if (!wrapper || !image) return;
+              const direction = event.key === "ArrowRight" ? 1 : -1;
+              const width = Math.min(Math.max((image.width || 320) + direction * (event.shiftKey ? 50 : 10), 80), event.currentTarget.clientWidth || 2000);
+              wrapper.style.width = `${width}px`;
+              image.setAttribute("width", String(width));
+              resize.setAttribute("aria-valuenow", String(width));
+              editBody(event.currentTarget);
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
             const shortcut = formattingShortcutFor(event.nativeEvent);
             if (!shortcut) return;
             if (applyFormattingShortcut(event.currentTarget, shortcut)) {

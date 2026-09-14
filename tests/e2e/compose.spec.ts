@@ -31,7 +31,7 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await expect(reply).toBeVisible();
   await expect(page.getByRole("region", { name: "Conversation" }).getByRole("dialog", { name: "Reply message" })).toBeVisible();
   await expect(reply.locator("xpath=parent::*")).toHaveClass(/message-stack/);
-  await expect(reply.getByRole("textbox", { name: "To", exact: true })).toHaveValue(/hello@dispatch.local/);
+  await expect(reply.getByRole("button", { name: "Remove Dispatch" })).toBeVisible();
   const replyBody = reply.getByRole("textbox", { name: "Message body" });
   await expect(replyBody).toHaveCSS("outline-style", "none");
   await expect(replyBody).toHaveCSS("padding-top", "12px");
@@ -131,6 +131,24 @@ test("the command palette can send from a composer and the outbox records simula
   await page.clock.fastForward(11000);
   await page.getByRole("button", { name: /Outbox \(/ }).click();
   await expect(page.getByRole("list", { name: "Outbox" })).toContainText("sent");
+});
+
+test("a recipient badge can be dragged from To into Cc", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  await composer.getByRole("textbox", { name: "To", exact: true }).fill("friend@example.com");
+  await composer.getByRole("textbox", { name: "Subject" }).click();
+  await composer.getByRole("button", { name: "Cc / Bcc" }).click();
+
+  const toRow = composer.getByRole("textbox", { name: "To", exact: true }).locator("xpath=..");
+  const ccRow = composer.getByRole("textbox", { name: "Cc", exact: true }).locator("xpath=..");
+  await expect(toRow.locator(".recipient-chip")).toHaveCount(1);
+
+  await toRow.locator(".recipient-chip", { hasText: "friend@example.com" }).dragTo(ccRow);
+
+  await expect(toRow.locator(".recipient-chip")).toHaveCount(0);
+  await expect(ccRow.locator(".recipient-chip", { hasText: "friend@example.com" })).toHaveCount(1);
 });
 
 for (const theme of ["light", "dark"] as const) {
