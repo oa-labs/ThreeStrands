@@ -155,6 +155,13 @@ const safeStyles: Record<string, RegExp> = {
   "border-right": safeBorder,
   "border-bottom": safeBorder,
   "border-left": safeBorder,
+  // Marketing ESPs (Customer.io, Klaviyo, HubSpot, Mailchimp) widely pair a
+  // black background with a screen+difference blend-mode stack to defeat
+  // Gmail's automatic dark-mode color inversion: both blend modes are a
+  // no-op against black, so the pair cancels out to fully transparent in
+  // any renderer that honors mix-blend-mode. Without it, the black
+  // background has nothing to cancel it and renders as an opaque block.
+  "mix-blend-mode": /^(normal|multiply|screen|overlay|darken|lighten|color-dodge|color-burn|hard-light|soft-light|difference|exclusion|hue|saturation|color|luminosity)$/,
 };
 
 const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;

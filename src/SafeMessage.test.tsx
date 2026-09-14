@@ -178,6 +178,21 @@ it("preserves line-height, borders, bgcolor, cellpadding/cellspacing, and CSS wi
   expect(img.style.height).toBe(""); // over the 4096px cap, dropped
 });
 
+it("preserves mix-blend-mode so ESP dark-mode-inversion workarounds keep canceling out", () => {
+  // Customer.io/Klaviyo/HubSpot pair a black background with screen+difference
+  // blend modes to defeat Gmail's automatic color inversion; both modes are a
+  // no-op against black, so without mix-blend-mode the black background has
+  // nothing to cancel it out and renders as an opaque block over the text.
+  const sanitized = sanitizeMessageHtml(
+    '<div style="background:#000;mix-blend-mode:screen"><div style="background:#000;mix-blend-mode:difference"><p>Hi</p></div></div>',
+  );
+  const container = document.createElement("div");
+  container.innerHTML = sanitized;
+  const [outer, inner] = Array.from(container.querySelectorAll("div"));
+  expect(outer.style.mixBlendMode).toBe("screen");
+  expect(inner.style.mixBlendMode).toBe("difference");
+});
+
 it("rejects unsafe border and bgcolor values", () => {
   const sanitized = sanitizeMessageHtml(
     '<table bgcolor="expression(alert(1))"><tr><td style="border:1px solid url(https://tracker.invalid)">Hi</td></tr></table>',
