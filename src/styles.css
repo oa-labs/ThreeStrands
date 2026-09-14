@@ -523,6 +523,22 @@ kbd {
 .message-images-notice button:hover { background: var(--hover); border-color: var(--border-strong); }
 iframe.message-body { display: block; width: 100%; border: 0; background: transparent; }
 div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--font-scale)); line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
+.quoted-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 22px;
+  margin-top: 8px;
+  padding: 0 9px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--muted);
+  font: 700 calc(16px * var(--font-scale)) / 1 var(--font-family);
+  cursor: pointer;
+}
+.quoted-history-toggle:hover { color: var(--text); background: var(--raised); }
 .reader-empty { height: 100%; display: grid; place-content: center; justify-items: center; color: var(--muted); }
 
 .modal-backdrop {

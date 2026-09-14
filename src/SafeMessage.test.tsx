@@ -1,7 +1,15 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { SafeMessage, applyResolvedImages, extractBlockedImageUrls, linkifyText, sanitizeMessageHtml } from "./SafeMessage";
+import {
+  SafeMessage,
+  applyResolvedImages,
+  collapseQuotedHistoryHtml,
+  collapseQuotedHistoryText,
+  extractBlockedImageUrls,
+  linkifyText,
+  sanitizeMessageHtml,
+} from "./SafeMessage";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
@@ -157,6 +165,40 @@ describe("SafeMessage", () => {
     expect(accepted).toBe(false);
     window.removeEventListener("keydown", shortcut);
   });
+
+  it("collapses a common HTML reply chain behind an ellipsis until clicked", () => {
+    render(<SafeMessage html={`
+      <div>My current reply</div>
+      <div class="gmail_quote">
+        <div>On Friday, Brian wrote:</div>
+        <blockquote>Earlier message</blockquote>
+      </div>
+    `} />);
+
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    expect(frame.srcdoc).toContain("My current reply");
+    expect(frame.srcdoc).not.toContain("Earlier message");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show quoted content" }));
+    expect(frame.srcdoc).toContain("Earlier message");
+    expect(screen.queryByRole("button", { name: "Show quoted content" })).not.toBeInTheDocument();
+  });
+
+  it("collapses generic original-message separators while preserving the current HTML", () => {
+    const collapsed = collapseQuotedHistoryHtml(`
+      <p>Current answer</p>
+      <div>------ Original Message ------</div>
+      <div>From Brian</div>
+    `);
+
+    expect(collapsed).toContain("Current answer");
+    expect(collapsed).not.toContain("Original Message");
+    expect(collapsed).not.toContain("From Brian");
+  });
+
+  it("does not hide a blockquote when it is the only message content", () => {
+    expect(collapseQuotedHistoryHtml("<blockquote>A standalone quotation</blockquote>")).toBeNull();
+  });
 });
 
 it("preserves safe formatting and the class attribute while removing CSS requests and positioning", () => {
@@ -285,6 +327,17 @@ it("renders plain text literally when HTML is absent or stripped", () => {
 it("decodes entities in the plain text fallback", () => {
   render(<SafeMessage html="" text="Tom &#39;s message &amp; details" />);
   expect(screen.getByTestId("message-body")).toHaveTextContent("Tom 's message & details");
+});
+
+it("collapses and reveals quoted history in a plain-text reply", () => {
+  const text = "Current answer\n\n------ Original Message ------\nFrom Brian\nEarlier message";
+  expect(collapseQuotedHistoryText(text)).toBe("Current answer");
+  render(<SafeMessage html="" text={text} />);
+
+  expect(screen.getByTestId("message-body")).toHaveTextContent("Current answer");
+  expect(screen.getByTestId("message-body")).not.toHaveTextContent("Earlier message");
+  fireEvent.click(screen.getByRole("button", { name: "Show quoted content" }));
+  expect(screen.getByTestId("message-body")).toHaveTextContent("Earlier message");
 });
 
 it("linkifies bare URLs, www.-domains, and email addresses without swallowing trailing punctuation", () => {
