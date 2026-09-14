@@ -94,6 +94,13 @@ describe("SafeMessage", () => {
     expect(frame.srcdoc).toContain("Content-Security-Policy");
     expect(frame.srcdoc).toContain("script-src 'none'");
     expect(frame.srcdoc).toContain("img-src data:");
+    // break-word, not anywhere: anywhere shrinks a box's minimum content
+    // size for auto-layout, so a narrow fixed-width table cell (a numbered
+    // list's index column, say) would treat even a short 2-character
+    // string as breakable and split it across lines instead of letting the
+    // column render slightly wider than its width hint.
+    expect(frame.srcdoc).toContain("overflow-wrap: break-word");
+    expect(frame.srcdoc).not.toContain("overflow-wrap: anywhere");
   });
 
   it("forwards keyboard events from the message iframe to the application window", () => {

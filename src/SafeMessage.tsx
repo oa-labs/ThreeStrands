@@ -38,6 +38,16 @@ async function defaultResolveImage(): Promise<string> {
 // mirrors the palette and .message-body content rules in styles.css — kept
 // here instead of styles.css because the iframe doesn't load the app's
 // stylesheet, so this is the single source of truth for message content look.
+//
+// body's overflow-wrap is break-word, not anywhere: both allow breaking a
+// long unbreakable token (a URL, a tracking id) as a last resort, but
+// anywhere also shrinks a box's *minimum* content size for auto-layout
+// purposes — inside a narrow fixed-width table cell (a numbered list's
+// index column, say), that lets the layout treat even a short, ordinary
+// 2-character string as breakable, splitting it across lines instead of
+// letting the column render slightly wider than its width hint.
+// break-word doesn't touch intrinsic sizing, so the column just widens
+// instead, matching what other mail clients render.
 const MESSAGE_DOCUMENT_STYLES = `
 :root {
   color-scheme: dark;
@@ -69,7 +79,7 @@ body {
   color: var(--body-text);
   font-size: calc(15px * var(--font-scale, 1));
   line-height: 1.7;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   overflow-x: auto;
 }
 body[data-tone="current"] { color: var(--text); }
