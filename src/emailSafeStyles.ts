@@ -44,7 +44,18 @@ export const safeStyles: Record<string, RegExp> = {
   "border-collapse": /^(collapse|separate)$/,
   "color": safeColor,
   "background-color": safeColor,
-  "line-height": /^(normal|\d+(\.\d+)?(px|%)?)$/,
+  // Bounded to 3 digits (max 999) — generous for any real heading/label/price
+  // size, but finite. Senders very commonly size headings/labels in em/rem
+  // rather than px (this property was previously missing from the
+  // allowlist entirely, so every explicit size — a 1.5em heading, a 12px
+  // label, a 36px price — was silently dropped and fell back to one
+  // uniform body size, flattening the sender's intended visual hierarchy).
+  "font-size": /^\d{1,3}(\.\d+)?(px|em|rem|%)$/,
+  // em/rem added alongside the pre-existing px/% support for the same
+  // reason as font-size above — senders pair a line-height in em with a
+  // font-size in em (e.g. "font-size:1.5em;line-height:1.3em") and having
+  // only one of the pair survive throws off the intended spacing.
+  "line-height": /^(normal|\d+(\.\d+)?(px|%|em|rem)?)$/,
   // Marketing templates (MJML-generated ones especially) commonly size a
   // layout column with an inline `width` percentage, and cap a product
   // image with `max-width`/`max-height` alongside a `width: 100%` that's

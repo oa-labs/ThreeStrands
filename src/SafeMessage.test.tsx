@@ -340,6 +340,26 @@ it("rejects unsafe values for the new cosmetic properties instead of passing the
   expect(sanitized).not.toContain("url(");
 });
 
+it("keeps font-size (px, em, %) and line-height in em so a sender's heading/label/price hierarchy survives", () => {
+  // Mirrors a QuickBooks invoice email: a 1.5em bold heading, a 12px label,
+  // and a 36px price all lost their sizing entirely when font-size wasn't
+  // in the allowlist, flattening everything to one uniform body size.
+  const sanitized = sanitizeMessageHtml(`
+    <div style="font-size:1.5em;line-height:1.3em;font-weight:bold;">Your invoice is ready!</div>
+    <span style="font-size:12px;">BALANCE DUE</span>
+    <span style="font-size:36px;">$4,770.00</span>
+  `);
+  expect(sanitized).toContain("font-size: 1.5em");
+  expect(sanitized).toContain("line-height: 1.3em");
+  expect(sanitized).toContain("font-size: 12px");
+  expect(sanitized).toContain("font-size: 36px");
+});
+
+it("rejects an unbounded or unit-less font-size", () => {
+  const sanitized = sanitizeMessageHtml('<span style="font-size:99999px;">x</span><span style="font-size:12;">y</span>');
+  expect(sanitized).not.toContain("font-size");
+});
+
 it("keeps a product thumbnail capped at its intended size instead of growing to fill its container", () => {
   // Mirrors an actual Amazon Subscribe & Save template: the image itself
   // carries a responsive `width: 100%` paired with `max-width`/`max-height`
