@@ -62,6 +62,24 @@ describe("SafeMessage", () => {
     expect(sanitized).toContain("Hello");
   });
 
+  it("keeps a lone &nbsp; paragraph as a blank-line spacer instead of collapsing it away", () => {
+    // Marketing templates commonly zero every <p>'s margin and rely on a
+    // standalone "<p>&nbsp;</p>" to reserve a blank line's height between
+    // sections. JS's \s matches U+00A0, so this used to be misidentified as
+    // an empty wrapper (like an indentation-only "<p>\n</p>") and removed
+    // outright, collapsing sections together that every other mail client
+    // renders with visible spacing between them.
+    const sanitized = sanitizeMessageHtml(`
+      <p style="margin:0">What's changing</p>
+      <p style="margin:0">&nbsp;</p>
+      <p style="margin:0"></p>
+      <p style="margin:0">Why we're making this change</p>
+    `);
+
+    expect(sanitized).toContain("&nbsp;");
+    expect(sanitized.match(/<p/g)).toHaveLength(3);
+  });
+
   it("preserves a zero margin/padding given in em/rem/%, not just px, and still caps large values per unit", () => {
     // A sender zeroing out a browser default (e.g. a <p>'s ~1em margin) in
     // the same unit as their own font-size is as common as doing it in px.

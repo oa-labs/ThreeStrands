@@ -260,6 +260,18 @@ function isBlank(element: Element): boolean {
   return (element.textContent ?? "").replace(/\s+/g, "") === "";
 }
 
+// A lone non-breaking space (or run of them) inside an otherwise-empty
+// element is a deliberate line-height spacer — templates commonly use
+// "<p>&nbsp;</p>" to reserve a blank line's height between sections since
+// margins are often reset to 0. isBlank() above treats it as whitespace (JS's
+// \s matches U+00A0), which is right for zeroing an empty table cell's
+// padding, but wrong for deciding whether to remove the element entirely:
+// that would delete the sender's spacing outright instead of just rendering
+// it, unlike every other mail client.
+function isPureSpacingChar(element: Element): boolean {
+  return /^\u00A0+$/.test(element.textContent ?? "");
+}
+
 export function sanitizeMessageHtml(html: string): string {
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
@@ -387,7 +399,12 @@ export function sanitizeMessageHtml(html: string): string {
   // ancestors, letting nested spacer stacks collapse in one pass.
   for (const element of Array.from(fragment.querySelectorAll<HTMLElement>("*")).reverse()) {
     if (!fragment.contains(element)) continue;
-    if (spacerTags.has(element.tagName.toLowerCase()) && element.children.length === 0 && isBlank(element)) {
+    if (
+      spacerTags.has(element.tagName.toLowerCase())
+      && element.children.length === 0
+      && isBlank(element)
+      && !isPureSpacingChar(element)
+    ) {
       element.remove();
     }
   }
