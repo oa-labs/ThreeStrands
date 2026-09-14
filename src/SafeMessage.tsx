@@ -1,7 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import DOMPurify from "dompurify";
 import { Image } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   backgroundImageUrl,
   blockedSrcAttr,
@@ -205,6 +205,51 @@ export function decodeHtmlEntities(text: string): string {
   const container = document.createElement("textarea");
   container.innerHTML = text;
   return container.value;
+}
+
+const LINKIFY_PATTERN = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|[\w.+-]+@[\w-]+\.[\w.-]+)/gi;
+
+// Trailing punctuation (a sentence-ending period, a closing paren around the
+// URL, ...) reads as part of the surrounding sentence, not the link.
+function trimTrailingPunctuation(value: string): { url: string; trailing: string } {
+  const match = value.match(/[.,;:!?)\]}'"]+$/);
+  if (!match) return { url: value, trailing: "" };
+  return { url: value.slice(0, -match[0].length), trailing: match[0] };
+}
+
+/**
+ * Turns bare URLs, www.-domains, and email addresses in a plain-text message
+ * body into clickable links, routed through the same `openUrl` (OS browser /
+ * default mail client) path HTML message bodies use.
+ */
+export function linkifyText(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(LINKIFY_PATTERN)) {
+    const index = match.index ?? 0;
+    const { url, trailing } = trimTrailingPunctuation(match[0]);
+    if (!url) continue;
+    if (index > lastIndex) nodes.push(text.slice(lastIndex, index));
+    const isEmail = url.includes("@") && !/^https?:\/\//i.test(url);
+    const href = isEmail ? `mailto:${url}` : /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    nodes.push(
+      <a
+        key={`link-${index}`}
+        href={href}
+        onClick={(event) => {
+          event.preventDefault();
+          void openUrl(href);
+        }}
+      >
+        {url}
+      </a>,
+    );
+    lastIndex = index + match[0].length;
+    if (trailing) nodes.push(trailing);
+  }
+  if (nodes.length === 0) return [text];
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
 }
 
 function isBlank(element: Element): boolean {
@@ -523,7 +568,12 @@ export function SafeMessage({
   useEffect(() => () => cleanupRef.current?.(), []);
 
   if (!hasContent) {
-    return <div className="message-body message-body-plain" data-testid="message-body">{decodeHtmlEntities(text) || "No message content."}</div>;
+    const decoded = decodeHtmlEntities(text);
+    return (
+      <div className="message-body message-body-plain" data-testid="message-body">
+        {decoded ? linkifyText(decoded) : "No message content."}
+      </div>
+    );
   }
 
   return (

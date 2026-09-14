@@ -1,8 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SafeMessage, applyResolvedImages, extractBlockedImageUrls, sanitizeMessageHtml } from "./SafeMessage";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { SafeMessage, applyResolvedImages, extractBlockedImageUrls, linkifyText, sanitizeMessageHtml } from "./SafeMessage";
 
-afterEach(cleanup);
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+
+afterEach(() => {
+  cleanup();
+  vi.mocked(openUrl).mockClear();
+});
 
 describe("SafeMessage", () => {
   it("removes active content and always parks remote images behind a blocked-src marker", () => {
@@ -279,6 +285,34 @@ it("renders plain text literally when HTML is absent or stripped", () => {
 it("decodes entities in the plain text fallback", () => {
   render(<SafeMessage html="" text="Tom &#39;s message &amp; details" />);
   expect(screen.getByTestId("message-body")).toHaveTextContent("Tom 's message & details");
+});
+
+it("linkifies bare URLs, www.-domains, and email addresses without swallowing trailing punctuation", () => {
+  const nodes = linkifyText("See https://example.com/path, or www.example.org. Contact tom@example.com!");
+  const { container } = render(<>{nodes}</>);
+  const links = container.querySelectorAll("a");
+  expect(Array.from(links).map((a) => [a.getAttribute("href"), a.textContent])).toEqual([
+    ["https://example.com/path", "https://example.com/path"],
+    ["https://www.example.org", "www.example.org"],
+    ["mailto:tom@example.com", "tom@example.com"],
+  ]);
+  expect(container.textContent).toBe(
+    "See https://example.com/path, or www.example.org. Contact tom@example.com!",
+  );
+});
+
+it("renders plain-text URLs as links that open in the OS browser instead of navigating", () => {
+  render(<SafeMessage html="" text="Come see https://example.com/offer for details." />);
+  const link = screen.getByRole("link", { name: "https://example.com/offer" });
+  expect(link).toHaveAttribute("href", "https://example.com/offer");
+
+  fireEvent.click(link);
+  expect(openUrl).toHaveBeenCalledWith("https://example.com/offer");
+});
+
+it("leaves plain text without links untouched", () => {
+  render(<SafeMessage html="" text="No links in this message." />);
+  expect(screen.getByTestId("message-body").querySelector("a")).toBeNull();
 });
 
 it("blocks images by default and resolves them through resolveImage once the reader asks to load them", async () => {
