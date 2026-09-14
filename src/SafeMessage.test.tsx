@@ -125,15 +125,16 @@ describe("SafeMessage", () => {
   });
 });
 
-it("preserves safe formatting while removing CSS requests and app classes", () => {
+it("preserves safe formatting while removing CSS requests, positioning, and app classes", () => {
   const sanitized = sanitizeMessageHtml('<table class="modal"><tr><td style="text-align:center;font-weight:700;padding:200px;background-image:url(https://tracker.invalid);position:fixed;color:black">Invoice</td></tr></table>');
   expect(sanitized).toContain("text-align: center");
   expect(sanitized).toContain("font-weight: 700");
   expect(sanitized).toContain("padding-top: 32px");
+  expect(sanitized).toContain("color: black");
   // background-image is gated the same way as <img src> rather than stripped
   // outright, so its URL only survives as an inert blocked-src marker.
   expect(sanitized).toContain('data-blocked-src="https://tracker.invalid"');
-  expect(sanitized).not.toMatch(/style="[^"]*url\(|position|class=|color:/);
+  expect(sanitized).not.toMatch(/style="[^"]*url\(|position|class=/);
 });
 
 it("restores a background-image only once images are explicitly allowed, with the same URL validation as <img src>", () => {
@@ -191,6 +192,13 @@ it("preserves mix-blend-mode so ESP dark-mode-inversion workarounds keep canceli
   const [outer, inner] = Array.from(container.querySelectorAll("div"));
   expect(outer.style.mixBlendMode).toBe("screen");
   expect(inner.style.mixBlendMode).toBe("difference");
+});
+
+it("preserves text color", () => {
+  const sanitized = sanitizeMessageHtml('<p style="color:#ffffff">Hi</p>');
+  const container = document.createElement("div");
+  container.innerHTML = sanitized;
+  expect(container.querySelector("p")?.style.color).toBe("rgb(255, 255, 255)");
 });
 
 it("rejects unsafe border and bgcolor values", () => {

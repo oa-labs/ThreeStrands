@@ -135,12 +135,13 @@ const safeBorder = new RegExp(
   "i",
 );
 
-// Keep text formatting without allowing positioning, hidden content, or CSS
-// network requests. Text color inherits the reader's active theme for
-// legibility; background-color/border-color are safe to keep as-is since
-// they never carry a network request. background-image is handled
-// separately below since it needs the same URL validation and remote-image
-// gating as <img src>.
+// Keep text formatting without allowing positioning or CSS network requests.
+// color/background-color/border-color are safe to keep as-is since they
+// never carry a network request; senders that set light text without a
+// matching background are rare in practice and this is a legibility
+// tradeoff, not a security one. background-image is handled separately
+// below since it needs the same URL validation and remote-image gating as
+// <img src>.
 const safeStyles: Record<string, RegExp> = {
   "text-align": /^(left|right|center|justify|start|end)$/,
   "font-weight": /^(normal|bold|[1-9]00)$/,
@@ -148,6 +149,7 @@ const safeStyles: Record<string, RegExp> = {
   "text-decoration": /^(none|underline|line-through)( (underline|line-through))?$/,
   "vertical-align": /^(baseline|top|middle|bottom|sub|super|text-top|text-bottom)$/,
   "border-collapse": /^(collapse|separate)$/,
+  "color": safeColor,
   "background-color": safeColor,
   "line-height": /^(normal|\d+(\.\d+)?(px|%)?)$/,
   "border": safeBorder,

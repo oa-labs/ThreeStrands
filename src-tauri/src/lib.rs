@@ -3,8 +3,10 @@ mod auth;
 mod correspondence;
 mod db;
 mod gmail;
+mod image_proxy;
 mod mime;
 mod models;
+mod net_safety;
 mod sync;
 #[path = "unsubscribe.rs"]
 mod unsubscribe_service;
@@ -60,6 +62,7 @@ struct AppState {
     /// finishing never silently blocks the next "Add account" click.
     authorize_slot: AuthorizeSlot,
     exiting: std::sync::atomic::AtomicBool,
+    image_cache: image_proxy::ImageCache,
 }
 
 #[derive(Clone, Default)]
@@ -253,6 +256,14 @@ fn list_trash_page(
 #[tauri::command]
 fn get_thread(id: String, state: State<'_, AppState>) -> Result<ThreadDetail, String> {
     state.database.get_thread(&id)
+}
+
+/// Fetches a remote image referenced by message HTML and returns it as a
+/// `data:` URI, so the message iframe never contacts the sender's (or a
+/// spoofed) host directly. See `image_proxy` for the validation this does.
+#[tauri::command]
+async fn fetch_remote_image(url: String, state: State<'_, AppState>) -> Result<String, String> {
+    image_proxy::fetch(&url, &state.image_cache).await
 }
 
 #[tauri::command]
@@ -724,6 +735,7 @@ pub fn run() {
                 correspondence,
                 authorize_slot: AuthorizeSlot::default(),
                 exiting: std::sync::atomic::AtomicBool::new(false),
+                image_cache: image_proxy::ImageCache::default(),
             });
             Ok(())
         })
@@ -737,6 +749,7 @@ pub fn run() {
             list_all_mail_page,
             list_trash_page,
             get_thread,
+            fetch_remote_image,
             search_threads,
             mutate_thread,
             mutate_threads,

@@ -3,12 +3,13 @@
 //! The webview passes a cached message ID to the native layer. This module
 //! never accepts a caller-supplied URL for an external side effect.
 
-use std::{net::IpAddr, time::Duration};
+use std::time::Duration;
 
 use reqwest::{header::CONTENT_TYPE, redirect::Policy};
 use url::Url;
 
 use crate::models::{UnsubscribeMethod, UnsubscribeResult, UnsubscribeTarget};
+use crate::net_safety::{self, is_disallowed_host};
 
 const ONE_CLICK_BODY: &str = "List-Unsubscribe=One-Click";
 
@@ -22,6 +23,7 @@ pub async fn execute(target: &UnsubscribeTarget) -> Result<UnsubscribeResult, St
 async fn execute_one_click(target: &UnsubscribeTarget) -> Result<UnsubscribeResult, String> {
     let url = validate_https_url(&target.url)?;
     let client = reqwest::Client::builder()
+        .dns_resolver(net_safety::dns_resolver())
         .redirect(Policy::none())
         .timeout(Duration::from_secs(15))
         .build()
@@ -80,35 +82,11 @@ fn validate_https_url(value: &str) -> Result<Url, String> {
         return Err("Unsubscribe requires a safe HTTPS URL".to_string());
     }
     if let Some(host) = url.host_str() {
-        let normalized = host.trim_end_matches('.').to_ascii_lowercase();
-        if normalized == "localhost"
-            || normalized == "local"
-            || normalized.ends_with(".localhost")
-            || normalized.ends_with(".local")
-            || normalized.parse::<IpAddr>().is_ok_and(is_private_ip)
-        {
+        if is_disallowed_host(host) {
             return Err("Unsubscribe URL points to a local or private host".to_string());
         }
     }
     Ok(url)
-}
-
-fn is_private_ip(address: IpAddr) -> bool {
-    match address {
-        IpAddr::V4(address) => {
-            address.is_private()
-                || address.is_loopback()
-                || address.is_link_local()
-                || address.is_unspecified()
-                || address.is_broadcast()
-        }
-        IpAddr::V6(address) => {
-            address.is_loopback()
-                || address.is_unspecified()
-                || address.is_unique_local()
-                || address.is_unicast_link_local()
-        }
-    }
 }
 
 #[cfg(test)]
