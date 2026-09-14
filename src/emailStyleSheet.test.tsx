@@ -8,13 +8,29 @@ describe("sanitizeStyleSheet", () => {
       .dark-logo { display: none; }
       @media (prefers-color-scheme: dark) {
         .light-logo { display: none; }
-        .dark-logo { display: inline-block; color: #ffffff; }
+        .dark-logo { display: inline-block; }
       }
     `);
     expect(css).toContain("@media (prefers-color-scheme: dark)");
     expect(css).toContain(".dark-logo");
     expect(css).toContain("display: inline-block");
-    expect(css).toContain("color: #ffffff");
+  });
+
+  it("drops color/background-color inside a prefers-color-scheme media query, even on an otherwise-safe selector", () => {
+    // That media feature reflects the reader's real OS/webview appearance,
+    // not this app's own theme, so letting a sender recolor text/backgrounds
+    // there can silently produce unreadable (e.g. same-color-as-background)
+    // text — see the comment on MEDIA_QUERY_SAFE_PROPERTIES in
+    // emailStyleSheet.ts. Only the logo-swap use case (display/visibility)
+    // is allowed in this context.
+    const css = sanitizeStyleSheet(`
+      @media (prefers-color-scheme: dark) {
+        .wrapper { background-color: #000000; color: #000000; display: block; }
+      }
+    `);
+    expect(css).toContain("display: block");
+    expect(css).not.toContain("background-color");
+    expect(css).not.toMatch(/(?<!background-)color: #000000/);
   });
 
   it("drops every other at-rule (@font-face, @import, @keyframes, @supports, unrelated @media)", () => {

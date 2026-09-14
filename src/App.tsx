@@ -1823,7 +1823,7 @@ export function App() {
                       loadImages={loadRemoteImages}
                       resolveImage={mailClient.fetchRemoteImage}
                       theme={effectiveThemeValue}
-                      fontScale={fontScale}
+                      fontScale={fontScale / 100}
                       fontFamily={fontFamily}
                       tone={isLatest ? "current" : message.unread ? "default" : "muted"}
                     />

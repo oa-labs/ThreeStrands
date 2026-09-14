@@ -30,8 +30,26 @@ function isSafeSelector(selector: string): boolean {
 // style="background-image:..." and <img src> both are (see SafeMessage.tsx).
 // Rather than build a second, weaker gating path for this one spot, any
 // declaration whose value contains url(...) is dropped unconditionally.
-function sanitizeDeclarationValue(prop: string, rawValue: string): string | null {
+//
+// Inside a `@media (prefers-color-scheme)` block specifically, only the two
+// properties the logo-swap trick actually needs are kept. That media feature
+// reflects the reader's real OS/webview appearance, not this app's own
+// light/dark setting, so a sender rule that repaints color/background-color
+// there fires independently of (and can contradict) the color the rest of
+// the message was authored against. ESP templates commonly split a dark-mode
+// override into more than one rule — e.g. a `body { color: #fff }` text-color
+// flip alongside a `.wrapper { background-color: #000 }` on a class — and
+// this sanitizer's own selector allowlist (below) drops the `body` rule
+// wholesale while keeping the class-scoped one, so only the background half
+// of such a pair would ever survive: a solid-color block with no readable
+// text. Restricting this context to display/visibility keeps the documented
+// logo-swap use case working without ever letting a sender's dark-mode CSS
+// recolor the message.
+const MEDIA_QUERY_SAFE_PROPERTIES = new Set(["display", "visibility"]);
+
+function sanitizeDeclarationValue(prop: string, rawValue: string, insideMediaQuery: boolean): string | null {
   const property = prop.trim().toLowerCase();
+  if (insideMediaQuery && !MEDIA_QUERY_SAFE_PROPERTIES.has(property)) return null;
   const pattern = safeStyles[property];
   if (!pattern) return null;
   const value = rawValue.trim();
@@ -69,8 +87,9 @@ export function sanitizeStyleSheet(css: string): string {
     }
     rule.selector = selectors.join(", ");
 
+    const insideMediaQuery = rule.parent?.type === "atrule";
     rule.walkDecls((decl) => {
-      const safeValue = sanitizeDeclarationValue(decl.prop, decl.value);
+      const safeValue = sanitizeDeclarationValue(decl.prop, decl.value, insideMediaQuery);
       if (safeValue === null) decl.remove();
       else decl.value = safeValue;
     });
