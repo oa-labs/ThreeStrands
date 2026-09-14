@@ -997,7 +997,7 @@ export function App() {
       if (previousDetail && failedIds.includes(previousDetail.thread.id)) setDetail(previousDetail);
     }
 
-    if (template.kind !== "archive" && template.kind !== "trash" && template.kind !== "spam") {
+    if (removesFromView) {
       await loadThreads(query);
     }
     if (document.visibilityState !== "visible" || !document.hasFocus()) {
@@ -1832,7 +1832,7 @@ export function App() {
                           to{" "}
                           {message.recipients.map((recipient, recipientIndex) => (
                             <span key={recipient}>
-                              {recipientIndex > 0 ? ", " : ""}
+                              {recipientListSeparator(recipientIndex, message.recipients.length)}
                               <AddressWithCopy address={recipient} />
                             </span>
                           ))}
@@ -2025,6 +2025,12 @@ function AddressWithCopy({ address, displayName }: { address: string; displayNam
 function messageSnippet(bodyText: string, maxLength = 140): string {
   const collapsed = decodeHtmlEntities(bodyText).replace(/\s+/g, " ").trim();
   return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength).trimEnd()}…` : collapsed;
+}
+
+function recipientListSeparator(index: number, recipientCount: number): string {
+  if (index === 0) return "";
+  if (index === recipientCount - 1) return recipientCount === 2 ? " and " : ", and ";
+  return ", ";
 }
 
 function summaryLines(summary: string): string[] {
@@ -2333,7 +2339,9 @@ function LabelManager({
   const [renaming, setRenaming] = useState<Label | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const userLabels = labels.filter((label) => label.kind === "user");
+  const userLabels = labels
+    .filter((label) => label.kind === "user")
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   const labelInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {

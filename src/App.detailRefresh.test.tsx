@@ -8,6 +8,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("puts 'and' before the final message recipient", async () => {
+  const originalGetThread = mailClient.getThread.bind(mailClient);
+  vi.spyOn(mailClient, "getThread").mockImplementation(async (id) => {
+    const detail = await originalGetThread(id);
+    return id === "welcome" ? {
+      ...detail,
+      messages: detail.messages.map((message) => ({
+        ...message,
+        recipients: ["Joel Reed <joel@example.com>", "Leann Moore <leann@example.com>", "Cara Cenfetelli <cara@example.com>"],
+      })),
+    } : detail;
+  });
+
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+  const recipientLine = document.querySelector(".message-recipients");
+  expect(recipientLine?.querySelectorAll(".address-name")).toHaveLength(3);
+  expect(Array.from(recipientLine?.children ?? []).map((recipient) =>
+    Array.from(recipient.childNodes).find((node) => node.nodeType === Node.TEXT_NODE)?.textContent ?? "",
+  )).toEqual(["", ", ", ", and "]);
+});
+
 it("refreshes the open conversation when its inbox row receives a sent reply", async () => {
   const originalList = mailClient.listThreadsPage.bind(mailClient);
   const originalGetThread = mailClient.getThread.bind(mailClient);
