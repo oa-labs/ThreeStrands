@@ -1405,6 +1405,11 @@ export function App() {
     selectAllRef.current.indeterminate = checkedIds.size > 0 && checkedIds.size < threads.length;
   }, [checkedIds, threads.length]);
 
+  const selectedThreads = threads.filter((thread) => checkedIds.has(thread.id));
+  const allSelectedThreadsStarred = selectedThreads.length > 0
+    && selectedThreads.every((thread) => thread.starred);
+  const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
+
   return (
     <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
@@ -1538,45 +1543,65 @@ export function App() {
         {isThreadMailbox && checkedIds.size > 0 ? (
           <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
             <span className="batch-count">{checkedIds.size} selected</span>
-            {mailbox === "trash" ? (
-              <ActionButton label="Restore" onClick={() => runOnSelection("Restore", { kind: "trash", value: false })}>
-                <RotateCcw size={16} />
-              </ActionButton>
-            ) : (
-              <>
-                <ActionButton label="Archive" onClick={() => runOnSelection("Archive", { kind: "archive", value: true })}>
-                  <Archive size={16} />
+            <div className="batch-actions">
+              {mailbox === "trash" ? (
+                <HoverTooltip label="Restore" placement="bottom">
+                  <ActionButton label="Restore" onClick={() => runOnSelection("Restore", { kind: "trash", value: false })}>
+                    <RotateCcw size={16} />
+                  </ActionButton>
+                </HoverTooltip>
+              ) : (
+                <>
+                  <HoverTooltip label="Archive" placement="bottom">
+                    <ActionButton label="Archive" onClick={() => runOnSelection("Archive", { kind: "archive", value: true })}>
+                      <Archive size={16} />
+                    </ActionButton>
+                  </HoverTooltip>
+                  <HoverTooltip label="Trash" placement="bottom">
+                    <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
+                      <Trash2 size={16} />
+                    </ActionButton>
+                  </HoverTooltip>
+                  <HoverTooltip label="Mark spam" placement="bottom">
+                    <ActionButton label="Mark spam" onClick={() => runOnSelection("Mark spam", { kind: "spam", value: true })}>
+                      <ShieldAlert size={16} />
+                    </ActionButton>
+                  </HoverTooltip>
+                </>
+              )}
+              <HoverTooltip label="Mark read" placement="bottom">
+                <ActionButton label="Mark read" onClick={() => runOnSelection("Mark read", { kind: "read", value: true })}>
+                  <MailOpen size={16} />
                 </ActionButton>
-                <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
-                  <Trash2 size={16} />
+              </HoverTooltip>
+              <HoverTooltip label="Mark unread" placement="bottom">
+                <ActionButton label="Mark unread" onClick={() => runOnSelection("Mark unread", { kind: "read", value: false })}>
+                  <Mail size={16} />
                 </ActionButton>
-                <ActionButton label="Mark spam" onClick={() => runOnSelection("Mark spam", { kind: "spam", value: true })}>
-                  <ShieldAlert size={16} />
+              </HoverTooltip>
+              <HoverTooltip label={batchStarLabel} placement="bottom">
+                <ActionButton
+                  label={batchStarLabel}
+                  onClick={() => runOnSelection(batchStarLabel, { kind: "star", value: !allSelectedThreadsStarred })}
+                >
+                  <Star size={16} fill={allSelectedThreadsStarred ? "currentColor" : "none"} />
                 </ActionButton>
-              </>
-            )}
-            <ActionButton label="Mark read" onClick={() => runOnSelection("Mark read", { kind: "read", value: true })}>
-              <MailOpen size={16} />
-            </ActionButton>
-            <ActionButton label="Mark unread" onClick={() => runOnSelection("Mark unread", { kind: "read", value: false })}>
-              <Mail size={16} />
-            </ActionButton>
-            <ActionButton label="Star" onClick={() => runOnSelection("Star", { kind: "star", value: true })}>
-              <Star size={16} />
-            </ActionButton>
-            <ActionButton label="Unstar" onClick={() => runOnSelection("Unstar", { kind: "star", value: false })}>
-              <Star size={16} />
-            </ActionButton>
-            <ActionButton label="Labels" onClick={() => setLabelTargetIds([...checkedIds])}>
-              <Tag size={16} />
-            </ActionButton>
-            <button
-              className="icon-button"
-              aria-label="Clear selection"
-              onClick={() => setCheckedIds(new Set())}
-            >
-              <X size={16} />
-            </button>
+              </HoverTooltip>
+              <HoverTooltip label="Labels" placement="bottom">
+                <ActionButton label="Labels" onClick={() => setLabelTargetIds([...checkedIds])}>
+                  <Tag size={16} />
+                </ActionButton>
+              </HoverTooltip>
+              <HoverTooltip label="Clear selection" placement="bottom">
+                <button
+                  className="icon-button"
+                  aria-label="Clear selection"
+                  onClick={() => setCheckedIds(new Set())}
+                >
+                  <X size={16} />
+                </button>
+              </HoverTooltip>
+            </div>
           </div>
         ) : null}
         {mailbox === "inbox" ? (

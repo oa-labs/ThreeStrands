@@ -474,6 +474,46 @@ test("resizes the inbox with pointer and keyboard and restores the preferred wid
   await expect(divider).toHaveAttribute("aria-valuenow", "400");
 });
 
+test("wraps batch actions and shows their help at the minimum inbox width", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const divider = page.getByRole("separator", { name: "Resize inbox" });
+  await divider.focus();
+  await page.keyboard.press("Home");
+  await expect(divider).toHaveAttribute("aria-valuenow", "280");
+
+  const selectedThread = page.getByRole("option", { selected: true });
+  await selectedThread.focus();
+  await page.keyboard.press("x");
+
+  const toolbar = page.getByRole("toolbar", { name: "Batch actions" });
+  await expect(toolbar).toBeVisible();
+  await expect(toolbar.getByRole("button", { name: /star/i })).toHaveCount(1);
+  await expect(toolbar.locator(".batch-count")).toHaveCSS("white-space", "nowrap");
+
+  const actionLayout = await toolbar.evaluate((toolbarElement) => {
+    const buttons = [...toolbarElement.querySelectorAll("button")];
+    const countBounds = toolbarElement.querySelector(".batch-count")!.getBoundingClientRect();
+    const firstButtonBounds = buttons[0].getBoundingClientRect();
+    const toolbarBounds = toolbarElement.getBoundingClientRect();
+    return {
+      rows: new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top))).size,
+      overflows: buttons.some((button) => {
+        const buttonBounds = button.getBoundingClientRect();
+        return buttonBounds.left < toolbarBounds.left || buttonBounds.right > toolbarBounds.right;
+      }),
+      countCenter: countBounds.top + countBounds.height / 2,
+      firstRowCenter: firstButtonBounds.top + firstButtonBounds.height / 2,
+    };
+  });
+  expect(actionLayout.rows).toBeGreaterThan(1);
+  expect(actionLayout.overflows).toBe(false);
+  expect(actionLayout.countCenter).toBeCloseTo(actionLayout.firstRowCenter, 0);
+
+  await toolbar.getByRole("button", { name: "Archive" }).hover();
+  await expect(toolbar.getByRole("tooltip", { name: "Archive" })).toBeVisible();
+});
+
 test("keeps the theme toggle on screen with a long email", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 600 });
   await page.emulateMedia({ colorScheme: "dark" });

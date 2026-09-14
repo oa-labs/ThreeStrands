@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, NOTICE_TIMEOUT_MS } from "./App";
 import { mailClient } from "./data/client";
@@ -279,6 +279,7 @@ describe("trash and batch actions", () => {
       await mailClient.mutateThread({ kind: "archive", threadId, value: false });
       await mailClient.mutateThread({ kind: "trash", threadId, value: false });
       await mailClient.mutateThread({ kind: "spam", threadId, value: false });
+      await mailClient.mutateThread({ kind: "star", threadId, value: false });
       await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
     }
   });
@@ -344,6 +345,36 @@ describe("trash and batch actions", () => {
     expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Phase 1: read and triage" })).not.toBeInTheDocument();
+  });
+
+  it("shows one state-aware star action and hover help for every batch action", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "x" }));
+    });
+
+    const toolbar = screen.getByRole("toolbar", { name: "Batch actions" });
+    expect(within(toolbar).getByText("1 selected")).toBeInTheDocument();
+    expect(within(toolbar).getAllByRole("button", { name: /star/i })).toHaveLength(1);
+    expect(within(toolbar).getByRole("button", { name: "Star" })).toBeInTheDocument();
+
+    for (const label of ["Archive", "Trash", "Mark spam", "Mark read", "Mark unread", "Star", "Labels", "Clear selection"]) {
+      expect(within(toolbar).getByRole("tooltip", { name: label })).toBeInTheDocument();
+    }
+
+    await act(async () => {
+      within(toolbar).getByRole("button", { name: "Star" }).click();
+    });
+    expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "x" }));
+    });
+    const starredToolbar = screen.getByRole("toolbar", { name: "Batch actions" });
+    expect(within(starredToolbar).getByRole("button", { name: "Unstar" })).toBeInTheDocument();
+    expect(within(starredToolbar).getAllByRole("button", { name: /star/i })).toHaveLength(1);
   });
 });
 

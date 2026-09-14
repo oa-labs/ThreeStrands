@@ -211,16 +211,30 @@ button { color: inherit; }
 .batch-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  min-width: 0;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--hover);
 }
 .batch-toolbar .batch-count {
-  margin-right: auto;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
   font-size: calc(12px * var(--font-scale));
   font-weight: 600;
   color: var(--muted);
+  white-space: nowrap;
+}
+.batch-actions {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
 }
 .batch-toolbar .action-button span { display: none; }
 
@@ -899,8 +913,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-from select { font: inherit; font-size: calc(12px * var(--font-scale)); color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: 6px; padding: 1px 4px; }
 .composer-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 0 22px; }
 .compose-field { display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--border); font-size: calc(13px * var(--font-scale)); flex-shrink: 0; }
+.compose-field:focus-within { border-bottom-color: var(--accent); }
 .compose-field > span { width: 50px; flex-shrink: 0; color: var(--muted); }
-.compose-field input { min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: 12px 0; outline-offset: -2px; }
+.compose-field input { min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: 12px 6px; outline: none; }
 .compose-body { display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); padding: 12px 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: calc(15px * var(--font-scale)); line-height: 1.4; white-space: pre-wrap; }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
