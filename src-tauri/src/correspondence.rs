@@ -162,6 +162,7 @@ pub struct OutboxItem {
     pub state: String,
     pub deadline: i64,
     pub error: Option<String>,
+    pub provider_id: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -523,7 +524,7 @@ impl Database {
         let c = self.connection()?;
         let mut q = c
             .prepare(
-                "SELECT id,payload,state,deadline,error FROM outbox_messages ORDER BY rowid DESC",
+                "SELECT id,payload,state,deadline,error,provider_id FROM outbox_messages ORDER BY rowid DESC",
             )
             .map_err(error)?;
         let rows = q
@@ -534,17 +535,19 @@ impl Database {
                     r.get::<_, String>(2)?,
                     r.get::<_, i64>(3)?,
                     r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<String>>(5)?,
                 ))
             })
             .map_err(error)?;
         rows.map(|r| {
-            let (id, payload, state, deadline, error) = r.map_err(error)?;
+            let (id, payload, state, deadline, error, provider_id) = r.map_err(error)?;
             Ok(OutboxItem {
                 id,
                 draft: serde_json::from_str(&payload).map_err(crate::correspondence::error)?,
                 state,
                 deadline,
                 error,
+                provider_id,
             })
         })
         .collect()
@@ -581,6 +584,7 @@ impl Database {
             state: "undo_pending".into(),
             deadline: now() + UNDO_MS,
             error: None,
+            provider_id: None,
         };
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(error)?;

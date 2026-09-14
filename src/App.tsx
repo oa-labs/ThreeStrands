@@ -82,6 +82,7 @@ import type {
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
+import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { parseAddress } from "./emailAddress";
 import {
@@ -493,6 +494,10 @@ export function App() {
     correspondence.activeDraft
     && correspondence.activeDraft.mode !== "new"
     && visibleDetail?.messages.some((message) => message.id === correspondence.activeDraft?.sourceId),
+  );
+  const displayedMessages = useMemo(
+    () => visibleDetail ? messagesWithQueuedReplies(visibleDetail, correspondence.outbox) : [],
+    [visibleDetail, correspondence.outbox],
   );
   const [query, setQuery] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -1791,8 +1796,8 @@ export function App() {
               </div>
             ) : null}
             <div className="message-stack" ref={messageStackRef}>
-              {visibleDetail.messages.map((message, index) => {
-                const isLatest = index === visibleDetail.messages.length - 1;
+              {displayedMessages.map((message, index) => {
+                const isLatest = index === displayedMessages.length - 1;
                 const isExpanded = isLatest || message.unread || olderMessagesExpanded;
                 const parsedSender = parseAddress(message.sender);
                 const senderAccount = accounts.find(
@@ -2025,6 +2030,70 @@ function AddressWithCopy({ address, displayName }: { address: string; displayNam
 function messageSnippet(bodyText: string, maxLength = 140): string {
   const collapsed = decodeHtmlEntities(bodyText).replace(/\s+/g, " ").trim();
   return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength).trimEnd()}…` : collapsed;
+}
+
+function splitDraftRecipients(draft: Draft): string[] {
+  const result: string[] = [];
+  for (const field of [draft.to, draft.cc]) {
+    let start = 0;
+    let quoted = false;
+    let angleDepth = 0;
+    for (let index = 0; index <= field.length; index++) {
+      const character = field[index];
+      if (character === '"' && field[index - 1] !== "\\") quoted = !quoted;
+      else if (!quoted && character === "<") angleDepth++;
+      else if (!quoted && character === ">") angleDepth = Math.max(0, angleDepth - 1);
+      if (index === field.length || (character === "," && !quoted && angleDepth === 0)) {
+        const address = field.slice(start, index).trim();
+        if (address) result.push(address);
+        start = index + 1;
+      }
+    }
+  }
+  return result;
+}
+
+function comparableMessageBody(value: string): string {
+  return decodeHtmlEntities(value).replace(/\s+/g, " ").trim().toLocaleLowerCase();
+}
+
+function providerMessageMatchesDraft(message: Message, draft: Draft): boolean {
+  if (parseAddress(message.sender).email.toLocaleLowerCase() !== draft.account.toLocaleLowerCase()) return false;
+  if (new Date(message.sentAt).getTime() < draft.updatedAt - 60_000) return false;
+  const actual = comparableMessageBody(message.bodyText);
+  const expected = comparableMessageBody(draft.body);
+  return Boolean(expected) && (actual === expected || actual.includes(expected) || expected.includes(actual));
+}
+
+/**
+ * Adds locally queued replies to their open conversation immediately. Once
+ * Gmail's copy reaches the thread cache it wins, preventing a duplicate.
+ */
+export function messagesWithQueuedReplies(detail: ThreadDetail, outbox: OutboxItem[]): Message[] {
+  const queuedReplies = outbox
+    .filter((item) =>
+      ["reply", "replyAll"].includes(item.draft.mode)
+      && !["canceled", "failed"].includes(item.state)
+      && Boolean(item.draft.sourceId)
+      && detail.messages.some((message) => message.id === item.draft.sourceId)
+      && !detail.messages.some((message) =>
+        (item.providerId && message.id === item.providerId)
+        || providerMessageMatchesDraft(message, item.draft))
+      )
+    .sort((left, right) => left.draft.updatedAt - right.draft.updatedAt)
+    .map<Message>((item) => ({
+      id: `outbox-${item.id}`,
+      threadId: detail.thread.id,
+      sender: item.draft.account,
+      recipients: splitDraftRecipients(item.draft),
+      sentAt: new Date(item.draft.updatedAt).toISOString(),
+      bodyHtml: item.draft.bodyHtml ?? "",
+      bodyText: item.draft.body,
+      unread: false,
+      unsubscribe: null,
+    }));
+
+  return queuedReplies.length > 0 ? [...detail.messages, ...queuedReplies] : detail.messages;
 }
 
 function recipientListSeparator(index: number, recipientCount: number): string {

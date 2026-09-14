@@ -8,7 +8,7 @@ export type Draft = {
   to: string; cc: string; bcc: string; subject: string; body: string; bodyHtml?: string;
   attachments: Attachment[]; updatedAt: number;
 };
-export type OutboxItem = { id: string; draft: Draft; state: "undo_pending" | "ready" | "sending" | "sent" | "failed" | "uncertain" | "canceled"; deadline: number; error: string | null };
+export type OutboxItem = { id: string; draft: Draft; state: "undo_pending" | "ready" | "sending" | "sent" | "failed" | "uncertain" | "canceled"; deadline: number; error: string | null; providerId?: string | null };
 export interface CorrespondenceClient {
   senderIdentity(): Promise<string>;
   /** `account` is required for reply/replyAll/forward (the source thread's owning account) and optional for "new" (defaults to the most-recently-used account). */

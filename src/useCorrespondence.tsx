@@ -106,7 +106,14 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
       draft={active}
       accounts={accounts}
       onClose={() => { setActive(null); void refresh(); }}
-      onQueued={() => { setActive(null); void refresh(); }}
+      onQueued={(item) => {
+        setActive(null);
+        // queueDraft already returned the authoritative queued item. Publish
+        // it immediately instead of waiting for a second listOutbox roundtrip
+        // so an open conversation can render the reply optimistically.
+        setOutbox((current) => [item, ...current.filter((entry) => entry.id !== item.id)]);
+        void refresh();
+      }}
     />
   ) : null;
   return {
