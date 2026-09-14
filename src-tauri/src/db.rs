@@ -7,8 +7,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use uuid::Uuid;
 
-use crate::mime::NormalizedMessage;
-use crate::mime::UnsubscribeMetadata;
+use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
     Account, Message, SearchThreadsRequest, SyncStatus, Thread, ThreadDetail, ThreadMutation,
     ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
@@ -239,7 +238,7 @@ impl Database {
         let sql = format!(
             "SELECT id, provider_thread_id, subject, snippet, participants_json,
                     last_message_at, unread, starred, archived, labels_json, trashed, account_id,
-                    summary, summary_generated_at
+                    summary, summary_generated_at, has_attachments
              FROM threads
              WHERE {filter} {}
              ORDER BY last_message_at DESC",
@@ -274,7 +273,7 @@ impl Database {
         let sql = format!(
             "SELECT id, provider_thread_id, subject, snippet, participants_json,
                     last_message_at, unread, starred, archived, labels_json, trashed, account_id,
-                    summary, summary_generated_at
+                    summary, summary_generated_at, has_attachments
              FROM threads
              WHERE {filter} {}
              ORDER BY last_message_at DESC
@@ -308,7 +307,7 @@ impl Database {
             .query_row(
                 "SELECT id, provider_thread_id, subject, snippet, participants_json,
                         last_message_at, unread, starred, archived, labels_json, trashed, account_id,
-                        summary, summary_generated_at
+                        summary, summary_generated_at, has_attachments
                  FROM threads WHERE id = ?1",
                 [id],
                 thread_from_row,
@@ -320,7 +319,7 @@ impl Database {
         let mut statement = connection
             .prepare(
                 "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
-                        unsubscribe_json, unread
+                        unsubscribe_json, unread, attachments_json
                  FROM messages WHERE thread_id = ?1 ORDER BY sent_at",
             )
             .map_err(display_error)?;
@@ -339,11 +338,47 @@ impl Database {
                         .and_then(|value| serde_json::from_str::<UnsubscribeMetadata>(&value).ok())
                         .map(|value| value.info()),
                     unread: row.get::<_, i64>(8)? != 0,
+                    attachments: serde_json::from_str(&row.get::<_, String>(9)?).map_err(
+                        |error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                9,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        },
+                    )?,
                 })
             })
             .map_err(display_error)?;
         let messages = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
         Ok(ThreadDetail { thread, messages })
+    }
+
+    pub fn attachment_message(&self, message_id: &str) -> Result<(String, GmailMessage), String> {
+        self.connection()?
+            .query_row(
+                "SELECT t.account_id, mm.payload
+                 FROM messages m
+                 JOIN threads t ON t.id = m.thread_id
+                 JOIN message_metadata mm ON mm.id = m.id
+                 WHERE m.id = ?1",
+                [message_id],
+                |row| {
+                    let account_id: String = row.get(0)?;
+                    let payload: String = row.get(1)?;
+                    let message = serde_json::from_str(&payload).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            payload.len(),
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                    Ok((account_id, message))
+                },
+            )
+            .optional()
+            .map_err(display_error)?
+            .ok_or_else(|| "Attachment source not found".to_string())
     }
 
     /// Records a local-only interaction observation. Sender identity is
@@ -642,7 +677,7 @@ impl Database {
             "SELECT t.id, t.provider_thread_id, t.subject, t.snippet,
                     t.participants_json, t.last_message_at, t.unread, t.starred,
                     t.archived, t.labels_json, t.trashed, t.account_id,
-                    t.summary, t.summary_generated_at,
+                    t.summary, t.summary_generated_at, t.has_attachments,
                     snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet
              FROM thread_search s
              JOIN threads t ON t.id = s.thread_id
@@ -667,7 +702,8 @@ impl Database {
                 account_id: row.get(11)?,
                 summary: row.get(12)?,
                 summary_generated_at: row.get(13)?,
-                match_snippet: row.get(14)?,
+                has_attachments: row.get(14)?,
+                match_snippet: row.get(15)?,
             })
         };
         let rows = match account_id {
@@ -1046,18 +1082,22 @@ impl Database {
         let starred = labels.iter().any(|label| label == "STARRED");
         let archived = !labels.iter().any(|label| label == "INBOX");
         let trashed = labels.iter().any(|label| label == "TRASH");
+        let has_attachments = messages
+            .iter()
+            .any(|message| !message.attachments.is_empty());
         transaction
             .execute(
                 "INSERT INTO threads(
                     id, account_id, provider_thread_id, subject, snippet, participants_json,
-                    last_message_at, unread, starred, archived, labels_json, trashed
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    last_message_at, unread, starred, archived, labels_json, trashed, has_attachments
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT(id) DO UPDATE SET
                     subject=excluded.subject, snippet=excluded.snippet,
                     participants_json=excluded.participants_json,
                     last_message_at=excluded.last_message_at, unread=excluded.unread,
                     starred=excluded.starred, archived=excluded.archived,
-                    labels_json=excluded.labels_json, trashed=excluded.trashed",
+                    labels_json=excluded.labels_json, trashed=excluded.trashed,
+                    has_attachments=excluded.has_attachments",
                 params![
                     thread_id,
                     account_id,
@@ -1071,6 +1111,7 @@ impl Database {
                     archived,
                     serde_json::to_string(&labels).map_err(display_error)?,
                     trashed,
+                    has_attachments,
                 ],
             )
             .map_err(display_error)?;
@@ -1093,8 +1134,8 @@ impl Database {
                 .execute(
                     "INSERT INTO messages(
                         id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
-                        unsubscribe_json, unread
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        unsubscribe_json, unread, attachments_json
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     params![
                         message.id,
                         thread_id,
@@ -1109,6 +1150,7 @@ impl Database {
                             .map(|value| serde_json::to_string(value).map_err(display_error))
                             .transpose()?,
                         message_unread,
+                        serde_json::to_string(&message.attachments).map_err(display_error)?,
                     ],
                 )
                 .map_err(display_error)?;
@@ -1535,6 +1577,7 @@ fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         account_id: row.get(11)?,
         summary: row.get(12)?,
         summary_generated_at: row.get(13)?,
+        has_attachments: row.get(14)?,
         match_snippet: None,
     })
 }
@@ -1617,7 +1660,7 @@ fn insert_demo(
     let participants = serde_json::to_string(&[participant]).expect("static data serializes");
     let labels = serde_json::to_string(&["INBOX"]).expect("static data serializes");
     transaction.execute(
-        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0, 'default', NULL, NULL)",
+        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0, 'default', NULL, NULL, 0)",
         params![
             id,
             format!("demo-{id}"),
@@ -1894,6 +1937,7 @@ mod tests {
                         labels: vec!["INBOX".into()],
                         metadata_json: "{}".into(),
                         unsubscribe: None,
+                        attachments: vec![],
                     }],
                 )
                 .unwrap();
@@ -2244,7 +2288,36 @@ mod tests {
             labels: vec!["INBOX".into()],
             metadata_json: "{}".into(),
             unsubscribe: None,
+            attachments: vec![],
         }
+    }
+
+    #[test]
+    fn attachment_metadata_sets_thread_flag_and_round_trips_on_message() {
+        let database = database();
+        let mut normalized = message(
+            "attachment-message",
+            "attachment-thread",
+            "2026-01-01T00:00:00Z",
+            "body",
+        );
+        normalized
+            .attachments
+            .push(crate::models::MessageAttachment {
+                id: "gmail-attachment-id".into(),
+                filename: "invoice.pdf".into(),
+                mime_type: "application/pdf".into(),
+                size: 42,
+            });
+        database
+            .upsert_gmail_thread("work@example.com", &[normalized])
+            .unwrap();
+
+        let detail = database
+            .get_thread("work@example.com:attachment-thread")
+            .unwrap();
+        assert!(detail.thread.has_attachments);
+        assert_eq!(detail.messages[0].attachments[0].filename, "invoice.pdf");
     }
 
     #[test]

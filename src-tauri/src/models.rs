@@ -20,6 +20,7 @@ pub struct Thread {
     pub match_snippet: Option<String>,
     pub summary: Option<String>,
     pub summary_generated_at: Option<String>,
+    pub has_attachments: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +42,16 @@ pub struct Message {
     pub body_text: String,
     pub unread: bool,
     pub unsubscribe: Option<UnsubscribeInfo>,
+    pub attachments: Vec<MessageAttachment>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageAttachment {
+    pub id: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
