@@ -3,6 +3,7 @@ import { Paperclip, Send, X, Trash2 } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem } from "./correspondence";
 import type { Account } from "./domain";
+import { RecipientField } from "./RecipientField";
 import {
   applyFormattingShortcut,
   formattingShortcutFor,
@@ -96,7 +97,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); window.removeEventListener("beforeunload", beforeUnload); previous?.focus(); };
   }, [initial.mode]);
   useEscapeDismiss(close);
-  return <div ref={panel} className="composer composer-inline" role="dialog" aria-label={initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
+  return <div ref={panel} className="composer composer-inline" role="dialog" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
         if (event.key === "Tab") {
@@ -106,15 +107,15 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
           if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
         }
       }}>
-      <header className="composer-header"><div><h2>{initial.mode === "new" ? "New message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply all" : "Reply"}</h2>{initial.mode === "new" && accounts.length > 1 ? (
+      <header className="composer-header"><div><h2>{initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply all" : "Reply"}</h2>{initial.mode === "new" && accounts.length > 1 ? (
         <label className="compose-from"><span>From</span><select aria-label="Send from" value={draft.account} disabled={busy} onChange={(e) => changeAccount(e.target.value)}>
           {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
         </select></label>
       ) : <span>From {draft.account}</span>}</div><button className="icon-button" aria-label="Save and close draft" onClick={close} disabled={busy}><X size={19} /></button></header>
       <div className="composer-content">
-        <label className="compose-field"><span>To</span><input name="to" aria-label="To" value={draft.to} onChange={(e) => edit("to", e.target.value)} disabled={busy} placeholder="Name <email@example.com>" /></label>
+        <RecipientField id="to" label="To" value={draft.to} account={draft.account} disabled={busy} onChange={(value) => edit("to", value)} />
         <button className="text-button" aria-expanded={showCopies} onClick={() => setShowCopies(!showCopies)}>Cc / Bcc</button>
-        {showCopies && <>{(["cc", "bcc"] as const).map((field) => <label className="compose-field" key={field}><span>{field === "cc" ? "Cc" : "Bcc"}</span><input aria-label={field === "cc" ? "Cc" : "Bcc"} value={draft[field]} onChange={(e) => edit(field, e.target.value)} disabled={busy} /></label>)}</>}
+        {showCopies && <>{(["cc", "bcc"] as const).map((field) => <RecipientField key={field} id={field} label={field === "cc" ? "Cc" : "Bcc"} value={draft[field]} account={draft.account} disabled={busy} onChange={(value) => edit(field, value)} />)}</>}
         <label className="compose-field"><span>Subject</span><input aria-label="Subject" value={draft.subject} onChange={(e) => edit("subject", e.target.value)} disabled={busy} /></label>
         <div
           ref={bodyEditor}

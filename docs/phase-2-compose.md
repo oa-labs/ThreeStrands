@@ -27,7 +27,7 @@ The message model currently drops reply headers and separates neither To nor Cc.
 ### Deliverables
 
 - A composer with To, expandable Cc/Bcc, subject, body, sender identity, and visible save status.
-- New message, Reply, and Reply All actions, plus a Drafts view with resume and discard.
+- New Message, Reply, and Reply All actions, plus a Drafts view with resume and discard.
 - Closing the composer saves it; discarding is a separate explicit action. Returning to a conversation reopens its existing active reply draft instead of accidentally creating duplicates.
 - Reply uses Reply-To when present, otherwise From. Reply All deduplicates recipients, excludes the user's own identity, preserves To/Cc roles, and never guesses hidden Bcc recipients. Handle replies to the user's own sent messages.
 - Quoted body with attribution; preserve Unicode and line breaks. Use an address parser rather than the current comma-splitting helper for display-name addresses.
@@ -106,7 +106,7 @@ All buttons and palette entries invoke shared commands with enabled states and f
 
 | Action | Shortcut |
 | --- | --- |
-| New message | `c` |
+| New Message | `c` |
 | Reply | `r` |
 | Reply All | `a` |
 | Forward | `f` |

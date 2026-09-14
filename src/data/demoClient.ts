@@ -2,6 +2,7 @@ import { demoCorrespondence } from "./demoCorrespondence";
 import type { MailClient } from "./client";
 import type {
   Account,
+  ContactSuggestion,
   Label,
   SummaryResult,
   SyncStatus,
@@ -107,6 +108,14 @@ const details: Record<string, string> = {
     keychain and message data belongs in the local SQLite database.</p>
   `,
 };
+
+// Stands in for locally-mined send/receive history in the browser preview —
+// no imported address book, same as the real client.
+let contacts: ContactSuggestion[] = [
+  { email: "jane@example.com", displayName: "Jane Doe", sentCount: 12, receivedCount: 5, lastInteractedAt: "2026-03-05T12:00:00Z", pinned: false },
+  { email: "product@example.com", displayName: "Product Team", sentCount: 4, receivedCount: 9, lastInteractedAt: "2026-03-05T14:15:00Z", pinned: false },
+  { email: "alex@example.com", displayName: "Alex Rivera", sentCount: 1, receivedCount: 1, lastInteractedAt: "2026-02-20T09:00:00Z", pinned: false },
+];
 
 const status: SyncStatus = {
   state: "idle",
@@ -317,6 +326,49 @@ export const demoClient: MailClient = {
   async recordTriageEvent(_event: TriageEvent) {},
   async listTriageSenderStats(_accountId: string, _limit?: number): Promise<TriageSenderStats[]> {
     return [];
+  },
+  async listContactSuggestions(_accountId, query, limit = 8) {
+    const needle = query.trim().toLocaleLowerCase();
+    const matches = contacts.filter(
+      (contact) =>
+        !needle ||
+        contact.email.startsWith(needle) ||
+        (contact.displayName?.toLocaleLowerCase().includes(needle) ?? false),
+    );
+    matches.sort(
+      (a, b) =>
+        Number(b.pinned) - Number(a.pinned) ||
+        b.sentCount - a.sentCount ||
+        b.receivedCount - a.receivedCount ||
+        b.lastInteractedAt.localeCompare(a.lastInteractedAt),
+    );
+    return structuredClone(matches.slice(0, limit));
+  },
+  async pinContact(_accountId, email, displayName) {
+    const normalized = email.trim().toLocaleLowerCase();
+    const existing = contacts.find((contact) => contact.email === normalized);
+    if (existing) {
+      existing.pinned = true;
+      if (displayName) existing.displayName = displayName;
+    } else {
+      contacts = [
+        ...contacts,
+        {
+          email: normalized,
+          displayName,
+          sentCount: 0,
+          receivedCount: 0,
+          lastInteractedAt: new Date().toISOString(),
+          pinned: true,
+        },
+      ];
+    }
+  },
+  async unpinContact(_accountId, email) {
+    const normalized = email.trim().toLocaleLowerCase();
+    contacts = contacts
+      .map((contact) => (contact.email === normalized ? { ...contact, pinned: false } : contact))
+      .filter((contact) => contact.pinned || contact.sentCount > 0 || contact.receivedCount > 0);
   },
   async unsubscribe(messageId): Promise<UnsubscribeResult> {
     if (!messageId.endsWith("-message") || !messageId.startsWith("welcome")) {

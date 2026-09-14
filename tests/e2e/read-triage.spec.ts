@@ -107,7 +107,7 @@ test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) =>
   await expect(help.getByRole("heading", { name: "Navigation" })).toBeVisible();
   await expect(help).toContainText("Go to Inbox");
   await expect(help).toContainText("Manage labels");
-  await expect(help).toContainText("New message");
+  await expect(help).toContainText("New Message");
   await expect(help).toContainText("Command palette");
   await expect(help).toContainText("Refresh mail");
   await expect(help).toContainText("Undo last action");
@@ -163,7 +163,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
 
   // A new message offers a From selector once more than one account is connected.
   await page.keyboard.press("c");
-  const composer = page.getByRole("dialog", { name: "New message" });
+  const composer = page.getByRole("dialog", { name: "New Message" });
   const from = composer.getByRole("combobox", { name: "Send from" });
   await expect(from).toHaveValue("demo@example.com");
   await from.selectOption("demo-2@example.com");

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::Path,
     sync::{Mutex, MutexGuard},
 };
@@ -9,9 +10,9 @@ use uuid::Uuid;
 
 use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
-    Account, Message, SearchThreadsRequest, SyncStatus, Thread, ThreadDetail, ThreadMutation,
-    ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
-    UnsubscribeMethod, UnsubscribeTarget,
+    Account, ContactSuggestion, Message, SearchThreadsRequest, SyncStatus, Thread, ThreadDetail,
+    ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind,
+    TriageSenderStats, UnsubscribeMethod, UnsubscribeTarget,
 };
 
 /// Assigned to newly connected accounts in rotation, so each has a distinct
@@ -136,6 +137,17 @@ ON triage_events(account_id, sender_email, created_at);
 
 CREATE INDEX IF NOT EXISTS triage_events_account_time
 ON triage_events(account_id, created_at);
+
+-- Contacts explicitly favorited from the compose autocomplete dropdown.
+-- Pinned entries always outrank history-derived suggestions, and (unlike
+-- history) survive even with zero sent/received messages.
+CREATE TABLE IF NOT EXISTS pinned_contacts (
+    account_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    display_name TEXT,
+    pinned_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, email)
+);
 "#;
 
 pub struct Database(Mutex<Connection>);
@@ -526,6 +538,202 @@ impl Database {
             })
             .map_err(display_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
+    }
+
+    /// Ranks past correspondents for compose autocomplete. Deliberately
+    /// doesn't import Google's address book: every suggestion is mined from
+    /// this account's own cached `messages` (who it sent to, who it heard
+    /// from), so results are inherently people the user has actually
+    /// corresponded with, plus anything explicitly pinned. Bounded to the
+    /// most recent messages so a large mailbox can't make every keystroke
+    /// re-parse years of history.
+    pub fn list_contact_suggestions(
+        &self,
+        account_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ContactSuggestion>, String> {
+        let limit = limit.clamp(1, 50);
+        let connection = self.connection()?;
+        let account_email = account_id.to_ascii_lowercase();
+
+        struct Agg {
+            display_name: Option<String>,
+            sent_count: i64,
+            received_count: i64,
+            last_interacted_at: String,
+            pinned: bool,
+        }
+        let mut by_email: HashMap<String, Agg> = HashMap::new();
+
+        let mut statement = connection
+            .prepare(
+                "SELECT m.sender, m.recipients_json, m.sent_at
+                 FROM messages m JOIN threads t ON t.id = m.thread_id
+                 WHERE t.account_id = ?1
+                 ORDER BY m.sent_at DESC
+                 LIMIT 20000",
+            )
+            .map_err(display_error)?;
+        let rows = statement
+            .query_map(params![account_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(display_error)?;
+
+        for row in rows {
+            let (sender, recipients_json, sent_at) = row.map_err(display_error)?;
+            // Best-effort: a message with an address this parser rejects
+            // just contributes nothing to suggestions rather than failing
+            // the whole ranking.
+            let Some((sender_name, sender_email)) = crate::correspondence::addresses(&sender)
+                .ok()
+                .and_then(|parsed| parsed.into_iter().next())
+            else {
+                continue;
+            };
+            let sender_email = sender_email.to_ascii_lowercase();
+            if sender_email == account_email {
+                let Ok(recipients) = serde_json::from_str::<Vec<String>>(&recipients_json) else {
+                    continue;
+                };
+                for raw in recipients {
+                    let Some((name, email)) = crate::correspondence::addresses(&raw)
+                        .ok()
+                        .and_then(|parsed| parsed.into_iter().next())
+                    else {
+                        continue;
+                    };
+                    let email = email.to_ascii_lowercase();
+                    if email.is_empty() || email == account_email {
+                        continue;
+                    }
+                    let entry = by_email.entry(email).or_insert_with(|| Agg {
+                        display_name: None,
+                        sent_count: 0,
+                        received_count: 0,
+                        last_interacted_at: sent_at.clone(),
+                        pinned: false,
+                    });
+                    entry.sent_count += 1;
+                    if entry.display_name.is_none() && !name.is_empty() {
+                        entry.display_name = Some(name);
+                    }
+                    if sent_at > entry.last_interacted_at {
+                        entry.last_interacted_at = sent_at.clone();
+                    }
+                }
+            } else if !sender_email.is_empty() {
+                let entry = by_email.entry(sender_email).or_insert_with(|| Agg {
+                    display_name: None,
+                    sent_count: 0,
+                    received_count: 0,
+                    last_interacted_at: sent_at.clone(),
+                    pinned: false,
+                });
+                entry.received_count += 1;
+                if entry.display_name.is_none() && !sender_name.is_empty() {
+                    entry.display_name = Some(sender_name);
+                }
+                if sent_at > entry.last_interacted_at {
+                    entry.last_interacted_at = sent_at.clone();
+                }
+            }
+        }
+
+        let mut pinned_statement = connection
+            .prepare(
+                "SELECT email, display_name, pinned_at FROM pinned_contacts WHERE account_id = ?1",
+            )
+            .map_err(display_error)?;
+        let pinned_rows = pinned_statement
+            .query_map(params![account_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(display_error)?;
+        for row in pinned_rows {
+            let (email, display_name, pinned_at) = row.map_err(display_error)?;
+            let entry = by_email.entry(email).or_insert_with(|| Agg {
+                display_name: display_name.clone(),
+                sent_count: 0,
+                received_count: 0,
+                last_interacted_at: pinned_at,
+                pinned: false,
+            });
+            entry.pinned = true;
+            if entry.display_name.is_none() {
+                entry.display_name = display_name;
+            }
+        }
+
+        let needle = query.trim().to_ascii_lowercase();
+        let mut suggestions: Vec<ContactSuggestion> = by_email
+            .into_iter()
+            .filter(|(email, agg)| {
+                needle.is_empty()
+                    || email.starts_with(&needle)
+                    || agg
+                        .display_name
+                        .as_deref()
+                        .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
+            })
+            .map(|(email, agg)| ContactSuggestion {
+                email,
+                display_name: agg.display_name,
+                sent_count: agg.sent_count,
+                received_count: agg.received_count,
+                last_interacted_at: agg.last_interacted_at,
+                pinned: agg.pinned,
+            })
+            .collect();
+        suggestions.sort_by(|a, b| {
+            b.pinned
+                .cmp(&a.pinned)
+                .then(b.sent_count.cmp(&a.sent_count))
+                .then(b.received_count.cmp(&a.received_count))
+                .then(b.last_interacted_at.cmp(&a.last_interacted_at))
+        });
+        suggestions.truncate(limit);
+        Ok(suggestions)
+    }
+
+    pub fn pin_contact(
+        &self,
+        account_id: &str,
+        email: &str,
+        display_name: Option<&str>,
+    ) -> Result<(), String> {
+        let email = email.trim().to_ascii_lowercase();
+        if email.is_empty() {
+            return Err("Enter an email address".into());
+        }
+        self.connection()?
+            .execute(
+                "INSERT INTO pinned_contacts(account_id, email, display_name, pinned_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(account_id, email) DO UPDATE SET display_name = excluded.display_name",
+                params![account_id, email, display_name, Utc::now().to_rfc3339()],
+            )
+            .map_err(display_error)?;
+        Ok(())
+    }
+
+    pub fn unpin_contact(&self, account_id: &str, email: &str) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "DELETE FROM pinned_contacts WHERE account_id = ?1 AND email = ?2",
+                params![account_id, email.trim().to_ascii_lowercase()],
+            )
+            .map_err(display_error)?;
+        Ok(())
     }
 
     pub fn set_thread_summary(
@@ -1848,6 +2056,97 @@ mod tests {
             .list_triage_sender_stats("work@example.com", 100)
             .unwrap();
         assert_eq!(stats[0].trash_count, 0);
+    }
+
+    #[test]
+    fn contact_suggestions_rank_sent_recipients_above_mere_senders_and_filter_by_prefix() {
+        let database = database();
+        let mut sent = message(
+            "sent-message",
+            "sent-thread",
+            "2026-01-01T00:00:00Z",
+            "body",
+        );
+        sent.from = "you@example.com".into();
+        sent.to = vec!["Jane Doe <jane@example.com>".into()];
+        database
+            .upsert_gmail_thread("you@example.com", &[sent])
+            .unwrap();
+
+        let mut received = message(
+            "received-message",
+            "received-thread",
+            "2026-01-02T00:00:00Z",
+            "body",
+        );
+        received.from = "Newsletter <newsletter@example.com>".into();
+        received.to = vec!["you@example.com".into()];
+        database
+            .upsert_gmail_thread("you@example.com", &[received])
+            .unwrap();
+
+        let suggestions = database
+            .list_contact_suggestions("you@example.com", "", 10)
+            .unwrap();
+        assert_eq!(suggestions.len(), 2);
+        assert_eq!(suggestions[0].email, "jane@example.com");
+        assert_eq!(suggestions[0].display_name.as_deref(), Some("Jane Doe"));
+        assert_eq!(suggestions[0].sent_count, 1);
+        assert_eq!(suggestions[1].email, "newsletter@example.com");
+        assert_eq!(suggestions[1].received_count, 1);
+
+        let filtered = database
+            .list_contact_suggestions("you@example.com", "jan", 10)
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].email, "jane@example.com");
+
+        let filtered_out = database
+            .list_contact_suggestions("you@example.com", "zzz", 10)
+            .unwrap();
+        assert!(filtered_out.is_empty());
+    }
+
+    #[test]
+    fn pinned_contacts_outrank_history_and_survive_without_any_messages() {
+        let database = database();
+        let mut sent = message(
+            "sent-message",
+            "sent-thread",
+            "2026-01-01T00:00:00Z",
+            "body",
+        );
+        sent.from = "you@example.com".into();
+        sent.to = vec!["Frequent <frequent@example.com>".into()];
+        database
+            .upsert_gmail_thread("you@example.com", &[sent])
+            .unwrap();
+
+        database
+            .pin_contact(
+                "you@example.com",
+                "Pinned@Example.com",
+                Some("Pinned Person"),
+            )
+            .unwrap();
+
+        let suggestions = database
+            .list_contact_suggestions("you@example.com", "", 10)
+            .unwrap();
+        assert_eq!(suggestions[0].email, "pinned@example.com");
+        assert!(suggestions[0].pinned);
+        assert_eq!(suggestions[0].sent_count, 0);
+        assert_eq!(suggestions[1].email, "frequent@example.com");
+        assert!(!suggestions[1].pinned);
+
+        database
+            .unpin_contact("you@example.com", "pinned@example.com")
+            .unwrap();
+        let after_unpin = database
+            .list_contact_suggestions("you@example.com", "", 10)
+            .unwrap();
+        assert_eq!(after_unpin.len(), 1);
+        assert_eq!(after_unpin[0].email, "frequent@example.com");
     }
 
     #[test]

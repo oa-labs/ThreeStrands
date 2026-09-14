@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "./Composer";
 import type { Draft } from "./correspondence";
 import { mailClient } from "./data/client";
@@ -54,5 +54,55 @@ describe("Composer From selector", () => {
 
     await waitFor(() => expect(selector).toHaveValue("second@example.com"));
     expect(mailClient.setDraftAccount).toHaveBeenCalledWith("draft-1", "second@example.com");
+  });
+});
+
+describe("Composer recipient autocomplete", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  const contact = {
+    email: "jane@example.com",
+    displayName: "Jane Doe",
+    sentCount: 4,
+    receivedCount: 1,
+    lastInteractedAt: "2026-03-05T00:00:00Z",
+    pinned: false,
+  };
+
+  it("suggests a past correspondent from local history and fills the field on selection", async () => {
+    const suggest = vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([contact]);
+    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+
+    fireEvent.change(to, { target: { value: "ja" } });
+    await vi.advanceTimersByTimeAsync(150);
+    expect(suggest).toHaveBeenCalledWith("first@example.com", "ja", 8);
+
+    const option = await screen.findByRole("option", { name: /Jane Doe/ });
+    fireEvent.mouseDown(option);
+    expect(to).toHaveValue("Jane Doe <jane@example.com>, ");
+  });
+
+  it("pins a suggested contact without inserting it into the field", async () => {
+    vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([contact]);
+    const pin = vi.spyOn(mailClient, "pinContact").mockResolvedValue();
+    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+
+    fireEvent.change(to, { target: { value: "ja" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await screen.findByRole("option", { name: /Jane Doe/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pin jane@example.com" }));
+    expect(pin).toHaveBeenCalledWith("first@example.com", "jane@example.com", "Jane Doe");
+    expect(to).toHaveValue("ja");
   });
 });

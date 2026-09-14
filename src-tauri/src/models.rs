@@ -156,6 +156,21 @@ pub struct TriageSenderStats {
     pub last_seen_at: String,
 }
 
+/// A past correspondent ranked for compose autocomplete. Built entirely from
+/// local send/receive history (plus anything explicitly pinned) rather than
+/// an imported address book, so every suggestion is someone the user has
+/// actually exchanged mail with.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactSuggestion {
+    pub email: String,
+    pub display_name: Option<String>,
+    pub sent_count: i64,
+    pub received_count: i64,
+    pub last_interacted_at: String,
+    pub pinned: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SummaryResult {

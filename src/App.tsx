@@ -1421,7 +1421,7 @@ export function App() {
           onReorder={reorderNavbarAccounts}
         />
         <div className="sidebar-nav">
-          <button className="nav-button" aria-label="New message (c)" title="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
+          <button className="nav-button" aria-label="New Message (c)" title="New Message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
           <HoverTooltip label="Inbox" shortcut="G I">
             <button
               className={`nav-button ${mailbox === "inbox" ? "active" : ""}`}
@@ -1805,7 +1805,7 @@ export function App() {
                     </ul>
                     {visibleDetail.thread.summaryGeneratedAt
                     && visibleDetail.thread.lastMessageAt > visibleDetail.thread.summaryGeneratedAt ? (
-                      <p className="thread-summary-stale">New messages since this summary.</p>
+                      <p className="thread-summary-stale">New Messages since this summary.</p>
                     ) : null}
                     <div className="thread-summary-actions">
                       <button type="button" onClick={() => setSummaryExpanded(false)}>

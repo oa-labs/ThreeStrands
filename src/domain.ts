@@ -86,6 +86,16 @@ export type TriageSenderStats = {
   lastSeenAt: string;
 };
 
+/** A past correspondent ranked for compose autocomplete, mined from local send/receive history plus anything pinned. */
+export type ContactSuggestion = {
+  email: string;
+  displayName: string | null;
+  sentCount: number;
+  receivedCount: number;
+  lastInteractedAt: string;
+  pinned: boolean;
+};
+
 export type ThreadPage = {
   threads: Thread[];
   hasMore: boolean;

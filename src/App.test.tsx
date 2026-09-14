@@ -392,14 +392,14 @@ describe("Escape dismissal", () => {
   it("closes the composer when focus is in a field", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
-    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
 
     const recipient = await screen.findByRole("textbox", { name: "To" });
     recipient.focus();
     fireEvent.keyDown(recipient, { key: "Escape" });
 
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "New message" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("dialog", { name: "New Message" })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("region", { name: "Conversation" })).toBeInTheDocument();
   });
@@ -419,8 +419,8 @@ describe("Escape dismissal", () => {
   it("closes only the topmost popup when overlays are stacked", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
-    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
-    const composer = await screen.findByRole("dialog", { name: "New message" });
+    fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
+    const composer = await screen.findByRole("dialog", { name: "New Message" });
     fireEvent.click(screen.getByRole("button", { name: "Command palette" }));
 
     const filter = await screen.findByRole("textbox", { name: "Filter commands" });

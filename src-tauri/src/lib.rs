@@ -20,9 +20,9 @@ use chrono::Utc;
 use db::Database;
 use gmail::{GmailClient, GmailProvider};
 use models::{
-    Account, AuthStatus, CreateLabelRequest, Label, SearchThreadsRequest, SummaryResult,
-    SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats,
-    UpdateLabelRequest,
+    Account, AuthStatus, ContactSuggestion, CreateLabelRequest, Label, SearchThreadsRequest,
+    SummaryResult, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageEvent,
+    TriageSenderStats, UpdateLabelRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -407,6 +407,39 @@ fn list_triage_sender_stats(
     state
         .database
         .list_triage_sender_stats(&account_id, limit.unwrap_or(100))
+}
+
+#[tauri::command]
+fn list_contact_suggestions(
+    account_id: String,
+    query: String,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ContactSuggestion>, String> {
+    state
+        .database
+        .list_contact_suggestions(&account_id, &query, limit.unwrap_or(8))
+}
+
+#[tauri::command]
+fn pin_contact(
+    account_id: String,
+    email: String,
+    display_name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .database
+        .pin_contact(&account_id, &email, display_name.as_deref())
+}
+
+#[tauri::command]
+fn unpin_contact(
+    account_id: String,
+    email: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.database.unpin_contact(&account_id, &email)
 }
 
 #[tauri::command]
@@ -861,6 +894,9 @@ pub fn run() {
             mutate_threads,
             record_triage_event,
             list_triage_sender_stats,
+            list_contact_suggestions,
+            pin_contact,
+            unpin_contact,
             unsubscribe,
             sync_status,
             sync_account,

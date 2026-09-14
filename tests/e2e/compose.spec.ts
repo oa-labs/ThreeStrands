@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 
 test("saves an offline draft, restores after reload, sends once, and undoes", async ({ page, context }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "New message (c)" }).click();
-  const composer = page.getByRole("dialog", { name: "New message" });
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
   await context.setOffline(true);
   await composer.getByRole("textbox", { name: "To", exact: true }).fill("friend@example.com");
   await composer.getByRole("textbox", { name: "Subject" }).fill("Offline draft");
@@ -57,8 +57,8 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
 
 test("Superhuman formatting shortcuts edit rich compose content and appear in help", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "New message (c)" }).click();
-  const composer = page.getByRole("dialog", { name: "New message" });
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
   const body = composer.getByRole("textbox", { name: "Message body" });
 
   await body.fill("Bold text");
@@ -92,8 +92,8 @@ test("Superhuman formatting shortcuts edit rich compose content and appear in he
 
 test("attachment selection and removal survive autosave; invalid recipients keep the draft", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "New message (c)" }).click();
-  const composer = page.getByRole("dialog", { name: "New message" });
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
   await composer.getByRole("textbox", { name: "Subject" }).fill("Files");
   const picker = page.waitForEvent("filechooser");
   await composer.getByRole("button", { name: "Attach files" }).click();
@@ -109,10 +109,10 @@ test("attachment selection and removal survive autosave; invalid recipients keep
 test("a new message opens as the conversation pane instead of a modal window", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
-  await page.getByRole("button", { name: "New message (c)" }).click();
+  await page.getByRole("button", { name: "New Message (c)" }).click();
   const reader = page.getByRole("region", { name: "Conversation" });
-  const composer = page.getByRole("dialog", { name: "New message" });
-  await expect(reader.getByRole("dialog", { name: "New message" })).toBeVisible();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  await expect(reader.getByRole("dialog", { name: "New Message" })).toBeVisible();
   await expect(composer.locator("xpath=parent::*")).toHaveClass(/draft-message-stack/);
   await expect(reader.getByRole("heading", { name: "Welcome to Dispatch" })).toHaveCount(0);
   await expect(page.locator(".compose-backdrop")).toHaveCount(0);
@@ -121,13 +121,13 @@ test("a new message opens as the conversation pane instead of a modal window", a
 test("the command palette can send from a composer and the outbox records simulated delivery", async ({ page }) => {
   await page.clock.install();
   await page.goto("/");
-  await page.getByRole("button", { name: "New message (c)" }).click();
+  await page.getByRole("button", { name: "New Message (c)" }).click();
   await page.getByRole("textbox", { name: "To", exact: true }).fill("friend@example.com");
   await page.getByRole("textbox", { name: "Subject" }).fill("Palette send");
   await page.keyboard.press("ControlOrMeta+k");
   await page.getByRole("textbox", { name: "Filter commands" }).fill("Send draft");
   await page.getByRole("button", { name: /Send draft/ }).click();
-  await expect(page.getByRole("dialog", { name: "New message" })).not.toBeVisible();
+  await expect(page.getByRole("dialog", { name: "New Message" })).not.toBeVisible();
   await page.clock.fastForward(11000);
   await page.getByRole("button", { name: /Outbox \(/ }).click();
   await expect(page.getByRole("list", { name: "Outbox" })).toContainText("sent");
@@ -138,7 +138,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: theme });
     await page.setViewportSize({ width: 900, height: 600 });
     await page.goto("/");
-    await page.getByRole("button", { name: "New message (c)" }).click();
+    await page.getByRole("button", { name: "New Message (c)" }).click();
     await page.getByRole("textbox", { name: "To", exact: true }).fill("Jane <jane@example.com>");
     await page.getByRole("textbox", { name: "Subject" }).fill("A quick update");
     await page.getByRole("textbox", { name: "Message body" }).fill("Hi Jane,\n\nI've attached my notes from today. Let me know what you think.\n\nThanks!");

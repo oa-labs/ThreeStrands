@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Account,
   AuthStatus,
+  ContactSuggestion,
   Label,
   SearchThreadsRequest,
   SummaryResult,
@@ -46,6 +47,10 @@ export interface MailClient extends CorrespondenceClient {
   mutateThreads(mutations: ThreadMutation[]): Promise<void>;
   recordTriageEvent(event: TriageEvent): Promise<void>;
   listTriageSenderStats(accountId: string, limit?: number): Promise<TriageSenderStats[]>;
+  /** Ranked past correspondents for compose autocomplete, built from local mail history rather than an imported address book. */
+  listContactSuggestions(accountId: string, query: string, limit?: number): Promise<ContactSuggestion[]>;
+  pinContact(accountId: string, email: string, displayName: string | null): Promise<void>;
+  unpinContact(accountId: string, email: string): Promise<void>;
   unsubscribe(messageId: string): Promise<UnsubscribeResult>;
   sync(): Promise<SyncStatus>;
   flushPending(): Promise<SyncStatus>;
@@ -91,6 +96,9 @@ const tauriClient: MailClient = {
   mutateThreads: (mutations) => invoke("mutate_threads", { mutations }),
   recordTriageEvent: (event) => invoke("record_triage_event", { event }),
   listTriageSenderStats: (accountId, limit) => invoke("list_triage_sender_stats", { accountId, limit }),
+  listContactSuggestions: (accountId, query, limit) => invoke("list_contact_suggestions", { accountId, query, limit }),
+  pinContact: (accountId, email, displayName) => invoke("pin_contact", { accountId, email, displayName }),
+  unpinContact: (accountId, email) => invoke("unpin_contact", { accountId, email }),
   unsubscribe: (messageId) => invoke("unsubscribe", { messageId }),
   sync: () => invoke("sync_account"),
   flushPending: () => invoke("flush_pending_mutations"),
