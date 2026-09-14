@@ -315,3 +315,20 @@ it("opens web links separately and rejects unsafe or relative navigation", () =>
   expect(links[1].hasAttribute("href")).toBe(false);
   expect(links[2].hasAttribute("href")).toBe(false);
 });
+
+it("keeps a product thumbnail capped at its intended size instead of growing to fill its container", () => {
+  // Mirrors an actual Amazon Subscribe & Save template: the image itself
+  // carries a responsive `width: 100%` paired with `max-width`/`max-height`
+  // caps meant to keep it thumbnail-sized, plus an HTML width attribute as
+  // a fallback. If max-width/max-height get stripped while width: 100%
+  // survives, the image is left free to grow to the full width of
+  // whatever contains it.
+  const sanitized = sanitizeMessageHtml(`
+    <table role="presentation" width="100%"><tr><td style="width:100%;height:93px;">
+      <img style="width:100%;height:auto;max-height:93px;max-width:93px;margin:auto;display:block;"
+           width="165" src="https://m.media-amazon.com/images/I/81nGPnMJHlL.jpg" alt="">
+    </td></tr></table>
+  `);
+  expect(sanitized).toContain("max-width: 93px");
+  expect(sanitized).toContain("max-height: 93px");
+});

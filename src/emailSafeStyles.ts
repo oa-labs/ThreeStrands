@@ -12,6 +12,15 @@ export const safeBorder = new RegExp(
   "i",
 );
 
+// A bounded CSS length: 0-4 digit px or percent, matching the same shape
+// safeDimension/safeCssLength in SafeMessage.tsx already enforce for the
+// width/height *attributes* dimensionAttributeTags carries. Redefined here
+// as a plain regex (rather than imported) since this module is imported by
+// SafeMessage.tsx, and a value-shape check like this can't carry a
+// network request or positioning regardless of which element it lands on.
+const safeDimensionValue = /^\d{1,4}(?:\.\d+)?(?:px|%)$/;
+const safeMaxDimensionValue = /^(\d{1,4}(\.\d+)?(px|%)|none)$/;
+
 // Keep text formatting without allowing positioning or CSS network requests.
 // color/background-color/border-color are safe to keep as-is since they
 // never carry a network request; senders that set light text without a
@@ -29,6 +38,17 @@ export const safeStyles: Record<string, RegExp> = {
   "color": safeColor,
   "background-color": safeColor,
   "line-height": /^(normal|\d+(\.\d+)?(px|%)?)$/,
+  // Marketing templates (MJML-generated ones especially) commonly size a
+  // layout column with an inline `width` percentage, and cap a product
+  // image with `max-width`/`max-height` alongside a `width: 100%` that's
+  // meant to only fill up to that cap. Without these, a sender's own size
+  // constraint is silently dropped while the `width: 100%` that was meant
+  // to pair with it survives, leaving the image (or column) free to grow
+  // to the full width of its container instead of its intended thumbnail
+  // size.
+  "width": safeDimensionValue,
+  "max-width": safeMaxDimensionValue,
+  "max-height": safeMaxDimensionValue,
   "border": safeBorder,
   "border-top": safeBorder,
   "border-right": safeBorder,
