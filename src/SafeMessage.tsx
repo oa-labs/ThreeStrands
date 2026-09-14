@@ -127,7 +127,10 @@ const spacerTags = new Set([
 ]);
 
 // Keep text formatting without allowing positioning, hidden content, or CSS
-// network requests. Colors inherit the reader's active theme for legibility.
+// network requests. Text color inherits the reader's active theme for
+// legibility; background-color is safe to keep as-is since it never carries
+// a network request. background-image is handled separately below since it
+// needs the same URL validation and remote-image gating as <img src>.
 const safeStyles: Record<string, RegExp> = {
   "text-align": /^(left|right|center|justify|start|end)$/,
   "font-weight": /^(normal|bold|[1-9]00)$/,
@@ -135,7 +138,10 @@ const safeStyles: Record<string, RegExp> = {
   "text-decoration": /^(none|underline|line-through)( (underline|line-through))?$/,
   "vertical-align": /^(baseline|top|middle|bottom|sub|super|text-top|text-bottom)$/,
   "border-collapse": /^(collapse|separate)$/,
+  "background-color": /^(#[0-9a-f]{3,8}|rgba?\([\d.\s,%]+\)|hsla?\([\d.\s,%]+\)|transparent|currentcolor|[a-z]+)$/,
 };
+
+const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;
 
 const safeImageSrc = /^(https?:|data:image\/)/i;
 const blockedSrcAttr = "data-blocked-src";
@@ -185,6 +191,16 @@ export function sanitizeMessageHtml(html: string, options: { allowImages?: boole
     for (const [property, pattern] of Object.entries(safeStyles)) {
       const value = original.getPropertyValue(property).trim().toLowerCase();
       if (pattern.test(value)) declarations.push(`${property}: ${value}`);
+    }
+    // Same URL scheme check and remote-image gating as <img src>, since a
+    // background-image is just as much a network request as an <img> is.
+    const backgroundImageMatch = original.getPropertyValue("background-image").trim().match(backgroundImageUrl);
+    if (backgroundImageMatch) {
+      const backgroundUrl = backgroundImageMatch[1] ?? backgroundImageMatch[2] ?? backgroundImageMatch[3] ?? "";
+      if (safeImageSrc.test(backgroundUrl) && !/["']/.test(backgroundUrl)) {
+        if (allowImages) declarations.push(`background-image: url("${backgroundUrl}")`);
+        else element.setAttribute(blockedSrcAttr, backgroundUrl);
+      }
     }
     const tag = element.tagName.toLowerCase();
     if (!dimensionAttributeTags.has(tag)) element.removeAttribute("width");

@@ -13,8 +13,11 @@ describe("SafeMessage", () => {
       <script>alert("bad")</script>
     `);
 
-    expect(sanitized).toContain("<p>Hello</p>");
-    expect(sanitized).not.toContain("style=");
+    expect(sanitized).toContain("Hello");
+    // A background-image is as much a network request as <img src>, so it's
+    // held behind the same block/allow gate instead of a live style.
+    expect(sanitized).not.toMatch(/style="[^"]*url\(/);
+    expect(sanitized).toContain('data-blocked-src="https://tracker.invalid"');
     expect(sanitized).toContain("<img");
     expect(sanitized).not.toContain(' src="');
     expect(sanitized).toContain('data-blocked-src="https://tracker.invalid/open.gif"');
@@ -127,7 +130,24 @@ it("preserves safe formatting while removing CSS requests and app classes", () =
   expect(sanitized).toContain("text-align: center");
   expect(sanitized).toContain("font-weight: 700");
   expect(sanitized).toContain("padding-top: 32px");
-  expect(sanitized).not.toMatch(/tracker|position|class=|color:/);
+  // background-image is gated the same way as <img src> rather than stripped
+  // outright, so its URL only survives as an inert blocked-src marker.
+  expect(sanitized).toContain('data-blocked-src="https://tracker.invalid"');
+  expect(sanitized).not.toMatch(/style="[^"]*url\(|position|class=|color:/);
+});
+
+it("restores a background-image only once images are explicitly allowed, with the same URL validation as <img src>", () => {
+  const blocked = sanitizeMessageHtml('<div style="background-image:url(https://example.com/hero.png)">Hi</div>');
+  expect(blocked).not.toMatch(/style="[^"]*url\(/);
+  expect(blocked).toContain('data-blocked-src="https://example.com/hero.png"');
+
+  const allowed = sanitizeMessageHtml('<div style="background-image:url(https://example.com/hero.png)">Hi</div>', { allowImages: true });
+  const container = document.createElement("div");
+  container.innerHTML = allowed;
+  expect(container.querySelector("div")?.style.backgroundImage).toBe('url("https://example.com/hero.png")');
+
+  const unsafe = sanitizeMessageHtml('<div style="background-image:url(javascript:alert(1))">Hi</div>', { allowImages: true });
+  expect(unsafe).not.toContain("background-image");
 });
 
 it("renders plain text literally when HTML is absent or stripped", () => {
