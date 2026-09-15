@@ -108,9 +108,11 @@ import {
   readAutoReadDelaySeconds,
   readFontFamily,
   readLoadRemoteImages,
+  readSelectedAccountId,
   saveAutoReadDelaySeconds,
   saveFontFamily,
   saveLoadRemoteImages,
+  saveSelectedAccountId,
   type FontFamily,
 } from "./settings";
 import { listSystemFontFamilies } from "./systemFonts";
@@ -559,7 +561,7 @@ export function App() {
   const [labelsByAccount, setLabelsByAccount] = useState<Record<string, Label[]>>({});
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(readSelectedAccountId);
   const [mailbox, setMailbox] = useState<MailboxKind>("inbox");
   const [mailboxError, setMailboxError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
@@ -579,12 +581,21 @@ export function App() {
     return mailClient
       .listAccounts()
       .then((next) => {
-        if (requestId === accountsRequest.current) setAccounts(next);
+        if (requestId !== accountsRequest.current) return;
+        setAccounts(next);
+        setActiveAccountId((current) =>
+          current === null || next.some((account) => account.email === current)
+            ? current
+            : null,
+        );
       })
       .catch(() => {
         if (requestId === accountsRequest.current) setAccounts([]);
       });
   }, []);
+  useEffect(() => {
+    saveSelectedAccountId(activeAccountId);
+  }, [activeAccountId]);
   useEffect(() => {
     // Accounts sync in the background for as long as the app runs, so a
     // status/last-synced snapshot fetched once at mount goes stale quickly.

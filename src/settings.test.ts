@@ -9,9 +9,11 @@ import {
   readAutoReadDelaySeconds,
   readFontFamily,
   readLoadRemoteImages,
+  readSelectedAccountId,
   saveAutoReadDelaySeconds,
   saveFontFamily,
   saveLoadRemoteImages,
+  saveSelectedAccountId,
 } from "./settings";
 
 describe("font family preference", () => {
@@ -87,5 +89,30 @@ describe("remote image preference", () => {
   it("treats invalid stored values as disabled", () => {
     localStorage.setItem("dispatch.settings.loadRemoteImages", "yes");
     expect(readLoadRemoteImages()).toBe(false);
+  });
+});
+
+describe("selected account preference", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("restores a selected account", () => {
+    expect(readSelectedAccountId()).toBeNull();
+    saveSelectedAccountId("work@example.com");
+    expect(localStorage.getItem("dispatch.settings.selectedAccountId")).toBe("work@example.com");
+    expect(readSelectedAccountId()).toBe("work@example.com");
+  });
+
+  it("persists All accounts explicitly", () => {
+    saveSelectedAccountId("work@example.com");
+    saveSelectedAccountId(null);
+    expect(localStorage.getItem("dispatch.settings.selectedAccountId")).toBe("all");
+    expect(readSelectedAccountId()).toBeNull();
+  });
+
+  it("ignores an invalid stored account id", () => {
+    localStorage.setItem("dispatch.settings.selectedAccountId", "work@example.com\ninvalid");
+    expect(readSelectedAccountId()).toBeNull();
   });
 });

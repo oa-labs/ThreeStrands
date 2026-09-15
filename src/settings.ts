@@ -40,6 +40,9 @@ export function fontFamilyStack(value: FontFamily): string {
 const AUTO_READ_DELAY_SECONDS_KEY = "dispatch.settings.autoReadDelaySeconds";
 
 const LOAD_REMOTE_IMAGES_KEY = "dispatch.settings.loadRemoteImages";
+const SELECTED_ACCOUNT_ID_KEY = "dispatch.settings.selectedAccountId";
+const ALL_ACCOUNTS_VALUE = "all";
+const MAX_ACCOUNT_ID_LENGTH = 320;
 
 export const DEFAULT_LOAD_REMOTE_IMAGES = false;
 
@@ -93,6 +96,34 @@ export function saveLoadRemoteImages(value: boolean): boolean {
     // The preference still applies for this session when storage is unavailable.
   }
   return value;
+}
+
+function validAccountId(value: string | null): value is string {
+  return value !== null
+    && value.length > 0
+    && value.length <= MAX_ACCOUNT_ID_LENGTH
+    && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+export function readSelectedAccountId(): string | null {
+  try {
+    const saved = localStorage.getItem(SELECTED_ACCOUNT_ID_KEY);
+    if (saved === ALL_ACCOUNTS_VALUE) return null;
+    if (validAccountId(saved)) return saved;
+  } catch {
+    // A blocked storage backend should not prevent the app from opening.
+  }
+  return null;
+}
+
+export function saveSelectedAccountId(value: string | null): string | null {
+  const next = validAccountId(value) ? value : null;
+  try {
+    localStorage.setItem(SELECTED_ACCOUNT_ID_KEY, next ?? ALL_ACCOUNTS_VALUE);
+  } catch {
+    // The preference still applies for this session when storage is unavailable.
+  }
+  return next;
 }
 
 export function readFontFamily(): FontFamily {

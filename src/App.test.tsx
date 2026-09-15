@@ -576,3 +576,43 @@ describe("foreground mail refresh", () => {
     expect(sync).not.toHaveBeenCalled();
   });
 });
+
+describe("account selection persistence", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.removeItem("dispatch.settings.selectedAccountId");
+    vi.restoreAllMocks();
+  });
+
+  it("restores both a selected account and All accounts after a restart", async () => {
+    const [primary] = await mailClient.listAccounts();
+    vi.spyOn(mailClient, "listAccounts").mockResolvedValue([
+      primary!,
+      {
+        ...primary!,
+        email: "work@example.com",
+        displayName: "Work",
+        color: "#34A853",
+        sortOrder: 1,
+      },
+    ]);
+
+    const firstRun = render(<App />);
+    await act(async () => {});
+    const workAccount = screen.getByRole("radio", { name: "Work" });
+    fireEvent.click(workAccount);
+    expect(localStorage.getItem("dispatch.settings.selectedAccountId")).toBe("work@example.com");
+    firstRun.unmount();
+
+    const secondRun = render(<App />);
+    await act(async () => {});
+    expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("radio", { name: "All accounts" }));
+    expect(localStorage.getItem("dispatch.settings.selectedAccountId")).toBe("all");
+    secondRun.unmount();
+
+    render(<App />);
+    await act(async () => {});
+    expect(screen.getByRole("radio", { name: "All accounts" })).toHaveAttribute("aria-checked", "true");
+  });
+});
