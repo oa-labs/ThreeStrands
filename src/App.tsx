@@ -87,6 +87,7 @@ import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
+import { CalendarAttachment, isCalendarAttachment } from "./CalendarAttachment";
 import { parseAddress, simplifyDisplayName } from "./emailAddress";
 import {
   applyFontScale,
@@ -2036,36 +2037,45 @@ export function App() {
                       {downloadableAttachments.length > 0 ? (
                         <div className="message-attachments" aria-label="Attachments">
                           {downloadableAttachments.map((attachment) => (
-                            <div className="message-attachment" key={attachment.id}>
-                              <button
-                                type="button"
-                                className="attachment-badge"
-                                aria-label={`View ${attachment.filename}`}
-                                onClick={() => {
-                                  void mailClient.openAttachment(message.id, attachment.id).catch((reason: unknown) => {
-                                    setNotice({ message: `Could not open attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
-                                  });
-                                }}
-                              >
-                                <Paperclip size={14} />
-                                <span>{attachment.filename}</span>
-                                <small>{formatAttachmentSize(attachment.size)}</small>
-                                <ExternalLink size={13} />
-                              </button>
-                              <button
-                                type="button"
-                                className="attachment-download"
-                                aria-label={`Download ${attachment.filename}`}
-                                title={`Download ${attachment.filename}`}
-                                onClick={() => {
-                                  void mailClient.saveAttachment(message.id, attachment.id).catch((reason: unknown) => {
-                                    setNotice({ message: `Could not download attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
-                                  });
-                                }}
-                              >
-                                <Download size={14} />
-                              </button>
-                            </div>
+                            isCalendarAttachment(attachment) ? (
+                              <CalendarAttachment
+                                key={attachment.id}
+                                messageId={message.id}
+                                attachment={attachment}
+                                onError={(notice) => setNotice({ message: notice })}
+                              />
+                            ) : (
+                              <div className="message-attachment" key={attachment.id}>
+                                <button
+                                  type="button"
+                                  className="attachment-badge"
+                                  aria-label={`View ${attachment.filename}`}
+                                  onClick={() => {
+                                    void mailClient.openAttachment(message.id, attachment.id).catch((reason: unknown) => {
+                                      setNotice({ message: `Could not open attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
+                                    });
+                                  }}
+                                >
+                                  <Paperclip size={14} />
+                                  <span>{attachment.filename}</span>
+                                  <small>{formatAttachmentSize(attachment.size)}</small>
+                                  <ExternalLink size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="attachment-download"
+                                  aria-label={`Download ${attachment.filename}`}
+                                  title={`Download ${attachment.filename}`}
+                                  onClick={() => {
+                                    void mailClient.saveAttachment(message.id, attachment.id).catch((reason: unknown) => {
+                                      setNotice({ message: `Could not download attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
+                                    });
+                                  }}
+                                >
+                                  <Download size={14} />
+                                </button>
+                              </div>
+                            )
                           ))}
                         </div>
                       ) : null}

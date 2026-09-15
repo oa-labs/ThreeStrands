@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Account,
   AuthStatus,
+  CalendarPreview,
   ContactSuggestion,
   Label,
   SearchThreadsRequest,
@@ -36,6 +37,8 @@ export interface MailClient extends CorrespondenceClient {
   fetchRemoteImage(url: string): Promise<string>;
   /** Resolves an embedded MIME image to a `data:` URI without contacting a remote sender host. */
   fetchAttachmentImage(messageId: string, attachmentId: string): Promise<string>;
+  /** Parses an iCalendar attachment natively and returns display-safe event metadata. */
+  previewCalendarAttachment(messageId: string, attachmentId: string): Promise<CalendarPreview>;
   summarizeThread(
     threadId: string,
     provider: AiProvider,
@@ -89,6 +92,7 @@ const tauriClient: MailClient = {
   saveAttachment: (messageId, attachmentId) => invoke("save_attachment", { messageId, attachmentId }),
   fetchRemoteImage: (url) => invoke("fetch_remote_image", { url }),
   fetchAttachmentImage: (messageId, attachmentId) => invoke("fetch_attachment_image", { messageId, attachmentId }),
+  previewCalendarAttachment: (messageId, attachmentId) => invoke("preview_calendar_attachment", { messageId, attachmentId }),
   summarizeThread: (threadId, provider, model, endpoint) =>
     invoke("ai_summarize_thread", { threadId, provider, model, endpoint }),
   searchThreads: (request, accountId) => invoke("search_threads", { request, accountId }),

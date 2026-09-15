@@ -29,6 +29,25 @@ export type MessageAttachment = {
   inline?: boolean;
 };
 
+export type CalendarEventPreview = {
+  title: string;
+  start: string | null;
+  end: string | null;
+  allDay: boolean;
+  timeZone: string | null;
+  location: string | null;
+  description: string | null;
+  organizer: string | null;
+  attendeeCount: number;
+  recurring: boolean;
+  status: string | null;
+};
+
+export type CalendarPreview = {
+  events: CalendarEventPreview[];
+  truncated: boolean;
+};
+
 export type Message = {
   id: string;
   threadId: string;

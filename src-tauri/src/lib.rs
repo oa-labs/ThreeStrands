@@ -1,5 +1,6 @@
 mod ai;
 mod auth;
+mod calendar;
 mod correspondence;
 mod db;
 mod gmail;
@@ -330,6 +331,24 @@ async fn fetch_attachment_image(
         "data:{mime_type};base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
     ))
+}
+
+#[tauri::command]
+async fn preview_calendar_attachment(
+    message_id: String,
+    attachment_id: String,
+    state: State<'_, AppState>,
+) -> Result<calendar::CalendarPreview, String> {
+    let (filename, mime_type, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
+    let is_calendar = mime_type
+        .split(';')
+        .next()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/calendar"))
+        || filename.to_ascii_lowercase().ends_with(".ics");
+    if !is_calendar {
+        return Err("Attachment is not a calendar invitation".into());
+    }
+    calendar::parse(&bytes)
 }
 
 #[tauri::command]
@@ -887,6 +906,7 @@ pub fn run() {
             get_thread,
             fetch_remote_image,
             fetch_attachment_image,
+            preview_calendar_attachment,
             open_attachment,
             save_attachment,
             search_threads,

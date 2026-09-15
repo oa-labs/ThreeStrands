@@ -253,6 +253,9 @@ export const demoClient: MailClient = {
   async fetchAttachmentImage(_messageId, _attachmentId) {
     throw new Error("Embedded attachment images are unavailable in browser preview");
   },
+  async previewCalendarAttachment(_messageId, _attachmentId) {
+    throw new Error("Calendar previews are unavailable in browser preview");
+  },
   async getThread(id) {
     const thread = threads.find((candidate) => candidate.id === id);
     if (!thread) throw new Error("Thread not found");
