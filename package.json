@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "build:linux": "./scripts/build-linux.sh",
     "tauri": "tauri"
   },
   "dependencies": {

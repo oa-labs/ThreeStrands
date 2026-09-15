@@ -1,0 +1,28 @@
+{
+  "name": "Dispatch Linux build",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "options": ["--platform=linux/amd64"]
+  },
+  "runArgs": ["--platform=linux/amd64"],
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "APPIMAGE_EXTRACT_AND_RUN": "1"
+  },
+  "postCreateCommand": "pnpm install --frozen-lockfile",
+  "forwardPorts": [1420],
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tauri-apps.tauri-vscode",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  }
+}

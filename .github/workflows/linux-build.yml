@@ -1,0 +1,49 @@
+name: Linux build
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Require and embed the configured Google OAuth client
+        required: true
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-amd64:
+    name: Linux x86-64 packages
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build and verify packages in the devcontainer
+        uses: devcontainers/ci@v0.3
+        env:
+          DISPATCH_GOOGLE_CLIENT_ID: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && secrets.DISPATCH_GOOGLE_CLIENT_ID || '' }}
+          DISPATCH_GOOGLE_CLIENT_SECRET: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && secrets.DISPATCH_GOOGLE_CLIENT_SECRET || '' }}
+          DISPATCH_RELEASE_BUILD: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && '1' || '0' }}
+        with:
+          platform: linux/amd64
+          push: never
+          runCmd: ./scripts/build-linux.sh
+          env: |
+            DISPATCH_GOOGLE_CLIENT_ID
+            DISPATCH_GOOGLE_CLIENT_SECRET
+            DISPATCH_RELEASE_BUILD
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v6
+        with:
+          name: dispatch-linux-amd64
+          path: artifacts/linux-amd64/
+          if-no-files-found: error

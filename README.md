@@ -47,6 +47,10 @@ pnpm build
 pnpm tauri dev # native app with local SQLite
 ```
 
+Linux release packages are built in the repository's reproducible Ubuntu
+devcontainer. It produces x86-64 Debian, RPM, and AppImage artifacts whether
+the host is Linux or Apple Silicon. See the [Linux build guide](docs/linux-builds.md).
+
 To connect Gmail, enable the Gmail API in a Google Cloud project, create an
 OAuth client of type **Desktop app**, and launch the native client with its
 client ID and client-secret value:

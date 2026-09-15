@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use mail_parser::decoders::html::html_to_text;
 use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -105,6 +106,10 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
         html.as_deref().unwrap_or_default(),
         &mut attachments,
     );
+    let body_html = html.unwrap_or_default();
+    // Some messages (newsletters, marketing mail) omit the text/plain alternative
+    // entirely, so fall back to deriving plain text from the HTML body.
+    let body_text = text.unwrap_or_else(|| html_to_text(&body_html));
     Ok(NormalizedMessage {
         id: message.id.clone(),
         thread_id: message.thread_id.clone(),
@@ -118,8 +123,8 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
         date: header(&message.payload, "Date")
             .and_then(normalize_date)
             .unwrap_or_else(|| millis_to_rfc3339(&message.internal_date)),
-        body_html: html.unwrap_or_default(),
-        body_text: text.unwrap_or_default(),
+        body_html,
+        body_text,
         snippet: message.snippet.clone(),
         labels: message.label_ids.clone(),
         metadata_json: serde_json::to_string(message).map_err(|e| e.to_string())?,
@@ -437,6 +442,20 @@ mod tests {
             attachment_bytes_from_payload(&message, "part:0.2").unwrap(),
             Some(b"attachment".to_vec())
         );
+    }
+
+    #[test]
+    fn derives_body_text_from_html_when_no_plain_part_exists() {
+        let message = GmailMessage {
+            id: "m".into(),
+            thread_id: "t".into(),
+            label_ids: vec![],
+            snippet: String::new(),
+            internal_date: "0".into(),
+            payload: part("text/html", "<p>Joel, this is the math.</p>"),
+        };
+        let normalized = normalize(&message).unwrap();
+        assert_eq!(normalized.body_text.trim(), "Joel, this is the math.");
     }
 
     #[test]
