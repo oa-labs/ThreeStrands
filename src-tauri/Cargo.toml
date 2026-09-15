@@ -37,3 +37,4 @@ tokio = { version = "1", features = ["net", "sync", "time", "io-util", "macros",
 tokio-util = { version = "0.7", default-features = false }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+zstd = "0.13"

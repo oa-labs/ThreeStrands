@@ -201,6 +201,19 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 11 {
+        // Compressed bodies live alongside the legacy plaintext columns
+        // rather than replacing them, so rows written before this migration
+        // keep reading correctly with no backfill required at upgrade time.
+        // A background job compresses them lazily afterward (see
+        // `Database::compress_next_body_batch`).
+        tx.execute_batch(
+            "ALTER TABLE messages ADD COLUMN body_html_z BLOB;
+            ALTER TABLE messages ADD COLUMN body_text_z BLOB;
+            PRAGMA user_version=11;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection
@@ -396,6 +409,33 @@ impl Database {
     }
     pub fn set_compose_identity(&self, identity: &str) -> Result<(), String> {
         self.connection()?.execute("INSERT INTO compose_settings VALUES ('identity',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [identity]).map_err(error)?;
+        Ok(())
+    }
+    /// How long locally cached mail is kept before `prune_expired_threads`
+    /// removes it. `None` means unlimited (the default, so nobody's mail
+    /// silently disappears the first time this ships).
+    pub fn retention_days(&self) -> Result<Option<i64>, String> {
+        self.connection()?
+            .query_row(
+                "SELECT value FROM compose_settings WHERE key='retention_days'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(error)?
+            .map(|value| value.parse::<i64>().map_err(error))
+            .transpose()
+    }
+    pub fn set_retention_days(&self, days: Option<i64>) -> Result<(), String> {
+        let connection = self.connection()?;
+        match days {
+            Some(days) => connection.execute(
+                "INSERT INTO compose_settings VALUES ('retention_days',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![days.to_string()],
+            ),
+            None => connection.execute("DELETE FROM compose_settings WHERE key='retention_days'", []),
+        }
+        .map_err(error)?;
         Ok(())
     }
     pub fn drafts(&self) -> Result<Vec<Draft>, String> {
@@ -1384,6 +1424,16 @@ mod tests {
         d.body = "Saved work ✓".into();
         db.save_draft(d).unwrap()
     }
+    #[test]
+    fn retention_days_defaults_to_unlimited_and_round_trips() {
+        let db = database();
+        assert_eq!(db.retention_days().unwrap(), None);
+        db.set_retention_days(Some(90)).unwrap();
+        assert_eq!(db.retention_days().unwrap(), Some(90));
+        db.set_retention_days(None).unwrap();
+        assert_eq!(db.retention_days().unwrap(), None);
+    }
+
     #[test]
     fn draft_revision_rejects_stale_writes_and_header_injection() {
         let db = database();

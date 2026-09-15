@@ -135,6 +135,7 @@ import {
   type AiFeatureFlags,
   type AiProvider,
 } from "./aiSettings";
+import { getRetentionDays, setRetentionDays, RETENTION_OPTIONS } from "./retentionSettings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import {
   buildTriageCloseEvent,
@@ -3471,8 +3472,37 @@ function PrivacySettings({
 }) {
   const [reporting, setReporting] = useState(crashReportingEnabled);
   const [reportCount, setReportCount] = useState(() => localCrashReports().length);
+  const [retentionDays, setRetentionDaysState] = useState<number | null>(null);
+
+  useEffect(() => {
+    void getRetentionDays().then(setRetentionDaysState);
+  }, []);
+
   return (
     <section className="settings-section" aria-label="Privacy">
+      <h3>Local storage</h3>
+      <label className="settings-field">
+        <span>Keep mail on this device for</span>
+        <select
+          value={retentionDays === null ? "forever" : String(retentionDays)}
+          onChange={(event) => {
+            const next = event.target.value === "forever" ? null : Number(event.target.value);
+            setRetentionDaysState(next);
+            void setRetentionDays(next);
+          }}
+        >
+          {RETENTION_OPTIONS.map((option) => (
+            <option key={option.label} value={option.value === null ? "forever" : String(option.value)}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <span className="settings-hint">
+        Mail older than this is removed from Dispatch's local cache to keep the
+        database from growing without bound. It stays on the server.
+      </span>
+
       <h3>Message images</h3>
       <label className="settings-checkbox">
         <input

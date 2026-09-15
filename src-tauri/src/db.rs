@@ -37,6 +37,18 @@ fn local_thread_id(account_id: &str, provider_thread_id: &str) -> String {
     format!("{account_id}:{provider_thread_id}")
 }
 
+/// Best-effort: narrow the database file to owner-only access. Not fatal if
+/// it fails (e.g. an unsupported filesystem) since the containing directory
+/// is already locked down by the caller.
+#[cfg(unix)]
+fn restrict_to_owner(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn restrict_to_owner(_path: &Path) {}
+
 const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -155,6 +167,7 @@ pub struct Database(Mutex<Connection>);
 impl Database {
     pub fn open(path: &Path) -> Result<Self, String> {
         let mut connection = Connection::open(path).map_err(display_error)?;
+        restrict_to_owner(path);
         connection.execute_batch(SCHEMA).map_err(display_error)?;
         connection
             .execute(
@@ -331,7 +344,7 @@ impl Database {
         let mut statement = connection
             .prepare(
                 "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
-                        unsubscribe_json, unread, attachments_json
+                        body_html_z, body_text_z, unsubscribe_json, unread, attachments_json
                  FROM messages WHERE thread_id = ?1 ORDER BY sent_at",
             )
             .map_err(display_error)?;
@@ -343,17 +356,17 @@ impl Database {
                     sender: row.get(2)?,
                     recipients: decode_json(row.get::<_, String>(3)?)?,
                     sent_at: row.get(4)?,
-                    body_html: row.get(5)?,
-                    body_text: row.get(6)?,
+                    body_html: resolve_body(7, row.get(5)?, row.get(7)?)?,
+                    body_text: resolve_body(8, row.get(6)?, row.get(8)?)?,
                     unsubscribe: row
-                        .get::<_, Option<String>>(7)?
+                        .get::<_, Option<String>>(9)?
                         .and_then(|value| serde_json::from_str::<UnsubscribeMetadata>(&value).ok())
                         .map(|value| value.info()),
-                    unread: row.get::<_, i64>(8)? != 0,
-                    attachments: serde_json::from_str(&row.get::<_, String>(9)?).map_err(
+                    unread: row.get::<_, i64>(10)? != 0,
+                    attachments: serde_json::from_str(&row.get::<_, String>(11)?).map_err(
                         |error| {
                             rusqlite::Error::FromSqlConversionFailure(
-                                9,
+                                11,
                                 rusqlite::types::Type::Text,
                                 Box::new(error),
                             )
@@ -1265,6 +1278,104 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
+    /// Deletes threads (and their messages, via `ON DELETE CASCADE`) whose
+    /// newest message is older than the configured retention window.
+    /// Starred and trashed threads are always kept regardless of age. A
+    /// no-op when retention is unset (unlimited). Returns the number of
+    /// threads removed.
+    pub fn prune_expired_threads(&self) -> Result<usize, String> {
+        let Some(days) = self.retention_days()? else {
+            return Ok(0);
+        };
+        let cutoff = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        transaction
+            .execute(
+                "DELETE FROM thread_search WHERE thread_id IN
+                    (SELECT id FROM threads WHERE last_message_at < ?1 AND starred = 0 AND trashed = 0)",
+                [&cutoff],
+            )
+            .map_err(display_error)?;
+        let removed = transaction
+            .execute(
+                "DELETE FROM threads WHERE last_message_at < ?1 AND starred = 0 AND trashed = 0",
+                [&cutoff],
+            )
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)?;
+        Ok(removed)
+    }
+
+    /// Returns freed pages to the OS. Cheap as long as `auto_vacuum` is
+    /// already `INCREMENTAL` (see `vacuum_to_incremental`); otherwise a
+    /// harmless no-op.
+    pub fn reclaim_space(&self) -> Result<(), String> {
+        self.connection()?
+            .execute_batch("PRAGMA incremental_vacuum;")
+            .map_err(display_error)
+    }
+
+    /// Whether the database still needs the one-time conversion to
+    /// incremental auto-vacuum mode.
+    pub fn needs_vacuum_upgrade(&self) -> Result<bool, String> {
+        let mode: i64 = self
+            .connection()?
+            .query_row("PRAGMA auto_vacuum", [], |r| r.get(0))
+            .map_err(display_error)?;
+        Ok(mode != 2)
+    }
+
+    /// One-time conversion to incremental auto-vacuum. Rewrites the entire
+    /// file (like `VACUUM`), so it can be slow on a large existing database
+    /// — call this off the async runtime's blocking pool, not inline at
+    /// startup. Must not run inside a transaction.
+    pub fn vacuum_to_incremental(&self) -> Result<(), String> {
+        self.connection()?
+            .execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")
+            .map_err(display_error)
+    }
+
+    /// Compresses a bounded batch of message bodies still on the legacy
+    /// plaintext columns (written before the body-compression migration)
+    /// into `body_html_z`/`body_text_z`, clearing the plaintext columns as
+    /// it goes so the freed space is reclaimable. Returns the number of rows
+    /// converted; call repeatedly (e.g. from a background loop) until it
+    /// returns 0.
+    pub fn compress_next_body_batch(&self, batch_size: usize) -> Result<usize, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        let rows: Vec<(String, String, String)> = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT id, body_html, body_text FROM messages
+                     WHERE body_html_z IS NULL LIMIT ?1",
+                )
+                .map_err(display_error)?;
+            let collected = statement
+                .query_map(params![batch_size as i64], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .map_err(display_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(display_error)?;
+            collected
+        };
+        let count = rows.len();
+        for (id, body_html, body_text) in rows {
+            transaction
+                .execute(
+                    "UPDATE messages SET body_html = '', body_text = '',
+                        body_html_z = ?1, body_text_z = ?2
+                     WHERE id = ?3",
+                    params![compress_body(&body_html), compress_body(&body_text), id],
+                )
+                .map_err(display_error)?;
+        }
+        transaction.commit().map_err(display_error)?;
+        Ok(count)
+    }
+
     fn apply_gmail_thread(
         transaction: &Transaction<'_>,
         account_id: &str,
@@ -1369,16 +1480,18 @@ impl Database {
                 .execute(
                     "INSERT INTO messages(
                         id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
-                        unsubscribe_json, unread, attachments_json
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        body_html_z, body_text_z, unsubscribe_json, unread, attachments_json
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         message.id,
                         thread_id,
                         message.from,
                         serde_json::to_string(&message.to).map_err(display_error)?,
                         message.date,
-                        message.body_html,
-                        message.body_text,
+                        "",
+                        "",
+                        compress_body(&message.body_html),
+                        compress_body(&message.body_text),
                         message
                             .unsubscribe
                             .as_ref()
@@ -1826,6 +1939,39 @@ fn decode_json(value: String) -> rusqlite::Result<Vec<String>> {
             Box::new(error),
         )
     })
+}
+
+/// zstd-compresses message body text for the `body_html_z`/`body_text_z`
+/// columns. Encoding an in-memory byte slice cannot meaningfully fail.
+fn compress_body(text: &str) -> Vec<u8> {
+    zstd::stream::encode_all(text.as_bytes(), 3)
+        .expect("zstd encoding of an in-memory byte slice cannot fail")
+}
+
+/// Prefers the compressed column when present (every row written after the
+/// body-compression migration); falls back to the legacy plaintext column
+/// for rows synced before it.
+fn resolve_body(
+    column_index: usize,
+    legacy: String,
+    compressed: Option<Vec<u8>>,
+) -> rusqlite::Result<String> {
+    match compressed {
+        Some(bytes) => zstd::stream::decode_all(bytes.as_slice())
+            .ok()
+            .and_then(|buf| String::from_utf8(buf).ok())
+            .ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    column_index,
+                    rusqlite::types::Type::Blob,
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "failed to decompress message body",
+                    )),
+                )
+            }),
+        None => Ok(legacy),
+    }
 }
 
 /// Builds an FTS5 MATCH expression, ANDing together every unquoted word and
@@ -2822,6 +2968,184 @@ mod tests {
         let threads = database.list_threads(None).unwrap();
         assert!(!threads.iter().any(|t| t.id == "work@example.com:t1"));
         assert!(threads.iter().any(|t| t.id == "personal@example.com:t2"));
+    }
+
+    #[test]
+    fn prune_expired_threads_is_a_noop_when_retention_is_unset() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2000-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        let removed = database.prune_expired_threads().unwrap();
+        assert_eq!(removed, 0);
+        assert!(database
+            .list_threads(None)
+            .unwrap()
+            .iter()
+            .any(|t| t.id == "work@example.com:t1"));
+    }
+
+    #[test]
+    fn prune_expired_threads_removes_only_old_unstarred_threads() {
+        let database = database();
+        database.begin_full_sync("default").unwrap();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2000-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m2", "t2", &Utc::now().to_rfc3339(), "body")],
+            )
+            .unwrap();
+        database.set_retention_days(Some(30)).unwrap();
+        let removed = database.prune_expired_threads().unwrap();
+        assert_eq!(removed, 1);
+        let threads = database.list_threads(None).unwrap();
+        assert!(!threads.iter().any(|t| t.id == "work@example.com:t1"));
+        assert!(threads.iter().any(|t| t.id == "work@example.com:t2"));
+    }
+
+    #[test]
+    fn prune_expired_threads_keeps_starred_threads_regardless_of_age() {
+        let database = database();
+        database.begin_full_sync("default").unwrap();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2000-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Star {
+                thread_id: "work@example.com:t1".into(),
+                value: true,
+            })
+            .unwrap();
+        database.set_retention_days(Some(30)).unwrap();
+        let removed = database.prune_expired_threads().unwrap();
+        assert_eq!(removed, 0);
+        assert!(database
+            .list_threads(None)
+            .unwrap()
+            .iter()
+            .any(|t| t.id == "work@example.com:t1"));
+    }
+
+    #[test]
+    fn pruning_a_thread_also_removes_its_search_index_row() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2000-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database.set_retention_days(Some(30)).unwrap();
+        database.prune_expired_threads().unwrap();
+        let remaining: i64 = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM thread_search WHERE thread_id = 'work@example.com:t1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn message_bodies_round_trip_through_compression() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message(
+                    "m1",
+                    "t1",
+                    "2026-01-01T00:00:00Z",
+                    "Hello, this is the plaintext body ✓",
+                )],
+            )
+            .unwrap();
+        let detail = database.get_thread("work@example.com:t1").unwrap();
+        assert_eq!(
+            detail.messages[0].body_text,
+            "Hello, this is the plaintext body ✓"
+        );
+        // Stored compressed, not as plaintext, in the legacy columns.
+        let (body_html, body_text): (String, String) = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT body_html, body_text FROM messages WHERE id = 'm1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(body_html, "");
+        assert_eq!(body_text, "");
+    }
+
+    #[test]
+    fn legacy_uncompressed_bodies_still_read_back_correctly() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2026-01-01T00:00:00Z", "placeholder")],
+            )
+            .unwrap();
+        // Simulate a row written before the compression migration: only the
+        // legacy plaintext columns are populated.
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE messages SET body_html = 'Legacy <b>html</b>', body_text = 'Legacy text',
+                    body_html_z = NULL, body_text_z = NULL
+                 WHERE id = 'm1'",
+                [],
+            )
+            .unwrap();
+        let detail = database.get_thread("work@example.com:t1").unwrap();
+        assert_eq!(detail.messages[0].body_html, "Legacy <b>html</b>");
+        assert_eq!(detail.messages[0].body_text, "Legacy text");
+    }
+
+    #[test]
+    fn compress_next_body_batch_converts_legacy_rows_and_drains_to_zero() {
+        let database = database();
+        database.begin_full_sync("default").unwrap();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2026-01-01T00:00:00Z", "placeholder")],
+            )
+            .unwrap();
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE messages SET body_html = 'Legacy <b>html</b>', body_text = 'Legacy text',
+                    body_html_z = NULL, body_text_z = NULL
+                 WHERE id = 'm1'",
+                [],
+            )
+            .unwrap();
+        let converted = database.compress_next_body_batch(500).unwrap();
+        assert_eq!(converted, 1);
+        assert_eq!(database.compress_next_body_batch(500).unwrap(), 0);
+        let detail = database.get_thread("work@example.com:t1").unwrap();
+        assert_eq!(detail.messages[0].body_html, "Legacy <b>html</b>");
+        assert_eq!(detail.messages[0].body_text, "Legacy text");
     }
 
     #[test]

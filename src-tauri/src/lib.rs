@@ -150,6 +150,18 @@ mod authorize_slot_tests {
     }
 }
 
+/// Best-effort: narrow a data directory to owner-only access, so nothing
+/// inside it (the database, its WAL/SHM sidecar files, cached attachments)
+/// is readable by other local users regardless of umask.
+#[cfg(unix)]
+fn restrict_dir_to_owner(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+}
+
+#[cfg(not(unix))]
+fn restrict_dir_to_owner(_path: &std::path::Path) {}
+
 fn primary_account_id(state: &AppState) -> String {
     state
         .auth
@@ -723,6 +735,16 @@ async fn delete_label(id: String, state: State<'_, AppState>) -> Result<(), Stri
 }
 
 #[tauri::command]
+fn get_retention_days(state: State<'_, AppState>) -> Result<Option<i64>, String> {
+    state.database.retention_days()
+}
+
+#[tauri::command]
+fn set_retention_days(days: Option<i64>, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.set_retention_days(days)
+}
+
+#[tauri::command]
 fn ai_api_key_configured() -> bool {
     ai::configured()
 }
@@ -792,6 +814,7 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|error| format!("Unable to find app data directory: {error}"))?;
             std::fs::create_dir_all(&data_dir)?;
+            restrict_dir_to_owner(&data_dir);
             let database = Arc::new(
                 Database::open(&data_dir.join("dispatch.sqlite"))
                     .map_err(|error| format!("Unable to open local database: {error}"))?,
@@ -837,8 +860,61 @@ pub fn run() {
                     }
                 });
             }
+            {
+                // One-time, potentially slow (full file rewrite) conversion
+                // to incremental auto-vacuum, then a recurring prune of mail
+                // past the user's retention window with cheap incremental
+                // reclamation after. All off the blocking pool so a large
+                // existing mailbox doesn't stall startup or the UI thread.
+                let database = database.clone();
+                tauri::async_runtime::spawn(async move {
+                    let upgrade_db = database.clone();
+                    let needs_upgrade =
+                        tokio::task::spawn_blocking(move || upgrade_db.needs_vacuum_upgrade())
+                            .await
+                            .ok()
+                            .and_then(|result| result.ok())
+                            .unwrap_or(false);
+                    if needs_upgrade {
+                        let upgrade_db = database.clone();
+                        let _ =
+                            tokio::task::spawn_blocking(move || upgrade_db.vacuum_to_incremental())
+                                .await;
+                    }
+                    // One-time backfill: compress any message bodies left
+                    // over from before body compression shipped, a batch at
+                    // a time with a short pause between batches so this
+                    // doesn't starve the database mutex normal sync/read
+                    // operations also need. Becomes a no-op once everything
+                    // has been converted.
+                    loop {
+                        let backfill_db = database.clone();
+                        let converted = tokio::task::spawn_blocking(move || {
+                            backfill_db.compress_next_body_batch(500)
+                        })
+                        .await
+                        .ok()
+                        .and_then(|result| result.ok())
+                        .unwrap_or(0);
+                        if converted == 0 {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                    loop {
+                        let prune_db = database.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let _ = prune_db.prune_expired_threads();
+                            let _ = prune_db.reclaim_space();
+                        })
+                        .await;
+                        tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
+                    }
+                });
+            }
             let root = data_dir.join("attachments");
             std::fs::create_dir_all(&root)?;
+            restrict_dir_to_owner(&root);
             let additional_accounts = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
             let correspondence = correspondence::Correspondence {
                 database: database.clone(),
@@ -935,6 +1011,8 @@ pub fn run() {
             create_label,
             update_label,
             delete_label,
+            get_retention_days,
+            set_retention_days,
             ai_api_key_configured,
             set_ai_api_key,
             ai_summarize_thread,
