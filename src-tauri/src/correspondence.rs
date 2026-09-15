@@ -5,7 +5,10 @@ use crate::{
     gmail::{GmailClient, GmailProvider},
     mime::{GmailMessage, MimePart},
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine,
+};
 use chrono::Utc;
 use mail_builder::MessageBuilder;
 use mail_parser::MessageParser;
@@ -182,6 +185,10 @@ pub struct Attachment {
     pub ready: bool,
     pub message_id: Option<String>,
     pub provider_id: Option<String>,
+    #[serde(default)]
+    pub inline: bool,
+    #[serde(default)]
+    pub content_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -254,6 +261,16 @@ pub enum Request {
     Attach {
         id: String,
     },
+    AttachInline {
+        id: String,
+        name: String,
+        mime: String,
+        data: String,
+    },
+    ReadInline {
+        id: String,
+        attachment_id: String,
+    },
     RemoveAttachment {
         id: String,
         attachment_id: String,
@@ -319,6 +336,8 @@ fn forward_attachments(part: &MimePart, message_id: &str, result: &mut Vec<Attac
             ready: false,
             message_id: Some(message_id.into()),
             provider_id: part.body.attachment_id.clone(),
+            inline: false,
+            content_id: None,
         });
     }
     for child in &part.parts {
@@ -766,7 +785,15 @@ fn build_mime(
             return Err("Attachments exceed the 18 MB local limit".into());
         }
         let bytes = std::fs::read(path).map_err(error)?;
-        builder = builder.attachment(attachment.mime.clone(), attachment.name.clone(), bytes);
+        builder = if attachment.inline {
+            let content_id = attachment
+                .content_id
+                .as_deref()
+                .ok_or("Inline image has no content ID")?;
+            builder.inline(attachment.mime.clone(), content_id.to_string(), bytes)
+        } else {
+            builder.attachment(attachment.mime.clone(), attachment.name.clone(), bytes)
+        };
     }
     let raw = builder.write_to_vec().map_err(error)?;
     if raw.len() > MAX_BYTES {
@@ -952,6 +979,8 @@ impl Correspondence {
                             ready: true,
                             message_id: None,
                             provider_id: None,
+                            inline: false,
+                            content_id: None,
                         };
                         let target = self.root.join(&attachment.id);
                         copied.push(target.clone());
@@ -977,6 +1006,86 @@ impl Correspondence {
                     }
                 }
                 serde_json::to_value(result?).map_err(error)
+            }
+            AttachInline {
+                id,
+                name,
+                mime,
+                data,
+            } => {
+                let mime = mime.to_ascii_lowercase();
+                if !matches!(
+                    mime.as_str(),
+                    "image/avif" | "image/gif" | "image/jpeg" | "image/png" | "image/webp"
+                ) {
+                    return Err("Paste a supported image format".into());
+                }
+                let bytes = STANDARD
+                    .decode(data)
+                    .map_err(|_| "Pasted image data is invalid")?;
+                if bytes.is_empty() {
+                    return Err("Pasted image is empty".into());
+                }
+                let mut d = self.database.draft(&id)?;
+                if bytes.len() as u64
+                    + d.attachments
+                        .iter()
+                        .map(|attachment| attachment.size)
+                        .sum::<u64>()
+                    > 18 * 1024 * 1024
+                {
+                    return Err("Attachments exceed the 18 MB local limit".into());
+                }
+                let attachment_id = Uuid::new_v4().to_string();
+                let content_id = format!("{attachment_id}@dispatch.local");
+                let safe_name = Path::new(&name)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
+                    .unwrap_or("pasted-image")
+                    .to_string();
+                let attachment = Attachment {
+                    id: attachment_id.clone(),
+                    name: safe_name,
+                    size: bytes.len() as u64,
+                    mime,
+                    ready: true,
+                    message_id: None,
+                    provider_id: None,
+                    inline: true,
+                    content_id: Some(content_id),
+                };
+                let target = self.root.join(&attachment_id);
+                std::fs::write(&target, bytes).map_err(error)?;
+                d.attachments.push(attachment);
+                match self.database.save_attachment_draft(d) {
+                    Ok(saved) => serde_json::to_value(saved).map_err(error),
+                    Err(error) => {
+                        let _ = std::fs::remove_file(target);
+                        Err(error)
+                    }
+                }
+            }
+            ReadInline { id, attachment_id } => {
+                let d = self.database.draft(&id)?;
+                let attachment = d
+                    .attachments
+                    .iter()
+                    .find(|attachment| attachment.id == attachment_id && attachment.inline)
+                    .ok_or("Inline image not found")?;
+                if !attachment.ready {
+                    return Err("Inline image is unavailable".into());
+                }
+                let bytes = std::fs::read(self.root.join(&attachment.id))
+                    .map_err(|_| "Inline image data is unavailable")?;
+                if bytes.len() as u64 != attachment.size {
+                    return Err("Inline image data is incomplete".into());
+                }
+                Ok(serde_json::Value::String(format!(
+                    "data:{};base64,{}",
+                    attachment.mime,
+                    STANDARD.encode(bytes)
+                )))
             }
             RemoveAttachment { id, attachment_id } => {
                 let mut d = self.database.draft(&id)?;
@@ -1346,6 +1455,8 @@ mod tests {
             ready: true,
             message_id: None,
             provider_id: None,
+            inline: false,
+            content_id: None,
         });
         let raw = build_mime(&d, Some("Joel Reed"), "test-id", &root).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
@@ -1383,6 +1494,40 @@ mod tests {
             parsed.body_html(0).as_deref(),
             Some("<p><strong>Formatted</strong> message</p>")
         );
+    }
+    #[test]
+    fn mime_embeds_inline_images_with_their_content_id() {
+        let db = database();
+        let mut d = saved(&db);
+        let root = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&root).unwrap();
+        let attachment_id = Uuid::new_v4().to_string();
+        let content_id = format!("{attachment_id}@dispatch.local");
+        let bytes = vec![137, 80, 78, 71];
+        std::fs::write(root.join(&attachment_id), &bytes).unwrap();
+        d.body_html = format!("<p>Screenshot</p><img src=\"cid:{content_id}\">");
+        d.attachments.push(Attachment {
+            id: attachment_id,
+            name: "screenshot.png".into(),
+            size: bytes.len() as u64,
+            mime: "image/png".into(),
+            ready: true,
+            message_id: None,
+            provider_id: None,
+            inline: true,
+            content_id: Some(content_id.clone()),
+        });
+
+        let raw = build_mime(&d, None, "inline-id", &root).unwrap();
+        let source = String::from_utf8_lossy(&raw);
+        assert!(source.contains(&format!("Content-ID: <{content_id}>")));
+        assert!(source.contains("Content-Disposition: inline"));
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert!(parsed
+            .body_html(0)
+            .unwrap()
+            .contains(&format!("src=\"cid:{content_id}\"")));
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn reply_all_excludes_self_preserves_cc_and_forward_is_not_a_reply() {
@@ -1623,6 +1768,8 @@ mod tests {
             ready: false,
             message_id: None,
             provider_id: None,
+            inline: false,
+            content_id: None,
         });
         assert!(build_mime(&d, None, "id", Path::new("/unused")).is_err());
         d.attachments[0].ready = true;

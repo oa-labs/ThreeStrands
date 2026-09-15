@@ -84,11 +84,12 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     if (email === latest.current.account) return;
     void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); latest.current = next; setDraft(next); });
   }
-  function decorateImage(image: HTMLImageElement) {
+  function decorateImage(image: HTMLImageElement, attachmentId?: string) {
     if (image.closest("[data-compose-image]")) return;
     const wrapper = document.createElement("span");
     wrapper.className = "compose-image";
     wrapper.dataset.composeImage = "true";
+    if (attachmentId) wrapper.dataset.attachmentId = attachmentId;
     wrapper.contentEditable = "false";
     if (image.width) wrapper.style.width = `${image.width}px`;
     image.before(wrapper);
@@ -120,29 +121,39 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     reader.onerror = () => setError(`Could not paste ${file.name || "image"}.`);
     reader.onload = () => {
       if (!mounted.current || typeof reader.result !== "string" || !bodyEditor.current) return;
-      const image = document.createElement("img");
-      image.src = reader.result;
-      image.alt = file.name || "Pasted image";
-      decorateImage(image);
-      const wrapper = image.closest<HTMLElement>("[data-compose-image]")!;
+      const preview = reader.result;
+      const data = preview.slice(preview.indexOf(",") + 1);
+      void run(async () => {
+        await flush();
+        const next = await mailClient.attachInlineImage(latest.current.id, file.name || "pasted-image", file.type, data);
+        const attachment = next.attachments.find((candidate) => candidate.inline && !latest.current.attachments.some((existing) => existing.id === candidate.id));
+        if (!attachment?.contentId || !bodyEditor.current) throw new Error("Could not prepare the pasted image");
+        latest.current = next; setDraft(next);
 
-      const insertion = range && bodyEditor.current.contains(range.commonAncestorContainer) ? range : document.createRange();
-      if (!range || !bodyEditor.current.contains(range.commonAncestorContainer)) insertion.selectNodeContents(bodyEditor.current);
-      insertion.collapse(false);
-      insertion.deleteContents();
-      insertion.insertNode(wrapper);
-      const spacer = document.createTextNode("\u00a0");
-      wrapper.after(spacer);
-      const caret = document.createRange();
-      caret.setStartAfter(spacer); caret.collapse(true);
-      window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(caret);
-      image.onload = () => {
-        const available = bodyEditor.current?.clientWidth ?? image.naturalWidth;
-        const width = Math.max(80, Math.min(image.naturalWidth, available));
-        if (width) { image.setAttribute("width", String(Math.round(width))); wrapper.style.width = `${Math.round(width)}px`; }
-        editBody(bodyEditor.current!);
-      };
-      editBody(bodyEditor.current);
+        const image = document.createElement("img");
+        image.src = preview;
+        image.dataset.composeSource = `cid:${attachment.contentId}`;
+        image.alt = file.name || "Pasted image";
+        decorateImage(image, attachment.id);
+        const wrapper = image.closest<HTMLElement>("[data-compose-image]")!;
+        const insertion = range && bodyEditor.current.contains(range.commonAncestorContainer) ? range : document.createRange();
+        if (!range || !bodyEditor.current.contains(range.commonAncestorContainer)) insertion.selectNodeContents(bodyEditor.current);
+        insertion.collapse(false);
+        insertion.deleteContents();
+        insertion.insertNode(wrapper);
+        const spacer = document.createTextNode("\u00a0");
+        wrapper.after(spacer);
+        const caret = document.createRange();
+        caret.setStartAfter(spacer); caret.collapse(true);
+        window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(caret);
+        image.onload = () => {
+          const available = bodyEditor.current?.clientWidth ?? image.naturalWidth;
+          const width = Math.max(80, Math.min(image.naturalWidth, available));
+          if (width) { image.setAttribute("width", String(Math.round(width))); wrapper.style.width = `${Math.round(width)}px`; }
+          editBody(bodyEditor.current!);
+        };
+        editBody(bodyEditor.current);
+      });
     };
     reader.readAsDataURL(file);
   }
@@ -155,7 +166,17 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   useEffect(() => {
     mounted.current = true;
     const previous = document.activeElement as HTMLElement | null;
-    bodyEditor.current?.querySelectorAll<HTMLImageElement>("img").forEach(decorateImage);
+    bodyEditor.current?.querySelectorAll<HTMLImageElement>("img").forEach((image) => {
+      const source = image.getAttribute("src") ?? "";
+      const attachment = source.startsWith("cid:")
+        ? initial.attachments.find((candidate) => candidate.inline && candidate.contentId === source.slice(4))
+        : undefined;
+      if (attachment) {
+        image.dataset.composeSource = source;
+        void mailClient.readInlineImage(initial.id, attachment.id).then((preview) => { image.src = preview; }).catch((reason) => setError(String(reason)));
+      }
+      decorateImage(image, attachment?.id);
+    });
     panel.current?.querySelector<HTMLElement>(initial.mode === "new" || initial.mode === "forward" ? '[name="to"]' : '[contenteditable="true"]')?.focus();
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (generation.current !== savedGeneration.current) { event.preventDefault(); event.returnValue = ""; }
@@ -211,9 +232,16 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
           onClick={(event) => {
             const remove = (event.target as Element).closest<HTMLElement>("[data-compose-image-remove]");
             if (!remove) return;
-            remove.closest("[data-compose-image]")?.remove();
+            const wrapper = remove.closest<HTMLElement>("[data-compose-image]");
+            const attachmentId = wrapper?.dataset.attachmentId;
+            wrapper?.remove();
             editBody(event.currentTarget);
             event.currentTarget.focus();
+            if (attachmentId) void run(async () => {
+              await flush();
+              const next = await mailClient.removeAttachment(latest.current.id, attachmentId);
+              latest.current = next; setDraft(next);
+            });
           }}
           onPointerDown={(event) => {
             const handle = (event.target as Element).closest<HTMLElement>("[data-compose-image-resize]");
@@ -264,7 +292,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
             }
           }}
         />
-        {draft.attachments.length > 0 && <ul className="attachment-list">{draft.attachments.map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={14} /></button></li>)}</ul>}
+        {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={14} /></button></li>)}</ul>}
         {error && <div className="compose-error" role="alert">{error} <button onClick={() => void run(async () => { await flush(); })}>Retry save</button></div>}
       </div>
       <footer><button className="send-button" onClick={send} disabled={busy}><Send size={16} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button onClick={attach} disabled={busy} aria-label="Attach files"><Paperclip size={17} /></button><span className="save-status" role="status">{status}</span><button disabled={busy} aria-label="Discard draft" onClick={() => void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); })}><Trash2 size={16} /></button></footer>

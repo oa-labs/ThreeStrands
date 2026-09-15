@@ -64,6 +64,10 @@ describe("Composer pasted images", () => {
   });
 
   it("inserts, resizes, and removes an image pasted into the message body", async () => {
+    const inlineAttachment = { id: "inline-1", name: "screenshot.png", mime: "image/png", size: 4, ready: true, messageId: null, providerId: null, inline: true, contentId: "inline-1@dispatch.local" };
+    const attachInline = vi.spyOn(mailClient, "attachInlineImage").mockResolvedValue({ ...draft, revision: 1, attachments: [inlineAttachment] });
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const removeAttachment = vi.spyOn(mailClient, "removeAttachment").mockResolvedValue({ ...draft, revision: 3 });
     render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
     const editor = screen.getByRole("textbox", { name: "Message body" });
     Object.defineProperty(editor, "clientWidth", { configurable: true, value: 800 });
@@ -78,14 +82,35 @@ describe("Composer pasted images", () => {
       expect(pasted).toBeInTheDocument();
       return pasted!;
     });
+    expect(attachInline).toHaveBeenCalledWith("draft-1", "screenshot.png", "image/png", expect.any(String));
     const handle = screen.getByRole("slider", { name: "Resize pasted image" });
     fireEvent.pointerDown(handle, { clientX: 100 });
     fireEvent.pointerMove(window, { clientX: 160 });
     fireEvent.pointerUp(window);
     expect(image).toHaveAttribute("width", "380");
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      bodyHtml: expect.stringContaining('src="cid:inline-1@dispatch.local"'),
+    })));
 
     fireEvent.click(screen.getByRole("button", { name: "Remove pasted image" }));
     expect(editor.querySelector("img")).not.toBeInTheDocument();
+    await waitFor(() => expect(removeAttachment).toHaveBeenCalledWith("draft-1", "inline-1"));
+  });
+
+  it("restores an inline image preview when a saved draft is reopened", async () => {
+    const savedDraft = {
+      ...draft,
+      bodyHtml: '<p>See below</p><img src="cid:inline-1@dispatch.local" alt="Screenshot" width="320">',
+      attachments: [{ id: "inline-1", name: "screenshot.png", mime: "image/png", size: 4, ready: true, messageId: null, providerId: null, inline: true, contentId: "inline-1@dispatch.local" }],
+    };
+    const readInline = vi.spyOn(mailClient, "readInlineImage").mockResolvedValue("data:image/png;base64,iVBORw==");
+
+    render(<Composer draft={savedDraft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+
+    const image = screen.getByRole("img", { name: "Screenshot" });
+    await waitFor(() => expect(image).toHaveAttribute("src", "data:image/png;base64,iVBORw=="));
+    expect(readInline).toHaveBeenCalledWith("draft-1", "inline-1");
+    expect(screen.getByRole("button", { name: "Remove pasted image" })).toBeInTheDocument();
   });
 });
 

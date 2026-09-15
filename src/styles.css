@@ -953,7 +953,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .composer button:disabled { opacity: .5; cursor: default; }
 .save-status { margin-left: auto; font-size: calc(11px * var(--font-scale)); color: var(--muted); }
 .compose-note { flex-shrink: 0; margin: 0; padding: 0 22px 14px; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
-.compose-error { padding: 12px 0; color: var(--error); font-size: calc(13px * var(--font-scale)); }
+.compose-error { display: flex; align-items: center; gap: 10px; margin: 8px 0 12px; padding: 10px 12px; color: var(--error); background: color-mix(in srgb, var(--error) 8%, transparent); border-radius: 7px; font-size: calc(13px * var(--font-scale)); }
+.compose-error button { flex-shrink: 0; padding: 7px 10px; }
 .attachment-list { margin: 0 0 14px; padding: 0; list-style: none; flex-shrink: 0; }
 .attachment-list li { display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--input); border-radius: 6px; margin-top: 6px; font-size: calc(13px * var(--font-scale)); }
 .attachment-list li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }

@@ -92,7 +92,8 @@ export function sanitizeComposeHtml(html: string): string {
   });
   container.querySelectorAll<HTMLImageElement>("img").forEach((image) => {
     const source = image.getAttribute("src") ?? "";
-    if (!/^data:image\/(?:avif|gif|jpe?g|png|webp);base64,[a-z0-9+/]+=*$/i.test(source)) {
+    if (!/^data:image\/(?:avif|gif|jpe?g|png|webp);base64,[a-z0-9+/]+=*$/i.test(source)
+        && !/^cid:[a-z0-9._@-]+$/i.test(source)) {
       image.remove();
       return;
     }
@@ -110,6 +111,8 @@ export function serializeComposeHtml(editor: HTMLElement): string {
   const clone = editor.cloneNode(true) as HTMLElement;
   clone.querySelectorAll<HTMLElement>("[data-compose-image]").forEach((wrapper) => {
     const image = wrapper.querySelector("img");
+    const composeSource = image?.dataset.composeSource;
+    if (image && composeSource) image.setAttribute("src", composeSource);
     if (image) wrapper.replaceWith(image);
     else wrapper.remove();
   });

@@ -2,6 +2,7 @@ import type { CorrespondenceClient, Draft, OutboxItem } from "../correspondence"
 import type { ThreadDetail } from "../domain";
 
 const key = "dispatch.demoCorrespondence";
+const inlineImages = new Map<string, string>();
 type Store = { drafts: Draft[]; outbox: OutboxItem[] };
 function read(): Store {
   const saved = localStorage.getItem(key);
@@ -90,10 +91,27 @@ export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDeta
       });
       const store = read(); const d = draft(store, id);
       if (files.reduce((sum, f) => sum + f.size, d.attachments.reduce((sum, a) => sum + a.size, 0)) > 18 * 1024 * 1024) throw new Error("Attachments exceed the 18 MB local limit");
-      d.attachments.push(...files.map((f) => ({ id: crypto.randomUUID(), name: f.name, mime: f.type || "application/octet-stream", size: f.size, ready: true, messageId: null, providerId: null })));
+      d.attachments.push(...files.map((f) => ({ id: crypto.randomUUID(), name: f.name, mime: f.type || "application/octet-stream", size: f.size, ready: true, messageId: null, providerId: null, inline: false, contentId: null })));
       d.revision++; write(store); return d;
     },
-    async removeAttachment(id, attachmentId) { const store = read(); const d = draft(store, id); d.attachments = d.attachments.filter((a) => a.id !== attachmentId); d.revision++; write(store); return d; },
+    async attachInlineImage(id, name, mime, data) {
+      const store = read(); const d = draft(store, id);
+      if (!/^image\/(?:avif|gif|jpeg|png|webp)$/i.test(mime)) throw new Error("Paste a supported image format");
+      const size = Math.floor(data.length * 3 / 4);
+      if (size + d.attachments.reduce((sum, attachment) => sum + attachment.size, 0) > 18 * 1024 * 1024) throw new Error("Attachments exceed the 18 MB local limit");
+      const attachmentId = crypto.randomUUID();
+      const contentId = `${attachmentId}@dispatch.local`;
+      d.attachments.push({ id: attachmentId, name: name || "pasted-image", mime, size, ready: true, messageId: null, providerId: null, inline: true, contentId });
+      inlineImages.set(attachmentId, `data:${mime};base64,${data}`);
+      d.revision++; write(store); return d;
+    },
+    async readInlineImage(id, attachmentId) {
+      const attachment = draft(read(), id).attachments.find((candidate) => candidate.id === attachmentId && candidate.inline);
+      const data = attachment && inlineImages.get(attachmentId);
+      if (!data) throw new Error("Pasted image data is unavailable");
+      return data;
+    },
+    async removeAttachment(id, attachmentId) { const store = read(); const d = draft(store, id); d.attachments = d.attachments.filter((a) => a.id !== attachmentId); inlineImages.delete(attachmentId); d.revision++; write(store); return d; },
     async fetchAttachment() { throw new Error("Attachments are simulated in browser preview"); },
   };
 }

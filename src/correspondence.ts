@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
-export type Attachment = { id: string; name: string; size: number; mime: string; ready: boolean; messageId: string | null; providerId: string | null };
+export type Attachment = { id: string; name: string; size: number; mime: string; ready: boolean; messageId: string | null; providerId: string | null; inline?: boolean; contentId?: string | null };
 export type Draft = {
   id: string; revision: number; account: string; mode: ComposeMode;
   sourceId: string | null; threadId: string | null; replyId: string | null; references: string[];
@@ -24,6 +24,8 @@ export interface CorrespondenceClient {
   recoverSend(id: string): Promise<Draft>;
   reconcileSend(id: string): Promise<void>;
   attachFiles(id: string): Promise<Draft>;
+  attachInlineImage(id: string, name: string, mime: string, data: string): Promise<Draft>;
+  readInlineImage(id: string, attachmentId: string): Promise<string>;
   removeAttachment(id: string, attachmentId: string): Promise<Draft>;
   fetchAttachment(id: string, attachmentId: string): Promise<Draft>;
 }
@@ -41,6 +43,8 @@ export const nativeCorrespondence: CorrespondenceClient = {
   recoverSend: (id) => request("recover", { id }),
   reconcileSend: (id) => request("reconcile", { id }),
   attachFiles: (id) => request("attach", { id }),
+  attachInlineImage: (id, name, mime, data) => request("attachInline", { id, name, mime, data }),
+  readInlineImage: (id, attachmentId) => request("readInline", { id, attachmentId }),
   removeAttachment: (id, attachmentId) => request("removeAttachment", { id, attachmentId }),
   fetchAttachment: (id, attachmentId) => request("fetchAttachment", { id, attachmentId }),
 };
