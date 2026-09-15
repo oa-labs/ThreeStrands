@@ -185,6 +185,21 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 
+const dateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "2-digit",
+});
+
+function formatThreadTimestamp(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return isToday ? timeFormatter.format(date) : dateFormatter.format(date);
+}
+
 const SEARCH_PAGE_SIZE = 50;
 
 const MAILBOX_TITLES: Record<MailboxKind, string> = {
@@ -271,14 +286,16 @@ const ThreadRow = memo(function ThreadRow({
       <span className="thread-content">
         <span className="thread-meta">
           <span className="thread-sender">
-            {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
             <strong>
               {thread.participants
                 .map((participant) => simplifyDisplayName(parseAddress(participant).name))
                 .join(", ")}
             </strong>
           </span>
-          <time>{timeFormatter.format(new Date(thread.lastMessageAt))}</time>
+          <span className="thread-meta-trailing">
+            {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
+            <time>{formatThreadTimestamp(thread.lastMessageAt)}</time>
+          </span>
         </span>
         <span className="thread-subject">{thread.subject}</span>
         <span className="thread-snippet"><HighlightedSnippet thread={thread} /></span>

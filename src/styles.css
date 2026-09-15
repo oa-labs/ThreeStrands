@@ -347,10 +347,12 @@ kbd {
 }
 .thread-row:hover { background: var(--hover); }
 .thread-row.selected { background: var(--selected); box-shadow: inset 2px 0 var(--accent); }
-.unread-dot { width: 7px; height: 7px; flex: 0 0 auto; margin-top: 6px; border-radius: 50%; }
-.unread-dot.visible { background: var(--accent); }
+.unread-dot { width: 8px; height: 8px; flex: 0 0 auto; margin-top: 6px; border-radius: 50%; }
+.unread-dot.visible { background: #ff8c1a; }
 .thread-content { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
 .thread-meta { display: flex; justify-content: space-between; gap: 8px; font-size: calc(13px * var(--font-scale)); }
+.thread-meta-trailing { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.thread-meta-trailing .account-dot { width: 8px; height: 8px; }
 .thread-meta time { flex: 0 0 auto; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
 .thread-sender { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
 .thread-sender strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
