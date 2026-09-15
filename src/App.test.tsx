@@ -139,6 +139,25 @@ describe("archive notice", () => {
 
       expect(firstHeader).toHaveAttribute("aria-expanded", "false");
       expect(screen.getAllByTestId("message-body")).toHaveLength(1);
+
+      const secondHeader = screen.getByRole("button", { name: /Second message snippet/ });
+      const latestHeader = screen.getByLabelText(/Message from .+, /);
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+      });
+      expect(secondHeader).toHaveFocus();
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+      });
+      expect(latestHeader).toHaveFocus();
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "p" }));
+      });
+      expect(secondHeader).toHaveFocus();
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+      });
+      expect(firstHeader).toHaveFocus();
     } finally {
       getThread.mockRestore();
     }

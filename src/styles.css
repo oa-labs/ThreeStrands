@@ -483,6 +483,11 @@ kbd {
   box-shadow: 0 2px 12px var(--shadow);
 }
 .message-current > header { padding-bottom: 18px; }
+.message-current-header:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 6px;
+  border-radius: 4px;
+}
 .message + .message-current { margin-top: 24px; border-top: none; }
 .message-older .message-sender-row strong { color: var(--muted); }
 .message-current .message-sender-row time { color: var(--secondary); }
@@ -536,15 +541,15 @@ kbd {
   background: transparent;
   transition: border-color 120ms ease, background-color 120ms ease;
 }
+.message + .message-card {
+  margin-top: 12px;
+  padding-top: 0;
+  border-top-color: transparent;
+}
 .message-card:hover,
 .message-card:focus-within {
   border-color: var(--border);
   background: color-mix(in srgb, var(--raised) 55%, transparent);
-}
-.message + .message-card {
-  margin-top: 12px;
-  padding-top: 0;
-  border-top: 1px solid var(--border);
 }
 .message-card + .message-current { margin-top: 24px; }
 .message-card > .message-card-header {

@@ -16,6 +16,7 @@ function noopContext(): CommandContext {
     selectedArchived: false,
     selectedTrashed: false,
     canUnsubscribe: false,
+    canNavigateMessages: false,
     composerActive: false,
     canUndoSend: false,
     compose: () => {},
@@ -32,6 +33,8 @@ function noopContext(): CommandContext {
     undoSend: () => {},
     selectNext: () => {},
     selectPrevious: () => {},
+    selectNextMessage: () => {},
+    selectPreviousMessage: () => {},
     archiveSelected: async () => ({}),
     markNotDoneSelected: async () => ({}),
     unsubscribeSelected: () => {},
@@ -71,6 +74,15 @@ describe("command registry", () => {
 
   it("matches shortcuts case-insensitively", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "J" }), "j")).toBe(true);
+  });
+
+  it("registers message navigation on N/P and the horizontal arrows", () => {
+    const next = commands.find((command) => command.id === "message.next");
+    const previous = commands.find((command) => command.id === "message.previous");
+    expect(next?.keys).toEqual(["n", "ArrowRight"]);
+    expect(previous?.keys).toEqual(["p", "ArrowLeft"]);
+    expect(next?.enabled({ ...noopContext(), canNavigateMessages: true })).toBe(true);
+    expect(previous?.enabled({ ...noopContext(), canNavigateMessages: true, composerActive: true })).toBe(false);
   });
 
   it("does not trigger inbox shortcuts in editable controls", () => {

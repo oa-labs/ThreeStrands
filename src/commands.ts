@@ -6,6 +6,7 @@ export type CommandContext = {
   selectedArchived: boolean;
   selectedTrashed: boolean;
   canUnsubscribe: boolean;
+  canNavigateMessages: boolean;
   composerActive: boolean;
   closing?: boolean;
   canUndoSend: boolean;
@@ -23,6 +24,8 @@ export type CommandContext = {
   undoSend(): void;
   selectNext(): void;
   selectPrevious(): void;
+  selectNextMessage(): void;
+  selectPreviousMessage(): void;
   archiveSelected(): Promise<CommandResult>;
   markNotDoneSelected(): Promise<CommandResult>;
   unsubscribeSelected(): void;
@@ -109,6 +112,22 @@ export const commands: Command[] = [
     group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.selectPrevious),
+  },
+  {
+    id: "message.next",
+    title: "Next message",
+    keys: ["n", "ArrowRight"],
+    group: "Navigation",
+    enabled: (context) => context.canNavigateMessages && !context.composerActive,
+    run: (context) => complete(context.selectNextMessage),
+  },
+  {
+    id: "message.previous",
+    title: "Previous message",
+    keys: ["p", "ArrowLeft"],
+    group: "Navigation",
+    enabled: (context) => context.canNavigateMessages && !context.composerActive,
+    run: (context) => complete(context.selectPreviousMessage),
   },
   {
     id: "thread.archive",

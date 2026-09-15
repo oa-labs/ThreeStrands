@@ -506,6 +506,8 @@ export function App() {
   const [messageExpansionOverrides, setMessageExpansionOverrides] = useState<Map<string, boolean>>(new Map());
   const latestMessageRef = useRef<HTMLElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const activeMessageIdRef = useRef<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId);
   const composerBelongsToVisibleThread = Boolean(
@@ -750,6 +752,8 @@ export function App() {
 
   useEffect(() => {
     setMessageExpansionOverrides(new Map());
+    messageRefs.current.clear();
+    activeMessageIdRef.current = null;
     setSummaryExpanded(false);
     // Pending/error state deliberately isn't reset here — it's keyed by
     // thread id (see `summarizingRef`/`summaryErrors`) so it stays correct
@@ -1203,6 +1207,22 @@ export function App() {
     }
   }, [selected]);
 
+  const selectAdjacentMessage = useCallback((direction: -1 | 1) => {
+    if (displayedMessages.length === 0) return;
+    const activeIndex = displayedMessages.findIndex((message) => message.id === activeMessageIdRef.current);
+    const currentIndex = activeIndex >= 0 ? activeIndex : displayedMessages.length - 1;
+    const targetIndex = Math.max(0, Math.min(displayedMessages.length - 1, currentIndex + direction));
+    const target = displayedMessages[targetIndex];
+    if (!target) return;
+
+    activeMessageIdRef.current = target.id;
+    const node = messageRefs.current.get(target.id);
+    if (!node) return;
+    const focusTarget = node.querySelector<HTMLElement>(".message-card-toggle, .message-current-header") ?? node;
+    focusTarget.focus({ preventScroll: true });
+    node.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [displayedMessages]);
+
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     mailbox,
@@ -1210,6 +1230,7 @@ export function App() {
     selectedArchived: selected?.archived ?? false,
     selectedTrashed: selected?.trashed ?? false,
     canUnsubscribe,
+    canNavigateMessages: displayedMessages.length > 1,
     openInbox: () => {
       correspondence.context.openInbox();
       setQuery("");
@@ -1247,6 +1268,8 @@ export function App() {
       const next = Math.max(selectedIndex - 1, 0);
       setSelectedId(threads[next]?.id ?? null);
     },
+    selectNextMessage: () => selectAdjacentMessage(1),
+    selectPreviousMessage: () => selectAdjacentMessage(-1),
     archiveSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: true }),
     markNotDoneSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: false }),
     unsubscribeSelected: () => {
@@ -1350,7 +1373,7 @@ export function App() {
     showAllAccounts: () => {
       setActiveAccountId(null);
     },
-  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1857,13 +1880,26 @@ export function App() {
                 const queuedItem = correspondence.outbox.find((item) => `outbox-${item.id}` === message.id);
                 const cardBodyId = `message-body-${index}`;
                 const toggleMessage = () => setMessageExpansionOverrides((current) => {
+                  activeMessageIdRef.current = message.id;
                   const next = new Map(current);
                   next.set(message.id, !isExpanded);
                   return next;
                 });
+                const registerMessageNode = (node: HTMLElement | null) => {
+                  if (isLatest) latestMessageRef.current = node;
+                  if (node) messageRefs.current.set(message.id, node);
+                  else messageRefs.current.delete(message.id);
+                };
                 if (!isExpanded) {
                   return (
-                    <article className="message message-older message-card message-card-collapsed" key={message.id}>
+                    <article
+                      className="message message-older message-card message-card-collapsed"
+                      key={message.id}
+                      ref={registerMessageNode}
+                      data-message-id={message.id}
+                      onFocusCapture={() => { activeMessageIdRef.current = message.id; }}
+                      onMouseDown={() => { activeMessageIdRef.current = message.id; }}
+                    >
                       <header className="message-card-header">
                         <button
                           type="button"
@@ -1888,10 +1924,17 @@ export function App() {
                   <article
                     className={`message ${variant} ${isLatest ? "" : "message-card message-card-expanded"}`}
                     key={message.id}
-                    ref={isLatest ? (node: HTMLElement | null) => { latestMessageRef.current = node; } : undefined}
+                    ref={registerMessageNode}
+                    data-message-id={message.id}
+                    onFocusCapture={() => { activeMessageIdRef.current = message.id; }}
+                    onMouseDown={() => { activeMessageIdRef.current = message.id; }}
                   >
                     {isLatest ? (
-                      <header>
+                      <header
+                        className="message-current-header"
+                        tabIndex={-1}
+                        aria-label={`Message from ${senderFirstName}, ${formatMessageDate(message.sentAt)}`}
+                      >
                         <div className="message-header-details">
                           <div className="message-sender-row">
                             <strong><AddressWithCopy address={message.sender} displayName={senderFirstName} /></strong>
