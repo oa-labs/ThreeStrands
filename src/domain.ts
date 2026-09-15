@@ -5,6 +5,8 @@ export type Thread = {
   snippet: string;
   participants: string[];
   lastMessageAt: string;
+  /** Newest *inbound* message's timestamp; sending a reply doesn't change this. Drives inbox sort order. */
+  lastReceivedAt: string;
   unread: boolean;
   starred: boolean;
   archived: boolean;

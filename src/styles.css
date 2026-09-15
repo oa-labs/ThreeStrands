@@ -529,22 +529,47 @@ kbd {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.message-collapsed {
+.message-card {
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.message-card:hover,
+.message-card:focus-within {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+.message + .message-card {
+  margin-top: 12px;
+  padding-top: 0;
+  border-top: 1px solid var(--border);
+}
+.message-card + .message-current { margin-top: 24px; }
+.message-card > .message-card-header {
+  display: block;
+  padding: 0;
+}
+.message-card-toggle {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
-  padding: 10px 4px;
+  padding: 11px 14px;
   border: none;
-  border-radius: 8px;
-  background: none;
+  background: transparent;
   font: inherit;
   color: var(--muted);
   text-align: left;
   cursor: pointer;
 }
-.message-collapsed:hover { background: var(--hover); }
-.message-collapsed-sender {
+.message-card-toggle:hover { background: var(--hover); }
+.message-card-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.message-card-sender {
   flex: 0 0 auto;
   max-width: 200px;
   overflow: hidden;
@@ -552,16 +577,20 @@ kbd {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.message-collapsed-snippet {
+.message-card-snippet {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.message-collapsed time { flex: 0 0 auto; font-size: calc(11px * var(--font-scale)); white-space: nowrap; }
-.message-collapsed-chevron { flex: 0 0 auto; transform: rotate(-90deg); }
-.message-collapsed + .message-collapsed { margin-top: 0; padding-top: 10px; border-top: 1px solid var(--border); }
+.message-card-toggle time { flex: 0 0 auto; font-size: calc(11px * var(--font-scale)); white-space: nowrap; }
+.message-card-chevron { flex: 0 0 auto; transition: transform 120ms ease; }
+.message-card-collapsed .message-card-chevron { transform: rotate(-90deg); }
+.message-card-expanded .message-card-header { border-bottom: 1px solid transparent; }
+.message-card-expanded:hover .message-card-header,
+.message-card-expanded:focus-within .message-card-header { border-bottom-color: var(--border); }
+.message-card-body { padding: 20px 18px 18px; }
 .message-images-notice {
   display: flex;
   align-items: center;

@@ -367,7 +367,7 @@ function describeMutation(template: MutationTemplate, count: number, labelName?:
 }
 
 function sortByRecency(threads: Thread[]): Thread[] {
-  return [...threads].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  return [...threads].sort((a, b) => b.lastReceivedAt.localeCompare(a.lastReceivedAt));
 }
 
 function triageNow(): number {
@@ -503,7 +503,7 @@ export function App() {
   const selectedThread = threads.find((thread) => thread.id === selectedId);
   const selectedThreadLastMessageAt = selectedThread?.lastMessageAt;
   const selectedThreadSnippet = selectedThread?.snippet;
-  const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(new Set());
+  const [messageExpansionOverrides, setMessageExpansionOverrides] = useState<Map<string, boolean>>(new Map());
   const latestMessageRef = useRef<HTMLElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -749,7 +749,7 @@ export function App() {
   }, [selectedId, selectedThreadLastMessageAt, selectedThreadSnippet, setNotice]);
 
   useEffect(() => {
-    setExpandedMessageIds(new Set());
+    setMessageExpansionOverrides(new Map());
     setSummaryExpanded(false);
     // Pending/error state deliberately isn't reset here — it's keyed by
     // thread id (see `summarizingRef`/`summaryErrors`) so it stays correct
@@ -832,7 +832,7 @@ export function App() {
     if (!node) return;
     const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
     if (node.scrollTop > maxScrollTop) node.scrollTop = maxScrollTop;
-  }, [expandedMessageIds]);
+  }, [messageExpansionOverrides]);
 
   const refreshMail = useCallback(() => {
     setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
@@ -1307,10 +1307,10 @@ export function App() {
         return next;
       });
     },
-    toggleOlderMessagesExpanded: () => setExpandedMessageIds((current) => {
-      const olderMessageIds = displayedMessages.slice(0, -1).map((message) => message.id);
-      const allExpanded = olderMessageIds.every((id) => current.has(id));
-      return allExpanded ? new Set() : new Set(olderMessageIds);
+    toggleOlderMessagesExpanded: () => setMessageExpansionOverrides((current) => {
+      const olderMessages = displayedMessages.slice(0, -1);
+      const allExpanded = olderMessages.every((message) => current.get(message.id) ?? message.unread);
+      return new Map(olderMessages.map((message) => [message.id, !allExpanded]));
     }),
     pageMessageDown: () => {
       const node = messageStackRef.current;
@@ -1846,7 +1846,7 @@ export function App() {
             <div className="message-stack" ref={messageStackRef}>
               {displayedMessages.map((message, index) => {
                 const isLatest = index === displayedMessages.length - 1;
-                const isExpanded = isLatest || message.unread || expandedMessageIds.has(message.id);
+                const isExpanded = isLatest || (messageExpansionOverrides.get(message.id) ?? message.unread);
                 const parsedSender = parseAddress(message.sender);
                 const senderAccount = accounts.find(
                   (account) => account.email.toLocaleLowerCase() === parsedSender.email.toLocaleLowerCase(),
@@ -1855,114 +1855,142 @@ export function App() {
                 const senderFirstName = simplifyDisplayName(senderName);
                 const downloadableAttachments = message.attachments.filter((attachment) => !attachment.inline);
                 const queuedItem = correspondence.outbox.find((item) => `outbox-${item.id}` === message.id);
+                const cardBodyId = `message-body-${index}`;
+                const toggleMessage = () => setMessageExpansionOverrides((current) => {
+                  const next = new Map(current);
+                  next.set(message.id, !isExpanded);
+                  return next;
+                });
                 if (!isExpanded) {
                   return (
-                    <button
-                      type="button"
-                      className="message message-collapsed"
-                      key={message.id}
-                      onClick={() => setExpandedMessageIds((current) => {
-                        const next = new Set(current);
-                        next.add(message.id);
-                        return next;
-                      })}
-                    >
-                      <span className="message-collapsed-sender">{senderFirstName}</span>
-                      <span className="message-collapsed-snippet">{messageSnippet(message.bodyText)}</span>
-                      {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
-                      <time>{formatMessageDate(message.sentAt)}</time>
-                      <ChevronDown size={14} className="message-collapsed-chevron" />
-                    </button>
+                    <article className="message message-older message-card message-card-collapsed" key={message.id}>
+                      <header className="message-card-header">
+                        <button
+                          type="button"
+                          className="message-card-toggle"
+                          aria-expanded={false}
+                          aria-controls={cardBodyId}
+                          onClick={toggleMessage}
+                        >
+                          <span className="message-card-sender">{senderFirstName}</span>
+                          <span className="message-card-snippet">{messageSnippet(message.bodyText)}</span>
+                          {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
+                          <time>{formatMessageDate(message.sentAt)}</time>
+                          <ChevronDown size={14} className="message-card-chevron" />
+                        </button>
+                      </header>
+                      <div id={cardBodyId} hidden />
+                    </article>
                   );
                 }
                 const variant = isLatest ? "message-current" : message.unread ? "" : "message-older";
                 return (
                   <article
-                    className={`message ${variant}`}
+                    className={`message ${variant} ${isLatest ? "" : "message-card message-card-expanded"}`}
                     key={message.id}
                     ref={isLatest ? (node: HTMLElement | null) => { latestMessageRef.current = node; } : undefined}
                   >
-                    <header>
-                      <div className="message-header-details">
-                        <div className="message-sender-row">
-                          <strong><AddressWithCopy address={message.sender} displayName={senderFirstName} /></strong>
-                          <time>{formatMessageDate(message.sentAt)}</time>
+                    {isLatest ? (
+                      <header>
+                        <div className="message-header-details">
+                          <div className="message-sender-row">
+                            <strong><AddressWithCopy address={message.sender} displayName={senderFirstName} /></strong>
+                            <time>{formatMessageDate(message.sentAt)}</time>
+                          </div>
+                          <div className="message-recipients">
+                            to{" "}
+                            {message.recipients.map((recipient, recipientIndex) => (
+                              <span key={recipient}>
+                                {recipientListSeparator(recipientIndex, message.recipients.length)}
+                                <AddressWithCopy address={recipient} />
+                              </span>
+                            ))}
+                          </div>
                         </div>
-                        <div className="message-recipients">
-                          to{" "}
-                          {message.recipients.map((recipient, recipientIndex) => (
-                            <span key={recipient}>
-                              {recipientListSeparator(recipientIndex, message.recipients.length)}
-                              <AddressWithCopy address={recipient} />
-                            </span>
+                      </header>
+                    ) : (
+                      <header className="message-card-header">
+                        <button
+                          type="button"
+                          className="message-card-toggle"
+                          aria-expanded={true}
+                          aria-controls={cardBodyId}
+                          onClick={toggleMessage}
+                        >
+                          <span className="message-card-sender">{senderFirstName}</span>
+                          <span className="message-card-snippet">{messageSnippet(message.bodyText)}</span>
+                          {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
+                          <time>{formatMessageDate(message.sentAt)}</time>
+                          <ChevronDown size={14} className="message-card-chevron" />
+                        </button>
+                      </header>
+                    )}
+                    <div id={isLatest ? undefined : cardBodyId} className={isLatest ? undefined : "message-card-body"}>
+                      <SafeMessage
+                        html={message.bodyHtml}
+                        text={message.bodyText}
+                        loadImages={loadRemoteImages}
+                        imageCacheKey={message.id}
+                        resolveImage={(url) => {
+                          if (!/^cid:/i.test(url)) return mailClient.fetchRemoteImage(url);
+                          let contentId = url.slice(4);
+                          try {
+                            contentId = decodeURIComponent(contentId);
+                          } catch {
+                            // Use the literal Content-ID when percent encoding is malformed.
+                          }
+                          contentId = contentId.trim().replace(/^<|>$/g, "");
+                          const embedded = message.attachments.find((attachment) =>
+                            attachment.inline
+                            && attachment.contentId?.localeCompare(contentId, undefined, { sensitivity: "accent" }) === 0
+                          );
+                          if (!embedded) return Promise.reject(new Error("Embedded image not found"));
+                          return queuedItem
+                            ? mailClient.readInlineImage(queuedItem.draft.id, embedded.id)
+                            : mailClient.fetchAttachmentImage(message.id, embedded.id);
+                        }}
+                        theme={effectiveThemeValue}
+                        fontScale={fontScale / 100}
+                        fontFamily={fontFamily}
+                        tone={isLatest ? "current" : message.unread ? "default" : "muted"}
+                      />
+                      {downloadableAttachments.length > 0 ? (
+                        <div className="message-attachments" aria-label="Attachments">
+                          {downloadableAttachments.map((attachment) => (
+                            <div className="message-attachment" key={attachment.id}>
+                              <button
+                                type="button"
+                                className="attachment-badge"
+                                aria-label={`View ${attachment.filename}`}
+                                onClick={() => {
+                                  void mailClient.openAttachment(message.id, attachment.id).catch((reason: unknown) => {
+                                    setNotice({ message: `Could not open attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
+                                  });
+                                }}
+                              >
+                                <Paperclip size={14} />
+                                <span>{attachment.filename}</span>
+                                <small>{formatAttachmentSize(attachment.size)}</small>
+                                <ExternalLink size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                className="attachment-download"
+                                aria-label={`Download ${attachment.filename}`}
+                                title={`Download ${attachment.filename}`}
+                                onClick={() => {
+                                  void mailClient.saveAttachment(message.id, attachment.id).catch((reason: unknown) => {
+                                    setNotice({ message: `Could not download attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
+                                  });
+                                }}
+                              >
+                                <Download size={14} />
+                              </button>
+                            </div>
                           ))}
                         </div>
-                      </div>
-                    </header>
-                    <SafeMessage
-                      html={message.bodyHtml}
-                      text={message.bodyText}
-                      loadImages={loadRemoteImages}
-                      imageCacheKey={message.id}
-                      resolveImage={(url) => {
-                        if (!/^cid:/i.test(url)) return mailClient.fetchRemoteImage(url);
-                        let contentId = url.slice(4);
-                        try {
-                          contentId = decodeURIComponent(contentId);
-                        } catch {
-                          // Use the literal Content-ID when percent encoding is malformed.
-                        }
-                        contentId = contentId.trim().replace(/^<|>$/g, "");
-                        const embedded = message.attachments.find((attachment) =>
-                          attachment.inline
-                          && attachment.contentId?.localeCompare(contentId, undefined, { sensitivity: "accent" }) === 0
-                        );
-                        if (!embedded) return Promise.reject(new Error("Embedded image not found"));
-                        return queuedItem
-                          ? mailClient.readInlineImage(queuedItem.draft.id, embedded.id)
-                          : mailClient.fetchAttachmentImage(message.id, embedded.id);
-                      }}
-                      theme={effectiveThemeValue}
-                      fontScale={fontScale / 100}
-                      fontFamily={fontFamily}
-                      tone={isLatest ? "current" : message.unread ? "default" : "muted"}
-                    />
-                    {downloadableAttachments.length > 0 ? (
-                      <div className="message-attachments" aria-label="Attachments">
-                        {downloadableAttachments.map((attachment) => (
-                          <div className="message-attachment" key={attachment.id}>
-                            <button
-                              type="button"
-                              className="attachment-badge"
-                              aria-label={`View ${attachment.filename}`}
-                              onClick={() => {
-                                void mailClient.openAttachment(message.id, attachment.id).catch((reason: unknown) => {
-                                  setNotice({ message: `Could not open attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
-                                });
-                              }}
-                            >
-                              <Paperclip size={14} />
-                              <span>{attachment.filename}</span>
-                              <small>{formatAttachmentSize(attachment.size)}</small>
-                              <ExternalLink size={13} />
-                            </button>
-                            <button
-                              type="button"
-                              className="attachment-download"
-                              aria-label={`Download ${attachment.filename}`}
-                              title={`Download ${attachment.filename}`}
-                              onClick={() => {
-                                void mailClient.saveAttachment(message.id, attachment.id).catch((reason: unknown) => {
-                                  setNotice({ message: `Could not download attachment: ${reason instanceof Error ? reason.message : String(reason)}` });
-                                });
-                              }}
-                            >
-                              <Download size={14} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
+                      ) : null}
+                    </div>
                   </article>
                 );
               })}

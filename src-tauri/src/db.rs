@@ -250,10 +250,10 @@ impl Database {
         let sql = format!(
             "SELECT id, provider_thread_id, subject, snippet, participants_json,
                     last_message_at, unread, starred, archived, labels_json, trashed, account_id,
-                    summary, summary_generated_at, has_attachments
+                    summary, summary_generated_at, has_attachments, last_received_at
              FROM threads
              WHERE {filter} {}
-             ORDER BY last_message_at DESC",
+             ORDER BY last_received_at DESC",
             if account_id.is_some() {
                 "AND account_id = ?1"
             } else {
@@ -285,10 +285,10 @@ impl Database {
         let sql = format!(
             "SELECT id, provider_thread_id, subject, snippet, participants_json,
                     last_message_at, unread, starred, archived, labels_json, trashed, account_id,
-                    summary, summary_generated_at, has_attachments
+                    summary, summary_generated_at, has_attachments, last_received_at
              FROM threads
              WHERE {filter} {}
-             ORDER BY last_message_at DESC
+             ORDER BY last_received_at DESC
              LIMIT ?{} OFFSET ?{}",
             if account_id.is_some() {
                 "AND account_id = ?1"
@@ -319,7 +319,7 @@ impl Database {
             .query_row(
                 "SELECT id, provider_thread_id, subject, snippet, participants_json,
                         last_message_at, unread, starred, archived, labels_json, trashed, account_id,
-                        summary, summary_generated_at, has_attachments
+                        summary, summary_generated_at, has_attachments, last_received_at
                  FROM threads WHERE id = ?1",
                 [id],
                 thread_from_row,
@@ -896,12 +896,12 @@ impl Database {
             "SELECT t.id, t.provider_thread_id, t.subject, t.snippet,
                     t.participants_json, t.last_message_at, t.unread, t.starred,
                     t.archived, t.labels_json, t.trashed, t.account_id,
-                    t.summary, t.summary_generated_at, t.has_attachments,
+                    t.summary, t.summary_generated_at, t.has_attachments, t.last_received_at,
                     snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet
              FROM thread_search s
              JOIN threads t ON t.id = s.thread_id
              WHERE thread_search MATCH ?1 {archived_filter} {account_filter}
-             ORDER BY rank, t.last_message_at DESC
+             ORDER BY rank, t.last_received_at DESC
              LIMIT ?2 OFFSET ?3"
         );
         let mut statement = connection.prepare(&sql).map_err(display_error)?;
@@ -922,7 +922,8 @@ impl Database {
                 summary: row.get(12)?,
                 summary_generated_at: row.get(13)?,
                 has_attachments: row.get(14)?,
-                match_snippet: row.get(15)?,
+                last_received_at: row.get(15)?,
+                match_snippet: row.get(16)?,
             })
         };
         let rows = match account_id {
@@ -1307,19 +1308,30 @@ impl Database {
                 .iter()
                 .any(|attachment| !attachment.inline)
         });
+        // Only messages someone else sent should bump a thread's place in the
+        // inbox order; otherwise replying to a thread buried in the list
+        // would jump it straight to the top like a freshly received message.
+        let last_received_at = messages
+            .iter()
+            .filter(|message| !message.labels.iter().any(|label| label == "SENT"))
+            .max_by(|a, b| a.date.cmp(&b.date))
+            .map(|message| message.date.clone())
+            .unwrap_or_else(|| latest.date.clone());
         transaction
             .execute(
                 "INSERT INTO threads(
                     id, account_id, provider_thread_id, subject, snippet, participants_json,
-                    last_message_at, unread, starred, archived, labels_json, trashed, has_attachments
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                    last_message_at, unread, starred, archived, labels_json, trashed, has_attachments,
+                    last_received_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                  ON CONFLICT(id) DO UPDATE SET
                     subject=excluded.subject, snippet=excluded.snippet,
                     participants_json=excluded.participants_json,
                     last_message_at=excluded.last_message_at, unread=excluded.unread,
                     starred=excluded.starred, archived=excluded.archived,
                     labels_json=excluded.labels_json, trashed=excluded.trashed,
-                    has_attachments=excluded.has_attachments",
+                    has_attachments=excluded.has_attachments,
+                    last_received_at=excluded.last_received_at",
                 params![
                     thread_id,
                     account_id,
@@ -1334,6 +1346,7 @@ impl Database {
                     serde_json::to_string(&labels).map_err(display_error)?,
                     trashed,
                     has_attachments,
+                    last_received_at,
                 ],
             )
             .map_err(display_error)?;
@@ -1665,9 +1678,9 @@ impl Database {
 fn ensure_query_indexes(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
         "CREATE INDEX IF NOT EXISTS threads_account_mailbox_order
-         ON threads(account_id, trashed, archived, last_message_at DESC);
+         ON threads(account_id, trashed, archived, last_received_at DESC);
          CREATE INDEX IF NOT EXISTS threads_mailbox_order
-         ON threads(trashed, archived, last_message_at DESC);
+         ON threads(trashed, archived, last_received_at DESC);
          CREATE INDEX IF NOT EXISTS mutations_account_pending
          ON mutations(account_id, state, created_at);",
     )
@@ -1800,6 +1813,7 @@ fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         summary: row.get(12)?,
         summary_generated_at: row.get(13)?,
         has_attachments: row.get(14)?,
+        last_received_at: row.get(15)?,
         match_snippet: None,
     })
 }
@@ -1882,7 +1896,7 @@ fn insert_demo(
     let participants = serde_json::to_string(&[participant]).expect("static data serializes");
     let labels = serde_json::to_string(&["INBOX"]).expect("static data serializes");
     transaction.execute(
-        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0, 'default', NULL, NULL, 0)",
+        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0, 'default', NULL, NULL, 0, ?6)",
         params![
             id,
             format!("demo-{id}"),

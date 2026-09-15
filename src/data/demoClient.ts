@@ -25,6 +25,7 @@ const initialThreads: Thread[] = [
     snippet: "A keyboard-first inbox that keeps your mail on this device.",
     participants: ["Dispatch"],
     lastMessageAt: "2026-03-05T16:30:00Z",
+    lastReceivedAt: "2026-03-05T16:30:00Z",
     unread: true,
     starred: false,
     archived: false,
@@ -42,6 +43,7 @@ const initialThreads: Thread[] = [
     snippet: "The first vertical slice includes local search and optimistic actions.",
     participants: ["Product Team"],
     lastMessageAt: "2026-03-05T14:15:00Z",
+    lastReceivedAt: "2026-03-05T14:15:00Z",
     unread: false,
     starred: true,
     archived: false,
@@ -59,6 +61,7 @@ const initialThreads: Thread[] = [
     snippet: "Dispatch connects directly to Gmail and stores its cache in SQLite.",
     participants: ["Security"],
     lastMessageAt: "2026-03-04T19:40:00Z",
+    lastReceivedAt: "2026-03-04T19:40:00Z",
     unread: false,
     starred: false,
     archived: false,
@@ -131,7 +134,7 @@ function visibleWhere(accountId: string | undefined, predicate: (thread: Thread)
     .filter((thread) => connected.has(thread.accountId))
     .filter(predicate)
     .filter((thread) => !accountId || accountId === "all" || thread.accountId === accountId)
-    .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+    .sort((a, b) => b.lastReceivedAt.localeCompare(a.lastReceivedAt));
 }
 
 function visible(accountId?: string): Thread[] {
@@ -307,7 +310,7 @@ export const demoClient: MailClient = {
     const pool = includeArchived
       ? [...threads]
           .filter((thread) => !accountId || accountId === "all" || thread.accountId === accountId)
-          .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
+          .sort((a, b) => b.lastReceivedAt.localeCompare(a.lastReceivedAt))
       : visible(accountId);
     return structuredClone(
       pool

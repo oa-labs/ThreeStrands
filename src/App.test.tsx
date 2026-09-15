@@ -92,7 +92,7 @@ describe("archive notice", () => {
     }
   });
 
-  it("expands only the older message that was clicked", async () => {
+  it("toggles only the prior message card whose header was clicked", async () => {
     const originalDetail = await mailClient.getThread("welcome");
     const latest = originalDetail.messages[0]!;
     const getThread = vi.spyOn(mailClient, "getThread").mockResolvedValue({
@@ -122,14 +122,23 @@ describe("archive notice", () => {
       const { container } = render(<App />);
       await screen.findByRole("heading", { name: "Welcome to Dispatch" });
 
-      expect(container.querySelectorAll("article.message")).toHaveLength(1);
-      expect(container.querySelectorAll("button.message-collapsed")).toHaveLength(2);
+      expect(container.querySelectorAll("article.message-card")).toHaveLength(2);
+      expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(2);
+      expect(screen.getAllByTestId("message-body")).toHaveLength(1);
 
-      fireEvent.click(screen.getByRole("button", { name: /First message snippet/ }));
+      const firstHeader = screen.getByRole("button", { name: /First message snippet/ });
+      expect(firstHeader).toHaveAttribute("aria-expanded", "false");
+      expect(firstHeader).toHaveAttribute("aria-controls", "message-body-0");
+      fireEvent.click(firstHeader);
 
-      expect(container.querySelectorAll("article.message")).toHaveLength(2);
-      expect(container.querySelectorAll("button.message-collapsed")).toHaveLength(1);
+      expect(firstHeader).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getAllByTestId("message-body")).toHaveLength(2);
       expect(screen.getByRole("button", { name: /Second message snippet/ })).toBeInTheDocument();
+
+      fireEvent.click(firstHeader);
+
+      expect(firstHeader).toHaveAttribute("aria-expanded", "false");
+      expect(screen.getAllByTestId("message-body")).toHaveLength(1);
     } finally {
       getThread.mockRestore();
     }

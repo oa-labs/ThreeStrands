@@ -164,6 +164,43 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
         tx.pragma_update(None, "user_version", 9).map_err(error)?;
     }
+    if version < 10 {
+        // Sending a reply used to bump the thread to the top of the inbox,
+        // because `last_message_at` (used for sort order) took the newest
+        // message regardless of direction. `last_received_at` tracks only
+        // inbound messages, so the list stays put on send and only moves for
+        // a genuinely new reply from someone else.
+        tx.execute_batch(
+            "ALTER TABLE threads ADD COLUMN last_received_at TEXT NOT NULL DEFAULT '';",
+        )
+        .map_err(error)?;
+        tx.execute(
+            "UPDATE threads SET last_received_at = COALESCE(
+                (SELECT MAX(m.sent_at) FROM messages m
+                 JOIN message_metadata mm ON mm.id = m.id
+                 WHERE m.thread_id = threads.id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM json_each(json_extract(mm.payload, '$.labelIds')) label
+                       WHERE label.value = 'SENT'
+                   )),
+                last_message_at
+            )",
+            [],
+        )
+        .map_err(error)?;
+        tx.execute_batch(
+            "DROP INDEX IF EXISTS threads_inbox_order;
+            CREATE INDEX IF NOT EXISTS threads_inbox_order ON threads(archived, last_received_at DESC);
+            DROP INDEX IF EXISTS threads_account_mailbox_order;
+            CREATE INDEX IF NOT EXISTS threads_account_mailbox_order
+                ON threads(account_id, trashed, archived, last_received_at DESC);
+            DROP INDEX IF EXISTS threads_mailbox_order;
+            CREATE INDEX IF NOT EXISTS threads_mailbox_order
+                ON threads(trashed, archived, last_received_at DESC);
+            PRAGMA user_version=10;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection

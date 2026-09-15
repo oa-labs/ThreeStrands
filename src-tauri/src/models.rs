@@ -9,6 +9,9 @@ pub struct Thread {
     pub snippet: String,
     pub participants: Vec<String>,
     pub last_message_at: String,
+    /// Newest *inbound* message's timestamp — unlike `last_message_at`, sending
+    /// a reply doesn't bump this, so the inbox order doesn't jump on send.
+    pub last_received_at: String,
     pub unread: bool,
     pub starred: bool,
     pub archived: bool,
