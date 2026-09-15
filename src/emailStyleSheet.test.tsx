@@ -16,6 +16,14 @@ describe("sanitizeStyleSheet", () => {
     expect(css).toContain("display: inline-block");
   });
 
+  it("preserves basic floats used to separate email action links", () => {
+    const css = sanitizeStyleSheet(".open-action { float: right; }");
+    expect(css).toContain("float: right");
+
+    const body = sanitizeMessageHtml('<a href="https://example.com" style="float:right">Open</a>');
+    expect(body).toContain("float: right");
+  });
+
   it("drops color/background-color inside a prefers-color-scheme media query, even on an otherwise-safe selector", () => {
     // That media feature reflects the reader's real OS/webview appearance,
     // not this app's own theme, so letting a sender recolor text/backgrounds

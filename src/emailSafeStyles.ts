@@ -107,6 +107,12 @@ export const safeStyles: Record<string, RegExp> = {
   // value carries positioning or a network request.
   "display": /^(none|block|inline|inline-block|table|table-cell|table-row|inline-table|flex|inline-flex)$/,
   "visibility": /^(visible|hidden|collapse)$/,
+  // Email action rows commonly pin their final action to the far edge with
+  // `float: right` (Google Docs notifications use this for "Open"). A float
+  // remains confined to the sandboxed message document and cannot trigger a
+  // fetch or escape its containing block, so retaining these basic values is
+  // both safe and important to the sender's intended spacing.
+  "float": /^(none|left|right)$/,
   // Purely cosmetic text/box formatting: none of these can carry a network
   // request, reposition an element outside its box, or escape the iframe's
   // own layout constraints.

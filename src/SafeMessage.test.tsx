@@ -78,6 +78,24 @@ describe("SafeMessage", () => {
     expect(sanitized).toContain("height: 8px");
   });
 
+  it("keeps modest fixed-height email spacers but collapses oversized empty blocks", () => {
+    // Google Docs comment notifications use these empty blocks between a
+    // quoted passage and its comment, and between consecutive discussions.
+    const sanitized = sanitizeMessageHtml(`
+      <div style="height:18px"></div>
+      <div style="height:20px"></div>
+      <div style="height:200px"></div>
+      <div style="height:50%"></div>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+
+    expect(Array.from(container.children).map((element) => (element as HTMLElement).style.height)).toEqual([
+      "18px",
+      "20px",
+    ]);
+  });
+
   it("propagates a table's cellpadding to each cell so it beats the base td/th padding", () => {
     // Browsers only honor `cellpadding` as a low-priority presentational
     // hint, which this document's own `td, th { padding: 6px 10px }` base

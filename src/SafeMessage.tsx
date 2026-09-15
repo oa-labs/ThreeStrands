@@ -284,6 +284,15 @@ function hasVisibleFill(element: HTMLElement): boolean {
   return element.hasAttribute(blockedSrcAttr);
 }
 
+// Empty fixed-height blocks are a standard HTML-email spacing primitive.
+// Keep modest pixel spacers while still collapsing oversized/percentage
+// blocks that would create unbounded dead whitespace. The style sanitizer
+// has already normalized the declaration by the time this runs.
+function hasIntentionalSpacerHeight(element: HTMLElement): boolean {
+  const match = element.style.getPropertyValue("height").trim().match(/^(\d+(?:\.\d+)?)px$/);
+  return match !== null && Number(match[1]) > 0 && Number(match[1]) <= 32;
+}
+
 export function sanitizeMessageHtml(html: string): string {
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
@@ -449,6 +458,7 @@ export function sanitizeMessageHtml(html: string): string {
       && isBlank(element)
       && !isPureSpacingChar(element)
       && !hasVisibleFill(element)
+      && !hasIntentionalSpacerHeight(element)
     ) {
       element.remove();
     }
