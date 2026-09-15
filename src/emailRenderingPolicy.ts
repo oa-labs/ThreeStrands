@@ -172,7 +172,7 @@ const validators: Record<string, Validator> = {
   bottom: layoutLength({ allowNegative: true }),
   left: layoutLength({ allowNegative: true }),
   font: (value) => {
-    const match = value.trim().toLowerCase().match(/^(?:(?:normal|italic|oblique)\s+)?(?:(?:normal|small-caps)\s+)?(?:normal|bold|[1-9]00)\s+(\d+(?:\.\d+)?(?:px|em|rem|%))(?:\/(normal|\d+(?:\.\d+)?(?:px|em|rem|%)))?\s+(.+)$/i);
+    const match = value.trim().toLowerCase().match(/^(?:(?:normal|italic|oblique)\s+)?(?:(?:normal|small-caps)\s+)?(?:(?:normal|bold|[1-9]00)\s+)?(\d+(?:\.\d+)?(?:px|em|rem|%))(?:\/(normal|\d+(?:\.\d+)?(?:px|em|rem|%)))?\s+(.+)$/i);
     if (!match || fontSize(match[1]) === null || (match[2] && lineHeight(match[2]) === null) || !safeFontFamily.test(match[3])) return null;
     return value.trim().toLowerCase();
   },

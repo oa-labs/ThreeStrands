@@ -266,7 +266,7 @@ export function sanitizeMessageHtml(html: string): string {
     }
     const tag = element.tagName.toLowerCase();
     if (!dimensionAttributeTags.has(tag)) element.removeAttribute("width");
-    if (tag !== "img") element.removeAttribute("height");
+    if (!dimensionAttributeTags.has(tag)) element.removeAttribute("height");
 
     const width = element.getAttribute("width");
     if (width !== null) {
