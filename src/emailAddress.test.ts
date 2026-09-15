@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAddress, simplifyDisplayName } from "./emailAddress";
+import { parseAddress, simplifyDisplayName, splitAddressList } from "./emailAddress";
 
 describe("parseAddress", () => {
   it("splits a display name and email out of a From-style header", () => {
@@ -58,11 +58,25 @@ describe("simplifyDisplayName", () => {
     expect(simplifyDisplayName("Jane Doe")).toBe("Jane");
   });
 
+  it("removes commas from the simplified display name", () => {
+    expect(simplifyDisplayName("Bates, Dan")).toBe("Bates");
+    expect(simplifyDisplayName("'The Dev Shop, LLC' via CS-PMO")).toBe("The Dev Shop LLC");
+  });
+
   it("treats a leading single-quoted name as one word and removes its quotes", () => {
     expect(simplifyDisplayName("'The Dev Shop LLC' via CS-PMO")).toBe("The Dev Shop LLC");
   });
 
   it("does not mistake an apostrophe within a name for wrapping quotes", () => {
     expect(simplifyDisplayName("Conan O'Brien")).toBe("Conan");
+  });
+});
+
+describe("splitAddressList", () => {
+  it("does not split on a comma inside a quoted display name", () => {
+    expect(splitAddressList('"Bates, Daniel R" <daniel@example.com>, bethgold@gmail.com')).toEqual([
+      '"Bates, Daniel R" <daniel@example.com>',
+      "bethgold@gmail.com",
+    ]);
   });
 });

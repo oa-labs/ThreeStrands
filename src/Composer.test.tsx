@@ -114,6 +114,57 @@ describe("Composer pasted images", () => {
   });
 });
 
+describe("Composer forwarded attachments", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("downloads unresolved forwarded images automatically before sending", async () => {
+    const image = {
+      id: "forwarded-image",
+      name: "image003.jpg",
+      mime: "image/jpeg",
+      size: 4096,
+      ready: false,
+      messageId: "source-message",
+      providerId: "provider-image",
+      inline: false,
+      contentId: null,
+    };
+    const forwarded = {
+      ...draft,
+      mode: "forward" as const,
+      to: "friend@example.com",
+      attachments: [image],
+    };
+    const ready = {
+      ...forwarded,
+      revision: 1,
+      attachments: [{ ...image, ready: true }],
+    };
+    const fetchAttachment = vi.spyOn(mailClient, "fetchAttachment").mockResolvedValue(ready);
+    const queued = {
+      id: "queued-forward",
+      draft: ready,
+      state: "undo_pending" as const,
+      deadline: Date.now() + 10_000,
+      error: null,
+    };
+    const queueDraft = vi.spyOn(mailClient, "queueDraft").mockResolvedValue(queued);
+    const onQueued = vi.fn();
+
+    render(<Composer draft={forwarded} accounts={accounts} onClose={() => {}} onQueued={onQueued} />);
+
+    await waitFor(() => expect(fetchAttachment).toHaveBeenCalledWith("draft-1", "forwarded-image"));
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Send/ }));
+
+    await waitFor(() => expect(queueDraft).toHaveBeenCalledWith("draft-1", 1));
+    expect(onQueued).toHaveBeenCalledWith(queued);
+  });
+});
+
 describe("Composer recipient autocomplete", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

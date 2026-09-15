@@ -88,7 +88,7 @@ import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { CalendarAttachment, isCalendarAttachment } from "./CalendarAttachment";
-import { parseAddress, simplifyDisplayName } from "./emailAddress";
+import { parseAddress, simplifyDisplayName, splitAddressList } from "./emailAddress";
 import {
   applyFontScale,
   changeFontScale,
@@ -191,9 +191,8 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "2-digit",
 });
 
-function formatThreadTimestamp(iso: string): string {
+export function formatMailTimestamp(iso: string, now = new Date()): string {
   const date = new Date(iso);
-  const now = new Date();
   const isToday =
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
@@ -295,7 +294,7 @@ const ThreadRow = memo(function ThreadRow({
           </span>
           <span className="thread-meta-trailing">
             {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
-            <time>{formatThreadTimestamp(thread.lastMessageAt)}</time>
+            <time>{formatMailTimestamp(thread.lastMessageAt)}</time>
           </span>
         </span>
         <span className="thread-subject">{thread.subject}</span>
@@ -1913,6 +1912,7 @@ export function App() {
                 );
                 const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
                 const senderFirstName = simplifyDisplayName(senderName);
+                const recipients = splitAddressList(message.recipients.join(", "));
                 const downloadableAttachments = message.attachments.filter((attachment) => !attachment.inline);
                 const queuedItem = correspondence.outbox.find((item) => `outbox-${item.id}` === message.id);
                 const cardBodyId = `message-body-${index}`;
@@ -1948,7 +1948,7 @@ export function App() {
                           <span className="message-card-sender">{senderFirstName}</span>
                           <span className="message-card-snippet">{messageSnippet(message.bodyText)}</span>
                           {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
-                          <time>{formatMessageDate(message.sentAt)}</time>
+                          <time>{formatMailTimestamp(message.sentAt)}</time>
                           <ChevronDown size={14} className="message-card-chevron" />
                         </button>
                       </header>
@@ -1970,19 +1970,22 @@ export function App() {
                       <header
                         className="message-current-header"
                         tabIndex={-1}
-                        aria-label={`Message from ${senderFirstName}, ${formatMessageDate(message.sentAt)}`}
+                        aria-label={`Message from ${senderFirstName}, ${formatMailTimestamp(message.sentAt)}`}
                       >
                         <div className="message-header-details">
                           <div className="message-sender-row">
                             <strong><AddressWithCopy address={message.sender} displayName={senderFirstName} /></strong>
-                            <time>{formatMessageDate(message.sentAt)}</time>
+                            <time>{formatMailTimestamp(message.sentAt)}</time>
                           </div>
                           <div className="message-recipients">
                             to{" "}
-                            {message.recipients.map((recipient, recipientIndex) => (
+                            {recipients.map((recipient, recipientIndex) => (
                               <span key={recipient}>
-                                {recipientListSeparator(recipientIndex, message.recipients.length)}
-                                <AddressWithCopy address={recipient} />
+                                {recipientListSeparator(recipientIndex, recipients.length)}
+                                <AddressWithCopy
+                                  address={recipient}
+                                  displayName={simplifyDisplayName(parseAddress(recipient).name)}
+                                />
                               </span>
                             ))}
                           </div>
@@ -2000,7 +2003,7 @@ export function App() {
                           <span className="message-card-sender">{senderFirstName}</span>
                           <span className="message-card-snippet">{messageSnippet(message.bodyText)}</span>
                           {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
-                          <time>{formatMessageDate(message.sentAt)}</time>
+                          <time>{formatMailTimestamp(message.sentAt)}</time>
                           <ChevronDown size={14} className="message-card-chevron" />
                         </button>
                       </header>
@@ -2347,13 +2350,6 @@ function summaryPreview(summary: string, maxLength = 90): string {
   const [first] = summaryLines(summary);
   if (!first) return "";
   return first.length > maxLength ? `${first.slice(0, maxLength).trimEnd()}…` : first;
-}
-
-const MESSAGE_DATE_MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-
-function formatMessageDate(sentAt: string): string {
-  const date = new Date(sentAt);
-  return `${MESSAGE_DATE_MONTHS[date.getMonth()]} ${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function AccountSwitcher({

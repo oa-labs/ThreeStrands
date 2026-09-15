@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -336,11 +337,27 @@ fn is_https(url: &Url) -> bool {
 }
 
 fn split_addresses(value: &str) -> Vec<String> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+    let raw = format!("To: {value}\r\n\r\n");
+    let Some(message) = MessageParser::default().parse(raw.as_bytes()) else {
+        return Vec::new();
+    };
+    let Some(list) = message.to() else {
+        return Vec::new();
+    };
+
+    list.iter()
+        .filter_map(|address| {
+            let email = address.address()?.trim();
+            if email.is_empty() {
+                return None;
+            }
+            let name = address.name().unwrap_or_default().trim();
+            Some(if name.is_empty() {
+                email.to_owned()
+            } else {
+                format!("{name} <{email}>")
+            })
+        })
         .collect()
 }
 
@@ -419,6 +436,17 @@ mod tests {
         assert_eq!(
             attachment_bytes_from_payload(&message, "part:0.2").unwrap(),
             Some(b"attachment".to_vec())
+        );
+    }
+
+    #[test]
+    fn keeps_quoted_display_name_commas_inside_one_address() {
+        assert_eq!(
+            split_addresses("\"Bates, Daniel R\" <daniel@example.com>, bethgold@gmail.com"),
+            vec![
+                "Bates, Daniel R <daniel@example.com>",
+                "bethgold@gmail.com",
+            ]
         );
     }
 

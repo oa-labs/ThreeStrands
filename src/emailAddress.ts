@@ -39,10 +39,31 @@ export function parseAddress(value: string): ParsedAddress {
 export function simplifyDisplayName(value: string): string {
   const name = value.trim();
   const quotedName = name.match(/^'(.+)'(?=\s|$)/)?.[1];
+  const simplifiedName = quotedName !== undefined ? quotedName.trim() : name.split(/\s+/)[0] || name;
 
-  if (quotedName !== undefined) {
-    return quotedName.trim();
+  return simplifiedName.replace(/,/g, "");
+}
+
+// Splits an RFC-style address list without treating commas inside quoted
+// display names or angle brackets as recipient separators.
+export function splitAddressList(value: string): string[] {
+  const result: string[] = [];
+  let start = 0;
+  let quoted = false;
+  let angleDepth = 0;
+
+  for (let index = 0; index <= value.length; index++) {
+    const character = value[index];
+    if (character === '"' && value[index - 1] !== "\\") quoted = !quoted;
+    else if (!quoted && character === "<") angleDepth++;
+    else if (!quoted && character === ">") angleDepth = Math.max(0, angleDepth - 1);
+
+    if (index === value.length || (character === "," && !quoted && angleDepth === 0)) {
+      const address = value.slice(start, index).trim();
+      if (address) result.push(address);
+      start = index + 1;
+    }
   }
 
-  return name.split(/\s+/)[0] || name;
+  return result;
 }

@@ -35,6 +35,12 @@ const safeFontFamily = /^(?=.{1,200}$)[a-z0-9 _,'"-]+$/i;
 // network request or positioning regardless of which element it lands on.
 const safeDimensionValue = /^\d{1,4}(?:\.\d+)?(?:px|%)$/;
 const safeMaxDimensionValue = /^(\d{1,4}(\.\d+)?(px|%)|none)$/;
+// Same numeric ceiling (~4096) SafeMessage.tsx's safeDimension() enforces for
+// the width/height *attribute* on img/table/td/th — unlike safeDimensionValue
+// above (bounded only by digit count, so up to 9999), this bounds the actual
+// magnitude so a generic property here can't grant a value that path itself
+// refuses.
+const safeBoundedLengthValue = /^(?:0|[1-9]\d{0,2}|[1-3]\d{3}|40\d{2})(?:\.\d+)?(?:px|%)$/;
 
 // Keep text formatting without allowing positioning or CSS network requests.
 // color/background-color/border-color are safe to keep as-is since they
@@ -74,6 +80,13 @@ export const safeStyles: Record<string, RegExp> = {
   // to the full width of its container instead of its intended thumbnail
   // size.
   "width": safeDimensionValue,
+  // Templates size a fixed decorative box — an avatar circle, a colored
+  // status dot, a divider bar — with an explicit width *and* height on a
+  // plain div/span. Only width was covered here; a bare "height" was
+  // dropped outright (SafeMessage.tsx's own height handling is gated to
+  // <img> only), leaving a sender's div at its set width but no height —
+  // e.g. a would-be circular badge collapsing to a flat sliver.
+  "height": safeBoundedLengthValue,
   "max-width": safeMaxDimensionValue,
   "max-height": safeMaxDimensionValue,
   "border": safeBorder,
@@ -104,6 +117,20 @@ export const safeStyles: Record<string, RegExp> = {
   "white-space": /^(normal|nowrap|pre|pre-wrap|pre-line)$/,
   "word-break": /^(normal|break-all|keep-all|break-word)$/,
   "border-spacing": /^\d{1,4}(?:\.\d+)?px(?:\s+\d{1,4}(?:\.\d+)?px)?$/,
+  // margin-top/margin-bottom are deliberately absent here — SafeMessage.tsx
+  // gives those two a dedicated, unit-aware cap for inline `style=""`
+  // (see spacingUnitCaps), and adding them to this flat allowlist too would
+  // let an inline style bypass that cap via the generic loop below. But a
+  // `<style>` block has no equivalent path at all today, so a template's own
+  // "h1, h2, h3, p { margin: 0 }" reset — extremely common, since email
+  // headings/paragraphs are otherwise given generous default spacing here —
+  // was being dropped outright, leaving nothing to oppose that default.
+  // Restricting values to 0/auto (rather than an open-ended length) sidesteps
+  // needing a matching cap here for the common reset/centering cases without
+  // reopening the magnitude concern the dedicated cap exists for.
+  "margin": /^(0|auto)(\s+(0|auto)){0,3}$/,
+  "margin-left": /^(0|auto|\d{1,3}(?:\.\d+)?(px|em|rem|%))$/,
+  "margin-right": /^(0|auto|\d{1,3}(?:\.\d+)?(px|em|rem|%))$/,
 };
 
 export const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;

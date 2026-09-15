@@ -7,6 +7,7 @@ import {
   collapseQuotedHistoryHtml,
   collapseQuotedHistoryText,
   extractBlockedImageUrls,
+  extractSafeStyleSheet,
   linkifyText,
   sanitizeMessageHtml,
 } from "./SafeMessage";
@@ -60,6 +61,55 @@ describe("SafeMessage", () => {
     expect(sanitized).toContain("padding-top: 0px");
     expect(sanitized).toContain("Real content");
     expect(sanitized).toContain("Hello");
+  });
+
+  it("keeps an empty div that paints a background instead of treating it as a dead spacer", () => {
+    // A colored, childless div with no text (a status dot, a swatch, a
+    // divider bar) is visually indistinguishable from a dead spacer div by
+    // shape alone — the two are only told apart by whether it actually
+    // paints something.
+    const sanitized = sanitizeMessageHtml(`
+      <div style="padding:40px 0"></div>
+      <div style="background-color:#ed353b;border-radius:50%;width:8px;height:8px"></div>
+    `);
+    expect(sanitized).not.toContain("padding-top: 40px");
+    expect(sanitized).toContain("background-color: rgb(237, 53, 59)");
+    expect(sanitized).toContain("width: 8px");
+    expect(sanitized).toContain("height: 8px");
+  });
+
+  it("propagates a table's cellpadding to each cell so it beats the base td/th padding", () => {
+    // Browsers only honor `cellpadding` as a low-priority presentational
+    // hint, which this document's own `td, th { padding: 6px 10px }` base
+    // rule always outranks — so a legacy layout table's cellpadding="0"
+    // (declaring a hairline-tight row) was silently defeated unless every
+    // cell also repeated padding:0 inline on every side.
+    const sanitized = sanitizeMessageHtml(`
+      <table cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="padding-right:4px">A</td>
+          <td>B</td>
+        </tr>
+      </table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const [tdA, tdB] = Array.from(container.querySelectorAll("td"));
+    // The sender's own explicit side survives untouched...
+    expect(tdA.style.paddingRight).toBe("4px");
+    // ...while every side left unset picks up the table's cellpadding.
+    expect(tdA.style.paddingTop).toBe("0px");
+    expect(tdA.style.paddingLeft).toBe("0px");
+    expect(tdB.style.padding).toBe("0px");
+  });
+
+  it("keeps a sender's own margin:0 heading/paragraph reset from a <style> block", () => {
+    // h1-h6/p are given generous default spacing by this document's own base
+    // stylesheet; a template that resets it via a <style> block (rather than
+    // inline) had nothing in the property allowlist to survive with, so the
+    // base spacing always won regardless of the sender's intent.
+    const styleSheet = extractSafeStyleSheet("<style>h1, p { margin: 0; }</style>");
+    expect(styleSheet).toContain("margin: 0");
   });
 
   it("keeps a lone &nbsp; paragraph as a blank-line spacer instead of collapsing it away", () => {

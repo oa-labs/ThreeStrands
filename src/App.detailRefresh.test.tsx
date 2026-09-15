@@ -1,12 +1,27 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { App, messagesWithQueuedReplies } from "./App";
+import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
 import type { OutboxItem } from "./correspondence";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+it("formats today's mail with the time of day and older mail with the date", () => {
+  const now = new Date(2026, 8, 14, 18, 0);
+  const today = new Date(2026, 8, 14, 9, 5);
+  const older = new Date(2026, 8, 13, 23, 55);
+
+  expect(formatMailTimestamp(today.toISOString(), now)).toBe(new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(today));
+  expect(formatMailTimestamp(older.toISOString(), now)).toBe(new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+  }).format(older));
 });
 
 it("puts 'and' before the final message recipient", async () => {
@@ -17,7 +32,12 @@ it("puts 'and' before the final message recipient", async () => {
       ...detail,
       messages: detail.messages.map((message) => ({
         ...message,
-        recipients: ["Joel Reed <joel@example.com>", "Leann Moore <leann@example.com>", "Cara Cenfetelli <cara@example.com>"],
+        recipients: [
+          "Joel Reed <joel@example.com>",
+          '"Bates',
+          'Daniel R" <daniel@example.com>',
+          "Cara Cenfetelli <cara@example.com>",
+        ],
       })),
     } : detail;
   });
@@ -27,6 +47,8 @@ it("puts 'and' before the final message recipient", async () => {
 
   const recipientLine = document.querySelector(".message-recipients");
   expect(recipientLine?.querySelectorAll(".address-name")).toHaveLength(3);
+  expect(Array.from(recipientLine?.querySelectorAll(".address-name") ?? [], ({ textContent }) => textContent))
+    .toEqual(["Joel", "Bates", "Cara"]);
   expect(Array.from(recipientLine?.children ?? []).map((recipient) =>
     Array.from(recipient.childNodes).find((node) => node.nodeType === Node.TEXT_NODE)?.textContent ?? "",
   )).toEqual(["", ", ", ", and "]);

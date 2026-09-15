@@ -274,6 +274,16 @@ function isPureSpacingChar(element: Element): boolean {
   return /^\u00A0+$/.test(element.textContent ?? "");
 }
 
+// A spacer div/span is invisible by definition \u2014 it exists only to reserve
+// blank space. An empty, childless element that paints a background is a
+// real decorative mark instead (a colored dot, a swatch, a divider bar),
+// even though it's shaped exactly like a spacer to the checks above.
+function hasVisibleFill(element: HTMLElement): boolean {
+  const backgroundColor = element.style.getPropertyValue("background-color").trim().toLowerCase();
+  if (backgroundColor && backgroundColor !== "transparent") return true;
+  return element.hasAttribute(blockedSrcAttr);
+}
+
 export function sanitizeMessageHtml(html: string): string {
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
@@ -349,6 +359,28 @@ export function sanitizeMessageHtml(html: string): string {
         if (!/^\d+$/.test(value.trim())) element.removeAttribute(attr);
         else element.setAttribute(attr, String(Math.min(Number(value), 32)));
       }
+      // `cellpadding` is a layout table's explicit declaration of per-cell
+      // spacing (almost always 0, for a hairline-tight row of icons/text) —
+      // but a browser only honors it as a low-priority presentational hint,
+      // which this document's own `td, th { padding: 6px 10px }` base rule
+      // (see MESSAGE_DOCUMENT_STYLES) always outranks regardless of source
+      // order. Mirror it as a real inline style on each direct cell, one
+      // side at a time so a cell's own explicit padding on any side is left
+      // alone, so it wins the cascade the way the sender's intended
+      // rendering would have.
+      const cellPadding = element.getAttribute("cellpadding");
+      if (cellPadding !== null) {
+        const rows = element.querySelectorAll(":scope > tr, :scope > tbody > tr, :scope > thead > tr, :scope > tfoot > tr");
+        for (const row of rows) {
+          for (const cell of Array.from(row.children) as HTMLElement[]) {
+            const cellTag = cell.tagName.toLowerCase();
+            if (cellTag !== "td" && cellTag !== "th") continue;
+            for (const side of ["padding-top", "padding-right", "padding-bottom", "padding-left"]) {
+              if (!cell.style.getPropertyValue(side)) cell.style.setProperty(side, `${cellPadding}px`);
+            }
+          }
+        }
+      }
     }
     const bgcolor = element.getAttribute("bgcolor");
     if (bgcolor !== null) {
@@ -416,6 +448,7 @@ export function sanitizeMessageHtml(html: string): string {
       && element.children.length === 0
       && isBlank(element)
       && !isPureSpacingChar(element)
+      && !hasVisibleFill(element)
     ) {
       element.remove();
     }

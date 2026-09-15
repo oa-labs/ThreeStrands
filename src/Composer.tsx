@@ -189,6 +189,16 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
       if (generation.current !== savedGeneration.current) { event.preventDefault(); event.returnValue = ""; }
     };
     window.addEventListener("beforeunload", beforeUnload);
+    if (initial.mode === "forward" && initial.attachments.some((attachment) => !attachment.ready)) {
+      void run(async () => {
+        let next = await flush();
+        for (const attachment of next.attachments.filter((candidate) => !candidate.ready)) {
+          next = await mailClient.fetchAttachment(next.id, attachment.id);
+          latest.current = next;
+          if (mounted.current) setDraft(next);
+        }
+      });
+    }
     return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); window.removeEventListener("beforeunload", beforeUnload); previous?.focus(); };
   }, [initial.mode]);
   useEscapeDismiss(close);
