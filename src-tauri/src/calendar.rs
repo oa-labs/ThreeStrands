@@ -17,6 +17,7 @@ pub struct CalendarPreview {
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalendarEventPreview {
+    pub uid: Option<String>,
     pub title: String,
     pub start: Option<String>,
     pub end: Option<String>,
@@ -58,6 +59,7 @@ fn event_preview(event: &ICalendarComponent) -> CalendarEventPreview {
     let time_zone =
         start_entry.and_then(|entry| parameter_text(entry, ICalendarParameterName::Tzid));
     CalendarEventPreview {
+        uid: text_property(event, ICalendarProperty::Uid),
         title: text_property(event, ICalendarProperty::Summary)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "Untitled event".into()),
@@ -177,6 +179,7 @@ mod tests {
 
         assert_eq!(preview.events.len(), 1);
         let event = &preview.events[0];
+        assert_eq!(event.uid.as_deref(), Some("planning@example.com"));
         assert_eq!(event.title, "Quarterly planning");
         assert_eq!(event.start.as_deref(), Some("2026-09-18T09:30:00"));
         assert_eq!(event.time_zone.as_deref(), Some("America/New_York"));

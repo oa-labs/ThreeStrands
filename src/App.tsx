@@ -87,7 +87,7 @@ import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
-import { CalendarAttachment, isCalendarAttachment } from "./CalendarAttachment";
+import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { parseAddress, simplifyDisplayName, splitAddressList } from "./emailAddress";
 import {
   applyFontScale,
@@ -2040,15 +2040,14 @@ export function App() {
                       />
                       {downloadableAttachments.length > 0 ? (
                         <div className="message-attachments" aria-label="Attachments">
-                          {downloadableAttachments.map((attachment) => (
-                            isCalendarAttachment(attachment) ? (
-                              <CalendarAttachment
-                                key={attachment.id}
-                                messageId={message.id}
-                                attachment={attachment}
-                                onError={(notice) => setNotice({ message: notice })}
-                              />
-                            ) : (
+                          {downloadableAttachments.some(isCalendarAttachment) ? (
+                            <CalendarAttachmentGroup
+                              messageId={message.id}
+                              attachments={downloadableAttachments.filter(isCalendarAttachment)}
+                              onError={(notice) => setNotice({ message: notice })}
+                            />
+                          ) : null}
+                          {downloadableAttachments.filter((attachment) => !isCalendarAttachment(attachment)).map((attachment) => (
                               <div className="message-attachment" key={attachment.id}>
                                 <button
                                   type="button"
@@ -2079,7 +2078,6 @@ export function App() {
                                   <Download size={14} />
                                 </button>
                               </div>
-                            )
                           ))}
                         </div>
                       ) : null}

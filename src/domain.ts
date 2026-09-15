@@ -30,6 +30,7 @@ export type MessageAttachment = {
 };
 
 export type CalendarEventPreview = {
+  uid: string | null;
   title: string;
   start: string | null;
   end: string | null;
