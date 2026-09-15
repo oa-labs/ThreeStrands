@@ -11,6 +11,7 @@ import {
   linkifyText,
   sanitizeMessageHtml,
 } from "./SafeMessage";
+import { emailRenderingFixtures } from "./test/emailRenderingFixtures";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
@@ -20,6 +21,22 @@ afterEach(() => {
 });
 
 describe("SafeMessage", () => {
+  it("preserves structurally distinct notification and transactional layouts", () => {
+    expect(sanitizeMessageHtml(emailRenderingFixtures.notification)).toContain("<table");
+    expect(sanitizeMessageHtml(emailRenderingFixtures.transactional)).toContain('class="layout"');
+    const stylesheet = extractSafeStyleSheet(emailRenderingFixtures.transactional, "dark");
+    expect(stylesheet).toContain("@media screen and (max-width:600px)");
+    expect(stylesheet).toContain('[data-email-root][data-theme="dark"] .dark-copy');
+  });
+
+  it("enforces the capability boundary on malformed fixture content", () => {
+    const sanitized = sanitizeMessageHtml(emailRenderingFixtures.malformed);
+    expect(sanitized).not.toContain("position");
+    expect(sanitized).not.toContain("animation");
+    expect(sanitized).not.toContain("<form");
+    expect(sanitized).not.toContain("<img");
+  });
+
   it("removes active content and always parks remote images behind a blocked-src marker", () => {
     const sanitized = sanitizeMessageHtml(`
       <p style="background:url(https://tracker.invalid)">Hello</p>
@@ -47,7 +64,7 @@ describe("SafeMessage", () => {
     expect(sanitized).not.toContain("<img");
   });
 
-  it("collapses empty spacer elements so they don't render as dead whitespace", () => {
+  it("preserves harmless empty elements and sender-authored spacing", () => {
     const sanitized = sanitizeMessageHtml(`
       <div style="padding:40px 0"></div>
       <p>&nbsp;</p>
@@ -56,9 +73,10 @@ describe("SafeMessage", () => {
       <p>Hello</p>
     `);
 
-    expect(sanitized).not.toContain("padding-top: 40px");
-    expect(sanitized).not.toContain("margin-bottom: 60px");
-    expect(sanitized).toContain("padding-top: 0px");
+    expect(sanitized).toContain("padding-top: 40px");
+    expect(sanitized).toContain("margin-bottom: 60px");
+    expect(sanitized).toContain("padding-top: 200px");
+    expect(sanitized).toContain("&nbsp;");
     expect(sanitized).toContain("Real content");
     expect(sanitized).toContain("Hello");
   });
@@ -72,36 +90,27 @@ describe("SafeMessage", () => {
       <div style="padding:40px 0"></div>
       <div style="background-color:#ed353b;border-radius:50%;width:8px;height:8px"></div>
     `);
-    expect(sanitized).not.toContain("padding-top: 40px");
+    expect(sanitized).toContain("padding-top: 40px");
     expect(sanitized).toContain("background-color: rgb(237, 53, 59)");
     expect(sanitized).toContain("width: 8px");
     expect(sanitized).toContain("height: 8px");
   });
 
-  it("keeps modest fixed-height email spacers but collapses oversized empty blocks", () => {
-    // Google Docs comment notifications use these empty blocks between a
-    // quoted passage and its comment, and between consecutive discussions.
+  it("preserves empty spacers while dropping only out-of-policy declarations", () => {
     const sanitized = sanitizeMessageHtml(`
       <div style="height:18px"></div>
       <div style="height:20px"></div>
       <div style="height:200px"></div>
+      <div style="height:5000px"></div>
       <div style="height:50%"></div>
     `);
     const container = document.createElement("div");
     container.innerHTML = sanitized;
 
-    expect(Array.from(container.children).map((element) => (element as HTMLElement).style.height)).toEqual([
-      "18px",
-      "20px",
-    ]);
+    expect(Array.from(container.children).map((element) => (element as HTMLElement).style.height)).toEqual(["18px", "20px", "200px", "", "50%"]);
   });
 
-  it("propagates a table's cellpadding to each cell so it beats the base td/th padding", () => {
-    // Browsers only honor `cellpadding` as a low-priority presentational
-    // hint, which this document's own `td, th { padding: 6px 10px }` base
-    // rule always outranks — so a legacy layout table's cellpadding="0"
-    // (declaring a hairline-tight row) was silently defeated unless every
-    // cell also repeated padding:0 inline on every side.
+  it("preserves native table spacing without synthesizing cell styles", () => {
     const sanitized = sanitizeMessageHtml(`
       <table cellpadding="0" cellspacing="0">
         <tr>
@@ -113,12 +122,11 @@ describe("SafeMessage", () => {
     const container = document.createElement("div");
     container.innerHTML = sanitized;
     const [tdA, tdB] = Array.from(container.querySelectorAll("td"));
-    // The sender's own explicit side survives untouched...
     expect(tdA.style.paddingRight).toBe("4px");
-    // ...while every side left unset picks up the table's cellpadding.
-    expect(tdA.style.paddingTop).toBe("0px");
-    expect(tdA.style.paddingLeft).toBe("0px");
-    expect(tdB.style.padding).toBe("0px");
+    expect(tdA.style.paddingTop).toBe("");
+    expect(tdA.style.paddingLeft).toBe("");
+    expect(tdB.style.padding).toBe("");
+    expect(container.querySelector("table")?.getAttribute("cellpadding")).toBe("0");
   });
 
   it("keeps a sender's own margin:0 heading/paragraph reset from a <style> block", () => {
@@ -145,7 +153,7 @@ describe("SafeMessage", () => {
     `);
 
     expect(sanitized).toContain("&nbsp;");
-    expect(sanitized.match(/<p/g)).toHaveLength(3);
+    expect(sanitized.match(/<p/g)).toHaveLength(4);
   });
 
   it("preserves a zero margin/padding given in em/rem/%, not just px, and still caps large values per unit", () => {
@@ -159,8 +167,8 @@ describe("SafeMessage", () => {
     `);
     expect(sanitized).toContain("margin-bottom: 0em");
     expect(sanitized).toContain("padding-top: 1.5em");
-    // 200% is capped down to the unit's max (50%), not dropped outright.
-    expect(sanitized).toContain("padding-left: 50%");
+    // Out-of-policy values are dropped rather than silently rewritten.
+    expect(sanitized).not.toContain("padding-left");
   });
 
   it("keeps newsletter preheaders hidden and preserves safe email dimensions", () => {
@@ -285,13 +293,28 @@ describe("SafeMessage", () => {
   it("does not hide a blockquote when it is the only message content", () => {
     expect(collapseQuotedHistoryHtml("<blockquote>A standalone quotation</blockquote>")).toBeNull();
   });
+
+  it("folds semantic reply and forwarded markers without provider selectors", () => {
+    const reply = collapseQuotedHistoryHtml(emailRenderingFixtures.reply);
+    expect(reply).toContain("Here is my answer.");
+    expect(reply).not.toContain("Earlier message content");
+
+    const forwarded = collapseQuotedHistoryHtml(emailRenderingFixtures.forwarded);
+    expect(forwarded).toContain("FYI, see below.");
+    expect(forwarded).not.toContain("Original details.");
+  });
+
+  it("keeps ambiguous quoted prose visible", () => {
+    const html = "<p>My answer includes a quotation:</p><blockquote><p>Important cited text.</p></blockquote>";
+    expect(collapseQuotedHistoryHtml(html)).toBeNull();
+  });
 });
 
 it("preserves safe formatting and the class attribute while removing CSS requests and positioning", () => {
   const sanitized = sanitizeMessageHtml('<table class="modal"><tr><td style="text-align:center;font-weight:700;padding:200px;background-image:url(https://tracker.invalid);position:fixed;color:black">Invoice</td></tr></table>');
   expect(sanitized).toContain("text-align: center");
   expect(sanitized).toContain("font-weight: 700");
-  expect(sanitized).toContain("padding-top: 32px");
+  expect(sanitized).toContain("padding-top: 200px");
   expect(sanitized).toContain("color: black");
   // class survives now that <style> blocks can target it (see
   // emailStyleSheet.ts) — it carries no special handling on its own.
@@ -359,7 +382,7 @@ it("preserves line-height, borders, bgcolor, cellpadding/cellspacing, and CSS wi
   const table = container.querySelector("table")!;
   expect(table.getAttribute("bgcolor")).toBe("#fff");
   expect(table.getAttribute("cellpadding")).toBe("8");
-  expect(table.getAttribute("cellspacing")).toBe("32"); // capped
+  expect(table.getAttribute("cellspacing")).toBe("999");
   expect(table.style.width).toBe("100%");
 
   const td = container.querySelector("td")!;

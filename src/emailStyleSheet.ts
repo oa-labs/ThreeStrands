@@ -1,71 +1,60 @@
 import postcss from "postcss";
-import { safeStyles } from "./emailSafeStyles";
+import selectorParser from "postcss-selector-parser";
+import { sanitizeCssDeclaration } from "./emailRenderingPolicy";
 
-// The one legitimate reason to want a <style> block at all: ESP templates
-// (Customer.io, Klaviyo, HubSpot) commonly ship two variants of a logo/icon
-// — one plain, one under a class a media query shows only in dark mode — to
-// work around Gmail's automatic color inversion. Nothing else gets in:
-// @font-face/@import/@keyframes/@supports and any other media feature are
-// all dropped, along with every other at-rule.
-const ALLOWED_MEDIA_QUERY = /^\(\s*prefers-color-scheme\s*:\s*(dark|light)\s*\)$/i;
+const MEDIA_FEATURE = /^(?:\(\s*(?:min-width|max-width)\s*:\s*(\d+(?:\.\d+)?px)\s*\)|\(\s*(?:orientation)\s*:\s*(?:portrait|landscape)\s*\)|\(\s*prefers-color-scheme\s*:\s*(?:dark|light)\s*\))$/i;
 
-// Rejects any selector that could reach outside the message body content
-// itself — html/body/:root (the whole rendered surface) or a bare universal
-// selector. Everything else (type/class/id/attribute selectors, pseudo
-// classes/elements, combinators) is left alone; the browser's own selector
-// engine resolves it exactly like any other CSS, and matching a class
-// attribute is only possible against elements/attributes DOMPurify already
-// allowed through.
-const UNSAFE_SELECTOR_TARGET = /(^|[\s,>+~])(html|body)(?=$|[\s,>+~.:#[])|:root\b|(^|[\s,>+~])\*(?=$|[\s,>+~.:#[])/i;
-
-function isSafeSelector(selector: string): boolean {
-  const trimmed = selector.trim();
-  return trimmed.length > 0 && !UNSAFE_SELECTOR_TARGET.test(trimmed);
+function isSafeMediaQuery(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return false;
+  return trimmed.split(/\s+and\s+/i).every((part) => {
+    if (/^(?:only\s+)?(?:screen|all)$/i.test(part.trim())) return true;
+    const feature = part.trim().match(/^\(\s*(min-width|max-width)\s*:\s*([^)]*)\)$/i);
+    if (feature) return sanitizeCssDeclaration("width", feature[2]) !== null && MEDIA_FEATURE.test(part.trim());
+    return MEDIA_FEATURE.test(part.trim());
+  });
 }
 
-// No property in `safeStyles` is expected to carry a url() — background-image
-// specifically isn't in that map, on purpose. A <style> rule's selector can
-// match zero, one, or many not-yet-known elements, so there's no single DOM
-// node to gate behind the image-blocking flow the way inline
-// style="background-image:..." and <img src> both are (see SafeMessage.tsx).
-// Rather than build a second, weaker gating path for this one spot, any
-// declaration whose value contains url(...) is dropped unconditionally.
-//
-// Inside a `@media (prefers-color-scheme)` block specifically, only the two
-// properties the logo-swap trick actually needs are kept. That media feature
-// reflects the reader's real OS/webview appearance, not this app's own
-// light/dark setting, so a sender rule that repaints color/background-color
-// there fires independently of (and can contradict) the color the rest of
-// the message was authored against. ESP templates commonly split a dark-mode
-// override into more than one rule — e.g. a `body { color: #fff }` text-color
-// flip alongside a `.wrapper { background-color: #000 }` on a class — and
-// this sanitizer's own selector allowlist (below) drops the `body` rule
-// wholesale while keeping the class-scoped one, so only the background half
-// of such a pair would ever survive: a solid-color block with no readable
-// text. Restricting this context to display/visibility keeps the documented
-// logo-swap use case working without ever letting a sender's dark-mode CSS
-// recolor the message.
-const MEDIA_QUERY_SAFE_PROPERTIES = new Set(["display", "visibility"]);
-
-function sanitizeDeclarationValue(prop: string, rawValue: string, insideMediaQuery: boolean): string | null {
-  const property = prop.trim().toLowerCase();
-  if (insideMediaQuery && !MEDIA_QUERY_SAFE_PROPERTIES.has(property)) return null;
-  const pattern = safeStyles[property];
-  if (!pattern) return null;
-  const value = rawValue.trim();
-  if (/url\(/i.test(value)) return null;
-  const normalized = value.toLowerCase();
-  return pattern.test(normalized) ? normalized : null;
+function scopedSelectorList(selectorText: string): string | null {
+  try {
+    const parser = selectorParser();
+    const ast = parser.astSync(selectorText);
+    const selectors: string[] = [];
+    ast.each((selector) => {
+      let hasRoot = false;
+      selector.walkTags((tag) => {
+        if (/^(?:html|body)$/i.test(tag.value)) {
+          tag.replaceWith(selectorParser.attribute({ attribute: "data-email-root" }));
+          hasRoot = true;
+        }
+      });
+      selector.walkPseudos((pseudo) => {
+        if (pseudo.value.toLowerCase() === ":root") {
+          pseudo.replaceWith(selectorParser.attribute({ attribute: "data-email-root" }));
+          hasRoot = true;
+        }
+      });
+      if (!selector.toString().trim()) return;
+      if (!hasRoot) {
+        selector.prepend(selectorParser.combinator({ value: " " }));
+        selector.prepend(selectorParser.attribute({ attribute: "data-email-root" }));
+      }
+      selectors.push(selector.toString().trim().replace(/^(\[data-email-root\])\s+/, "$1 "));
+    });
+    return selectors.length > 0 ? selectors.join(", ") : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Sanitizes the text content of a `<style>` tag down to the same
- * property/value allowlist SafeMessage.tsx applies to inline `style=""`
- * attributes, plus a small selector allowlist and an at-rule allowlist of
- * exactly `@media (prefers-color-scheme: ...)`. Returns "" if nothing in
- * the sheet survives (including if it fails to parse at all).
+ * Sanitizes sender CSS with the same typed declaration policy used for
+ * inline styles. PostCSS owns stylesheet structure; selector-parser owns
+ * selector-list parsing, root rewriting, and malformed-selector rejection.
+ * Only bounded responsive media queries survive. Unsupported at-rules and
+ * active/resource declarations are removed.
  */
-export function sanitizeStyleSheet(css: string): string {
+export function sanitizeStyleSheet(css: string, theme?: "light" | "dark"): string {
   let root;
   try {
     root = postcss.parse(css);
@@ -74,22 +63,42 @@ export function sanitizeStyleSheet(css: string): string {
   }
 
   root.walkAtRules((atRule) => {
-    if (atRule.name.toLowerCase() !== "media" || !ALLOWED_MEDIA_QUERY.test(atRule.params.trim())) {
+    if (atRule.name.toLowerCase() !== "media" || !atRule.params.split(",").every(isSafeMediaQuery)) {
       atRule.remove();
+      return;
+    }
+    if (!theme) return;
+
+    const branches = atRule.params.split(",").map((branch) => branch.trim());
+    const preferredThemes = branches.map((branch) => branch.match(/prefers-color-scheme\s*:\s*(dark|light)/i)?.[1]?.toLowerCase());
+    const specifiedThemes = preferredThemes.filter((value): value is string => value !== undefined);
+    if (specifiedThemes.length > 0) {
+      // Mixed light/dark comma branches are ambiguous after mapping to the
+      // reader-selected theme; drop them instead of falling back to the OS.
+      if (specifiedThemes.some((value) => value !== theme) || specifiedThemes.some((value) => value !== specifiedThemes[0])) {
+        atRule.remove();
+        return;
+      }
+      atRule.params = branches
+        .map((branch) => branch.replace(/\s+and\s*\(\s*prefers-color-scheme\s*:\s*(?:dark|light)\s*\)/i, "").replace(/^\(\s*prefers-color-scheme\s*:\s*(?:dark|light)\s*\)\s*and\s*/i, "").replace(/^\(\s*prefers-color-scheme\s*:\s*(?:dark|light)\s*\)$/i, "").trim())
+        .filter(Boolean)
+        .join(", ") || "all";
+      atRule.walkRules((rule) => {
+        rule.selector = `[data-email-root][data-theme="${theme}"] ${rule.selector}`;
+      });
     }
   });
 
   root.walkRules((rule) => {
-    const selectors = rule.selector.split(",").map((s) => s.trim()).filter(isSafeSelector);
-    if (selectors.length === 0) {
+    const selector = scopedSelectorList(rule.selector);
+    if (!selector) {
       rule.remove();
       return;
     }
-    rule.selector = selectors.join(", ");
+    rule.selector = selector;
 
-    const insideMediaQuery = rule.parent?.type === "atrule";
     rule.walkDecls((decl) => {
-      const safeValue = sanitizeDeclarationValue(decl.prop, decl.value, insideMediaQuery);
+      const safeValue = sanitizeCssDeclaration(decl.prop, decl.value);
       if (safeValue === null) decl.remove();
       else decl.value = safeValue;
     });

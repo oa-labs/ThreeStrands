@@ -7,8 +7,11 @@ import {
   blockedSrcAttr,
   safeColor,
   safeImageSrc,
-  safeStyles,
-} from "./emailSafeStyles";
+  safeStyleProperties,
+  EMAIL_CSS_LIMITS,
+  sanitizeCssDeclaration,
+  sanitizeHtmlDimension,
+} from "./emailRenderingPolicy";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
 import { fontFamilyStack, type FontFamily } from "./settings";
 
@@ -79,7 +82,7 @@ const MESSAGE_DOCUMENT_STYLES = `
   --link: #5942b5;
   --quote-border: #aaa1c7;
 }
-* { box-sizing: border-box; }
+:where(*) { box-sizing: border-box; }
 body {
   margin: 0;
   color: var(--body-text);
@@ -90,29 +93,16 @@ body {
 }
 body[data-tone="current"] { color: var(--text); }
 body[data-tone="muted"] { color: var(--muted); }
-[hidden] { display: none; }
-img { max-width: 100%; height: auto; }
-img:not([src]) { display: inline-block; min-width: 24px; min-height: 24px; border: 1px dashed var(--border); background: var(--hover); vertical-align: middle; }
-body > :first-child { margin-top: 0; }
-body > :last-child { margin-bottom: 0; }
-p { margin: 0 0 1em; }
-h1, h2, h3, h4, h5, h6 { margin: 1.3em 0 .5em; line-height: 1.3; color: var(--text); }
-h1 { font-size: 1.6em; }
-h2 { font-size: 1.35em; }
-h3 { font-size: 1.15em; }
-ul, ol { padding-inline-start: 1.6em; }
-li + li { margin-top: .25em; }
-table { max-width: 100%; border-collapse: collapse; font-size: inherit; }
-td, th { padding: 6px 10px; vertical-align: top; }
-th { text-align: start; }
-caption { text-align: start; font-weight: 600; margin-bottom: .5em; }
-pre { max-width: 100%; overflow-x: auto; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--code); line-height: 1.5; }
-code { font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; }
-:not(pre) > code { padding: 2px 4px; border-radius: 4px; background: var(--code); }
-hr { margin: 1.5em 0; border: 0; border-top: 1px solid var(--border); }
-a { color: var(--link); text-underline-offset: 3px; }
-a:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
-blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--quote-border); color: var(--secondary); }
+:where([hidden]) { display: none; }
+:where(img) { max-width: 100%; }
+:where(img:not([src])) { display: inline-block; min-width: 24px; min-height: 24px; border: 1px dashed var(--border); background: var(--hover); vertical-align: middle; }
+:where(a) { color: var(--link); text-underline-offset: 3px; }
+:where(a:focus-visible) { outline: 2px solid var(--link); outline-offset: 3px; }
+:where(pre) { max-width: 100%; overflow-x: auto; }
+:where(code) { font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; }
+:where(hr) { border: 0; border-top: 1px solid var(--border); }
+:where(table) { max-width: 100%; }
+:where(.email-root) { max-width: 100%; overflow-wrap: break-word; }
 `;
 
 const MESSAGE_DOCUMENT_CSP = [
@@ -150,7 +140,9 @@ function buildMessageDocument(bodyHtml: string, options: {
 <style>${MESSAGE_DOCUMENT_STYLES}</style>
 ${emailStyleSheet ? `<style>${emailStyleSheet}</style>\n` : ""}</head>
 <body data-tone="${tone}" style="font-family: ${fontStyle}; --font-scale: ${fontScale};">
+<div class="email-root" data-email-root data-theme="${theme}">
 ${bodyHtml}
+</div>
 </body>
 </html>`;
 }
@@ -162,10 +154,10 @@ ${bodyHtml}
  * here is inert — it never executes scripts or fetches resources, it's
  * just a tree we read `<style>` text back out of.
  */
-export function extractSafeStyleSheet(html: string): string {
+export function extractSafeStyleSheet(html: string, theme?: "light" | "dark"): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
   return Array.from(doc.querySelectorAll("style"))
-    .map((style) => sanitizeStyleSheet(style.textContent ?? ""))
+    .map((style) => sanitizeStyleSheet(style.textContent ?? "", theme))
     .filter(Boolean)
     .join("\n");
 }
@@ -178,34 +170,7 @@ const allowedTags = [
   "tfoot", "th", "thead", "tr", "u", "ul",
 ];
 
-// Block-level elements that marketing templates commonly use as empty
-// "spacer" wrappers (padding/margin only, no text or meaningful children).
-// Table cells are handled separately since removing them would break
-// column alignment for the rest of the row.
-const spacerTags = new Set([
-  "div", "p", "span", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "dd", "dt",
-]);
-
 const dimensionAttributeTags = new Set(["img", "table", "td", "th"]);
-
-function safeDimension(value: string, allowPercent: boolean): string | null {
-  const match = value.trim().match(/^(\d+(?:\.\d+)?)(%)?$/);
-  if (!match) return null;
-
-  const amount = Number(match[1]);
-  const isPercent = match[2] === "%";
-  if (!Number.isFinite(amount) || amount < 0) return null;
-  if (isPercent) return allowPercent && amount <= 100 ? `${amount}%` : null;
-  return amount <= 4096 ? `${amount}` : null;
-}
-
-// Same bounds as safeDimension, but for a CSS length (which carries its own
-// unit) rather than a bare HTML width/height attribute.
-function safeCssLength(value: string, allowPercent: boolean): string | null {
-  const safe = safeDimension(value.trim().replace(/px$/, ""), allowPercent);
-  if (safe === null) return null;
-  return safe.endsWith("%") ? safe : `${safe}px`;
-}
 
 export function decodeHtmlEntities(text: string): string {
   const container = document.createElement("textarea");
@@ -258,41 +223,6 @@ export function linkifyText(text: string): ReactNode[] {
   return nodes;
 }
 
-function isBlank(element: Element): boolean {
-  return (element.textContent ?? "").replace(/\s+/g, "") === "";
-}
-
-// A lone non-breaking space (or run of them) inside an otherwise-empty
-// element is a deliberate line-height spacer — templates commonly use
-// "<p>&nbsp;</p>" to reserve a blank line's height between sections since
-// margins are often reset to 0. isBlank() above treats it as whitespace (JS's
-// \s matches U+00A0), which is right for zeroing an empty table cell's
-// padding, but wrong for deciding whether to remove the element entirely:
-// that would delete the sender's spacing outright instead of just rendering
-// it, unlike every other mail client.
-function isPureSpacingChar(element: Element): boolean {
-  return /^\u00A0+$/.test(element.textContent ?? "");
-}
-
-// A spacer div/span is invisible by definition \u2014 it exists only to reserve
-// blank space. An empty, childless element that paints a background is a
-// real decorative mark instead (a colored dot, a swatch, a divider bar),
-// even though it's shaped exactly like a spacer to the checks above.
-function hasVisibleFill(element: HTMLElement): boolean {
-  const backgroundColor = element.style.getPropertyValue("background-color").trim().toLowerCase();
-  if (backgroundColor && backgroundColor !== "transparent") return true;
-  return element.hasAttribute(blockedSrcAttr);
-}
-
-// Empty fixed-height blocks are a standard HTML-email spacing primitive.
-// Keep modest pixel spacers while still collapsing oversized/percentage
-// blocks that would create unbounded dead whitespace. The style sanitizer
-// has already normalized the declaration by the time this runs.
-function hasIntentionalSpacerHeight(element: HTMLElement): boolean {
-  const match = element.style.getPropertyValue("height").trim().match(/^(\d+(?:\.\d+)?)px$/);
-  return match !== null && Number(match[1]) > 0 && Number(match[1]) <= 32;
-}
-
 export function sanitizeMessageHtml(html: string): string {
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
@@ -318,9 +248,10 @@ export function sanitizeMessageHtml(html: string): string {
       || ["hidden", "collapse"].includes(original.visibility.trim().toLowerCase())) {
       element.setAttribute("hidden", "");
     }
-    for (const [property, pattern] of Object.entries(safeStyles)) {
-      const value = original.getPropertyValue(property).trim().toLowerCase();
-      if (pattern.test(value)) declarations.push(`${property}: ${value}`);
+    for (const property of safeStyleProperties) {
+      const value = original.getPropertyValue(property).trim();
+      const safeValue = sanitizeCssDeclaration(property, value);
+      if (safeValue !== null) declarations.push(`${property}: ${safeValue}`);
     }
     // Same URL scheme check as <img src>. Every remote background, like
     // every remote <img>, is always parked behind the blocked-src marker
@@ -339,56 +270,25 @@ export function sanitizeMessageHtml(html: string): string {
 
     const width = element.getAttribute("width");
     if (width !== null) {
-      const safeWidth = safeDimension(width, true);
+      const safeWidth = sanitizeHtmlDimension(width, true);
       if (safeWidth === null) element.removeAttribute("width");
       else element.setAttribute("width", safeWidth);
     }
     const height = element.getAttribute("height");
     if (height !== null) {
-      const safeHeight = safeDimension(height, false);
+      const safeHeight = sanitizeHtmlDimension(height, false);
       if (safeHeight === null) element.removeAttribute("height");
       else element.setAttribute("height", safeHeight);
     }
     // Some templates size elements via CSS instead of the width/height
     // attributes above; apply the same bounds either way.
-    if (dimensionAttributeTags.has(tag)) {
-      const styleWidth = original.getPropertyValue("width").trim();
-      const safeWidth = styleWidth ? safeCssLength(styleWidth, true) : null;
-      if (safeWidth) declarations.push(`width: ${safeWidth}`);
-    }
-    if (tag === "img") {
-      const styleHeight = original.getPropertyValue("height").trim();
-      const safeHeight = styleHeight ? safeCssLength(styleHeight, false) : null;
-      if (safeHeight) declarations.push(`height: ${safeHeight}`);
-    }
     if (tag === "table") {
       for (const attr of ["cellpadding", "cellspacing"]) {
         const value = element.getAttribute(attr);
         if (value === null) continue;
-        if (!/^\d+$/.test(value.trim())) element.removeAttribute(attr);
-        else element.setAttribute(attr, String(Math.min(Number(value), 32)));
-      }
-      // `cellpadding` is a layout table's explicit declaration of per-cell
-      // spacing (almost always 0, for a hairline-tight row of icons/text) —
-      // but a browser only honors it as a low-priority presentational hint,
-      // which this document's own `td, th { padding: 6px 10px }` base rule
-      // (see MESSAGE_DOCUMENT_STYLES) always outranks regardless of source
-      // order. Mirror it as a real inline style on each direct cell, one
-      // side at a time so a cell's own explicit padding on any side is left
-      // alone, so it wins the cascade the way the sender's intended
-      // rendering would have.
-      const cellPadding = element.getAttribute("cellpadding");
-      if (cellPadding !== null) {
-        const rows = element.querySelectorAll(":scope > tr, :scope > tbody > tr, :scope > thead > tr, :scope > tfoot > tr");
-        for (const row of rows) {
-          for (const cell of Array.from(row.children) as HTMLElement[]) {
-            const cellTag = cell.tagName.toLowerCase();
-            if (cellTag !== "td" && cellTag !== "th") continue;
-            for (const side of ["padding-top", "padding-right", "padding-bottom", "padding-left"]) {
-              if (!cell.style.getPropertyValue(side)) cell.style.setProperty(side, `${cellPadding}px`);
-            }
-          }
-        }
+        const safeValue = sanitizeHtmlDimension(value, false);
+        if (safeValue === null) element.removeAttribute(attr);
+        else element.setAttribute(attr, safeValue);
       }
     }
     const bgcolor = element.getAttribute("bgcolor");
@@ -396,24 +296,6 @@ export function sanitizeMessageHtml(html: string): string {
       const value = bgcolor.trim().toLowerCase();
       if (safeColor.test(value)) element.setAttribute("bgcolor", value);
       else element.removeAttribute("bgcolor");
-    }
-    // Empty spacer cells carry no content, so zero their spacing outright
-    // instead of just capping it, rather than let it render as a dead gap.
-    const isEmptyCell = (tag === "td" || tag === "th") && element.children.length === 0 && isBlank(element);
-    // Senders often zero out a browser default (e.g. a <p>'s ~1em margin)
-    // using the same unit as their own font-size — "margin-bottom: 0em" is
-    // as common as "0px". Restricting this to px only silently dropped
-    // that reset, letting the UA default margin resurface instead of the
-    // zero the sender asked for. The cap is unit-aware since 1em and 1px
-    // aren't the same amount of space; 0 is always safe regardless of unit.
-    const spacingUnitCaps: Record<string, number> = { px: 32, em: 2, rem: 2, "%": 50 };
-    for (const property of ["padding-top", "padding-right", "padding-bottom", "padding-left", "margin-top", "margin-bottom"]) {
-      const value = original.getPropertyValue(property).trim();
-      const match = value.match(/^(\d+(?:\.\d+)?)(px|em|rem|%)$/);
-      if (match) {
-        const amount = isEmptyCell ? 0 : Math.min(Number(match[1]), spacingUnitCaps[match[2]]);
-        declarations.push(`${property}: ${amount}${match[2]}`);
-      }
     }
     element.removeAttribute("style");
     if (declarations.length) element.setAttribute("style", declarations.join("; "));
@@ -446,42 +328,35 @@ export function sanitizeMessageHtml(html: string): string {
     }
   });
 
-  // Now that invalid images are gone and styles are resolved, remove any
-  // block-level spacer elements left with no text and no remaining children.
-  // Processed in reverse document order so children are handled before their
-  // ancestors, letting nested spacer stacks collapse in one pass.
-  for (const element of Array.from(fragment.querySelectorAll<HTMLElement>("*")).reverse()) {
-    if (!fragment.contains(element)) continue;
-    if (
-      spacerTags.has(element.tagName.toLowerCase())
-      && element.children.length === 0
-      && isBlank(element)
-      && !isPureSpacingChar(element)
-      && !hasVisibleFill(element)
-      && !hasIntentionalSpacerHeight(element)
-    ) {
-      element.remove();
-    }
-  }
-
   const container = document.createElement("div");
   container.append(fragment);
   return container.innerHTML;
 }
 
-const quotedHistorySelector = [
-  ".gmail_quote",
-  ".protonmail_quote",
-  ".yahoo_quoted",
-  '[id^="yahoo_quoted"]',
-  "#divRplyFwdMsg",
-  ".OutlookMessageHeader",
-  ".moz-cite-prefix",
-  "blockquote",
-].join(", ");
-
 const quotedHistoryMarker = /(?:^|\n)\s*(?:(?:[-—_]{2,})\s*)?(?:original message|forwarded message|begin forwarded message)(?:\s*(?:[-—_]{2,}))?\s*(?:\n|$)/i;
 const wroteMarker = /(?:^|\n)\s*On\s+[^\n]{1,500}\s+wrote:\s*(?:\n|$)/i;
+const headerField = /^(?:from|sent|date|to|cc|bcc|subject)\s*:/i;
+const emailOrTimestamp = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d{1,2}:\d{2}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b)/i;
+
+function hasMeaningfulFollowingContent(element: Element, container: Element): boolean {
+  let current: Element = element;
+  while (current.parentElement && current.parentElement !== container) {
+    if (Array.from(current.parentElement.children).slice(Array.from(current.parentElement.children).indexOf(current) + 1)
+      .some((sibling) => Boolean(sibling.textContent?.trim()) || sibling.querySelector("img"))) return true;
+    current = current.parentElement;
+  }
+  if (current.parentElement === container) {
+    return Array.from(container.children).slice(Array.from(container.children).indexOf(current) + 1)
+      .some((sibling) => Boolean(sibling.textContent?.trim()) || sibling.querySelector("img"));
+  }
+  return false;
+}
+
+function isCompactHeaderBlock(element: Element): boolean {
+  const lines = (element.textContent ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const fields = new Set(lines.filter((line) => headerField.test(line)).map((line) => line.match(headerField)?.[0].toLowerCase()));
+  return fields.size >= 3 && emailOrTimestamp.test(lines.join(" ")) && lines.length <= 12;
+}
 
 function nodeComesBefore(left: Node, right: Node): boolean {
   return Boolean(left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -495,10 +370,16 @@ function nodeComesBefore(left: Node, right: Node): boolean {
 export function collapseQuotedHistoryHtml(html: string): string | null {
   const container = document.createElement("div");
   container.innerHTML = html;
-  const candidates: QuotedHistoryBoundary[] = Array.from(
-    container.querySelectorAll(quotedHistorySelector),
-    (node) => ({ node, kind: "element" as const }),
-  );
+  const candidates: Array<QuotedHistoryBoundary & { score: number }> = [];
+
+  container.querySelectorAll("blockquote, cite").forEach((node) => {
+    if (!hasMeaningfulFollowingContent(node, container)) candidates.push({ node, kind: "element", score: 2 });
+  });
+  container.querySelectorAll("*").forEach((node) => {
+    if (isCompactHeaderBlock(node) && !hasMeaningfulFollowingContent(node, container)) {
+      candidates.push({ node, kind: "element", score: 2 });
+    }
+  });
 
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   let textNode = walker.nextNode();
@@ -506,7 +387,7 @@ export function collapseQuotedHistoryHtml(html: string): string | null {
     const text = textNode.textContent ?? "";
     const marker = quotedHistoryMarker.exec(text) ?? wroteMarker.exec(text);
     if (marker?.index !== undefined) {
-      candidates.push({ node: textNode as Text, kind: "text", offset: marker.index });
+      candidates.push({ node: textNode as Text, kind: "text", offset: marker.index, score: 3 });
     }
     textNode = walker.nextNode();
   }
@@ -531,17 +412,29 @@ export function collapseQuotedHistoryHtml(html: string): string | null {
     visibleContainer.append(range.cloneContents());
     const hasVisibleContent = Boolean(visibleContainer.textContent?.trim())
       || visibleContainer.querySelector("img") !== null;
-    if (hasVisibleContent) return visibleContainer.innerHTML;
+    if (hasVisibleContent && boundary.score + 1 >= 4) return visibleContainer.innerHTML;
   }
   return null;
 }
 
 /** Returns the part of a plain-text reply before its quoted history. */
 export function collapseQuotedHistoryText(text: string): string | null {
-  const marker = quotedHistoryMarker.exec(text) ?? wroteMarker.exec(text);
-  if (!marker?.index) return null;
-  const visible = text.slice(0, marker.index).trimEnd();
-  return visible.trim() ? visible : null;
+  const lines = text.split(/\r?\n/);
+  const markerIndex = lines.findIndex((line) => quotedHistoryMarker.test(`\n${line}\n`) || wroteMarker.test(`\n${line}\n`));
+  if (markerIndex >= 0) {
+    const visible = lines.slice(0, markerIndex).join("\n").trimEnd();
+    return visible.trim() ? visible : null;
+  }
+  const headerStart = lines.findIndex((_, index) => {
+    const block = lines.slice(index, index + 12).map((line) => line.trim()).filter(Boolean);
+    const fields = new Set(block.filter((line) => headerField.test(line)).map((line) => line.match(headerField)?.[0].toLowerCase()));
+    return fields.size >= 3 && emailOrTimestamp.test(block.join(" "));
+  });
+  if (headerStart > 0 && lines.slice(0, headerStart).some((line) => line.trim())) {
+    const separator = lines.slice(0, headerStart).some((line) => /^\s*[-—_]{2,}\s*$/.test(line));
+    if (separator) return lines.slice(0, headerStart).join("\n").trimEnd();
+  }
+  return null;
 }
 
 /** Every URL currently parked behind a blocked-src marker, deduplicated. */
@@ -660,7 +553,7 @@ export function SafeMessage({
     () => applyResolvedImages(renderedHtml, resolvedImages),
     [renderedHtml, resolvedImages],
   );
-  const emailStyleSheet = useMemo(() => extractSafeStyleSheet(html), [html]);
+  const emailStyleSheet = useMemo(() => extractSafeStyleSheet(html, theme), [html, theme]);
 
   const doc = useMemo(
     () => buildMessageDocument(displayHtml, { theme, fontScale, fontFamily, tone, emailStyleSheet }),
@@ -681,7 +574,7 @@ export function SafeMessage({
 
     const resize = () => {
       const height = frameDoc.documentElement?.scrollHeight ?? frameDoc.body?.scrollHeight ?? 0;
-      setFrameHeight(height);
+      setFrameHeight(Math.min(height, EMAIL_CSS_LIMITS.maxFrameHeightPx));
     };
     resize();
 

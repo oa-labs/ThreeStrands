@@ -24,36 +24,36 @@ describe("sanitizeStyleSheet", () => {
     expect(body).toContain("float: right");
   });
 
-  it("drops color/background-color inside a prefers-color-scheme media query, even on an otherwise-safe selector", () => {
-    // That media feature reflects the reader's real OS/webview appearance,
-    // not this app's own theme, so letting a sender recolor text/backgrounds
-    // there can silently produce unreadable (e.g. same-color-as-background)
-    // text — see the comment on MEDIA_QUERY_SAFE_PROPERTIES in
-    // emailStyleSheet.ts. Only the logo-swap use case (display/visibility)
-    // is allowed in this context.
+  it("keeps safe theme overrides and scopes them to the message root", () => {
     const css = sanitizeStyleSheet(`
       @media (prefers-color-scheme: dark) {
         .wrapper { background-color: #000000; color: #000000; display: block; }
       }
-    `);
+    `, "dark");
+    expect(css).toContain('[data-email-root][data-theme="dark"] .wrapper');
+    expect(css).toContain("background-color: #000000");
     expect(css).toContain("display: block");
-    expect(css).not.toContain("background-color");
-    expect(css).not.toMatch(/(?<!background-)color: #000000/);
   });
 
-  it("drops every other at-rule (@font-face, @import, @keyframes, @supports, unrelated @media)", () => {
+  it("drops active/resource at-rules while keeping safe responsive media queries", () => {
     const css = sanitizeStyleSheet(`
       @import url(https://tracker.invalid/evil.css);
       @font-face { font-family: "Evil"; src: url(https://tracker.invalid/evil.woff); }
       @keyframes flash { from { opacity: 0; } to { opacity: 1; } }
       @supports (display: grid) { .x { color: red; } }
       @media (min-width: 100px) { .x { color: red; } }
-      @media screen { .x { color: red; } }
+      @media screen { .x { color: blue; } }
     `);
-    expect(css).toBe("");
+    expect(css).toContain("@media (min-width: 100px)");
+    expect(css).toContain("@media screen");
+    expect(css).toContain("color: red");
+    expect(css).not.toContain("@font-face");
+    expect(css).not.toContain("@import");
+    expect(css).not.toContain("@keyframes");
+    expect(css).not.toContain("@supports");
   });
 
-  it("drops selectors targeting html, body, :root, or a bare universal selector, keeping the rest of the list", () => {
+  it("parses selector lists, rewrites global roots, and scopes every selector", () => {
     const css = sanitizeStyleSheet(`
       body, .safe-one { color: red; }
       html { color: red; }
@@ -62,13 +62,14 @@ describe("sanitizeStyleSheet", () => {
       * > .also-unsafe { color: red; }
       .safe-two, div.safe-three { color: blue; }
     `);
-    expect(css).toContain(".safe-one");
-    expect(css).toContain(".safe-two");
-    expect(css).toContain("div.safe-three");
+    expect(css).toContain("[data-email-root]");
+    expect(css).toContain("[data-email-root] .safe-one");
+    expect(css).toContain("[data-email-root] .safe-two");
+    expect(css).toContain("[data-email-root] div.safe-three");
     expect(css).not.toMatch(/\bbody\b/);
     expect(css).not.toMatch(/\bhtml\b/);
     expect(css).not.toMatch(/:root/);
-    expect(css).not.toContain("*");
+    expect(css).toContain("[data-email-root] *");
   });
 
   it("never allows a property outside the shared safeStyles allowlist", () => {
@@ -83,7 +84,11 @@ describe("sanitizeStyleSheet", () => {
       }
     `);
     expect(css).toContain("color: red");
-    expect(css).not.toMatch(/position|top:|animation|cursor|content/);
+    expect(css).not.toContain("position");
+    expect(css).toContain("top: 0");
+    expect(css).not.toContain("animation");
+    expect(css).not.toContain("cursor");
+    expect(css).not.toContain("content:");
   });
 
   it("drops any declaration whose value carries a url(), even on an otherwise-allowed property", () => {
