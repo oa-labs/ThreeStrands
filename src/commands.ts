@@ -1,3 +1,5 @@
+import type { MessageFilterKind } from "./messageFilters";
+
 export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox";
 
 export type CommandContext = {
@@ -56,6 +58,7 @@ export type CommandContext = {
   undoLastAction(): void;
   showAllAccounts(): void;
   switchAccount(email: string): void;
+  toggleMessageFilter(kind: MessageFilterKind): void;
 };
 
 export type CommandResult = {
@@ -282,10 +285,42 @@ export const commands: Command[] = [
   {
     id: "mail.refresh",
     title: "Refresh mail",
-    keys: ["Shift+r"],
+    keys: [],
     group: "Application",
     enabled: () => true,
     run: (context) => complete(context.refresh),
+  },
+  {
+    id: "filter.unread",
+    title: "Toggle Unread filter",
+    keys: ["Shift+u"],
+    group: "Application",
+    enabled: (context) => isThreadMailbox(context) && !context.composerActive,
+    run: (context) => complete(() => context.toggleMessageFilter("unread")),
+  },
+  {
+    id: "filter.starred",
+    title: "Toggle Starred filter",
+    keys: ["Shift+s"],
+    group: "Application",
+    enabled: (context) => isThreadMailbox(context) && !context.composerActive,
+    run: (context) => complete(() => context.toggleMessageFilter("starred")),
+  },
+  {
+    id: "filter.important",
+    title: "Toggle Important filter",
+    keys: ["Shift+i"],
+    group: "Application",
+    enabled: (context) => isThreadMailbox(context) && !context.composerActive,
+    run: (context) => complete(() => context.toggleMessageFilter("important")),
+  },
+  {
+    id: "filter.noReply",
+    title: "Toggle No Reply filter",
+    keys: ["Shift+r"],
+    group: "Application",
+    enabled: (context) => isThreadMailbox(context) && !context.composerActive,
+    run: (context) => complete(() => context.toggleMessageFilter("noReply")),
   },
   {
     id: "diagnostics.open",

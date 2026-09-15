@@ -483,6 +483,41 @@ it("renders plain-text URLs as links that open in the OS browser instead of navi
   expect(openUrl).toHaveBeenCalledWith("https://example.com/offer");
 });
 
+it.each([
+  {
+    name: "nested RSVP control",
+    html: `
+      <table><tbody><tr><td>
+        <!--[if mso]><a href="https://calendar.example/event?action=RESPOND&amp;rst=1"><![endif]-->
+        <a href="https://calendar.example/event?action=RESPOND&amp;rst=1" target="_blank">
+          <span class="button-label">Yes</span>
+        </a>
+        <!--[if mso]></a><![endif]-->
+      </td></tr></tbody></table>
+    `,
+    selector: "a span",
+    expected: "https://calendar.example/event?action=RESPOND&rst=1",
+  },
+  {
+    name: "ordinary text link",
+    html: '<p>Read the <a href="https://news.example/story"><strong>full story</strong></a>.</p>',
+    selector: "a strong",
+    expected: "https://news.example/story",
+  },
+])("opens a $name in the OS browser", ({ html, selector, expected }) => {
+  render(<SafeMessage html={html} />);
+  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+  fireEvent.load(frame);
+  // jsdom does not populate an iframe from srcdoc, so mirror the loaded
+  // document before exercising the listener installed by handleLoad.
+  frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
+
+  const accepted = fireEvent.click(frame.contentDocument!.querySelector(selector)!);
+
+  expect(accepted).toBe(false);
+  expect(openUrl).toHaveBeenCalledWith(expected);
+});
+
 it("leaves plain text without links untouched", () => {
   render(<SafeMessage html="" text="No links in this message." />);
   expect(screen.getByTestId("message-body").querySelector("a")).toBeNull();

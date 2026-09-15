@@ -28,6 +28,73 @@ use models::{
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
 use tokio_util::sync::CancellationToken;
+use url::Url;
+
+/// Keep remote pages out of Dispatch even if a platform webview activates an
+/// email link before the iframe's DOM click handler can cancel it. This is a
+/// final native boundary: app documents may navigate in the webview, ordinary
+/// web/mail/telephone URLs are handed to the operating system, and other
+/// navigation schemes are denied.
+fn allow_in_app_navigation(url: &Url) -> bool {
+    match url.scheme() {
+        "about" | "tauri" => true,
+        "http" | "https" => {
+            let host = url.host_str();
+            host == Some("tauri.localhost")
+                || (cfg!(debug_assertions)
+                    && host == Some("localhost")
+                    && url.port_or_known_default() == Some(1420))
+        }
+        _ => false,
+    }
+}
+
+fn external_navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("external-navigation")
+        .on_navigation(|_, url| {
+            if allow_in_app_navigation(url) {
+                return true;
+            }
+            if matches!(url.scheme(), "http" | "https" | "mailto" | "tel") {
+                let _ = open::that(url.as_str());
+            }
+            false
+        })
+        .build()
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::allow_in_app_navigation;
+    use url::Url;
+
+    #[test]
+    fn keeps_only_application_documents_in_the_webview() {
+        assert!(allow_in_app_navigation(
+            &Url::parse("tauri://localhost/").unwrap()
+        ));
+        assert!(allow_in_app_navigation(
+            &Url::parse("http://tauri.localhost/thread/1").unwrap()
+        ));
+        assert!(allow_in_app_navigation(
+            &Url::parse("about:srcdoc").unwrap()
+        ));
+    }
+
+    #[test]
+    fn rejects_remote_and_active_navigation_from_the_webview() {
+        for value in [
+            "https://calendar.example/event?action=respond",
+            "http://example.com/",
+            "mailto:person@example.com",
+            "tel:+15551234567",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ] {
+            assert!(!allow_in_app_navigation(&Url::parse(value).unwrap()));
+        }
+    }
+}
 
 /// An account beyond the primary: its own credentials and the task running
 /// its own sync loop. Removing the account aborts `poll_task`. Shared with
@@ -799,6 +866,7 @@ fn not_configured() -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(external_navigation_guard())
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()

@@ -15,6 +15,7 @@ import {
   Forward,
   Inbox,
   Keyboard,
+  ListFilter,
   Mail,
   Mails,
   MailOpen,
@@ -71,6 +72,11 @@ import {
 import { mailClient } from "./data/client";
 import { createForegroundRefreshController } from "./foregroundRefresh";
 import { formatLabelName, labelIdsForConversationDisplay } from "./labels";
+import {
+  filterThreadsByMessageFilters,
+  MESSAGE_FILTER_OPTIONS,
+  type MessageFilterKind,
+} from "./messageFilters";
 import { formattingShortcuts } from "./richText";
 import type {
   Account,
@@ -516,6 +522,15 @@ export function App() {
     setFontScale((current) => saveFontScale(changeFontScale(current, direction)));
   }, []);
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [activeMessageFilters, setActiveMessageFilters] = useState<Set<MessageFilterKind>>(() => new Set());
+  const toggleMessageFilter = useCallback((kind: MessageFilterKind) => {
+    setActiveMessageFilters((current) => {
+      const next = new Set(current);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  }, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
@@ -1109,8 +1124,12 @@ export function App() {
     };
   }, [threads, detail, includeArchived, mailbox, selectedId, loadThreads, query, labels, recordTriageEvent, setNotice]);
 
+  const visibleThreads = useMemo(
+    () => filterThreadsByMessageFilters(threads, activeMessageFilters),
+    [threads, activeMessageFilters],
+  );
   const selected = threads.find((thread) => thread.id === selectedId) ?? null;
-  const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
+  const selectedIndex = visibleThreads.findIndex((thread) => thread.id === selectedId);
   const accountColors = useMemo(
     () => new Map(accounts.map((account) => [account.email, account.color] as const)),
     [accounts],
@@ -1299,12 +1318,12 @@ export function App() {
       setDetail(null);
     },
     selectNext: () => {
-      const next = Math.min(selectedIndex + 1, threads.length - 1);
-      setSelectedId(threads[next]?.id ?? null);
+      const next = Math.min(selectedIndex + 1, visibleThreads.length - 1);
+      setSelectedId(visibleThreads[next]?.id ?? null);
     },
     selectPrevious: () => {
       const next = Math.max(selectedIndex - 1, 0);
-      setSelectedId(threads[next]?.id ?? null);
+      setSelectedId(visibleThreads[next]?.id ?? null);
     },
     selectNextMessage: () => selectAdjacentMessage(1),
     selectPreviousMessage: () => selectAdjacentMessage(-1),
@@ -1411,7 +1430,8 @@ export function App() {
     showAllAccounts: () => {
       setActiveAccountId(null);
     },
-  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
+    toggleMessageFilter,
+  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1598,7 +1618,7 @@ export function App() {
                   ? `${correspondence.drafts.length} drafts`
                   : mailbox === "outbox"
                     ? `${correspondence.outbox.filter((item) => item.state !== "canceled").length} outgoing`
-                    : `${threads.length} conversations`}
+                    : `${visibleThreads.length} conversations`}
               </h1>
             </div>
           </div>
@@ -1674,30 +1694,35 @@ export function App() {
             </div>
           </div>
         ) : null}
-        {mailbox === "inbox" ? (
-          <label className="search-box">
-            <Search size={16} />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search mail"
-              aria-label="Search mail"
-            />
-            {query.trim() ? (
-              <button
-                type="button"
-                className={`search-toggle ${includeArchived ? "active" : ""}`}
-                aria-pressed={includeArchived}
-                aria-label="Include archived or trashed mail in search"
-                title="Include archived or trashed mail in search"
-                onClick={() => setIncludeArchived((current) => !current)}
-              >
-                <Archive size={14} />
-              </button>
+        {isThreadMailbox ? (
+          <div className="list-toolbar">
+            {mailbox === "inbox" ? (
+              <label className="search-box">
+                <Search size={16} />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search mail"
+                  aria-label="Search mail"
+                />
+                {query.trim() ? (
+                  <button
+                    type="button"
+                    className={`search-toggle ${includeArchived ? "active" : ""}`}
+                    aria-pressed={includeArchived}
+                    aria-label="Include archived or trashed mail in search"
+                    title="Include archived or trashed mail in search"
+                    onClick={() => setIncludeArchived((current) => !current)}
+                  >
+                    <Archive size={14} />
+                  </button>
+                ) : null}
+                <kbd>/</kbd>
+              </label>
             ) : null}
-            <kbd>/</kbd>
-          </label>
+            <FiltersButton activeFilters={activeMessageFilters} onToggleFilter={toggleMessageFilter} />
+          </div>
         ) : null}
         <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={MAILBOX_TITLES[mailbox]}>
           {mailbox === "drafts" ? (
@@ -1727,7 +1752,10 @@ export function App() {
               <p className="empty">{mailbox === "trash" ? "No trashed messages." : "Inbox zero."}</p>
             )
           ) : null}
-          {threads.map((thread) => (
+          {!loading && threads.length > 0 && visibleThreads.length === 0 ? (
+            <p className="empty">No conversations match the selected filters.</p>
+          ) : null}
+          {visibleThreads.map((thread) => (
             <ThreadRow
               key={thread.id}
               thread={thread}
@@ -2446,6 +2474,91 @@ function AccountSwitcher({
               {name.charAt(0).toUpperCase()}
             </button>
           </HoverTooltip>
+        );
+      })}
+    </div>
+  );
+}
+
+function FiltersButton({
+  activeFilters,
+  onToggleFilter,
+}: {
+  activeFilters: Set<MessageFilterKind>;
+  onToggleFilter(kind: MessageFilterKind): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (anchorRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  return (
+    <div className="filters-anchor" ref={anchorRef}>
+      <button
+        type="button"
+        className={`filters-trigger ${activeFilters.size > 0 ? "active" : ""}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <ListFilter size={15} />
+        <span>Filters</span>
+        {activeFilters.size > 0 ? <span className="filters-badge">{activeFilters.size}</span> : null}
+      </button>
+      {open ? (
+        <FiltersMenu
+          activeFilters={activeFilters}
+          onToggleFilter={onToggleFilter}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function FiltersMenu({
+  activeFilters,
+  onToggleFilter,
+  onClose,
+}: {
+  activeFilters: Set<MessageFilterKind>;
+  onToggleFilter(kind: MessageFilterKind): void;
+  onClose(): void;
+}) {
+  useEscapeDismiss(onClose);
+  return (
+    <div className="filters-menu" role="menu" aria-label="Filters">
+      <div className="filters-menu-title">Filters</div>
+      {MESSAGE_FILTER_OPTIONS.map((option) => {
+        const isActive = activeFilters.has(option.kind);
+        return (
+          <button
+            key={option.kind}
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={isActive}
+            className={`filters-menu-item ${isActive ? "active" : ""}`}
+            onClick={() => onToggleFilter(option.kind)}
+          >
+            <span className="filters-menu-item-label">
+              <span className="filters-menu-item-check" aria-hidden="true">
+                {isActive ? <Check size={13} /> : null}
+              </span>
+              {option.label}
+            </span>
+            <span className="filters-menu-item-keys">
+              <kbd>shift</kbd>
+              <kbd>{option.shortcutKey}</kbd>
+            </span>
+          </button>
         );
       })}
     </div>

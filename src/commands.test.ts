@@ -65,6 +65,7 @@ function noopContext(): CommandContext {
     undoLastAction: () => {},
     showAllAccounts: () => {},
     switchAccount: () => {},
+    toggleMessageFilter: () => {},
   };
 }
 
