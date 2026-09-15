@@ -33,6 +33,8 @@ type SafeMessageProps = {
   fontScale?: number;
   fontFamily?: FontFamily;
   tone?: "default" | "current" | "muted";
+  /** Called with an image's resolved `src` when the reader clicks it in the message body. */
+  onImageClick?: (src: string) => void;
 };
 
 type QuotedHistoryBoundary =
@@ -94,6 +96,7 @@ body[data-tone="current"] { color: var(--text); }
 body[data-tone="muted"] { color: var(--muted); }
 :where([hidden]) { display: none; }
 :where(img) { max-width: 100%; }
+:where(img[src]) { cursor: zoom-in; }
 :where(img:not([src])) { display: inline-block; min-width: 24px; min-height: 24px; border: 1px dashed var(--border); background: var(--hover); vertical-align: middle; }
 :where(a) { color: var(--link); text-underline-offset: 3px; }
 :where(a:focus-visible) { outline: 2px solid var(--link); outline-offset: 3px; }
@@ -496,7 +499,10 @@ export function SafeMessage({
   fontScale = 1,
   fontFamily = "system",
   tone = "default",
+  onImageClick,
 }: SafeMessageProps) {
+  const onImageClickRef = useRef(onImageClick);
+  onImageClickRef.current = onImageClick;
   const [imagesAllowedForMessage, setImagesAllowedForMessage] = useState(false);
   const [quotedHistoryExpanded, setQuotedHistoryExpanded] = useState(false);
   const imagesAllowed = loadImages || imagesAllowedForMessage;
@@ -594,10 +600,19 @@ export function SafeMessage({
 
     const onClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
-      const href = target?.closest("a")?.getAttribute("href");
-      if (!href) return;
+      const link = target?.closest("a");
+      const href = link?.getAttribute("href");
+      if (href) {
+        event.preventDefault();
+        void openUrl(href);
+        return;
+      }
+      // Read the live src (not the sanitized markup) so this reflects
+      // whatever applyResolvedImages ended up resolving the image to.
+      const src = target?.closest("img")?.getAttribute("src");
+      if (!src) return;
       event.preventDefault();
-      void openUrl(href);
+      onImageClickRef.current?.(src);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       // Keyboard events do not cross iframe boundaries. Forward input from

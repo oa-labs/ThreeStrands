@@ -7,10 +7,14 @@
   },
   "runArgs": ["--platform=linux/amd64"],
   "remoteUser": "vscode",
+  "mounts": [
+    "source=dispatch-linux-node-modules,target=${containerWorkspaceFolder}/node_modules,type=volume",
+    "source=dispatch-linux-cargo-target,target=${containerWorkspaceFolder}/src-tauri/target,type=volume"
+  ],
   "containerEnv": {
     "APPIMAGE_EXTRACT_AND_RUN": "1"
   },
-  "postCreateCommand": "pnpm install --frozen-lockfile",
+  "postCreateCommand": "sudo chown -R vscode:vscode node_modules src-tauri/target && pnpm install --frozen-lockfile",
   "forwardPorts": [1420],
   "hostRequirements": {
     "cpus": 4,

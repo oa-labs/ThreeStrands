@@ -550,6 +550,7 @@ export function App() {
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
+  const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   // Keyed by thread id, not a single flag, so summarizing thread A in the
@@ -2015,6 +2016,7 @@ export function App() {
                         text={message.bodyText}
                         loadImages={loadRemoteImages}
                         imageCacheKey={message.id}
+                        onImageClick={setLightboxImageSrc}
                         resolveImage={(url) => {
                           if (!/^cid:/i.test(url)) return mailClient.fetchRemoteImage(url);
                           let contentId = url.slice(4);
@@ -2220,6 +2222,9 @@ export function App() {
           {notice.undo ? <button onClick={notice.undo}>Undo</button> : null}
           <button aria-label="Dismiss" onClick={() => setNotice(null)}><X size={14} /></button>
         </div>
+      ) : null}
+      {lightboxImageSrc ? (
+        <ImageLightbox src={lightboxImageSrc} onClose={() => setLightboxImageSrc(null)} />
       ) : null}
     </main>
   );
@@ -3591,6 +3596,18 @@ function UnsubscribeConfirm({
         </div>
       </div>
     </Modal>
+  );
+}
+
+function ImageLightbox({ src, onClose }: { src: string; onClose(): void }) {
+  useEscapeDismiss(onClose);
+  return (
+    <div className="modal-backdrop lightbox-backdrop" role="presentation" onMouseDown={onClose}>
+      <button type="button" className="lightbox-close" aria-label="Close" onClick={onClose}>
+        <X size={20} />
+      </button>
+      <img src={src} alt="" className="lightbox-image" onMouseDown={(event) => event.stopPropagation()} />
+    </div>
   );
 }
 

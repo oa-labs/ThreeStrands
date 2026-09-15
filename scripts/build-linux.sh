@@ -20,6 +20,20 @@ if [[ "$release_build" != "0" && "$release_build" != "1" ]]; then
   exit 1
 fi
 
+bundle_selection="${DISPATCH_LINUX_BUNDLES:-deb,rpm,appimage}"
+case "$bundle_selection" in
+  deb,rpm | deb,rpm,appimage) ;;
+  *)
+    echo "error: DISPATCH_LINUX_BUNDLES must be deb,rpm or deb,rpm,appimage" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$release_build" == "1" && "$bundle_selection" != "deb,rpm,appimage" ]]; then
+  echo "error: release builds must produce deb,rpm,appimage" >&2
+  exit 1
+fi
+
 if [[ "$release_build" == "1" ]]; then
   if [[ -z "${DISPATCH_GOOGLE_CLIENT_ID:-}" ]]; then
     echo "error: DISPATCH_GOOGLE_CLIENT_ID is required for a release build" >&2
@@ -32,6 +46,7 @@ if [[ "$release_build" == "1" ]]; then
 fi
 
 echo "Building Dispatch Linux x86-64 packages"
+echo "Bundles: $bundle_selection"
 echo "Node:  $(node --version)"
 echo "pnpm:  $(pnpm --version)"
 echo "Rust:  $(rustc --version)"
@@ -52,7 +67,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-pnpm tauri build --bundles deb,rpm,appimage
+pnpm tauri build --bundles "$bundle_selection"
 
 bundle_root="$project_root/src-tauri/target/release/bundle"
 artifact_dir="$project_root/artifacts/linux-amd64"
@@ -64,7 +79,12 @@ mapfile -d '' packages < <(
     \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) -print0
 )
 
-for extension in deb rpm AppImage; do
+expected_extensions=(deb rpm)
+if [[ "$bundle_selection" == "deb,rpm,appimage" ]]; then
+  expected_extensions+=(AppImage)
+fi
+
+for extension in "${expected_extensions[@]}"; do
   found=0
   for package in "${packages[@]}"; do
     if [[ "$package" == *."$extension" ]]; then
@@ -79,7 +99,7 @@ for extension in deb rpm AppImage; do
 done
 
 for package in "${packages[@]}"; do
-  cp -p "$package" "$artifact_dir/"
+  install -m 0644 "$package" "$artifact_dir/"
 done
 
 deb_package="$(find "$artifact_dir" -maxdepth 1 -type f -name '*.deb' -print -quit)"
@@ -97,11 +117,6 @@ if [[ "$(rpm -qp --queryformat '%{ARCH}' "$rpm_package")" != "x86_64" ]]; then
   exit 1
 fi
 
-if ! file "$appimage_package" | grep -Eq 'x86-64|x86_64'; then
-  echo "error: AppImage is not x86-64" >&2
-  exit 1
-fi
-
 if ! file "$native_binary" | grep -Eq 'x86-64|x86_64'; then
   echo "error: native executable is not x86-64" >&2
   exit 1
@@ -111,17 +126,28 @@ dpkg-deb -I "$deb_package" > "$artifact_dir/debian-package-info.txt"
 rpm -qpR "$rpm_package" > "$artifact_dir/rpm-requires.txt"
 ldd "$native_binary" > "$artifact_dir/native-library-dependencies.txt"
 
-appimage_extract_dir="$(mktemp -d)"
-cleanup_paths+=("$appimage_extract_dir")
-(
-  cd "$appimage_extract_dir"
-  "$appimage_package" --appimage-extract >/dev/null
-)
-test -f "$appimage_extract_dir/squashfs-root/AppRun"
+if [[ "$bundle_selection" == "deb,rpm,appimage" ]]; then
+  if ! file "$appimage_package" | grep -Eq 'x86-64|x86_64'; then
+    echo "error: AppImage is not x86-64" >&2
+    exit 1
+  fi
+
+  appimage_extract_dir="$(mktemp -d)"
+  cleanup_paths+=("$appimage_extract_dir")
+  (
+    cd "$appimage_extract_dir"
+    "$appimage_package" --appimage-extract >/dev/null
+  )
+  test -f "$appimage_extract_dir/squashfs-root/AppRun"
+fi
 
 (
   cd "$artifact_dir"
-  sha256sum ./*.deb ./*.rpm ./*.AppImage > SHA256SUMS
+  checksum_files=(./*.deb ./*.rpm)
+  if [[ "$bundle_selection" == "deb,rpm,appimage" ]]; then
+    checksum_files+=(./*.AppImage)
+  fi
+  sha256sum "${checksum_files[@]}" > SHA256SUMS
 )
 
 echo "Linux artifacts:"

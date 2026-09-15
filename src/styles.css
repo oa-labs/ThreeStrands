@@ -762,6 +762,23 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
   box-shadow: 0 24px 80px var(--shadow);
 }
 .modal > header { display: flex; align-items: center; justify-content: space-between; padding: 15px 17px 8px; }
+.lightbox-backdrop { place-items: center; padding-top: 0; cursor: zoom-out; }
+.lightbox-image { max-width: min(92vw, 1400px); max-height: 92vh; border-radius: 6px; box-shadow: 0 24px 80px var(--shadow); cursor: default; }
+.lightbox-close {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--text);
+  cursor: pointer;
+}
+.lightbox-close:hover { background: var(--hover); }
 .modal > header h2 { font-size: calc(13px * var(--font-scale)); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 .palette-search { display: flex; align-items: center; gap: 10px; margin: 8px 12px; padding: 12px; border: 1px solid var(--border-strong); border-radius: 9px; }
 .command-list { max-height: 48vh; overflow: auto; padding: 5px 8px 10px; }

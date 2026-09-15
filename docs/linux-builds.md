@@ -20,16 +20,30 @@ the resulting AppImage can run.
 - At least 8 GB of memory available to the container
 
 Open the repository in its devcontainer. Its post-create command installs the
-locked JavaScript dependencies. The container deliberately targets
-`linux/amd64`; on an Apple Silicon host, Docker therefore uses x86-64 emulation.
-The build output is correct for x86-64 Linux, but compilation is slower than it
-would be on a native x86-64 machine.
+locked JavaScript dependencies. Named volumes keep Linux `node_modules` and
+Rust target files separate from any macOS build outputs. The container
+deliberately targets `linux/amd64`; on an Apple Silicon host, Docker therefore
+uses x86-64 emulation. The build output is correct for x86-64 Linux, but
+compilation is slower than it would be on a native x86-64 machine.
 
 On Apple Silicon, the container runtime must provide working x86-64 emulation.
 For Rancher Desktop, select the VZ virtual machine and enable **Rosetta
 support** in Preferences > Virtual Machine > Emulation before opening the
 devcontainer. QEMU user emulation can crash the Rust compiler even though
 ordinary x86-64 commands appear to work.
+
+Rosetta does not execute the statically linked x86-64 helper that Tauri uses
+to finish an AppImage. On Apple Silicon, use the devcontainer to produce the
+Debian and RPM packages locally:
+
+```sh
+DISPATCH_LINUX_BUNDLES=deb,rpm pnpm build:linux
+```
+
+The native x86-64 GitHub Actions runner remains the source of the AppImage and
+always builds all three formats. A configured release build also requires all
+three formats, so `DISPATCH_LINUX_BUNDLES=deb,rpm` is intentionally rejected
+when `DISPATCH_RELEASE_BUILD=1`.
 
 ## Local build
 
@@ -38,6 +52,9 @@ Inside the devcontainer, run:
 ```sh
 pnpm build:linux
 ```
+
+This produces all three package formats on a native x86-64 host. Use the
+Apple Silicon command above for local Debian/RPM validation.
 
 This unconfigured build does not contain Google OAuth credentials. It is useful
 for compile, package, and installation testing, but its Gmail connection is
@@ -119,6 +136,9 @@ runtime checks before advertising ARM64 support.
 - A Rust compiler `SIGSEGV` on Apple Silicon generally means the container
   runtime is using QEMU rather than Rosetta for x86-64 instructions. Enable the
   runtime's Rosetta support and rebuild the container.
+- An AppImage `exec format error` under Rosetta is the static-helper limitation
+  described above. Build `deb,rpm` locally and let the native x86-64 CI job
+  produce the AppImage.
 - AppImage extraction errors usually indicate a packaging failure; the build
   script uses extraction mode and does not require mounting the AppImage.
 - Keyring errors at runtime indicate that no usable Secret Service is available

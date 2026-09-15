@@ -533,6 +533,46 @@ it("loads images automatically through resolveImage when configured", async () =
   });
 });
 
+it("reports the resolved src when the reader clicks an image in the message body", async () => {
+  const resolveImage = vi.fn(async (url: string) => `data:image/png;base64,RESOLVED(${url})`);
+  const onImageClick = vi.fn();
+  render(
+    <SafeMessage
+      html="<img src='https://example.com/photo.png'>"
+      loadImages
+      resolveImage={resolveImage}
+      onImageClick={onImageClick}
+    />,
+  );
+  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+  fireEvent.load(frame);
+
+  await waitFor(() => expect(frame.srcdoc).toContain("data:image/png;base64,RESOLVED"));
+  // jsdom doesn't navigate the iframe to its srcdoc, so contentDocument
+  // never actually gets the message markup on its own — mirror what the
+  // real browser would have loaded before dispatching into it.
+  frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
+
+  const image = frame.contentDocument!.querySelector("img")!;
+  fireEvent.click(image);
+
+  expect(onImageClick).toHaveBeenCalledWith("data:image/png;base64,RESOLVED(https://example.com/photo.png)");
+  expect(openUrl).not.toHaveBeenCalled();
+});
+
+it("does not report a click on a still-blocked image", () => {
+  const onImageClick = vi.fn();
+  render(<SafeMessage html="<img src='https://example.com/photo.png'>" onImageClick={onImageClick} />);
+  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+  fireEvent.load(frame);
+  frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
+
+  const image = frame.contentDocument!.querySelector("img")!;
+  fireEvent.click(image);
+
+  expect(onImageClick).not.toHaveBeenCalled();
+});
+
 it("leaves an image blocked when resolveImage rejects, rather than crashing", async () => {
   const resolveImage = vi.fn(async () => {
     throw new Error("network error");
