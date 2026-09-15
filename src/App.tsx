@@ -1854,6 +1854,7 @@ export function App() {
                 const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
                 const senderFirstName = simplifyDisplayName(senderName);
                 const downloadableAttachments = message.attachments.filter((attachment) => !attachment.inline);
+                const queuedItem = correspondence.outbox.find((item) => `outbox-${item.id}` === message.id);
                 if (!isExpanded) {
                   return (
                     <button
@@ -1917,7 +1918,9 @@ export function App() {
                           && attachment.contentId?.localeCompare(contentId, undefined, { sensitivity: "accent" }) === 0
                         );
                         if (!embedded) return Promise.reject(new Error("Embedded image not found"));
-                        return mailClient.fetchAttachmentImage(message.id, embedded.id);
+                        return queuedItem
+                          ? mailClient.readInlineImage(queuedItem.draft.id, embedded.id)
+                          : mailClient.fetchAttachmentImage(message.id, embedded.id);
                       }}
                       theme={effectiveThemeValue}
                       fontScale={fontScale / 100}
@@ -2197,7 +2200,14 @@ export function messagesWithQueuedReplies(detail: ThreadDetail, outbox: OutboxIt
       bodyText: item.draft.body,
       unread: false,
       unsubscribe: null,
-      attachments: [],
+      attachments: item.draft.attachments.map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.name,
+        mimeType: attachment.mime,
+        size: attachment.size,
+        contentId: attachment.contentId,
+        inline: attachment.inline,
+      })),
     }));
 
   return queuedReplies.length > 0 ? [...detail.messages, ...queuedReplies] : detail.messages;

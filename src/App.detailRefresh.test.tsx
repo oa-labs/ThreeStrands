@@ -119,7 +119,17 @@ it("shows a queued reply immediately and replaces it with the provider copy", as
       subject: detail.thread.subject,
       body: "Immediate reply",
       bodyHtml: "<p>Immediate reply</p>",
-      attachments: [],
+      attachments: [{
+        id: "inline-1",
+        name: "image.png",
+        mime: "image/png",
+        size: 4,
+        ready: true,
+        messageId: null,
+        providerId: null,
+        inline: true,
+        contentId: "inline-1@dispatch.local",
+      }],
       updatedAt: Date.now(),
     },
   };
@@ -130,6 +140,13 @@ it("shows a queued reply immediately and replaces it with the provider copy", as
     id: "outbox-queued-reply",
     bodyText: "Immediate reply",
     recipients: ['"Doe, Jane" <jane@example.com>', "brian@example.com", "team@example.com"],
+    attachments: [{
+      id: "inline-1",
+      filename: "image.png",
+      mimeType: "image/png",
+      inline: true,
+      contentId: "inline-1@dispatch.local",
+    }],
   });
 
   const providerDetail = {
@@ -144,6 +161,58 @@ it("shows a queued reply immediately and replaces it with the provider copy", as
     .toHaveLength(providerDetail.messages.length);
   expect(messagesWithQueuedReplies(detail, [{ ...queued, state: "canceled" }]))
     .toHaveLength(detail.messages.length);
+});
+
+it("resolves a queued reply's inline image from its outbox draft", async () => {
+  const detail = await mailClient.getThread("welcome");
+  const source = detail.messages.at(-1)!;
+  const queued: OutboxItem = {
+    id: "queued-inline-reply",
+    state: "undo_pending",
+    deadline: Date.now() + 10_000,
+    error: null,
+    draft: {
+      id: "inline-reply-draft",
+      revision: 2,
+      account: "demo@example.com",
+      mode: "reply",
+      sourceId: source.id,
+      threadId: detail.thread.providerThreadId,
+      replyId: "source@example.com",
+      references: [],
+      to: "hello@dispatch.local",
+      cc: "",
+      bcc: "",
+      subject: detail.thread.subject,
+      body: "Screenshot",
+      bodyHtml: '<p>Screenshot</p><img src="cid:inline-1@dispatch.local" alt="image.png">',
+      attachments: [{
+        id: "inline-1",
+        name: "image.png",
+        mime: "image/png",
+        size: 4,
+        ready: true,
+        messageId: null,
+        providerId: null,
+        inline: true,
+        contentId: "inline-1@dispatch.local",
+      }],
+      updatedAt: Date.now(),
+    },
+  };
+  vi.spyOn(mailClient, "listOutbox").mockResolvedValue([queued]);
+  vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+  const readInline = vi.spyOn(mailClient, "readInlineImage")
+    .mockResolvedValue("data:image/png;base64,iVBORw==");
+
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+  await waitFor(() => expect(readInline).toHaveBeenCalledWith("inline-reply-draft", "inline-1"));
+  await waitFor(() => {
+    const bodies = screen.getAllByTestId("message-body") as HTMLIFrameElement[];
+    expect(bodies.some((body) => body.srcdoc.includes("data:image/png;base64,iVBORw=="))).toBe(true);
+  });
 });
 
 it("renders a reply in the open conversation as soon as Send queues it", async () => {

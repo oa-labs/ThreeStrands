@@ -1067,7 +1067,19 @@ impl Correspondence {
                 }
             }
             ReadInline { id, attachment_id } => {
-                let d = self.database.draft(&id)?;
+                // Queueing removes the editable draft row, but the UI keeps
+                // rendering its reply optimistically during undo/delivery.
+                // Resolve inline images from the outbox payload in that gap.
+                let d = match self.database.draft(&id) {
+                    Ok(draft) => draft,
+                    Err(draft_error) => self
+                        .database
+                        .outbox()?
+                        .into_iter()
+                        .find(|item| item.draft.id == id && item.state != "canceled")
+                        .map(|item| item.draft)
+                        .ok_or(draft_error)?,
+                };
                 let attachment = d
                     .attachments
                     .iter()

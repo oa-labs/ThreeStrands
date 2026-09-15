@@ -106,7 +106,10 @@ export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDeta
       d.revision++; write(store); return d;
     },
     async readInlineImage(id, attachmentId) {
-      const attachment = draft(read(), id).attachments.find((candidate) => candidate.id === attachmentId && candidate.inline);
+      const store = read();
+      const owner = store.drafts.find((candidate) => candidate.id === id)
+        ?? store.outbox.find((candidate) => candidate.draft.id === id && candidate.state !== "canceled")?.draft;
+      const attachment = owner?.attachments.find((candidate) => candidate.id === attachmentId && candidate.inline);
       const data = attachment && inlineImages.get(attachmentId);
       if (!data) throw new Error("Pasted image data is unavailable");
       return data;
