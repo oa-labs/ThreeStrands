@@ -393,6 +393,7 @@ kbd {
 
 .reader { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--reader); }
 .reader-header { flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.reader-header h2, .reader-actions { transform: translateY(4px); }
 .reader-actions { display: flex; gap: 5px; }
 .action-button {
   min-height: 34px;
