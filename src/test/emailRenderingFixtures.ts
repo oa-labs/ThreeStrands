@@ -16,6 +16,22 @@ export const emailRenderingFixtures = {
     </style>
     <div class="layout"><strong class="dark-copy" style="font-size:18px;line-height:1.3">Invoice ready</strong><span>View details</span></div>
   `,
+  newsletter: `
+    <table role="presentation" style="width:100%;max-width:640px;margin:0 auto;border-collapse:separate;border-spacing:8px">
+      <tr><td style="padding:16px;background-color:#f4f4f4"><h2>Monthly update</h2><p>Three concise highlights from the team.</p></td></tr>
+    </table>
+  `,
+  table: `
+    <table cellpadding="12" cellspacing="4" width="100%"><thead><tr><th align="left">Item</th><th align="right">Amount</th></tr></thead><tbody><tr><td>Service</td><td align="right">$24</td></tr></tbody></table>
+  `,
+  flex: `
+    <div style="display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px"><span style="flex:1 1 180px">Flexible content</span><a href="https://example.com" style="flex:0 0 auto">Open</a></div>
+  `,
+  darkMode: `
+    <style>@media (prefers-color-scheme: dark) { .panel { color:#fff; background-color:#202020; mix-blend-mode:normal; } }</style>
+    <div class="panel" style="padding:12px">Theme-aware content</div>
+  `,
+  spacer: `<div></div><p>&nbsp;</p><table><tr><td></td></tr></table><p>Content after intentional spacing.</p>`,
   reply: `
     <p>Here is my answer.</p>
     <p>On Tue, Sep 15, 2026 at 7:28 AM A. Sender wrote:</p>

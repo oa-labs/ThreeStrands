@@ -82,7 +82,6 @@ const MESSAGE_DOCUMENT_STYLES = `
   --link: #5942b5;
   --quote-border: #aaa1c7;
 }
-:where(*) { box-sizing: border-box; }
 body {
   margin: 0;
   color: var(--body-text);
@@ -353,7 +352,9 @@ function hasMeaningfulFollowingContent(element: Element, container: Element): bo
 }
 
 function isCompactHeaderBlock(element: Element): boolean {
-  const lines = (element.textContent ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const copy = element.cloneNode(true) as Element;
+  copy.querySelectorAll("br").forEach((br) => br.replaceWith("\n"));
+  const lines = (copy.textContent ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const fields = new Set(lines.filter((line) => headerField.test(line)).map((line) => line.match(headerField)?.[0].toLowerCase()));
   return fields.size >= 3 && emailOrTimestamp.test(lines.join(" ")) && lines.length <= 12;
 }
@@ -371,14 +372,18 @@ export function collapseQuotedHistoryHtml(html: string): string | null {
   const container = document.createElement("div");
   container.innerHTML = html;
   const candidates: Array<QuotedHistoryBoundary & { score: number }> = [];
+  const trailingQuotes = Array.from(container.querySelectorAll("blockquote, cite"))
+    .filter((node) => !hasMeaningfulFollowingContent(node, container));
+  const trailingHeaders = Array.from(container.querySelectorAll("*"))
+    .filter((node) => isCompactHeaderBlock(node) && !hasMeaningfulFollowingContent(node, container));
 
-  container.querySelectorAll("blockquote, cite").forEach((node) => {
-    if (!hasMeaningfulFollowingContent(node, container)) candidates.push({ node, kind: "element", score: 2 });
+  trailingQuotes.forEach((node) => {
+    const pairedHeader = trailingHeaders.some((header) => nodeComesBefore(node, header) || header.contains(node));
+    candidates.push({ node, kind: "element", score: 2 + (pairedHeader ? 2 : 0) });
   });
-  container.querySelectorAll("*").forEach((node) => {
-    if (isCompactHeaderBlock(node) && !hasMeaningfulFollowingContent(node, container)) {
-      candidates.push({ node, kind: "element", score: 2 });
-    }
+  trailingHeaders.forEach((node) => {
+    const pairedQuote = trailingQuotes.some((quote) => nodeComesBefore(node, quote) || node.contains(quote));
+    candidates.push({ node, kind: "element", score: 2 + (pairedQuote ? 2 : 0) });
   });
 
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
@@ -387,7 +392,9 @@ export function collapseQuotedHistoryHtml(html: string): string | null {
     const text = textNode.textContent ?? "";
     const marker = quotedHistoryMarker.exec(text) ?? wroteMarker.exec(text);
     if (marker?.index !== undefined) {
-      candidates.push({ node: textNode as Text, kind: "text", offset: marker.index, score: 3 });
+      const trailingEvidence = [...trailingQuotes, ...trailingHeaders]
+        .some((evidence) => nodeComesBefore(textNode as Node, evidence));
+      candidates.push({ node: textNode as Text, kind: "text", offset: marker.index, score: 3 + (trailingEvidence ? 2 : 0) });
     }
     textNode = walker.nextNode();
   }
@@ -574,7 +581,8 @@ export function SafeMessage({
 
     const resize = () => {
       const height = frameDoc.documentElement?.scrollHeight ?? frameDoc.body?.scrollHeight ?? 0;
-      setFrameHeight(Math.min(height, EMAIL_CSS_LIMITS.maxFrameHeightPx));
+      const nextHeight = Math.min(height, EMAIL_CSS_LIMITS.maxFrameHeightPx);
+      setFrameHeight((previous) => previous === nextHeight ? previous : nextHeight);
     };
     resize();
 

@@ -31,8 +31,19 @@ describe("sanitizeStyleSheet", () => {
       }
     `, "dark");
     expect(css).toContain('[data-email-root][data-theme="dark"] .wrapper');
+    expect(css).not.toContain('[data-email-root] [data-email-root]');
     expect(css).toContain("background-color: #000000");
     expect(css).toContain("display: block");
+  });
+
+  it("resolves color-scheme media against the selected light theme", () => {
+    const css = sanitizeStyleSheet(`
+      @media (prefers-color-scheme: dark) { .copy { color: white; } }
+      @media (prefers-color-scheme: light) { .copy { color: black; } }
+    `, "light");
+    expect(css).toContain('[data-email-root][data-theme="light"] .copy');
+    expect(css).toContain("color: black");
+    expect(css).not.toContain("color: white");
   });
 
   it("drops active/resource at-rules while keeping safe responsive media queries", () => {
@@ -51,6 +62,10 @@ describe("sanitizeStyleSheet", () => {
     expect(css).not.toContain("@import");
     expect(css).not.toContain("@keyframes");
     expect(css).not.toContain("@supports");
+  });
+
+  it("drops ambiguous mixed themed media branches", () => {
+    expect(sanitizeStyleSheet("@media (prefers-color-scheme: dark), screen { .x { color: red; } }", "dark")).toBe("");
   });
 
   it("parses selector lists, rewrites global roots, and scopes every selector", () => {

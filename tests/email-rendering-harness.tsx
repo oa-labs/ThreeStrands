@@ -9,12 +9,14 @@ const fixture = params.get("fixture") === "transactional" ? emailRenderingFixtur
 
 document.documentElement.dataset.theme = theme;
 document.body.style.margin = "0";
+document.body.style.minWidth = "0";
+document.body.style.overflow = "auto";
 document.body.style.padding = "24px";
 document.body.style.background = theme === "light" ? "#fff" : "#17171c";
 document.body.style.color = theme === "light" ? "#24242c" : "#e8e8eb";
 
 createRoot(document.getElementById("root")!).render(
-  <div style={{ maxWidth: 760, margin: "0 auto" }}>
+  <div style={{ width: "100%", maxWidth: 760, margin: "0 auto" }}>
     <SafeMessage html={fixture} theme={theme} loadImages={false} />
   </div>,
 );

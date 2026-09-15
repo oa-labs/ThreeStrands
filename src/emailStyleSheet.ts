@@ -24,20 +24,23 @@ function scopedSelectorList(selectorText: string): string | null {
       let hasRoot = false;
       selector.walkTags((tag) => {
         if (/^(?:html|body)$/i.test(tag.value)) {
-          tag.replaceWith(selectorParser.attribute({ attribute: "data-email-root" }));
+          tag.replaceWith(selectorParser.attribute({ attribute: "data-email-root", value: undefined, raws: {} }));
           hasRoot = true;
         }
       });
       selector.walkPseudos((pseudo) => {
         if (pseudo.value.toLowerCase() === ":root") {
-          pseudo.replaceWith(selectorParser.attribute({ attribute: "data-email-root" }));
+          pseudo.replaceWith(selectorParser.attribute({ attribute: "data-email-root", value: undefined, raws: {} }));
           hasRoot = true;
         }
+      });
+      selector.walkAttributes((attribute) => {
+        if (attribute.attribute === "data-email-root") hasRoot = true;
       });
       if (!selector.toString().trim()) return;
       if (!hasRoot) {
         selector.prepend(selectorParser.combinator({ value: " " }));
-        selector.prepend(selectorParser.attribute({ attribute: "data-email-root" }));
+        selector.prepend(selectorParser.attribute({ attribute: "data-email-root", value: undefined, raws: {} }));
       }
       selectors.push(selector.toString().trim().replace(/^(\[data-email-root\])\s+/, "$1 "));
     });
@@ -73,6 +76,12 @@ export function sanitizeStyleSheet(css: string, theme?: "light" | "dark"): strin
     const preferredThemes = branches.map((branch) => branch.match(/prefers-color-scheme\s*:\s*(dark|light)/i)?.[1]?.toLowerCase());
     const specifiedThemes = preferredThemes.filter((value): value is string => value !== undefined);
     if (specifiedThemes.length > 0) {
+      // A comma list mixing themed and unthemed branches cannot be faithfully
+      // mapped to the selected Dispatch theme without changing its meaning.
+      if (specifiedThemes.length !== branches.length) {
+        atRule.remove();
+        return;
+      }
       // Mixed light/dark comma branches are ambiguous after mapping to the
       // reader-selected theme; drop them instead of falling back to the OS.
       if (specifiedThemes.some((value) => value !== theme) || specifiedThemes.some((value) => value !== specifiedThemes[0])) {
@@ -84,7 +93,13 @@ export function sanitizeStyleSheet(css: string, theme?: "light" | "dark"): strin
         .filter(Boolean)
         .join(", ") || "all";
       atRule.walkRules((rule) => {
-        rule.selector = `[data-email-root][data-theme="${theme}"] ${rule.selector}`;
+        const scoped = scopedSelectorList(rule.selector);
+        if (scoped) {
+          rule.selector = scoped.replaceAll(
+            "[data-email-root]",
+            `[data-email-root][data-theme="${theme}"]`,
+          );
+        }
       });
     }
   });

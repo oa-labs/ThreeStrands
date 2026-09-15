@@ -29,6 +29,12 @@ describe("SafeMessage", () => {
     expect(stylesheet).toContain('[data-email-root][data-theme="dark"] .dark-copy');
   });
 
+  it.each(["newsletter", "table", "flex", "darkMode", "spacer"] as const)("keeps the %s fixture structure intact", (fixture) => {
+    const sanitized = sanitizeMessageHtml(emailRenderingFixtures[fixture]);
+    expect(sanitized).toBeTruthy();
+    if (fixture === "spacer") expect(sanitized).toContain("&nbsp;");
+  });
+
   it("enforces the capability boundary on malformed fixture content", () => {
     const sanitized = sanitizeMessageHtml(emailRenderingFixtures.malformed);
     expect(sanitized).not.toContain("position");
@@ -130,10 +136,8 @@ describe("SafeMessage", () => {
   });
 
   it("keeps a sender's own margin:0 heading/paragraph reset from a <style> block", () => {
-    // h1-h6/p are given generous default spacing by this document's own base
-    // stylesheet; a template that resets it via a <style> block (rather than
-    // inline) had nothing in the property allowlist to survive with, so the
-    // base spacing always won regardless of the sender's intent.
+    // Stylesheet declarations use the same policy as inline declarations, so
+    // sender resets remain available without any Dispatch geometry override.
     const styleSheet = extractSafeStyleSheet("<style>h1, p { margin: 0; }</style>");
     expect(styleSheet).toContain("margin: 0");
   });
@@ -308,6 +312,12 @@ describe("SafeMessage", () => {
     const html = "<p>My answer includes a quotation:</p><blockquote><p>Important cited text.</p></blockquote>";
     expect(collapseQuotedHistoryHtml(html)).toBeNull();
   });
+
+  it("folds a trailing header-and-quote cluster without relying on provider markup", () => {
+    const html = `<p>Current answer.</p><div><div>From: sender@example.com<br>Date: Tue, Sep 15, 2026<br>Subject: Details</div><blockquote>Earlier details.</blockquote></div>`;
+    expect(collapseQuotedHistoryHtml(html)).toContain("Current answer.");
+    expect(collapseQuotedHistoryHtml(html)).not.toContain("Earlier details.");
+  });
 });
 
 it("preserves safe formatting and the class attribute while removing CSS requests and positioning", () => {
@@ -369,7 +379,7 @@ it("restores a background-image only once resolved, with the same URL validation
 
 it("preserves line-height, borders, bgcolor, cellpadding/cellspacing, and CSS width/height", () => {
   const sanitized = sanitizeMessageHtml(`
-    <table bgcolor="#fff" cellpadding="8" cellspacing="999" style="width:100%">
+    <table bgcolor="#fff" cellpadding="8" cellspacing="999" height="120" style="width:100%">
       <tr>
         <td style="line-height:1.5;border-bottom:1px solid #ddd;width:50%">Row</td>
       </tr>
@@ -383,6 +393,7 @@ it("preserves line-height, borders, bgcolor, cellpadding/cellspacing, and CSS wi
   expect(table.getAttribute("bgcolor")).toBe("#fff");
   expect(table.getAttribute("cellpadding")).toBe("8");
   expect(table.getAttribute("cellspacing")).toBe("999");
+  expect(table.getAttribute("height")).toBe("120");
   expect(table.style.width).toBe("100%");
 
   const td = container.querySelector("td")!;

@@ -11,8 +11,10 @@ export const EMAIL_CSS_LIMITS = {
   maxPercentage: 100,
   maxFontSizePx: 256,
   maxFontSizeRelative: 16,
+  maxFontSizePercentage: 1600,
   maxLineHeightUnitless: 16,
   maxUnitlessFactor: 16,
+  maxOpacity: 1,
   maxFrameHeightPx: 50_000,
 } as const;
 
@@ -46,7 +48,7 @@ function fontSize(value: string): string | null {
   const limit = match[3] === "px"
     ? EMAIL_CSS_LIMITS.maxFontSizePx
     : match[3] === "%"
-      ? 1600
+      ? EMAIL_CSS_LIMITS.maxFontSizePercentage
       : EMAIL_CSS_LIMITS.maxFontSizeRelative;
   return amount <= limit ? trimmed : null;
 }
@@ -66,26 +68,59 @@ function unitlessFactor(value: string): string | null {
   return Number(trimmed) <= EMAIL_CSS_LIMITS.maxUnitlessFactor ? trimmed : null;
 }
 
+function opacity(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return null;
+  return Number(trimmed) <= EMAIL_CSS_LIMITS.maxOpacity ? trimmed : null;
+}
+
 const safeFontFamily = /^(?=.{1,200}$)[a-z0-9 _,'"-]+$/i;
+const safeBorderWidthKeyword = /^(?:thin|medium|thick)$/;
 function border(value: string): string | null {
-  const match = value.trim().toLowerCase().match(/^(\d+(?:\.\d+)?)px\s+(none|solid|dashed|dotted|double|groove|ridge|inset|outset)\s+(.+)$/);
-  if (!match || Number(match[1]) > EMAIL_CSS_LIMITS.maxAbsolutePx || !safeColor.test(match[3])) return null;
-  return `${match[1]}px ${match[2]} ${match[3]}`;
+  const trimmed = value.trim().toLowerCase();
+  if (/^(?:none|0|0px)$/.test(trimmed)) return trimmed;
+  const ordered = trimmed.match(/^(\d+(?:\.\d+)?(?:px|em|rem))\s+(none|solid|dashed|dotted|double|groove|ridge|inset|outset)(?:\s+(.+))?$/);
+  if (ordered && (!ordered[3] || safeColor.test(ordered[3]))) return trimmed;
+  const parts = trimmed.split(/\s+/);
+  if (parts.length > 3) return null;
+  const styles = new Set(["none", "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset"]);
+  let widthSeen = false;
+  let styleSeen = false;
+  let colorSeen = false;
+  for (const part of parts) {
+    if (styles.has(part)) {
+      if (styleSeen) return null;
+      styleSeen = true;
+    } else if (safeColor.test(part)) {
+      if (colorSeen) return null;
+      colorSeen = true;
+    } else if (safeBorderWidthKeyword.test(part) || (boundedLength(part) !== null && !part.endsWith("%"))) {
+      if (widthSeen) return null;
+      widthSeen = true;
+    } else return null;
+  }
+  return trimmed;
 }
 
 function boxShadow(value: string): string | null {
-  const parts = value.trim().toLowerCase().split(/\s+/);
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed === "none") return trimmed;
+  const parts = trimmed.split(/\s+/);
   if (parts[0] === "inset") parts.shift();
   if (parts.length < 4 || parts.length > 5 || !safeColor.test(parts.at(-1) ?? "")) return null;
   const lengths = parts.slice(0, -1);
   if (!lengths.every((part) => /^-?\d+(?:\.\d+)?px$/.test(part) && Math.abs(Number.parseFloat(part)) <= EMAIL_CSS_LIMITS.maxAbsolutePx)) return null;
-  return value.trim().toLowerCase();
+  return trimmed;
 }
 
 type Validator = (value: string) => string | null;
 const regex = (pattern: RegExp): Validator => (value) => pattern.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : null;
 const keyword = (values: string[]) => regex(namedValue(values));
 const layoutLength = (options: { allowNegative?: boolean; allowPercentage?: boolean } = {}): Validator => (value) => boundedLength(value, options);
+const autoOr = (validator: Validator): Validator => (value) => {
+  const trimmed = value.trim().toLowerCase();
+  return trimmed === "auto" ? trimmed : validator(value);
+};
 
 const validators: Record<string, Validator> = {
   "text-align": keyword(["left", "right", "center", "justify", "start", "end"]),
@@ -105,13 +140,14 @@ const validators: Record<string, Validator> = {
   background: (value) => safeColor.test(value.trim()) || /^(none|transparent)$/.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : null,
   color: regex(safeColor),
   "background-color": regex(safeColor),
+  opacity,
   "font-size": fontSize,
   "line-height": lineHeight,
-  width: layoutLength({ allowPercentage: true }),
-  height: layoutLength({ allowPercentage: true }),
-  "min-width": layoutLength({ allowPercentage: true }),
+  width: autoOr(layoutLength({ allowPercentage: true })),
+  height: autoOr(layoutLength({ allowPercentage: true })),
+  "min-width": autoOr(layoutLength({ allowPercentage: true })),
   "max-width": (value) => /^(none|auto)$/.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : boundedLength(value, { allowPercentage: true }),
-  "min-height": layoutLength({ allowPercentage: true }),
+  "min-height": autoOr(layoutLength({ allowPercentage: true })),
   "max-height": (value) => /^(none|auto)$/.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : boundedLength(value, { allowPercentage: true }),
   "margin": (value) => value.trim().toLowerCase().split(/\s+/).every((part) => /^(auto|0)$/.test(part) || boundedLength(part, { allowNegative: true, allowPercentage: true }) !== null) ? value.trim().toLowerCase() : null,
   padding: (value) => value.trim().toLowerCase().split(/\s+/).length <= 4 && value.trim().toLowerCase().split(/\s+/).every((part) => boundedLength(part, { allowPercentage: true }) !== null) ? value.trim().toLowerCase() : null,
@@ -130,7 +166,7 @@ const validators: Record<string, Validator> = {
   "border-left": border,
   "border-color": (value) => value.trim().toLowerCase().split(/\s+/).length <= 4 && value.trim().toLowerCase().split(/\s+/).every((part) => safeColor.test(part)) ? value.trim().toLowerCase() : null,
   "border-style": keyword(["none", "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset"]),
-  "border-width": (value) => value.trim().toLowerCase().split(/\s+/).length <= 4 && value.trim().toLowerCase().split(/\s+/).every((part) => boundedLength(part) !== null) ? value.trim().toLowerCase() : null,
+  "border-width": (value) => value.trim().toLowerCase().split(/\s+/).length <= 4 && value.trim().toLowerCase().split(/\s+/).every((part) => safeBorderWidthKeyword.test(part) || boundedLength(part) !== null) ? value.trim().toLowerCase() : null,
   "border-radius": (value) => value.trim().toLowerCase().split(/\s+/).every((part) => boundedLength(part, { allowPercentage: true }) !== null) ? value.trim().toLowerCase() : null,
   "box-shadow": boxShadow,
   "box-sizing": keyword(["content-box", "border-box"]),
@@ -167,10 +203,10 @@ const validators: Record<string, Validator> = {
   "mix-blend-mode": keyword(["normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"]),
   "letter-spacing": (value) => value.trim().toLowerCase() === "normal" ? "normal" : layoutLength({ allowNegative: true })(value),
   position: keyword(["static", "relative", "absolute"]),
-  top: layoutLength({ allowNegative: true }),
-  right: layoutLength({ allowNegative: true }),
-  bottom: layoutLength({ allowNegative: true }),
-  left: layoutLength({ allowNegative: true }),
+  top: layoutLength({ allowNegative: true, allowPercentage: true }),
+  right: layoutLength({ allowNegative: true, allowPercentage: true }),
+  bottom: layoutLength({ allowNegative: true, allowPercentage: true }),
+  left: layoutLength({ allowNegative: true, allowPercentage: true }),
   font: (value) => {
     const match = value.trim().toLowerCase().match(/^(?:(?:normal|italic|oblique)\s+)?(?:(?:normal|small-caps)\s+)?(?:(?:normal|bold|[1-9]00)\s+)?(\d+(?:\.\d+)?(?:px|em|rem|%))(?:\/(normal|\d+(?:\.\d+)?(?:px|em|rem|%)))?\s+(.+)$/i);
     if (!match || fontSize(match[1]) === null || (match[2] && lineHeight(match[2]) === null) || !safeFontFamily.test(match[3])) return null;
