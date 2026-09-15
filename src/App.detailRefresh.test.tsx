@@ -237,3 +237,25 @@ it("renders a reply in the open conversation as soon as Send queues it", async (
     localStorage.removeItem("dispatch.demoCorrespondence");
   }
 });
+
+it("sends and marks the open conversation done with Mod+Shift+Enter", async () => {
+  localStorage.removeItem("dispatch.demoCorrespondence");
+  const mutateThreads = vi.spyOn(mailClient, "mutateThreads").mockResolvedValue();
+  try {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    fireEvent.click(screen.getByRole("button", { name: "Reply (r)" }));
+
+    const editor = await screen.findByRole("textbox", { name: "Message body" });
+    editor.innerHTML = "<p>Send this and mark the conversation done</p>";
+    fireEvent.input(editor);
+    fireEvent.keyDown(editor, { key: "Enter", metaKey: true, shiftKey: true });
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply message" })).not.toBeInTheDocument());
+    await waitFor(() => expect(mutateThreads).toHaveBeenCalledWith([
+      { kind: "archive", threadId: "welcome", value: true },
+    ]));
+  } finally {
+    localStorage.removeItem("dispatch.demoCorrespondence");
+  }
+});

@@ -17,6 +17,7 @@ function noopContext(): CommandContext {
     selectedTrashed: false,
     canUnsubscribe: false,
     canNavigateMessages: false,
+    canSendAndMarkDone: false,
     composerActive: false,
     canUndoSend: false,
     compose: () => {},
@@ -29,6 +30,7 @@ function noopContext(): CommandContext {
     openDrafts: () => {},
     openOutbox: () => {},
     sendDraft: () => {},
+    sendAndMarkDone: () => {},
     attachFiles: () => {},
     undoSend: () => {},
     selectNext: () => {},
@@ -102,6 +104,16 @@ describe("command registry", () => {
   it("binds reply to r and reply all to a", () => {
     expect(commands.find((command) => command.id === "draft.reply")?.keys).toEqual(["r"]);
     expect(commands.find((command) => command.id === "draft.replyAll")?.keys).toEqual(["a"]);
+  });
+
+  it("sends and marks done with the shifted send shortcut", () => {
+    const command = commands.find((candidate) => candidate.id === "draft.sendAndMarkDone");
+    expect(command?.keys).toEqual(["Mod+Shift+Enter"]);
+    expect(command?.enabled({ ...noopContext(), composerActive: true, canSendAndMarkDone: true })).toBe(true);
+    expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(false);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true }), "Mod+Shift+Enter")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true }), "Mod+Shift+Enter")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", metaKey: true }), "Mod+Shift+Enter")).toBe(false);
   });
 
   it("gates triage and reply commands to thread-based mailboxes", () => {

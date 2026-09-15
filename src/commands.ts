@@ -7,6 +7,7 @@ export type CommandContext = {
   selectedTrashed: boolean;
   canUnsubscribe: boolean;
   canNavigateMessages: boolean;
+  canSendAndMarkDone: boolean;
   composerActive: boolean;
   closing?: boolean;
   canUndoSend: boolean;
@@ -20,6 +21,7 @@ export type CommandContext = {
   openDrafts(): void;
   openOutbox(): void;
   sendDraft(): void;
+  sendAndMarkDone(): void;
   attachFiles(): void;
   undoSend(): void;
   selectNext(): void;
@@ -95,6 +97,7 @@ export const commands: Command[] = [
   { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openDrafts) },
   { id: "outbox.open", title: "Open outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => complete(c.openOutbox) },
   { id: "draft.send", title: "Send draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
+  { id: "draft.sendAndMarkDone", title: "Send & Mark Done", keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
   { id: "draft.attach", title: "Attach files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
   { id: "send.undo", title: "Undo send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {

@@ -1231,6 +1231,14 @@ export function App() {
     selectedTrashed: selected?.trashed ?? false,
     canUnsubscribe,
     canNavigateMessages: displayedMessages.length > 1,
+    canSendAndMarkDone: composerBelongsToVisibleThread,
+    sendAndMarkDone: () => {
+      if (!selected || !composerBelongsToVisibleThread) return;
+      const threadId = selected.id;
+      correspondence.context.sendDraftAndThen(() => {
+        void mutateIds([threadId], { kind: "archive", value: true });
+      });
+    },
     openInbox: () => {
       correspondence.context.openInbox();
       setQuery("");
@@ -1373,7 +1381,7 @@ export function App() {
     showAllAccounts: () => {
       setActiveAccountId(null);
     },
-  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, threads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)

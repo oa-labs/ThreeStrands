@@ -87,6 +87,7 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   const openDrafts = useCallback(() => { void openList(); }, [openList]);
   const openOutbox = useCallback(() => { void openList(); }, [openList]);
   const sendDraft = useCallback(() => editor.current?.send(), []);
+  const sendDraftAndThen = useCallback((action: () => void) => editor.current?.send(action), []);
   const attachFiles = useCallback(() => editor.current?.attach(), []);
   const undoSend = useCallback(() => { void undo(); }, [undo]);
   const composerActive = Boolean(active);
@@ -95,8 +96,8 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     closing,
     composerActive,
     compose, reply, replyAll, forward, openInbox, openDrafts, openOutbox,
-    sendDraft, attachFiles, undoSend, canUndoSend: pendingId !== null,
-  }), [attachFiles, closing, compose, composerActive, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, undoSend, pendingId]);
+    sendDraft, sendDraftAndThen, attachFiles, undoSend, canUndoSend: pendingId !== null,
+  }), [attachFiles, closing, compose, composerActive, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
   const openDraft = useCallback((draft: Draft) => setActive(draft), []);
   const undoSendItem = useCallback((id: string) => { void undo(id); }, [undo]);
   const composer = active ? (
