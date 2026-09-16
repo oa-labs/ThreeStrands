@@ -10,10 +10,12 @@ import {
   readFontFamily,
   readLoadRemoteImages,
   readSelectedAccountId,
+  readSelectedTabForAccount,
   saveAutoReadDelaySeconds,
   saveFontFamily,
   saveLoadRemoteImages,
   saveSelectedAccountId,
+  saveSelectedTabForAccount,
 } from "./settings";
 
 describe("font family preference", () => {
@@ -114,5 +116,40 @@ describe("selected account preference", () => {
   it("ignores an invalid stored account id", () => {
     localStorage.setItem("dispatch.settings.selectedAccountId", "work@example.com\ninvalid");
     expect(readSelectedAccountId()).toBeNull();
+  });
+});
+
+describe("selected mailbox tab preference", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("has no preference until one is saved", () => {
+    expect(readSelectedTabForAccount("work@example.com")).toBeUndefined();
+    expect(readSelectedTabForAccount(null)).toBeUndefined();
+  });
+
+  it("restores a saved split tab for an account, independent of other accounts", () => {
+    saveSelectedTabForAccount("work@example.com", "important");
+    saveSelectedTabForAccount("home@example.com", "other");
+    expect(readSelectedTabForAccount("work@example.com")).toBe("important");
+    expect(readSelectedTabForAccount("home@example.com")).toBe("other");
+  });
+
+  it("restores the Inbox tab (stored as null) distinctly from no preference", () => {
+    saveSelectedTabForAccount("work@example.com", "important");
+    saveSelectedTabForAccount("work@example.com", null);
+    expect(readSelectedTabForAccount("work@example.com")).toBeNull();
+  });
+
+  it("scopes the merged 'All accounts' view under its own key", () => {
+    saveSelectedTabForAccount(null, "important");
+    expect(readSelectedTabForAccount(null)).toBe("important");
+    expect(readSelectedTabForAccount("work@example.com")).toBeUndefined();
+  });
+
+  it("ignores a corrupted stored map", () => {
+    localStorage.setItem("dispatch.settings.selectedTabByAccount", "not json");
+    expect(readSelectedTabForAccount("work@example.com")).toBeUndefined();
   });
 });

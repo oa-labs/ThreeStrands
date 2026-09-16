@@ -3360,6 +3360,49 @@ mod tests {
     }
 
     #[test]
+    fn list_threads_page_excludes_threads_claimed_by_a_split_inbox() {
+        let database = database();
+        let before = database.list_threads_page(None, 0, 10).unwrap();
+        assert_eq!(before.threads.len(), 2, "welcome and roadmap are both seeded, unclaimed by any split");
+
+        // "roadmap"'s only participant is "Product Team" (see `insert_demo`),
+        // which the `pattern` rule matches on the sender's normalized address.
+        database.create_split_inbox("Product", "pattern", "product").unwrap();
+
+        let after = database.list_threads_page(None, 0, 10).unwrap();
+        assert_eq!(after.threads.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["welcome"]);
+    }
+
+    #[test]
+    fn mailbox_unread_counts_buckets_unread_threads_by_split_and_excludes_them_from_inbox() {
+        let database = database();
+        let mut product_message = message(
+            "product-message",
+            "product-thread",
+            "2026-01-02T00:00:00Z",
+            "body",
+        );
+        product_message.from = "Team <team@product.example>".into();
+        product_message.labels = vec!["INBOX".into(), "UNREAD".into()];
+        database
+            .upsert_gmail_thread("work@example.com", &[product_message])
+            .unwrap();
+
+        // "welcome" (seeded, unread) and the new product thread both count
+        // toward the Inbox until a split inbox claims the latter.
+        let before = database.mailbox_unread_counts(None).unwrap();
+        assert_eq!(before.inbox, 2);
+        assert!(before.splits.is_empty());
+
+        let split = database
+            .create_split_inbox("Product", "domain", "product.example")
+            .unwrap();
+        let after = database.mailbox_unread_counts(None).unwrap();
+        assert_eq!(after.inbox, 1, "the product thread moved out of the Inbox bucket");
+        assert_eq!(after.splits.get(&split.id), Some(&1));
+    }
+
+    #[test]
     fn thread_summary_round_trips_through_get_thread() {
         let database = database();
         let before = database.get_thread("welcome").unwrap().thread;

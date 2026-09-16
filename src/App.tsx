@@ -567,12 +567,6 @@ export function App() {
     void mailClient.listUnreadCounts().then(setUnreadCounts).catch(() => {});
   }, []);
   useEffect(refreshUnreadCounts, [refreshUnreadCounts]);
-  const [mailboxUnreadCounts, setMailboxUnreadCounts] = useState<MailboxUnreadCounts>({ inbox: 0, splits: {} });
-  const refreshMailboxUnreadCounts = useCallback((accountOverride?: string | null) => {
-    const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
-    void mailClient.mailboxUnreadCounts(accountId).then(setMailboxUnreadCounts).catch(() => {});
-  }, [activeAccountId]);
-  useEffect(refreshMailboxUnreadCounts, [refreshMailboxUnreadCounts]);
   const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId);
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft
@@ -638,10 +632,17 @@ export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(readSelectedAccountId);
+  const [mailboxUnreadCounts, setMailboxUnreadCounts] = useState<MailboxUnreadCounts>({ inbox: 0, splits: {} });
+  const refreshMailboxUnreadCounts = useCallback((accountOverride?: string | null) => {
+    const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
+    void mailClient.mailboxUnreadCounts(accountId).then(setMailboxUnreadCounts).catch(() => {});
+  }, [activeAccountId]);
+  useEffect(refreshMailboxUnreadCounts, [refreshMailboxUnreadCounts]);
   const [mailbox, setMailbox] = useState<MailboxKind>("inbox");
   const [mailboxError, setMailboxError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "trash" || mailbox === "split";
+  const isTabbedMailbox = mailbox === "inbox" || mailbox === "split";
   const activeSplitInbox = activeSplitInboxId
     ? splitInboxes.find((candidate) => candidate.id === activeSplitInboxId) ?? null
     : null;
@@ -1787,8 +1788,10 @@ export function App() {
             ) : null}
             <div>
               <span className="eyebrow">
-                {mailboxTitle}
-                {activeAccount ? <span className="eyebrow-account"> · {activeAccount.email}</span> : null}
+                {isTabbedMailbox ? null : mailboxTitle}
+                {activeAccount ? (
+                  <span className="eyebrow-account">{isTabbedMailbox ? "" : " · "}{activeAccount.email}</span>
+                ) : null}
               </span>
               <h1>
                 {mailbox === "drafts"
@@ -1797,6 +1800,37 @@ export function App() {
                     ? `${correspondence.outbox.filter((item) => item.state !== "canceled").length} outgoing`
                     : `${visibleThreads.length} conversations`}
               </h1>
+              {isTabbedMailbox ? (
+                <div className="mailbox-tabs">
+                  <div className="mailbox-tab-list" role="tablist" aria-label="Mailbox views">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={mailbox === "inbox"}
+                      className={`mailbox-tab ${mailbox === "inbox" ? "active" : ""}`}
+                      onClick={() => context.openInbox()}
+                    >
+                      Inbox{mailboxUnreadCounts.inbox > 0 ? ` ${mailboxUnreadCounts.inbox}` : ""}
+                    </button>
+                    {splitInboxes.map((splitInbox) => (
+                      <button
+                        key={splitInbox.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={mailbox === "split" && activeSplitInboxId === splitInbox.id}
+                        className={`mailbox-tab ${mailbox === "split" && activeSplitInboxId === splitInbox.id ? "active" : ""}`}
+                        onClick={() => context.openSplitInbox(splitInbox.id)}
+                      >
+                        {splitInbox.name}
+                        {mailboxUnreadCounts.splits[splitInbox.id] ? ` ${mailboxUnreadCounts.splits[splitInbox.id]}` : ""}
+                      </button>
+                    ))}
+                  </div>
+                  <button type="button" className="mailbox-tab-add" onClick={() => openSettingsAt("splitInboxes")}>
+                    + Add Split
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
           {isThreadMailbox ? (
