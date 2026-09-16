@@ -98,6 +98,7 @@ import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
+import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import {
   applyFontScale,
@@ -2077,7 +2078,10 @@ export function App() {
                 const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
                 const senderDisplayName = formatDisplayName(senderName);
                 const recipients = splitAddressList(message.recipients.join(", "));
-                const downloadableAttachments = message.attachments.filter((attachment) => !attachment.inline);
+                const referencedContentIds = referencedImageContentIds(message.bodyHtml);
+                const downloadableAttachments = message.attachments.filter(
+                  (attachment) => !isInlineImageAttachment(attachment, referencedContentIds),
+                );
                 const queuedItem = correspondence.outbox.find((item) => `outbox-${item.id}` === message.id);
                 const cardBodyId = `message-body-${index}`;
                 const activateMessage = () => {
@@ -2254,16 +2258,10 @@ export function App() {
                         onImageClick={setLightboxImageSrc}
                         resolveImage={(url) => {
                           if (!/^cid:/i.test(url)) return mailClient.fetchRemoteImage(url);
-                          let contentId = url.slice(4);
-                          try {
-                            contentId = decodeURIComponent(contentId);
-                          } catch {
-                            // Use the literal Content-ID when percent encoding is malformed.
-                          }
-                          contentId = contentId.trim().replace(/^<|>$/g, "");
+                          const contentId = normalizeContentId(url.slice(4));
                           const embedded = message.attachments.find((attachment) =>
-                            attachment.inline
-                            && attachment.contentId?.localeCompare(contentId, undefined, { sensitivity: "accent" }) === 0
+                            attachment.contentId
+                            && normalizeContentId(attachment.contentId) === contentId
                           );
                           if (!embedded) return Promise.reject(new Error("Embedded image not found"));
                           return queuedItem
