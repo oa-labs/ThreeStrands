@@ -268,6 +268,36 @@ pub struct UpdateLabelRequest {
     pub name: String,
 }
 
+/// A user-defined, persistent inbox view that narrows the main inbox to
+/// threads matching one rule (sending domain, Gmail label, or a substring
+/// pattern against the sender address). Purely local — unlike `Label`,
+/// there's no provider-side equivalent to sync against.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitInbox {
+    pub id: String,
+    pub name: String,
+    pub match_kind: String,
+    pub match_value: String,
+    pub sort_order: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSplitInboxRequest {
+    pub name: String,
+    pub match_kind: String,
+    pub match_value: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSplitInboxRequest {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatus {

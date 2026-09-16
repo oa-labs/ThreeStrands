@@ -214,6 +214,20 @@ pub fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 12 {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS split_inboxes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                match_kind TEXT NOT NULL CHECK(match_kind IN ('domain', 'label', 'pattern')),
+                match_value TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            PRAGMA user_version=12;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
     connection

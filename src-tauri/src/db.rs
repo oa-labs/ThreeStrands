@@ -10,9 +10,9 @@ use uuid::Uuid;
 
 use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
-    Account, ContactSuggestion, Message, SearchThreadsRequest, SyncStatus, Thread, ThreadDetail,
-    ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind,
-    TriageSenderStats, UnsubscribeMethod, UnsubscribeTarget,
+    Account, ContactSuggestion, Message, SearchThreadsRequest, SplitInbox, SyncStatus, Thread,
+    ThreadDetail, ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent,
+    TriageEventKind, TriageSenderStats, UnsubscribeMethod, UnsubscribeTarget,
 };
 
 /// Assigned to newly connected accounts in rotation, so each has a distinct
@@ -1786,6 +1786,159 @@ impl Database {
         }
         transaction.commit().map_err(display_error)
     }
+
+    pub fn list_split_inboxes(&self) -> Result<Vec<SplitInbox>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, name, match_kind, match_value, sort_order, created_at
+                 FROM split_inboxes ORDER BY sort_order",
+            )
+            .map_err(display_error)?;
+        let rows = statement
+            .query_map([], split_inbox_from_row)
+            .map_err(display_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
+    }
+
+    pub fn create_split_inbox(
+        &self,
+        name: &str,
+        match_kind: &str,
+        match_value: &str,
+    ) -> Result<SplitInbox, String> {
+        let name = name.trim();
+        let match_value = match_value.trim();
+        if name.is_empty() {
+            return Err("Split inbox name cannot be empty".to_string());
+        }
+        if match_value.is_empty() {
+            return Err("Split inbox match value cannot be empty".to_string());
+        }
+        if !matches!(match_kind, "domain" | "label" | "pattern") {
+            return Err("Unknown split inbox match kind".to_string());
+        }
+        // Domains and patterns are matched case-insensitively against
+        // lowercased addresses (see `split_inbox_matches`), so normalize
+        // once here rather than on every match. Label ids are case-sensitive
+        // Gmail identifiers and must be stored as-is.
+        let match_value = if match_kind == "label" {
+            match_value.to_string()
+        } else {
+            match_value.to_ascii_lowercase()
+        };
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        let sort_order: i64 = transaction
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM split_inboxes",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(display_error)?;
+        let id = Uuid::new_v4().to_string();
+        let created_at = Utc::now().to_rfc3339();
+        transaction
+            .execute(
+                "INSERT INTO split_inboxes(id, name, match_kind, match_value, sort_order, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id, name, match_kind, match_value, sort_order, created_at],
+            )
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)?;
+        Ok(SplitInbox {
+            id,
+            name: name.to_string(),
+            match_kind: match_kind.to_string(),
+            match_value,
+            sort_order,
+            created_at,
+        })
+    }
+
+    pub fn update_split_inbox(&self, id: &str, name: &str) -> Result<SplitInbox, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Split inbox name cannot be empty".to_string());
+        }
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE split_inboxes SET name = ?1 WHERE id = ?2",
+                params![name, id],
+            )
+            .map_err(display_error)?;
+        if changed == 0 {
+            return Err("Split inbox not found".to_string());
+        }
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT id, name, match_kind, match_value, sort_order, created_at
+                 FROM split_inboxes WHERE id = ?1",
+                [id],
+                split_inbox_from_row,
+            )
+            .map_err(display_error)
+    }
+
+    pub fn delete_split_inbox(&self, id: &str) -> Result<(), String> {
+        self.connection()?
+            .execute("DELETE FROM split_inboxes WHERE id = ?1", [id])
+            .map_err(display_error)?;
+        Ok(())
+    }
+
+    pub fn reorder_split_inboxes(&self, ordered_ids: &[String]) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        for (index, id) in ordered_ids.iter().enumerate() {
+            transaction
+                .execute(
+                    "UPDATE split_inboxes SET sort_order = ?1 WHERE id = ?2",
+                    params![index as i64, id],
+                )
+                .map_err(display_error)?;
+        }
+        transaction.commit().map_err(display_error)
+    }
+
+    /// Filters the same unarchived/untrashed base set `list_threads` uses
+    /// down to one split inbox's rule, then paginates in memory. That base
+    /// set is realistically bounded (an actively-triaged inbox), so
+    /// re-filtering it on every page load is simpler than building true
+    /// SQL-level cursor pagination over a JSON column with no useful index.
+    pub fn list_split_inbox_page(
+        &self,
+        split_inbox_id: &str,
+        account_id: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ThreadPage, String> {
+        let rule = self
+            .connection()
+            .and_then(|connection| {
+                connection
+                    .query_row(
+                        "SELECT id, name, match_kind, match_value, sort_order, created_at
+                         FROM split_inboxes WHERE id = ?1",
+                        [split_inbox_id],
+                        split_inbox_from_row,
+                    )
+                    .optional()
+                    .map_err(display_error)
+            })?
+            .ok_or_else(|| "Split inbox not found".to_string())?;
+        let matched: Vec<Thread> = self
+            .list_threads(account_id)?
+            .into_iter()
+            .filter(|thread| split_inbox_matches(&rule, thread))
+            .collect();
+        let page_limit = limit.min(200);
+        let has_more = matched.len() > offset.saturating_add(page_limit);
+        let threads = matched.into_iter().skip(offset).take(page_limit).collect();
+        Ok(ThreadPage { threads, has_more })
+    }
 }
 
 fn ensure_query_indexes(connection: &Connection) -> rusqlite::Result<()> {
@@ -1899,6 +2052,35 @@ fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         connected_at: row.get(5)?,
         last_synced_at: row.get(6)?,
     })
+}
+
+fn split_inbox_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SplitInbox> {
+    Ok(SplitInbox {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        match_kind: row.get(2)?,
+        match_value: row.get(3)?,
+        sort_order: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+/// `match_value` is normalized to lowercase at creation time for `domain`
+/// and `pattern` rules (see `Database::create_split_inbox`), so only the
+/// participant side needs lowercasing here.
+fn split_inbox_matches(rule: &SplitInbox, thread: &Thread) -> bool {
+    match rule.match_kind.as_str() {
+        "domain" => thread
+            .participants
+            .iter()
+            .any(|participant| normalize_sender(participant).1 == rule.match_value),
+        "label" => thread.labels.iter().any(|label| label == &rule.match_value),
+        "pattern" => thread
+            .participants
+            .iter()
+            .any(|participant| normalize_sender(participant).0.contains(&rule.match_value)),
+        _ => false,
+    }
 }
 
 fn unsubscribe_method_name(method: &UnsubscribeMethod) -> &'static str {
@@ -2771,6 +2953,111 @@ mod tests {
         let accounts = database.list_accounts().unwrap();
         assert_eq!(accounts[0].email, "second@gmail.com");
         assert_eq!(accounts[1].email, "first@gmail.com");
+    }
+
+    fn test_thread(participants: &[&str], labels: &[&str]) -> Thread {
+        Thread {
+            id: "t1".into(),
+            provider_thread_id: "p1".into(),
+            subject: "Hi".into(),
+            snippet: "".into(),
+            participants: participants.iter().map(|value| value.to_string()).collect(),
+            last_message_at: "".into(),
+            last_received_at: "".into(),
+            unread: false,
+            starred: false,
+            archived: false,
+            trashed: false,
+            labels: labels.iter().map(|value| value.to_string()).collect(),
+            account_id: "default".into(),
+            match_snippet: None,
+            summary: None,
+            summary_generated_at: None,
+            has_attachments: false,
+        }
+    }
+
+    fn test_rule(match_kind: &str, match_value: &str) -> SplitInbox {
+        SplitInbox {
+            id: "s1".into(),
+            name: "Test".into(),
+            match_kind: match_kind.into(),
+            match_value: match_value.into(),
+            sort_order: 0,
+            created_at: "".into(),
+        }
+    }
+
+    #[test]
+    fn split_inbox_matches_covers_domain_label_and_pattern_rules() {
+        let thread = test_thread(&["Jane Doe <jane@Acme.com>"], &["IMPORTANT"]);
+
+        assert!(split_inbox_matches(&test_rule("domain", "acme.com"), &thread));
+        assert!(!split_inbox_matches(&test_rule("domain", "other.com"), &thread));
+
+        assert!(split_inbox_matches(&test_rule("label", "IMPORTANT"), &thread));
+        assert!(!split_inbox_matches(&test_rule("label", "STARRED"), &thread));
+
+        assert!(split_inbox_matches(&test_rule("pattern", "jane@"), &thread));
+        assert!(!split_inbox_matches(&test_rule("pattern", "john@"), &thread));
+    }
+
+    #[test]
+    fn create_update_delete_and_reorder_split_inboxes() {
+        let database = database();
+        let acme = database
+            .create_split_inbox("Acme", "domain", "Acme.com")
+            .unwrap();
+        assert_eq!(acme.match_value, "acme.com", "domain values are lowercased");
+        let widgets = database
+            .create_split_inbox("Widgets Co", "pattern", "widgets")
+            .unwrap();
+
+        let listed = database.list_split_inboxes().unwrap();
+        assert_eq!(listed.iter().map(|s| &s.name).collect::<Vec<_>>(), vec!["Acme", "Widgets Co"]);
+
+        let renamed = database.update_split_inbox(&acme.id, "Acme Corp").unwrap();
+        assert_eq!(renamed.name, "Acme Corp");
+        assert_eq!(renamed.match_value, "acme.com", "rename leaves the rule untouched");
+
+        database
+            .reorder_split_inboxes(&[widgets.id.clone(), acme.id.clone()])
+            .unwrap();
+        let reordered = database.list_split_inboxes().unwrap();
+        assert_eq!(reordered[0].id, widgets.id);
+        assert_eq!(reordered[1].id, acme.id);
+
+        database.delete_split_inbox(&widgets.id).unwrap();
+        assert_eq!(database.list_split_inboxes().unwrap().len(), 1);
+
+        assert!(database.create_split_inbox("", "domain", "acme.com").is_err());
+        assert!(database.create_split_inbox("Acme", "domain", "").is_err());
+        assert!(database.create_split_inbox("Acme", "bogus", "acme.com").is_err());
+    }
+
+    #[test]
+    fn list_split_inbox_page_filters_the_inbox_and_paginates() {
+        let database = database();
+        let split_inbox = database
+            .create_split_inbox("Inbox label", "label", "INBOX")
+            .unwrap();
+
+        let first_page = database
+            .list_split_inbox_page(&split_inbox.id, None, 0, 1)
+            .unwrap();
+        assert_eq!(first_page.threads.len(), 1);
+        assert!(first_page.has_more);
+
+        let second_page = database
+            .list_split_inbox_page(&split_inbox.id, None, 1, 1)
+            .unwrap();
+        assert_eq!(second_page.threads.len(), 1);
+        assert!(!second_page.has_more);
+        assert_ne!(first_page.threads[0].id, second_page.threads[0].id);
+
+        assert!(database
+            .list_split_inbox_page("missing", None, 0, 10)
+            .is_err());
     }
 
     #[test]

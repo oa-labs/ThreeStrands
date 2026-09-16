@@ -27,6 +27,7 @@ function noopContext(): CommandContext {
     openInbox: () => {},
     openAllMail: () => {},
     openTrash: () => {},
+    openSplitInbox: () => {},
     openDrafts: () => {},
     openOutbox: () => {},
     sendDraft: () => {},

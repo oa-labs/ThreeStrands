@@ -1,9 +1,11 @@
 import { demoCorrespondence } from "./demoCorrespondence";
 import type { MailClient } from "./client";
+import { parseAddress } from "../emailAddress";
 import type {
   Account,
   ContactSuggestion,
   Label,
+  SplitInbox,
   SummaryResult,
   SyncStatus,
   Thread,
@@ -92,6 +94,7 @@ let labels: Label[] = [
   { id: "STARRED", name: "Starred", kind: "system", color: null },
   { id: "work", name: "Work", kind: "user", color: "#7b73ee" },
 ];
+let splitInboxes: SplitInbox[] = [];
 
 const details: Record<string, string> = {
   welcome: `
@@ -148,6 +151,28 @@ function visibleAllMail(accountId?: string): Thread[] {
 
 function visibleTrash(accountId?: string): Thread[] {
   return visibleWhere(accountId, (thread) => thread.trashed);
+}
+
+/** Mirrors `split_inbox_matches` in `src-tauri/src/db.rs` for the browser-preview build. */
+function matchesSplitInbox(rule: SplitInbox, thread: Thread): boolean {
+  switch (rule.matchKind) {
+    case "domain":
+      return thread.participants.some(
+        (participant) => parseAddress(participant).email.split("@")[1]?.toLocaleLowerCase() === rule.matchValue,
+      );
+    case "label":
+      return thread.labels.includes(rule.matchValue);
+    case "pattern":
+      return thread.participants.some((participant) =>
+        parseAddress(participant).email.toLocaleLowerCase().includes(rule.matchValue),
+      );
+  }
+}
+
+function visibleSplitInbox(splitInboxId: string, accountId?: string): Thread[] {
+  const rule = splitInboxes.find((candidate) => candidate.id === splitInboxId);
+  if (!rule) throw new Error("Split inbox not found");
+  return visible(accountId).filter((thread) => matchesSplitInbox(rule, thread));
 }
 
 /**
@@ -475,5 +500,47 @@ export const demoClient: MailClient = {
       ...thread,
       labels: thread.labels.filter((labelId) => labelId !== id),
     }));
+  },
+  async listSplitInboxes() {
+    return structuredClone(splitInboxes);
+  },
+  async createSplitInbox(name, matchKind, matchValue) {
+    const normalizedName = name.trim();
+    const normalizedValue = matchValue.trim();
+    if (!normalizedName) throw new Error("Split inbox name cannot be empty");
+    if (!normalizedValue) throw new Error("Split inbox match value cannot be empty");
+    const splitInbox: SplitInbox = {
+      id: `demo-${crypto.randomUUID()}`,
+      name: normalizedName,
+      matchKind,
+      matchValue: matchKind === "label" ? normalizedValue : normalizedValue.toLocaleLowerCase(),
+      sortOrder: splitInboxes.length,
+      createdAt: new Date().toISOString(),
+    };
+    splitInboxes = [...splitInboxes, splitInbox];
+    return structuredClone(splitInbox);
+  },
+  async updateSplitInbox(id, name) {
+    const splitInbox = splitInboxes.find((candidate) => candidate.id === id);
+    if (!splitInbox) throw new Error("Split inbox not found");
+    const normalizedName = name.trim();
+    if (!normalizedName) throw new Error("Split inbox name cannot be empty");
+    splitInbox.name = normalizedName;
+    return structuredClone(splitInbox);
+  },
+  async deleteSplitInbox(id) {
+    splitInboxes = splitInboxes.filter((candidate) => candidate.id !== id);
+  },
+  async reorderSplitInboxes(ids) {
+    splitInboxes = ids
+      .map((id, index) => {
+        const splitInbox = splitInboxes.find((candidate) => candidate.id === id);
+        return splitInbox ? { ...splitInbox, sortOrder: index } : null;
+      })
+      .filter((splitInbox): splitInbox is SplitInbox => splitInbox !== null);
+  },
+  async listSplitInboxPage(splitInboxId, accountId, offset, limit): Promise<ThreadPage> {
+    const items = visibleSplitInbox(splitInboxId, accountId);
+    return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
   },
 };

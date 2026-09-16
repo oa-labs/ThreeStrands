@@ -150,6 +150,17 @@ export type Label = {
   color?: string | null;
 };
 
+export type SplitInboxMatchKind = "domain" | "label" | "pattern";
+
+export type SplitInbox = {
+  id: string;
+  name: string;
+  matchKind: SplitInboxMatchKind;
+  matchValue: string;
+  sortOrder: number;
+  createdAt: string;
+};
+
 export type SyncStatus = {
   state: "idle" | "syncing" | "offline" | "error";
   lastSuccessfulSync: string | null;

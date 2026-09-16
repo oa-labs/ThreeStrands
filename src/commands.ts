@@ -1,6 +1,7 @@
 import type { MessageFilterKind } from "./messageFilters";
+import type { SplitInbox } from "./domain";
 
-export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox";
+export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox" | "split";
 
 export type CommandContext = {
   mailbox: MailboxKind;
@@ -22,6 +23,7 @@ export type CommandContext = {
   openTrash(): void;
   openDrafts(): void;
   openOutbox(): void;
+  openSplitInbox(id: string): void;
   sendDraft(): void;
   sendAndMarkDone(): void;
   attachFiles(): void;
@@ -385,6 +387,18 @@ export function accountCommand(email: string, index: number): Command {
     group: "Application",
     enabled: () => true,
     run: (context) => complete(() => context.switchAccount(email)),
+  };
+}
+
+/** One entry per user-defined split inbox, reachable from the command palette alongside the sidebar. */
+export function splitInboxCommand(splitInbox: SplitInbox): Command {
+  return {
+    id: `mailbox.split.${splitInbox.id}`,
+    title: `Go to ${splitInbox.name}`,
+    keys: [],
+    group: "Navigation",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(() => context.openSplitInbox(splitInbox.id)),
   };
 }
 

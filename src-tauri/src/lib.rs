@@ -21,9 +21,10 @@ use chrono::Utc;
 use db::Database;
 use gmail::{GmailClient, GmailProvider};
 use models::{
-    Account, AuthStatus, ContactSuggestion, CreateLabelRequest, Label, SearchThreadsRequest,
-    SummaryResult, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageEvent,
-    TriageSenderStats, UpdateLabelRequest,
+    Account, AuthStatus, ContactSuggestion, CreateLabelRequest, CreateSplitInboxRequest, Label,
+    SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread, ThreadDetail,
+    ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
+    UpdateSplitInboxRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -734,6 +735,55 @@ fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> Result<(
 }
 
 #[tauri::command]
+fn list_split_inboxes(state: State<'_, AppState>) -> Result<Vec<SplitInbox>, String> {
+    state.database.list_split_inboxes()
+}
+
+#[tauri::command]
+fn create_split_inbox(
+    request: CreateSplitInboxRequest,
+    state: State<'_, AppState>,
+) -> Result<SplitInbox, String> {
+    state
+        .database
+        .create_split_inbox(&request.name, &request.match_kind, &request.match_value)
+}
+
+#[tauri::command]
+fn update_split_inbox(
+    request: UpdateSplitInboxRequest,
+    state: State<'_, AppState>,
+) -> Result<SplitInbox, String> {
+    state.database.update_split_inbox(&request.id, &request.name)
+}
+
+#[tauri::command]
+fn delete_split_inbox(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.delete_split_inbox(&id)
+}
+
+#[tauri::command]
+fn reorder_split_inboxes(ids: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.reorder_split_inboxes(&ids)
+}
+
+#[tauri::command]
+fn list_split_inbox_page(
+    split_inbox_id: String,
+    account_id: Option<String>,
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<ThreadPage, String> {
+    state.database.list_split_inbox_page(
+        &split_inbox_id,
+        account_id.as_deref(),
+        offset,
+        limit,
+    )
+}
+
+#[tauri::command]
 async fn list_labels(
     account_id: Option<String>,
     state: State<'_, AppState>,
@@ -1075,6 +1125,12 @@ pub fn run() {
             set_account_display_name,
             set_account_color,
             reorder_accounts,
+            list_split_inboxes,
+            create_split_inbox,
+            update_split_inbox,
+            delete_split_inbox,
+            reorder_split_inboxes,
+            list_split_inbox_page,
             list_labels,
             create_label,
             update_label,

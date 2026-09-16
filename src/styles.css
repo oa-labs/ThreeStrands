@@ -125,6 +125,23 @@ button { color: inherit; }
 .account-icon.dragging { opacity: 0.4; }
 .account-icon.drag-over { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--text); }
 
+.split-inbox-button {
+  width: var(--sidebar-item-size);
+  height: var(--sidebar-item-size);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: var(--muted);
+  color: white;
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 700;
+  cursor: pointer;
+}
+.split-inbox-button:hover { transform: scale(1.07); }
+.split-inbox-button.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--accent); }
+
 .sidebar-spacer { flex: 1; }
 .nav-button, .icon-button, .modal header button {
   width: var(--sidebar-item-size);

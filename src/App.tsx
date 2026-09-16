@@ -58,6 +58,7 @@ import {
   matchesShortcut,
   shortcutSteps,
   showAllAccountsCommand,
+  splitInboxCommand,
   undoResult,
   type Command,
   type CommandContext,
@@ -83,6 +84,8 @@ import type {
   Account,
   AuthStatus,
   Label,
+  SplitInbox,
+  SplitInboxMatchKind,
   SyncStatus,
   Thread,
   ThreadDetail,
@@ -152,7 +155,7 @@ import {
   type TriageSession,
 } from "./triage";
 
-type SettingsSection = "appearance" | "reading" | "accounts" | "ai" | "privacy";
+type SettingsSection = "appearance" | "reading" | "accounts" | "splitInboxes" | "ai" | "privacy";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -216,6 +219,7 @@ const MAILBOX_TITLES: Record<MailboxKind, string> = {
   trash: "Trash",
   drafts: "Drafts",
   outbox: "Outbox",
+  split: "Split Inbox",
 };
 
 // Matches the \u{1}/\u{2} markers the backend's FTS5 `snippet()` call wraps
@@ -599,13 +603,34 @@ export function App() {
   // an account. Keep the catalogs separate so the same id in two accounts
   // cannot be displayed with the wrong account's label name.
   const [labelsByAccount, setLabelsByAccount] = useState<Record<string, Label[]>>({});
+  const [splitInboxes, setSplitInboxes] = useState<SplitInbox[]>([]);
+  const [activeSplitInboxId, setActiveSplitInboxId] = useState<string | null>(null);
+  const refreshSplitInboxes = useCallback(() => {
+    void mailClient.listSplitInboxes().then(setSplitInboxes).catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshSplitInboxes();
+  }, [refreshSplitInboxes]);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(readSelectedAccountId);
   const [mailbox, setMailbox] = useState<MailboxKind>("inbox");
   const [mailboxError, setMailboxError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
-  const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "trash";
+  const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "trash" || mailbox === "split";
+  const activeSplitInbox = activeSplitInboxId
+    ? splitInboxes.find((candidate) => candidate.id === activeSplitInboxId) ?? null
+    : null;
+  const mailboxTitle = mailbox === "split" ? activeSplitInbox?.name ?? MAILBOX_TITLES.split : MAILBOX_TITLES[mailbox];
+  useEffect(() => {
+    // Deleting the split inbox currently being viewed (e.g. from Settings in
+    // another render) shouldn't leave the thread list stuck on a rule that
+    // no longer exists.
+    if (activeSplitInboxId && splitInboxes.length > 0 && !activeSplitInbox) {
+      setMailbox("inbox");
+      setActiveSplitInboxId(null);
+    }
+  }, [activeSplitInboxId, activeSplitInbox, splitInboxes.length]);
   const accountsRequest = useRef(0);
   const threadsRequest = useRef(0);
   const detailRequest = useRef(0);
@@ -670,7 +695,7 @@ export function App() {
   const loadThreads = useCallback(async (search: string, accountOverride?: string | null, mailboxOverride?: MailboxKind) => {
     const requestId = ++threadsRequest.current;
     const box = mailboxOverride ?? mailbox;
-    if (box === "drafts" || box === "outbox") {
+    if (box === "drafts" || box === "outbox" || (box === "split" && !activeSplitInboxId)) {
       setThreads([]);
       setSelectedId(null);
       setHasMoreResults(false);
@@ -691,7 +716,9 @@ export function App() {
           ? await mailClient.listAllMailPage(accountId, 0, SEARCH_PAGE_SIZE)
           : box === "trash"
             ? await mailClient.listTrashPage(accountId, 0, SEARCH_PAGE_SIZE)
-            : await mailClient.listThreadsPage(accountId, 0, SEARCH_PAGE_SIZE);
+            : box === "split"
+              ? await mailClient.listSplitInboxPage(activeSplitInboxId as string, accountId, 0, SEARCH_PAGE_SIZE)
+              : await mailClient.listThreadsPage(accountId, 0, SEARCH_PAGE_SIZE);
       if (requestId !== threadsRequest.current) return;
       setMailboxError("");
       setThreads(page.threads);
@@ -705,11 +732,12 @@ export function App() {
       if (requestId !== threadsRequest.current) return;
       setMailboxError(error instanceof Error ? error.message : String(error));
     }
-  }, [includeArchived, activeAccountId, mailbox]);
+  }, [includeArchived, activeAccountId, mailbox, activeSplitInboxId]);
 
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
     if ((mailbox === "drafts" || mailbox === "outbox") || loadingMore.current) return;
+    if (mailbox === "split" && !activeSplitInboxId) return;
     loadingMore.current = true;
     setLoadingMoreState(true);
     const requestId = threadsRequest.current;
@@ -726,7 +754,9 @@ export function App() {
           ? await mailClient.listAllMailPage(accountId, threads.length, SEARCH_PAGE_SIZE)
           : mailbox === "trash"
             ? await mailClient.listTrashPage(accountId, threads.length, SEARCH_PAGE_SIZE)
-            : await mailClient.listThreadsPage(accountId, threads.length, SEARCH_PAGE_SIZE);
+            : mailbox === "split"
+              ? await mailClient.listSplitInboxPage(activeSplitInboxId as string, accountId, threads.length, SEARCH_PAGE_SIZE)
+              : await mailClient.listThreadsPage(accountId, threads.length, SEARCH_PAGE_SIZE);
       if (requestId !== threadsRequest.current) return;
       setThreads((current) => [...current, ...page.threads]);
       setHasMoreResults(page.hasMore);
@@ -738,7 +768,7 @@ export function App() {
       loadingMore.current = false;
       setLoadingMoreState(false);
     }
-  }, [query, threads.length, includeArchived, activeAccountId, mailbox]);
+  }, [query, threads.length, includeArchived, activeAccountId, mailbox, activeSplitInboxId]);
 
   useEffect(() => {
     if (correspondence.sentCount > 0) void loadThreads(query);
@@ -1017,6 +1047,10 @@ export function App() {
       threads.filter((thread) => targetIds.includes(thread.id)).map((thread) => [thread.id, thread] as const),
     );
     const previousDetail = detail && targetIds.includes(detail.thread.id) ? detail : null;
+    // "split" intentionally falls into the default branch below: a split
+    // inbox's underlying set is the same unarchived/untrashed inbox scope,
+    // so archiving/trashing/spamming a thread should remove it exactly like
+    // it would from the plain Inbox.
     const removesFromView = mailbox === "trash"
       ? template.kind === "trash" && !template.value
       : mailbox === "allMail"
@@ -1321,6 +1355,13 @@ export function App() {
       setSearchOpen(false);
       setMailbox("trash");
     },
+    openSplitInbox: (id: string) => {
+      correspondence.context.openInbox();
+      setQuery("");
+      setSearchOpen(false);
+      setMailbox("split");
+      setActiveSplitInboxId(id);
+    },
     openDrafts: () => {
       correspondence.context.openDrafts();
       setQuery("");
@@ -1483,7 +1524,15 @@ export function App() {
         : [],
     [accounts],
   );
-  useShortcutHandler(context, executeCommand, accountCommands);
+  const splitInboxCommands = useMemo<Command[]>(
+    () => splitInboxes.map((splitInbox) => splitInboxCommand(splitInbox)),
+    [splitInboxes],
+  );
+  const paletteExtraCommands = useMemo<Command[]>(
+    () => [...accountCommands, ...splitInboxCommands],
+    [accountCommands, splitInboxCommands],
+  );
+  useShortcutHandler(context, executeCommand, paletteExtraCommands);
 
   const runOnSelection = useCallback((title: string, template: MutationTemplate) => {
     executeCommand({
@@ -1582,6 +1631,21 @@ export function App() {
             </button>
           </HoverTooltip>
         </div>
+        {splitInboxes.length > 0 ? (
+          <div className="sidebar-nav">
+            {splitInboxes.map((splitInbox) => (
+              <HoverTooltip key={splitInbox.id} label={splitInbox.name}>
+                <button
+                  className={`split-inbox-button ${mailbox === "split" && activeSplitInboxId === splitInbox.id ? "active" : ""}`}
+                  aria-label={splitInbox.name}
+                  onClick={() => context.openSplitInbox(splitInbox.id)}
+                >
+                  {splitInbox.name.charAt(0).toUpperCase()}
+                </button>
+              </HoverTooltip>
+            ))}
+          </div>
+        ) : null}
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
           <button
@@ -1644,7 +1708,7 @@ export function App() {
               </label>
             ) : null}
             <div>
-              <span className="eyebrow">{MAILBOX_TITLES[mailbox]}</span>
+              <span className="eyebrow">{mailboxTitle}</span>
               <h1>
                 {mailbox === "drafts"
                   ? `${correspondence.drafts.length} drafts`
@@ -1757,7 +1821,7 @@ export function App() {
             </label>
           </div>
         ) : null}
-        <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={MAILBOX_TITLES[mailbox]}>
+        <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={mailboxTitle}>
           {mailbox === "drafts" ? (
             <DraftsList drafts={correspondence.drafts} onOpen={correspondence.openDraft} />
           ) : mailbox === "outbox" ? (
@@ -2187,12 +2251,12 @@ export function App() {
         <CommandPalette
           context={context}
           execute={executeCommand}
-          extraCommands={accountCommands}
+          extraCommands={paletteExtraCommands}
           onClose={() => setPaletteOpen(false)}
         />
       ) : null}
       {shortcutHelpOpen ? (
-        <ShortcutHelp extraCommands={accountCommands} onClose={() => setShortcutHelpOpen(false)} />
+        <ShortcutHelp extraCommands={paletteExtraCommands} onClose={() => setShortcutHelpOpen(false)} />
       ) : null}
       {diagnosticsOpen ? (
         <Diagnostics status={syncStatus} onClose={() => setDiagnosticsOpen(false)} />
@@ -2280,6 +2344,26 @@ export function App() {
           onReorderAccounts={async (emails) => {
             await mailClient.reorderAccounts(emails);
             await refreshAccounts();
+          }}
+          splitInboxes={splitInboxes}
+          labelsByAccount={labelsByAccount}
+          onCreateSplitInbox={async (name, matchKind, matchValue) => {
+            const created = await mailClient.createSplitInbox(name, matchKind, matchValue);
+            setSplitInboxes((current) => [...current, created]);
+          }}
+          onRenameSplitInbox={async (id, name) => {
+            const updated = await mailClient.updateSplitInbox(id, name);
+            setSplitInboxes((current) =>
+              current.map((splitInbox) => splitInbox.id === id ? { ...splitInbox, ...updated } : splitInbox),
+            );
+          }}
+          onDeleteSplitInbox={async (id) => {
+            await mailClient.deleteSplitInbox(id);
+            setSplitInboxes((current) => current.filter((splitInbox) => splitInbox.id !== id));
+          }}
+          onReorderSplitInboxes={async (ids) => {
+            await mailClient.reorderSplitInboxes(ids);
+            await refreshSplitInboxes();
           }}
         />
       ) : null}
@@ -2909,6 +2993,7 @@ const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "reading", label: "Reading" },
   { id: "accounts", label: "Accounts" },
+  { id: "splitInboxes", label: "Split Inboxes" },
   { id: "ai", label: "AI provider" },
   { id: "privacy", label: "Privacy" },
 ];
@@ -2936,6 +3021,12 @@ function Settings({
   onSetAccountDisplayName,
   onSetAccountColor,
   onReorderAccounts,
+  splitInboxes,
+  labelsByAccount,
+  onCreateSplitInbox,
+  onRenameSplitInbox,
+  onDeleteSplitInbox,
+  onReorderSplitInboxes,
 }: {
   section: SettingsSection;
   onSectionChange(section: SettingsSection): void;
@@ -2959,6 +3050,12 @@ function Settings({
   onSetAccountDisplayName(email: string, displayName: string | null): Promise<void>;
   onSetAccountColor(email: string, color: string): Promise<void>;
   onReorderAccounts(emails: string[]): Promise<void>;
+  splitInboxes: SplitInbox[];
+  labelsByAccount: Record<string, Label[]>;
+  onCreateSplitInbox(name: string, matchKind: SplitInboxMatchKind, matchValue: string): Promise<void>;
+  onRenameSplitInbox(id: string, name: string): Promise<void>;
+  onDeleteSplitInbox(id: string): Promise<void>;
+  onReorderSplitInboxes(ids: string[]): Promise<void>;
 }) {
   return (
     <Modal title="Settings" className="settings-modal" onClose={onClose}>
@@ -3002,6 +3099,16 @@ function Settings({
               onSetDisplayName={onSetAccountDisplayName}
               onSetColor={onSetAccountColor}
               onReorder={onReorderAccounts}
+            />
+          ) : null}
+          {section === "splitInboxes" ? (
+            <SplitInboxesSettings
+              splitInboxes={splitInboxes}
+              labelsByAccount={labelsByAccount}
+              onCreate={onCreateSplitInbox}
+              onRename={onRenameSplitInbox}
+              onDelete={onDeleteSplitInbox}
+              onReorder={onReorderSplitInboxes}
             />
           ) : null}
           {section === "ai" ? <AiProviderSettings onChange={onAiConfigChange} /> : null}
@@ -3371,6 +3478,230 @@ function AccountsSettings({
       <p className="accounts-footnote">
         Disconnecting removes this account and its local Dispatch cache. Gmail and the account itself are not changed.
       </p>
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+/** Resolves a label id to its display name by scanning every account's label
+ * catalog rather than storing the name on the split inbox — ids are stable,
+ * but the label could be renamed after the split inbox is created. */
+function describeSplitInboxRule(splitInbox: SplitInbox, labelsByAccount: Record<string, Label[]>): string {
+  switch (splitInbox.matchKind) {
+    case "domain":
+      return `Sending domain: ${splitInbox.matchValue}`;
+    case "pattern":
+      return `Address contains: ${splitInbox.matchValue}`;
+    case "label": {
+      for (const labels of Object.values(labelsByAccount)) {
+        const label = labels.find((candidate) => candidate.id === splitInbox.matchValue);
+        if (label) return `Label: ${formatLabelName(label)}`;
+      }
+      return `Label: ${splitInbox.matchValue}`;
+    }
+  }
+}
+
+function SplitInboxNameInput({
+  splitInbox,
+  onCommit,
+}: {
+  splitInbox: SplitInbox;
+  onCommit(name: string): void;
+}) {
+  const [value, setValue] = useState(splitInbox.name);
+  const normalized = value.trim();
+
+  useEffect(() => setValue(splitInbox.name), [splitInbox.name]);
+
+  return (
+    <form
+      className="account-sender-name"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!normalized || normalized === splitInbox.name) return;
+        onCommit(normalized);
+      }}
+    >
+      <input
+        aria-label={`Name for ${splitInbox.name}`}
+        value={value}
+        maxLength={200}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <button type="submit" disabled={!normalized || normalized === splitInbox.name}>
+        Save name
+      </button>
+    </form>
+  );
+}
+
+function SplitInboxesSettings({
+  splitInboxes,
+  labelsByAccount,
+  onCreate,
+  onRename,
+  onDelete,
+  onReorder,
+}: {
+  splitInboxes: SplitInbox[];
+  labelsByAccount: Record<string, Label[]>;
+  onCreate(name: string, matchKind: SplitInboxMatchKind, matchValue: string): Promise<void>;
+  onRename(id: string, name: string): Promise<void>;
+  onDelete(id: string): Promise<void>;
+  onReorder(ids: string[]): Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [matchKind, setMatchKind] = useState<SplitInboxMatchKind>("domain");
+  const [matchValue, setMatchValue] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const labelOptions = Object.entries(labelsByAccount).flatMap(([accountEmail, accountLabels]) =>
+    accountLabels.filter((label) => label.kind === "user").map((label) => ({ accountEmail, label })),
+  );
+
+  const act = (busyKey: string, operation: () => Promise<void>) => {
+    setBusyId(busyKey);
+    setError(null);
+    void operation()
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setBusyId(null));
+  };
+
+  const move = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= splitInboxes.length) return;
+    const next = [...splitInboxes];
+    [next[index], next[target]] = [next[target]!, next[index]!];
+    act(splitInboxes[index]!.id, () => onReorder(next.map((splitInbox) => splitInbox.id)));
+  };
+
+  return (
+    <section className="settings-section accounts-manager" aria-label="Split Inboxes">
+      <div className="accounts-manager-header">
+        <div>
+          <h3>Split inboxes</h3>
+          <p>
+            Show a filtered slice of your inbox as its own view in the sidebar —
+            for example, every message from one client's sending domain.
+          </p>
+        </div>
+      </div>
+      <form
+        className="split-inbox-add"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const normalizedName = name.trim();
+          const normalizedValue = matchValue.trim();
+          if (!normalizedName || !normalizedValue || creating) return;
+          setCreating(true);
+          setError(null);
+          void onCreate(normalizedName, matchKind, normalizedValue)
+            .then(() => {
+              setName("");
+              setMatchValue("");
+            })
+            .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+            .finally(() => setCreating(false));
+        }}
+      >
+        <input
+          value={name}
+          placeholder="Name (e.g. Acme Corp)"
+          aria-label="Split inbox name"
+          onChange={(event) => setName(event.target.value)}
+        />
+        <select
+          value={matchKind}
+          aria-label="Match by"
+          onChange={(event) => {
+            setMatchKind(event.target.value as SplitInboxMatchKind);
+            setMatchValue("");
+          }}
+        >
+          <option value="domain">Sending domain</option>
+          <option value="label">Label</option>
+          <option value="pattern">Address contains</option>
+        </select>
+        {matchKind === "label" ? (
+          <select value={matchValue} aria-label="Label" onChange={(event) => setMatchValue(event.target.value)}>
+            <option value="" disabled>Choose a label</option>
+            {labelOptions.map(({ accountEmail, label }) => (
+              <option key={`${accountEmail}:${label.id}`} value={label.id}>
+                {formatLabelName(label)} ({accountEmail})
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={matchValue}
+            placeholder={matchKind === "domain" ? "acme.com" : "boss@"}
+            aria-label={matchKind === "domain" ? "Sending domain" : "Address pattern"}
+            onChange={(event) => setMatchValue(event.target.value)}
+          />
+        )}
+        <button type="submit" className="primary-action" disabled={creating || !name.trim() || !matchValue.trim()}>
+          <Plus size={15} />
+          {creating ? "Adding…" : "Add split inbox"}
+        </button>
+      </form>
+      {splitInboxes.length === 0 ? (
+        <div className="accounts-empty">
+          <strong>No split inboxes yet</strong>
+          <p>Add one above to see a filtered slice of your inbox in the sidebar.</p>
+        </div>
+      ) : (
+        <ul className="accounts-list">
+          {splitInboxes.map((splitInbox, index) => (
+            <li className="account-card" key={splitInbox.id}>
+              <div className="account-card-row">
+                <span className="account-card-avatar split-inbox-avatar" aria-hidden="true">
+                  {splitInbox.name.charAt(0).toUpperCase()}
+                </span>
+                <div className="account-card-identity">
+                  <SplitInboxNameInput
+                    splitInbox={splitInbox}
+                    onCommit={(nextName) => act(splitInbox.id, () => onRename(splitInbox.id, nextName))}
+                  />
+                  <span className="account-card-email">{describeSplitInboxRule(splitInbox, labelsByAccount)}</span>
+                </div>
+              </div>
+              <div className="account-card-controls">
+                <span className="accounts-list-actions">
+                  <span className="account-reorder">
+                    <button
+                      type="button"
+                      aria-label={`Move ${splitInbox.name} up`}
+                      disabled={index === 0 || busyId !== null}
+                      onClick={() => move(index, -1)}
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move ${splitInbox.name} down`}
+                      disabled={index === splitInboxes.length - 1 || busyId !== null}
+                      onClick={() => move(index, 1)}
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                  </span>
+                  <button
+                    type="button"
+                    className="account-action-button danger-action"
+                    disabled={busyId !== null}
+                    onClick={() => act(splitInbox.id, () => onDelete(splitInbox.id))}
+                  >
+                    Delete
+                  </button>
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
   );
