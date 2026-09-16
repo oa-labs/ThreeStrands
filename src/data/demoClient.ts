@@ -19,7 +19,7 @@ import type {
   UnsubscribeResult,
 } from "../domain";
 
-const DEMO_ACCOUNT_ID = "demo@example.com";
+export const DEMO_ACCOUNT_ID = "demo@example.com";
 
 const initialThreads: Thread[] = [
   {
@@ -171,21 +171,23 @@ function matchesSplitInbox(rule: SplitInbox, thread: Thread): boolean {
   }
 }
 
-function visibleSplitInbox(splitInboxId: string, accountId?: string): Thread[] {
+/** Always scoped to the rule's own account — a split inbox belongs to one account. */
+function visibleSplitInbox(splitInboxId: string): Thread[] {
   const rule = splitInboxes.find((candidate) => candidate.id === splitInboxId);
   if (!rule) throw new Error("Split inbox not found");
-  return visible(accountId).filter((thread) => matchesSplitInbox(rule, thread));
+  return visible(rule.accountId).filter((thread) => matchesSplitInbox(rule, thread));
 }
 
 /**
  * The Inbox tab is `visible()` minus anything a split inbox rule claims —
  * a split inbox pulls its matches out of the Inbox rather than mirroring
- * them into a second view. Mirrors `list_threads_page` in `src-tauri/src/db.rs`.
+ * them into a second view. A rule only ever excludes threads from its own
+ * account. Mirrors `list_threads_page` in `src-tauri/src/db.rs`.
  */
 function visibleInbox(accountId?: string): Thread[] {
   if (splitInboxes.length === 0) return visible(accountId);
   return visible(accountId).filter(
-    (thread) => !splitInboxes.some((rule) => matchesSplitInbox(rule, thread)),
+    (thread) => !splitInboxes.some((rule) => rule.accountId === thread.accountId && matchesSplitInbox(rule, thread)),
   );
 }
 
@@ -288,7 +290,9 @@ export const demoClient: MailClient = {
     let inbox = 0;
     for (const thread of visible(accountId)) {
       if (!thread.unread) continue;
-      const matchingRules = splitInboxes.filter((rule) => matchesSplitInbox(rule, thread));
+      const matchingRules = splitInboxes.filter(
+        (rule) => rule.accountId === thread.accountId && matchesSplitInbox(rule, thread),
+      );
       for (const rule of matchingRules) {
         splits[rule.id] = (splits[rule.id] ?? 0) + 1;
       }
@@ -570,7 +574,7 @@ export const demoClient: MailClient = {
   async listSplitInboxes() {
     return structuredClone(splitInboxes);
   },
-  async createSplitInbox(name, matchKind, matchValue) {
+  async createSplitInbox(name, matchKind, matchValue, accountId) {
     const normalizedName = name.trim();
     const normalizedValue = matchValue.trim();
     if (!normalizedName) throw new Error("Split inbox name cannot be empty");
@@ -582,6 +586,7 @@ export const demoClient: MailClient = {
       matchValue: matchKind === "label" ? normalizedValue : normalizedValue.toLocaleLowerCase(),
       sortOrder: splitInboxes.length,
       createdAt: new Date().toISOString(),
+      accountId,
     };
     splitInboxes = [...splitInboxes, splitInbox];
     return structuredClone(splitInbox);
@@ -605,8 +610,8 @@ export const demoClient: MailClient = {
       })
       .filter((splitInbox): splitInbox is SplitInbox => splitInbox !== null);
   },
-  async listSplitInboxPage(splitInboxId, accountId, offset, limit): Promise<ThreadPage> {
-    const items = visibleSplitInbox(splitInboxId, accountId);
+  async listSplitInboxPage(splitInboxId, offset, limit): Promise<ThreadPage> {
+    const items = visibleSplitInbox(splitInboxId);
     return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
   },
 };

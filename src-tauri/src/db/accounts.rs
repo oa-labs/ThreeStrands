@@ -91,6 +91,9 @@ impl Database {
             .execute("DELETE FROM triage_events WHERE account_id = ?1", [email])
             .map_err(display_error)?;
         transaction
+            .execute("DELETE FROM split_inboxes WHERE account_id = ?1", [email])
+            .map_err(display_error)?;
+        transaction
             .execute("DELETE FROM accounts WHERE email = ?1", [email])
             .map_err(display_error)?;
         transaction.commit().map_err(display_error)

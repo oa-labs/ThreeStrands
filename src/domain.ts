@@ -168,6 +168,7 @@ export type Label = {
 
 export type SplitInboxMatchKind = "domain" | "label" | "pattern";
 
+/** Scoped to one account — a split inbox never pulls mail out of a different account's inbox, even when viewing every account merged together. */
 export type SplitInbox = {
   id: string;
   name: string;
@@ -175,6 +176,7 @@ export type SplitInbox = {
   matchValue: string;
   sortOrder: number;
   createdAt: string;
+  accountId: string;
 };
 
 export type SyncStatus = {

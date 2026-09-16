@@ -296,6 +296,24 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 13 {
+        // A split inbox now belongs to one account rather than applying
+        // across all of them. Existing rows (created before this column
+        // existed) are assigned to whichever account sorts first, since
+        // there's no recorded owner to recover; the user can delete and
+        // recreate a rule under the right account if that guess is wrong.
+        tx.execute_batch(
+            "ALTER TABLE split_inboxes ADD COLUMN account_id TEXT NOT NULL DEFAULT '';",
+        )
+        .map_err(error)?;
+        tx.execute(
+            "UPDATE split_inboxes SET account_id = (SELECT email FROM accounts ORDER BY sort_order LIMIT 1)
+             WHERE account_id = ''",
+            [],
+        )
+        .map_err(error)?;
+        tx.pragma_update(None, "user_version", 13).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
