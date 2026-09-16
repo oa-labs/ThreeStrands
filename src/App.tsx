@@ -137,7 +137,7 @@ import {
   type AiProvider,
 } from "./aiSettings";
 import { getRetentionDays, setRetentionDays, RETENTION_OPTIONS } from "./retentionSettings";
-import { exportSettings, importSettings } from "./userPreferences";
+import { exportSettings, importSettings, type SettingsImportResult } from "./userPreferences";
 import { useAccounts } from "./useAccounts";
 import { useAppPreferences } from "./useAppPreferences";
 import { useEscapeDismiss } from "./useEscapeDismiss";
@@ -630,13 +630,13 @@ export function App() {
   const [splitInboxesLoaded, setSplitInboxesLoaded] = useState(false);
   const [activeSplitInboxId, setActiveSplitInboxId] = useState<string | null>(null);
   const refreshSplitInboxes = useCallback(() => {
-    void mailClient.listSplitInboxes()
+    return mailClient.listSplitInboxes()
       .then((next) => setSplitInboxes(next))
       .catch(() => {})
       .finally(() => setSplitInboxesLoaded(true));
   }, []);
   useEffect(() => {
-    refreshSplitInboxes();
+    void refreshSplitInboxes();
   }, [refreshSplitInboxes]);
   const [mailbox, setMailbox] = useState<MailboxKind>("inbox");
   const [mailboxError, setMailboxError] = useState("");
@@ -2426,6 +2426,22 @@ export function App() {
             await refreshAccounts();
           }}
           onReorderAccounts={reorderAccounts}
+          onSettingsImported={async (result) => {
+            const { preferences } = result;
+            setTheme(preferences.theme);
+            setFontScale(preferences.fontScale);
+            setFontFamily(preferences.fontFamily);
+            setAutoReadDelaySeconds(preferences.autoReadDelaySeconds);
+            setLoadRemoteImages(preferences.loadRemoteImages);
+            setActiveAccountId(preferences.selectedAccountId);
+            await Promise.all([
+              refreshAccounts(),
+              refreshSplitInboxes(),
+              mailClient.googleAuthStatus().then(setAuthStatus),
+            ]);
+            refreshAiAvailability();
+            setSettingsSection("accounts");
+          }}
           splitInboxes={splitInboxes}
           labelsByAccount={labelsByAccount}
           onCreateSplitInbox={async (name, matchKind, matchValue, accountId) => {
@@ -3116,6 +3132,7 @@ function Settings({
   onSetAccountDisplayName,
   onSetAccountColor,
   onReorderAccounts,
+  onSettingsImported,
   splitInboxes,
   labelsByAccount,
   onCreateSplitInbox,
@@ -3146,6 +3163,7 @@ function Settings({
   onSetAccountDisplayName(email: string, displayName: string | null): Promise<void>;
   onSetAccountColor(email: string, color: string): Promise<void>;
   onReorderAccounts(emails: string[]): Promise<void>;
+  onSettingsImported(result: SettingsImportResult): Promise<void>;
   splitInboxes: SplitInbox[];
   labelsByAccount: Record<string, Label[]>;
   onCreateSplitInbox(name: string, matchKind: SplitInboxMatchKind, matchValue: string, accountId: string): Promise<void>;
@@ -3216,7 +3234,7 @@ function Settings({
               onLoadRemoteImagesChange={onLoadRemoteImagesChange}
             />
           ) : null}
-          {section === "data" ? <DataTransferSettings /> : null}
+          {section === "data" ? <DataTransferSettings onImported={onSettingsImported} /> : null}
         </div>
       </div>
     </Modal>
@@ -4140,7 +4158,11 @@ function PrivacySettings({
   );
 }
 
-function DataTransferSettings() {
+function DataTransferSettings({
+  onImported,
+}: {
+  onImported(result: SettingsImportResult): Promise<void>;
+}) {
   const [exportPassword, setExportPassword] = useState("");
   const [exportConfirmation, setExportConfirmation] = useState("");
   const [importPassword, setImportPassword] = useState("");
@@ -4228,12 +4250,9 @@ function DataTransferSettings() {
           setBusy("import");
           setMessage(null);
           void importSettings(importPassword)
-            .then((result) => {
+            .then(async (result) => {
               if (!result) return;
-              setMessage(
-                `Imported ${result.accountCount} accounts and ${result.splitInboxCount} Split Inboxes. Reloading…`,
-              );
-              window.setTimeout(() => window.location.reload(), 250);
+              await onImported(result);
             })
             .catch(showError)
             .finally(() => setBusy(null));

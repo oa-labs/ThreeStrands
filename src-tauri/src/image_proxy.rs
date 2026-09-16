@@ -23,10 +23,6 @@ use crate::net_safety::{self, is_disallowed_host};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-const MAX_BYTES: usize = 5 * 1024 * 1024;
-const MAX_WIDTH: usize = 8_192;
-const MAX_HEIGHT: usize = 8_192;
-const MAX_PIXELS: usize = 16_000_000;
 const MAX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CONCURRENT_REQUESTS: usize = 4;
 
@@ -107,17 +103,10 @@ impl ImageCacheInner {
 }
 
 fn append_bounded(bytes: &mut Vec<u8>, chunk: &[u8]) -> Result<(), String> {
-    if chunk.len() > MAX_BYTES.saturating_sub(bytes.len()) {
+    if chunk.len() > crate::image_format::MAX_RASTER_BYTES.saturating_sub(bytes.len()) {
         return Err("Image exceeds the maximum allowed size".to_string());
     }
     bytes.extend_from_slice(chunk);
-    Ok(())
-}
-
-fn validate_dimensions(width: usize, height: usize) -> Result<(), String> {
-    if width > MAX_WIDTH || height > MAX_HEIGHT || width.saturating_mul(height) > MAX_PIXELS {
-        return Err("Image dimensions exceed the maximum allowed size".to_string());
-    }
     Ok(())
 }
 
@@ -185,15 +174,19 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
     }
 
     if let Some(claimed_len) = response.content_length() {
-        if claimed_len > MAX_BYTES as u64 {
+        if claimed_len > crate::image_format::MAX_RASTER_BYTES as u64 {
             return Err("Image exceeds the maximum allowed size".to_string());
         }
     }
 
     // Never call Response::bytes(): a chunked response without Content-Length
     // could otherwise be completely buffered before the limit is checked.
-    let mut bytes =
-        Vec::with_capacity(response.content_length().unwrap_or(0).min(MAX_BYTES as u64) as usize);
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or(0)
+            .min(crate::image_format::MAX_RASTER_BYTES as u64) as usize,
+    );
     while let Some(chunk) = response
         .chunk()
         .await
@@ -202,9 +195,7 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
         append_bounded(&mut bytes, &chunk)?;
     }
 
-    let dimensions = imagesize::blob_size(&bytes)
-        .map_err(|_| "Unable to verify image dimensions".to_string())?;
-    validate_dimensions(dimensions.width, dimensions.height)?;
+    crate::image_format::validate_raster(&bytes)?;
 
     let data_uri = format!("data:{content_type};base64,{}", STANDARD.encode(&bytes));
     cache.insert(url.to_string(), data_uri.clone()).await;
@@ -229,13 +220,13 @@ mod tests {
 
     #[test]
     fn streams_through_the_byte_limit_and_rejects_the_next_byte() {
-        let mut bytes = vec![0; MAX_BYTES - 1];
+        let mut bytes = vec![0; crate::image_format::MAX_RASTER_BYTES - 1];
         assert!(append_bounded(&mut bytes, &[0]).is_ok());
-        assert_eq!(bytes.len(), MAX_BYTES);
+        assert_eq!(bytes.len(), crate::image_format::MAX_RASTER_BYTES);
         assert!(append_bounded(&mut bytes, &[0]).is_err());
         assert_eq!(
             bytes.len(),
-            MAX_BYTES,
+            crate::image_format::MAX_RASTER_BYTES,
             "an oversized chunk must not be appended"
         );
     }
@@ -260,15 +251,6 @@ mod tests {
 
         cache.insert_with_limit("too-large".into(), "123456789012".into(), 20);
         assert!(!cache.entries.contains_key("too-large"));
-    }
-
-    #[test]
-    fn enforces_dimension_and_pixel_boundaries() {
-        assert!(validate_dimensions(3_999, 4_000).is_ok());
-        assert!(validate_dimensions(4_000, 4_000).is_ok());
-        assert!(validate_dimensions(4_001, 4_000).is_err());
-        assert!(validate_dimensions(MAX_WIDTH + 1, 1).is_err());
-        assert!(validate_dimensions(1, MAX_HEIGHT + 1).is_err());
     }
 }
 

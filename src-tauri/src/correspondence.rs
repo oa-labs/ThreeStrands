@@ -220,6 +220,18 @@ impl Database {
         self.connection()?.execute("INSERT INTO compose_settings VALUES ('identity',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [identity]).map_err(error)?;
         Ok(())
     }
+    /// Establishes an initial sending identity without replacing the account
+    /// the user most recently chose in an existing installation.
+    pub fn ensure_compose_identity(&self, identity: &str) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "INSERT INTO compose_settings(key, value) VALUES ('identity', ?1)
+                 ON CONFLICT(key) DO NOTHING",
+                [identity],
+            )
+            .map(|_| ())
+            .map_err(error)
+    }
     /// How long locally cached mail is kept before `prune_expired_threads`
     /// removes it. `None` means unlimited (the default, so nobody's mail
     /// silently disappears the first time this ships).
@@ -1238,6 +1250,18 @@ mod tests {
         assert_eq!(db.retention_days().unwrap(), Some(90));
         db.set_retention_days(None).unwrap();
         assert_eq!(db.retention_days().unwrap(), None);
+    }
+
+    #[test]
+    fn reconnect_bootstrap_sets_only_a_missing_compose_identity() {
+        let db = Database::open_memory();
+        db.adopt_account("first@example.com").unwrap();
+        db.ensure_compose_identity("first@example.com").unwrap();
+        assert_eq!(db.compose_identity().unwrap(), "first@example.com");
+
+        db.adopt_account("second@example.com").unwrap();
+        db.ensure_compose_identity("second@example.com").unwrap();
+        assert_eq!(db.compose_identity().unwrap(), "first@example.com");
     }
 
     #[test]

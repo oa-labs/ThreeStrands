@@ -422,6 +422,7 @@ async fn fetch_attachment_image(
     if !image_format::is_supported_raster_mime(&mime_type) {
         return Err("Embedded attachment is not a supported image".into());
     }
+    image_format::validate_raster(&bytes)?;
     Ok(format!(
         "data:{mime_type};base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -716,7 +717,12 @@ async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<
             accounts.insert(email.clone(), connected);
         }
     }
-    state.database.adopt_account(&email)
+    let account = state.database.adopt_account(&email)?;
+    // Imported accounts reconnect as additional accounts until the next app
+    // launch. Seed compose immediately so a new message does not fall back to
+    // the startup placeholder's nonexistent keychain entry.
+    state.database.ensure_compose_identity(&email)?;
+    Ok(account)
 }
 
 #[tauri::command]
