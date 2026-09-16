@@ -8,6 +8,7 @@ mod image_proxy;
 mod mime;
 mod models;
 mod net_safety;
+mod schema;
 mod sync;
 mod system_fonts;
 mod transfer;
