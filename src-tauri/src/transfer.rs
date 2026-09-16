@@ -33,6 +33,11 @@ const MAX_TEXT_LENGTH: usize = 2_048;
 pub struct AiFeaturePreferences {
     pub draft_assist: bool,
     pub summarize: bool,
+    // Version 1 exports originally included this flag. Keep emitting and
+    // accepting it so transfers remain compatible across app updates even
+    // though the webview no longer exposes the feature.
+    #[serde(default)]
+    pub classify: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -99,6 +104,10 @@ pub(crate) struct TransferSplitInbox {
     pub match_value: String,
     pub sort_order: i64,
     pub created_at: String,
+    // Split Inboxes were global when version 1 was introduced. Missing owners
+    // are migrated to the first exported account, matching the database's
+    // migration for locally stored rules.
+    #[serde(default)]
     pub account_id: String,
 }
 
@@ -128,6 +137,15 @@ struct TransferPayload {
 }
 
 impl TransferPayload {
+    fn migrate_legacy_fields(&mut self) {
+        let fallback_account_id = self.accounts.first().map(|account| account.email.as_str());
+        for split in &mut self.split_inboxes {
+            if split.account_id.is_empty() {
+                split.account_id = fallback_account_id.unwrap_or_default().to_string();
+            }
+        }
+    }
+
     fn validate(&self) -> Result<(), String> {
         if self.version != VERSION {
             return Err(format!("Unsupported transfer version {}", self.version));
@@ -173,7 +191,9 @@ impl TransferPayload {
                 return Err("The transfer contains an invalid Split Inbox rule".to_string());
             }
             if !account_emails.contains(&split.account_id.to_ascii_lowercase()) {
-                return Err("The transfer contains a Split Inbox for an unknown account".to_string());
+                return Err(
+                    "The transfer contains a Split Inbox for an unknown account".to_string()
+                );
             }
         }
         Ok(())
@@ -321,8 +341,10 @@ fn decrypt(encoded: &[u8], password: &str) -> Result<TransferPayload, String> {
     let plaintext = cipher
         .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
         .map_err(|_| "The password is incorrect or the settings export is damaged".to_string())?;
-    serde_json::from_slice(&plaintext)
-        .map_err(|_| "The settings export contains invalid data".to_string())
+    let mut payload: TransferPayload = serde_json::from_slice(&plaintext)
+        .map_err(|_| "The settings export contains invalid data".to_string())?;
+    payload.migrate_legacy_fields();
+    Ok(payload)
 }
 
 fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], String> {
@@ -391,6 +413,7 @@ mod tests {
                 ai_features: AiFeaturePreferences {
                     draft_assist: false,
                     summarize: false,
+                    classify: false,
                 },
             },
             accounts: vec![TransferAccount {
@@ -430,5 +453,43 @@ mod tests {
             serde_json::Value::String("secret-provider".to_string()),
         );
         assert!(serde_json::from_value::<TransferPreferences>(object.into()).is_err());
+    }
+
+    #[test]
+    fn decrypt_accepts_legacy_ai_classify_flag() {
+        let mut legacy_payload = payload();
+        legacy_payload.preferences.ai_features.classify = true;
+        let encoded = encrypt(&legacy_payload, "correct horse").unwrap();
+
+        let decoded = decrypt(&encoded, "correct horse").unwrap();
+
+        assert!(decoded.preferences.ai_features.classify);
+    }
+
+    #[test]
+    fn legacy_split_inbox_without_account_is_assigned_to_first_account() {
+        let mut serialized = serde_json::to_value(payload()).unwrap();
+        serialized["splitInboxes"] = serde_json::json!([{
+            "id": "legacy-rule",
+            "name": "Legacy rule",
+            "matchKind": "domain",
+            "matchValue": "example.com",
+            "sortOrder": 0,
+            "createdAt": "2026-03-06T00:00:00Z"
+        }]);
+        let mut decoded: TransferPayload = serde_json::from_value(serialized).unwrap();
+
+        decoded.migrate_legacy_fields();
+        decoded.validate().unwrap();
+
+        assert_eq!(decoded.split_inboxes[0].account_id, "person@example.com");
+    }
+
+    #[test]
+    fn transfer_still_rejects_unrecognized_fields() {
+        let mut serialized = serde_json::to_value(payload()).unwrap();
+        serialized["preferences"]["aiFeatures"]["unexpected"] = serde_json::json!(true);
+
+        assert!(serde_json::from_value::<TransferPayload>(serialized).is_err());
     }
 }

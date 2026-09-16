@@ -6,6 +6,10 @@ Agents are responsible for the automated test suite: run it (`pnpm test`, `pnpm 
 
 Agents are not responsible for manually exercising the running application (starting the dev server, clicking through the UI, taking screenshots) to confirm a fix looks or feels right — that verification is done by the developer. Ship the code change backed by automated coverage and let the developer do the hands-on check.
 
+## Settings transfer compatibility
+
+Treat the encrypted settings export as a persistent, cross-version format. Do not remove a field, add a required field, or change a field's meaning under the existing format version without a backward-compatible default or migration. If compatibility cannot be preserved, bump the format version intentionally and keep support for importing earlier versions. Every transfer schema change must include regression coverage for exports produced by the preceding schema.
+
 ## Email rendering
 
 Dispatch renders untrusted sender HTML inside a sandboxed, CSP-scoped iframe. Keep that trust boundary intact, but treat safe sender-authored structure as the source of truth.

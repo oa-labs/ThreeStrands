@@ -1070,12 +1070,14 @@ export function App() {
       setSelectedId(remaining[nextIndex]?.id ?? null);
     }
 
-    setCheckedIds((current) => {
-      if (current.size === 0) return current;
-      const next = new Set(current);
-      targetIds.forEach((id) => next.delete(id));
-      return next.size === current.size ? current : next;
-    });
+    if (removesFromView) {
+      setCheckedIds((current) => {
+        if (current.size === 0) return current;
+        const next = new Set(current);
+        targetIds.forEach((id) => next.delete(id));
+        return next.size === current.size ? current : next;
+      });
+    }
 
     let failedIds: string[] = [];
     try {
