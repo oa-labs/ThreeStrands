@@ -45,7 +45,6 @@ import {
   type RefObject,
   useCallback,
   useEffect,
-  useLayoutEffect,
   memo,
   useMemo,
   useRef,
@@ -85,7 +84,6 @@ import type {
   Account,
   AuthStatus,
   Label,
-  MailboxUnreadCounts,
   SplitInbox,
   SplitInboxMatchKind,
   SyncStatus,
@@ -104,31 +102,18 @@ import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachm
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import {
-  applyFontScale,
-  changeFontScale,
   FONT_SCALE_STEP,
   MAX_FONT_SCALE,
   MIN_FONT_SCALE,
-  readFontScale,
-  saveFontScale,
 } from "./fontScale";
 
-import { applyTheme, effectiveTheme, readTheme, saveTheme, type Theme } from "./theme";
+import type { Theme } from "./theme";
 import {
-  applyFontFamily,
   DEFAULT_FONT_FAMILY,
   fontFamilyStack,
   MAX_AUTO_READ_DELAY_SECONDS,
   MIN_AUTO_READ_DELAY_SECONDS,
-  readAutoReadDelaySeconds,
-  readFontFamily,
-  readLoadRemoteImages,
-  readSelectedAccountId,
   readSelectedTabForAccount,
-  saveAutoReadDelaySeconds,
-  saveFontFamily,
-  saveLoadRemoteImages,
-  saveSelectedAccountId,
   saveSelectedTabForAccount,
   type FontFamily,
 } from "./settings";
@@ -153,7 +138,10 @@ import {
 } from "./aiSettings";
 import { getRetentionDays, setRetentionDays, RETENTION_OPTIONS } from "./retentionSettings";
 import { exportSettings, importSettings } from "./userPreferences";
+import { useAccounts } from "./useAccounts";
+import { useAppPreferences } from "./useAppPreferences";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+import { useReaderState } from "./useReaderState";
 import {
   buildTriageCloseEvent,
   buildTriageDispositionEvent,
@@ -511,31 +499,21 @@ function useShortcutHandler(
 
 export function App() {
   const inboxSize = useInboxWidth();
-  const [theme, setTheme] = useState(readTheme);
-  const [fontScale, setFontScale] = useState(readFontScale);
-  const [fontFamily, setFontFamily] = useState(readFontFamily);
-  const [autoReadDelaySeconds, setAutoReadDelaySeconds] = useState(readAutoReadDelaySeconds);
-  const [loadRemoteImages, setLoadRemoteImages] = useState(readLoadRemoteImages);
-  useEffect(() => applyTheme(theme), [theme]);
-  useEffect(() => applyFontScale(fontScale), [fontScale]);
-  useEffect(() => applyFontFamily(fontFamily), [fontFamily]);
-  useEffect(() => {
-    if (theme !== "system") return;
-    const query = window.matchMedia?.("(prefers-color-scheme: light)");
-    if (!query) return;
-    const handleChange = () => applyTheme("system");
-    query.addEventListener("change", handleChange);
-    return () => query.removeEventListener("change", handleChange);
-  }, [theme]);
-  const effectiveThemeValue = effectiveTheme(theme);
-  const toggleTheme = () => {
-    const next = effectiveThemeValue === "dark" ? "light" : "dark";
-    saveTheme(next);
-    setTheme(next);
-  };
-  const adjustFontScale = useCallback((direction: 1 | -1) => {
-    setFontScale((current) => saveFontScale(changeFontScale(current, direction)));
-  }, []);
+  const {
+    theme,
+    effectiveTheme: effectiveThemeValue,
+    setTheme,
+    toggleTheme,
+    fontScale,
+    setFontScale,
+    adjustFontScale,
+    fontFamily,
+    setFontFamily,
+    autoReadDelaySeconds,
+    setAutoReadDelaySeconds,
+    loadRemoteImages,
+    setLoadRemoteImages,
+  } = useAppPreferences();
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeMessageFilters, setActiveMessageFilters] = useState<Set<MessageFilterKind>>(() => new Set());
   const toggleMessageFilter = useCallback((kind: MessageFilterKind) => {
@@ -553,15 +531,21 @@ export function App() {
   const selectedThread = threads.find((thread) => thread.id === selectedId);
   const selectedThreadLastMessageAt = selectedThread?.lastMessageAt;
   const selectedThreadSnippet = selectedThread?.snippet;
-  const [messageExpansionOverrides, setMessageExpansionOverrides] = useState<Map<string, boolean>>(new Map());
-  const latestMessageRef = useRef<HTMLElement | null>(null);
-  const messageStackRef = useRef<HTMLDivElement>(null);
-  const messageRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const activeMessageIdRef = useRef<string | null>(null);
-  const pendingMessageToggleFocusRef = useRef<string | null>(null);
-  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const selectedThreadRowRef = useRef<HTMLButtonElement | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const {
+    accounts,
+    authStatus,
+    setAuthStatus,
+    syncStatus,
+    setSyncStatus,
+    activeAccountId,
+    setActiveAccountId,
+    mailboxUnreadCounts,
+    refreshMailboxUnreadCounts,
+    refreshAccounts,
+    reorderAccounts,
+  } = useAccounts(settingsOpen);
   const [unreadCounts, setUnreadCounts] = useState<UnreadCounts>({});
   const refreshUnreadCounts = useCallback(() => {
     void mailClient.listUnreadCounts().then(setUnreadCounts).catch(() => {});
@@ -577,6 +561,23 @@ export function App() {
     () => visibleDetail ? messagesWithQueuedReplies(visibleDetail, correspondence.outbox) : [],
     [visibleDetail, correspondence.outbox],
   );
+  const {
+    messageExpansionOverrides,
+    setMessageExpansionOverrides,
+    latestMessageRef,
+    messageStackRef,
+    messageRefs,
+    activeMessageIdRef,
+    pendingMessageToggleFocusRef,
+    activeMessageId,
+    setActiveMessageId,
+    latestDisplayedMessageId,
+  } = useReaderState({
+    selectedThreadId: selectedId,
+    detail: visibleDetail,
+    displayedMessages,
+    composerOpen: composerBelongsToVisibleThread,
+  });
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -587,7 +588,6 @@ export function App() {
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
@@ -629,15 +629,6 @@ export function App() {
   useEffect(() => {
     refreshSplitInboxes();
   }, [refreshSplitInboxes]);
-  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-  const [activeAccountId, setActiveAccountId] = useState<string | null>(readSelectedAccountId);
-  const [mailboxUnreadCounts, setMailboxUnreadCounts] = useState<MailboxUnreadCounts>({ inbox: 0, splits: {} });
-  const refreshMailboxUnreadCounts = useCallback((accountOverride?: string | null) => {
-    const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
-    void mailClient.mailboxUnreadCounts(accountId).then(setMailboxUnreadCounts).catch(() => {});
-  }, [activeAccountId]);
-  useEffect(refreshMailboxUnreadCounts, [refreshMailboxUnreadCounts]);
   const [mailbox, setMailbox] = useState<MailboxKind>("inbox");
   const [mailboxError, setMailboxError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
@@ -669,43 +660,12 @@ export function App() {
     setMailbox((current) => (current === "inbox" || current === "split" ? (target ? "split" : "inbox") : current));
     setActiveSplitInboxId(target);
   }, [activeAccountId, splitInboxesLoaded, splitInboxes]);
-  const accountsRequest = useRef(0);
   const threadsRequest = useRef(0);
   const detailRequest = useRef(0);
   const triageSessionRef = useRef<TriageSession | null>(null);
   const triageCloseTimerRef = useRef<number | null>(null);
   const loadingMore = useRef(false);
   const [loadingMoreState, setLoadingMoreState] = useState(false);
-  const refreshAccounts = useCallback(() => {
-    // Guards against an earlier-issued refresh resolving after a later one
-    // (e.g. two account edits in quick succession) and clobbering it with
-    // stale data.
-    const requestId = ++accountsRequest.current;
-    return mailClient
-      .listAccounts()
-      .then((next) => {
-        if (requestId !== accountsRequest.current) return;
-        setAccounts(next);
-        setActiveAccountId((current) =>
-          current === null || next.some((account) => account.email === current)
-            ? current
-            : null,
-        );
-      })
-      .catch(() => {
-        if (requestId === accountsRequest.current) setAccounts([]);
-      });
-  }, []);
-  useEffect(() => {
-    saveSelectedAccountId(activeAccountId);
-  }, [activeAccountId]);
-  useEffect(() => {
-    // Accounts sync in the background for as long as the app runs, so a
-    // status/last-synced snapshot fetched once at mount goes stale quickly.
-    // Re-fetch on every open rather than only after an explicit account
-    // action, so the panel reflects sync progress that happened meanwhile.
-    if (settingsOpen) void refreshAccounts();
-  }, [settingsOpen, refreshAccounts]);
   const [notice, setNotice] = useNotice();
   const recordTriageEvent = useCallback((event: TriageEvent) => {
     // Instrumentation is deliberately best-effort: a local telemetry write
@@ -815,17 +775,8 @@ export function App() {
   }, [correspondence.sentCount, loadThreads]);
 
   useEffect(() => {
-    Promise.all([mailClient.syncStatus(), mailClient.googleAuthStatus()])
-      .then(([status, auth]) => {
-        setSyncStatus(status);
-        setAuthStatus(auth);
-      })
-      .catch(() => {
-        setSyncStatus((current) => current ? { ...current, state: "error" } : current);
-      });
     void mailClient.listLabels().then(setLabels).catch(() => setLabels([]));
-    void refreshAccounts();
-  }, [refreshAccounts]);
+  }, []);
 
   useEffect(() => {
     const accountId = detail?.thread.accountId;
@@ -872,44 +823,11 @@ export function App() {
   }, [selectedId, selectedThreadLastMessageAt, selectedThreadSnippet, setNotice]);
 
   useEffect(() => {
-    setMessageExpansionOverrides(new Map());
-    messageRefs.current.clear();
-    activeMessageIdRef.current = null;
-    pendingMessageToggleFocusRef.current = null;
-    setActiveMessageId(null);
     setSummaryExpanded(false);
     // Pending/error state deliberately isn't reset here — it's keyed by
     // thread id (see `summarizingRef`/`summaryErrors`) so it stays correct
     // for whichever thread it actually belongs to when you navigate back.
   }, [selectedId]);
-
-  useEffect(() => {
-    if (!visibleDetail) return;
-    // Unread status decides the initial presentation of an older message, but
-    // it must not remain the source of truth for expansion. Auto-read clears
-    // every message's unread flag; retaining that first decision prevents the
-    // cards from collapsing (and moving the reader) when the timer fires.
-    setMessageExpansionOverrides((current) => {
-      const next = new Map<string, boolean>();
-      for (const [index, message] of visibleDetail.messages.entries()) {
-        const isLatest = index === visibleDetail.messages.length - 1;
-        next.set(message.id, current.get(message.id) ?? (isLatest || message.unread));
-      }
-      return next;
-    });
-  }, [visibleDetail?.thread.id, visibleDetail?.messages]);
-
-  const latestDisplayedMessageId = displayedMessages.at(-1)?.id;
-  useEffect(() => {
-    if (!latestDisplayedMessageId) return;
-    activeMessageIdRef.current = latestDisplayedMessageId;
-    setActiveMessageId(latestDisplayedMessageId);
-  }, [visibleDetail?.thread.id, latestDisplayedMessageId]);
-
-  useEffect(() => {
-    if (!visibleDetail || composerBelongsToVisibleThread) return;
-    latestMessageRef.current?.scrollIntoView?.({ block: "start" });
-  }, [visibleDetail?.thread.id, latestDisplayedMessageId]);
 
   useEffect(() => {
     if (!visibleDetail) return;
@@ -971,26 +889,6 @@ export function App() {
       }, 0);
     };
   }, [includeArchived, mailbox, recordTriageEvent, visibleDetail?.thread.id]);
-
-  useLayoutEffect(() => {
-    // Collapsing older messages can shrink the stack below the current scroll
-    // offset; Chrome's scroll anchoring sometimes fails to re-clamp it when
-    // tall <article> nodes are replaced by short collapsed rows, leaving the
-    // pane scrolled past its content (blank space) until the user scrolls.
-    const node = messageStackRef.current;
-    if (!node) return;
-    const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
-    if (node.scrollTop > maxScrollTop) node.scrollTop = maxScrollTop;
-  }, [messageExpansionOverrides]);
-
-  useLayoutEffect(() => {
-    const messageId = pendingMessageToggleFocusRef.current;
-    if (!messageId) return;
-    pendingMessageToggleFocusRef.current = null;
-    const node = messageRefs.current.get(messageId);
-    const toggle = node?.querySelector<HTMLElement>(".message-card-toggle, .message-expanded-toggle");
-    toggle?.focus({ preventScroll: true });
-  }, [messageExpansionOverrides]);
 
   const refreshMail = useCallback(() => {
     setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
@@ -1623,21 +1521,10 @@ export function App() {
   }, [checkedIds, executeCommand, mutateIds]);
 
   const reorderNavbarAccounts = useCallback((emails: string[]) => {
-    const accountsByEmail = new Map(accounts.map((account) => [account.email, account]));
-    const reordered = emails
-      .map((email) => accountsByEmail.get(email))
-      .filter((account): account is Account => account !== undefined);
-    if (reordered.length !== accounts.length) return;
-
-    // Move the icons immediately; listAccounts then confirms the persisted order.
-    setAccounts(reordered);
-    void mailClient.reorderAccounts(emails)
-      .then(refreshAccounts)
-      .catch(() => {
-        setAccounts(accounts);
-        setNotice({ message: "Account order could not be saved" });
-      });
-  }, [accounts, refreshAccounts, setNotice]);
+    void reorderAccounts(emails).catch(() => {
+      setNotice({ message: "Account order could not be saved" });
+    });
+  }, [reorderAccounts, setNotice]);
 
   useEffect(() => {
     if (!selectAllRef.current) return;
@@ -2476,18 +2363,15 @@ export function App() {
           onSectionChange={setSettingsSection}
           onClose={() => setSettingsOpen(false)}
           theme={theme}
-          onThemeChange={(next) => {
-            saveTheme(next);
-            setTheme(next);
-          }}
+          onThemeChange={setTheme}
           fontScale={fontScale}
-          onFontScaleChange={(value) => setFontScale(saveFontScale(value))}
+          onFontScaleChange={setFontScale}
           fontFamily={fontFamily}
-          onFontFamilyChange={(value) => setFontFamily(saveFontFamily(value))}
+          onFontFamilyChange={setFontFamily}
           autoReadDelaySeconds={autoReadDelaySeconds}
-          onAutoReadDelayChange={(value) => setAutoReadDelaySeconds(saveAutoReadDelaySeconds(value))}
+          onAutoReadDelayChange={setAutoReadDelaySeconds}
           loadRemoteImages={loadRemoteImages}
-          onLoadRemoteImagesChange={(value) => setLoadRemoteImages(saveLoadRemoteImages(value))}
+          onLoadRemoteImagesChange={setLoadRemoteImages}
           onAiConfigChange={refreshAiAvailability}
           authStatus={authStatus}
           accounts={accounts}
@@ -2517,10 +2401,7 @@ export function App() {
             await mailClient.setAccountColor(email, color);
             await refreshAccounts();
           }}
-          onReorderAccounts={async (emails) => {
-            await mailClient.reorderAccounts(emails);
-            await refreshAccounts();
-          }}
+          onReorderAccounts={reorderAccounts}
           splitInboxes={splitInboxes}
           labelsByAccount={labelsByAccount}
           onCreateSplitInbox={async (name, matchKind, matchValue) => {
