@@ -262,6 +262,39 @@ fn escape_html_attribute(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
+// This matches Dispatch's 18 MiB local attachment limit and keeps provider
+// base64 bodies from causing an unbounded decoded allocation.
+const MAX_ATTACHMENT_BYTES: usize = 18 * 1024 * 1024;
+
+fn decoded_base64_len(encoded_len: usize) -> Option<usize> {
+    let trailing_bytes = match encoded_len % 4 {
+        0 => 0,
+        2 => 1,
+        3 => 2,
+        _ => return None,
+    };
+    (encoded_len / 4)
+        .checked_mul(3)
+        .and_then(|length| length.checked_add(trailing_bytes))
+}
+
+pub(crate) fn decode_attachment_data(data: &str) -> Result<Vec<u8>, String> {
+    let encoded = data.trim_end_matches('=');
+    let decoded_len = decoded_base64_len(encoded.len())
+        .ok_or_else(|| "Gmail returned invalid attachment data".to_string())?;
+    if decoded_len > MAX_ATTACHMENT_BYTES {
+        return Err("Gmail attachment exceeds the 18 MB local limit".into());
+    }
+
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|error| format!("Invalid Gmail base64url attachment: {error}"))?;
+    if bytes.len() > MAX_ATTACHMENT_BYTES {
+        return Err("Gmail attachment exceeds the 18 MB local limit".into());
+    }
+    Ok(bytes)
+}
+
 pub fn attachment_bytes_from_payload(
     message: &GmailMessage,
     attachment_id: &str,
@@ -287,11 +320,7 @@ pub fn attachment_bytes_from_payload(
     part.body
         .data
         .as_deref()
-        .map(|data| {
-            URL_SAFE_NO_PAD
-                .decode(data.trim_end_matches('='))
-                .map_err(|error| format!("Invalid Gmail base64url attachment: {error}"))
-        })
+        .map(decode_attachment_data)
         .transpose()
 }
 
@@ -471,6 +500,26 @@ fn normalize_date(value: &str) -> Option<String> {
 mod tests {
     use super::*;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+    #[test]
+    fn attachment_decoded_size_policy_includes_the_limit() {
+        let exact_encoded_len = MAX_ATTACHMENT_BYTES / 3 * 4;
+        assert_eq!(
+            decoded_base64_len(exact_encoded_len),
+            Some(MAX_ATTACHMENT_BYTES)
+        );
+        assert_eq!(
+            decoded_base64_len(exact_encoded_len + 2),
+            Some(MAX_ATTACHMENT_BYTES + 1)
+        );
+        assert_eq!(decoded_base64_len(exact_encoded_len + 1), None);
+    }
+
+    #[test]
+    fn decodes_padded_and_unpadded_attachment_data() {
+        assert_eq!(decode_attachment_data("SGVsbG8").unwrap(), b"Hello");
+        assert_eq!(decode_attachment_data("SGVsbG8=").unwrap(), b"Hello");
+    }
 
     fn part(kind: &str, body: &str) -> MimePart {
         MimePart {

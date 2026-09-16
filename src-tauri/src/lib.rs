@@ -1,4 +1,5 @@
 mod ai;
+mod attachment_reader;
 mod auth;
 mod calendar;
 mod correspondence;
@@ -136,6 +137,7 @@ struct AppState {
     authorize_slot: AuthorizeSlot,
     exiting: std::sync::atomic::AtomicBool,
     image_cache: image_proxy::ImageCache,
+    attachment_reader: attachment_reader::ReaderCache,
 }
 
 #[derive(Clone, Default)]
@@ -420,6 +422,7 @@ async fn fetch_attachment_image(
     if !image_format::is_supported_raster_mime(&mime_type) {
         return Err("Embedded attachment is not a supported image".into());
     }
+    image_format::validate_raster(&bytes)?;
     Ok(format!(
         "data:{mime_type};base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -451,15 +454,10 @@ async fn open_attachment(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let (filename, _, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
-    let directory = state
-        .correspondence
-        .root
-        .join("reader")
-        .join(uuid::Uuid::new_v4().to_string());
-    std::fs::create_dir_all(&directory)
+    let path = state
+        .attachment_reader
+        .write(&filename, &bytes)
         .map_err(|error| format!("Unable to prepare attachment: {error}"))?;
-    let path = directory.join(filename);
-    std::fs::write(&path, bytes).map_err(|error| format!("Unable to write attachment: {error}"))?;
     open::that(path).map_err(|error| format!("Unable to open attachment: {error}"))
 }
 
@@ -1123,6 +1121,7 @@ pub fn run() {
             let root = data_dir.join("attachments");
             std::fs::create_dir_all(&root)?;
             restrict_dir_to_owner(&root);
+            let attachment_reader = attachment_reader::ReaderCache::new(root.join("reader"))?;
             let additional_accounts = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
             let correspondence = correspondence::Correspondence {
                 database: database.clone(),
@@ -1175,6 +1174,7 @@ pub fn run() {
                 authorize_slot: AuthorizeSlot::default(),
                 exiting: std::sync::atomic::AtomicBool::new(false),
                 image_cache: image_proxy::ImageCache::new().map_err(std::io::Error::other)?,
+                attachment_reader,
             });
             Ok(())
         })

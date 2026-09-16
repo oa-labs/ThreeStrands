@@ -517,7 +517,6 @@ impl GmailClient {
         self.json(request, false).await
     }
     pub async fn attachment_bytes(&self, message: &str, id: &str) -> ProviderResult<Vec<u8>> {
-        use base64::Engine;
         #[derive(Deserialize)]
         struct Body {
             data: String,
@@ -529,9 +528,7 @@ impl GmailClient {
             )
             .await?;
         let body: Body = self.json(request, false).await?;
-        base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(body.data.trim_end_matches('='))
-            .map_err(|e| ProviderError::Other(e.to_string()))
+        crate::mime::decode_attachment_data(&body.data).map_err(ProviderError::Other)
     }
     pub async fn prepare_send(&self) -> ProviderResult<RequestBuilder> {
         Ok(self
