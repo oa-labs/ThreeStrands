@@ -312,6 +312,11 @@ fn list_threads_page(
 }
 
 #[tauri::command]
+fn list_unread_counts(state: State<'_, AppState>) -> Result<HashMap<String, i64>, String> {
+    state.database.list_unread_counts()
+}
+
+#[tauri::command]
 fn list_all_mail_page(
     account_id: Option<String>,
     offset: usize,
@@ -1095,6 +1100,7 @@ pub fn run() {
             list_all_mail,
             list_trash,
             list_threads_page,
+            list_unread_counts,
             list_all_mail_page,
             list_trash_page,
             get_thread,

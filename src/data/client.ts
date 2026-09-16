@@ -16,6 +16,7 @@ import type {
   ThreadMutation,
   TriageEvent,
   TriageSenderStats,
+  UnreadCounts,
   UnsubscribeResult,
 } from "../domain";
 import type { AiProvider } from "../aiSettings";
@@ -32,6 +33,7 @@ export interface MailClient extends CorrespondenceClient {
   listThreadsPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   listAllMailPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   listTrashPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
+  listUnreadCounts(): Promise<UnreadCounts>;
   getThread(id: string): Promise<ThreadDetail>;
   openAttachment(messageId: string, attachmentId: string): Promise<void>;
   saveAttachment(messageId: string, attachmentId: string): Promise<void>;
@@ -95,6 +97,7 @@ const tauriClient: MailClient = {
   listThreadsPage: (accountId, offset, limit) => invoke("list_threads_page", { accountId, offset, limit }),
   listAllMailPage: (accountId, offset, limit) => invoke("list_all_mail_page", { accountId, offset, limit }),
   listTrashPage: (accountId, offset, limit) => invoke("list_trash_page", { accountId, offset, limit }),
+  listUnreadCounts: () => invoke("list_unread_counts"),
   getThread: (id) => invoke("get_thread", { id }),
   openAttachment: (messageId, attachmentId) => invoke("open_attachment", { messageId, attachmentId }),
   saveAttachment: (messageId, attachmentId) => invoke("save_attachment", { messageId, attachmentId }),

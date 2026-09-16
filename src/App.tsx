@@ -91,6 +91,7 @@ import type {
   ThreadDetail,
   ThreadMutation,
   TriageEvent,
+  UnreadCounts,
   Message,
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
@@ -555,6 +556,11 @@ export function App() {
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const selectedThreadRowRef = useRef<HTMLButtonElement | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [unreadCounts, setUnreadCounts] = useState<UnreadCounts>({});
+  const refreshUnreadCounts = useCallback(() => {
+    void mailClient.listUnreadCounts().then(setUnreadCounts).catch(() => {});
+  }, []);
+  useEffect(refreshUnreadCounts, [refreshUnreadCounts]);
   const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId);
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft
@@ -725,6 +731,7 @@ export function App() {
       setMailboxError("");
       setThreads(page.threads);
       setHasMoreResults(page.hasMore);
+      refreshUnreadCounts();
       setSelectedId((current) =>
         current && page.threads.some((thread) => thread.id === current)
           ? current
@@ -734,7 +741,7 @@ export function App() {
       if (requestId !== threadsRequest.current) return;
       setMailboxError(error instanceof Error ? error.message : String(error));
     }
-  }, [includeArchived, activeAccountId, mailbox, activeSplitInboxId]);
+  }, [includeArchived, activeAccountId, mailbox, activeSplitInboxId, refreshUnreadCounts]);
 
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
@@ -1615,6 +1622,7 @@ export function App() {
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
+          unreadCounts={unreadCounts}
           activeAccountId={activeAccountId}
           onSwitch={context.switchAccount}
           onShowAll={context.showAllAccounts}
@@ -2552,14 +2560,16 @@ function summaryPreview(summary: string, maxLength = 90): string {
   return first.length > maxLength ? `${first.slice(0, maxLength).trimEnd()}…` : first;
 }
 
-function AccountSwitcher({
+export function AccountSwitcher({
   accounts,
+  unreadCounts,
   activeAccountId,
   onSwitch,
   onShowAll,
   onReorder,
 }: {
   accounts: Account[];
+  unreadCounts: UnreadCounts;
   activeAccountId: string | null;
   onSwitch(email: string): void;
   onShowAll(): void;
@@ -2570,6 +2580,8 @@ function AccountSwitcher({
   const draggedEmailRef = useRef<string | null>(null);
 
   if (accounts.length <= 1) return null;
+
+  const totalUnread = accounts.reduce((total, account) => total + (unreadCounts[account.email] ?? 0), 0);
 
   const clearDragState = () => {
     draggedEmailRef.current = null;
@@ -2599,20 +2611,23 @@ function AccountSwitcher({
           type="button"
           role="radio"
           aria-checked={activeAccountId === null}
-          aria-label="All accounts"
+          aria-label={totalUnread > 0 ? `All accounts, ${totalUnread} unread` : "All accounts"}
           className={`account-icon all-accounts ${activeAccountId === null ? "active" : ""}`}
           onClick={onShowAll}
-        />
+        >
+          {totalUnread > 0 ? <UnreadBadge count={totalUnread} /> : null}
+        </button>
       </HoverTooltip>
       {accounts.map((account) => {
         const name = account.displayName ?? account.email;
+        const unreadCount = unreadCounts[account.email] ?? 0;
         return (
           <HoverTooltip key={account.email} label={name}>
             <button
               type="button"
               role="radio"
               aria-checked={activeAccountId === account.email}
-              aria-label={name}
+              aria-label={unreadCount > 0 ? `${name}, ${unreadCount} unread` : name}
               title="Drag to reorder accounts"
               draggable
               className={`account-icon ${activeAccountId === account.email ? "active" : ""} ${draggedEmail === account.email ? "dragging" : ""} ${dragOverEmail === account.email && draggedEmail !== account.email ? "drag-over" : ""}`}
@@ -2640,12 +2655,17 @@ function AccountSwitcher({
               onDragEnd={clearDragState}
             >
               {name.charAt(0).toUpperCase()}
+              {unreadCount > 0 ? <UnreadBadge count={unreadCount} /> : null}
             </button>
           </HoverTooltip>
         );
       })}
     </div>
   );
+}
+
+function UnreadBadge({ count }: { count: number }) {
+  return <span className="account-unread-badge" aria-hidden="true">{count > 99 ? "99+" : count}</span>;
 }
 
 function FiltersButton({

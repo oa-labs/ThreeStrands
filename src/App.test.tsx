@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App, NOTICE_TIMEOUT_MS } from "./App";
+import { AccountSwitcher, App, NOTICE_TIMEOUT_MS } from "./App";
 import { mailClient } from "./data/client";
 import { FOREGROUND_DEBOUNCE_MS, FOREGROUND_IDLE_MS } from "./foregroundRefresh";
 
@@ -682,5 +682,40 @@ describe("account selection persistence", () => {
     render(<App />);
     await act(async () => {});
     expect(screen.getByRole("radio", { name: "All accounts" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("shows unread inbox totals on each account and the combined account icon", async () => {
+    const primary = {
+      email: "demo@example.com",
+      displayName: null,
+      color: "#4285F4",
+      status: "connected" as const,
+      sortOrder: 0,
+      connectedAt: "2026-03-04T00:00:00Z",
+      lastSyncedAt: null,
+    };
+    render(
+      <AccountSwitcher
+        accounts={[
+          primary,
+          {
+        ...primary,
+        email: "work@example.com",
+        displayName: "Work",
+        color: "#34A853",
+        sortOrder: 1,
+          },
+        ]}
+        unreadCounts={{ [primary.email]: 3, "work@example.com": 120 }}
+        activeAccountId={null}
+        onSwitch={() => {}}
+        onShowAll={() => {}}
+        onReorder={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("radio", { name: "All accounts, 123 unread" })).toHaveTextContent("99+");
+    expect(screen.getByRole("radio", { name: `${primary.email}, 3 unread` })).toHaveTextContent("3");
+    expect(screen.getByRole("radio", { name: "Work, 120 unread" })).toHaveTextContent("99+");
   });
 });
