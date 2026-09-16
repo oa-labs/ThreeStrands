@@ -702,8 +702,12 @@ impl Database {
         let mut suggestions: Vec<ContactSuggestion> = by_email
             .into_iter()
             .filter(|(email, agg)| {
+                let domain_matches = email
+                    .split_once('@')
+                    .is_some_and(|(_, domain)| domain.contains(&needle));
                 needle.is_empty()
                     || email.starts_with(&needle)
+                    || domain_matches
                     || agg
                         .display_name
                         .as_deref()
@@ -2458,6 +2462,30 @@ mod tests {
             .list_contact_suggestions("you@example.com", "zzz", 10)
             .unwrap();
         assert!(filtered_out.is_empty());
+    }
+
+    #[test]
+    fn contact_suggestions_match_email_prefixes_display_names_and_domains() {
+        let database = database();
+        let mut sent = message(
+            "sent-to-kristen",
+            "sent-to-kristen-thread",
+            "2026-01-01T00:00:00Z",
+            "body",
+        );
+        sent.from = "you@example.com".into();
+        sent.to = vec!["Kristen Hammett <khammett@carsonwealth.com>".into()];
+        database
+            .upsert_gmail_thread("you@example.com", &[sent])
+            .unwrap();
+
+        for query in ["kham", "Kristen", "hammett", "CARS", "wealth"] {
+            let matches = database
+                .list_contact_suggestions("you@example.com", query, 10)
+                .unwrap();
+            assert_eq!(matches.len(), 1, "query {query:?} should match");
+            assert_eq!(matches[0].email, "khammett@carsonwealth.com");
+        }
     }
 
     #[test]

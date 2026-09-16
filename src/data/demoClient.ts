@@ -361,10 +361,16 @@ export const demoClient: MailClient = {
   async listContactSuggestions(_accountId, query, limit = 8) {
     const needle = query.trim().toLocaleLowerCase();
     const matches = contacts.filter(
-      (contact) =>
-        !needle ||
-        contact.email.startsWith(needle) ||
-        (contact.displayName?.toLocaleLowerCase().includes(needle) ?? false),
+      (contact) => {
+        const email = contact.email.toLocaleLowerCase();
+        const domain = email.split("@").at(-1) ?? "";
+        return (
+          !needle ||
+          email.startsWith(needle) ||
+          domain.includes(needle) ||
+          (contact.displayName?.toLocaleLowerCase().includes(needle) ?? false)
+        );
+      },
     );
     matches.sort(
       (a, b) =>
