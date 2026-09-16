@@ -134,7 +134,8 @@ describe("archive notice", () => {
       let firstHeader = within(firstArticle).getByRole("button", { name: /First message snippet/ });
       expect(firstHeader).toHaveAttribute("aria-expanded", "false");
       expect(firstHeader).toHaveAttribute("aria-controls", "message-body-0");
-      fireEvent.click(firstHeader);
+      firstHeader.focus();
+      fireEvent.keyDown(firstHeader, { key: "Enter" });
 
       // Expanding swaps the condensed snippet header for the full sender/recipient header.
       firstHeader = within(firstArticle).getByRole("button", { name: /Collapse message from/ });
@@ -143,13 +144,15 @@ describe("archive notice", () => {
       expect(firstHeader).toHaveAttribute("aria-expanded", "true");
       expect(firstArticle).toHaveClass("message-card-expanded", "message-active");
       expect(latestArticle).not.toHaveClass("message-active");
+      expect(firstHeader).toHaveFocus();
       expect(screen.getAllByTestId("message-body")).toHaveLength(2);
       expect(within(secondArticle).getByRole("button", { name: /Second message snippet/ })).toBeInTheDocument();
 
-      fireEvent.click(firstHeader);
+      fireEvent.keyDown(firstHeader, { key: "Enter" });
 
       firstHeader = within(firstArticle).getByRole("button", { name: /First message snippet/ });
       expect(firstHeader).toHaveAttribute("aria-expanded", "false");
+      expect(firstHeader).toHaveFocus();
       expect(screen.getAllByTestId("message-body")).toHaveLength(1);
 
       const secondHeader = within(secondArticle).getByRole("button", { name: /Second message snippet/ });

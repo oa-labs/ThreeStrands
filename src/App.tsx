@@ -551,6 +551,7 @@ export function App() {
   const messageStackRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLElement>>(new Map());
   const activeMessageIdRef = useRef<string | null>(null);
+  const pendingMessageToggleFocusRef = useRef<string | null>(null);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const selectedThreadRowRef = useRef<HTMLButtonElement | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -836,6 +837,7 @@ export function App() {
     setMessageExpansionOverrides(new Map());
     messageRefs.current.clear();
     activeMessageIdRef.current = null;
+    pendingMessageToggleFocusRef.current = null;
     setActiveMessageId(null);
     setSummaryExpanded(false);
     // Pending/error state deliberately isn't reset here — it's keyed by
@@ -941,6 +943,15 @@ export function App() {
     if (!node) return;
     const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
     if (node.scrollTop > maxScrollTop) node.scrollTop = maxScrollTop;
+  }, [messageExpansionOverrides]);
+
+  useLayoutEffect(() => {
+    const messageId = pendingMessageToggleFocusRef.current;
+    if (!messageId) return;
+    pendingMessageToggleFocusRef.current = null;
+    const node = messageRefs.current.get(messageId);
+    const toggle = node?.querySelector<HTMLElement>(".message-card-toggle, .message-expanded-toggle");
+    toggle?.focus({ preventScroll: true });
   }, [messageExpansionOverrides]);
 
   const refreshMail = useCallback(() => {
@@ -2078,12 +2089,15 @@ export function App() {
                   activeMessageIdRef.current = message.id;
                   setActiveMessageId(message.id);
                 };
-                const toggleMessage = () => setMessageExpansionOverrides((current) => {
+                const toggleMessage = () => {
                   activateMessage();
-                  const next = new Map(current);
-                  next.set(message.id, !isExpanded);
-                  return next;
-                });
+                  pendingMessageToggleFocusRef.current = message.id;
+                  setMessageExpansionOverrides((current) => {
+                    const next = new Map(current);
+                    next.set(message.id, !isExpanded);
+                    return next;
+                  });
+                };
                 const registerMessageNode = (node: HTMLElement | null) => {
                   if (isLatest) latestMessageRef.current = node;
                   if (node) messageRefs.current.set(message.id, node);
@@ -2106,6 +2120,11 @@ export function App() {
                           aria-expanded={false}
                           aria-controls={cardBodyId}
                           onClick={toggleMessage}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter") return;
+                            event.preventDefault();
+                            toggleMessage();
+                          }}
                         >
                           <span className="message-card-sender">{senderDisplayName}</span>
                           <span className="message-card-snippet">{messageSnippet(message.bodyText)}</span>
@@ -2158,6 +2177,11 @@ export function App() {
                         aria-controls={cardBodyId}
                         aria-label={`Collapse message from ${senderDisplayName}, ${formatMailTimestamp(message.sentAt)}`}
                         onClick={toggleMessage}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          toggleMessage();
+                        }}
                       >
                         <ChevronUp size={14} />
                       </button>
