@@ -126,21 +126,28 @@ describe("archive notice", () => {
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(2);
       expect(screen.getAllByTestId("message-body")).toHaveLength(1);
 
-      const firstHeader = screen.getByRole("button", { name: /First message snippet/ });
+      const firstArticle = container.querySelector<HTMLElement>('[data-message-id="welcome-first"]')!;
+      const secondArticle = container.querySelector<HTMLElement>('[data-message-id="welcome-second"]')!;
+
+      let firstHeader = within(firstArticle).getByRole("button", { name: /First message snippet/ });
       expect(firstHeader).toHaveAttribute("aria-expanded", "false");
       expect(firstHeader).toHaveAttribute("aria-controls", "message-body-0");
       fireEvent.click(firstHeader);
 
+      // Expanding swaps the condensed snippet header for the full sender/recipient header.
+      firstHeader = within(firstArticle).getByRole("button", { name: /Collapse message from/ });
+      expect(firstHeader).toHaveClass("message-current-header-collapsible");
       expect(firstHeader).toHaveAttribute("aria-expanded", "true");
       expect(screen.getAllByTestId("message-body")).toHaveLength(2);
-      expect(screen.getByRole("button", { name: /Second message snippet/ })).toBeInTheDocument();
+      expect(within(secondArticle).getByRole("button", { name: /Second message snippet/ })).toBeInTheDocument();
 
       fireEvent.click(firstHeader);
 
+      firstHeader = within(firstArticle).getByRole("button", { name: /First message snippet/ });
       expect(firstHeader).toHaveAttribute("aria-expanded", "false");
       expect(screen.getAllByTestId("message-body")).toHaveLength(1);
 
-      const secondHeader = screen.getByRole("button", { name: /Second message snippet/ });
+      const secondHeader = within(secondArticle).getByRole("button", { name: /Second message snippet/ });
       const latestHeader = screen.getByLabelText(/Message from .+, /);
       await act(async () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));

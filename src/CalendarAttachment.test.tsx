@@ -92,6 +92,7 @@ describe("CalendarAttachmentGroup", () => {
     expect(screen.getAllByRole("heading", { name: "Pete lunch w/Joel R." })).toHaveLength(1);
     expect(mailClient.previewCalendarAttachment).toHaveBeenCalledWith("message-1", "calendar-inline");
     expect(mailClient.previewCalendarAttachment).toHaveBeenCalledWith("message-1", "calendar-file");
+    expect(mailClient.previewCalendarAttachment).toHaveBeenCalledTimes(2);
   });
 
   it("renders one card per attachment when they describe different events", async () => {
@@ -121,5 +122,6 @@ describe("CalendarAttachmentGroup", () => {
 
     expect(await screen.findByRole("heading", { name: "Morning standup" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Lunch" })).toBeVisible();
+    expect(mailClient.previewCalendarAttachment).toHaveBeenCalledTimes(2);
   });
 });

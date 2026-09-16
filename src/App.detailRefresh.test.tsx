@@ -48,7 +48,7 @@ it("puts 'and' before the final message recipient", async () => {
   const recipientLine = document.querySelector(".message-recipients");
   expect(recipientLine?.querySelectorAll(".address-name")).toHaveLength(3);
   expect(Array.from(recipientLine?.querySelectorAll(".address-name") ?? [], ({ textContent }) => textContent))
-    .toEqual(["Joel", "Bates", "Cara"]);
+    .toEqual(["Joel Reed", "Bates, Daniel R", "Cara Cenfetelli"]);
   expect(Array.from(recipientLine?.children ?? []).map((recipient) =>
     Array.from(recipient.childNodes).find((node) => node.nodeType === Node.TEXT_NODE)?.textContent ?? "",
   )).toEqual(["", ", ", ", and "]);
@@ -115,7 +115,7 @@ it("refreshes the open conversation when its inbox row receives a sent reply", a
     const bodies = screen.getAllByTestId("message-body") as HTMLIFrameElement[];
     expect(bodies.some((body) => body.srcdoc.includes("Sent reply body"))).toBe(true);
   });
-  expect(screen.getByText("Joel", { selector: ".address-name" })).toBeInTheDocument();
+  expect(screen.getByText("Joel Reed", { selector: ".address-name" })).toBeInTheDocument();
 });
 
 it("shows a queued reply immediately and replaces it with the provider copy", async () => {

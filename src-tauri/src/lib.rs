@@ -1034,7 +1034,7 @@ pub fn run() {
                 correspondence,
                 authorize_slot: AuthorizeSlot::default(),
                 exiting: std::sync::atomic::AtomicBool::new(false),
-                image_cache: image_proxy::ImageCache::default(),
+                image_cache: image_proxy::ImageCache::new().map_err(std::io::Error::other)?,
             });
             Ok(())
         })

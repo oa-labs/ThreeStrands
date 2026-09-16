@@ -61,6 +61,9 @@ DISPATCH_GOOGLE_CLIENT_SECRET="value-from-downloaded-desktop-client-json" \
 pnpm tauri dev
 ```
 
+Release builds require these same two variables and fail at build time when
+either is missing, so an installed build cannot silently lose Gmail access.
+
 Google labels this value a client secret, but installed desktop applications
 are public clients and cannot keep it confidential. It is used only as a
 required token-endpoint parameter; OAuth tokens are stored in the

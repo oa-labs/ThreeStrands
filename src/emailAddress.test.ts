@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAddress, simplifyDisplayName, splitAddressList } from "./emailAddress";
+import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 
 describe("parseAddress", () => {
   it("splits a display name and email out of a From-style header", () => {
@@ -53,22 +53,24 @@ describe("parseAddress", () => {
   });
 });
 
-describe("simplifyDisplayName", () => {
-  it("uses the first word of an ordinary display name", () => {
-    expect(simplifyDisplayName("Jane Doe")).toBe("Jane");
+describe("formatDisplayName", () => {
+  it("preserves a person's complete display name", () => {
+    expect(formatDisplayName("Jane Doe")).toBe("Jane Doe");
+    expect(formatDisplayName("Bates, Dan")).toBe("Bates, Dan");
   });
 
-  it("removes commas from the simplified display name", () => {
-    expect(simplifyDisplayName("Bates, Dan")).toBe("Bates");
-    expect(simplifyDisplayName("'The Dev Shop, LLC' via CS-PMO")).toBe("The Dev Shop LLC");
+  it("preserves structurally different organization names", () => {
+    expect(formatDisplayName("The Freedom Foundation")).toBe("The Freedom Foundation");
+    expect(formatDisplayName("New York Times")).toBe("New York Times");
   });
 
-  it("treats a leading single-quoted name as one word and removes its quotes", () => {
-    expect(simplifyDisplayName("'The Dev Shop LLC' via CS-PMO")).toBe("The Dev Shop LLC");
+  it("removes a delegated delivery suffix while preserving the complete name", () => {
+    expect(formatDisplayName("'The Dev Shop, LLC' via CS-PMO")).toBe("The Dev Shop, LLC");
   });
 
-  it("does not mistake an apostrophe within a name for wrapping quotes", () => {
-    expect(simplifyDisplayName("Conan O'Brien")).toBe("Conan");
+  it("does not mistake apostrophes or an ordinary quoted name for delegation", () => {
+    expect(formatDisplayName("Conan O'Brien")).toBe("Conan O'Brien");
+    expect(formatDisplayName("'The Dev Shop, LLC'")).toBe("'The Dev Shop, LLC'");
   });
 });
 

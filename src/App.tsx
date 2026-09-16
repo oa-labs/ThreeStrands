@@ -94,7 +94,7 @@ import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
-import { parseAddress, simplifyDisplayName, splitAddressList } from "./emailAddress";
+import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import {
   applyFontScale,
   changeFontScale,
@@ -295,7 +295,7 @@ const ThreadRow = memo(function ThreadRow({
           <span className="thread-sender">
             <strong>
               {thread.participants
-                .map((participant) => simplifyDisplayName(parseAddress(participant).name))
+                .map((participant) => formatDisplayName(parseAddress(participant).name))
                 .join(", ")}
             </strong>
           </span>
@@ -973,6 +973,7 @@ export function App() {
 
   useEscapeDismiss(() => {
     setCheckedIds((current) => (current.size > 0 ? new Set() : current));
+    setActiveMessageFilters((current) => (current.size > 0 ? new Set() : current));
   });
 
   const mutateIds = useCallback(async (ids: string[], template: MutationTemplate): Promise<CommandResult> => {
@@ -1941,7 +1942,7 @@ export function App() {
                   (account) => account.email.toLocaleLowerCase() === parsedSender.email.toLocaleLowerCase(),
                 );
                 const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
-                const senderFirstName = simplifyDisplayName(senderName);
+                const senderDisplayName = formatDisplayName(senderName);
                 const recipients = splitAddressList(message.recipients.join(", "));
                 const downloadableAttachments = message.attachments.filter((attachment) => !attachment.inline);
                 const queuedItem = correspondence.outbox.find((item) => `outbox-${item.id}` === message.id);
@@ -1975,7 +1976,7 @@ export function App() {
                           aria-controls={cardBodyId}
                           onClick={toggleMessage}
                         >
-                          <span className="message-card-sender">{senderFirstName}</span>
+                          <span className="message-card-sender">{senderDisplayName}</span>
                           <span className="message-card-snippet">{messageSnippet(message.bodyText)}</span>
                           {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
                           <time>{formatMailTimestamp(message.sentAt)}</time>
@@ -1987,6 +1988,26 @@ export function App() {
                   );
                 }
                 const variant = isLatest ? "message-current" : message.unread ? "" : "message-older";
+                const headerDetails = (
+                  <div className="message-header-details">
+                    <div className="message-sender-row">
+                      <strong><AddressWithCopy address={message.sender} displayName={senderDisplayName} /></strong>
+                      <time>{formatMailTimestamp(message.sentAt)}</time>
+                    </div>
+                    <div className="message-recipients">
+                      to{" "}
+                      {recipients.map((recipient, recipientIndex) => (
+                        <span key={recipient}>
+                          {recipientListSeparator(recipientIndex, recipients.length)}
+                          <AddressWithCopy
+                            address={recipient}
+                            displayName={formatDisplayName(parseAddress(recipient).name)}
+                          />
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
                 return (
                   <article
                     className={`message ${variant} ${isLatest ? "" : "message-card message-card-expanded"}`}
@@ -2000,42 +2021,27 @@ export function App() {
                       <header
                         className="message-current-header"
                         tabIndex={-1}
-                        aria-label={`Message from ${senderFirstName}, ${formatMailTimestamp(message.sentAt)}`}
+                        aria-label={`Message from ${senderDisplayName}, ${formatMailTimestamp(message.sentAt)}`}
                       >
-                        <div className="message-header-details">
-                          <div className="message-sender-row">
-                            <strong><AddressWithCopy address={message.sender} displayName={senderFirstName} /></strong>
-                            <time>{formatMailTimestamp(message.sentAt)}</time>
-                          </div>
-                          <div className="message-recipients">
-                            to{" "}
-                            {recipients.map((recipient, recipientIndex) => (
-                              <span key={recipient}>
-                                {recipientListSeparator(recipientIndex, recipients.length)}
-                                <AddressWithCopy
-                                  address={recipient}
-                                  displayName={simplifyDisplayName(parseAddress(recipient).name)}
-                                />
-                              </span>
-                            ))}
-                          </div>
-                        </div>
+                        {headerDetails}
                       </header>
                     ) : (
-                      <header className="message-card-header">
-                        <button
-                          type="button"
-                          className="message-card-toggle"
-                          aria-expanded={true}
-                          aria-controls={cardBodyId}
-                          onClick={toggleMessage}
-                        >
-                          <span className="message-card-sender">{senderFirstName}</span>
-                          <span className="message-card-snippet">{messageSnippet(message.bodyText)}</span>
-                          {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
-                          <time>{formatMailTimestamp(message.sentAt)}</time>
-                          <ChevronDown size={14} className="message-card-chevron" />
-                        </button>
+                      <header
+                        className="message-current-header message-current-header-collapsible"
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={true}
+                        aria-controls={cardBodyId}
+                        aria-label={`Collapse message from ${senderDisplayName}, ${formatMailTimestamp(message.sentAt)}`}
+                        onClick={toggleMessage}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            toggleMessage();
+                          }
+                        }}
+                      >
+                        {headerDetails}
                       </header>
                     )}
                     <div id={isLatest ? undefined : cardBodyId} className={isLatest ? undefined : "message-card-body"}>
@@ -2271,7 +2277,7 @@ function AddressWithCopy({ address, displayName }: { address: string; displayNam
   };
 
   return (
-    <span className="address" tabIndex={0}>
+    <span className="address" tabIndex={0} onClick={(event) => event.stopPropagation()}>
       <span className="address-name">{parsed.name}</span>
       <span className="address-popover">
         <span className="address-email">{parsed.email}</span>

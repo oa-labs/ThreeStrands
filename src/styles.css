@@ -501,6 +501,8 @@ kbd {
 .message-header-details { display: flex; min-width: 0; flex: 1; flex-direction: column; font-size: calc(13px * var(--font-scale)); }
 .message-sender-row { display: flex; align-items: baseline; gap: 12px; min-width: 0; margin-bottom: 5px; }
 .message-sender-row strong { min-width: 0; white-space: nowrap; }
+.message-sender-row strong .address { max-width: 100%; }
+.message-sender-row strong .address-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-sender-row time, .message-recipients { color: var(--muted); font-size: calc(11px * var(--font-scale)); }
 .message-sender-row time { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
 .message-recipients { line-height: 1.45; }
@@ -570,11 +572,19 @@ kbd {
   box-shadow: 0 2px 12px var(--shadow);
 }
 .message-current > header { padding-bottom: 18px; }
+.message-current-header {
+  /* Leaves room below the header for the focus outline's offset, which
+     (unlike padding/margin) is drawn outside the box and would otherwise
+     overlap the message content that follows. */
+  margin-bottom: 8px;
+}
 .message-current-header:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 6px;
   border-radius: 4px;
 }
+.message-current-header-collapsible { cursor: pointer; border-radius: 8px; }
+.message-current-header-collapsible:hover { background: var(--hover); }
 .message + .message-current { margin-top: 24px; border-top: none; }
 .message-older .message-sender-row strong { color: var(--muted); }
 .message-current .message-sender-row time { color: var(--secondary); }
@@ -778,9 +788,12 @@ kbd {
 .message-card-toggle time { flex: 0 0 auto; font-size: calc(11px * var(--font-scale)); white-space: nowrap; }
 .message-card-chevron { flex: 0 0 auto; transition: transform 120ms ease; }
 .message-card-collapsed .message-card-chevron { transform: rotate(-90deg); }
-.message-card-expanded .message-card-header { border-bottom: 1px solid transparent; }
+.message-card-expanded .message-card-header,
+.message-card-expanded .message-current-header { border-bottom: 1px solid transparent; }
 .message-card-expanded:hover .message-card-header,
-.message-card-expanded:focus-within .message-card-header { border-bottom-color: var(--border); }
+.message-card-expanded:focus-within .message-card-header,
+.message-card-expanded:hover .message-current-header,
+.message-card-expanded:focus-within .message-current-header { border-bottom-color: var(--border); }
 .message-card-body { padding: 20px 18px 18px; }
 .message-images-notice {
   display: flex;
@@ -810,12 +823,13 @@ kbd {
 iframe.message-body { display: block; width: 100%; border: 0; background: transparent; }
 div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--font-scale)); line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
 .quoted-history-toggle {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
+  width: fit-content;
   min-width: 34px;
   height: 22px;
-  margin-top: 8px;
+  margin: 8px auto 0;
   padding: 0 9px;
   border: 1px solid var(--border-strong);
   border-radius: 5px;

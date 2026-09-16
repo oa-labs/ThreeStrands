@@ -529,7 +529,7 @@ export function SafeMessage({
     if (resolvableUrls.length === 0) return;
     let cancelled = false;
 
-    void Promise.all(resolvableUrls.map(async (url) => {
+    for (const url of resolvableUrls) {
       const cacheKey = /^cid:/i.test(url) ? `${imageCacheKey}\0${url}` : url;
       let pending = resolvedImagePromises.get(cacheKey);
       if (!pending) {
@@ -540,22 +540,20 @@ export function SafeMessage({
         // get a real second attempt, not the same rejected promise.
         pending.catch(() => resolvedImagePromises.delete(cacheKey));
       }
-      try {
-        return [url, await pending] as const;
-      } catch {
-        return null;
-      }
-    })).then((results) => {
-      if (cancelled) return;
-      const resolved = results.filter((entry): entry is readonly [string, string] => entry !== null);
-      if (resolved.length === 0) return;
-      setResolvedImages((previous) => {
-        if (resolved.every(([url, dataUri]) => previous.get(url) === dataUri)) return previous;
-        const next = new Map(previous);
-        for (const [url, dataUri] of resolved) next.set(url, dataUri);
-        return next;
+      void pending.then((dataUri) => {
+        if (cancelled) return;
+        setResolvedImages((previous) => {
+          if (previous.get(url) === dataUri) return previous;
+          const next = new Map(previous);
+          next.set(url, dataUri);
+          return next;
+        });
+      }).catch(() => {
+        // A failed image stays behind its inert blocked-src marker. The
+        // shared-cache rejection handler above also makes a later retry
+        // possible.
       });
-    });
+    }
 
     return () => {
       cancelled = true;

@@ -29,11 +29,13 @@ type GroupProps = {
  * attachments that turn out to describe the same event. */
 export function CalendarAttachmentGroup({ messageId, attachments, onError }: GroupProps) {
   const [visibleIds, setVisibleIds] = useState<Set<string> | null>(null);
+  const [loadedPreviews, setLoadedPreviews] = useState<Map<string, CalendarPreview | null> | null>(null);
   const attachmentIdsKey = attachments.map((attachment) => attachment.id).join(",");
 
   useEffect(() => {
     let active = true;
     setVisibleIds(null);
+    setLoadedPreviews(null);
     const previewable = attachments.filter((attachment) => attachment.size <= MAX_PREVIEWABLE_SIZE);
     if (previewable.length <= 1) {
       setVisibleIds(new Set(attachments.map((attachment) => attachment.id)));
@@ -42,14 +44,16 @@ export function CalendarAttachmentGroup({ messageId, attachments, onError }: Gro
     void Promise.all(
       previewable.map((attachment) =>
         mailClient.previewCalendarAttachment(messageId, attachment.id)
-          .then((preview): [string, string | null] => [attachment.id, calendarPreviewKey(preview)])
-          .catch((): [string, string | null] => [attachment.id, null])
+          .then((preview): [string, CalendarPreview | null] => [attachment.id, preview])
+          .catch((): [string, CalendarPreview | null] => [attachment.id, null])
       )
     ).then((results) => {
       if (!active) return;
+      setLoadedPreviews(new Map(results));
       const seenKeys = new Set<string>();
       const kept = new Set<string>();
-      for (const [id, key] of results) {
+      for (const [id, preview] of results) {
+        const key = preview === null ? null : calendarPreviewKey(preview);
         if (key === null || !seenKeys.has(key)) {
           if (key !== null) seenKeys.add(key);
           kept.add(id);
@@ -75,7 +79,13 @@ export function CalendarAttachmentGroup({ messageId, attachments, onError }: Gro
   return (
     <>
       {attachments.filter((attachment) => visibleIds.has(attachment.id)).map((attachment) => (
-        <CalendarAttachment key={attachment.id} messageId={messageId} attachment={attachment} onError={onError} />
+        <CalendarAttachment
+          key={attachment.id}
+          messageId={messageId}
+          attachment={attachment}
+          onError={onError}
+          loadedPreview={loadedPreviews?.get(attachment.id)}
+        />
       ))}
     </>
   );
@@ -85,9 +95,12 @@ type Props = {
   messageId: string;
   attachment: MessageAttachment;
   onError(message: string): void;
+  /** A preview already loaded by CalendarAttachmentGroup. Null records a failed load;
+   * undefined means this component still needs to load it. */
+  loadedPreview?: CalendarPreview | null;
 };
 
-export function CalendarAttachment({ messageId, attachment, onError }: Props) {
+export function CalendarAttachment({ messageId, attachment, onError, loadedPreview }: Props) {
   const [preview, setPreview] = useState<CalendarPreview | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -95,6 +108,11 @@ export function CalendarAttachment({ messageId, attachment, onError }: Props) {
     let active = true;
     setPreview(null);
     setFailed(false);
+    if (loadedPreview !== undefined) {
+      setPreview(loadedPreview);
+      setFailed(loadedPreview === null);
+      return () => { active = false; };
+    }
     if (attachment.size > MAX_PREVIEWABLE_SIZE) {
       setFailed(true);
       return () => { active = false; };
@@ -105,7 +123,7 @@ export function CalendarAttachment({ messageId, attachment, onError }: Props) {
       if (active) setFailed(true);
     });
     return () => { active = false; };
-  }, [attachment.id, attachment.size, messageId]);
+  }, [attachment.id, attachment.size, loadedPreview, messageId]);
 
   const open = () => {
     void mailClient.openAttachment(messageId, attachment.id).catch((reason: unknown) => {

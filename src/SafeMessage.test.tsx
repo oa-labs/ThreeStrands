@@ -568,6 +568,34 @@ it("loads images automatically through resolveImage when configured", async () =
   });
 });
 
+it("renders each resolved image without waiting for slower images", async () => {
+  const fastUrl = "https://fast.example/per-image-render.png";
+  const slowUrl = "https://slow.example/per-image-background.png";
+  let finishSlow!: (dataUri: string) => void;
+  const slowResult = new Promise<string>((resolve) => { finishSlow = resolve; });
+  const resolveImage = vi.fn((url: string) =>
+    url === slowUrl ? slowResult : Promise.resolve("data:image/png;base64,FAST="));
+
+  render(
+    <SafeMessage
+      html={`<img src="${fastUrl}"><div style="background-image:url(${slowUrl})">Hero</div>`}
+      loadImages
+      resolveImage={resolveImage}
+    />,
+  );
+
+  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+  await waitFor(() => expect(frame.srcdoc).toContain('src="data:image/png;base64,FAST="'));
+  expect(frame.srcdoc).toContain(`data-blocked-src="${slowUrl}"`);
+  expect(frame.srcdoc).not.toContain(`background-image: url(&quot;${slowUrl}`);
+
+  finishSlow("data:image/png;base64,SLOW=");
+  await waitFor(() => {
+    expect(frame.srcdoc).toContain("data:image/png;base64,SLOW=");
+    expect(frame.srcdoc).not.toContain(`data-blocked-src="${slowUrl}"`);
+  });
+});
+
 it("reports the resolved src when the reader clicks an image in the message body", async () => {
   const resolveImage = vi.fn(async (url: string) => `data:image/png;base64,RESOLVED(${url})`);
   const onImageClick = vi.fn();

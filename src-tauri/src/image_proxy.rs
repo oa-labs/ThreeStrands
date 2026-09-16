@@ -28,8 +28,15 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_BYTES: usize = 10 * 1024 * 1024;
 const MAX_CACHE_ENTRIES: usize = 200;
 
-#[derive(Clone, Default)]
-pub(crate) struct ImageCache(Arc<tokio::sync::Mutex<ImageCacheInner>>);
+#[derive(Clone)]
+pub(crate) struct ImageCache {
+    inner: Arc<tokio::sync::Mutex<ImageCacheInner>>,
+    // reqwest clients own their connection pool. Keeping one here lets
+    // images from the same host reuse DNS results and established TLS
+    // connections while every request still passes through the guarded
+    // resolver and redirect policy configured below.
+    client: reqwest::Client,
+}
 
 #[derive(Default)]
 struct ImageCacheInner {
@@ -41,12 +48,26 @@ struct ImageCacheInner {
 }
 
 impl ImageCache {
+    pub(crate) fn new() -> Result<Self, String> {
+        let client = reqwest::Client::builder()
+            .dns_resolver(net_safety::dns_resolver())
+            .redirect(Policy::limited(5))
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .map_err(|error| format!("Unable to prepare image requests: {error}"))?;
+        Ok(Self {
+            inner: Arc::new(tokio::sync::Mutex::new(ImageCacheInner::default())),
+            client,
+        })
+    }
+
     async fn get(&self, url: &str) -> Option<String> {
-        self.0.lock().await.entries.get(url).cloned()
+        self.inner.lock().await.entries.get(url).cloned()
     }
 
     async fn insert(&self, url: String, data_uri: String) {
-        let mut inner = self.0.lock().await;
+        let mut inner = self.inner.lock().await;
         if !inner.entries.contains_key(&url) && inner.entries.len() >= MAX_CACHE_ENTRIES {
             if let Some(oldest) = inner.order.pop_front() {
                 inner.entries.remove(&oldest);
@@ -85,15 +106,8 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
 
     let parsed = validate_public_image_url(url)?;
 
-    let client = reqwest::Client::builder()
-        .dns_resolver(net_safety::dns_resolver())
-        .redirect(Policy::limited(5))
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .map_err(|error| format!("Unable to prepare image request: {error}"))?;
-
-    let response = client
+    let response = cache
+        .client
         .get(parsed)
         .send()
         .await
@@ -157,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn caches_by_url_and_evicts_oldest_entry_past_the_cap() {
-        let cache = ImageCache::default();
+        let cache = ImageCache::new().unwrap();
         for index in 0..MAX_CACHE_ENTRIES {
             cache
                 .insert(format!("https://example.com/{index}.png"), "data:x".into())
@@ -186,7 +200,7 @@ mod live_smoke_test {
     #[tokio::test]
     #[ignore = "hits the real network; run manually with `cargo test -- --ignored`"]
     async fn fetches_a_real_remote_image_end_to_end() {
-        let cache = ImageCache::default();
+        let cache = ImageCache::new().unwrap();
         let data_uri = fetch(
             "https://userimg-assets.customeriomail.com/images/client-env-141356/01M260RE1ZYJ8R9E1FY2BM0Q5A.png",
             &cache,

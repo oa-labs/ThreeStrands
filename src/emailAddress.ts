@@ -32,16 +32,14 @@ export function parseAddress(value: string): ParsedAddress {
   return { name: normalizeDisplayName(trimmed), email: trimmed };
 }
 
-// Message headers use a compact version of the sender's display name. Most
-// names reduce to their first word, but delegated senders can arrive as a
-// single-quoted organization followed by "via ...". Treat that quoted phrase
-// as one unit instead of displaying a fragment such as "'The".
-export function simplifyDisplayName(value: string): string {
+// Preserve the complete sender-authored display name. Delegated senders can
+// arrive as a single-quoted name followed by "via ..."; that suffix describes
+// the delivery path rather than the sender identity, so omit it from the UI.
+export function formatDisplayName(value: string): string {
   const name = value.trim();
-  const quotedName = name.match(/^'(.+)'(?=\s|$)/)?.[1];
-  const simplifiedName = quotedName !== undefined ? quotedName.trim() : name.split(/\s+/)[0] || name;
+  const delegatedName = name.match(/^'(.+)'\s+via\s+.+$/i)?.[1];
 
-  return simplifiedName.replace(/,/g, "");
+  return delegatedName?.trim() || name;
 }
 
 // Splits an RFC-style address list without treating commas inside quoted
