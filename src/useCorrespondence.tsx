@@ -35,14 +35,14 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     });
     return () => { void listener.then((unlisten) => unlisten()); };
   }, []);
-  const start = useCallback(async (mode: ComposeMode) => {
+  const start = useCallback(async (mode: ComposeMode, messageId?: string) => {
     if (opening.current) return;
     opening.current = true;
     try {
       await editor.current?.flush();
       const d = mode === "new"
         ? await mailClient.createDraft(mode)
-        : await mailClient.createDraft(mode, sourceId, sourceAccountId);
+        : await mailClient.createDraft(mode, messageId ?? sourceId, sourceAccountId);
       setActive(d); setError("");
     }
     catch (e) { setError(String(e)); }
@@ -80,9 +80,9 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   }, [hasActiveDelivery, refresh]);
 
   const compose = useCallback(() => { void start("new"); }, [start]);
-  const reply = useCallback(() => { void start("reply"); }, [start]);
-  const replyAll = useCallback(() => { void start("replyAll"); }, [start]);
-  const forward = useCallback(() => { void start("forward"); }, [start]);
+  const reply = useCallback((messageId?: string) => { void start("reply", messageId); }, [start]);
+  const replyAll = useCallback((messageId?: string) => { void start("replyAll", messageId); }, [start]);
+  const forward = useCallback((messageId?: string) => { void start("forward", messageId); }, [start]);
   const openInbox = useCallback(() => { setActive(null); }, []);
   const openDrafts = useCallback(() => { void openList(); }, [openList]);
   const openOutbox = useCallback(() => { void openList(); }, [openList]);

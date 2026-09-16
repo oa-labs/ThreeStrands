@@ -536,6 +536,20 @@ kbd {
 .message-sender-row strong .address-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-sender-row time, .message-recipients { color: var(--muted); font-size: calc(11px * var(--font-scale)); }
 .message-sender-row time { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
+.message-header-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; align-self: center; }
+.message-header-action {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.message-header-action:hover { background: var(--hover); color: var(--text); }
+.message-header-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .message-recipients { line-height: 1.45; }
 .message > header .address { position: relative; display: inline-flex; align-items: center; color: inherit; font-size: inherit; }
 .address-name { cursor: help; }
@@ -1093,9 +1107,6 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .inbox-resizer.dragging::after { background: var(--accent); }
 .inbox-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .app-shell:has(.inbox-resizer.dragging) { cursor: col-resize; user-select: none; }
-
-.reply-toolbar { display: flex; gap: 8px; padding: 10px 22px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.reply-toolbar .action-button span { display: inline; }
 
 .thread-summary { padding: 10px 22px 0px; flex-shrink: 0; }
 .thread-summary-pill {

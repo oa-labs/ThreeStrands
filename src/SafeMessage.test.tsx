@@ -228,6 +228,19 @@ describe("SafeMessage", () => {
     // column render slightly wider than its width hint.
     expect(frame.srcdoc).toContain("overflow-wrap: break-word");
     expect(frame.srcdoc).not.toContain("overflow-wrap: anywhere");
+    expect(frame.srcdoc).toContain("text-decoration-skip-ink: none");
+  });
+
+  it.each([
+    ["sender-authored link", '<p>Visit <a href="https://example.com/paging">paging</a></p>'],
+    ["auto-linkified plain text", "https://example.com/paging"],
+  ])("keeps link underlines continuous for a %s", (_case, html) => {
+    render(<SafeMessage html={html} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+
+    expect(frame.srcdoc).toContain("text-decoration-skip-ink: none");
+    expect(frame.srcdoc).toContain("script-src 'none'");
+    expect(frame.srcdoc).toContain("img-src data:");
   });
 
   it("safely embeds an installed font family name in the message document", () => {

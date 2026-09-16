@@ -242,7 +242,7 @@ it("renders a reply in the open conversation as soon as Send queues it", async (
   try {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
-    fireEvent.click(screen.getByRole("button", { name: "Reply (r)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
 
     const editor = await screen.findByRole("textbox", { name: "Message body" });
     editor.innerHTML = "<p>Visible without waiting for delivery</p>";
@@ -266,7 +266,7 @@ it("sends and marks the open conversation done with Mod+Shift+Enter", async () =
   try {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
-    fireEvent.click(screen.getByRole("button", { name: "Reply (r)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
 
     const editor = await screen.findByRole("textbox", { name: "Message body" });
     editor.innerHTML = "<p>Send this and mark the conversation done</p>";

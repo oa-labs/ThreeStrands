@@ -2007,11 +2007,6 @@ export function App() {
                 </HoverTooltip>
               </div>
             </header>
-            <div className="reply-toolbar" aria-label="Correspondence actions">
-              <ActionButton label="Reply" shortcut="r" onClick={() => executeById("draft.reply")}><Reply size={16} /></ActionButton>
-              <ActionButton label="Reply all" shortcut="a" onClick={() => executeById("draft.replyAll")}><ReplyAll size={16} /></ActionButton>
-              <ActionButton label="Forward" shortcut="f" onClick={() => executeById("draft.forward")}><Forward size={16} /></ActionButton>
-            </div>
             {visibleDetail.thread.summary || summaryPending || summaryError ? (
               <div
                 className={`thread-summary ${summaryExpanded ? "thread-summary-expanded" : "thread-summary-collapsed"}`}
@@ -2137,11 +2132,75 @@ export function App() {
                     </article>
                   );
                 }
+                const replyToMessage = () => {
+                  if (selected) {
+                    recordTriageEvent({
+                      threadId: selected.id,
+                      kind: "response",
+                      context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
+                    });
+                  }
+                  correspondence.context.reply(message.id);
+                };
+                const replyAllToMessage = () => {
+                  if (selected) {
+                    recordTriageEvent({
+                      threadId: selected.id,
+                      kind: "response",
+                      context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
+                    });
+                  }
+                  correspondence.context.replyAll(message.id);
+                };
+                const forwardMessage = () => {
+                  if (selected) {
+                    recordTriageEvent({
+                      threadId: selected.id,
+                      kind: "response",
+                      context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
+                    });
+                  }
+                  correspondence.context.forward(message.id);
+                };
                 const headerDetails = (
                   <div className="message-header-details">
                     <div className="message-sender-row">
                       <strong><AddressWithCopy address={message.sender} displayName={senderDisplayName} /></strong>
                       <time>{formatMailTimestamp(message.sentAt)}</time>
+                      {queuedItem ? null : (
+                        <div className="message-header-actions">
+                          <HoverTooltip label="Reply" placement="bottom">
+                            <button
+                              type="button"
+                              className="message-header-action"
+                              aria-label="Reply"
+                              onClick={replyToMessage}
+                            >
+                              <Reply size={14} />
+                            </button>
+                          </HoverTooltip>
+                          <HoverTooltip label="Reply all" placement="bottom">
+                            <button
+                              type="button"
+                              className="message-header-action"
+                              aria-label="Reply all"
+                              onClick={replyAllToMessage}
+                            >
+                              <ReplyAll size={14} />
+                            </button>
+                          </HoverTooltip>
+                          <HoverTooltip label="Forward" placement="bottom">
+                            <button
+                              type="button"
+                              className="message-header-action"
+                              aria-label="Forward"
+                              onClick={forwardMessage}
+                            >
+                              <Forward size={14} />
+                            </button>
+                          </HoverTooltip>
+                        </div>
+                      )}
                     </div>
                     <div className="message-recipients">
                       to{" "}

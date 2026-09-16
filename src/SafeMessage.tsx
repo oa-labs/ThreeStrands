@@ -99,7 +99,9 @@ body[data-tone="muted"] { color: var(--muted); }
 :where(img) { max-width: 100%; }
 :where(img[src]) { cursor: zoom-in; }
 :where(img:not([src])) { display: inline-block; min-width: 24px; min-height: 24px; border: 1px dashed var(--border); background: var(--hover); vertical-align: middle; }
-:where(a) { color: var(--link); text-underline-offset: 3px; }
+/* Cosmetic text-decoration geometry only; it cannot fetch resources, execute
+   code, escape the iframe, or create an interactive surface. */
+:where(a) { color: var(--link); text-underline-offset: 3px; text-decoration-skip-ink: none; }
 :where(a:focus-visible) { outline: 2px solid var(--link); outline-offset: 3px; }
 :where(pre) { max-width: 100%; overflow-x: auto; }
 :where(code) { font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; }
