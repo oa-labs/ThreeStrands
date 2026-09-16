@@ -1625,21 +1625,6 @@ export function App() {
             </button>
           </HoverTooltip>
         </div>
-        {splitInboxes.length > 0 ? (
-          <div className="sidebar-nav">
-            {splitInboxes.map((splitInbox) => (
-              <HoverTooltip key={splitInbox.id} label={splitInbox.name}>
-                <button
-                  className={`split-inbox-button ${mailbox === "split" && activeSplitInboxId === splitInbox.id ? "active" : ""}`}
-                  aria-label={splitInbox.name}
-                  onClick={() => context.openSplitInbox(splitInbox.id)}
-                >
-                  {splitInbox.name.charAt(0).toUpperCase()}
-                </button>
-              </HoverTooltip>
-            ))}
-          </div>
-        ) : null}
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
           <button
