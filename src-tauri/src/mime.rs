@@ -136,9 +136,9 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
             .unwrap_or_default()
             .to_string(),
         to: split_addresses(header(&message.payload, "To").unwrap_or_default()),
-        date: header(&message.payload, "Date")
-            .and_then(normalize_date)
-            .unwrap_or_else(|| millis_to_rfc3339(&message.internal_date)),
+        date: millis_to_rfc3339(&message.internal_date)
+            .or_else(|| header(&message.payload, "Date").and_then(normalize_date))
+            .unwrap_or_default(),
         body_html,
         body_text,
         snippet: message.snippet.clone(),
@@ -452,13 +452,12 @@ fn split_addresses(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn millis_to_rfc3339(value: &str) -> String {
+fn millis_to_rfc3339(value: &str) -> Option<String> {
     value
         .parse::<i64>()
         .ok()
         .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
         .map(|date| date.to_rfc3339())
-        .unwrap_or_default()
 }
 
 fn normalize_date(value: &str) -> Option<String> {
