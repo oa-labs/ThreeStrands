@@ -422,6 +422,7 @@ async fn fetch_attachment_image(
     if !image_format::is_supported_raster_mime(&mime_type) {
         return Err("Embedded attachment is not a supported image".into());
     }
+    image_format::validate_raster(&bytes)?;
     Ok(format!(
         "data:{mime_type};base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
