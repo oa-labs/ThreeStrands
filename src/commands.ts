@@ -24,6 +24,10 @@ export type CommandContext = {
   openDrafts(): void;
   openOutbox(): void;
   openSplitInbox(id: string): void;
+  /** Count of user-defined split inboxes, for gating Tab/Shift+Tab cycling. */
+  splitInboxCount: number;
+  goToNextSplitTab(): void;
+  goToPreviousSplitTab(): void;
   sendDraft(): void;
   sendAndMarkDone(): void;
   attachFiles(): void;
@@ -100,6 +104,22 @@ export const commands: Command[] = [
   { id: "mailbox.allMail", title: "Go to All Mail", keys: ["g then a"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openAllMail) },
   { id: "mailbox.trash", title: "Go to Trash", keys: ["g then t"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openTrash) },
   { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openDrafts) },
+  {
+    id: "mailbox.nextSplit",
+    title: "Next split inbox",
+    keys: ["Tab"],
+    group: "Navigation",
+    enabled: (c) => !c.composerActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
+    run: (c) => complete(c.goToNextSplitTab),
+  },
+  {
+    id: "mailbox.previousSplit",
+    title: "Previous split inbox",
+    keys: ["Shift+Tab"],
+    group: "Navigation",
+    enabled: (c) => !c.composerActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
+    run: (c) => complete(c.goToPreviousSplitTab),
+  },
   { id: "outbox.open", title: "Open outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => complete(c.openOutbox) },
   { id: "draft.send", title: "Send draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
   { id: "draft.sendAndMarkDone", title: "Send & Mark Done", keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },

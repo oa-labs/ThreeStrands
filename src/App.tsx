@@ -439,7 +439,15 @@ function useShortcutHandler(
       const fontShortcut = (event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
       const dialog = document.querySelector('[role="dialog"]');
       const allowsMailboxNavigation = dialog?.classList.contains("correspondence-list");
-      if (!sendShortcut && !fontShortcut && (isEditableTarget(event.target) || (dialog && !allowsMailboxNavigation))) {
+      // Tab/Shift+Tab double as the split-inbox tab cycler, but only when
+      // focus isn't already on some other focusable control — otherwise
+      // this would hijack Tab away from normal focus-cycling between
+      // buttons/links/checkboxes, breaking keyboard/screen-reader navigation.
+      const focusedControl = event.key === "Tab"
+        && event.target instanceof HTMLElement
+        && event.target !== document.body
+        && event.target.matches("button, a[href], [tabindex]");
+      if (!sendShortcut && !fontShortcut && (isEditableTarget(event.target) || focusedControl || (dialog && !allowsMailboxNavigation))) {
         clearPendingStep();
         return;
       }
@@ -1292,6 +1300,37 @@ export function App() {
     node.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
   }, [displayedMessages]);
 
+  const goToInboxTab = useCallback(() => {
+    correspondence.context.openInbox();
+    setQuery("");
+    setSearchOpen(false);
+    setMailbox("inbox");
+    setActiveSplitInboxId(null);
+    saveSelectedTabForAccount(activeAccountId, null);
+  }, [correspondence.context, activeAccountId]);
+
+  const goToSplitTab = useCallback((id: string) => {
+    correspondence.context.openInbox();
+    setQuery("");
+    setSearchOpen(false);
+    setMailbox("split");
+    setActiveSplitInboxId(id);
+    saveSelectedTabForAccount(activeAccountId, id);
+  }, [correspondence.context, activeAccountId]);
+
+  // Cycles through Inbox + every split inbox tab, in the order the tab bar
+  // shows them, wrapping around at either end.
+  const goToRelativeSplitTab = useCallback((direction: 1 | -1) => {
+    const tabs: (string | null)[] = [null, ...splitInboxes.map((splitInbox) => splitInbox.id)];
+    const currentIndex = mailbox === "split" ? tabs.indexOf(activeSplitInboxId) : 0;
+    const from = currentIndex === -1 ? 0 : currentIndex;
+    const target = tabs[(from + direction + tabs.length) % tabs.length];
+    if (target === null) goToInboxTab();
+    else goToSplitTab(target);
+  }, [splitInboxes, mailbox, activeSplitInboxId, goToInboxTab, goToSplitTab]);
+  const goToNextSplitTab = useCallback(() => goToRelativeSplitTab(1), [goToRelativeSplitTab]);
+  const goToPreviousSplitTab = useCallback(() => goToRelativeSplitTab(-1), [goToRelativeSplitTab]);
+
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     mailbox,
@@ -1308,14 +1347,10 @@ export function App() {
         void mutateIds([threadId], { kind: "archive", value: true });
       });
     },
-    openInbox: () => {
-      correspondence.context.openInbox();
-      setQuery("");
-      setSearchOpen(false);
-      setMailbox("inbox");
-      setActiveSplitInboxId(null);
-      saveSelectedTabForAccount(activeAccountId, null);
-    },
+    openInbox: goToInboxTab,
+    splitInboxCount: splitInboxes.length,
+    goToNextSplitTab,
+    goToPreviousSplitTab,
     openAllMail: () => {
       correspondence.context.openInbox();
       setQuery("");
@@ -1328,14 +1363,7 @@ export function App() {
       setSearchOpen(false);
       setMailbox("trash");
     },
-    openSplitInbox: (id: string) => {
-      correspondence.context.openInbox();
-      setQuery("");
-      setSearchOpen(false);
-      setMailbox("split");
-      setActiveSplitInboxId(id);
-      saveSelectedTabForAccount(activeAccountId, id);
-    },
+    openSplitInbox: goToSplitTab,
     openDrafts: () => {
       correspondence.context.openDrafts();
       setQuery("");
@@ -1470,7 +1498,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, splitInboxes.length, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1597,21 +1625,6 @@ export function App() {
             </button>
           </HoverTooltip>
         </div>
-        {splitInboxes.length > 0 ? (
-          <div className="sidebar-nav">
-            {splitInboxes.map((splitInbox) => (
-              <HoverTooltip key={splitInbox.id} label={splitInbox.name}>
-                <button
-                  className={`split-inbox-button ${mailbox === "split" && activeSplitInboxId === splitInbox.id ? "active" : ""}`}
-                  aria-label={splitInbox.name}
-                  onClick={() => context.openSplitInbox(splitInbox.id)}
-                >
-                  {splitInbox.name.charAt(0).toUpperCase()}
-                </button>
-              </HoverTooltip>
-            ))}
-          </div>
-        ) : null}
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
           <button

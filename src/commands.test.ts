@@ -28,6 +28,9 @@ function noopContext(): CommandContext {
     openAllMail: () => {},
     openTrash: () => {},
     openSplitInbox: () => {},
+    splitInboxCount: 0,
+    goToNextSplitTab: () => {},
+    goToPreviousSplitTab: () => {},
     openDrafts: () => {},
     openOutbox: () => {},
     sendDraft: () => {},
@@ -211,6 +214,25 @@ describe("command registry", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Z" }), "z")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "z", ctrlKey: true }), "Mod+z")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "z", metaKey: true }), "Mod+z")).toBe(true);
+  });
+
+  it("cycles split inbox tabs with Tab/Shift+Tab, only while viewing the Inbox or a split, with splits to cycle through", () => {
+    const next = commands.find((command) => command.id === "mailbox.nextSplit");
+    const previous = commands.find((command) => command.id === "mailbox.previousSplit");
+    expect(next?.keys).toEqual(["Tab"]);
+    expect(previous?.keys).toEqual(["Shift+Tab"]);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Tab" }), "Tab")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }), "Tab")).toBe(false);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }), "Shift+Tab")).toBe(true);
+
+    const context = { ...noopContext(), splitInboxCount: 2 };
+    expect(next?.enabled(context)).toBe(true);
+    expect(previous?.enabled(context)).toBe(true);
+    expect(next?.enabled({ ...context, splitInboxCount: 0 })).toBe(false);
+    expect(next?.enabled({ ...context, mailbox: "drafts" })).toBe(false);
+    expect(next?.enabled({ ...context, mailbox: "trash" })).toBe(false);
+    expect(next?.enabled({ ...context, composerActive: true })).toBe(false);
+    expect(next?.enabled({ ...context, mailbox: "split" })).toBe(true);
   });
 
   it("splits sequential shortcuts into independently matchable steps", () => {
