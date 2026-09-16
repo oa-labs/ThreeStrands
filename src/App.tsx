@@ -2240,6 +2240,7 @@ export function App() {
                         loadImages={loadRemoteImages}
                         imageCacheKey={message.id}
                         onImageClick={setLightboxImageSrc}
+                        onEnterKey={toggleMessage}
                         resolveImage={(url) => {
                           if (!/^cid:/i.test(url)) return mailClient.fetchRemoteImage(url);
                           const contentId = normalizeContentId(url.slice(4));

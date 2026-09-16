@@ -37,6 +37,15 @@ type SafeMessageProps = {
   tone?: "default" | "current" | "muted";
   /** Called with an image's resolved `src` when the reader clicks it in the message body. */
   onImageClick?: (src: string) => void;
+  /**
+   * Called when the reader presses a plain, unmodified Enter inside the
+   * message body. Keydown events don't cross iframe boundaries, and the
+   * generic keydown forwarding below only reaches window-level shortcut
+   * listeners, not a parent component's local Enter handler (e.g. the
+   * expand/collapse toggle button) — so without this, Enter silently stops
+   * collapsing the message once the reader has clicked into its body.
+   */
+  onEnterKey?: () => void;
 };
 
 type QuotedHistoryBoundary =
@@ -591,9 +600,12 @@ export function SafeMessage({
   fontFamily = "system",
   tone = "default",
   onImageClick,
+  onEnterKey,
 }: SafeMessageProps) {
   const onImageClickRef = useRef(onImageClick);
   onImageClickRef.current = onImageClick;
+  const onEnterKeyRef = useRef(onEnterKey);
+  onEnterKeyRef.current = onEnterKey;
   const [imagesAllowedForMessage, setImagesAllowedForMessage] = useState(false);
   const [quotedHistoryExpanded, setQuotedHistoryExpanded] = useState(false);
   const imagesAllowed = loadImages || imagesAllowedForMessage;
@@ -712,6 +724,13 @@ export function SafeMessage({
       onImageClickRef.current?.(src);
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      const plainEnter = event.key === "Enter"
+        && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
+      if (plainEnter && onEnterKeyRef.current) {
+        event.preventDefault();
+        onEnterKeyRef.current();
+        return;
+      }
       // Keyboard events do not cross iframe boundaries. Forward input from
       // this read-only document so every global application shortcut keeps
       // working after the reader clicks or tabs into an email body.
