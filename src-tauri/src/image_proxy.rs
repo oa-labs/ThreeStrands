@@ -23,10 +23,12 @@ use crate::net_safety::{self, is_disallowed_host};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-// Generous for a marketing-email header image or a profile photo, small
-// enough to bound memory use per request.
-const MAX_BYTES: usize = 10 * 1024 * 1024;
-const MAX_CACHE_ENTRIES: usize = 200;
+const MAX_BYTES: usize = 5 * 1024 * 1024;
+const MAX_WIDTH: usize = 8_192;
+const MAX_HEIGHT: usize = 8_192;
+const MAX_PIXELS: usize = 16_000_000;
+const MAX_CACHE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_CONCURRENT_REQUESTS: usize = 4;
 
 #[derive(Clone)]
 pub(crate) struct ImageCache {
@@ -36,6 +38,7 @@ pub(crate) struct ImageCache {
     // connections while every request still passes through the guarded
     // resolver and redirect policy configured below.
     client: reqwest::Client,
+    request_slots: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Default)]
@@ -45,6 +48,7 @@ struct ImageCacheInner {
     // an arbitrary one (a bare LRU would be nicer but isn't worth a new
     // dependency for a bound whose only job is capping memory use).
     order: VecDeque<String>,
+    total_bytes: usize,
 }
 
 impl ImageCache {
@@ -59,6 +63,7 @@ impl ImageCache {
         Ok(Self {
             inner: Arc::new(tokio::sync::Mutex::new(ImageCacheInner::default())),
             client,
+            request_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_REQUESTS)),
         })
     }
 
@@ -68,14 +73,52 @@ impl ImageCache {
 
     async fn insert(&self, url: String, data_uri: String) {
         let mut inner = self.inner.lock().await;
-        if !inner.entries.contains_key(&url) && inner.entries.len() >= MAX_CACHE_ENTRIES {
-            if let Some(oldest) = inner.order.pop_front() {
-                inner.entries.remove(&oldest);
+        inner.insert_with_limit(url, data_uri, MAX_CACHE_BYTES);
+    }
+}
+
+impl ImageCacheInner {
+    fn insert_with_limit(&mut self, url: String, data_uri: String, max_bytes: usize) {
+        let entry_bytes = url.len().saturating_add(data_uri.len());
+        if entry_bytes > max_bytes {
+            return;
+        }
+        if let Some(previous) = self.entries.remove(&url) {
+            self.total_bytes = self
+                .total_bytes
+                .saturating_sub(url.len().saturating_add(previous.len()));
+            self.order.retain(|key| key != &url);
+        }
+        while self.total_bytes.saturating_add(entry_bytes) > max_bytes {
+            if let Some(oldest) = self.order.pop_front() {
+                if let Some(removed) = self.entries.remove(&oldest) {
+                    self.total_bytes = self
+                        .total_bytes
+                        .saturating_sub(oldest.len().saturating_add(removed.len()));
+                }
+            } else {
+                break;
             }
         }
-        inner.order.push_back(url.clone());
-        inner.entries.insert(url, data_uri);
+        self.order.push_back(url.clone());
+        self.entries.insert(url, data_uri);
+        self.total_bytes += entry_bytes;
     }
+}
+
+fn append_bounded(bytes: &mut Vec<u8>, chunk: &[u8]) -> Result<(), String> {
+    if chunk.len() > MAX_BYTES.saturating_sub(bytes.len()) {
+        return Err("Image exceeds the maximum allowed size".to_string());
+    }
+    bytes.extend_from_slice(chunk);
+    Ok(())
+}
+
+fn validate_dimensions(width: usize, height: usize) -> Result<(), String> {
+    if width > MAX_WIDTH || height > MAX_HEIGHT || width.saturating_mul(height) > MAX_PIXELS {
+        return Err("Image dimensions exceed the maximum allowed size".to_string());
+    }
+    Ok(())
 }
 
 /// Same shape as `SafeMessage.tsx`'s own `safeImageSrc`: only plain http(s)
@@ -105,8 +148,13 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
     }
 
     let parsed = validate_public_image_url(url)?;
+    let _request_slot = cache
+        .request_slots
+        .acquire()
+        .await
+        .map_err(|_| "Image request limiter is unavailable".to_string())?;
 
-    let response = cache
+    let mut response = cache
         .client
         .get(parsed)
         .send()
@@ -135,18 +183,26 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
     }
 
     if let Some(claimed_len) = response.content_length() {
-        if claimed_len as usize > MAX_BYTES {
+        if claimed_len > MAX_BYTES as u64 {
             return Err("Image exceeds the maximum allowed size".to_string());
         }
     }
 
-    let bytes = response
-        .bytes()
+    // Never call Response::bytes(): a chunked response without Content-Length
+    // could otherwise be completely buffered before the limit is checked.
+    let mut bytes =
+        Vec::with_capacity(response.content_length().unwrap_or(0).min(MAX_BYTES as u64) as usize);
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|error| format!("Image download failed: {error}"))?;
-    if bytes.len() > MAX_BYTES {
-        return Err("Image exceeds the maximum allowed size".to_string());
+        .map_err(|error| format!("Image download failed: {error}"))?
+    {
+        append_bounded(&mut bytes, &chunk)?;
     }
+
+    let dimensions = imagesize::blob_size(&bytes)
+        .map_err(|_| "Unable to verify image dimensions".to_string())?;
+    validate_dimensions(dimensions.width, dimensions.height)?;
 
     let data_uri = format!("data:{content_type};base64,{}", STANDARD.encode(&bytes));
     cache.insert(url.to_string(), data_uri.clone()).await;
@@ -169,27 +225,48 @@ mod tests {
         assert!(validate_public_image_url("http://example.com/x.png").is_ok());
     }
 
-    #[tokio::test]
-    async fn caches_by_url_and_evicts_oldest_entry_past_the_cap() {
-        let cache = ImageCache::new().unwrap();
-        for index in 0..MAX_CACHE_ENTRIES {
-            cache
-                .insert(format!("https://example.com/{index}.png"), "data:x".into())
-                .await;
-        }
-        assert!(cache.get("https://example.com/0.png").await.is_some());
-
-        cache
-            .insert("https://example.com/overflow.png".into(), "data:x".into())
-            .await;
-        assert!(
-            cache.get("https://example.com/0.png").await.is_none(),
-            "oldest entry should be evicted once the cache is full"
+    #[test]
+    fn streams_through_the_byte_limit_and_rejects_the_next_byte() {
+        let mut bytes = vec![0; MAX_BYTES - 1];
+        assert!(append_bounded(&mut bytes, &[0]).is_ok());
+        assert_eq!(bytes.len(), MAX_BYTES);
+        assert!(append_bounded(&mut bytes, &[0]).is_err());
+        assert_eq!(
+            bytes.len(),
+            MAX_BYTES,
+            "an oversized chunk must not be appended"
         );
-        assert!(cache
-            .get("https://example.com/overflow.png")
-            .await
-            .is_some());
+    }
+
+    #[test]
+    fn cache_evicts_by_combined_entry_weight() {
+        let mut cache = ImageCacheInner::default();
+        cache.insert_with_limit("a".into(), "123456789".into(), 20);
+        cache.insert_with_limit("b".into(), "123456789".into(), 20);
+        assert!(cache.entries.contains_key("a"));
+        assert!(cache.entries.contains_key("b"));
+        assert_eq!(cache.total_bytes, 20);
+
+        cache.insert_with_limit("c".into(), "x".into(), 20);
+        assert!(
+            !cache.entries.contains_key("a"),
+            "oldest entries are evicted to make room"
+        );
+        assert!(cache.entries.contains_key("b"));
+        assert!(cache.entries.contains_key("c"));
+        assert_eq!(cache.total_bytes, 12);
+
+        cache.insert_with_limit("too-large".into(), "123456789012".into(), 20);
+        assert!(!cache.entries.contains_key("too-large"));
+    }
+
+    #[test]
+    fn enforces_dimension_and_pixel_boundaries() {
+        assert!(validate_dimensions(3_999, 4_000).is_ok());
+        assert!(validate_dimensions(4_000, 4_000).is_ok());
+        assert!(validate_dimensions(4_001, 4_000).is_err());
+        assert!(validate_dimensions(MAX_WIDTH + 1, 1).is_err());
+        assert!(validate_dimensions(1, MAX_HEIGHT + 1).is_err());
     }
 }
 

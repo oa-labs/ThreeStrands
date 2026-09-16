@@ -8,9 +8,11 @@ import {
   collapseQuotedHistoryText,
   extractBlockedImageUrls,
   extractSafeStyleSheet,
+  fitsMessageImageBudget,
   linkifyText,
   sanitizeMessageHtml,
 } from "./SafeMessage";
+import { EMAIL_IMAGE_LIMITS } from "./emailRenderingPolicy";
 import { emailRenderingFixtures } from "./test/emailRenderingFixtures";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -579,6 +581,66 @@ it("loads images automatically through resolveImage when configured", async () =
     expect((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc)
       .toContain('src="data:image/png;base64,RESOLVED(https://example.com/logo.png)"');
   });
+});
+
+it("limits concurrent image resolution within one message", async () => {
+  const finishes: Array<() => void> = [];
+  const resolveImage = vi.fn(() => new Promise<string>((resolve) => {
+    finishes.push(() => resolve("data:image/png;base64,x"));
+  }));
+  const html = Array.from(
+    { length: EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage + 1 },
+    (_, index) => `<img src="https://example.com/concurrency-${index}.png">`,
+  ).join("");
+
+  render(<SafeMessage html={html} loadImages resolveImage={resolveImage} />);
+  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage));
+
+  finishes[0]();
+  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage + 1));
+  finishes.forEach((finish) => finish());
+});
+
+it("limits concurrent image resolution across messages", async () => {
+  const finishes: Array<() => void> = [];
+  const resolveImage = vi.fn(() => new Promise<string>((resolve) => {
+    finishes.push(() => resolve("data:image/png;base64,x"));
+  }));
+
+  for (let message = 0; message < 3; message += 1) {
+    render(
+      <SafeMessage
+        html={`<img src="https://example.com/global-${message}-a.png"><img src="https://example.com/global-${message}-b.png">`}
+        loadImages
+        resolveImage={resolveImage}
+      />,
+    );
+  }
+  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentGlobally));
+
+  finishes[0]();
+  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentGlobally + 1));
+  finishes.forEach((finish) => finish());
+  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(6));
+  finishes[5]();
+});
+
+it("caps the number of distinct resources activated by one message", async () => {
+  const resolveImage = vi.fn(async () => "data:image/png;base64,x");
+  const html = Array.from(
+    { length: EMAIL_IMAGE_LIMITS.maxImagesPerMessage + 1 },
+    (_, index) => `<img src="https://example.com/fanout-${index}.png">`,
+  ).join("");
+
+  render(<SafeMessage html={html} loadImages resolveImage={resolveImage} />);
+  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxImagesPerMessage));
+});
+
+it("accepts data URIs through the message byte budget boundary without clamping", () => {
+  const limit = EMAIL_IMAGE_LIMITS.maxDataUriBytesPerMessage;
+  expect(fitsMessageImageBudget(1, limit - 2)).toBe(true);
+  expect(fitsMessageImageBudget(1, limit - 1)).toBe(true);
+  expect(fitsMessageImageBudget(1, limit)).toBe(false);
 });
 
 it("renders each resolved image without waiting for slower images", async () => {
