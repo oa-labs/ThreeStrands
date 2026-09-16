@@ -13,6 +13,7 @@ import {
   sanitizeHtmlDimension,
 } from "./emailRenderingPolicy";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
+import { LINKIFY_PATTERN, linkHrefFor, trimTrailingPunctuation } from "./linkify";
 import { fontFamilyStack, type FontFamily } from "./settings";
 
 type SafeMessageProps = {
@@ -180,16 +181,6 @@ export function decodeHtmlEntities(text: string): string {
   return container.value;
 }
 
-const LINKIFY_PATTERN = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|[\w.+-]+@[\w-]+\.[\w.-]+)/gi;
-
-// Trailing punctuation (a sentence-ending period, a closing paren around the
-// URL, ...) reads as part of the surrounding sentence, not the link.
-function trimTrailingPunctuation(value: string): { url: string; trailing: string } {
-  const match = value.match(/[.,;:!?)\]}'"]+$/);
-  if (!match) return { url: value, trailing: "" };
-  return { url: value.slice(0, -match[0].length), trailing: match[0] };
-}
-
 /**
  * Turns bare URLs, www.-domains, and email addresses in a plain-text message
  * body into clickable links, routed through the same `openUrl` (OS browser /
@@ -203,8 +194,7 @@ export function linkifyText(text: string): ReactNode[] {
     const { url, trailing } = trimTrailingPunctuation(match[0]);
     if (!url) continue;
     if (index > lastIndex) nodes.push(text.slice(lastIndex, index));
-    const isEmail = url.includes("@") && !/^https?:\/\//i.test(url);
-    const href = isEmail ? `mailto:${url}` : /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    const href = linkHrefFor(url);
     nodes.push(
       <a
         key={`link-${index}`}
@@ -223,6 +213,43 @@ export function linkifyText(text: string): ReactNode[] {
   if (nodes.length === 0) return [text];
   if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
   return nodes;
+}
+
+/**
+ * Senders' HTML bodies routinely contain bare URLs that were never wrapped
+ * in an <a> — many mail clients don't autolink either. Walk the sanitized
+ * fragment's text nodes (skipping anything already inside a link) and wrap
+ * matches in real anchors, same rule set as the plain-text fallback above.
+ */
+function linkifyTextNodes(root: Node): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => node.parentElement?.closest("a") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+  });
+  const targets: Text[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    LINKIFY_PATTERN.lastIndex = 0;
+    if (LINKIFY_PATTERN.test(node.textContent ?? "")) targets.push(node as Text);
+  }
+  targets.forEach((textNode) => {
+    const text = textNode.textContent ?? "";
+    const replacement = document.createDocumentFragment();
+    let lastIndex = 0;
+    for (const match of text.matchAll(LINKIFY_PATTERN)) {
+      const index = match.index ?? 0;
+      const { url, trailing } = trimTrailingPunctuation(match[0]);
+      if (!url) continue;
+      if (index > lastIndex) replacement.append(document.createTextNode(text.slice(lastIndex, index)));
+      const anchor = document.createElement("a");
+      anchor.setAttribute("href", linkHrefFor(url));
+      anchor.setAttribute("rel", "noopener noreferrer");
+      anchor.textContent = url;
+      replacement.append(anchor);
+      lastIndex = index + match[0].length;
+      if (trailing) replacement.append(document.createTextNode(trailing));
+    }
+    if (lastIndex < text.length) replacement.append(document.createTextNode(text.slice(lastIndex)));
+    textNode.replaceWith(replacement);
+  });
 }
 
 export function sanitizeMessageHtml(html: string): string {
@@ -329,6 +356,8 @@ export function sanitizeMessageHtml(html: string): string {
       else element.setAttribute(blockedSrcAttr, src);
     }
   });
+
+  linkifyTextNodes(fragment);
 
   const container = document.createElement("div");
   container.append(fragment);

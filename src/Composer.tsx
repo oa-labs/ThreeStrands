@@ -7,6 +7,7 @@ import { RecipientField } from "./RecipientField";
 import {
   applyFormattingShortcut,
   formattingShortcutFor,
+  linkifyPlainText,
   plainTextToHtml,
   sanitizeComposeHtml,
   serializeComposeHtml,
@@ -244,7 +245,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
               return;
             }
             event.preventDefault();
-            document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
+            document.execCommand("insertHTML", false, linkifyPlainText(event.clipboardData.getData("text/plain")));
           }}
           onClick={(event) => {
             const remove = (event.target as Element).closest<HTMLElement>("[data-compose-image-remove]");

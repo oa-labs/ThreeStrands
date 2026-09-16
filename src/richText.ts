@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 import { matchesShortcut } from "./commands";
+import { LINKIFY_PATTERN, linkHrefFor, trimTrailingPunctuation } from "./linkify";
 
 export type FormattingShortcut = {
   id: string;
@@ -65,6 +66,29 @@ export function plainTextToHtml(text: string): string {
   text.split("\n").forEach((line, index) => {
     if (index) container.append(document.createElement("br"));
     container.append(document.createTextNode(line));
+  });
+  return container.innerHTML;
+}
+
+/** Turns bare URLs/emails pasted into the composer into real <a> tags. */
+export function linkifyPlainText(text: string): string {
+  const container = document.createElement("div");
+  text.split("\n").forEach((line, lineIndex) => {
+    if (lineIndex) container.append(document.createElement("br"));
+    let lastIndex = 0;
+    for (const match of line.matchAll(LINKIFY_PATTERN)) {
+      const index = match.index ?? 0;
+      const { url, trailing } = trimTrailingPunctuation(match[0]);
+      if (!url) continue;
+      if (index > lastIndex) container.append(document.createTextNode(line.slice(lastIndex, index)));
+      const anchor = document.createElement("a");
+      anchor.setAttribute("href", linkHrefFor(url));
+      anchor.textContent = url;
+      container.append(anchor);
+      lastIndex = index + match[0].length;
+      if (trailing) container.append(document.createTextNode(trailing));
+    }
+    if (lastIndex < line.length) container.append(document.createTextNode(line.slice(lastIndex)));
   });
   return container.innerHTML;
 }
