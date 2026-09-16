@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import {
   type CSSProperties,
+  type RefObject,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -257,6 +258,7 @@ const ThreadRow = memo(function ThreadRow({
   showAccount,
   onSelect,
   onToggleCheck,
+  rowRef,
 }: {
   thread: Thread;
   selected: boolean;
@@ -265,9 +267,11 @@ const ThreadRow = memo(function ThreadRow({
   showAccount: boolean;
   onSelect(id: string): void;
   onToggleCheck(id: string): void;
+  rowRef?: RefObject<HTMLButtonElement | null>;
 }) {
   return (
     <button
+      ref={rowRef}
       role="option"
       aria-selected={selected}
       className={`thread-row ${selected ? "selected" : ""}`}
@@ -543,6 +547,7 @@ export function App() {
   const messageStackRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLElement>>(new Map());
   const activeMessageIdRef = useRef<string | null>(null);
+  const selectedThreadRowRef = useRef<HTMLButtonElement | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId);
   const composerBelongsToVisibleThread = Boolean(
@@ -555,6 +560,7 @@ export function App() {
     [visibleDetail, correspondence.outbox],
   );
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [hasMoreResults, setHasMoreResults] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -960,6 +966,10 @@ export function App() {
   }, [query]);
 
   useEffect(() => {
+    if (searchOpen && mailbox === "inbox") searchRef.current?.focus();
+  }, [mailbox, searchOpen]);
+
+  useEffect(() => {
     setCheckedIds(new Set());
   }, [query, includeArchived]);
 
@@ -1257,6 +1267,10 @@ export function App() {
     }
   }, [selected]);
 
+  useEffect(() => {
+    selectedThreadRowRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [selectedId]);
+
   const selectAdjacentMessage = useCallback((direction: -1 | 1) => {
     if (displayedMessages.length === 0) return;
     const activeIndex = displayedMessages.findIndex((message) => message.id === activeMessageIdRef.current);
@@ -1292,21 +1306,25 @@ export function App() {
     openInbox: () => {
       correspondence.context.openInbox();
       setQuery("");
+      setSearchOpen(false);
       setMailbox("inbox");
     },
     openAllMail: () => {
       correspondence.context.openInbox();
       setQuery("");
+      setSearchOpen(false);
       setMailbox("allMail");
     },
     openTrash: () => {
       correspondence.context.openInbox();
       setQuery("");
+      setSearchOpen(false);
       setMailbox("trash");
     },
     openDrafts: () => {
       correspondence.context.openDrafts();
       setQuery("");
+      setSearchOpen(false);
       setMailbox("drafts");
       setSelectedId(null);
       setDetail(null);
@@ -1314,6 +1332,7 @@ export function App() {
     openOutbox: () => {
       correspondence.context.openOutbox();
       setQuery("");
+      setSearchOpen(false);
       setMailbox("outbox");
       setSelectedId(null);
       setDetail(null);
@@ -1414,7 +1433,11 @@ export function App() {
       await runSummarize();
       return {};
     },
-    focusSearch: () => searchRef.current?.focus(),
+    focusSearch: () => {
+      correspondence.context.openInbox();
+      setMailbox("inbox");
+      setSearchOpen(true);
+    },
     refresh: refreshMail,
     openDiagnostics: () => setDiagnosticsOpen(true),
     openLabels: () => setLabelTargetIds(selected ? [selected.id] : null),
@@ -1696,8 +1719,8 @@ export function App() {
           </div>
         ) : null}
         {isThreadMailbox ? (
-          <div className="list-toolbar">
-            {mailbox === "inbox" ? (
+          <div className={`list-toolbar ${searchOpen ? "" : "search-closed"}`}>
+            {mailbox === "inbox" && searchOpen ? (
               <label className="search-box">
                 <Search size={16} />
                 <input
@@ -1706,6 +1729,14 @@ export function App() {
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search mail"
                   aria-label="Search mail"
+                  onKeyDown={(event) => {
+                    if (event.key !== "Escape") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setQuery("");
+                    setSearchOpen(false);
+                    selectedThreadRowRef.current?.focus();
+                  }}
                 />
                 {query.trim() ? (
                   <button
@@ -1766,6 +1797,7 @@ export function App() {
               accountColor={accountColors.get(thread.accountId)}
               onSelect={selectThread}
               onToggleCheck={toggleChecked}
+              rowRef={thread.id === selectedId ? selectedThreadRowRef : undefined}
             />
           ))}
           {hasMoreResults ? (

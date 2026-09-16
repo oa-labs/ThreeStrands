@@ -175,7 +175,10 @@ describe("archive notice", () => {
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });
 
     await archiveSelected();
-    const search = screen.getByRole("textbox", { name: "Search mail" });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "/" }));
+    });
+    const search = await screen.findByRole("textbox", { name: "Search mail" });
     fireEvent.change(search, { target: { value: "Welcome" } });
     const includeArchived = await screen.findByRole("button", { name: "Include archived or trashed mail in search" });
     await act(async () => {

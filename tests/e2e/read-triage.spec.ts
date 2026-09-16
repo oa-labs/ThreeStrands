@@ -66,8 +66,11 @@ test("confirms unsubscribe with Cmd/Ctrl+U when the message advertises one-click
 
 test("searches and opens the command palette", async ({ page }) => {
   await page.goto("/");
+  await expect(page.getByRole("textbox", { name: "Search mail" })).toHaveCount(0);
   await page.keyboard.press("/");
-  await page.getByRole("textbox", { name: "Search mail" }).fill("SQLite");
+  const search = page.getByRole("textbox", { name: "Search mail" });
+  await expect(search).toBeFocused();
+  await search.fill("SQLite");
   await expect(page.getByRole("option")).toHaveCount(1);
   await expect(page.getByRole("heading", { name: "Your inbox stays local" })).toBeVisible();
 
@@ -77,6 +80,19 @@ test("searches and opens the command palette", async ({ page }) => {
   await expect(palette.getByRole("button", { name: /Increase font size/ })).toContainText("Mod+=");
   await expect(palette.getByRole("button", { name: /Increase font size/ })).toContainText("Mod++");
   await expect(palette.getByRole("button", { name: /Decrease font size/ })).toContainText("Mod+-");
+});
+
+test("dismisses search with Escape", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await page.keyboard.press("/");
+  const search = page.getByRole("textbox", { name: "Search mail" });
+  await search.fill("SQLite");
+  await expect(page.getByRole("option")).toHaveCount(1);
+
+  await page.keyboard.press("Escape");
+  await expect(search).toHaveCount(0);
+  await expect(page.getByRole("option")).toHaveCount(3);
 });
 
 test("changes the app font size with desktop shortcuts and restores it", async ({ page }) => {
@@ -115,6 +131,7 @@ test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) =>
   await page.keyboard.press("Escape");
   await expect(help).not.toBeVisible();
 
+  await page.keyboard.press("/");
   const search = page.getByRole("textbox", { name: "Search mail" });
   await search.focus();
   await page.keyboard.type("?");
