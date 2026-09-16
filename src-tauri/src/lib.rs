@@ -717,7 +717,12 @@ async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<
             accounts.insert(email.clone(), connected);
         }
     }
-    state.database.adopt_account(&email)
+    let account = state.database.adopt_account(&email)?;
+    // Imported accounts reconnect as additional accounts until the next app
+    // launch. Seed compose immediately so a new message does not fall back to
+    // the startup placeholder's nonexistent keychain entry.
+    state.database.ensure_compose_identity(&email)?;
+    Ok(account)
 }
 
 #[tauri::command]
