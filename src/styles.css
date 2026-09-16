@@ -16,6 +16,7 @@
   --secondary: #aaaab2;
   --body-text: #d2d2d7;
   --accent: #8078ff;
+  --message-active: #655dde;
   --link: #aaa6ff;
   --focus-glow: #6e69d833;
   --quote-border: #66617f;
@@ -49,6 +50,7 @@
   --secondary: #5e5e70;
   --body-text: #353541;
   --accent: #6350c6;
+  --message-active: #655dde;
   --link: #5942b5;
   --focus-glow: #6350c633;
   --quote-border: #aaa1c7;
@@ -758,7 +760,7 @@ kbd {
 .message-card {
   overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 6px;
   background: transparent;
 }
 .message-card-expanded {
@@ -768,7 +770,7 @@ kbd {
   background: var(--raised);
   box-shadow: 0 2px 12px var(--shadow);
 }
-.message-active { border-left: 3px solid var(--accent); }
+.message-active { border-left: 3px solid var(--message-active); }
 .message-card > .message-card-header {
   display: block;
   padding: 0;
