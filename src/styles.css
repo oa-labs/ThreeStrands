@@ -1299,7 +1299,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .recipient-chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 6px 0; }
 .recipient-chip-row.drag-over { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 6px; }
 .recipient-chip-row input { flex: 1 1 120px; min-width: 60px; padding: 4px 2px; }
-.recipient-chip { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 3px 4px 3px 9px; border-radius: 999px; background: var(--hover); font-size: calc(12px * var(--font-scale)); cursor: grab; }
+.recipient-chip { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 3px 6px 3px 9px; border-radius: 999px; background: var(--hover); font-size: calc(12px * var(--font-scale)); cursor: grab; }
 .recipient-chip:active { cursor: grabbing; }
 .recipient-chip-label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipient-chip-remove { display: grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; border: 0; border-radius: 50%; color: var(--muted); background: transparent; cursor: pointer; }
