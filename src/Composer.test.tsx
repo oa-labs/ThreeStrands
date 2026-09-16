@@ -253,6 +253,23 @@ describe("Composer recipient autocomplete", () => {
     expect(screen.queryByRole("button", { name: "Remove b@example.com" })).not.toBeInTheDocument();
   });
 
+  it("removes a newly added recipient without activating the first recipient's remove button", () => {
+    const prefilled = { ...draft, to: "original@example.com" };
+    render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+
+    fireEvent.change(to, { target: { value: "added@example.com" } });
+    fireEvent.keyDown(to, { key: "Enter" });
+
+    // The chip buttons must not be descendants of the input's label. Native
+    // label activation would otherwise forward a click to the first button.
+    expect(to.closest("label")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove added@example.com" }));
+
+    expect(screen.getByRole("button", { name: "Remove original@example.com" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove added@example.com" })).not.toBeInTheDocument();
+  });
+
   it("drags a recipient badge from To into Cc, moving it rather than copying it", () => {
     const prefilled = { ...draft, to: "hello@dispatch.local", cc: "" };
     render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);

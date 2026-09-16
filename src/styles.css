@@ -845,7 +845,7 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
   width: fit-content;
   min-width: 34px;
   height: 22px;
-  margin: 8px auto 0;
+  margin: 8px 0 0;
   padding: 0 9px;
   border: 1px solid var(--border-strong);
   border-radius: 5px;
@@ -1182,7 +1182,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .composer-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 0 22px; }
 .compose-field { display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--border); font-size: calc(13px * var(--font-scale)); flex-shrink: 0; }
 .compose-field:focus-within { border-bottom-color: var(--accent); }
-.compose-field > span { width: 50px; flex-shrink: 0; color: var(--muted); }
+.compose-field > span, .compose-field > label { width: 50px; flex-shrink: 0; color: var(--muted); }
 .compose-field input { min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: 10px 6px; outline: none; line-height: 20px; }
 .recipient-field { position: relative; }
 .recipient-chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 6px 0; }

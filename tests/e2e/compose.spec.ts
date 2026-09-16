@@ -55,6 +55,21 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await expect(forward.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: Welcome to Dispatch");
 });
 
+test("removing an added reply recipient keeps the original recipient", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTitle("Message content").contentFrame().locator("body").click();
+  await page.keyboard.press("r");
+  const reply = page.getByRole("dialog", { name: "Reply message" });
+  const to = reply.getByRole("textbox", { name: "To", exact: true });
+
+  await to.fill("added@example.com");
+  await to.press("Enter");
+  await reply.getByRole("button", { name: "Remove added@example.com" }).click();
+
+  await expect(reply.getByRole("button", { name: "Remove Dispatch" })).toBeVisible();
+  await expect(reply.getByRole("button", { name: "Remove added@example.com" })).toHaveCount(0);
+});
+
 test("Superhuman formatting shortcuts edit rich compose content and appear in help", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New Message (c)" }).click();

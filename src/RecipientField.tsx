@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Pin, PinOff, UserPlus, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactSuggestion } from "./domain";
@@ -70,6 +70,7 @@ function serialize(chips: Chip[], draftText: string): string {
 }
 
 export function RecipientField({ id, label, value, account, disabled, onChange }: Props) {
+  const inputId = useId();
   const lastEmitted = useRef(value);
   const [chips, setChips] = useState<Chip[]>(() => parseExternalValue(value).chips);
   const [draftText, setDraftText] = useState(() => parseExternalValue(value).draftText);
@@ -99,8 +100,8 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
     onChange(serialized);
   }
 
-  function removeChipAt(index: number) {
-    emit(chips.filter((_, i) => i !== index), draftText);
+  function removeChip(target: Chip) {
+    emit(chips.filter((chip) => chip.email.toLowerCase() !== target.email.toLowerCase()), draftText);
   }
 
   function commitDraftText() {
@@ -168,8 +169,8 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
   }
 
   return (
-    <label className="compose-field recipient-field">
-      <span>{label}</span>
+    <div className="compose-field recipient-field">
+      <label htmlFor={inputId}>{label}</label>
       <div
         className={`recipient-chip-row${dragOver ? " drag-over" : ""}`}
         onDragEnter={(event) => {
@@ -203,13 +204,13 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
           origin?.remove();
         }}
       >
-        {chips.map((chip, index) => (
+        {chips.map((chip) => (
           <span
             key={chip.email}
             className="recipient-chip"
             draggable={!disabled}
             onDragStart={(event) => {
-              dragOrigin = { field: id, remove: () => removeChipAt(index) };
+              dragOrigin = { field: id, remove: () => removeChip(chip) };
               event.dataTransfer.setData("application/x-dispatch-recipient", JSON.stringify(chip));
               event.dataTransfer.effectAllowed = "move";
             }}
@@ -223,7 +224,7 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
                 type="button"
                 className="recipient-chip-remove"
                 aria-label={`Remove ${chip.displayName ?? chip.email}`}
-                onClick={() => removeChipAt(index)}
+                onClick={() => removeChip(chip)}
               >
                 <X size={11} />
               </button>
@@ -231,6 +232,7 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
           </span>
         ))}
         <input
+          id={inputId}
           ref={inputRef}
           name={id}
           aria-label={label}
@@ -278,7 +280,7 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
             }
             if (event.key === "Backspace" && draftText === "" && chips.length > 0) {
               event.preventDefault();
-              removeChipAt(chips.length - 1);
+              removeChip(chips[chips.length - 1]);
               return;
             }
             if (!visible) {
@@ -361,6 +363,6 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
           )}
         </ul>
       )}
-    </label>
+    </div>
   );
 }
