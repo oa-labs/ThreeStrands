@@ -49,7 +49,7 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await page.keyboard.press("Escape");
   await expect(replyAll).not.toBeVisible();
 
-  await page.getByRole("button", { name: "Forward (f)" }).click();
+  await page.getByRole("button", { name: "Forward" }).click();
   const forward = page.getByRole("dialog", { name: "Forward message" });
   await expect(forward.getByRole("textbox", { name: "To", exact: true })).toHaveValue("");
   await expect(forward.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: Welcome to Dispatch");

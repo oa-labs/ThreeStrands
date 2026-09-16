@@ -106,7 +106,23 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
         html.as_deref().unwrap_or_default(),
         &mut attachments,
     );
-    let body_html = html.unwrap_or_default();
+    let mut body_html = html.unwrap_or_default();
+    // An explicitly inline MIME image is itself sender-authored structure. If
+    // it has no placement in the HTML, display it after the authored body so
+    // classifying it as inline never makes it disappear entirely.
+    for attachment in attachments.iter().filter(|attachment| attachment.inline) {
+        let Some(content_id) = attachment.content_id.as_deref() else {
+            continue;
+        };
+        if body_references_content_id(&body_html, content_id) {
+            continue;
+        }
+        body_html.push_str(&format!(
+            "<img src=\"cid:{}\" alt=\"{}\">",
+            escape_html_attribute(content_id),
+            escape_html_attribute(&attachment.filename),
+        ));
+    }
     // Some messages (newsletters, marketing mail) omit the text/plain alternative
     // entirely, so fall back to deriving plain text from the HTML body.
     let body_text = text.unwrap_or_else(|| html_to_text(&body_html));
@@ -144,11 +160,27 @@ fn collect_attachments(
         .map(|value| value.trim_start_matches('<').trim_end_matches('>'))
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let inline = content_id.as_deref().is_some_and(|content_id| {
-        body_html
-            .to_ascii_lowercase()
-            .contains(&format!("cid:{}", content_id.to_ascii_lowercase()))
-    });
+    let referenced_by_html = content_id
+        .as_deref()
+        .is_some_and(|content_id| body_references_content_id(body_html, content_id));
+    // Gmail preserves the sender's MIME disposition in the part headers. An
+    // inline image can use an encoded cid: URL (or HTML that our deliberately
+    // small matcher does not reinterpret), so the disposition is independent
+    // semantic evidence that it belongs in the body instead of the download
+    // tray. Requiring both an image media type and Content-ID keeps ordinary
+    // files, including explicitly attached images, downloadable.
+    let declared_inline_image =
+        content_id.is_some()
+            && part.mime_type.split(';').next().is_some_and(|mime_type| {
+                mime_type.trim().to_ascii_lowercase().starts_with("image/")
+            })
+            && header(part, "Content-Disposition").is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .is_some_and(|disposition| disposition.trim().eq_ignore_ascii_case("inline"))
+            });
+    let inline = referenced_by_html || declared_inline_image;
     if !part.filename.is_empty() || inline {
         attachments.push(crate::models::MessageAttachment {
             id: part
@@ -174,6 +206,60 @@ fn collect_attachments(
     for (index, child) in part.parts.iter().enumerate() {
         collect_attachments(child, &format!("{path}.{index}"), body_html, attachments);
     }
+}
+
+fn body_references_content_id(body_html: &str, content_id: &str) -> bool {
+    let lowercase_html = body_html.to_ascii_lowercase();
+    let mut offset = 0;
+    while let Some(relative_start) = lowercase_html[offset..].find("cid:") {
+        let value_start = offset + relative_start + 4;
+        let rest = body_html[value_start..]
+            .strip_prefix('<')
+            .unwrap_or(&body_html[value_start..]);
+        let value_end = rest
+            .find(|character: char| {
+                character.is_ascii_whitespace() || matches!(character, '\'' | '"' | '<' | '>' | ')')
+            })
+            .unwrap_or(rest.len());
+        if percent_decode(&rest[..value_end])
+            .trim()
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .eq_ignore_ascii_case(content_id)
+        {
+            return true;
+        }
+        offset = value_start;
+    }
+    false
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let high = (bytes[index + 1] as char).to_digit(16);
+            let low = (bytes[index + 2] as char).to_digit(16);
+            if let (Some(high), Some(low)) = (high, low) {
+                decoded.push((high * 16 + low) as u8);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn escape_html_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 pub fn attachment_bytes_from_payload(
@@ -497,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn marks_html_referenced_content_id_images_as_inline() {
+    fn marks_encoded_html_content_id_images_as_inline() {
         let message: GmailMessage = serde_json::from_value(serde_json::json!({
             "id": "m",
             "threadId": "t",
@@ -505,7 +591,7 @@ mod tests {
                 "mimeType": "multipart/related",
                 "parts": [{
                     "mimeType": "text/html",
-                    "body": { "data": URL_SAFE_NO_PAD.encode("<p>Regards</p><img src=\"cid:Signature.Logo\">") }
+                    "body": { "data": URL_SAFE_NO_PAD.encode("<p>Regards</p><img src=\"cid:Signature%2ELogo\">") }
                 }, {
                     "mimeType": "image/png",
                     "headers": [{ "name": "Content-ID", "value": "<signature.logo>" }],
@@ -525,8 +611,80 @@ mod tests {
             normalized.attachments[0].content_id.as_deref(),
             Some("signature.logo")
         );
+        assert_eq!(normalized.body_html.matches("cid:").count(), 1);
         assert!(!normalized.attachments[1].inline);
         assert_eq!(normalized.attachments[1].content_id, None);
+    }
+
+    #[test]
+    fn displays_a_declared_inline_image_without_an_html_placement() {
+        let message: GmailMessage = serde_json::from_value(serde_json::json!({
+            "id": "m",
+            "threadId": "t",
+            "payload": {
+                "mimeType": "multipart/mixed",
+                "parts": [{
+                    "mimeType": "multipart/alternative",
+                    "parts": [{
+                        "mimeType": "text/plain",
+                        "body": { "data": URL_SAFE_NO_PAD.encode("See chart") }
+                    }, {
+                        "mimeType": "text/html",
+                        "body": { "data": URL_SAFE_NO_PAD.encode("<p>See chart</p>") }
+                    }]
+                }, {
+                    "mimeType": "image/png; name=\"chart.png\"",
+                    "filename": "chart.png",
+                    "headers": [
+                        { "name": "Content-ID", "value": "<chart.one>" },
+                        { "name": "Content-Disposition", "value": " Inline ; filename=\"chart.png\"" }
+                    ],
+                    "body": { "attachmentId": "inline-chart", "size": 42 }
+                }]
+            }
+        }))
+        .unwrap();
+
+        let normalized = normalize(&message).unwrap();
+        assert_eq!(normalized.attachments.len(), 1);
+        assert!(normalized.attachments[0].inline);
+        assert_eq!(normalized.attachments[0].id, "inline-chart");
+        assert_eq!(
+            normalized.body_html,
+            "<p>See chart</p><img src=\"cid:chart.one\" alt=\"chart.png\">"
+        );
+    }
+
+    #[test]
+    fn keeps_explicit_image_attachments_downloadable_even_with_a_content_id() {
+        let message: GmailMessage = serde_json::from_value(serde_json::json!({
+            "id": "m",
+            "threadId": "t",
+            "payload": {
+                "mimeType": "multipart/mixed",
+                "parts": [{
+                    "mimeType": "text/html",
+                    "body": { "data": URL_SAFE_NO_PAD.encode("<p>Photos attached.</p>") }
+                }, {
+                    "mimeType": "image/jpeg",
+                    "filename": "photo.jpg",
+                    "headers": [
+                        { "name": "Content-ID", "value": "<photo.attachment>" },
+                        { "name": "Content-Disposition", "value": "attachment; filename=\"photo.jpg\"" }
+                    ],
+                    "body": { "attachmentId": "photo-file", "size": 99 }
+                }]
+            }
+        }))
+        .unwrap();
+
+        let normalized = normalize(&message).unwrap();
+        assert_eq!(normalized.attachments.len(), 1);
+        assert!(!normalized.attachments[0].inline);
+        assert_eq!(
+            normalized.attachments[0].content_id.as_deref(),
+            Some("photo.attachment")
+        );
     }
 
     #[test]
