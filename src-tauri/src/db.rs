@@ -14,6 +14,7 @@ use crate::models::{
     ThreadDetail, ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent,
     TriageEventKind, TriageSenderStats, UnsubscribeMethod, UnsubscribeTarget,
 };
+use crate::transfer::{TransferAccount, TransferSplitInbox};
 
 /// Assigned to newly connected accounts in rotation, so each has a distinct
 /// color for switcher/thread-row indicators without asking the user to pick
@@ -1811,6 +1812,85 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
+    /// Applies the native portion of a settings transfer atomically. Existing
+    /// destination accounts keep their connection status because their
+    /// keychain credentials are deliberately not part of the transfer. An
+    /// account seen only in the imported file is created as `needs_reauth`.
+    pub(crate) fn import_transfer_data(
+        &self,
+        accounts: &[TransferAccount],
+        split_inboxes: &[TransferSplitInbox],
+        retention_days: Option<i64>,
+    ) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        transaction
+            .execute(
+                "UPDATE accounts SET sort_order = sort_order + ?1",
+                [accounts.len() as i64],
+            )
+            .map_err(display_error)?;
+        let connected_at = Utc::now().to_rfc3339();
+        for account in accounts {
+            transaction
+                .execute(
+                    "INSERT INTO accounts(
+                         email, display_name, color, status, sort_order, connected_at, last_synced_at
+                     ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, NULL)
+                     ON CONFLICT(email) DO UPDATE SET
+                         display_name = excluded.display_name,
+                         color = excluded.color,
+                         sort_order = excluded.sort_order",
+                    params![
+                        account.email,
+                        account.display_name,
+                        account.color,
+                        account.sort_order,
+                        connected_at,
+                    ],
+                )
+                .map_err(display_error)?;
+        }
+
+        transaction
+            .execute("DELETE FROM split_inboxes", [])
+            .map_err(display_error)?;
+        for split in split_inboxes {
+            transaction
+                .execute(
+                    "INSERT INTO split_inboxes(
+                         id, name, match_kind, match_value, sort_order, created_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        split.id,
+                        split.name,
+                        split.match_kind,
+                        split.match_value,
+                        split.sort_order,
+                        split.created_at,
+                    ],
+                )
+                .map_err(display_error)?;
+        }
+
+        match retention_days {
+            Some(days) => transaction
+                .execute(
+                    "INSERT INTO compose_settings(key, value) VALUES ('retention_days', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    [days.to_string()],
+                )
+                .map_err(display_error)?,
+            None => transaction
+                .execute(
+                    "DELETE FROM compose_settings WHERE key = 'retention_days'",
+                    [],
+                )
+                .map_err(display_error)?,
+        };
+        transaction.commit().map_err(display_error)
+    }
+
     pub fn list_split_inboxes(&self) -> Result<Vec<SplitInbox>, String> {
         let connection = self.connection()?;
         let mut statement = connection
@@ -2291,9 +2371,68 @@ fn display_error(error: impl std::fmt::Display) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transfer::{TransferAccount, TransferSplitInbox};
 
     fn database() -> Database {
         Database::open_memory()
+    }
+
+    #[test]
+    fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connection() {
+        let database = database();
+        database.adopt_account("connected@example.com").unwrap();
+        database
+            .create_split_inbox("Old rule", "domain", "old.example")
+            .unwrap();
+
+        database
+            .import_transfer_data(
+                &[
+                    TransferAccount {
+                        email: "new@example.com".to_string(),
+                        display_name: Some("New account".to_string()),
+                        color: "#123456".to_string(),
+                        sort_order: 0,
+                    },
+                    TransferAccount {
+                        email: "connected@example.com".to_string(),
+                        display_name: Some("Connected account".to_string()),
+                        color: "#654321".to_string(),
+                        sort_order: 1,
+                    },
+                ],
+                &[TransferSplitInbox {
+                    id: "imported-split".to_string(),
+                    name: "Imported rule".to_string(),
+                    match_kind: "pattern".to_string(),
+                    match_value: "newsletter".to_string(),
+                    sort_order: 0,
+                    created_at: "2026-03-06T00:00:00Z".to_string(),
+                }],
+                Some(90),
+            )
+            .unwrap();
+
+        assert_eq!(
+            database
+                .get_account("connected@example.com")
+                .unwrap()
+                .unwrap()
+                .status,
+            "connected"
+        );
+        assert_eq!(
+            database
+                .get_account("new@example.com")
+                .unwrap()
+                .unwrap()
+                .status,
+            "needs_reauth"
+        );
+        let splits = database.list_split_inboxes().unwrap();
+        assert_eq!(splits.len(), 1);
+        assert_eq!(splits[0].name, "Imported rule");
+        assert_eq!(database.retention_days().unwrap(), Some(90));
     }
 
     #[test]

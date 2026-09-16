@@ -548,13 +548,14 @@ cleanly from offline and token-expiry scenarios.
 
 ### Phase 3 — hardening and public alpha (3–5 weeks)
 
-- installer/update path, import/export, retention controls;
+- installer/update path, [password-encrypted settings and account-list
+  transfer](docs/settings-transfer.md), retention controls;
 - threat model, external security review, telemetry consent;
 - provider quota/load tests and operational runbooks; and
 - contributor documentation and stable extension contracts.
 
-**Exit:** reproducible signed builds, documented local backup/restore, and no
-known critical security or sync correctness issue.
+**Exit:** reproducible signed builds, documented local settings backup/restore,
+and no known critical security or sync correctness issue.
 
 ### Phase 4 — expand based on evidence
 

@@ -10,6 +10,7 @@ mod models;
 mod net_safety;
 mod sync;
 mod system_fonts;
+mod transfer;
 #[path = "unsubscribe.rs"]
 mod unsubscribe_service;
 
@@ -740,6 +741,23 @@ fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> Result<(
 }
 
 #[tauri::command]
+fn export_settings(
+    preferences: transfer::TransferPreferences,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    transfer::export(&state.database, preferences, &password)
+}
+
+#[tauri::command]
+fn import_settings(
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<Option<transfer::ImportResult>, String> {
+    transfer::import(&state.database, &password)
+}
+
+#[tauri::command]
 fn list_split_inboxes(state: State<'_, AppState>) -> Result<Vec<SplitInbox>, String> {
     state.database.list_split_inboxes()
 }
@@ -1131,6 +1149,8 @@ pub fn run() {
             set_account_display_name,
             set_account_color,
             reorder_accounts,
+            export_settings,
+            import_settings,
             list_split_inboxes,
             create_split_inbox,
             update_split_inbox,

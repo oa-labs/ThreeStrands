@@ -37,6 +37,7 @@ import {
   Tag,
   Trash2,
   Unlink,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -148,6 +149,7 @@ import {
   type AiProvider,
 } from "./aiSettings";
 import { getRetentionDays, setRetentionDays, RETENTION_OPTIONS } from "./retentionSettings";
+import { exportSettings, importSettings } from "./userPreferences";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import {
   buildTriageCloseEvent,
@@ -157,7 +159,7 @@ import {
   type TriageSession,
 } from "./triage";
 
-type SettingsSection = "appearance" | "reading" | "accounts" | "splitInboxes" | "ai" | "privacy";
+type SettingsSection = "appearance" | "reading" | "accounts" | "splitInboxes" | "ai" | "privacy" | "data";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -3118,6 +3120,7 @@ const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "splitInboxes", label: "Split Inboxes" },
   { id: "ai", label: "AI provider" },
   { id: "privacy", label: "Privacy" },
+  { id: "data", label: "Data transfer" },
 ];
 
 function Settings({
@@ -3240,6 +3243,7 @@ function Settings({
               onLoadRemoteImagesChange={onLoadRemoteImagesChange}
             />
           ) : null}
+          {section === "data" ? <DataTransferSettings /> : null}
         </div>
       </div>
     </Modal>
@@ -4149,6 +4153,116 @@ function PrivacySettings({
       >
         Clear {reportCount} local {reportCount === 1 ? "report" : "reports"}
       </button>
+    </section>
+  );
+}
+
+function DataTransferSettings() {
+  const [exportPassword, setExportPassword] = useState("");
+  const [exportConfirmation, setExportConfirmation] = useState("");
+  const [importPassword, setImportPassword] = useState("");
+  const [busy, setBusy] = useState<"export" | "import" | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const isDesktop = "__TAURI_INTERNALS__" in window;
+  const passwordsMatch = exportPassword.length >= 8 && exportPassword === exportConfirmation;
+
+  const showError = (error: unknown) => {
+    setMessage(error instanceof Error ? error.message : String(error));
+  };
+
+  return (
+    <section className="settings-section" aria-label="Data transfer">
+      <h3>Export settings and accounts</h3>
+      <p className="settings-hint">
+        Creates a password-encrypted file containing your preferences, account
+        list, Split Inboxes, and retention setting. Mail, OAuth credentials,
+        API keys, and other keychain secrets are never exported.
+      </p>
+      <label className="settings-field">
+        <span>Export password</span>
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={exportPassword}
+          onChange={(event) => setExportPassword(event.target.value)}
+          disabled={!isDesktop || busy !== null}
+        />
+      </label>
+      <label className="settings-field">
+        <span>Confirm password</span>
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={exportConfirmation}
+          onChange={(event) => setExportConfirmation(event.target.value)}
+          disabled={!isDesktop || busy !== null}
+        />
+      </label>
+      <button
+        type="button"
+        disabled={!isDesktop || !passwordsMatch || busy !== null}
+        onClick={() => {
+          setBusy("export");
+          setMessage(null);
+          void exportSettings(exportPassword)
+            .then((path) => {
+              if (path) {
+                setMessage(`Settings exported to ${path}`);
+                setExportPassword("");
+                setExportConfirmation("");
+              }
+            })
+            .catch(showError)
+            .finally(() => setBusy(null));
+        }}
+      >
+        <Download size={15} aria-hidden="true" />
+        {busy === "export" ? "Exporting…" : "Export encrypted settings"}
+      </button>
+
+      <h3>Import settings and accounts</h3>
+      <p className="settings-hint">
+        Importing replaces preferences and Split Inboxes from this installation.
+        Existing connected accounts stay connected. Other imported accounts
+        appear as “Connect on this device” and require Google authorization.
+      </p>
+      <label className="settings-field">
+        <span>Export password</span>
+        <input
+          type="password"
+          autoComplete="current-password"
+          value={importPassword}
+          onChange={(event) => setImportPassword(event.target.value)}
+          disabled={!isDesktop || busy !== null}
+        />
+      </label>
+      <button
+        type="button"
+        disabled={!isDesktop || importPassword.length < 8 || busy !== null}
+        onClick={() => {
+          setBusy("import");
+          setMessage(null);
+          void importSettings(importPassword)
+            .then((result) => {
+              if (!result) return;
+              setMessage(
+                `Imported ${result.accountCount} accounts and ${result.splitInboxCount} Split Inboxes. Reloading…`,
+              );
+              window.setTimeout(() => window.location.reload(), 250);
+            })
+            .catch(showError)
+            .finally(() => setBusy(null));
+        }}
+      >
+        <Upload size={15} aria-hidden="true" />
+        {busy === "import" ? "Importing…" : "Choose encrypted settings file"}
+      </button>
+      {!isDesktop ? (
+        <p className="settings-hint" role="status">
+          Settings transfer is available in the Dispatch desktop app.
+        </p>
+      ) : null}
+      {message ? <p className="settings-hint" role="status">{message}</p> : null}
     </section>
   );
 }
