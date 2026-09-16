@@ -371,6 +371,25 @@ const quotedHistoryMarker = /(?:^|\n)\s*(?:(?:[-—_]{2,})\s*)?(?:original messa
 const wroteMarker = /(?:^|\n)\s*On\s+[^\n]{1,500}\s+wrote:\s*(?:\n|$)/i;
 const headerField = /^(?:from|sent|date|to|cc|bcc|subject)\s*:/i;
 const emailOrTimestamp = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d{1,2}:\d{2}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b)/i;
+const quoteLine = /^\s*>/;
+const MIN_QUOTE_RUN = 5;
+
+/** Index of the first line starting a run of MIN_QUOTE_RUN+ consecutive `>`-quoted lines, or -1. */
+function findQuoteRunStart(lines: string[]): number {
+  let runStart = -1;
+  let runLength = 0;
+  for (let index = 0; index < lines.length; index++) {
+    if (quoteLine.test(lines[index])) {
+      if (runLength === 0) runStart = index;
+      runLength++;
+      if (runLength >= MIN_QUOTE_RUN) return runStart;
+    } else {
+      runLength = 0;
+      runStart = -1;
+    }
+  }
+  return -1;
+}
 
 function hasMeaningfulFollowingContent(element: Element, container: Element): boolean {
   let current: Element = element;
@@ -463,8 +482,11 @@ export function collapseQuotedHistoryHtml(html: string): string | null {
 export function collapseQuotedHistoryText(text: string): string | null {
   const lines = text.split(/\r?\n/);
   const markerIndex = lines.findIndex((line) => quotedHistoryMarker.test(`\n${line}\n`) || wroteMarker.test(`\n${line}\n`));
-  if (markerIndex >= 0) {
-    const visible = lines.slice(0, markerIndex).join("\n").trimEnd();
+  const quoteRunIndex = findQuoteRunStart(lines);
+  const cutCandidates = [markerIndex, quoteRunIndex].filter((index) => index >= 0);
+  if (cutCandidates.length > 0) {
+    const cutIndex = Math.min(...cutCandidates);
+    const visible = lines.slice(0, cutIndex).join("\n").trimEnd();
     return visible.trim() ? visible : null;
   }
   const headerStart = lines.findIndex((_, index) => {

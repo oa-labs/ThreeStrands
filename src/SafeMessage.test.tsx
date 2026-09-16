@@ -475,6 +475,24 @@ it("collapses and reveals quoted history in a plain-text reply", () => {
   expect(screen.getByTestId("message-body")).toHaveTextContent("Earlier message");
 });
 
+it("does not collapse fewer than 5 consecutive '>' lines", () => {
+  const text = ["Current answer", "", "> line one", "> line two", "> line three"].join("\n");
+  expect(collapseQuotedHistoryText(text)).toBeNull();
+});
+
+it("collapses at the first line of a 5+ line '>' quote run", () => {
+  const text = [
+    "Current answer",
+    "",
+    "> line one",
+    "> line two",
+    "> line three",
+    "> line four",
+    "> line five",
+  ].join("\n");
+  expect(collapseQuotedHistoryText(text)).toBe("Current answer");
+});
+
 it("linkifies bare URLs, www.-domains, and email addresses without swallowing trailing punctuation", () => {
   const nodes = linkifyText("See https://example.com/path, or www.example.org. Contact tom@example.com!");
   const { container } = render(<>{nodes}</>);
