@@ -1019,6 +1019,15 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
   background: var(--input);
   font-size: calc(13px * var(--font-scale));
   font-family: inherit;
+  box-sizing: border-box;
+}
+form.split-inbox-add select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
 }
 .settings-add-account { display: inline-flex; flex-shrink: 0; align-items: center; gap: 7px; border-color: var(--primary-border) !important; background: var(--primary) !important; white-space: nowrap; }
 .accounts-config-notice { display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 10px 11px; border: 1px solid color-mix(in srgb, var(--error) 45%, var(--border)); border-radius: 8px; color: var(--error); background: color-mix(in srgb, var(--error) 8%, transparent); }
@@ -1082,7 +1091,7 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
   border: 1px solid var(--border-strong);
   border-radius: 7px;
   color: var(--text);
-  background: var(--input);
+  background-color: var(--input);
   font-size: calc(13px * var(--font-scale));
 }
 .settings-section button { padding: 7px 11px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--hover); cursor: pointer; font-size: calc(13px * var(--font-scale)); }
