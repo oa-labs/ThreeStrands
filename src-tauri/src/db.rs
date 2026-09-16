@@ -16,6 +16,12 @@ use crate::models::{
 };
 use crate::transfer::{TransferAccount, TransferSplitInbox};
 
+mod accounts;
+mod contacts;
+mod split_inboxes;
+mod threads;
+mod triage;
+
 /// Assigned to newly connected accounts in rotation, so each has a distinct
 /// color for switcher/thread-row indicators without asking the user to pick
 /// one up front.
@@ -50,126 +56,15 @@ fn restrict_to_owner(path: &Path) {
 #[cfg(not(unix))]
 fn restrict_to_owner(_path: &Path) {}
 
-const SCHEMA: &str = r#"
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS threads (
-    id TEXT PRIMARY KEY,
-    provider_thread_id TEXT NOT NULL,
-    subject TEXT NOT NULL,
-    snippet TEXT NOT NULL,
-    participants_json TEXT NOT NULL,
-    last_message_at TEXT NOT NULL,
-    unread INTEGER NOT NULL DEFAULT 0,
-    starred INTEGER NOT NULL DEFAULT 0,
-    archived INTEGER NOT NULL DEFAULT 0,
-    labels_json TEXT NOT NULL DEFAULT '[]'
-);
-
-CREATE INDEX IF NOT EXISTS threads_inbox_order
-ON threads(archived, last_message_at DESC);
-
-CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-    sender TEXT NOT NULL,
-    recipients_json TEXT NOT NULL,
-    sent_at TEXT NOT NULL,
-    body_html TEXT NOT NULL,
-    body_text TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS messages_by_thread
-ON messages(thread_id, sent_at);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS thread_search USING fts5(
-    thread_id UNINDEXED,
-    subject,
-    snippet,
-    participants,
-    body,
-    tokenize = 'unicode61 remove_diacritics 2'
-);
-
-CREATE TABLE IF NOT EXISTS mutations (
-    id TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL,
-    thread_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    state TEXT NOT NULL CHECK(state IN ('pending', 'running', 'done', 'failed')),
-    attempts INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    last_error TEXT
-);
-
-CREATE INDEX IF NOT EXISTS mutations_pending
-ON mutations(state, created_at);
-
-CREATE TABLE IF NOT EXISTS sync_state (
-    account_id TEXT PRIMARY KEY,
-    cursor TEXT,
-    last_successful_sync TEXT,
-    last_error TEXT
-);
-
-INSERT OR IGNORE INTO sync_state(account_id) VALUES ('default');
-
-CREATE TABLE IF NOT EXISTS accounts (
-    email TEXT PRIMARY KEY,
-    display_name TEXT,
-    color TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('connected', 'needs_reauth')),
-    sort_order INTEGER NOT NULL,
-    connected_at TEXT NOT NULL,
-    last_synced_at TEXT
-);
-
--- Raw, local-only interaction observations. Keeping the event log lets us
--- revise the quick-dismissal threshold and ranking later without having to
--- recollect the user's behavior.
-CREATE TABLE IF NOT EXISTS triage_events (
-    id TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL,
-    thread_id TEXT NOT NULL,
-    sender_email TEXT NOT NULL,
-    sender_domain TEXT NOT NULL,
-    event_kind TEXT NOT NULL CHECK(event_kind IN ('open', 'close', 'disposition', 'restore', 'response')),
-    context TEXT NOT NULL CHECK(context IN ('inbox', 'other')),
-    action TEXT CHECK(action IS NULL OR action IN ('archive', 'trash')),
-    opened INTEGER NOT NULL DEFAULT 0,
-    dwell_ms INTEGER,
-    scrolled INTEGER NOT NULL DEFAULT 0,
-    batch INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS triage_events_account_sender
-ON triage_events(account_id, sender_email, created_at);
-
-CREATE INDEX IF NOT EXISTS triage_events_account_time
-ON triage_events(account_id, created_at);
-
--- Contacts explicitly favorited from the compose autocomplete dropdown.
--- Pinned entries always outrank history-derived suggestions, and (unlike
--- history) survive even with zero sent/received messages.
-CREATE TABLE IF NOT EXISTS pinned_contacts (
-    account_id TEXT NOT NULL,
-    email TEXT NOT NULL,
-    display_name TEXT,
-    pinned_at TEXT NOT NULL,
-    PRIMARY KEY (account_id, email)
-);
-"#;
-
 pub struct Database(Mutex<Connection>);
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self, String> {
         let mut connection = Connection::open(path).map_err(display_error)?;
         restrict_to_owner(path);
-        connection.execute_batch(SCHEMA).map_err(display_error)?;
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .map_err(display_error)?;
         connection
             .execute(
                 "UPDATE mutations SET state = 'pending', last_error = 'Interrupted before acknowledgement'
@@ -177,7 +72,7 @@ impl Database {
                 [],
             )
             .map_err(display_error)?;
-        crate::correspondence::migrate(&mut connection)?;
+        crate::schema::migrate(&mut connection)?;
         ensure_query_indexes(&connection).map_err(display_error)?;
         seed_if_empty(&connection).map_err(display_error)?;
         Ok(Self(Mutex::new(connection)))
@@ -186,8 +81,10 @@ impl Database {
     #[cfg(test)]
     pub(crate) fn open_memory() -> Self {
         let mut connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(SCHEMA).unwrap();
-        crate::correspondence::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        crate::schema::migrate(&mut connection).unwrap();
         ensure_query_indexes(&connection).unwrap();
         seed_if_empty(&connection).unwrap();
         Self(Mutex::new(connection))
@@ -197,55 +94,6 @@ impl Database {
         self.0
             .lock()
             .map_err(|_| "Local database lock was poisoned".to_string())
-    }
-
-    /// `account_id` merges every account when `None` — the unified inbox —
-    /// or scopes to just that account when set.
-    pub fn list_threads(&self, account_id: Option<&str>) -> Result<Vec<Thread>, String> {
-        self.list_threads_where(account_id, "archived = 0 AND trashed = 0")
-    }
-
-    /// Gmail's "All Mail": everything except Trash. (There's a `spam` column
-    /// referenced elsewhere for an in-progress Spam feature, but no migration
-    /// has added it to `threads` yet, so it isn't filterable here.)
-    pub fn list_all_mail(&self, account_id: Option<&str>) -> Result<Vec<Thread>, String> {
-        self.list_threads_where(account_id, "trashed = 0")
-    }
-
-    pub fn list_trash(&self, account_id: Option<&str>) -> Result<Vec<Thread>, String> {
-        self.list_threads_where(account_id, "trashed = 1")
-    }
-
-    /// Unread thread count across every account's inbox, for the Dock badge.
-    pub fn count_unread_inbox(&self) -> Result<i64, String> {
-        let connection = self.connection()?;
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM threads WHERE archived = 0 AND trashed = 0 AND unread = 1",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|error| error.to_string())
-    }
-
-    /// Unread inbox thread totals keyed by account, used by the account switcher.
-    pub fn list_unread_counts(&self) -> Result<HashMap<String, i64>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT account_id, COUNT(*)
-                 FROM threads
-                 WHERE archived = 0 AND trashed = 0 AND unread = 1
-                 GROUP BY account_id",
-            )
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .map_err(|error| error.to_string())?;
-        rows.collect::<Result<HashMap<_, _>, _>>()
-            .map_err(|error| error.to_string())
     }
 
     /// The Inbox is unarchived/untrashed threads *minus* anything claimed by
@@ -461,61 +309,6 @@ impl Database {
             .optional()
             .map_err(display_error)?
             .ok_or_else(|| "Attachment source not found".to_string())
-    }
-
-    /// Records a local-only interaction observation. Sender identity is
-    /// resolved from the cached thread rather than accepted from the webview,
-    /// so the event cannot accidentally be attributed to another account or
-    /// sender.
-    pub fn record_triage_event(&self, event: &TriageEvent) -> Result<(), String> {
-        match (&event.kind, &event.action) {
-            (
-                TriageEventKind::Open | TriageEventKind::Close | TriageEventKind::Response,
-                Some(_),
-            ) => {
-                return Err("Open and close triage events cannot have an action".into());
-            }
-            (TriageEventKind::Disposition | TriageEventKind::Restore, None) => {
-                return Err("Disposition and restore triage events require an action".into());
-            }
-            _ => {}
-        }
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        let Some((account_id, sender_email, sender_domain)) =
-            sender_identity_for_thread(&transaction, &event.thread_id)?
-        else {
-            // A thread can disappear between the optimistic UI action and
-            // this best-effort observation. That should never affect mail.
-            return Ok(());
-        };
-        let created_at = Utc::now().to_rfc3339();
-        let dwell_ms = event.dwell_ms.map(|value| value.clamp(0, 86_400_000));
-        transaction
-            .execute(
-                "INSERT INTO triage_events(
-                    id, account_id, thread_id, sender_email, sender_domain,
-                    event_kind, context, action, opened, dwell_ms, scrolled,
-                    batch, created_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-                params![
-                    Uuid::new_v4().to_string(),
-                    account_id,
-                    event.thread_id,
-                    sender_email,
-                    sender_domain,
-                    triage_event_kind_name(&event.kind),
-                    triage_context_name(&event.context),
-                    event.action.as_ref().map(triage_action_name),
-                    event.opened,
-                    dwell_ms,
-                    event.scrolled,
-                    event.batch,
-                    created_at,
-                ],
-            )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)
     }
 
     /// Returns the current top sender candidates for one account. This is a
@@ -788,37 +581,6 @@ impl Database {
         });
         suggestions.truncate(limit);
         Ok(suggestions)
-    }
-
-    pub fn pin_contact(
-        &self,
-        account_id: &str,
-        email: &str,
-        display_name: Option<&str>,
-    ) -> Result<(), String> {
-        let email = email.trim().to_ascii_lowercase();
-        if email.is_empty() {
-            return Err("Enter an email address".into());
-        }
-        self.connection()?
-            .execute(
-                "INSERT INTO pinned_contacts(account_id, email, display_name, pinned_at)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(account_id, email) DO UPDATE SET display_name = excluded.display_name",
-                params![account_id, email, display_name, Utc::now().to_rfc3339()],
-            )
-            .map_err(display_error)?;
-        Ok(())
-    }
-
-    pub fn unpin_contact(&self, account_id: &str, email: &str) -> Result<(), String> {
-        self.connection()?
-            .execute(
-                "DELETE FROM pinned_contacts WHERE account_id = ?1 AND email = ?2",
-                params![account_id, email.trim().to_ascii_lowercase()],
-            )
-            .map_err(display_error)?;
-        Ok(())
     }
 
     pub fn set_thread_summary(
@@ -1675,182 +1437,6 @@ impl Database {
             .map_err(display_error)
     }
 
-    pub fn list_accounts(&self) -> Result<Vec<Account>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT email, display_name, color, status, sort_order, connected_at, last_synced_at
-                 FROM accounts ORDER BY sort_order",
-            )
-            .map_err(display_error)?;
-        let rows = statement
-            .query_map([], account_from_row)
-            .map_err(display_error)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
-    }
-
-    /// Ensures an `accounts` row exists for `email`, marking it connected
-    /// either way, and folds any pre-multi-account local state (the
-    /// `sync_state`/`mutations` rows still keyed by the literal `'default'`)
-    /// onto it. Idempotent: safe to call on every successful identity
-    /// refresh, not just the first one.
-    pub fn adopt_account(&self, email: &str) -> Result<Account, String> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        let exists: bool = transaction
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ?1)",
-                [email],
-                |row| row.get(0),
-            )
-            .map_err(display_error)?;
-        if exists {
-            transaction
-                .execute(
-                    "UPDATE accounts SET status = 'connected' WHERE email = ?1",
-                    [email],
-                )
-                .map_err(display_error)?;
-        } else {
-            let sort_order: i64 = transaction
-                .query_row(
-                    "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM accounts",
-                    [],
-                    |row| row.get(0),
-                )
-                .map_err(display_error)?;
-            let color = ACCOUNT_COLORS[(sort_order as usize) % ACCOUNT_COLORS.len()];
-            transaction
-                .execute(
-                    "INSERT INTO accounts(email, color, status, sort_order, connected_at)
-                     VALUES (?1, ?2, 'connected', ?3, ?4)",
-                    params![email, color, sort_order, Utc::now().to_rfc3339()],
-                )
-                .map_err(display_error)?;
-        }
-        // Fold any pre-multi-account local state, still keyed by the literal
-        // 'default', onto the real address. A no-op after the first time.
-        transaction
-            .execute(
-                "UPDATE sync_state SET account_id = ?1 WHERE account_id = 'default'",
-                [email],
-            )
-            .map_err(display_error)?;
-        transaction
-            .execute(
-                "UPDATE mutations SET account_id = ?1 WHERE account_id = 'default'",
-                [email],
-            )
-            .map_err(display_error)?;
-        transaction
-            .execute(
-                "UPDATE threads SET account_id = ?1 WHERE account_id = 'default'",
-                [email],
-            )
-            .map_err(display_error)?;
-        transaction
-            .execute(
-                "UPDATE triage_events SET account_id = ?1 WHERE account_id = 'default'",
-                [email],
-            )
-            .map_err(display_error)?;
-        // Accounts adopted directly (not migrated from a 'default' row)
-        // still need their own cursor row.
-        transaction
-            .execute(
-                "INSERT OR IGNORE INTO sync_state(account_id) VALUES (?1)",
-                [email],
-            )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)?;
-        drop(connection);
-        self.get_account(email)?
-            .ok_or_else(|| "Account not found".to_string())
-    }
-
-    pub fn get_account(&self, email: &str) -> Result<Option<Account>, String> {
-        self.connection()?
-            .query_row(
-                "SELECT email, display_name, color, status, sort_order, connected_at, last_synced_at
-                 FROM accounts WHERE email = ?1",
-                [email],
-                account_from_row,
-            )
-            .optional()
-            .map_err(display_error)
-    }
-
-    pub fn remove_account(&self, email: &str) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        transaction
-            .execute("DELETE FROM triage_events WHERE account_id = ?1", [email])
-            .map_err(display_error)?;
-        transaction
-            .execute("DELETE FROM split_inboxes WHERE account_id = ?1", [email])
-            .map_err(display_error)?;
-        transaction
-            .execute("DELETE FROM accounts WHERE email = ?1", [email])
-            .map(|_| ())
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)
-    }
-
-    pub fn set_account_color(&self, email: &str, color: &str) -> Result<(), String> {
-        let changed = self
-            .connection()?
-            .execute(
-                "UPDATE accounts SET color = ?1 WHERE email = ?2",
-                params![color, email],
-            )
-            .map_err(display_error)?;
-        if changed == 0 {
-            return Err("Account not found".to_string());
-        }
-        Ok(())
-    }
-
-    pub fn set_account_display_name(
-        &self,
-        email: &str,
-        display_name: Option<&str>,
-    ) -> Result<(), String> {
-        let normalized = display_name.map(str::trim).filter(|name| !name.is_empty());
-        if normalized
-            .is_some_and(|name| name.chars().count() > 200 || name.chars().any(char::is_control))
-        {
-            return Err(
-                "Sender name must be 200 characters or fewer and cannot contain control characters"
-                    .into(),
-            );
-        }
-        let changed = self
-            .connection()?
-            .execute(
-                "UPDATE accounts SET display_name = ?1 WHERE email = ?2",
-                params![normalized, email],
-            )
-            .map_err(display_error)?;
-        if changed == 0 {
-            return Err("Account not found".to_string());
-        }
-        Ok(())
-    }
-
-    pub fn reorder_accounts(&self, ordered_emails: &[String]) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        for (index, email) in ordered_emails.iter().enumerate() {
-            transaction
-                .execute(
-                    "UPDATE accounts SET sort_order = ?1 WHERE email = ?2",
-                    params![index as i64, email],
-                )
-                .map_err(display_error)?;
-        }
-        transaction.commit().map_err(display_error)
-    }
-
     /// Applies the native portion of a settings transfer atomically. Existing
     /// destination accounts keep their connection status because their
     /// keychain credentials are deliberately not part of the transfer. An
@@ -1929,20 +1515,6 @@ impl Database {
                 .map_err(display_error)?,
         };
         transaction.commit().map_err(display_error)
-    }
-
-    pub fn list_split_inboxes(&self) -> Result<Vec<SplitInbox>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT id, name, match_kind, match_value, sort_order, created_at, account_id
-                 FROM split_inboxes ORDER BY sort_order",
-            )
-            .map_err(display_error)?;
-        let rows = statement
-            .query_map([], split_inbox_from_row)
-            .map_err(display_error)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
     }
 
     pub fn create_split_inbox(

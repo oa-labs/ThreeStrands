@@ -1,36 +1,36 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type AiProvider = "none" | "openai" | "anthropic" | "openrouter" | "fireworks" | "custom";
+export const AI_PROVIDERS = [
+  { id: "none", label: "None", modelPlaceholder: "" },
+  { id: "openai", label: "OpenAI", modelPlaceholder: "gpt-4o" },
+  { id: "anthropic", label: "Anthropic", modelPlaceholder: "claude-sonnet-5" },
+  { id: "openrouter", label: "OpenRouter", modelPlaceholder: "openai/gpt-4o" },
+  { id: "fireworks", label: "Fireworks", modelPlaceholder: "accounts/fireworks/models/llama-v3p1-70b-instruct" },
+  { id: "custom", label: "Custom endpoint", modelPlaceholder: "model name" },
+] as const;
+
+export type AiProvider = (typeof AI_PROVIDERS)[number]["id"];
 
 export type AiFeatureFlags = {
   draftAssist: boolean;
   summarize: boolean;
-  classify: boolean;
 };
 
-export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] = [
-  { value: "none", label: "None" },
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openrouter", label: "OpenRouter" },
-  { value: "fireworks", label: "Fireworks" },
-  { value: "custom", label: "Custom endpoint" },
-];
+export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] =
+  AI_PROVIDERS.map(({ id, label }) => ({ value: id, label }));
 
 export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
   draftAssist: false,
   summarize: false,
-  classify: false,
 };
 
-export const AI_MODEL_PLACEHOLDERS: Record<AiProvider, string> = {
-  none: "",
-  openai: "gpt-4o",
-  anthropic: "claude-sonnet-5",
-  openrouter: "openai/gpt-4o",
-  fireworks: "accounts/fireworks/models/llama-v3p1-70b-instruct",
-  custom: "model name",
-};
+export const AI_MODEL_PLACEHOLDERS = Object.fromEntries(
+  AI_PROVIDERS.map(({ id, modelPlaceholder }) => [id, modelPlaceholder]),
+) as Record<AiProvider, string>;
+
+function isAiProvider(value: string | null): value is AiProvider {
+  return AI_PROVIDERS.some(({ id }) => id === value);
+}
 
 /**
  * A blank model field falls back to a sensible default for every provider
@@ -51,16 +51,7 @@ const FEATURES_KEY = "dispatch.settings.ai.features";
 export function readAiProvider(): AiProvider {
   try {
     const saved = localStorage.getItem(PROVIDER_KEY);
-    if (
-      saved === "none" ||
-      saved === "openai" ||
-      saved === "anthropic" ||
-      saved === "openrouter" ||
-      saved === "fireworks" ||
-      saved === "custom"
-    ) {
-      return saved;
-    }
+    if (isAiProvider(saved)) return saved;
   } catch {
     // A blocked storage backend should not prevent the app from opening.
   }
@@ -111,7 +102,10 @@ export function readAiFeatures(): AiFeatureFlags {
   try {
     const saved = JSON.parse(localStorage.getItem(FEATURES_KEY) ?? "null") as Partial<AiFeatureFlags> | null;
     if (saved && typeof saved === "object") {
-      return { ...DEFAULT_AI_FEATURES, ...saved };
+      return {
+        draftAssist: saved.draftAssist === true,
+        summarize: saved.summarize === true,
+      };
     }
   } catch {
     // Ignored; fall through to the default below.

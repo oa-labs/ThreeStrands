@@ -4049,14 +4049,6 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             />
             Thread summaries
           </label>
-          <label className="settings-checkbox">
-            <input
-              type="checkbox"
-              checked={features.classify}
-              onChange={(event) => updateFeature("classify", event.target.checked)}
-            />
-            Split Inbox classification
-          </label>
         </>
       ) : null}
     </section>

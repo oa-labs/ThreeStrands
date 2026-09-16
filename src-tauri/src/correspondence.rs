@@ -12,7 +12,7 @@ use base64::{
 use chrono::Utc;
 use mail_builder::MessageBuilder;
 use mail_parser::MessageParser;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -32,229 +32,6 @@ fn json<T: Serialize>(value: &T) -> Result<String, String> {
 }
 fn now() -> i64 {
     Utc::now().timestamp_millis()
-}
-
-pub fn migrate(connection: &mut Connection) -> Result<(), String> {
-    let tx = connection.transaction().map_err(error)?;
-    let version: i64 = tx
-        .query_row("PRAGMA user_version", [], |r| r.get(0))
-        .map_err(error)?;
-    if version < 1 {
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS message_metadata(id TEXT PRIMARY KEY, payload TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS compose_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS drafts(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS outbox_messages(id TEXT PRIMARY KEY, draft_id TEXT NOT NULL, revision INTEGER NOT NULL, account TEXT NOT NULL, state TEXT NOT NULL, deadline INTEGER NOT NULL, payload TEXT NOT NULL, raw BLOB NOT NULL, error TEXT, provider_id TEXT, UNIQUE(draft_id, revision));
-        PRAGMA user_version=1;").map_err(error)?;
-    }
-    if version < 2 {
-        tx.execute_batch(
-            "ALTER TABLE outbox_messages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
-            ALTER TABLE outbox_messages ADD COLUMN last_attempt_at INTEGER;
-            PRAGMA user_version=2;",
-        )
-        .map_err(error)?;
-    }
-    if version < 3 {
-        tx.execute_batch(
-            "ALTER TABLE threads ADD COLUMN trashed INTEGER NOT NULL DEFAULT 0;
-            CREATE INDEX IF NOT EXISTS threads_trashed ON threads(trashed);
-            PRAGMA user_version=3;",
-        )
-        .map_err(error)?;
-    }
-    if version < 4 {
-        // Gmail thread IDs are unique only within one account, so the bare
-        // provider ID can no longer be the uniqueness key once a second
-        // account exists. Existing rows all get the 'default' placeholder;
-        // `Database::adopt_account` rewrites it onto the real address the
-        // first time an account's identity is confirmed.
-        tx.execute_batch(
-            "ALTER TABLE threads ADD COLUMN account_id TEXT NOT NULL DEFAULT 'default';
-            CREATE UNIQUE INDEX IF NOT EXISTS threads_account_provider_unique
-                ON threads(account_id, provider_thread_id);
-            PRAGMA user_version=4;",
-        )
-        .map_err(error)?;
-    }
-    if version < 5 {
-        tx.execute_batch(
-            "ALTER TABLE messages ADD COLUMN unsubscribe_json TEXT;
-            CREATE TABLE IF NOT EXISTS unsubscribe_requests(
-                id TEXT PRIMARY KEY,
-                message_id TEXT NOT NULL,
-                thread_id TEXT NOT NULL,
-                method TEXT NOT NULL,
-                state TEXT NOT NULL CHECK(state IN ('pending', 'succeeded', 'opened', 'failed')),
-                http_status INTEGER,
-                created_at TEXT NOT NULL,
-                completed_at TEXT,
-                last_error TEXT
-            );
-            CREATE INDEX IF NOT EXISTS unsubscribe_requests_message
-                ON unsubscribe_requests(message_id, created_at);
-            PRAGMA user_version=5;",
-        )
-        .map_err(error)?;
-    }
-    if version < 6 {
-        // Gmail tracks UNREAD per message, not just per thread; existing rows
-        // default to read since we can't retroactively know their state, and
-        // the next sync backfills the real value from each message's labels.
-        tx.execute_batch(
-            "ALTER TABLE messages ADD COLUMN unread INTEGER NOT NULL DEFAULT 0;
-            PRAGMA user_version=6;",
-        )
-        .map_err(error)?;
-    }
-    if version < 7 {
-        tx.execute_batch(
-            "ALTER TABLE threads ADD COLUMN summary TEXT;
-            ALTER TABLE threads ADD COLUMN summary_generated_at TEXT;
-            PRAGMA user_version=7;",
-        )
-        .map_err(error)?;
-    }
-    if version < 8 {
-        tx.execute_batch(
-            "ALTER TABLE threads ADD COLUMN has_attachments INTEGER NOT NULL DEFAULT 0;
-            ALTER TABLE messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';
-            PRAGMA user_version=8;",
-        )
-        .map_err(error)?;
-    }
-    if version < 9 {
-        // Attachment metadata written by older builds did not distinguish
-        // HTML-referenced CID images from downloadable files. Re-normalize
-        // cached Gmail payloads once so signatures are fixed without a full
-        // mailbox resync.
-        let cached_payloads = {
-            let mut statement = tx
-                .prepare("SELECT id, payload FROM message_metadata")
-                .map_err(error)?;
-            let rows = statement
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .map_err(error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(error)?;
-            rows
-        };
-        for (id, payload) in cached_payloads {
-            let Ok(message) = serde_json::from_str::<GmailMessage>(&payload) else {
-                continue;
-            };
-            let Ok(normalized) = crate::mime::normalize(&message) else {
-                continue;
-            };
-            tx.execute(
-                "UPDATE messages SET attachments_json=?1 WHERE id=?2",
-                params![json(&normalized.attachments)?, id],
-            )
-            .map_err(error)?;
-        }
-        tx.execute(
-            "UPDATE threads SET has_attachments = EXISTS(
-                SELECT 1 FROM messages m, json_each(m.attachments_json) attachment
-                WHERE m.thread_id = threads.id
-                  AND COALESCE(json_extract(attachment.value, '$.inline'), 0) = 0
-            )",
-            [],
-        )
-        .map_err(error)?;
-        tx.pragma_update(None, "user_version", 9).map_err(error)?;
-    }
-    if version < 10 {
-        // Sending a reply used to bump the thread to the top of the inbox,
-        // because `last_message_at` (used for sort order) took the newest
-        // message regardless of direction. `last_received_at` tracks only
-        // inbound messages, so the list stays put on send and only moves for
-        // a genuinely new reply from someone else.
-        tx.execute_batch(
-            "ALTER TABLE threads ADD COLUMN last_received_at TEXT NOT NULL DEFAULT '';",
-        )
-        .map_err(error)?;
-        tx.execute(
-            "UPDATE threads SET last_received_at = COALESCE(
-                (SELECT MAX(m.sent_at) FROM messages m
-                 JOIN message_metadata mm ON mm.id = m.id
-                 WHERE m.thread_id = threads.id
-                   AND NOT EXISTS (
-                       SELECT 1 FROM json_each(json_extract(mm.payload, '$.labelIds')) label
-                       WHERE label.value = 'SENT'
-                   )),
-                last_message_at
-            )",
-            [],
-        )
-        .map_err(error)?;
-        tx.execute_batch(
-            "DROP INDEX IF EXISTS threads_inbox_order;
-            CREATE INDEX IF NOT EXISTS threads_inbox_order ON threads(archived, last_received_at DESC);
-            DROP INDEX IF EXISTS threads_account_mailbox_order;
-            CREATE INDEX IF NOT EXISTS threads_account_mailbox_order
-                ON threads(account_id, trashed, archived, last_received_at DESC);
-            DROP INDEX IF EXISTS threads_mailbox_order;
-            CREATE INDEX IF NOT EXISTS threads_mailbox_order
-                ON threads(trashed, archived, last_received_at DESC);
-            PRAGMA user_version=10;",
-        )
-        .map_err(error)?;
-    }
-    if version < 11 {
-        // Compressed bodies live alongside the legacy plaintext columns
-        // rather than replacing them, so rows written before this migration
-        // keep reading correctly with no backfill required at upgrade time.
-        // A background job compresses them lazily afterward (see
-        // `Database::compress_next_body_batch`).
-        tx.execute_batch(
-            "ALTER TABLE messages ADD COLUMN body_html_z BLOB;
-            ALTER TABLE messages ADD COLUMN body_text_z BLOB;
-            PRAGMA user_version=11;",
-        )
-        .map_err(error)?;
-    }
-    if version < 12 {
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS split_inboxes (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                match_kind TEXT NOT NULL CHECK(match_kind IN ('domain', 'label', 'pattern')),
-                match_value TEXT NOT NULL,
-                sort_order INTEGER NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            PRAGMA user_version=12;",
-        )
-        .map_err(error)?;
-    }
-    if version < 13 {
-        // A split inbox now belongs to one account rather than applying
-        // across all of them. Existing rows (created before this column
-        // existed) are assigned to whichever account sorts first, since
-        // there's no recorded owner to recover; the user can delete and
-        // recreate a rule under the right account if that guess is wrong.
-        tx.execute_batch(
-            "ALTER TABLE split_inboxes ADD COLUMN account_id TEXT NOT NULL DEFAULT '';",
-        )
-        .map_err(error)?;
-        tx.execute(
-            "UPDATE split_inboxes SET account_id = (SELECT email FROM accounts ORDER BY sort_order LIMIT 1)
-             WHERE account_id = ''",
-            [],
-        )
-        .map_err(error)?;
-        tx.pragma_update(None, "user_version", 13).map_err(error)?;
-    }
-    tx.commit().map_err(error)?;
-    connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
-    connection
-        .execute(
-            "UPDATE outbox_messages SET deadline=?1 WHERE state='undo_pending'",
-            [now() + UNDO_MS],
-        )
-        .map_err(error)?;
-    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1758,7 +1535,7 @@ mod tests {
     fn migrations_preserve_existing_mail_and_are_repeatable() {
         let db = database();
         let before = db.list_threads(None).unwrap().len();
-        migrate(&mut db.connection().unwrap()).unwrap();
+        crate::schema::migrate(&mut db.connection().unwrap()).unwrap();
         assert_eq!(db.list_threads(None).unwrap().len(), before);
     }
     fn service() -> Correspondence {
@@ -1884,7 +1661,7 @@ mod tests {
         }).await;
         assert!(result.is_err());
         assert_eq!(service.database.outbox().unwrap()[0].state, "sending");
-        migrate(&mut service.database.connection().unwrap()).unwrap();
+        crate::schema::migrate(&mut service.database.connection().unwrap()).unwrap();
         assert_eq!(service.database.outbox().unwrap()[0].state, "uncertain");
     }
     #[test]

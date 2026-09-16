@@ -11,6 +11,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    ai::AiProvider,
     db::Database,
     models::{Account, SplitInbox},
 };
@@ -32,7 +33,6 @@ const MAX_TEXT_LENGTH: usize = 2_048;
 pub struct AiFeaturePreferences {
     pub draft_assist: bool,
     pub summarize: bool,
-    pub classify: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -44,7 +44,7 @@ pub struct TransferPreferences {
     pub auto_read_delay_seconds: i64,
     pub load_remote_images: bool,
     pub selected_account_id: Option<String>,
-    pub ai_provider: String,
+    pub ai_provider: AiProvider,
     pub ai_model: String,
     pub ai_endpoint: String,
     pub ai_features: AiFeaturePreferences,
@@ -64,12 +64,6 @@ impl TransferPreferences {
         }
         if let Some(account_id) = &self.selected_account_id {
             validate_text("selected account", account_id, 320)?;
-        }
-        if !matches!(
-            self.ai_provider.as_str(),
-            "none" | "openai" | "anthropic" | "openrouter" | "fireworks" | "custom"
-        ) {
-            return Err("The transfer contains an invalid AI provider".to_string());
         }
         validate_text("AI model", &self.ai_model, MAX_TEXT_LENGTH)?;
         validate_text("AI endpoint", &self.ai_endpoint, MAX_TEXT_LENGTH)
@@ -391,13 +385,12 @@ mod tests {
                 auto_read_delay_seconds: 2,
                 load_remote_images: false,
                 selected_account_id: Some("person@example.com".to_string()),
-                ai_provider: "none".to_string(),
+                ai_provider: AiProvider::None,
                 ai_model: String::new(),
                 ai_endpoint: String::new(),
                 ai_features: AiFeaturePreferences {
                     draft_assist: false,
                     summarize: false,
-                    classify: false,
                 },
             },
             accounts: vec![TransferAccount {
@@ -430,8 +423,12 @@ mod tests {
 
     #[test]
     fn preferences_reject_unknown_provider() {
-        let mut payload = payload();
-        payload.preferences.ai_provider = "secret-provider".to_string();
-        assert!(payload.validate().is_err());
+        let serialized = serde_json::to_value(&payload().preferences).unwrap();
+        let mut object = serialized.as_object().unwrap().clone();
+        object.insert(
+            "aiProvider".to_string(),
+            serde_json::Value::String("secret-provider".to_string()),
+        );
+        assert!(serde_json::from_value::<TransferPreferences>(object.into()).is_err());
     }
 }
