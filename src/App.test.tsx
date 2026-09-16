@@ -122,12 +122,14 @@ describe("archive notice", () => {
       const { container } = render(<App />);
       await screen.findByRole("heading", { name: "Welcome to Dispatch" });
 
-      expect(container.querySelectorAll("article.message-card")).toHaveLength(2);
+      expect(container.querySelectorAll("article.message-card")).toHaveLength(3);
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(2);
       expect(screen.getAllByTestId("message-body")).toHaveLength(1);
 
       const firstArticle = container.querySelector<HTMLElement>('[data-message-id="welcome-first"]')!;
       const secondArticle = container.querySelector<HTMLElement>('[data-message-id="welcome-second"]')!;
+      const latestArticle = container.querySelector<HTMLElement>(`[data-message-id="${latest.id}"]`)!;
+      expect(latestArticle).toHaveClass("message-card-expanded", "message-active");
 
       let firstHeader = within(firstArticle).getByRole("button", { name: /First message snippet/ });
       expect(firstHeader).toHaveAttribute("aria-expanded", "false");
@@ -136,8 +138,11 @@ describe("archive notice", () => {
 
       // Expanding swaps the condensed snippet header for the full sender/recipient header.
       firstHeader = within(firstArticle).getByRole("button", { name: /Collapse message from/ });
-      expect(firstHeader).toHaveClass("message-current-header-collapsible");
+      expect(firstHeader).toHaveClass("message-expanded-toggle");
+      expect(firstArticle.querySelector("header")).toHaveClass("message-expanded-header");
       expect(firstHeader).toHaveAttribute("aria-expanded", "true");
+      expect(firstArticle).toHaveClass("message-card-expanded", "message-active");
+      expect(latestArticle).not.toHaveClass("message-active");
       expect(screen.getAllByTestId("message-body")).toHaveLength(2);
       expect(within(secondArticle).getByRole("button", { name: /Second message snippet/ })).toBeInTheDocument();
 
@@ -148,7 +153,7 @@ describe("archive notice", () => {
       expect(screen.getAllByTestId("message-body")).toHaveLength(1);
 
       const secondHeader = within(secondArticle).getByRole("button", { name: /Second message snippet/ });
-      const latestHeader = screen.getByLabelText(/Message from .+, /);
+      const latestHeader = within(latestArticle).getByRole("button", { name: /Collapse message from/ });
       await act(async () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
       });
@@ -165,6 +170,10 @@ describe("archive notice", () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
       });
       expect(firstHeader).toHaveFocus();
+
+      fireEvent.click(latestHeader);
+      expect(latestArticle).toHaveClass("message-card-collapsed", "message-active");
+      expect(within(latestArticle).getByRole("button")).toHaveAttribute("aria-expanded", "false");
     } finally {
       getThread.mockRestore();
     }
@@ -202,14 +211,14 @@ describe("archive notice", () => {
       await screen.findByRole("heading", { name: "Welcome to Dispatch" });
 
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(0);
-      expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(2);
+      expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(3);
       expect(screen.getAllByTestId("message-body")).toHaveLength(3);
 
       await advance(3000);
       await screen.findByRole("button", { name: "Mark unread (u)" });
 
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(0);
-      expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(2);
+      expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(3);
       expect(screen.getAllByTestId("message-body")).toHaveLength(3);
     } finally {
       getThread.mockRestore();

@@ -525,7 +525,7 @@ kbd {
 .action-button:hover { border-color: var(--border); background: var(--hover); }
 .action-button span { display: none; }
 .message-stack { min-height: 0; overflow: auto; overflow-anchor: none; padding: 28px clamp(28px, 5vw, 72px); }
-.message { max-width: 840px; margin: 0 auto; }
+.message { width: 100%; max-width: 840px; margin: 0 auto; }
 .message > header { display: flex; align-items: flex-start; width: 100%; gap: 10px; padding-bottom: 24px; }
 .message-header-details { display: flex; min-width: 0; flex: 1; flex-direction: column; font-size: calc(13px * var(--font-scale)); }
 .message-sender-row { display: flex; align-items: baseline; gap: 12px; min-width: 0; margin-bottom: 5px; }
@@ -591,32 +591,31 @@ kbd {
   cursor: pointer;
 }
 .address-copy:hover { background: var(--hover); color: var(--text); }
-.message + .message { margin-top: 32px; padding-top: 28px; border-top: 1px solid var(--border); }
-.message-current {
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: 12px;
-  padding: 32px 28px 24px;
-  background: var(--raised);
-  box-shadow: 0 2px 12px var(--shadow);
-}
-.message-current > header { padding-bottom: 18px; }
-.message-current-header {
-  /* Leaves room below the header for the focus outline's offset, which
-     (unlike padding/margin) is drawn outside the box and would otherwise
-     overlap the message content that follows. */
+.message + .message { margin-top: 12px; }
+.message > .message-expanded-header {
   margin-bottom: 8px;
+  padding-bottom: 18px;
 }
-.message-current-header:focus-visible {
+.message-expanded-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: -4px -6px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.message-expanded-toggle:hover { background: var(--hover); color: var(--text); }
+.message-expanded-toggle:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 6px;
-  border-radius: 4px;
+  outline-offset: 2px;
 }
-.message-current-header-collapsible { cursor: pointer; border-radius: 8px; }
-.message-current-header-collapsible:hover { background: var(--hover); }
-.message + .message-current { margin-top: 24px; border-top: none; }
-.message-older .message-sender-row strong { color: var(--muted); }
-.message-current .message-sender-row time { color: var(--secondary); }
 .message-attachments {
   display: flex;
   flex-wrap: wrap;
@@ -762,21 +761,17 @@ kbd {
 .message-card {
   overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 12px;
   background: transparent;
-  transition: border-color 120ms ease, background-color 120ms ease;
 }
-.message + .message-card {
-  margin-top: 12px;
-  padding-top: 0;
-  border-top-color: transparent;
-}
-.message-card:hover,
-.message-card:focus-within {
+.message-card-expanded {
+  overflow: visible;
   border-color: var(--border);
-  background: color-mix(in srgb, var(--raised) 55%, transparent);
+  padding: 32px 28px 24px;
+  background: var(--raised);
+  box-shadow: 0 2px 12px var(--shadow);
 }
-.message-card + .message-current { margin-top: 24px; }
+.message-active { border-left: 3px solid var(--accent); }
 .message-card > .message-card-header {
   display: block;
   padding: 0;
@@ -817,13 +812,7 @@ kbd {
 .message-card-toggle time { flex: 0 0 auto; font-size: calc(11px * var(--font-scale)); white-space: nowrap; }
 .message-card-chevron { flex: 0 0 auto; transition: transform 120ms ease; }
 .message-card-collapsed .message-card-chevron { transform: rotate(-90deg); }
-.message-card-expanded .message-card-header,
-.message-card-expanded .message-current-header { border-bottom: 1px solid transparent; }
-.message-card-expanded:hover .message-card-header,
-.message-card-expanded:focus-within .message-card-header,
-.message-card-expanded:hover .message-current-header,
-.message-card-expanded:focus-within .message-current-header { border-bottom-color: var(--border); }
-.message-card-body { padding: 20px 18px 18px; }
+.message-card-body { padding: 0; }
 .message-images-notice {
   display: flex;
   align-items: center;

@@ -551,6 +551,7 @@ export function App() {
   const messageStackRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLElement>>(new Map());
   const activeMessageIdRef = useRef<string | null>(null);
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const selectedThreadRowRef = useRef<HTMLButtonElement | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId);
@@ -835,6 +836,7 @@ export function App() {
     setMessageExpansionOverrides(new Map());
     messageRefs.current.clear();
     activeMessageIdRef.current = null;
+    setActiveMessageId(null);
     setSummaryExpanded(false);
     // Pending/error state deliberately isn't reset here — it's keyed by
     // thread id (see `summarizingRef`/`summaryErrors`) so it stays correct
@@ -849,14 +851,21 @@ export function App() {
     // cards from collapsing (and moving the reader) when the timer fires.
     setMessageExpansionOverrides((current) => {
       const next = new Map<string, boolean>();
-      for (const message of visibleDetail.messages) {
-        next.set(message.id, current.get(message.id) ?? message.unread);
+      for (const [index, message] of visibleDetail.messages.entries()) {
+        const isLatest = index === visibleDetail.messages.length - 1;
+        next.set(message.id, current.get(message.id) ?? (isLatest || message.unread));
       }
       return next;
     });
   }, [visibleDetail?.thread.id, visibleDetail?.messages]);
 
   const latestDisplayedMessageId = displayedMessages.at(-1)?.id;
+  useEffect(() => {
+    if (!latestDisplayedMessageId) return;
+    activeMessageIdRef.current = latestDisplayedMessageId;
+    setActiveMessageId(latestDisplayedMessageId);
+  }, [visibleDetail?.thread.id, latestDisplayedMessageId]);
+
   useEffect(() => {
     if (!visibleDetail || composerBelongsToVisibleThread) return;
     latestMessageRef.current?.scrollIntoView?.({ block: "start" });
@@ -1331,7 +1340,7 @@ export function App() {
     activeMessageIdRef.current = target.id;
     const node = messageRefs.current.get(target.id);
     if (!node) return;
-    const focusTarget = node.querySelector<HTMLElement>(".message-card-toggle, .message-current-header") ?? node;
+    const focusTarget = node.querySelector<HTMLElement>(".message-card-toggle, .message-expanded-toggle") ?? node;
     focusTarget.focus({ preventScroll: true });
     node.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
   }, [displayedMessages]);
@@ -2053,7 +2062,8 @@ export function App() {
             <div className="message-stack" ref={messageStackRef}>
               {displayedMessages.map((message, index) => {
                 const isLatest = index === displayedMessages.length - 1;
-                const isExpanded = isLatest || (messageExpansionOverrides.get(message.id) ?? message.unread);
+                const isExpanded = messageExpansionOverrides.get(message.id) ?? (isLatest || message.unread);
+                const isActive = (activeMessageId ?? latestDisplayedMessageId) === message.id;
                 const parsedSender = parseAddress(message.sender);
                 const senderAccount = accounts.find(
                   (account) => account.email.toLocaleLowerCase() === parsedSender.email.toLocaleLowerCase(),
@@ -2064,8 +2074,12 @@ export function App() {
                 const downloadableAttachments = message.attachments.filter((attachment) => !attachment.inline);
                 const queuedItem = correspondence.outbox.find((item) => `outbox-${item.id}` === message.id);
                 const cardBodyId = `message-body-${index}`;
-                const toggleMessage = () => setMessageExpansionOverrides((current) => {
+                const activateMessage = () => {
                   activeMessageIdRef.current = message.id;
+                  setActiveMessageId(message.id);
+                };
+                const toggleMessage = () => setMessageExpansionOverrides((current) => {
+                  activateMessage();
                   const next = new Map(current);
                   next.set(message.id, !isExpanded);
                   return next;
@@ -2078,12 +2092,12 @@ export function App() {
                 if (!isExpanded) {
                   return (
                     <article
-                      className="message message-older message-card message-card-collapsed"
+                      className={`message message-card message-card-collapsed ${isActive ? "message-active" : ""}`}
                       key={message.id}
                       ref={registerMessageNode}
                       data-message-id={message.id}
-                      onFocusCapture={() => { activeMessageIdRef.current = message.id; }}
-                      onMouseDown={() => { activeMessageIdRef.current = message.id; }}
+                      onFocusCapture={activateMessage}
+                      onMouseDown={activateMessage}
                     >
                       <header className="message-card-header">
                         <button
@@ -2104,7 +2118,6 @@ export function App() {
                     </article>
                   );
                 }
-                const variant = isLatest ? "message-current" : message.unread ? "" : "message-older";
                 const headerDetails = (
                   <div className="message-header-details">
                     <div className="message-sender-row">
@@ -2127,41 +2140,29 @@ export function App() {
                 );
                 return (
                   <article
-                    className={`message ${variant} ${isLatest ? "" : "message-card message-card-expanded"}`}
+                    className={`message message-card message-card-expanded ${isActive ? "message-active" : ""}`}
                     key={message.id}
                     ref={registerMessageNode}
                     data-message-id={message.id}
-                    onFocusCapture={() => { activeMessageIdRef.current = message.id; }}
-                    onMouseDown={() => { activeMessageIdRef.current = message.id; }}
+                    onFocusCapture={activateMessage}
+                    onMouseDown={activateMessage}
                   >
-                    {isLatest ? (
-                      <header
-                        className="message-current-header"
-                        tabIndex={-1}
-                        aria-label={`Message from ${senderDisplayName}, ${formatMailTimestamp(message.sentAt)}`}
-                      >
-                        {headerDetails}
-                      </header>
-                    ) : (
-                      <header
-                        className="message-current-header message-current-header-collapsible"
-                        role="button"
-                        tabIndex={0}
+                    <header
+                      className="message-expanded-header"
+                    >
+                      {headerDetails}
+                      <button
+                        type="button"
+                        className="message-expanded-toggle"
                         aria-expanded={true}
                         aria-controls={cardBodyId}
                         aria-label={`Collapse message from ${senderDisplayName}, ${formatMailTimestamp(message.sentAt)}`}
                         onClick={toggleMessage}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            toggleMessage();
-                          }
-                        }}
                       >
-                        {headerDetails}
-                      </header>
-                    )}
-                    <div id={isLatest ? undefined : cardBodyId} className={isLatest ? undefined : "message-card-body"}>
+                        <ChevronUp size={14} />
+                      </button>
+                    </header>
+                    <div id={cardBodyId} className="message-card-body">
                       <SafeMessage
                         html={message.bodyHtml}
                         text={message.bodyText}
