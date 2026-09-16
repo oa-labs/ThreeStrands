@@ -65,6 +65,40 @@ describe("Composer From selector", () => {
   });
 });
 
+describe("Composer recipient visibility and shortcuts", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("shows populated copy fields by default and toggles only blank fields from the To label", () => {
+    render(<Composer draft={{ ...draft, cc: "copy@example.com" }} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+
+    expect(screen.getByRole("textbox", { name: "Cc" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Bcc" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cc / Bcc" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "To" }));
+    expect(screen.getByRole("textbox", { name: "Bcc" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "To" }));
+    expect(screen.getByRole("textbox", { name: "Cc" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Bcc" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["o", "To"],
+    ["c", "Cc"],
+    ["b", "Bcc"],
+  ])("focuses the %s recipient using its shortcut", (key, label) => {
+    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key, metaKey: true, shiftKey: true });
+
+    expect(screen.getByRole("textbox", { name: label })).toHaveFocus();
+  });
+});
+
 describe("Composer pasted images", () => {
   afterEach(() => {
     cleanup();
@@ -388,7 +422,7 @@ describe("Composer recipient autocomplete", () => {
   it("drags a recipient badge from To into Cc, moving it rather than copying it", () => {
     const prefilled = { ...draft, to: "hello@dispatch.local", cc: "" };
     render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(screen.getByRole("button", { name: "Cc / Bcc" }));
+    fireEvent.click(screen.getByRole("button", { name: "To" }));
 
     const chip = screen.getByRole("button", { name: "Remove hello@dispatch.local" }).closest(".recipient-chip");
     const ccRow = screen.getByRole("textbox", { name: "Cc" }).closest(".recipient-chip-row");

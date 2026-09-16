@@ -1292,7 +1292,10 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-field:focus-within { border-bottom-color: var(--accent); }
 .compose-field > span, .compose-field > label { width: 50px; flex-shrink: 0; color: var(--muted); }
 .compose-field input { min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: 10px 6px; outline: none; line-height: 20px; }
-.recipient-field { position: relative; }
+.recipient-field { position: relative; border-bottom: 0; }
+.recipient-field:focus-within { border-bottom-color: transparent; }
+.recipient-field-label { width: 50px; flex-shrink: 0; padding: 0; border: 0; color: var(--muted); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.recipient-field-label:disabled { cursor: default; }
 .recipient-chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 6px 0; }
 .recipient-chip-row.drag-over { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 6px; }
 .recipient-chip-row input { flex: 1 1 120px; min-width: 60px; padding: 4px 2px; }

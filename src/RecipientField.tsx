@@ -10,6 +10,8 @@ type Props = {
   value: string;
   account: string;
   disabled: boolean;
+  labelExpanded?: boolean;
+  onLabelClick?(): void;
   onChange(value: string): void;
 };
 
@@ -69,7 +71,7 @@ function serialize(chips: Chip[], draftText: string): string {
   return draftText ? `${formatted.join(", ")}, ${draftText}` : `${formatted.join(", ")}, `;
 }
 
-export function RecipientField({ id, label, value, account, disabled, onChange }: Props) {
+export function RecipientField({ id, label, value, account, disabled, labelExpanded, onLabelClick, onChange }: Props) {
   const inputId = useId();
   const lastEmitted = useRef(value);
   const [chips, setChips] = useState<Chip[]>(() => parseExternalValue(value).chips);
@@ -170,7 +172,11 @@ export function RecipientField({ id, label, value, account, disabled, onChange }
 
   return (
     <div className="compose-field recipient-field">
-      <label htmlFor={inputId}>{label}</label>
+      {onLabelClick ? (
+        <button type="button" className="recipient-field-label" aria-expanded={labelExpanded} onClick={onLabelClick} disabled={disabled}>{label}</button>
+      ) : (
+        <label htmlFor={inputId}>{label}</label>
+      )}
       <div
         className={`recipient-chip-row${dragOver ? " drag-over" : ""}`}
         onDragEnter={(event) => {

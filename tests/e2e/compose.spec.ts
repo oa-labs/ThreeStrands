@@ -152,9 +152,10 @@ test("a recipient badge can be dragged from To into Cc", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New Message (c)" }).click();
   const composer = page.getByRole("dialog", { name: "New Message" });
-  await composer.getByRole("textbox", { name: "To", exact: true }).fill("friend@example.com");
-  await composer.getByRole("textbox", { name: "Subject" }).click();
-  await composer.getByRole("button", { name: "Cc / Bcc" }).click();
+  const to = composer.getByRole("textbox", { name: "To", exact: true });
+  await to.fill("friend@example.com");
+  await to.press("Enter");
+  await composer.getByRole("button", { name: "To", exact: true }).click();
 
   const toRow = composer.getByRole("textbox", { name: "To", exact: true }).locator("xpath=..");
   const ccRow = composer.getByRole("textbox", { name: "Cc", exact: true }).locator("xpath=..");
@@ -175,7 +176,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.getByRole("textbox", { name: "To", exact: true }).fill("Jane <jane@example.com>");
     await page.getByRole("textbox", { name: "Subject" }).fill("A quick update");
     await page.getByRole("textbox", { name: "Message body" }).fill("Hi Jane,\n\nI've attached my notes from today. Let me know what you think.\n\nThanks!");
-    await page.getByRole("button", { name: "Cc / Bcc" }).click();
+    await page.getByRole("button", { name: "To", exact: true }).click();
     await expect(page.getByRole("button", { name: /^Send / })).toBeInViewport();
     await expect(page.getByRole("button", { name: "Save and close draft" })).toBeInViewport();
     await expect(page.getByRole("dialog").getByRole("status")).toHaveText("Saved on this device");

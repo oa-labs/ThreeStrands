@@ -34,7 +34,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  const [showCopies, setShowCopies] = useState(Boolean(initial.cc || initial.bcc));
+  const [showBlankCopies, setShowBlankCopies] = useState(false);
   const [replyAssistAvailable, setReplyAssistAvailable] = useState(false);
   const [replyAssistOpen, setReplyAssistOpen] = useState(false);
   const [replyAssistContext, setReplyAssistContext] = useState<ReplyAssistContext | null>(null);
@@ -44,6 +44,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   const [confirmAddToExisting, setConfirmAddToExisting] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const bodyEditor = useRef<HTMLDivElement>(null);
+  const pendingRecipientFocus = useRef<"cc" | "bcc" | null>(null);
   const initialBodyHtml = useRef(sanitizeComposeHtml(initial.bodyHtml || plainTextToHtml(initial.body)));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
@@ -103,6 +104,15 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     });
   }
   function attach() { void run(async () => { await flush(); const next = await mailClient.attachFiles(latest.current.id); latest.current = next; setDraft(next); }); }
+  function focusRecipient(field: "to" | "cc" | "bcc") {
+    const input = panel.current?.querySelector<HTMLInputElement>(`[name="${field}"]`);
+    if (input) {
+      input.focus();
+      return;
+    }
+    pendingRecipientFocus.current = field === "to" ? null : field;
+    setShowBlankCopies(true);
+  }
   function changeAccount(email: string) {
     if (email === latest.current.account) return;
     void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); latest.current = next; setDraft(next); });
@@ -278,10 +288,22 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
       .then((configured) => { if (mounted.current) setReplyAssistAvailable(configured); })
       .catch(() => { if (mounted.current) setReplyAssistAvailable(false); });
   }, [initial.mode]);
+  useEffect(() => {
+    const field = pendingRecipientFocus.current;
+    if (!field || !showBlankCopies) return;
+    pendingRecipientFocus.current = null;
+    panel.current?.querySelector<HTMLInputElement>(`[name="${field}"]`)?.focus();
+  }, [showBlankCopies]);
   useEscapeDismiss(close);
   return <div ref={panel} className="composer composer-inline" role="dialog" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
+        if ((event.metaKey || event.ctrlKey) && event.shiftKey && ["o", "c", "b"].includes(event.key.toLowerCase())) {
+          const field = event.key.toLowerCase() === "o" ? "to" : event.key.toLowerCase() === "c" ? "cc" : "bcc";
+          event.preventDefault();
+          focusRecipient(field);
+          return;
+        }
         if (event.key === "Tab") {
           const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [contenteditable="true"], [tabindex="0"]') ?? []);
           const first = controls[0], last = controls.at(-1);
@@ -295,9 +317,12 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
         </select></label>
       ) : <span>From {draft.account}</span>}</div><button className="icon-button" aria-label="Save and close draft" onClick={close} disabled={busy}><X size={19} /></button></header>
       <div className="composer-content">
-        <RecipientField id="to" label="To" value={draft.to} account={draft.account} disabled={busy} onChange={(value) => edit("to", value)} />
-        <button className="text-button" aria-expanded={showCopies} onClick={() => setShowCopies(!showCopies)}>Cc / Bcc</button>
-        {showCopies && <>{(["cc", "bcc"] as const).map((field) => <RecipientField key={field} id={field} label={field === "cc" ? "Cc" : "Bcc"} value={draft[field]} account={draft.account} disabled={busy} onChange={(value) => edit(field, value)} />)}</>}
+        <RecipientField id="to" label="To" value={draft.to} account={draft.account} disabled={busy} labelExpanded={showBlankCopies} onLabelClick={() => setShowBlankCopies((visible) => !visible)} onChange={(value) => edit("to", value)} />
+        {(["cc", "bcc"] as const).map((field) => (
+          (showBlankCopies || Boolean(draft[field].trim())) && (
+            <RecipientField key={field} id={field} label={field === "cc" ? "Cc" : "Bcc"} value={draft[field]} account={draft.account} disabled={busy} onChange={(value) => edit(field, value)} />
+          )
+        ))}
         <label className="compose-field"><span>Subject</span><input aria-label="Subject" value={draft.subject} onChange={(e) => edit("subject", e.target.value)} disabled={busy} /></label>
         <div
           ref={bodyEditor}
