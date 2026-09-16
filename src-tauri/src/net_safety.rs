@@ -11,26 +11,31 @@
 //! connect time — including on redirects, since it's attached to the
 //! `reqwest::Client` itself rather than checked once up front.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 
+fn is_private_ipv4(address: Ipv4Addr) -> bool {
+    address.is_private()
+        || address.is_loopback()
+        || address.is_link_local()
+        || address.is_unspecified()
+        || address.is_broadcast()
+}
+
 pub(crate) fn is_private_ip(address: IpAddr) -> bool {
     match address {
-        IpAddr::V4(address) => {
-            address.is_private()
-                || address.is_loopback()
-                || address.is_link_local()
-                || address.is_unspecified()
-                || address.is_broadcast()
-        }
-        IpAddr::V6(address) => {
-            address.is_loopback()
-                || address.is_unspecified()
-                || address.is_unique_local()
-                || address.is_unicast_link_local()
-        }
+        IpAddr::V4(address) => is_private_ipv4(address),
+        IpAddr::V6(address) => address.to_ipv4_mapped().map_or_else(
+            || {
+                address.is_loopback()
+                    || address.is_unspecified()
+                    || address.is_unique_local()
+                    || address.is_unicast_link_local()
+            },
+            is_private_ipv4,
+        ),
     }
 }
 
@@ -88,5 +93,28 @@ mod tests {
         assert!(is_disallowed_host("192.168.1.1"));
         assert!(!is_disallowed_host("example.com"));
         assert!(!is_disallowed_host("8.8.8.8"));
+    }
+
+    #[test]
+    fn classifies_ipv4_mapped_ipv6_by_its_embedded_ipv4_address() {
+        for address in [
+            "::ffff:127.0.0.1",   // loopback
+            "::ffff:10.0.0.1",    // private
+            "::ffff:192.168.1.1", // private
+            "::ffff:169.254.1.1", // link-local
+        ] {
+            assert!(
+                is_private_ip(address.parse().unwrap()),
+                "{address} must not be treated as public"
+            );
+        }
+
+        assert!(!is_private_ip("::ffff:8.8.8.8".parse().unwrap()));
+    }
+
+    #[test]
+    fn flags_ipv4_mapped_ipv6_literal_hosts() {
+        assert!(is_disallowed_host("::ffff:127.0.0.1"));
+        assert!(!is_disallowed_host("::ffff:8.8.8.8"));
     }
 }
