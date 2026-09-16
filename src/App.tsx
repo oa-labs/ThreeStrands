@@ -2178,7 +2178,6 @@ export function App() {
                   <div className="message-header-details">
                     <div className="message-sender-row">
                       <strong><AddressWithCopy address={message.sender} displayName={senderDisplayName} /></strong>
-                      <time>{formatMailTimestamp(message.sentAt)}</time>
                       {queuedItem ? null : (
                         <div className="message-header-actions">
                           <HoverTooltip label="Reply" placement="bottom">
@@ -2213,6 +2212,7 @@ export function App() {
                           </HoverTooltip>
                         </div>
                       )}
+                      <time>{formatMailTimestamp(message.sentAt)}</time>
                     </div>
                     <div className="message-recipients">
                       to{" "}

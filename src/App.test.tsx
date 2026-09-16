@@ -182,6 +182,21 @@ describe("archive notice", () => {
     }
   });
 
+  it("places message actions to the left of the received time", async () => {
+    const { container } = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+    const senderRow = container.querySelector<HTMLElement>(".message-card-expanded .message-sender-row")!;
+    const actions = senderRow.querySelector<HTMLElement>(".message-header-actions")!;
+    const receivedTime = senderRow.querySelector("time")!;
+
+    expect(Array.from(senderRow.children).indexOf(actions)).toBeLessThan(
+      Array.from(senderRow.children).indexOf(receivedTime),
+    );
+    expect(within(actions).getAllByRole("button").map((button) => button.getAttribute("aria-label")))
+      .toEqual(["Reply", "Reply all", "Forward"]);
+  });
+
   it("keeps multiple unread messages expanded when auto-read marks the conversation read", async () => {
     await mailClient.mutateThread({ kind: "read", threadId: "welcome", value: false });
     const originalDetail = await mailClient.getThread("welcome");
