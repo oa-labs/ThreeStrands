@@ -91,11 +91,12 @@ export interface MailClient extends CorrespondenceClient {
   updateLabel(id: string, name: string): Promise<Label>;
   deleteLabel(id: string): Promise<void>;
   listSplitInboxes(): Promise<SplitInbox[]>;
-  createSplitInbox(name: string, matchKind: SplitInboxMatchKind, matchValue: string): Promise<SplitInbox>;
+  createSplitInbox(name: string, matchKind: SplitInboxMatchKind, matchValue: string, accountId: string): Promise<SplitInbox>;
   updateSplitInbox(id: string, name: string): Promise<SplitInbox>;
   deleteSplitInbox(id: string): Promise<void>;
   reorderSplitInboxes(ids: string[]): Promise<void>;
-  listSplitInboxPage(splitInboxId: string, accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
+  /** Always scoped to the split's own account — see `SplitInbox.accountId`. */
+  listSplitInboxPage(splitInboxId: string, offset: number, limit: number): Promise<ThreadPage>;
 }
 
 function isTauri(): boolean {
@@ -150,13 +151,13 @@ const tauriClient: MailClient = {
   updateLabel: (id, name) => invoke("update_label", { request: { id, name } }),
   deleteLabel: (id) => invoke("delete_label", { id }),
   listSplitInboxes: () => invoke("list_split_inboxes"),
-  createSplitInbox: (name, matchKind, matchValue) =>
-    invoke("create_split_inbox", { request: { name, matchKind, matchValue } }),
+  createSplitInbox: (name, matchKind, matchValue, accountId) =>
+    invoke("create_split_inbox", { request: { name, matchKind, matchValue, accountId } }),
   updateSplitInbox: (id, name) => invoke("update_split_inbox", { request: { id, name } }),
   deleteSplitInbox: (id) => invoke("delete_split_inbox", { id }),
   reorderSplitInboxes: (ids) => invoke("reorder_split_inboxes", { ids }),
-  listSplitInboxPage: (splitInboxId, accountId, offset, limit) =>
-    invoke("list_split_inbox_page", { splitInboxId, accountId, offset, limit }),
+  listSplitInboxPage: (splitInboxId, offset, limit) =>
+    invoke("list_split_inbox_page", { splitInboxId, offset, limit }),
 };
 
 export const mailClient = isTauri() ? tauriClient : demoClient;

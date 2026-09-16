@@ -267,7 +267,11 @@ impl Database {
         let matched: Vec<Thread> = self
             .list_threads(account_id)?
             .into_iter()
-            .filter(|thread| !rules.iter().any(|rule| split_inbox_matches(rule, thread)))
+            .filter(|thread| {
+                !rules
+                    .iter()
+                    .any(|rule| rule.account_id == thread.account_id && split_inbox_matches(rule, thread))
+            })
             .collect();
         let page_limit = limit.min(200);
         let has_more = matched.len() > offset.saturating_add(page_limit);
@@ -1783,6 +1787,9 @@ impl Database {
             .execute("DELETE FROM triage_events WHERE account_id = ?1", [email])
             .map_err(display_error)?;
         transaction
+            .execute("DELETE FROM split_inboxes WHERE account_id = ?1", [email])
+            .map_err(display_error)?;
+        transaction
             .execute("DELETE FROM accounts WHERE email = ?1", [email])
             .map(|_| ())
             .map_err(display_error)?;
@@ -1891,8 +1898,8 @@ impl Database {
             transaction
                 .execute(
                     "INSERT INTO split_inboxes(
-                         id, name, match_kind, match_value, sort_order, created_at
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                         id, name, match_kind, match_value, sort_order, created_at, account_id
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         split.id,
                         split.name,
@@ -1900,6 +1907,7 @@ impl Database {
                         split.match_value,
                         split.sort_order,
                         split.created_at,
+                        split.account_id,
                     ],
                 )
                 .map_err(display_error)?;
@@ -1927,7 +1935,7 @@ impl Database {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT id, name, match_kind, match_value, sort_order, created_at
+                "SELECT id, name, match_kind, match_value, sort_order, created_at, account_id
                  FROM split_inboxes ORDER BY sort_order",
             )
             .map_err(display_error)?;
@@ -1942,6 +1950,7 @@ impl Database {
         name: &str,
         match_kind: &str,
         match_value: &str,
+        account_id: &str,
     ) -> Result<SplitInbox, String> {
         let name = name.trim();
         let match_value = match_value.trim();
@@ -1976,9 +1985,9 @@ impl Database {
         let created_at = Utc::now().to_rfc3339();
         transaction
             .execute(
-                "INSERT INTO split_inboxes(id, name, match_kind, match_value, sort_order, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id, name, match_kind, match_value, sort_order, created_at],
+                "INSERT INTO split_inboxes(id, name, match_kind, match_value, sort_order, created_at, account_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, name, match_kind, match_value, sort_order, created_at, account_id],
             )
             .map_err(display_error)?;
         transaction.commit().map_err(display_error)?;
@@ -1989,6 +1998,7 @@ impl Database {
             match_value,
             sort_order,
             created_at,
+            account_id: account_id.to_string(),
         })
     }
 
@@ -2010,7 +2020,7 @@ impl Database {
         let connection = self.connection()?;
         connection
             .query_row(
-                "SELECT id, name, match_kind, match_value, sort_order, created_at
+                "SELECT id, name, match_kind, match_value, sort_order, created_at, account_id
                  FROM split_inboxes WHERE id = ?1",
                 [id],
                 split_inbox_from_row,
@@ -2044,10 +2054,11 @@ impl Database {
     /// set is realistically bounded (an actively-triaged inbox), so
     /// re-filtering it on every page load is simpler than building true
     /// SQL-level cursor pagination over a JSON column with no useful index.
+    /// Always scoped to the rule's own account — a split inbox belongs to
+    /// one account, so there's no separate `account_id` to pass in.
     pub fn list_split_inbox_page(
         &self,
         split_inbox_id: &str,
-        account_id: Option<&str>,
         offset: usize,
         limit: usize,
     ) -> Result<ThreadPage, String> {
@@ -2056,7 +2067,7 @@ impl Database {
             .and_then(|connection| {
                 connection
                     .query_row(
-                        "SELECT id, name, match_kind, match_value, sort_order, created_at
+                        "SELECT id, name, match_kind, match_value, sort_order, created_at, account_id
                          FROM split_inboxes WHERE id = ?1",
                         [split_inbox_id],
                         split_inbox_from_row,
@@ -2066,7 +2077,7 @@ impl Database {
             })?
             .ok_or_else(|| "Split inbox not found".to_string())?;
         let matched: Vec<Thread> = self
-            .list_threads(account_id)?
+            .list_threads(Some(&rule.account_id))?
             .into_iter()
             .filter(|thread| split_inbox_matches(&rule, thread))
             .collect();
@@ -2078,8 +2089,10 @@ impl Database {
 
     /// Unread totals for the Inbox and each split inbox tab, scoped to one
     /// account (or merged across all when `account_id` is `None`). A thread
-    /// counts toward the Inbox only when no split inbox rule claims it,
-    /// mirroring the exclusion `list_threads_page` applies.
+    /// counts toward the Inbox only when no split inbox rule *belonging to
+    /// that thread's own account* claims it, mirroring the exclusion
+    /// `list_threads_page` applies — a split inbox never pulls mail out of a
+    /// different account's inbox.
     pub fn mailbox_unread_counts(
         &self,
         account_id: Option<&str>,
@@ -2094,7 +2107,7 @@ impl Database {
             }
             let mut matched_any = false;
             for rule in &rules {
-                if split_inbox_matches(rule, thread) {
+                if rule.account_id == thread.account_id && split_inbox_matches(rule, thread) {
                     *splits.entry(rule.id.clone()).or_insert(0) += 1;
                     matched_any = true;
                 }
@@ -2228,6 +2241,7 @@ fn split_inbox_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SplitInbox>
         match_value: row.get(3)?,
         sort_order: row.get(4)?,
         created_at: row.get(5)?,
+        account_id: row.get(6)?,
     })
 }
 
@@ -2462,7 +2476,7 @@ mod tests {
         let database = database();
         database.adopt_account("connected@example.com").unwrap();
         database
-            .create_split_inbox("Old rule", "domain", "old.example")
+            .create_split_inbox("Old rule", "domain", "old.example", "connected@example.com")
             .unwrap();
 
         database
@@ -2488,6 +2502,7 @@ mod tests {
                     match_value: "newsletter".to_string(),
                     sort_order: 0,
                     created_at: "2026-03-06T00:00:00Z".to_string(),
+                    account_id: "new@example.com".to_string(),
                 }],
                 Some(90),
             )
@@ -3186,6 +3201,24 @@ mod tests {
     }
 
     #[test]
+    fn removing_an_account_deletes_its_split_inboxes_but_not_another_accounts() {
+        let database = database();
+        database.adopt_account("you@gmail.com").unwrap();
+        database.adopt_account("other@gmail.com").unwrap();
+        database
+            .create_split_inbox("Mine", "domain", "acme.com", "you@gmail.com")
+            .unwrap();
+        let kept = database
+            .create_split_inbox("Theirs", "domain", "acme.com", "other@gmail.com")
+            .unwrap();
+
+        database.remove_account("you@gmail.com").unwrap();
+
+        let remaining = database.list_split_inboxes().unwrap();
+        assert_eq!(remaining.iter().map(|s| &s.id).collect::<Vec<_>>(), vec![&kept.id]);
+    }
+
+    #[test]
     fn set_account_color_updates_an_existing_account_and_rejects_an_unknown_one() {
         let database = database();
         database.adopt_account("you@gmail.com").unwrap();
@@ -3284,6 +3317,7 @@ mod tests {
             match_value: match_value.into(),
             sort_order: 0,
             created_at: "".into(),
+            account_id: "default".into(),
         }
     }
 
@@ -3305,11 +3339,12 @@ mod tests {
     fn create_update_delete_and_reorder_split_inboxes() {
         let database = database();
         let acme = database
-            .create_split_inbox("Acme", "domain", "Acme.com")
+            .create_split_inbox("Acme", "domain", "Acme.com", "default")
             .unwrap();
         assert_eq!(acme.match_value, "acme.com", "domain values are lowercased");
+        assert_eq!(acme.account_id, "default");
         let widgets = database
-            .create_split_inbox("Widgets Co", "pattern", "widgets")
+            .create_split_inbox("Widgets Co", "pattern", "widgets", "default")
             .unwrap();
 
         let listed = database.list_split_inboxes().unwrap();
@@ -3329,34 +3364,56 @@ mod tests {
         database.delete_split_inbox(&widgets.id).unwrap();
         assert_eq!(database.list_split_inboxes().unwrap().len(), 1);
 
-        assert!(database.create_split_inbox("", "domain", "acme.com").is_err());
-        assert!(database.create_split_inbox("Acme", "domain", "").is_err());
-        assert!(database.create_split_inbox("Acme", "bogus", "acme.com").is_err());
+        assert!(database.create_split_inbox("", "domain", "acme.com", "default").is_err());
+        assert!(database.create_split_inbox("Acme", "domain", "", "default").is_err());
+        assert!(database.create_split_inbox("Acme", "bogus", "acme.com", "default").is_err());
     }
 
     #[test]
     fn list_split_inbox_page_filters_the_inbox_and_paginates() {
         let database = database();
         let split_inbox = database
-            .create_split_inbox("Inbox label", "label", "INBOX")
+            .create_split_inbox("Inbox label", "label", "INBOX", "default")
             .unwrap();
 
         let first_page = database
-            .list_split_inbox_page(&split_inbox.id, None, 0, 1)
+            .list_split_inbox_page(&split_inbox.id, 0, 1)
             .unwrap();
         assert_eq!(first_page.threads.len(), 1);
         assert!(first_page.has_more);
 
         let second_page = database
-            .list_split_inbox_page(&split_inbox.id, None, 1, 1)
+            .list_split_inbox_page(&split_inbox.id, 1, 1)
             .unwrap();
         assert_eq!(second_page.threads.len(), 1);
         assert!(!second_page.has_more);
         assert_ne!(first_page.threads[0].id, second_page.threads[0].id);
 
-        assert!(database
-            .list_split_inbox_page("missing", None, 0, 10)
-            .is_err());
+        assert!(database.list_split_inbox_page("missing", 0, 10).is_err());
+    }
+
+    #[test]
+    fn list_split_inbox_page_never_pulls_in_another_accounts_threads() {
+        let database = database();
+        let mut other_message = message(
+            "other-message",
+            "other-thread",
+            "2026-01-02T00:00:00Z",
+            "body",
+        );
+        other_message.labels = vec!["INBOX".into()];
+        database
+            .upsert_gmail_thread("other@example.com", &[other_message])
+            .unwrap();
+
+        // Both accounts have an "INBOX"-labeled thread, but the rule only
+        // belongs to "default" — the other account's matching thread must
+        // not leak into its page.
+        let split_inbox = database
+            .create_split_inbox("Inbox label", "label", "INBOX", "default")
+            .unwrap();
+        let page = database.list_split_inbox_page(&split_inbox.id, 0, 10).unwrap();
+        assert!(page.threads.iter().all(|thread| thread.account_id == "default"));
     }
 
     #[test]
@@ -3367,10 +3424,24 @@ mod tests {
 
         // "roadmap"'s only participant is "Product Team" (see `insert_demo`),
         // which the `pattern` rule matches on the sender's normalized address.
-        database.create_split_inbox("Product", "pattern", "product").unwrap();
+        // Both seeded threads are account "default" (see `insert_demo`).
+        database.create_split_inbox("Product", "pattern", "product", "default").unwrap();
 
         let after = database.list_threads_page(None, 0, 10).unwrap();
         assert_eq!(after.threads.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["welcome"]);
+    }
+
+    #[test]
+    fn list_threads_page_does_not_exclude_a_thread_for_another_accounts_split_rule() {
+        let database = database();
+        // "roadmap" (account "default") matches this rule's pattern, but the
+        // rule belongs to a different account, so it must stay in the Inbox.
+        database
+            .create_split_inbox("Product", "pattern", "product", "other@example.com")
+            .unwrap();
+
+        let after = database.list_threads_page(None, 0, 10).unwrap();
+        assert_eq!(after.threads.len(), 2);
     }
 
     #[test]
@@ -3395,11 +3466,36 @@ mod tests {
         assert!(before.splits.is_empty());
 
         let split = database
-            .create_split_inbox("Product", "domain", "product.example")
+            .create_split_inbox("Product", "domain", "product.example", "work@example.com")
             .unwrap();
         let after = database.mailbox_unread_counts(None).unwrap();
         assert_eq!(after.inbox, 1, "the product thread moved out of the Inbox bucket");
         assert_eq!(after.splits.get(&split.id), Some(&1));
+    }
+
+    #[test]
+    fn mailbox_unread_counts_ignores_a_split_rule_from_a_different_account() {
+        let database = database();
+        let mut product_message = message(
+            "product-message",
+            "product-thread",
+            "2026-01-02T00:00:00Z",
+            "body",
+        );
+        product_message.from = "Team <team@product.example>".into();
+        product_message.labels = vec!["INBOX".into(), "UNREAD".into()];
+        // Unread thread lives on "work@example.com"; the rule below belongs
+        // to a different account and must not claim it.
+        database
+            .upsert_gmail_thread("work@example.com", &[product_message])
+            .unwrap();
+        database
+            .create_split_inbox("Product", "domain", "product.example", "other@example.com")
+            .unwrap();
+
+        let counts = database.mailbox_unread_counts(None).unwrap();
+        assert_eq!(counts.inbox, 2, "the product thread stays in the Inbox bucket");
+        assert!(counts.splits.is_empty());
     }
 
     #[test]

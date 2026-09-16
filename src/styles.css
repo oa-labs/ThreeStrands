@@ -1008,7 +1008,7 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .accounts-manager-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; width: 100%; }
 .accounts-manager-header h3 { margin-top: 0; }
 .accounts-manager-header p { max-width: 330px; }
-.split-inbox-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; margin: 2px 0; }
+.split-inbox-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; margin: 2px 0; }
 .split-inbox-add input, .split-inbox-add select {
   width: 100%;
   min-width: 0;

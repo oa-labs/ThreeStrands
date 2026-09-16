@@ -105,6 +105,7 @@ pub(crate) struct TransferSplitInbox {
     pub match_value: String,
     pub sort_order: i64,
     pub created_at: String,
+    pub account_id: String,
 }
 
 impl From<SplitInbox> for TransferSplitInbox {
@@ -116,6 +117,7 @@ impl From<SplitInbox> for TransferSplitInbox {
             match_value: split.match_value,
             sort_order: split.sort_order,
             created_at: split.created_at,
+            account_id: split.account_id,
         }
     }
 }
@@ -175,6 +177,9 @@ impl TransferPayload {
             )?;
             if !matches!(split.match_kind.as_str(), "domain" | "label" | "pattern") {
                 return Err("The transfer contains an invalid Split Inbox rule".to_string());
+            }
+            if !account_emails.contains(&split.account_id.to_ascii_lowercase()) {
+                return Err("The transfer contains a Split Inbox for an unknown account".to_string());
             }
         }
         Ok(())

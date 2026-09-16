@@ -775,9 +775,12 @@ fn create_split_inbox(
     request: CreateSplitInboxRequest,
     state: State<'_, AppState>,
 ) -> Result<SplitInbox, String> {
-    state
-        .database
-        .create_split_inbox(&request.name, &request.match_kind, &request.match_value)
+    state.database.create_split_inbox(
+        &request.name,
+        &request.match_kind,
+        &request.match_value,
+        &request.account_id,
+    )
 }
 
 #[tauri::command]
@@ -801,17 +804,11 @@ fn reorder_split_inboxes(ids: Vec<String>, state: State<'_, AppState>) -> Result
 #[tauri::command]
 fn list_split_inbox_page(
     split_inbox_id: String,
-    account_id: Option<String>,
     offset: usize,
     limit: usize,
     state: State<'_, AppState>,
 ) -> Result<ThreadPage, String> {
-    state.database.list_split_inbox_page(
-        &split_inbox_id,
-        account_id.as_deref(),
-        offset,
-        limit,
-    )
+    state.database.list_split_inbox_page(&split_inbox_id, offset, limit)
 }
 
 #[tauri::command]
