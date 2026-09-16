@@ -128,6 +128,22 @@ export type SummaryResult = {
   generatedAt: string;
 };
 
+export type ReplyAssistMessage = {
+  sender: string;
+  sentAt: string;
+  bodyText: string;
+};
+
+/** The exact, bounded mailbox content that will be sent to the selected AI provider. */
+export type ReplyAssistContext = {
+  subject: string;
+  messages: ReplyAssistMessage[];
+};
+
+export type ReplyAssistResult = {
+  body: string;
+};
+
 export type SearchThreadsRequest = {
   query: string;
   limit?: number;
@@ -186,6 +202,16 @@ export type Account = {
 
 /** Inbox unread thread totals keyed by account email. Accounts with no unread mail may be omitted. */
 export type UnreadCounts = Record<string, number>;
+
+/**
+ * Unread totals for the mailbox tab bar, scoped to one account (or merged
+ * across all accounts). `inbox` excludes threads claimed by any split
+ * inbox rule; `splits` is keyed by split inbox id.
+ */
+export type MailboxUnreadCounts = {
+  inbox: number;
+  splits: Record<string, number>;
+};
 
 export type CrashReport = {
   id: string;

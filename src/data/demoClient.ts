@@ -5,6 +5,8 @@ import type {
   Account,
   ContactSuggestion,
   Label,
+  ReplyAssistContext,
+  ReplyAssistResult,
   SplitInbox,
   SummaryResult,
   SyncStatus,
@@ -176,6 +178,18 @@ function visibleSplitInbox(splitInboxId: string, accountId?: string): Thread[] {
 }
 
 /**
+ * The Inbox tab is `visible()` minus anything a split inbox rule claims —
+ * a split inbox pulls its matches out of the Inbox rather than mirroring
+ * them into a second view. Mirrors `list_threads_page` in `src-tauri/src/db.rs`.
+ */
+function visibleInbox(accountId?: string): Thread[] {
+  if (splitInboxes.length === 0) return visible(accountId);
+  return visible(accountId).filter(
+    (thread) => !splitInboxes.some((rule) => matchesSplitInbox(rule, thread)),
+  );
+}
+
+/**
  * Splits a query into quoted phrases and standalone words, mirroring the
  * FTS5 query builder in `src-tauri/src/db.rs` well enough for the demo/test
  * build: `query.split('"')` alternates unquoted segments (even indices) with
@@ -241,7 +255,7 @@ function update(mutation: ThreadMutation) {
 export const demoClient: MailClient = {
   ...demoCorrespondence((id) => demoClient.getThread(id), () => accounts[0]?.email ?? DEMO_ACCOUNT_ID),
   async listThreads(accountId) {
-    return structuredClone(visible(accountId));
+    return structuredClone(visibleInbox(accountId));
   },
   async listAllMail(accountId) {
     return structuredClone(visibleAllMail(accountId));
@@ -250,7 +264,7 @@ export const demoClient: MailClient = {
     return structuredClone(visibleTrash(accountId));
   },
   async listThreadsPage(accountId, offset, limit): Promise<ThreadPage> {
-    const items = visible(accountId);
+    const items = visibleInbox(accountId);
     return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
   },
   async listAllMailPage(accountId, offset, limit): Promise<ThreadPage> {
@@ -268,6 +282,19 @@ export const demoClient: MailClient = {
       }
       return counts;
     }, {});
+  },
+  async mailboxUnreadCounts(accountId) {
+    const splits: Record<string, number> = {};
+    let inbox = 0;
+    for (const thread of visible(accountId)) {
+      if (!thread.unread) continue;
+      const matchingRules = splitInboxes.filter((rule) => matchesSplitInbox(rule, thread));
+      for (const rule of matchingRules) {
+        splits[rule.id] = (splits[rule.id] ?? 0) + 1;
+      }
+      if (matchingRules.length === 0) inbox += 1;
+    }
+    return { inbox, splits };
   },
   // No native backend to proxy through in demo mode, so this fetches
   // directly from the browser — fine for local dev/preview, where there's
@@ -340,6 +367,31 @@ export const demoClient: MailClient = {
       candidate.id === threadId ? { ...candidate, summary, summaryGeneratedAt: generatedAt } : candidate,
     );
     return { summary, generatedAt };
+  },
+  async replyAssistContext(draftId): Promise<ReplyAssistContext> {
+    const replyDraft = (await this.listDrafts()).find((candidate) => candidate.id === draftId);
+    if (!replyDraft || !["reply", "replyAll"].includes(replyDraft.mode) || !replyDraft.sourceId) {
+      throw new Error("Reply Assist is only available for reply drafts");
+    }
+    const detail = await this.getThread(replyDraft.sourceId.replace(/-message$/, ""));
+    return {
+      subject: detail.thread.subject,
+      messages: detail.messages.map((message) => ({
+        sender: message.sender,
+        sentAt: message.sentAt,
+        bodyText: message.bodyText,
+      })),
+    };
+  },
+  async generateReply(context, instruction): Promise<ReplyAssistResult> {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const request = instruction.trim();
+    const latest = context.messages.at(-1);
+    return {
+      body: request
+        ? `Thanks for the update. ${request}`
+        : `Thanks for the update${latest ? `, ${latest.sender.split("<")[0].trim()}` : ""}. I'll follow up shortly.`,
+    };
   },
   async searchThreads({ query, limit = 50, offset = 0, includeArchived = false }, accountId) {
     if (!query.trim()) return this.listThreads(accountId);

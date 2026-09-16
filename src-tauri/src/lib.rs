@@ -23,9 +23,9 @@ use db::Database;
 use gmail::{GmailClient, GmailProvider};
 use models::{
     Account, AuthStatus, ContactSuggestion, CreateLabelRequest, CreateSplitInboxRequest, Label,
-    SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread, ThreadDetail,
-    ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
-    UpdateSplitInboxRequest,
+    MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult, SearchThreadsRequest, SplitInbox,
+    SummaryResult, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageEvent,
+    TriageSenderStats, UpdateLabelRequest, UpdateSplitInboxRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -315,6 +315,14 @@ fn list_threads_page(
 #[tauri::command]
 fn list_unread_counts(state: State<'_, AppState>) -> Result<HashMap<String, i64>, String> {
     state.database.list_unread_counts()
+}
+
+#[tauri::command]
+fn mailbox_unread_counts(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<MailboxUnreadCounts, String> {
+    state.database.mailbox_unread_counts(account_id.as_deref())
 }
 
 #[tauri::command]
@@ -930,6 +938,69 @@ async fn ai_summarize_thread(
     })
 }
 
+#[tauri::command]
+fn ai_reply_assist_context(
+    draft_id: String,
+    state: State<'_, AppState>,
+) -> Result<ReplyAssistContext, String> {
+    let draft = state.correspondence.database.draft(&draft_id)?;
+    if !matches!(draft.mode.as_str(), "reply" | "replyAll") {
+        return Err("Reply Assist is only available for reply drafts".to_string());
+    }
+    let source_id = draft
+        .source_id
+        .ok_or_else(|| "Reply draft has no source message".to_string())?;
+    let detail = state.database.get_thread_for_message(&source_id)?;
+    Ok(ai::reply_context(
+        detail.thread.subject,
+        detail
+            .messages
+            .into_iter()
+            .map(|message| ai::ThreadMessageInput {
+                sender: message.sender,
+                sent_at: message.sent_at,
+                body_text: message.body_text,
+            })
+            .collect(),
+    ))
+}
+
+#[tauri::command]
+async fn ai_generate_reply(
+    context: ReplyAssistContext,
+    instruction: String,
+    provider: String,
+    model: String,
+    endpoint: Option<String>,
+) -> Result<ReplyAssistResult, String> {
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
+    // Re-apply the native bounds even though normal callers received this
+    // context from `ai_reply_assist_context`; the webview is not trusted to
+    // enforce request size or cost limits.
+    let bounded = ai::reply_context(
+        context.subject,
+        context
+            .messages
+            .into_iter()
+            .map(|message| ai::ThreadMessageInput {
+                sender: message.sender,
+                sent_at: message.sent_at,
+                body_text: message.body_text,
+            })
+            .collect(),
+    );
+    let body = ai::generate_reply(
+        &bounded,
+        &instruction,
+        &provider,
+        &model,
+        endpoint.as_deref(),
+        &api_key,
+    )
+    .await?;
+    Ok(ReplyAssistResult { body })
+}
+
 fn not_configured() -> String {
     "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_ID and \
      DISPATCH_GOOGLE_CLIENT_SECRET from a Desktop app credential."
@@ -1119,6 +1190,7 @@ pub fn run() {
             list_trash,
             list_threads_page,
             list_unread_counts,
+            mailbox_unread_counts,
             list_all_mail_page,
             list_trash_page,
             get_thread,
@@ -1166,6 +1238,8 @@ pub fn run() {
             ai_api_key_configured,
             set_ai_api_key,
             ai_summarize_thread,
+            ai_reply_assist_context,
+            ai_generate_reply,
             system_fonts::list_system_font_families,
         ])
         .build(tauri::generate_context!())

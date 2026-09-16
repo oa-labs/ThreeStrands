@@ -10,9 +10,9 @@ use uuid::Uuid;
 
 use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
-    Account, ContactSuggestion, Message, SearchThreadsRequest, SplitInbox, SyncStatus, Thread,
-    ThreadDetail, ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent,
-    TriageEventKind, TriageSenderStats, UnsubscribeMethod, UnsubscribeTarget,
+    Account, ContactSuggestion, MailboxUnreadCounts, Message, SearchThreadsRequest, SplitInbox,
+    SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageAction, TriageContext,
+    TriageEvent, TriageEventKind, TriageSenderStats, UnsubscribeMethod, UnsubscribeTarget,
 };
 use crate::transfer::{TransferAccount, TransferSplitInbox};
 
@@ -248,13 +248,31 @@ impl Database {
             .map_err(|error| error.to_string())
     }
 
+    /// The Inbox is unarchived/untrashed threads *minus* anything claimed by
+    /// a split inbox rule — a split inbox is meant to pull its matches out
+    /// of the Inbox, not just mirror them into a second view. Split inbox
+    /// rule sets are realistically small, so filtering the base set in
+    /// memory (rather than the SQL-level pagination `list_threads_page_where`
+    /// uses) is simpler than pushing the rule matching into SQL.
     pub fn list_threads_page(
         &self,
         account_id: Option<&str>,
         offset: usize,
         limit: usize,
     ) -> Result<ThreadPage, String> {
-        self.list_threads_page_where(account_id, "archived = 0 AND trashed = 0", offset, limit)
+        let rules = self.list_split_inboxes()?;
+        if rules.is_empty() {
+            return self.list_threads_page_where(account_id, "archived = 0 AND trashed = 0", offset, limit);
+        }
+        let matched: Vec<Thread> = self
+            .list_threads(account_id)?
+            .into_iter()
+            .filter(|thread| !rules.iter().any(|rule| split_inbox_matches(rule, thread)))
+            .collect();
+        let page_limit = limit.min(200);
+        let has_more = matched.len() > offset.saturating_add(page_limit);
+        let threads = matched.into_iter().skip(offset).take(page_limit).collect();
+        Ok(ThreadPage { threads, has_more })
     }
 
     pub fn list_all_mail_page(
@@ -398,6 +416,20 @@ impl Database {
             .map_err(display_error)?;
         let messages = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
         Ok(ThreadDetail { thread, messages })
+    }
+
+    pub fn get_thread_for_message(&self, message_id: &str) -> Result<ThreadDetail, String> {
+        let thread_id = self
+            .connection()?
+            .query_row(
+                "SELECT thread_id FROM messages WHERE id = ?1",
+                [message_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(display_error)?
+            .ok_or_else(|| "Reply source message not found".to_string())?;
+        self.get_thread(&thread_id)
     }
 
     pub fn attachment_message(&self, message_id: &str) -> Result<(String, GmailMessage), String> {
@@ -2043,6 +2075,36 @@ impl Database {
         let threads = matched.into_iter().skip(offset).take(page_limit).collect();
         Ok(ThreadPage { threads, has_more })
     }
+
+    /// Unread totals for the Inbox and each split inbox tab, scoped to one
+    /// account (or merged across all when `account_id` is `None`). A thread
+    /// counts toward the Inbox only when no split inbox rule claims it,
+    /// mirroring the exclusion `list_threads_page` applies.
+    pub fn mailbox_unread_counts(
+        &self,
+        account_id: Option<&str>,
+    ) -> Result<MailboxUnreadCounts, String> {
+        let rules = self.list_split_inboxes()?;
+        let threads = self.list_threads(account_id)?;
+        let mut splits: HashMap<String, i64> = HashMap::new();
+        let mut inbox = 0i64;
+        for thread in &threads {
+            if !thread.unread {
+                continue;
+            }
+            let mut matched_any = false;
+            for rule in &rules {
+                if split_inbox_matches(rule, thread) {
+                    *splits.entry(rule.id.clone()).or_insert(0) += 1;
+                    matched_any = true;
+                }
+            }
+            if !matched_any {
+                inbox += 1;
+            }
+        }
+        Ok(MailboxUnreadCounts { inbox, splits })
+    }
 }
 
 fn ensure_query_indexes(connection: &Connection) -> rusqlite::Result<()> {
@@ -2299,17 +2361,6 @@ fn seed_if_empty(connection: &Connection) -> rusqlite::Result<()> {
         false,
         "<p>Welcome to <strong>Dispatch</strong>.</p><p>Use <kbd>j</kbd> and <kbd>k</kbd> to move, <kbd>e</kbd> to archive, <kbd>s</kbd> to star, and <kbd>⌘K</kbd> to open the command palette.</p>",
     )?;
-    insert_demo(
-        &transaction,
-        "roadmap",
-        "Phase 1: read and triage",
-        "The first vertical slice includes local search and optimistic actions.",
-        "Product Team",
-        "2026-03-05T14:15:00Z",
-        false,
-        true,
-        "<p>The first read-and-triage vertical slice is now running from local SQLite.</p>",
-    )?;
     transaction.commit()
 }
 
@@ -2374,7 +2425,36 @@ mod tests {
     use crate::transfer::{TransferAccount, TransferSplitInbox};
 
     fn database() -> Database {
-        Database::open_memory()
+        let database = Database::open_memory();
+        let connection = database.connection().unwrap();
+        let transaction = connection.unchecked_transaction().unwrap();
+        insert_demo(
+            &transaction,
+            "roadmap",
+            "Phase 1: read and triage",
+            "The first vertical slice includes local search and optimistic actions.",
+            "Product Team",
+            "2026-03-05T14:15:00Z",
+            false,
+            true,
+            "<p>The first read-and-triage vertical slice is now running from local SQLite.</p>",
+        )
+        .unwrap();
+        transaction.commit().unwrap();
+        drop(connection);
+        database
+    }
+
+    #[test]
+    fn fresh_database_does_not_seed_internal_roadmap_message() {
+        let database = Database::open_memory();
+        let threads = database.list_threads(None).unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].subject, "Welcome to Dispatch");
+        assert!(threads
+            .iter()
+            .all(|thread| thread.subject != "Phase 1: read and triage"));
     }
 
     #[test]

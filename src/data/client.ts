@@ -5,6 +5,9 @@ import type {
   CalendarPreview,
   ContactSuggestion,
   Label,
+  MailboxUnreadCounts,
+  ReplyAssistContext,
+  ReplyAssistResult,
   SearchThreadsRequest,
   SplitInbox,
   SplitInboxMatchKind,
@@ -34,6 +37,8 @@ export interface MailClient extends CorrespondenceClient {
   listAllMailPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   listTrashPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   listUnreadCounts(): Promise<UnreadCounts>;
+  /** Unread totals for the Inbox and each split inbox tab, scoped to `accountId` (merged across all when omitted). */
+  mailboxUnreadCounts(accountId?: string): Promise<MailboxUnreadCounts>;
   getThread(id: string): Promise<ThreadDetail>;
   openAttachment(messageId: string, attachmentId: string): Promise<void>;
   saveAttachment(messageId: string, attachmentId: string): Promise<void>;
@@ -49,6 +54,14 @@ export interface MailClient extends CorrespondenceClient {
     model: string,
     endpoint: string | null,
   ): Promise<SummaryResult>;
+  replyAssistContext(draftId: string): Promise<ReplyAssistContext>;
+  generateReply(
+    context: ReplyAssistContext,
+    instruction: string,
+    provider: AiProvider,
+    model: string,
+    endpoint: string | null,
+  ): Promise<ReplyAssistResult>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   mutateThread(mutation: ThreadMutation): Promise<void>;
   mutateThreads(mutations: ThreadMutation[]): Promise<void>;
@@ -98,6 +111,7 @@ const tauriClient: MailClient = {
   listAllMailPage: (accountId, offset, limit) => invoke("list_all_mail_page", { accountId, offset, limit }),
   listTrashPage: (accountId, offset, limit) => invoke("list_trash_page", { accountId, offset, limit }),
   listUnreadCounts: () => invoke("list_unread_counts"),
+  mailboxUnreadCounts: (accountId) => invoke("mailbox_unread_counts", { accountId }),
   getThread: (id) => invoke("get_thread", { id }),
   openAttachment: (messageId, attachmentId) => invoke("open_attachment", { messageId, attachmentId }),
   saveAttachment: (messageId, attachmentId) => invoke("save_attachment", { messageId, attachmentId }),
@@ -106,6 +120,9 @@ const tauriClient: MailClient = {
   previewCalendarAttachment: (messageId, attachmentId) => invoke("preview_calendar_attachment", { messageId, attachmentId }),
   summarizeThread: (threadId, provider, model, endpoint) =>
     invoke("ai_summarize_thread", { threadId, provider, model, endpoint }),
+  replyAssistContext: (draftId) => invoke("ai_reply_assist_context", { draftId }),
+  generateReply: (context, instruction, provider, model, endpoint) =>
+    invoke("ai_generate_reply", { context, instruction, provider, model, endpoint }),
   searchThreads: (request, accountId) => invoke("search_threads", { request, accountId }),
   mutateThread: (mutation) => invoke("mutate_thread", { mutation }),
   mutateThreads: (mutations) => invoke("mutate_threads", { mutations }),

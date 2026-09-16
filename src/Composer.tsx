@@ -1,8 +1,16 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Paperclip, Send, X, Trash2 } from "lucide-react";
+import { Paperclip, Send, Sparkles, Trash2, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem } from "./correspondence";
-import type { Account } from "./domain";
+import type { Account, ReplyAssistContext } from "./domain";
+import {
+  isAiApiKeyConfigured,
+  readAiEndpoint,
+  readAiFeatures,
+  readAiModel,
+  readAiProvider,
+  resolveAiModel,
+} from "./aiSettings";
 import { RecipientField } from "./RecipientField";
 import {
   applyFormattingShortcut,
@@ -27,6 +35,13 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [showCopies, setShowCopies] = useState(Boolean(initial.cc || initial.bcc));
+  const [replyAssistAvailable, setReplyAssistAvailable] = useState(false);
+  const [replyAssistOpen, setReplyAssistOpen] = useState(false);
+  const [replyAssistContext, setReplyAssistContext] = useState<ReplyAssistContext | null>(null);
+  const [replyInstruction, setReplyInstruction] = useState("");
+  const [replyAssistBusy, setReplyAssistBusy] = useState(false);
+  const [replyAssistError, setReplyAssistError] = useState("");
+  const [confirmAddToExisting, setConfirmAddToExisting] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const bodyEditor = useRef<HTMLDivElement>(null);
   const initialBodyHtml = useRef(sanitizeComposeHtml(initial.bodyHtml || plainTextToHtml(initial.body)));
@@ -91,6 +106,55 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   function changeAccount(email: string) {
     if (email === latest.current.account) return;
     void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); latest.current = next; setDraft(next); });
+  }
+  async function openReplyAssist() {
+    setReplyAssistOpen(true);
+    setReplyAssistBusy(true);
+    setReplyAssistError("");
+    try {
+      setReplyAssistContext(await mailClient.replyAssistContext(latest.current.id));
+    } catch (reason) {
+      setReplyAssistError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (mounted.current) setReplyAssistBusy(false);
+    }
+  }
+  async function generateReply(confirmed = false) {
+    if (!replyAssistContext || !bodyEditor.current) return;
+    if (replyBodyHasAuthoredContent(latest.current.body) && !confirmed) {
+      setConfirmAddToExisting(true);
+      return;
+    }
+    setConfirmAddToExisting(false);
+    setReplyAssistBusy(true);
+    setReplyAssistError("");
+    try {
+      const provider = readAiProvider();
+      const model = resolveAiModel(provider, readAiModel());
+      if (provider === "none" || !model) throw new Error("Configure a model in AI settings first.");
+      const endpoint = provider === "custom" ? readAiEndpoint().trim() : null;
+      if (provider === "custom" && !endpoint) throw new Error("Set an endpoint URL in AI settings first.");
+      const result = await mailClient.generateReply(
+        replyAssistContext,
+        replyInstruction,
+        provider,
+        model,
+        endpoint,
+      );
+      if (!bodyEditor.current) return;
+      // The provider's output is always handled as text. `plainTextToHtml`
+      // escapes markup before insertion, and the composer sanitizer remains
+      // the final defense before the draft is persisted.
+      const generatedHtml = sanitizeComposeHtml(plainTextToHtml(`${result.body.trim()}\n\n`));
+      bodyEditor.current.insertAdjacentHTML("afterbegin", generatedHtml);
+      editBody(bodyEditor.current);
+      setReplyAssistOpen(false);
+      setReplyInstruction("");
+    } catch (reason) {
+      setReplyAssistError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (mounted.current) setReplyAssistBusy(false);
+    }
   }
   function decorateImage(image: HTMLImageElement, attachmentId?: string) {
     if (image.closest("[data-compose-image]")) return;
@@ -202,6 +266,14 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     }
     return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); window.removeEventListener("beforeunload", beforeUnload); previous?.focus(); };
   }, [initial.mode]);
+  useEffect(() => {
+    if (!["reply", "replyAll"].includes(initial.mode)) return;
+    const enabled = readAiProvider() !== "none" && readAiFeatures().draftAssist;
+    if (!enabled) return;
+    void isAiApiKeyConfigured()
+      .then((configured) => { if (mounted.current) setReplyAssistAvailable(configured); })
+      .catch(() => { if (mounted.current) setReplyAssistAvailable(false); });
+  }, [initial.mode]);
   useEscapeDismiss(close);
   return <div ref={panel} className="composer composer-inline" role="dialog" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
       onKeyDown={(event) => {
@@ -310,6 +382,66 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
             }
           }}
         />
+        {replyAssistAvailable ? (
+          <div className="reply-assist">
+            {!replyAssistOpen ? (
+              <button type="button" className="reply-assist-trigger" onClick={() => void openReplyAssist()}>
+                <Sparkles size={14} /> Draft reply with AI
+              </button>
+            ) : (
+              <section className="reply-assist-panel" aria-label="Reply Assist">
+                <div className="reply-assist-heading">
+                  <strong><Sparkles size={14} /> Reply Assist</strong>
+                  <button type="button" aria-label="Close Reply Assist" onClick={() => setReplyAssistOpen(false)}>
+                    <X size={14} />
+                  </button>
+                </div>
+                <label>
+                  <span>Optional short instruction</span>
+                  <input
+                    value={replyInstruction}
+                    placeholder="e.g. Accept and ask for available times"
+                    onChange={(event) => setReplyInstruction(event.target.value)}
+                    disabled={replyAssistBusy}
+                  />
+                </label>
+                {replyAssistContext ? (
+                  <details open className="reply-assist-context">
+                    <summary>Exact email content sent to {readAiProvider()}</summary>
+                    <div className="reply-assist-context-body">
+                      <p><strong>Subject:</strong> {replyAssistContext.subject}</p>
+                      {replyAssistContext.messages.map((message, index) => (
+                        <article key={`${message.sentAt}-${index}`}>
+                          <p><strong>From:</strong> {message.sender}</p>
+                          <p><strong>Date:</strong> {message.sentAt}</p>
+                          <pre>{message.bodyText}</pre>
+                        </article>
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
+                {confirmAddToExisting ? (
+                  <div className="reply-assist-confirm" role="alert">
+                    <span>Your reply already contains text. The suggestion will be added above it without replacing anything.</span>
+                    <button type="button" onClick={() => void generateReply(true)}>Add anyway</button>
+                    <button type="button" onClick={() => setConfirmAddToExisting(false)}>Cancel</button>
+                  </div>
+                ) : null}
+                {replyAssistError ? <div className="compose-error" role="alert">{replyAssistError}</div> : null}
+                <div className="reply-assist-actions">
+                  <button
+                    type="button"
+                    disabled={replyAssistBusy || !replyAssistContext || confirmAddToExisting}
+                    onClick={() => void generateReply()}
+                  >
+                    {replyAssistBusy ? "Preparing…" : "Generate draft"}
+                  </button>
+                  <span>The suggestion is never sent automatically.</span>
+                </div>
+              </section>
+            )}
+          </div>
+        ) : null}
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={14} /></button></li>)}</ul>}
         {error && <div className="compose-error" role="alert">{error} <button onClick={() => void run(async () => { await flush(); })}>Retry save</button></div>}
       </div>
@@ -317,3 +449,8 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
       <p className="compose-note">Drafts are saved on this device. Send has a 10-second undo window.{!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}</p>
   </div>;
 });
+
+function replyBodyHasAuthoredContent(body: string): boolean {
+  const quoteStart = body.search(/\n\nOn [\s\S]*? wrote:\n/);
+  return (quoteStart >= 0 ? body.slice(0, quoteStart) : body).trim().length > 0;
+}

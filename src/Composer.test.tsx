@@ -4,6 +4,13 @@ import { Composer } from "./Composer";
 import type { Draft } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Account } from "./domain";
+import {
+  clearAiApiKey,
+  DEFAULT_AI_FEATURES,
+  saveAiFeatures,
+  saveAiProvider,
+  setAiApiKey,
+} from "./aiSettings";
 
 const draft: Draft = {
   id: "draft-1",
@@ -162,6 +169,91 @@ describe("Composer forwarded attachments", () => {
 
     await waitFor(() => expect(queueDraft).toHaveBeenCalledWith("draft-1", 1));
     expect(onQueued).toHaveBeenCalledWith(queued);
+  });
+});
+
+describe("Composer Reply Assist", () => {
+  const replyDraft: Draft = {
+    ...draft,
+    mode: "reply",
+    sourceId: "source-message",
+    threadId: "provider-thread",
+    to: "sender@example.com",
+    subject: "Project timing",
+    body: "\n\nOn Sep 16, Sender wrote:\n> Can we meet Friday?",
+  };
+  const context = {
+    subject: "Project timing",
+    messages: [{
+      sender: "Sender <sender@example.com>",
+      sentAt: "2026-09-16T12:00:00Z",
+      bodyText: "Can we meet Friday?",
+    }],
+  };
+
+  beforeEach(async () => {
+    saveAiProvider("openai");
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, draftAssist: true });
+    await setAiApiKey("test-key");
+  });
+
+  afterEach(async () => {
+    cleanup();
+    vi.restoreAllMocks();
+    await clearAiApiKey();
+    saveAiProvider("none");
+    saveAiFeatures(DEFAULT_AI_FEATURES);
+  });
+
+  it("shows the exact reviewed context and inserts provider output only as plain text", async () => {
+    vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
+    const generate = vi.spyOn(mailClient, "generateReply").mockResolvedValue({
+      body: '<img src=x onerror="alert(1)">Friday works for me.',
+    });
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+
+    render(<Composer draft={replyDraft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Draft reply with AI" }));
+
+    expect(await screen.findByText("Can we meet Friday?")).toBeInTheDocument();
+    expect(screen.getByText("Project timing")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Optional short instruction" }), {
+      target: { value: "Accept and ask what time." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate draft" }));
+
+    await waitFor(() => expect(generate).toHaveBeenCalledWith(
+      context,
+      "Accept and ask what time.",
+      "openai",
+      "gpt-4o",
+      null,
+    ));
+    const editor = screen.getByRole("textbox", { name: "Message body" });
+    await waitFor(() => expect(editor).toHaveTextContent('<img src=x onerror="alert(1)">Friday works for me.'));
+    expect(editor.querySelector("img")).toBeNull();
+    expect(editor).toHaveTextContent("Can we meet Friday?");
+  });
+
+  it("requires confirmation before adding a suggestion above existing authored text", async () => {
+    vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
+    const generate = vi.spyOn(mailClient, "generateReply").mockResolvedValue({ body: "Suggested reply." });
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const existing = { ...replyDraft, body: `My existing words.${replyDraft.body}` };
+
+    render(<Composer draft={existing} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Draft reply with AI" }));
+    await screen.findByText("Can we meet Friday?");
+    fireEvent.click(screen.getByRole("button", { name: "Generate draft" }));
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(screen.getByText(/already contains text/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add anyway" }));
+
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    const editor = screen.getByRole("textbox", { name: "Message body" });
+    await waitFor(() => expect(editor).toHaveTextContent("Suggested reply."));
+    expect(editor).toHaveTextContent("My existing words.");
   });
 });
 

@@ -181,6 +181,29 @@ pub struct SummaryResult {
     pub generated_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyAssistMessage {
+    pub sender: String,
+    pub sent_at: String,
+    pub body_text: String,
+}
+
+/// The exact bounded mailbox content displayed for review before it is sent
+/// to the user's selected AI provider.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyAssistContext {
+    pub subject: String,
+    pub messages: Vec<ReplyAssistMessage>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyAssistResult {
+    pub body: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchThreadsRequest {
@@ -281,6 +304,16 @@ pub struct SplitInbox {
     pub match_value: String,
     pub sort_order: i64,
     pub created_at: String,
+}
+
+/// Unread totals for the tab bar: `inbox` counts unarchived/untrashed
+/// threads that don't match any split inbox rule, and `splits` counts
+/// unread threads matching each split inbox's rule, keyed by split id.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MailboxUnreadCounts {
+    pub inbox: i64,
+    pub splits: std::collections::HashMap<String, i64>,
 }
 
 #[derive(Debug, Deserialize)]

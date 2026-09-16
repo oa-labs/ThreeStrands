@@ -85,6 +85,7 @@ import type {
   Account,
   AuthStatus,
   Label,
+  MailboxUnreadCounts,
   SplitInbox,
   SplitInboxMatchKind,
   SyncStatus,
@@ -123,10 +124,12 @@ import {
   readFontFamily,
   readLoadRemoteImages,
   readSelectedAccountId,
+  readSelectedTabForAccount,
   saveAutoReadDelaySeconds,
   saveFontFamily,
   saveLoadRemoteImages,
   saveSelectedAccountId,
+  saveSelectedTabForAccount,
   type FontFamily,
 } from "./settings";
 import { listSystemFontFamilies } from "./systemFonts";
@@ -564,6 +567,12 @@ export function App() {
     void mailClient.listUnreadCounts().then(setUnreadCounts).catch(() => {});
   }, []);
   useEffect(refreshUnreadCounts, [refreshUnreadCounts]);
+  const [mailboxUnreadCounts, setMailboxUnreadCounts] = useState<MailboxUnreadCounts>({ inbox: 0, splits: {} });
+  const refreshMailboxUnreadCounts = useCallback((accountOverride?: string | null) => {
+    const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
+    void mailClient.mailboxUnreadCounts(accountId).then(setMailboxUnreadCounts).catch(() => {});
+  }, [activeAccountId]);
+  useEffect(refreshMailboxUnreadCounts, [refreshMailboxUnreadCounts]);
   const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId);
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft
@@ -615,9 +624,13 @@ export function App() {
   // cannot be displayed with the wrong account's label name.
   const [labelsByAccount, setLabelsByAccount] = useState<Record<string, Label[]>>({});
   const [splitInboxes, setSplitInboxes] = useState<SplitInbox[]>([]);
+  const [splitInboxesLoaded, setSplitInboxesLoaded] = useState(false);
   const [activeSplitInboxId, setActiveSplitInboxId] = useState<string | null>(null);
   const refreshSplitInboxes = useCallback(() => {
-    void mailClient.listSplitInboxes().then(setSplitInboxes).catch(() => {});
+    void mailClient.listSplitInboxes()
+      .then((next) => setSplitInboxes(next))
+      .catch(() => {})
+      .finally(() => setSplitInboxesLoaded(true));
   }, []);
   useEffect(() => {
     refreshSplitInboxes();
@@ -642,6 +655,19 @@ export function App() {
       setActiveSplitInboxId(null);
     }
   }, [activeSplitInboxId, activeSplitInbox, splitInboxes.length]);
+  const restoredTabAccountRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    // Restores whichever Inbox/split tab this account last had selected —
+    // waits for splitInboxesLoaded so a stored split id isn't mistaken for
+    // deleted before the real list has a chance to arrive.
+    if (!splitInboxesLoaded || restoredTabAccountRef.current === activeAccountId) return;
+    restoredTabAccountRef.current = activeAccountId;
+    const stored = readSelectedTabForAccount(activeAccountId);
+    if (stored === undefined) return;
+    const target = stored && splitInboxes.some((candidate) => candidate.id === stored) ? stored : null;
+    setMailbox((current) => (current === "inbox" || current === "split" ? (target ? "split" : "inbox") : current));
+    setActiveSplitInboxId(target);
+  }, [activeAccountId, splitInboxesLoaded, splitInboxes]);
   const accountsRequest = useRef(0);
   const threadsRequest = useRef(0);
   const detailRequest = useRef(0);
@@ -735,6 +761,7 @@ export function App() {
       setThreads(page.threads);
       setHasMoreResults(page.hasMore);
       refreshUnreadCounts();
+      refreshMailboxUnreadCounts();
       setSelectedId((current) =>
         current && page.threads.some((thread) => thread.id === current)
           ? current
@@ -744,7 +771,7 @@ export function App() {
       if (requestId !== threadsRequest.current) return;
       setMailboxError(error instanceof Error ? error.message : String(error));
     }
-  }, [includeArchived, activeAccountId, mailbox, activeSplitInboxId, refreshUnreadCounts]);
+  }, [includeArchived, activeAccountId, mailbox, activeSplitInboxId, refreshUnreadCounts, refreshMailboxUnreadCounts]);
 
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
@@ -1387,6 +1414,8 @@ export function App() {
       setQuery("");
       setSearchOpen(false);
       setMailbox("inbox");
+      setActiveSplitInboxId(null);
+      saveSelectedTabForAccount(activeAccountId, null);
     },
     openAllMail: () => {
       correspondence.context.openInbox();
@@ -1406,6 +1435,7 @@ export function App() {
       setSearchOpen(false);
       setMailbox("split");
       setActiveSplitInboxId(id);
+      saveSelectedTabForAccount(activeAccountId, id);
     },
     openDrafts: () => {
       correspondence.context.openDrafts();
@@ -1541,7 +1571,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -4200,6 +4230,7 @@ function DataTransferSettings() {
       </label>
       <button
         type="button"
+        className="settings-transfer-action"
         disabled={!isDesktop || !passwordsMatch || busy !== null}
         onClick={() => {
           setBusy("export");
@@ -4238,6 +4269,7 @@ function DataTransferSettings() {
       </label>
       <button
         type="button"
+        className="settings-transfer-action"
         disabled={!isDesktop || importPassword.length < 8 || busy !== null}
         onClick={() => {
           setBusy("import");

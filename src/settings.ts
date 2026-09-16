@@ -126,6 +126,53 @@ export function saveSelectedAccountId(value: string | null): string | null {
   return next;
 }
 
+const SELECTED_TAB_BY_ACCOUNT_KEY = "dispatch.settings.selectedTabByAccount";
+const ALL_ACCOUNTS_TAB_KEY = "all";
+const MAX_SPLIT_INBOX_ID_LENGTH = 200;
+
+/** Which mailbox tab (Inbox, or a split inbox by id) was last selected, keyed by account email (or "all" for the merged view). */
+type SelectedTabByAccount = Record<string, string | null>;
+
+function validSelectedTabByAccount(value: unknown): value is SelectedTabByAccount {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.entries(value).every(
+    ([key, entry]) =>
+      key.length > 0
+      && key.length <= MAX_ACCOUNT_ID_LENGTH
+      && (entry === null
+        || (typeof entry === "string" && entry.length > 0 && entry.length <= MAX_SPLIT_INBOX_ID_LENGTH)),
+  );
+}
+
+/** `null` for a stored entry means the Inbox tab; a missing entry means no preference has been saved yet. */
+export function readSelectedTabForAccount(accountId: string | null): string | null | undefined {
+  try {
+    const saved = localStorage.getItem(SELECTED_TAB_BY_ACCOUNT_KEY);
+    if (saved) {
+      const parsed: unknown = JSON.parse(saved);
+      if (validSelectedTabByAccount(parsed)) {
+        const key = accountId ?? ALL_ACCOUNTS_TAB_KEY;
+        return Object.hasOwn(parsed, key) ? parsed[key] : undefined;
+      }
+    }
+  } catch {
+    // A blocked or corrupted storage backend should not prevent the app from opening.
+  }
+  return undefined;
+}
+
+export function saveSelectedTabForAccount(accountId: string | null, splitInboxId: string | null): void {
+  try {
+    const saved = localStorage.getItem(SELECTED_TAB_BY_ACCOUNT_KEY);
+    const parsed: unknown = saved ? JSON.parse(saved) : {};
+    const current = validSelectedTabByAccount(parsed) ? parsed : {};
+    const key = accountId ?? ALL_ACCOUNTS_TAB_KEY;
+    localStorage.setItem(SELECTED_TAB_BY_ACCOUNT_KEY, JSON.stringify({ ...current, [key]: splitInboxId }));
+  } catch {
+    // The preference still applies for this session when storage is unavailable.
+  }
+}
+
 export function readFontFamily(): FontFamily {
   try {
     const saved = localStorage.getItem(FONT_FAMILY_KEY);
