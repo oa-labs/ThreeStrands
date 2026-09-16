@@ -841,6 +841,21 @@ export function App() {
     // for whichever thread it actually belongs to when you navigate back.
   }, [selectedId]);
 
+  useEffect(() => {
+    if (!visibleDetail) return;
+    // Unread status decides the initial presentation of an older message, but
+    // it must not remain the source of truth for expansion. Auto-read clears
+    // every message's unread flag; retaining that first decision prevents the
+    // cards from collapsing (and moving the reader) when the timer fires.
+    setMessageExpansionOverrides((current) => {
+      const next = new Map<string, boolean>();
+      for (const message of visibleDetail.messages) {
+        next.set(message.id, current.get(message.id) ?? message.unread);
+      }
+      return next;
+    });
+  }, [visibleDetail?.thread.id, visibleDetail?.messages]);
+
   const latestDisplayedMessageId = displayedMessages.at(-1)?.id;
   useEffect(() => {
     if (!visibleDetail || composerBelongsToVisibleThread) return;
@@ -1568,6 +1583,8 @@ export function App() {
     selectAllRef.current.indeterminate = checkedIds.size > 0 && checkedIds.size < threads.length;
   }, [checkedIds, threads.length]);
 
+  const activeAccount = accounts.find((account) => account.email === activeAccountId) ?? null;
+
   const selectedThreads = threads.filter((thread) => checkedIds.has(thread.id));
   const allSelectedThreadsStarred = selectedThreads.length > 0
     && selectedThreads.every((thread) => thread.starred);
@@ -1708,7 +1725,10 @@ export function App() {
               </label>
             ) : null}
             <div>
-              <span className="eyebrow">{mailboxTitle}</span>
+              <span className="eyebrow">
+                {mailboxTitle}
+                {activeAccount ? <span className="eyebrow-account"> · {activeAccount.email}</span> : null}
+              </span>
               <h1>
                 {mailbox === "drafts"
                   ? `${correspondence.drafts.length} drafts`

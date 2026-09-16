@@ -170,6 +170,52 @@ describe("archive notice", () => {
     }
   });
 
+  it("keeps multiple unread messages expanded when auto-read marks the conversation read", async () => {
+    await mailClient.mutateThread({ kind: "read", threadId: "welcome", value: false });
+    const originalDetail = await mailClient.getThread("welcome");
+    const latest = originalDetail.messages[0]!;
+    const getThread = vi.spyOn(mailClient, "getThread").mockResolvedValue({
+      ...originalDetail,
+      messages: [
+        {
+          ...latest,
+          id: "welcome-first-unread",
+          sentAt: "2026-03-03T16:30:00Z",
+          bodyHtml: "<p>First unread message body</p>",
+          bodyText: "First unread message snippet",
+          unread: true,
+        },
+        {
+          ...latest,
+          id: "welcome-second-unread",
+          sentAt: "2026-03-04T16:30:00Z",
+          bodyHtml: "<p>Second unread message body</p>",
+          bodyText: "Second unread message snippet",
+          unread: true,
+        },
+        { ...latest, unread: true },
+      ],
+    });
+
+    try {
+      const { container } = render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+
+      expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(0);
+      expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(2);
+      expect(screen.getAllByTestId("message-body")).toHaveLength(3);
+
+      await advance(3000);
+      await screen.findByRole("button", { name: "Mark unread (u)" });
+
+      expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(0);
+      expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(2);
+      expect(screen.getAllByTestId("message-body")).toHaveLength(3);
+    } finally {
+      getThread.mockRestore();
+    }
+  });
+
   it("marks an archived conversation not done with Shift+e", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to Dispatch" });

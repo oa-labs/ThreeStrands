@@ -142,7 +142,13 @@ button { color: inherit; }
 .split-inbox-button:hover { transform: scale(1.07); }
 .split-inbox-button.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--accent); }
 
-.sidebar-spacer { flex: 1; }
+.sidebar-spacer {
+  flex: 1;
+  align-self: stretch;
+  min-height: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
 .nav-button, .icon-button, .modal header button {
   width: var(--sidebar-item-size);
   height: var(--sidebar-item-size);
@@ -153,7 +159,8 @@ button { color: inherit; }
   background: transparent;
   cursor: pointer;
 }
-.nav-button:hover, .nav-button.active, .icon-button:hover { background: var(--hover); }
+.nav-button:hover, .icon-button:hover { background: var(--hover); }
+.nav-button.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--accent); }
 
 .tooltip-anchor {
   position: relative;
@@ -262,6 +269,11 @@ button { color: inherit; }
   font-weight: 700;
   letter-spacing: .09em;
   text-transform: uppercase;
+}
+.eyebrow-account {
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
 }
 h1, h2 { margin: 5px 0 0; line-height: 1.15; }
 h1 { font-size: calc(19px * var(--font-scale)); }
@@ -774,7 +786,7 @@ kbd {
   align-items: center;
   gap: 12px;
   width: 100%;
-  padding: 11px 14px;
+  padding: 11px 0;
   border: none;
   background: transparent;
   font: inherit;
