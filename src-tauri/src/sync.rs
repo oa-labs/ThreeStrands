@@ -58,6 +58,12 @@ impl SyncService {
     }
 
     pub async fn sync(&self) -> Result<SyncStatus, String> {
+        self.sync_provider()
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn sync_provider(&self) -> ProviderResult<SyncStatus> {
         let _guard = self.gate.lock().await;
         let account_id = self.account_id();
         let provider = GmailClient::new(self.auth.clone());
@@ -67,10 +73,14 @@ impl SyncService {
         }
         if let Err(error) = result {
             let message = error.to_string();
-            self.database.fail_sync(&account_id, &message)?;
-            return Err(message);
+            self.database
+                .fail_sync(&account_id, &message)
+                .map_err(ProviderError::Other)?;
+            return Err(error);
         }
-        self.database.sync_status(&account_id)
+        self.database
+            .sync_status(&account_id)
+            .map_err(ProviderError::Other)
     }
 
     /// Incremental catch-up for OS resume / window focus. Skips if polling
@@ -138,13 +148,21 @@ impl SyncService {
                 .sync_status(&self.account_id())
                 .map(|status| status.pending_mutations)
                 .unwrap_or_default();
-            delay = match self.sync().await {
-                Ok(status) if before > 0 || status.pending_mutations > 0 => MIN_POLL_INTERVAL,
-                Ok(_) => (delay * 2).min(MAX_POLL_INTERVAL),
-                Err(error) if error.contains("rate limit") => MAX_POLL_INTERVAL,
-                Err(_) => Duration::from_secs(60),
-            };
+            delay = next_poll_delay(delay, before, self.sync_provider().await);
         }
+    }
+}
+
+fn next_poll_delay(
+    current: Duration,
+    pending_before: i64,
+    result: ProviderResult<SyncStatus>,
+) -> Duration {
+    match result {
+        Ok(status) if pending_before > 0 || status.pending_mutations > 0 => MIN_POLL_INTERVAL,
+        Ok(_) => (current * 2).min(MAX_POLL_INTERVAL),
+        Err(ProviderError::RateLimited) => MAX_POLL_INTERVAL,
+        Err(_) => Duration::from_secs(60),
     }
 }
 
@@ -535,6 +553,24 @@ mod tests {
         async fn delete_label(&self, _id: &str) -> ProviderResult<()> {
             unreachable!()
         }
+    }
+
+    #[test]
+    fn polling_backoff_uses_structured_rate_limit_classification() {
+        assert_eq!(
+            next_poll_delay(MIN_POLL_INTERVAL, 0, Err(ProviderError::RateLimited),),
+            MAX_POLL_INTERVAL
+        );
+        assert_eq!(
+            next_poll_delay(
+                MIN_POLL_INTERVAL,
+                0,
+                Err(ProviderError::Other(
+                    "display text happens to mention rate limit".into(),
+                )),
+            ),
+            Duration::from_secs(60)
+        );
     }
 
     #[tokio::test]

@@ -7,6 +7,83 @@ use crate::models::{ReplyAssistContext, ReplyAssistMessage};
 const SERVICE: &str = "app.dispatch.mail";
 const KEY: &str = "ai-provider-api-key";
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiProvider {
+    None,
+    OpenAi,
+    Anthropic,
+    OpenRouter,
+    Fireworks,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApiProtocol {
+    Anthropic,
+    OpenAiCompatible,
+    Disabled,
+}
+
+struct ProviderDescriptor {
+    protocol: ApiProtocol,
+    base_url: Option<&'static str>,
+}
+
+impl AiProvider {
+    #[cfg(test)]
+    const ALL: [Self; 6] = [
+        Self::None,
+        Self::OpenAi,
+        Self::Anthropic,
+        Self::OpenRouter,
+        Self::Fireworks,
+        Self::Custom,
+    ];
+
+    fn descriptor(self) -> ProviderDescriptor {
+        match self {
+            Self::None => ProviderDescriptor {
+                protocol: ApiProtocol::Disabled,
+                base_url: None,
+            },
+            Self::OpenAi => ProviderDescriptor {
+                protocol: ApiProtocol::OpenAiCompatible,
+                base_url: Some("https://api.openai.com/v1"),
+            },
+            Self::Anthropic => ProviderDescriptor {
+                protocol: ApiProtocol::Anthropic,
+                base_url: Some("https://api.anthropic.com/v1"),
+            },
+            Self::OpenRouter => ProviderDescriptor {
+                protocol: ApiProtocol::OpenAiCompatible,
+                base_url: Some("https://openrouter.ai/api/v1"),
+            },
+            Self::Fireworks => ProviderDescriptor {
+                protocol: ApiProtocol::OpenAiCompatible,
+                base_url: Some("https://api.fireworks.ai/inference/v1"),
+            },
+            Self::Custom => ProviderDescriptor {
+                protocol: ApiProtocol::OpenAiCompatible,
+                base_url: None,
+            },
+        }
+    }
+
+    fn base_url(self, endpoint: Option<&str>) -> Result<String, String> {
+        if let Some(base_url) = self.descriptor().base_url {
+            return Ok(base_url.to_string());
+        }
+        if matches!(self, Self::Custom) {
+            return endpoint
+                .map(|value| value.trim_end_matches('/').to_string())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "Set an endpoint URL in AI settings".to_string());
+        }
+        Err("Select an AI provider in settings".to_string())
+    }
+}
+
 pub fn configured() -> bool {
     entry()
         .and_then(|entry| entry.get_password().map_err(display))
@@ -54,7 +131,7 @@ pub struct ThreadMessageInput {
 }
 
 pub struct SummarizeRequest {
-    pub provider: String,
+    pub provider: AiProvider,
     pub model: String,
     pub endpoint: Option<String>,
     pub subject: String,
@@ -74,15 +151,16 @@ const REPLY_SYSTEM_PROMPT: &str = "You draft concise email replies for a mail cl
 
 pub async fn summarize(request: SummarizeRequest, api_key: &str) -> Result<String, String> {
     let prompt = build_prompt(&request.subject, &request.messages);
-    let content = match request.provider.as_str() {
-        "anthropic" => call_anthropic(&request.model, SYSTEM_PROMPT, &prompt, 300, api_key).await?,
-        "openai" | "openrouter" | "fireworks" | "custom" => {
-            let base = base_url(&request.provider, request.endpoint.as_deref())?;
-            call_openai_compatible(&base, &request.model, SYSTEM_PROMPT, &prompt, 300, api_key)
-                .await?
-        }
-        other => return Err(format!("Unknown AI provider: {other}")),
-    };
+    let content = call_provider(
+        request.provider,
+        &request.model,
+        request.endpoint.as_deref(),
+        SYSTEM_PROMPT,
+        &prompt,
+        300,
+        api_key,
+    )
+    .await?;
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Err("The AI provider returned an empty summary".to_string());
@@ -110,20 +188,22 @@ pub fn reply_context(subject: String, messages: Vec<ThreadMessageInput>) -> Repl
 pub async fn generate_reply(
     context: &ReplyAssistContext,
     instruction: &str,
-    provider: &str,
+    provider: AiProvider,
     model: &str,
     endpoint: Option<&str>,
     api_key: &str,
 ) -> Result<String, String> {
     let prompt = build_reply_prompt(context, instruction)?;
-    let content = match provider {
-        "anthropic" => call_anthropic(model, REPLY_SYSTEM_PROMPT, &prompt, 600, api_key).await?,
-        "openai" | "openrouter" | "fireworks" | "custom" => {
-            let base = base_url(provider, endpoint)?;
-            call_openai_compatible(&base, model, REPLY_SYSTEM_PROMPT, &prompt, 600, api_key).await?
-        }
-        other => return Err(format!("Unknown AI provider: {other}")),
-    };
+    let content = call_provider(
+        provider,
+        model,
+        endpoint,
+        REPLY_SYSTEM_PROMPT,
+        &prompt,
+        600,
+        api_key,
+    )
+    .await?;
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Err("The AI provider returned an empty reply".to_string());
@@ -172,16 +252,41 @@ fn build_prompt(subject: &str, messages: &[ThreadMessageInput]) -> String {
     out
 }
 
-fn base_url(provider: &str, endpoint: Option<&str>) -> Result<String, String> {
-    match provider {
-        "openai" => Ok("https://api.openai.com/v1".to_string()),
-        "openrouter" => Ok("https://openrouter.ai/api/v1".to_string()),
-        "fireworks" => Ok("https://api.fireworks.ai/inference/v1".to_string()),
-        "custom" => endpoint
-            .map(|value| value.trim_end_matches('/').to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "Set an endpoint URL in AI settings".to_string()),
-        other => Err(format!("Unknown AI provider: {other}")),
+async fn call_provider(
+    provider: AiProvider,
+    model: &str,
+    endpoint: Option<&str>,
+    system_prompt: &str,
+    prompt: &str,
+    max_tokens: usize,
+    api_key: &str,
+) -> Result<String, String> {
+    let descriptor = provider.descriptor();
+    let base_url = provider.base_url(endpoint)?;
+    match descriptor.protocol {
+        ApiProtocol::Anthropic => {
+            call_anthropic(
+                &base_url,
+                model,
+                system_prompt,
+                prompt,
+                max_tokens,
+                api_key,
+            )
+            .await
+        }
+        ApiProtocol::OpenAiCompatible => {
+            call_openai_compatible(
+                &base_url,
+                model,
+                system_prompt,
+                prompt,
+                max_tokens,
+                api_key,
+            )
+            .await
+        }
+        ApiProtocol::Disabled => Err("Select an AI provider in settings".to_string()),
     }
 }
 
@@ -215,6 +320,7 @@ async fn call_openai_compatible(
 }
 
 async fn call_anthropic(
+    base_url: &str,
     model: &str,
     system_prompt: &str,
     prompt: &str,
@@ -228,7 +334,7 @@ async fn call_anthropic(
         "messages": [{"role": "user", "content": prompt}],
     });
     let response = ai_client()?
-        .post("https://api.anthropic.com/v1/messages")
+        .post(format!("{base_url}/messages"))
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .json(&body)
@@ -306,15 +412,15 @@ mod tests {
     #[test]
     fn base_url_resolves_known_providers() {
         assert_eq!(
-            base_url("openai", None).unwrap(),
+            AiProvider::OpenAi.base_url(None).unwrap(),
             "https://api.openai.com/v1"
         );
         assert_eq!(
-            base_url("openrouter", None).unwrap(),
+            AiProvider::OpenRouter.base_url(None).unwrap(),
             "https://openrouter.ai/api/v1"
         );
         assert_eq!(
-            base_url("fireworks", None).unwrap(),
+            AiProvider::Fireworks.base_url(None).unwrap(),
             "https://api.fireworks.ai/inference/v1"
         );
     }
@@ -322,11 +428,33 @@ mod tests {
     #[test]
     fn base_url_uses_endpoint_for_custom_provider() {
         assert_eq!(
-            base_url("custom", Some("https://example.com/v1/")).unwrap(),
+            AiProvider::Custom
+                .base_url(Some("https://example.com/v1/"))
+                .unwrap(),
             "https://example.com/v1"
         );
-        assert!(base_url("custom", None).is_err());
-        assert!(base_url("custom", Some("")).is_err());
+        assert!(AiProvider::Custom.base_url(None).is_err());
+        assert!(AiProvider::Custom.base_url(Some("")).is_err());
+    }
+
+    #[test]
+    fn rust_and_typescript_provider_identifiers_match() {
+        let typescript = include_str!("../../src/aiSettings.ts");
+        let typescript_ids: Vec<&str> = typescript
+            .lines()
+            .filter_map(|line| {
+                line.trim()
+                    .strip_prefix("{ id: \"")
+                    .and_then(|rest| rest.split('"').next())
+            })
+            .collect();
+        let rust_ids: Vec<String> = AiProvider::ALL
+            .iter()
+            .map(|provider| serde_json::to_value(provider).unwrap())
+            .map(|value| value.as_str().unwrap().to_string())
+            .collect();
+
+        assert_eq!(rust_ids, typescript_ids);
     }
 
     #[test]

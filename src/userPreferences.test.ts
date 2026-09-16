@@ -24,7 +24,6 @@ describe("exportable preferences", () => {
       aiFeatures: {
         draftAssist: true,
         summarize: false,
-        classify: true,
       },
     };
 

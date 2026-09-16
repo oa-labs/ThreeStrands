@@ -905,7 +905,7 @@ fn set_ai_api_key(key: String) -> Result<(), String> {
 #[tauri::command]
 async fn ai_summarize_thread(
     thread_id: String,
-    provider: String,
+    provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
@@ -969,7 +969,7 @@ fn ai_reply_assist_context(
 async fn ai_generate_reply(
     context: ReplyAssistContext,
     instruction: String,
-    provider: String,
+    provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
 ) -> Result<ReplyAssistResult, String> {
@@ -992,7 +992,7 @@ async fn ai_generate_reply(
     let body = ai::generate_reply(
         &bounded,
         &instruction,
-        &provider,
+        provider,
         &model,
         endpoint.as_deref(),
         &api_key,
