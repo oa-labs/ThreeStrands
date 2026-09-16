@@ -44,8 +44,9 @@ specific identity, triaging one client's mail before a call).
    once more than one account is connected; with exactly one account it's
    omitted, so the common case is a pixel-for-pixel no-op.
 3. **Fast account scoping.** Command palette gains `Switch to <email>` and
-   `Show all accounts`; `Cmd/Ctrl+1..9` map to accounts in sort order, the same
-   convention browsers use for tabs. These are ordinary entries in the
+   `Show all accounts`; `Cmd/Ctrl+0` returns to the unified inbox, while
+   `Cmd/Ctrl+1..9` map to accounts in sort order, the same convention browsers
+   use for tabs. These are ordinary entries in the
    existing command registry (`commands.ts`, `PLAN.MD` §9), so they inherit
    remapping, the palette, and shortcut help for free.
 4. **Settings → Accounts.** A dedicated section beside Appearance/Reading/AI/Privacy
@@ -325,9 +326,9 @@ composer's stated From address always matches what actually sends.
 
 ### Deliverables
 
-- `Cmd/Ctrl+1..9` account switching and `Switch to <email>`/`Show all
-  accounts` palette entries are discoverable the same way every other command
-  is.
+- `Cmd/Ctrl+0` for all accounts, `Cmd/Ctrl+1..9` account switching, and
+  `Switch to <email>`/`Show all accounts` palette entries are discoverable the
+  same way every other command is.
 - Shortcut help (`shortcuts.open`) documents the new bindings once more than
   one account exists.
 
@@ -342,7 +343,7 @@ a single-account install's palette and help screen show nothing new.
 ### Acceptance
 
 Keyboard-only pass: connect a second account, switch between accounts with
-`Cmd+1`/`Cmd+2` and the palette, compose/reply from each, disconnect one, and
+`Cmd+0`/`Cmd+1`/`Cmd+2` and the palette, compose/reply from each, disconnect one, and
 confirm the other's shortcuts, unified inbox, and outbox are unaffected
 throughout. Update the automated keyboard acceptance suite referenced in
 `PLAN.MD` §9 to include this pass.

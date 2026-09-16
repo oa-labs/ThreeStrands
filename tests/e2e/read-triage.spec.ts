@@ -167,6 +167,10 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   // Cmd/Ctrl+2 scopes to the new (empty) account; Cmd/Ctrl+1 returns to the first.
   await page.keyboard.press("ControlOrMeta+2");
   await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+0");
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+2");
+  await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
   await page.keyboard.press("ControlOrMeta+1");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
@@ -195,6 +199,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(help).toContainText("Switch to demo@example.com");
   await expect(help).toContainText("Switch to demo-2@example.com");
+  await expect(help).toContainText("Show all accounts");
   await page.keyboard.press("Escape");
   await expect(help).not.toBeVisible();
 

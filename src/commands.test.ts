@@ -264,17 +264,20 @@ describe("account commands", () => {
     expect(context.switchAccount).toHaveBeenCalledWith("you@example.com");
   });
 
-  it("show all accounts has no default key and calls showAllAccounts when run", async () => {
+  it("binds Mod+0 to show all accounts and calls showAllAccounts when run", async () => {
     const context = noopContext();
     context.showAllAccounts = vi.fn();
     const command = showAllAccountsCommand();
-    expect(command.keys).toEqual([]);
+    expect(command.keys).toEqual(["Mod+0"]);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "0", metaKey: true }), "Mod+0")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "0", ctrlKey: true }), "Mod+0")).toBe(true);
     await command.run(context);
     expect(context.showAllAccounts).toHaveBeenCalledTimes(1);
   });
 
   it("does not collide with the static command registry's shortcut keys", () => {
     const staticKeys = new Set(commands.flatMap((command) => command.keys.map((key) => key.toLowerCase())));
+    expect(staticKeys.has(showAllAccountsCommand().keys[0].toLowerCase())).toBe(false);
     for (let index = 0; index < 9; index++) {
       const [key] = accountCommand(`account-${index}@example.com`, index).keys;
       if (key) expect(staticKeys.has(key.toLowerCase())).toBe(false);

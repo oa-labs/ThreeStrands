@@ -426,7 +426,7 @@ export function showAllAccountsCommand(): Command {
   return {
     id: "account.showAll",
     title: "Show all accounts",
-    keys: [],
+    keys: ["Mod+0"],
     group: "Application",
     enabled: () => true,
     run: (context) => complete(context.showAllAccounts),
