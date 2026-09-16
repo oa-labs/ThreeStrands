@@ -184,6 +184,9 @@ export type Account = {
   lastSyncedAt: string | null;
 };
 
+/** Inbox unread thread totals keyed by account email. Accounts with no unread mail may be omitted. */
+export type UnreadCounts = Record<string, number>;
+
 export type CrashReport = {
   id: string;
   occurredAt: string;

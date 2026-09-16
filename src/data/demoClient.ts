@@ -261,6 +261,14 @@ export const demoClient: MailClient = {
     const items = visibleTrash(accountId);
     return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
   },
+  async listUnreadCounts() {
+    return threads.reduce<Record<string, number>>((counts, thread) => {
+      if (thread.unread && !thread.archived && !thread.trashed) {
+        counts[thread.accountId] = (counts[thread.accountId] ?? 0) + 1;
+      }
+      return counts;
+    }, {});
+  },
   // No native backend to proxy through in demo mode, so this fetches
   // directly from the browser — fine for local dev/preview, where there's
   // no real reader to protect from a sender's tracking/SSRF attempts.

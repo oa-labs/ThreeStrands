@@ -227,6 +227,26 @@ impl Database {
             .map_err(|error| error.to_string())
     }
 
+    /// Unread inbox thread totals keyed by account, used by the account switcher.
+    pub fn list_unread_counts(&self) -> Result<HashMap<String, i64>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT account_id, COUNT(*)
+                 FROM threads
+                 WHERE archived = 0 AND trashed = 0 AND unread = 1
+                 GROUP BY account_id",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<HashMap<_, _>, _>>()
+            .map_err(|error| error.to_string())
+    }
+
     pub fn list_threads_page(
         &self,
         account_id: Option<&str>,
@@ -2711,6 +2731,38 @@ mod tests {
         assert!(first.has_more);
         assert_eq!(second.threads.len(), 1);
         assert!(!second.has_more);
+    }
+
+    #[test]
+    fn unread_counts_include_only_unread_inbox_threads_and_group_by_account() {
+        let database = database();
+        let connection = database.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE threads SET account_id = 'work@example.com' WHERE id = 'roadmap'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE threads SET unread = 1 WHERE id IN ('welcome', 'roadmap')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let counts = database.list_unread_counts().unwrap();
+        assert_eq!(counts.get("default"), Some(&1));
+        assert_eq!(counts.get("work@example.com"), Some(&1));
+
+        let connection = database.connection().unwrap();
+        connection
+            .execute("UPDATE threads SET archived = 1 WHERE id = 'roadmap'", [])
+            .unwrap();
+        drop(connection);
+        let counts = database.list_unread_counts().unwrap();
+        assert_eq!(counts.get("default"), Some(&1));
+        assert!(!counts.contains_key("work@example.com"));
     }
 
     #[test]
