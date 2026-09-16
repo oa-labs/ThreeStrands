@@ -24,6 +24,15 @@ use uuid::Uuid;
 
 const MAX_BYTES: usize = 24 * 1024 * 1024; // Conservative encoded MIME limit.
 const UNDO_MS: i64 = 10_000;
+
+pub(crate) fn validate_retention_days(days: Option<i64>) -> Result<(), String> {
+    if matches!(days, None | Some(30 | 90 | 365)) {
+        Ok(())
+    } else {
+        Err("Retention must be unlimited or 30, 90, or 365 days".to_string())
+    }
+}
+
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -248,6 +257,7 @@ impl Database {
             .transpose()
     }
     pub fn set_retention_days(&self, days: Option<i64>) -> Result<(), String> {
+        validate_retention_days(days)?;
         let connection = self.connection()?;
         match days {
             Some(days) => connection.execute(
@@ -1250,6 +1260,17 @@ mod tests {
         assert_eq!(db.retention_days().unwrap(), Some(90));
         db.set_retention_days(None).unwrap();
         assert_eq!(db.retention_days().unwrap(), None);
+    }
+
+    #[test]
+    fn retention_days_rejects_values_outside_the_supported_options() {
+        let db = database();
+        db.set_retention_days(Some(90)).unwrap();
+
+        for days in [-1, 0, 1, 31, 366] {
+            assert!(db.set_retention_days(Some(days)).is_err());
+            assert_eq!(db.retention_days().unwrap(), Some(90));
+        }
     }
 
     #[test]

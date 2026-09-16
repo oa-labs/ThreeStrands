@@ -3,10 +3,11 @@
 //! to arbitrary hosts directly.
 //!
 //! This closes two gaps a same-scheme-only `img-src` policy leaves open:
-//! senders never see the reader's real IP/User-Agent (this app's client
-//! makes the request, not the reader's actual browser engine), and a
-//! malicious `src` can't be used to probe internal/private-network
-//! addresses reachable from the user's machine — see [`crate::net_safety`].
+//! senders don't receive the reader's browser context, cookies, referrer, or
+//! browser User-Agent (though the image host still sees the device's public
+//! network egress IP), and a malicious `src` can't be used to probe
+//! internal/private-network addresses reachable from the user's machine —
+//! see [`crate::net_safety`].
 //! It also lets the iframe's CSP drop `img-src https:` down to `data:`
 //! only, since the iframe itself never makes a network request for an
 //! image.

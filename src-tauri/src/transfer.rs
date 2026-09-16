@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ai::AiProvider,
+    correspondence::validate_retention_days,
     db::Database,
     models::{Account, SplitInbox},
 };
@@ -151,9 +152,8 @@ impl TransferPayload {
             return Err(format!("Unsupported transfer version {}", self.version));
         }
         self.preferences.validate()?;
-        if !matches!(self.retention_days, None | Some(30 | 90 | 365)) {
-            return Err("The transfer contains an invalid retention period".to_string());
-        }
+        validate_retention_days(self.retention_days)
+            .map_err(|_| "The transfer contains an invalid retention period".to_string())?;
         let mut account_emails = HashSet::new();
         for account in &self.accounts {
             validate_required_text("account email", &account.email, 320)?;
@@ -464,6 +464,24 @@ mod tests {
         let decoded = decrypt(&encoded, "correct horse").unwrap();
 
         assert!(decoded.preferences.ai_features.classify);
+    }
+
+    #[test]
+    fn transfer_retention_uses_the_native_retention_policy() {
+        for retention_days in [None, Some(30), Some(90), Some(365)] {
+            let mut candidate = payload();
+            candidate.retention_days = retention_days;
+            candidate.validate().unwrap();
+        }
+
+        for retention_days in [Some(-1), Some(0), Some(31), Some(366)] {
+            let mut candidate = payload();
+            candidate.retention_days = retention_days;
+            assert_eq!(
+                candidate.validate().unwrap_err(),
+                "The transfer contains an invalid retention period"
+            );
+        }
     }
 
     #[test]
