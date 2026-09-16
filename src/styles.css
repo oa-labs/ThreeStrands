@@ -980,6 +980,18 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .accounts-manager-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; width: 100%; }
 .accounts-manager-header h3 { margin-top: 0; }
 .accounts-manager-header p { max-width: 330px; }
+.split-inbox-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; margin: 2px 0; }
+.split-inbox-add input, .split-inbox-add select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--input);
+  font-size: calc(13px * var(--font-scale));
+  font-family: inherit;
+}
 .settings-add-account { display: inline-flex; flex-shrink: 0; align-items: center; gap: 7px; border-color: var(--primary-border) !important; background: var(--primary) !important; white-space: nowrap; }
 .accounts-config-notice { display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 10px 11px; border: 1px solid color-mix(in srgb, var(--error) 45%, var(--border)); border-radius: 8px; color: var(--error); background: color-mix(in srgb, var(--error) 8%, transparent); }
 .accounts-config-notice strong { display: block; font-size: calc(13px * var(--font-scale)); }
