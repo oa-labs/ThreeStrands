@@ -1586,6 +1586,14 @@ export function App() {
         <div className="sidebar-nav">
           <button
             className="nav-button"
+            aria-label="Refresh mail"
+            title="Refresh mail"
+            onClick={() => executeById("mail.refresh")}
+          >
+            <RefreshCw size={19} className={syncStatus?.state === "syncing" ? "spin" : ""} />
+          </button>
+          <button
+            className="nav-button"
             aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
             title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
             onClick={toggleTheme}
@@ -1646,13 +1654,9 @@ export function App() {
               </h1>
             </div>
           </div>
-          <button
-            className="icon-button"
-            aria-label="Refresh mail"
-            onClick={() => executeById("mail.refresh")}
-          >
-            <RefreshCw size={17} className={syncStatus?.state === "syncing" ? "spin" : ""} />
-          </button>
+          {isThreadMailbox ? (
+            <FiltersButton activeFilters={activeMessageFilters} onToggleFilter={toggleMessageFilter} />
+          ) : null}
         </header>
         {isThreadMailbox && checkedIds.size > 0 ? (
           <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
@@ -1718,42 +1722,39 @@ export function App() {
             </div>
           </div>
         ) : null}
-        {isThreadMailbox ? (
-          <div className={`list-toolbar ${searchOpen ? "" : "search-closed"}`}>
-            {mailbox === "inbox" && searchOpen ? (
-              <label className="search-box">
-                <Search size={16} />
-                <input
-                  ref={searchRef}
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search mail"
-                  aria-label="Search mail"
-                  onKeyDown={(event) => {
-                    if (event.key !== "Escape") return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setQuery("");
-                    setSearchOpen(false);
-                    selectedThreadRowRef.current?.focus();
-                  }}
-                />
-                {query.trim() ? (
-                  <button
-                    type="button"
-                    className={`search-toggle ${includeArchived ? "active" : ""}`}
-                    aria-pressed={includeArchived}
-                    aria-label="Include archived or trashed mail in search"
-                    title="Include archived or trashed mail in search"
-                    onClick={() => setIncludeArchived((current) => !current)}
-                  >
-                    <Archive size={14} />
-                  </button>
-                ) : null}
-                <kbd>/</kbd>
-              </label>
-            ) : null}
-            <FiltersButton activeFilters={activeMessageFilters} onToggleFilter={toggleMessageFilter} />
+        {mailbox === "inbox" && searchOpen ? (
+          <div className="list-toolbar">
+            <label className="search-box">
+              <Search size={16} />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search mail"
+                aria-label="Search mail"
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setQuery("");
+                  setSearchOpen(false);
+                  selectedThreadRowRef.current?.focus();
+                }}
+              />
+              {query.trim() ? (
+                <button
+                  type="button"
+                  className={`search-toggle ${includeArchived ? "active" : ""}`}
+                  aria-pressed={includeArchived}
+                  aria-label="Include archived or trashed mail in search"
+                  title="Include archived or trashed mail in search"
+                  onClick={() => setIncludeArchived((current) => !current)}
+                >
+                  <Archive size={14} />
+                </button>
+              ) : null}
+              <kbd>/</kbd>
+            </label>
           </div>
         ) : null}
         <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={MAILBOX_TITLES[mailbox]}>

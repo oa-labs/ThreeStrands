@@ -256,7 +256,6 @@ h2 { font-size: calc(22px * var(--font-scale)); }
   gap: 8px;
   margin: 8px 16px 12px;
 }
-.list-toolbar.search-closed { justify-content: flex-end; }
 .list-toolbar .search-box { flex: 1; min-width: 0; margin: 0; }
 
 .search-box {

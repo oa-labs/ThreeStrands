@@ -67,6 +67,8 @@ test("confirms unsubscribe with Cmd/Ctrl+U when the message advertises one-click
 test("searches and opens the command palette", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("textbox", { name: "Search mail" })).toHaveCount(0);
+  await expect(page.locator(".thread-header").getByRole("button", { name: "Filters" })).toBeVisible();
+  await expect(page.locator(".sidebar").getByRole("button", { name: "Refresh mail" })).toBeVisible();
   await page.keyboard.press("/");
   const search = page.getByRole("textbox", { name: "Search mail" });
   await expect(search).toBeFocused();
