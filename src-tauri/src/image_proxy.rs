@@ -178,8 +178,10 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    if !content_type.starts_with("image/") {
-        return Err(format!("Refusing non-image content-type: {content_type}"));
+    if !crate::image_format::is_supported_raster_mime(&content_type) {
+        return Err(format!(
+            "Refusing unsupported image content-type: {content_type}"
+        ));
     }
 
     if let Some(claimed_len) = response.content_length() {

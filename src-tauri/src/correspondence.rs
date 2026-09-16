@@ -900,10 +900,7 @@ impl Correspondence {
                 data,
             } => {
                 let mime = mime.to_ascii_lowercase();
-                if !matches!(
-                    mime.as_str(),
-                    "image/avif" | "image/gif" | "image/jpeg" | "image/png" | "image/webp"
-                ) {
+                if !crate::image_format::is_supported_raster_mime(&mime) {
                     return Err("Paste a supported image format".into());
                 }
                 let bytes = STANDARD

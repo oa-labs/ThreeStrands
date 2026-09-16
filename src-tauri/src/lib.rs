@@ -4,6 +4,7 @@ mod calendar;
 mod correspondence;
 mod db;
 mod gmail;
+mod image_format;
 mod image_proxy;
 mod mime;
 mod models;
@@ -416,10 +417,7 @@ async fn fetch_attachment_image(
 
     let (_, mime_type, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
     let mime_type = mime_type.to_ascii_lowercase();
-    if !matches!(
-        mime_type.as_str(),
-        "image/avif" | "image/gif" | "image/jpeg" | "image/png" | "image/webp"
-    ) {
+    if !image_format::is_supported_raster_mime(&mime_type) {
         return Err("Embedded attachment is not a supported image".into());
     }
     Ok(format!(
