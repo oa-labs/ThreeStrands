@@ -436,6 +436,7 @@ function useShortcutHandler(
         return;
       }
       const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
+      const replyAssistShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j";
       const fontShortcut = (event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
       const dialog = document.querySelector('[role="dialog"]');
       const allowsMailboxNavigation = dialog?.classList.contains("correspondence-list");
@@ -447,7 +448,7 @@ function useShortcutHandler(
         && event.target instanceof HTMLElement
         && event.target !== document.body
         && event.target.matches("button, a[href], [tabindex]");
-      if (!sendShortcut && !fontShortcut && (isEditableTarget(event.target) || focusedControl || (dialog && !allowsMailboxNavigation))) {
+      if (!sendShortcut && !replyAssistShortcut && !fontShortcut && (isEditableTarget(event.target) || focusedControl || (dialog && !allowsMailboxNavigation))) {
         clearPendingStep();
         return;
       }

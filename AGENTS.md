@@ -1,5 +1,11 @@
 # Agent guidance
 
+## Testing
+
+Agents are responsible for the automated test suite: run it (`pnpm test`, `pnpm test:e2e`), add tests that cover the change being made, and maintain existing tests (fix or update them when behavior intentionally changes, don't just delete or skip a failing test to get green).
+
+Agents are not responsible for manually exercising the running application (starting the dev server, clicking through the UI, taking screenshots) to confirm a fix looks or feels right — that verification is done by the developer. Ship the code change backed by automated coverage and let the developer do the hands-on check.
+
 ## Email rendering
 
 Dispatch renders untrusted sender HTML inside a sandboxed, CSP-scoped iframe. Keep that trust boundary intact, but treat safe sender-authored structure as the source of truth.

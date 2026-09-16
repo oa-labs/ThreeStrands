@@ -1,6 +1,7 @@
+import { createRef } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Composer } from "./Composer";
+import { Composer, type ComposerHandle } from "./Composer";
 import type { Draft } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Account } from "./domain";
@@ -213,7 +214,7 @@ describe("Composer Reply Assist", () => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
 
     render(<Composer draft={replyDraft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Draft reply with AI" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Draft reply with AI/ }));
 
     expect(await screen.findByText("Can we meet Friday?")).toBeInTheDocument();
     expect(screen.getByText("Project timing")).toBeInTheDocument();
@@ -242,7 +243,7 @@ describe("Composer Reply Assist", () => {
     const existing = { ...replyDraft, body: `My existing words.${replyDraft.body}` };
 
     render(<Composer draft={existing} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Draft reply with AI" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Draft reply with AI/ }));
     await screen.findByText("Can we meet Friday?");
     fireEvent.click(screen.getByRole("button", { name: "Generate draft" }));
 
@@ -254,6 +255,28 @@ describe("Composer Reply Assist", () => {
     const editor = screen.getByRole("textbox", { name: "Message body" });
     await waitFor(() => expect(editor).toHaveTextContent("Suggested reply."));
     expect(editor).toHaveTextContent("My existing words.");
+  });
+
+  it("opens Reply Assist through the exposed handle, the same way the Mod+J shortcut does", async () => {
+    vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
+    const ref = createRef<ComposerHandle>();
+
+    render(<Composer ref={ref} draft={replyDraft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    await screen.findByRole("button", { name: /Draft reply with AI/ });
+
+    ref.current?.draftReplyWithAI();
+
+    expect(await screen.findByText("Can we meet Friday?")).toBeInTheDocument();
+  });
+
+  it("does nothing when Reply Assist is unavailable or already open", async () => {
+    saveAiProvider("none");
+    const ref = createRef<ComposerHandle>();
+
+    render(<Composer ref={ref} draft={replyDraft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    ref.current?.draftReplyWithAI();
+
+    expect(screen.queryByText("Reply Assist")).not.toBeInTheDocument();
   });
 });
 

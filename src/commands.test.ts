@@ -36,6 +36,7 @@ function noopContext(): CommandContext {
     sendDraft: () => {},
     sendAndMarkDone: () => {},
     attachFiles: () => {},
+    draftReplyWithAI: () => {},
     undoSend: () => {},
     selectNext: () => {},
     selectPrevious: () => {},
@@ -119,6 +120,19 @@ describe("command registry", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true }), "Mod+Shift+Enter")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true }), "Mod+Shift+Enter")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", metaKey: true }), "Mod+Shift+Enter")).toBe(false);
+  });
+
+  it("drafts a reply with AI on Mod+J while the composer is open", async () => {
+    const command = commands.find((candidate) => candidate.id === "draft.replyAssist");
+    expect(command?.keys).toEqual(["Mod+j"]);
+    expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(true);
+    expect(command?.enabled(noopContext())).toBe(false);
+    const draftReplyWithAI = vi.fn();
+    await command?.run({ ...noopContext(), composerActive: true, draftReplyWithAI });
+    expect(draftReplyWithAI).toHaveBeenCalledTimes(1);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "j", metaKey: true }), "Mod+j")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "j", ctrlKey: true }), "Mod+j")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "j" }), "Mod+j")).toBe(false);
   });
 
   it("gates triage and reply commands to thread-based mailboxes", () => {

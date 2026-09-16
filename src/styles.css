@@ -1280,11 +1280,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .recipient-suggestion-add { gap: 8px; color: var(--muted); border-top: 1px solid var(--border); }
 .recipient-suggestions li:only-child.recipient-suggestion-add { border-top: 0; }
 .recipient-suggestion-add.active, .recipient-suggestion-add:hover { color: var(--text); }
-.compose-body { display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); padding: 12px 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: calc(15px * var(--font-scale)); line-height: 1.4; white-space: pre-wrap; }
+.compose-body { display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); flex-shrink: 0; padding: 12px 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: calc(15px * var(--font-scale)); line-height: 1.4; white-space: pre-wrap; }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
 .compose-body ol, .compose-body ul { margin: .5em 0; padding-left: 2em; }
-.reply-assist { margin: 0 0 12px; }
+.reply-assist { flex-shrink: 0; margin: 0 0 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .reply-assist-trigger, .reply-assist-actions button, .reply-assist-confirm button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border-strong); border-radius: 7px; padding: 7px 10px; background: var(--hover); color: var(--text); }
 .reply-assist-panel { border: 1px solid var(--border); border-radius: 9px; padding: 12px; background: var(--hover); }
 .reply-assist-heading, .reply-assist-heading strong, .reply-assist-actions, .reply-assist-confirm { display: flex; align-items: center; gap: 8px; }

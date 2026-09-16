@@ -22,7 +22,7 @@ import {
 } from "./richText";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
-export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void): void; attach(): void; close(): void };
+export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void): void; attach(): void; close(): void; draftReplyWithAI(): void };
 
 export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Account[]; onClose(): void; onQueued(item: OutboxItem): void }>(function Composer({ draft: initial, accounts, onClose, onQueued }, ref) {
   const [draft, setDraft] = useState(initial);
@@ -106,6 +106,10 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   function changeAccount(email: string) {
     if (email === latest.current.account) return;
     void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); latest.current = next; setDraft(next); });
+  }
+  function draftReplyWithAI() {
+    if (!replyAssistAvailable || replyAssistOpen) return;
+    void openReplyAssist();
   }
   async function openReplyAssist() {
     setReplyAssistOpen(true);
@@ -229,7 +233,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     };
     reader.readAsDataURL(file);
   }
-  useImperativeHandle(ref, () => ({ flush, send, attach, close, prepareExit: async () => {
+  useImperativeHandle(ref, () => ({ flush, send, attach, close, draftReplyWithAI, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
     try { await flush(); }
@@ -386,7 +390,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
           <div className="reply-assist">
             {!replyAssistOpen ? (
               <button type="button" className="reply-assist-trigger" onClick={() => void openReplyAssist()}>
-                <Sparkles size={14} /> Draft reply with AI
+                <Sparkles size={14} /> Draft reply with AI <kbd>⌘/Ctrl J</kbd>
               </button>
             ) : (
               <section className="reply-assist-panel" aria-label="Reply Assist">

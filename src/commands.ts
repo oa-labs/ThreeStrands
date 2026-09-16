@@ -31,6 +31,7 @@ export type CommandContext = {
   sendDraft(): void;
   sendAndMarkDone(): void;
   attachFiles(): void;
+  draftReplyWithAI(): void;
   undoSend(): void;
   selectNext(): void;
   selectPrevious(): void;
@@ -124,6 +125,7 @@ export const commands: Command[] = [
   { id: "draft.send", title: "Send draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
   { id: "draft.sendAndMarkDone", title: "Send & Mark Done", keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
   { id: "draft.attach", title: "Attach files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
+  { id: "draft.replyAssist", title: "Draft reply with AI", keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.draftReplyWithAI) },
   { id: "send.undo", title: "Undo send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {
     id: "thread.next",
