@@ -18,6 +18,21 @@ export const EMAIL_CSS_LIMITS = {
   maxFrameHeightPx: 50_000,
 } as const;
 
+/**
+ * Resource budgets for remote and embedded images. These are kept beside the
+ * other sender-controlled rendering limits so components do not invent local
+ * caps. The native proxy independently enforces its byte/pixel/cache bounds at
+ * the trust boundary; these limits additionally bound fan-out and frontend
+ * copies for each rendered message.
+ */
+export const EMAIL_IMAGE_LIMITS = {
+  maxConcurrentGlobally: 4,
+  maxPendingGlobally: 40,
+  maxConcurrentPerMessage: 2,
+  maxImagesPerMessage: 40,
+  maxDataUriBytesPerMessage: 20 * 1024 * 1024,
+} as const;
+
 const colorValue = "(#[0-9a-f]{3,8}|rgba?\\([\\d.\\s,%]+\\)|hsla?\\([\\d.\\s,%]+\\)|transparent|currentcolor|[a-z]+)";
 export const safeColor = new RegExp(`^${colorValue}$`, "i");
 

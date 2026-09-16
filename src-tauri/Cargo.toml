@@ -20,6 +20,7 @@ calcard = { version = "0.3.13", default-features = false }
 chacha20poly1305 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 fontdb = "0.24"
+imagesize = "0.13"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 mail-builder = "0.5"
 mail-parser = "0.11"

@@ -9,6 +9,7 @@ import {
   safeImageSrc,
   safeStyleProperties,
   EMAIL_CSS_LIMITS,
+  EMAIL_IMAGE_LIMITS,
   sanitizeCssDeclaration,
   sanitizeHtmlDimension,
 } from "./emailRenderingPolicy";
@@ -513,12 +514,49 @@ export function applyResolvedImages(html: string, resolved: ReadonlyMap<string, 
   return container.innerHTML;
 }
 
-// Shared across every SafeMessage instance for the life of the session, so
-// an asset referenced repeatedly (a sender's logo reused across many
-// emails, a tracking pixel repeated within one) is fetched at most once —
-// on top of the native proxy's own cache, this also dedupes concurrent
-// requests for the same URL across separate messages.
-const resolvedImagePromises = new Map<string, Promise<string>>();
+// Only in-flight work is retained here. The native proxy owns the bounded
+// result cache; retaining fulfilled data URIs in JS as well would create a
+// second, unbounded cache and another full copy of every image.
+const pendingImagePromises = new Map<string, Promise<string>>();
+const globalImageQueue: Array<() => void> = [];
+let globallyActiveImages = 0;
+
+function withGlobalImageSlot<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const start = () => {
+      globallyActiveImages += 1;
+      // Resolve through a microtask so a synchronously throwing injected
+      // resolver cannot leak a global slot.
+      void Promise.resolve().then(task).then(resolve, reject).finally(() => {
+        globallyActiveImages -= 1;
+        globalImageQueue.shift()?.();
+      });
+    };
+    if (globallyActiveImages < EMAIL_IMAGE_LIMITS.maxConcurrentGlobally) start();
+    else if (globallyActiveImages + globalImageQueue.length >= EMAIL_IMAGE_LIMITS.maxPendingGlobally) {
+      reject(new Error("Global image queue is full"));
+    }
+    else globalImageQueue.push(start);
+  });
+}
+
+function resolveSharedImage(cacheKey: string, url: string, resolveImage: (url: string) => Promise<string>) {
+  const existing = pendingImagePromises.get(cacheKey);
+  if (existing) return existing;
+  const pending = withGlobalImageSlot(() => resolveImage(url));
+  pendingImagePromises.set(cacheKey, pending);
+  void pending.finally(() => {
+    if (pendingImagePromises.get(cacheKey) === pending) pendingImagePromises.delete(cacheKey);
+  }).catch(() => {
+    // The caller handles the original rejection. This catch only consumes the
+    // promise returned by finally.
+  });
+  return pending;
+}
+
+export function fitsMessageImageBudget(currentBytes: number, candidateBytes: number): boolean {
+  return candidateBytes <= EMAIL_IMAGE_LIMITS.maxDataUriBytesPerMessage - currentBytes;
+}
 
 export function SafeMessage({
   html,
@@ -555,36 +593,44 @@ export function SafeMessage({
   const hasBlockedImages = !imagesAllowed && blockedUrls.some((url) => !/^cid:/i.test(url));
 
   const [resolvedImages, setResolvedImages] = useState<Map<string, string>>(new Map());
+  const acceptedImageBytesRef = useRef(0);
+  const acceptedImageUrlsRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (resolvableUrls.length === 0) return;
     let cancelled = false;
+    let nextIndex = 0;
+    const urls = resolvableUrls.slice(0, EMAIL_IMAGE_LIMITS.maxImagesPerMessage);
 
-    for (const url of resolvableUrls) {
-      const cacheKey = /^cid:/i.test(url) ? `${imageCacheKey}\0${url}` : url;
-      let pending = resolvedImagePromises.get(cacheKey);
-      if (!pending) {
-        pending = resolveImage(url);
-        resolvedImagePromises.set(cacheKey, pending);
-        // Don't let a transient failure permanently poison the shared
-        // cache — a later retry (e.g. a fresh "Load images" click) should
-        // get a real second attempt, not the same rejected promise.
-        pending.catch(() => resolvedImagePromises.delete(cacheKey));
+    const worker = async () => {
+      while (!cancelled) {
+        const url = urls[nextIndex++];
+        if (!url) return;
+        if (acceptedImageUrlsRef.current.has(url)) continue;
+        const cacheKey = /^cid:/i.test(url) ? `${imageCacheKey}\0${url}` : url;
+        try {
+          const dataUri = await resolveSharedImage(cacheKey, url, resolveImage);
+          if (cancelled) return;
+          // Data URIs are ASCII, so string length is their byte size. Reject
+          // the whole resource instead of truncating sender-controlled data.
+          if (!fitsMessageImageBudget(acceptedImageBytesRef.current, dataUri.length)) return;
+          acceptedImageBytesRef.current += dataUri.length;
+          acceptedImageUrlsRef.current.add(url);
+          setResolvedImages((previous) => {
+            if (previous.get(url) === dataUri) return previous;
+            const next = new Map(previous);
+            next.set(url, dataUri);
+            return next;
+          });
+        } catch {
+          // A failed image stays behind its inert blocked-src marker. Since
+          // only in-flight promises are shared, a later retry remains possible.
+        }
       }
-      void pending.then((dataUri) => {
-        if (cancelled) return;
-        setResolvedImages((previous) => {
-          if (previous.get(url) === dataUri) return previous;
-          const next = new Map(previous);
-          next.set(url, dataUri);
-          return next;
-        });
-      }).catch(() => {
-        // A failed image stays behind its inert blocked-src marker. The
-        // shared-cache rejection handler above also makes a later retry
-        // possible.
-      });
-    }
+    };
+
+    const workerCount = Math.min(urls.length, EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage);
+    for (let index = 0; index < workerCount; index += 1) void worker();
 
     return () => {
       cancelled = true;
