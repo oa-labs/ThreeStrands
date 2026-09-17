@@ -2640,13 +2640,13 @@ fn seed_if_empty(connection: &Connection) -> rusqlite::Result<()> {
     insert_demo(
         &transaction,
         "welcome",
-        "Welcome to Dispatch",
+        "Welcome to ThreeStrands",
         "A keyboard-first inbox that keeps your mail on this device.",
-        "Dispatch",
+        "ThreeStrands",
         "2026-03-05T16:30:00Z",
         true,
         false,
-        "<p>Welcome to <strong>Dispatch</strong>.</p><p>Use <kbd>j</kbd> and <kbd>k</kbd> to move, <kbd>e</kbd> to archive, <kbd>s</kbd> to star, and <kbd>⌘K</kbd> to open the command palette.</p>",
+        "<p>Welcome to <strong>ThreeStrands</strong>.</p><p>Use <kbd>j</kbd> and <kbd>k</kbd> to move, <kbd>e</kbd> to archive, <kbd>s</kbd> to star, and <kbd>⌘K</kbd> to open the command palette.</p>",
     )?;
     transaction.commit()
 }
@@ -2686,7 +2686,7 @@ fn insert_demo(
         params![
             format!("{id}-message"),
             id,
-            format!("{participant} <hello@dispatch.local>"),
+            format!("{participant} <hello@threestrands.local>"),
             "[\"You <you@example.com>\"]",
             sent_at,
             body,
@@ -2748,7 +2748,7 @@ mod tests {
         let threads = database.list_threads(None).unwrap();
 
         assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].subject, "Welcome to Dispatch");
+        assert_eq!(threads[0].subject, "Welcome to ThreeStrands");
         assert!(threads
             .iter()
             .all(|thread| thread.subject != "Phase 1: read and triage"));
@@ -4557,7 +4557,7 @@ mod tests {
 
     impl TempDbPath {
         fn new() -> Self {
-            let dir = std::env::temp_dir().join(format!("dispatch-db-test-{}", Uuid::new_v4()));
+            let dir = std::env::temp_dir().join(format!("threestrands-db-test-{}", Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             let path = dir.join("test.sqlite");
             Self { dir, path }
@@ -4725,7 +4725,7 @@ mod tests {
         }
 
         let threads = database.list_threads(None).unwrap();
-        assert!(threads.iter().any(|t| t.subject == "Welcome to Dispatch"));
+        assert!(threads.iter().any(|t| t.subject == "Welcome to ThreeStrands"));
         assert!(!threads.iter().any(|t| t.id == "work@example.com:lost-thread"));
         assert!(
             !list_matching(&temp.dir, ".corrupt-").is_empty(),
@@ -4830,15 +4830,15 @@ mod tests {
     /// `ENOSPC` needs a genuinely space-constrained filesystem, which isn't
     /// something to fabricate inside the normal `cargo test` sandbox. Run
     /// this manually against a small scratch volume, e.g. on macOS:
-    /// `hdiutil create -size 2m -fs "APFS" -volname dispatch-disk-full /tmp/dispatch-disk-full.dmg`
-    /// then `hdiutil attach /tmp/dispatch-disk-full.dmg`, point
-    /// `DISPATCH_DISK_FULL_TEST_DIR` at the mounted volume, and run
+    /// `hdiutil create -size 2m -fs "APFS" -volname threestrands-disk-full /tmp/threestrands-disk-full.dmg`
+    /// then `hdiutil attach /tmp/threestrands-disk-full.dmg`, point
+    /// `THREESTRANDS_DISK_FULL_TEST_DIR` at the mounted volume, and run
     /// `cargo test disk_full -- --ignored`.
     #[test]
     #[ignore = "needs a real space-constrained filesystem; see comment"]
     fn write_failure_under_disk_full_surfaces_as_an_error_not_a_panic() {
-        let dir = std::env::var("DISPATCH_DISK_FULL_TEST_DIR")
-            .expect("set DISPATCH_DISK_FULL_TEST_DIR to a small, space-constrained mount point");
+        let dir = std::env::var("THREESTRANDS_DISK_FULL_TEST_DIR")
+            .expect("set THREESTRANDS_DISK_FULL_TEST_DIR to a small, space-constrained mount point");
         let path = PathBuf::from(dir).join("disk-full.sqlite");
         let database = Database::open(&path).unwrap();
 

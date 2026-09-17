@@ -5,7 +5,7 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
-  echo "error: Linux packages must be built inside the Dispatch devcontainer" >&2
+  echo "error: Linux packages must be built inside the ThreeStrands devcontainer" >&2
   exit 1
 fi
 
@@ -14,17 +14,17 @@ if [[ "$(uname -m)" != "x86_64" ]]; then
   exit 1
 fi
 
-release_build="${DISPATCH_RELEASE_BUILD:-0}"
+release_build="${THREESTRANDS_RELEASE_BUILD:-0}"
 if [[ "$release_build" != "0" && "$release_build" != "1" ]]; then
-  echo "error: DISPATCH_RELEASE_BUILD must be 0 or 1" >&2
+  echo "error: THREESTRANDS_RELEASE_BUILD must be 0 or 1" >&2
   exit 1
 fi
 
-bundle_selection="${DISPATCH_LINUX_BUNDLES:-deb,rpm,appimage}"
+bundle_selection="${THREESTRANDS_LINUX_BUNDLES:-deb,rpm,appimage}"
 case "$bundle_selection" in
   deb,rpm | deb,rpm,appimage) ;;
   *)
-    echo "error: DISPATCH_LINUX_BUNDLES must be deb,rpm or deb,rpm,appimage" >&2
+    echo "error: THREESTRANDS_LINUX_BUNDLES must be deb,rpm or deb,rpm,appimage" >&2
     exit 1
     ;;
 esac
@@ -35,17 +35,17 @@ if [[ "$release_build" == "1" && "$bundle_selection" != "deb,rpm,appimage" ]]; t
 fi
 
 if [[ "$release_build" == "1" ]]; then
-  if [[ -z "${DISPATCH_GOOGLE_CLIENT_ID:-}" ]]; then
-    echo "error: DISPATCH_GOOGLE_CLIENT_ID is required for a release build" >&2
+  if [[ -z "${THREESTRANDS_GOOGLE_CLIENT_ID:-}" ]]; then
+    echo "error: THREESTRANDS_GOOGLE_CLIENT_ID is required for a release build" >&2
     exit 1
   fi
-  if [[ -z "${DISPATCH_GOOGLE_CLIENT_SECRET:-}" ]]; then
-    echo "error: DISPATCH_GOOGLE_CLIENT_SECRET is required for a release build" >&2
+  if [[ -z "${THREESTRANDS_GOOGLE_CLIENT_SECRET:-}" ]]; then
+    echo "error: THREESTRANDS_GOOGLE_CLIENT_SECRET is required for a release build" >&2
     exit 1
   fi
 fi
 
-echo "Building Dispatch Linux x86-64 packages"
+echo "Building ThreeStrands Linux x86-64 packages"
 echo "Bundles: $bundle_selection"
 echo "Node:  $(node --version)"
 echo "pnpm:  $(pnpm --version)"
@@ -105,7 +105,7 @@ done
 deb_package="$(find "$artifact_dir" -maxdepth 1 -type f -name '*.deb' -print -quit)"
 rpm_package="$(find "$artifact_dir" -maxdepth 1 -type f -name '*.rpm' -print -quit)"
 appimage_package="$(find "$artifact_dir" -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
-native_binary="$project_root/src-tauri/target/release/dispatch"
+native_binary="$project_root/src-tauri/target/release/threestrands"
 
 if [[ "$(dpkg-deb -f "$deb_package" Architecture)" != "amd64" ]]; then
   echo "error: Debian package is not amd64" >&2

@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::models::{ReplyAssistContext, ReplyAssistMessage};
 
-const SERVICE: &str = "app.dispatch.mail";
+const SERVICE: &str = "app.threestrands.mail";
 const KEY: &str = "ai-provider-api-key";
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]

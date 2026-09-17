@@ -139,7 +139,7 @@ describe("SafeMessage", () => {
 
   it("keeps a sender's own margin:0 heading/paragraph reset from a <style> block", () => {
     // Stylesheet declarations use the same policy as inline declarations, so
-    // sender resets remain available without any Dispatch geometry override.
+    // sender resets remain available without any ThreeStrands geometry override.
     const styleSheet = extractSafeStyleSheet("<style>h1, p { margin: 0; }</style>");
     expect(styleSheet).toContain("margin: 0");
   });

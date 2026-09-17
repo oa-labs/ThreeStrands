@@ -6,7 +6,7 @@ import { App } from "./App";
 describe("read and triage accessibility", () => {
   it("has no automatically detectable serious violations", async () => {
     const { container } = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     const result = await axe.run(container, {
       // Message bodies render in a sandboxed iframe (see SafeMessage.tsx) whose
       // content is untrusted, sanitized email HTML axe doesn't need to police;

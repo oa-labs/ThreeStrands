@@ -50,4 +50,4 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
     && rustc --version \
     && cargo --version
 
-WORKDIR /workspaces/dispatch
+WORKDIR /workspaces/threestrands

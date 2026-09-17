@@ -1,6 +1,6 @@
 # Linux builds
 
-Dispatch produces Linux x86-64 Debian, RPM, and AppImage packages from an
+ThreeStrands produces Linux x86-64 Debian, RPM, and AppImage packages from an
 Ubuntu 22.04 devcontainer. The same devcontainer definition is used locally
 and by GitHub Actions so both builds share the Node, pnpm, Rust, native library,
 and packaging toolchain.
@@ -37,13 +37,13 @@ to finish an AppImage. On Apple Silicon, use the devcontainer to produce the
 Debian and RPM packages locally:
 
 ```sh
-DISPATCH_LINUX_BUNDLES=deb,rpm pnpm build:linux
+THREESTRANDS_LINUX_BUNDLES=deb,rpm pnpm build:linux
 ```
 
 The native x86-64 GitHub Actions runner remains the source of the AppImage and
 always builds all three formats. A configured release build also requires all
-three formats, so `DISPATCH_LINUX_BUNDLES=deb,rpm` is intentionally rejected
-when `DISPATCH_RELEASE_BUILD=1`.
+three formats, so `THREESTRANDS_LINUX_BUNDLES=deb,rpm` is intentionally rejected
+when `THREESTRANDS_RELEASE_BUILD=1`.
 
 ## Local build
 
@@ -64,9 +64,9 @@ To produce a configured release build, provide the Google Desktop OAuth client
 values only to the build process:
 
 ```sh
-DISPATCH_RELEASE_BUILD=1 \
-DISPATCH_GOOGLE_CLIENT_ID="1234.apps.googleusercontent.com" \
-DISPATCH_GOOGLE_CLIENT_SECRET="value-from-desktop-client-json" \
+THREESTRANDS_RELEASE_BUILD=1 \
+THREESTRANDS_GOOGLE_CLIENT_ID="1234.apps.googleusercontent.com" \
+THREESTRANDS_GOOGLE_CLIENT_SECRET="value-from-desktop-client-json" \
 pnpm build:linux
 ```
 
@@ -91,8 +91,8 @@ dependencies beside the packages.
 requests. Version tags matching `v*` run in release mode and require these
 GitHub Actions secrets:
 
-- `DISPATCH_GOOGLE_CLIENT_ID`
-- `DISPATCH_GOOGLE_CLIENT_SECRET`
+- `THREESTRANDS_GOOGLE_CLIENT_ID`
+- `THREESTRANDS_GOOGLE_CLIENT_SECRET`
 
 The workflow can also be started manually. Select the `release` input only when
 the repository secrets are configured. Release-mode builds fail before

@@ -26,7 +26,7 @@ describe("archive notice", () => {
       await mailClient.mutateThread({ kind: "spam", threadId, value: false });
       await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
     }
-    localStorage.removeItem("dispatch.settings.autoReadDelaySeconds");
+    localStorage.removeItem("threestrands.settings.autoReadDelaySeconds");
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -37,7 +37,7 @@ describe("archive notice", () => {
 
   it("dismisses itself after the notice timeout", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await archiveSelected();
     expect(await screen.findByRole("status")).toHaveTextContent("Conversation archived");
@@ -51,7 +51,7 @@ describe("archive notice", () => {
 
   it("can still be dismissed manually before the timeout", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await archiveSelected();
     const dismiss = await screen.findByRole("button", { name: "Dismiss" });
@@ -77,7 +77,7 @@ describe("archive notice", () => {
 
     try {
       render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
       expect(screen.queryByText(/Label_18/i)).not.toBeInTheDocument();
       expect(await screen.findByText("Inbox · Projects")).toBeInTheDocument();
@@ -121,7 +121,7 @@ describe("archive notice", () => {
 
     try {
       const { container } = render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
       expect(container.querySelectorAll("article.message-card")).toHaveLength(3);
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(2);
@@ -185,7 +185,7 @@ describe("archive notice", () => {
 
   it("places message actions to the left of the received time", async () => {
     const { container } = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     const senderRow = container.querySelector<HTMLElement>(".message-card-expanded .message-sender-row")!;
     const actions = senderRow.querySelector<HTMLElement>(".message-header-actions")!;
@@ -227,7 +227,7 @@ describe("archive notice", () => {
 
     try {
       const { container } = render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(0);
       expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(3);
@@ -246,7 +246,7 @@ describe("archive notice", () => {
 
   it("marks an archived conversation not done with Shift+e", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await archiveSelected();
     await act(async () => {
@@ -258,7 +258,7 @@ describe("archive notice", () => {
     await act(async () => {
       includeArchived.click();
     });
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
@@ -269,7 +269,7 @@ describe("archive notice", () => {
 
   it("confirms and sends unsubscribe with Cmd+u", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     expect(await screen.findByRole("button", { name: "Unsubscribe (⌘U)" })).toBeVisible();
 
     await act(async () => {
@@ -277,7 +277,7 @@ describe("archive notice", () => {
     });
 
     const dialog = await screen.findByRole("dialog", { name: "Unsubscribe" });
-    expect(dialog).toHaveTextContent("dispatch.example");
+    expect(dialog).toHaveTextContent("threestrands.example");
     expect(dialog).toHaveTextContent("one-click request");
     await act(async () => {
       screen.getByRole("button", { name: "Send one-click request" }).click();
@@ -289,7 +289,7 @@ describe("archive notice", () => {
 
   it("keeps a conversation unread after pressing u, instead of the auto-read timer reverting it", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     // Let the conversation's own auto-read timer (armed on open, since it
     // started unread) run out first so it doesn't interfere with the assertion below.
@@ -307,9 +307,9 @@ describe("archive notice", () => {
 
   it("reschedules auto-read when its delay changes without reverting an explicit unread action", async () => {
     await mailClient.mutateThread({ kind: "read", threadId: "welcome", value: false });
-    localStorage.setItem("dispatch.settings.autoReadDelaySeconds", "60");
+    localStorage.setItem("threestrands.settings.autoReadDelaySeconds", "60");
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     expect(screen.getByRole("button", { name: "Mark read (u)" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
@@ -337,7 +337,7 @@ describe("archive notice", () => {
 
     try {
       render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
       scrollIntoView.mockClear();
 
@@ -357,7 +357,7 @@ describe("archive notice", () => {
 
   it("undoes an archive and optimistically restores the conversation", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await archiveSelected();
     const undo = await screen.findByRole("button", { name: "Undo" });
@@ -365,13 +365,13 @@ describe("archive notice", () => {
       undo.click();
     });
 
-    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("undoes the last action with the Superhuman Z shortcut", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await archiveSelected();
     await screen.findByRole("status");
@@ -379,12 +379,12 @@ describe("archive notice", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "z" }));
     });
 
-    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
   it("undoes adding and removing a label", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     await act(async () => {
       screen.getByRole("button", { name: "Labels (l)" }).click();
     });
@@ -419,7 +419,7 @@ describe("archive notice", () => {
     const keyboardLabel = await mailClient.createLabel("Keyboard navigation");
     try {
       render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       await act(async () => {
         screen.getByRole("button", { name: "Labels (l)" }).click();
       });
@@ -444,7 +444,7 @@ describe("archive notice", () => {
 
   it("keeps a replacement notice on screen for its own full timeout", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await archiveSelected();
     await advance(NOTICE_TIMEOUT_MS - 1000);
@@ -461,7 +461,7 @@ describe("archive notice", () => {
     const setTimeout = vi.spyOn(window, "setTimeout");
     const clearTimeout = vi.spyOn(window, "clearTimeout");
     const { unmount } = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await archiveSelected();
     await screen.findByRole("status");
@@ -493,23 +493,23 @@ describe("trash and batch actions", () => {
 
   it("moves the open conversation to trash and can undo it", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await act(async () => {
       screen.getByRole("button", { name: "Trash (#)" }).click();
     });
     expect(await screen.findByRole("status")).toHaveTextContent("Conversation moved to trash");
-    expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument();
 
     await act(async () => {
       screen.getByRole("button", { name: "Undo" }).click();
     });
-    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
   it("marks the open conversation as spam with ! and can undo it", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", {
@@ -519,17 +519,17 @@ describe("trash and batch actions", () => {
       }));
     });
     expect(await screen.findByRole("status")).toHaveTextContent("Conversation marked as spam");
-    expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument();
 
     await act(async () => {
       screen.getByRole("button", { name: "Undo" }).click();
     });
-    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
   it("archives every conversation checked for batch actions", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "x" }));
@@ -548,13 +548,13 @@ describe("trash and batch actions", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("Archived 2 conversations");
     expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Phase 1: read and triage" })).not.toBeInTheDocument();
   });
 
   it("shows one state-aware star action and hover help for every batch action", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "x" }));
@@ -581,7 +581,7 @@ describe("trash and batch actions", () => {
 
 describe("Escape dismissal", () => {
   beforeEach(async () => {
-    localStorage.removeItem("dispatch.demoCorrespondence");
+    localStorage.removeItem("threestrands.demoCorrespondence");
     for (const threadId of demoThreadIds) {
       await mailClient.mutateThread({ kind: "archive", threadId, value: false });
       await mailClient.mutateThread({ kind: "spam", threadId, value: false });
@@ -592,7 +592,7 @@ describe("Escape dismissal", () => {
 
   it("closes the composer when focus is in a field", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
 
     const recipient = await screen.findByRole("textbox", { name: "To" });
@@ -607,19 +607,19 @@ describe("Escape dismissal", () => {
 
   it("switches to the inline Drafts view and back to the inbox without losing state", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: /Drafts \(0\)/ }));
 
     expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Welcome to Dispatch" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Inbox (g then i)" }));
-    expect(await screen.findByRole("heading", { name: "Welcome to Dispatch" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
   it("closes only the topmost popup when overlays are stacked", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
     const composer = await screen.findByRole("dialog", { name: "New Message" });
     fireEvent.click(screen.getByRole("button", { name: "Command palette" }));
@@ -646,7 +646,7 @@ describe("foreground mail refresh", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const sync = vi.spyOn(mailClient, "sync");
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     sync.mockClear();
 
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
@@ -667,7 +667,7 @@ describe("foreground mail refresh", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const sync = vi.spyOn(mailClient, "sync");
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     sync.mockClear();
 
     await act(async () => {
@@ -684,7 +684,7 @@ describe("foreground mail refresh", () => {
 describe("account selection persistence", () => {
   afterEach(() => {
     cleanup();
-    localStorage.removeItem("dispatch.settings.selectedAccountId");
+    localStorage.removeItem("threestrands.settings.selectedAccountId");
     vi.restoreAllMocks();
   });
 
@@ -705,14 +705,14 @@ describe("account selection persistence", () => {
     await act(async () => {});
     const workAccount = screen.getByRole("radio", { name: "Work" });
     fireEvent.click(workAccount);
-    expect(localStorage.getItem("dispatch.settings.selectedAccountId")).toBe("work@example.com");
+    expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("work@example.com");
     firstRun.unmount();
 
     const secondRun = render(<App />);
     await act(async () => {});
     expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByRole("radio", { name: "All accounts" }));
-    expect(localStorage.getItem("dispatch.settings.selectedAccountId")).toBe("all");
+    expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("all");
     secondRun.unmount();
 
     render(<App />);

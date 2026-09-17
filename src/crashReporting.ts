@@ -1,7 +1,7 @@
 import type { CrashReport } from "./domain";
 
-const CONSENT_KEY = "dispatch.crash-reporting.enabled";
-const REPORTS_KEY = "dispatch.crash-reports";
+const CONSENT_KEY = "threestrands.crash-reporting.enabled";
+const REPORTS_KEY = "threestrands.crash-reports";
 const MAX_LOCAL_REPORTS = 20;
 
 type ReporterOptions = {

@@ -348,7 +348,7 @@ fn escape_html_attribute(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
-// This matches Dispatch's 18 MiB local attachment limit and keeps provider
+// This matches ThreeStrands's 18 MiB local attachment limit and keeps provider
 // base64 bodies from causing an unbounded decoded allocation.
 const MAX_ATTACHMENT_BYTES: usize = 18 * 1024 * 1024;
 

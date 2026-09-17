@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-const storageKey = "dispatch.inboxWidth";
+const storageKey = "threestrands.inboxWidth";
 const minimumWidth = 280;
 const defaultWidth = 400;
 const maximumWidth = 640;

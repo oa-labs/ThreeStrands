@@ -31,8 +31,8 @@ describe("demoClient split inbox exclusion", () => {
     expect(before.inbox).toBeGreaterThan(0);
     expect(before.splits).toEqual({});
 
-    // "welcome" (unread, participant "Dispatch") is the only seeded thread this rule matches.
-    const split = await demoClient.createSplitInbox("Dispatch", "pattern", "dispatch", DEMO_ACCOUNT_ID);
+    // "welcome" (unread, participant "ThreeStrands") is the only seeded thread this rule matches.
+    const split = await demoClient.createSplitInbox("ThreeStrands", "pattern", "threestrands", DEMO_ACCOUNT_ID);
     const after = await demoClient.mailboxUnreadCounts();
     expect(after.inbox).toBe(before.inbox - 1);
     expect(after.splits[split.id]).toBe(1);
@@ -45,7 +45,7 @@ describe("demoClient split inbox exclusion", () => {
     // Matches "roadmap" and "welcome" respectively, but the rules are owned
     // by an account with no threads, so neither should have any effect.
     const productSplit = await demoClient.createSplitInbox("Product", "pattern", "product", OTHER_ACCOUNT_ID);
-    await demoClient.createSplitInbox("Dispatch", "pattern", "dispatch", OTHER_ACCOUNT_ID);
+    await demoClient.createSplitInbox("ThreeStrands", "pattern", "threestrands", OTHER_ACCOUNT_ID);
 
     const after = await demoClient.listThreads();
     expect(after.map((thread) => thread.id)).toEqual(before.map((thread) => thread.id));

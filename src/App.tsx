@@ -2929,7 +2929,7 @@ function ShortcutHelp({
   ];
   return (
     <Modal title="Keyboard shortcuts" className="shortcut-help-modal" onClose={onClose}>
-      <p className="shortcut-help-intro">Use Dispatch without leaving the keyboard.</p>
+      <p className="shortcut-help-intro">Use ThreeStrands without leaving the keyboard.</p>
       <div className="shortcut-help-groups">
         {shortcutGroupOrder.map((group) => {
           const groupCommands = shortcutCommands.filter((command) => command.group === group);
@@ -2976,7 +2976,7 @@ function recoveryStatusMessage(recovery: RecoveryStatus): string {
         "A few of the most recent changes may be missing until the next sync.";
     case "freshDatabase":
       return "Your mail cache was damaged and could not be restored from a backup, so it was rebuilt " +
-        "from scratch. Your mail is safe on the server; Dispatch is resyncing it now.";
+        "from scratch. Your mail is safe on the server; ThreeStrands is resyncing it now.";
   }
 }
 
@@ -3552,7 +3552,7 @@ function AccountsSettings({
         <div>
           <h3>Connected accounts</h3>
           <p>
-            Dispatch keeps accounts separate and merges their inboxes by default.
+            ThreeStrands keeps accounts separate and merges their inboxes by default.
             Use the sidebar or command palette to filter to one account.
           </p>
         </div>
@@ -3572,9 +3572,9 @@ function AccountsSettings({
           <div>
             <strong>Google OAuth is not configured</strong>
             <p>
-              Set <code>DISPATCH_GOOGLE_CLIENT_ID</code> and{" "}
-              <code>DISPATCH_GOOGLE_CLIENT_SECRET</code> from a Google Desktop
-              app credential, then restart Dispatch.
+              Set <code>THREESTRANDS_GOOGLE_CLIENT_ID</code> and{" "}
+              <code>THREESTRANDS_GOOGLE_CLIENT_SECRET</code> from a Google Desktop
+              app credential, then restart ThreeStrands.
             </p>
           </div>
         </div>
@@ -3674,7 +3674,7 @@ function AccountsSettings({
         </ul>
       )}
       <p className="accounts-footnote">
-        Disconnecting removes this account and its local Dispatch cache. Gmail and the account itself are not changed.
+        Disconnecting removes this account and its local ThreeStrands cache. Gmail and the account itself are not changed.
       </p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
@@ -4041,7 +4041,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   return (
     <section className="settings-section" aria-label="AI provider">
       <p className="settings-hint">
-        Disabled by default. Dispatch only sends thread content to your chosen
+        Disabled by default. ThreeStrands only sends thread content to your chosen
         provider for the features you turn on below, using your own API key.
       </p>
 
@@ -4193,7 +4193,7 @@ function PrivacySettings({
         </select>
       </label>
       <span className="settings-hint">
-        Mail older than this is removed from Dispatch's local cache to keep the
+        Mail older than this is removed from ThreeStrands's local cache to keep the
         database from growing without bound. It stays on the server.
       </span>
 
@@ -4344,7 +4344,7 @@ function DataTransferSettings({
       </button>
       {!isDesktop ? (
         <p className="settings-hint" role="status">
-          Settings transfer is available in the Dispatch desktop app.
+          Settings transfer is available in the ThreeStrands desktop app.
         </p>
       ) : null}
       {message ? <p className="settings-hint" role="status">{message}</p> : null}
@@ -4379,10 +4379,10 @@ function UnsubscribeConfirm({
         </p>
         <p className="unsubscribe-explanation">
           {method === "oneClick"
-            ? "Dispatch will send the sender's one-click request without opening a web page."
+            ? "ThreeStrands will send the sender's one-click request without opening a web page."
             : method === "mailto"
-              ? "Dispatch will open a new email in your default mail handler. You will still need to send it."
-              : "Dispatch will open the sender's unsubscribe page in your default browser."}
+              ? "ThreeStrands will open a new email in your default mail handler. You will still need to send it."
+              : "ThreeStrands will open the sender's unsubscribe page in your default browser."}
         </p>
         <div className="unsubscribe-actions">
           <button type="button" onClick={onClose} disabled={busy}>Cancel</button>

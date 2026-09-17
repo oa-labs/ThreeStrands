@@ -91,7 +91,7 @@ it("keeps safe pasted images and strips compose-only image controls", () => {
 
 it("serializes inline attachment previews back to their content IDs", () => {
   const editor = document.createElement("div");
-  editor.innerHTML = '<span data-compose-image="true"><img src="data:image/png;base64,aGk=" data-compose-source="cid:image-1@dispatch.local" alt="Screenshot"></span>';
+  editor.innerHTML = '<span data-compose-image="true"><img src="data:image/png;base64,aGk=" data-compose-source="cid:image-1@threestrands.local" alt="Screenshot"></span>';
 
-  expect(serializeComposeHtml(editor)).toBe('<img src="cid:image-1@dispatch.local" alt="Screenshot">');
+  expect(serializeComposeHtml(editor)).toBe('<img src="cid:image-1@threestrands.local" alt="Screenshot">');
 });

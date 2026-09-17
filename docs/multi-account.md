@@ -20,7 +20,7 @@ wrong identity.
 | Spark | Smart Inbox merges every account by default | Yes, on by default | Colored dot per message tied to its source account |
 | Mimestream (Gmail-only, native Mac) | Sidebar section per account, plus a unified smart mailbox | Yes, opt-in alongside per-account view | Color stripe per account |
 
-Dispatch's own thesis (`PLAN.MD` §2.1–2.3) is speed and *focused triage inside
+ThreeStrands's own thesis (`PLAN.MD` §2.1–2.3) is speed and *focused triage inside
 one view*, not an extra layer of per-account chrome. A Gmail/Outlook-style full
 context switch — reload the whole app state to look at a different mailbox —
 fights that. Spark's and Mimestream's default-unified inbox fits better: one
@@ -89,7 +89,7 @@ specific identity, triaging one client's mail before a call).
   (account dots, From selector, switcher list, `Cmd+N` shortcuts) only appears
   once a second account exists.
 - Reuse the app's single OAuth `client_id`/`client_secret`
-  (`DISPATCH_GOOGLE_CLIENT_ID`/`SECRET`, `auth.rs:60-75`) for every account —
+  (`THREESTRANDS_GOOGLE_CLIENT_ID`/`SECRET`, `auth.rs:60-75`) for every account —
   Google OAuth apps aren't per-end-user, only the token and consent are.
 - Key accounts by their Gmail address, not a synthetic UUID. This matches code
   that already exists: `outbox_messages.account` and `draft.account`

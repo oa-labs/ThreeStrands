@@ -56,7 +56,7 @@ describe("settings import navigation", () => {
     });
 
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });

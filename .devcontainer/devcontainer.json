@@ -1,5 +1,5 @@
 {
-  "name": "Dispatch Linux build",
+  "name": "ThreeStrands Linux build",
   "build": {
     "dockerfile": "Dockerfile",
     "context": "..",
@@ -8,8 +8,8 @@
   "runArgs": ["--platform=linux/amd64"],
   "remoteUser": "vscode",
   "mounts": [
-    "source=dispatch-linux-node-modules,target=${containerWorkspaceFolder}/node_modules,type=volume",
-    "source=dispatch-linux-cargo-target,target=${containerWorkspaceFolder}/src-tauri/target,type=volume"
+    "source=threestrands-linux-node-modules,target=${containerWorkspaceFolder}/node_modules,type=volume",
+    "source=threestrands-linux-cargo-target,target=${containerWorkspaceFolder}/src-tauri/target,type=volume"
   ],
   "containerEnv": {
     "APPIMAGE_EXTRACT_AND_RUN": "1"

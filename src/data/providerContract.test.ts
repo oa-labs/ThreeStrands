@@ -13,7 +13,7 @@ function providerContract(name: string, client: MailClient) {
     });
 
     it("searches and applies a reversible label mutation", async () => {
-      const threads = await client.searchThreads({ query: "Dispatch" });
+      const threads = await client.searchThreads({ query: "ThreeStrands" });
       expect(threads.length).toBeGreaterThan(0);
       const thread = threads[0]!;
       const label = await client.createLabel(`Contract ${crypto.randomUUID()}`);

@@ -36,7 +36,7 @@ use tauri::{async_runtime::JoinHandle, Manager, State};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-/// Keep remote pages out of Dispatch even if a platform webview activates an
+/// Keep remote pages out of ThreeStrands even if a platform webview activates an
 /// email link before the iframe's DOM click handler can cancel it. This is a
 /// final native boundary: app documents may navigate in the webview, ordinary
 /// web/mail/telephone URLs are handed to the operating system, and other
@@ -1041,8 +1041,8 @@ async fn ai_generate_reply(
 }
 
 fn not_configured() -> String {
-    "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_ID and \
-     DISPATCH_GOOGLE_CLIENT_SECRET from a Desktop app credential."
+    "Google OAuth is not configured. Set THREESTRANDS_GOOGLE_CLIENT_ID and \
+     THREESTRANDS_GOOGLE_CLIENT_SECRET from a Desktop app credential."
         .into()
 }
 
@@ -1067,7 +1067,7 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             restrict_dir_to_owner(&data_dir);
             let (opened_database, recovery) =
-                db::open_with_recovery(&data_dir.join("dispatch.sqlite"));
+                db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
             let database = Arc::new(opened_database);
             let recovery = match recovery {
                 db::RecoveryOutcome::Clean => None,
@@ -1308,7 +1308,7 @@ pub fn run() {
             system_fonts::list_system_font_families,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Dispatch")
+        .expect("error while building ThreeStrands")
         .run(|handle, event| {
             use tauri::Emitter;
             match &event {

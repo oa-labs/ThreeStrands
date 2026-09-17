@@ -189,7 +189,7 @@ mod tests {
     }
 
     fn test_root(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("dispatch-reader-{name}-{}", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!("threestrands-reader-{name}-{}", uuid::Uuid::new_v4()))
     }
 
     fn add_entry(root: &Path, name: &str, bytes: usize) -> PathBuf {

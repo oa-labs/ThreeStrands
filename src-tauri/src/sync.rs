@@ -28,7 +28,7 @@ const MUTATION_RETRY_MAX_SECS: i64 = 60 * 60;
 /// How often the background poll loop re-derives inbox membership from
 /// Gmail's live INBOX listing, independent of history-based incremental
 /// sync. History sync can miss a label change reaching us — e.g. Gmail-side
-/// propagation lag on a change made outside Dispatch — and nothing else
+/// propagation lag on a change made outside ThreeStrands — and nothing else
 /// self-heals that short of a historyId 404. This is a safety net, not the
 /// primary sync path, so it runs rarely.
 const RECONCILE_INTERVAL_SECS: i64 = 6 * 60 * 60;

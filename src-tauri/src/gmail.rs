@@ -691,7 +691,7 @@ impl GmailClient {
             .await?
             .query(&[(
                 "q",
-                format!("in:sent rfc822msgid:{operation}@dispatch.local"),
+                format!("in:sent rfc822msgid:{operation}@threestrands.local"),
             )]);
         let matches: Found = self.json(request, false).await?;
         // Verify the message identity and sender, rather than relying on search alone.
@@ -700,7 +700,7 @@ impl GmailClient {
             let matches_id = message.payload.headers.iter().any(|h| {
                 h.name.eq_ignore_ascii_case("Message-ID")
                     && h.value.trim().trim_matches(['<', '>'])
-                        == format!("{operation}@dispatch.local")
+                        == format!("{operation}@threestrands.local")
             });
             let matches_sender = message
                 .payload

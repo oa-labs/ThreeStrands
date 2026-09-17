@@ -29,7 +29,7 @@ describe("AI provider preferences", () => {
   });
 
   it("ignores an invalid stored provider", () => {
-    localStorage.setItem("dispatch.settings.ai.provider", "not-a-provider");
+    localStorage.setItem("threestrands.settings.ai.provider", "not-a-provider");
     expect(readAiProvider()).toBe("none");
   });
 

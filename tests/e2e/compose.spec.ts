@@ -24,14 +24,14 @@ test("saves an offline draft, restores after reload, sends once, and undoes", as
 
 test("reply shortcuts keep inbox actions out of the composer and forwarding starts unaddressed", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
   await page.getByTitle("Message content").contentFrame().locator("body").click();
   await page.keyboard.press("r");
   const reply = page.getByRole("dialog", { name: "Reply message" });
   await expect(reply).toBeVisible();
   await expect(page.getByRole("region", { name: "Conversation" }).getByRole("dialog", { name: "Reply message" })).toBeVisible();
   await expect(reply.locator("xpath=parent::*")).toHaveClass(/message-stack/);
-  await expect(reply.getByRole("button", { name: "Remove Dispatch" })).toBeVisible();
+  await expect(reply.getByRole("button", { name: "Remove ThreeStrands" })).toBeVisible();
   const replyBody = reply.getByRole("textbox", { name: "Message body" });
   await expect(replyBody).toHaveCSS("outline-style", "none");
   await expect(replyBody).toHaveCSS("padding-top", "12px");
@@ -52,7 +52,7 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await page.getByRole("button", { name: "Forward" }).click();
   const forward = page.getByRole("dialog", { name: "Forward message" });
   await expect(forward.getByRole("textbox", { name: "To", exact: true })).toHaveValue("");
-  await expect(forward.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: Welcome to Dispatch");
+  await expect(forward.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: Welcome to ThreeStrands");
 });
 
 test("removing an added reply recipient keeps the original recipient", async ({ page }) => {
@@ -66,7 +66,7 @@ test("removing an added reply recipient keeps the original recipient", async ({ 
   await to.press("Enter");
   await reply.getByRole("button", { name: "Remove added@example.com" }).click();
 
-  await expect(reply.getByRole("button", { name: "Remove Dispatch" })).toBeVisible();
+  await expect(reply.getByRole("button", { name: "Remove ThreeStrands" })).toBeVisible();
   await expect(reply.getByRole("button", { name: "Remove added@example.com" })).toHaveCount(0);
 });
 
@@ -81,11 +81,11 @@ test("Superhuman formatting shortcuts edit rich compose content and appear in he
   await body.press("ControlOrMeta+b");
   await expect(body.locator("b, strong")).toHaveText("Bold text");
 
-  await body.fill("Dispatch");
+  await body.fill("ThreeStrands");
   await body.press("ControlOrMeta+a");
-  page.once("dialog", (dialog) => dialog.accept("https://dispatch.local"));
+  page.once("dialog", (dialog) => dialog.accept("https://threestrands.local"));
   await body.press("ControlOrMeta+k");
-  await expect(body.locator("a")).toHaveAttribute("href", "https://dispatch.local");
+  await expect(body.locator("a")).toHaveAttribute("href", "https://threestrands.local");
 
   await body.fill("One");
   await body.press("ControlOrMeta+a");
@@ -123,13 +123,13 @@ test("attachment selection and removal survive autosave; invalid recipients keep
 
 test("a new message opens as the conversation pane instead of a modal window", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
   await page.getByRole("button", { name: "New Message (c)" }).click();
   const reader = page.getByRole("region", { name: "Conversation" });
   const composer = page.getByRole("dialog", { name: "New Message" });
   await expect(reader.getByRole("dialog", { name: "New Message" })).toBeVisible();
   await expect(composer.locator("xpath=parent::*")).toHaveClass(/draft-message-stack/);
-  await expect(reader.getByRole("heading", { name: "Welcome to Dispatch" })).toHaveCount(0);
+  await expect(reader.getByRole("heading", { name: "Welcome to ThreeStrands" })).toHaveCount(0);
   await expect(page.locator(".compose-backdrop")).toHaveCount(0);
 });
 

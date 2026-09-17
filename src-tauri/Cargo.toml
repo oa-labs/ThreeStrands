@@ -1,12 +1,12 @@
 [package]
-name = "dispatch"
-version = "0.5.11"
+name = "threestrands"
+version = "0.5.12"
 description = "A local-first, keyboard-driven email client"
-authors = ["Dispatch contributors"]
+authors = ["ThreeStrands contributors"]
 edition = "2021"
 
 [lib]
-name = "dispatch_lib"
+name = "threestrands_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

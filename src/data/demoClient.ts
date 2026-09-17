@@ -25,9 +25,9 @@ const initialThreads: Thread[] = [
   {
     id: "welcome",
     providerThreadId: "demo-welcome",
-    subject: "Welcome to Dispatch",
+    subject: "Welcome to ThreeStrands",
     snippet: "A keyboard-first inbox that keeps your mail on this device.",
-    participants: ["Dispatch"],
+    participants: ["ThreeStrands"],
     lastMessageAt: "2026-03-05T16:30:00Z",
     lastReceivedAt: "2026-03-05T16:30:00Z",
     unread: true,
@@ -62,7 +62,7 @@ const initialThreads: Thread[] = [
     id: "privacy",
     providerThreadId: "demo-privacy",
     subject: "Your inbox stays local",
-    snippet: "Dispatch connects directly to Gmail and stores its cache in SQLite.",
+    snippet: "ThreeStrands connects directly to Gmail and stores its cache in SQLite.",
     participants: ["Security"],
     lastMessageAt: "2026-03-04T19:40:00Z",
     lastReceivedAt: "2026-03-04T19:40:00Z",
@@ -100,7 +100,7 @@ let splitInboxes: SplitInbox[] = [];
 
 const details: Record<string, string> = {
   welcome: `
-    <p>Welcome to <strong>Dispatch</strong>.</p>
+    <p>Welcome to <strong>ThreeStrands</strong>.</p>
     <p>Use <kbd>j</kbd> and <kbd>k</kbd> to move, <kbd>e</kbd> to archive,
     <kbd>s</kbd> to star, and <kbd>⌘K</kbd> to open the command palette.</p>
     <img src="https://example.invalid/tracker.gif" alt="Blocked remote image" />
@@ -112,7 +112,7 @@ const details: Record<string, string> = {
     the same typed client boundary.</p>
   `,
   privacy: `
-    <p>No Dispatch backend is required. OAuth credentials belong in your OS
+    <p>No ThreeStrands backend is required. OAuth credentials belong in your OS
     keychain and message data belongs in the local SQLite database.</p>
   `,
 };
@@ -331,15 +331,15 @@ export const demoClient: MailClient = {
         {
           id: `${id}-message`,
           threadId: id,
-          sender: `${thread.participants[0]} <hello@dispatch.local>`,
+          sender: `${thread.participants[0]} <hello@threestrands.local>`,
           recipients: ["You <you@example.com>"],
           sentAt: thread.lastMessageAt,
           bodyHtml: details[id] ?? `<p>${thread.snippet}</p>`,
           bodyText: thread.snippet,
           unread: thread.unread,
-          unsubscribe: id === "welcome" ? { methods: ["oneClick"], listId: "dispatch.example" } : null,
+          unsubscribe: id === "welcome" ? { methods: ["oneClick"], listId: "threestrands.example" } : null,
           attachments: id === "welcome"
-            ? [{ id: "demo-guide", filename: "dispatch-shortcuts.txt", mimeType: "text/plain", size: 94 }]
+            ? [{ id: "demo-guide", filename: "threestrands-shortcuts.txt", mimeType: "text/plain", size: 94 }]
             : [],
         },
       ],
@@ -347,15 +347,15 @@ export const demoClient: MailClient = {
     return detail;
   },
   async openAttachment(_messageId, _attachmentId) {
-    const url = URL.createObjectURL(new Blob(["Dispatch keyboard shortcuts\n\nj/k: move\ne: archive\ns: star\n"], { type: "text/plain" }));
+    const url = URL.createObjectURL(new Blob(["ThreeStrands keyboard shortcuts\n\nj/k: move\ne: archive\ns: star\n"], { type: "text/plain" }));
     window.open(url, "_blank", "noopener,noreferrer");
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   },
   async saveAttachment(_messageId, _attachmentId) {
-    const url = URL.createObjectURL(new Blob(["Dispatch keyboard shortcuts\n\nj/k: move\ne: archive\ns: star\n"], { type: "text/plain" }));
+    const url = URL.createObjectURL(new Blob(["ThreeStrands keyboard shortcuts\n\nj/k: move\ne: archive\ns: star\n"], { type: "text/plain" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "dispatch-shortcuts.txt";
+    anchor.download = "threestrands-shortcuts.txt";
     anchor.click();
     URL.revokeObjectURL(url);
   },

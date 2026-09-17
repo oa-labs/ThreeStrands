@@ -43,10 +43,10 @@ export function resolveAiModel(provider: AiProvider, model: string): string {
   return provider === "custom" ? "" : AI_MODEL_PLACEHOLDERS[provider];
 }
 
-const PROVIDER_KEY = "dispatch.settings.ai.provider";
-const MODEL_KEY = "dispatch.settings.ai.model";
-const ENDPOINT_KEY = "dispatch.settings.ai.endpoint";
-const FEATURES_KEY = "dispatch.settings.ai.features";
+const PROVIDER_KEY = "threestrands.settings.ai.provider";
+const MODEL_KEY = "threestrands.settings.ai.model";
+const ENDPOINT_KEY = "threestrands.settings.ai.endpoint";
+const FEATURES_KEY = "threestrands.settings.ai.features";
 
 export function readAiProvider(): AiProvider {
   try {

@@ -106,7 +106,7 @@ describe("Composer pasted images", () => {
   });
 
   it("inserts, resizes, and removes an image pasted into the message body", async () => {
-    const inlineAttachment = { id: "inline-1", name: "screenshot.png", mime: "image/png", size: 4, ready: true, messageId: null, providerId: null, inline: true, contentId: "inline-1@dispatch.local" };
+    const inlineAttachment = { id: "inline-1", name: "screenshot.png", mime: "image/png", size: 4, ready: true, messageId: null, providerId: null, inline: true, contentId: "inline-1@threestrands.local" };
     const attachInline = vi.spyOn(mailClient, "attachInlineImage").mockResolvedValue({ ...draft, revision: 1, attachments: [inlineAttachment] });
     const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
     const removeAttachment = vi.spyOn(mailClient, "removeAttachment").mockResolvedValue({ ...draft, revision: 3 });
@@ -131,7 +131,7 @@ describe("Composer pasted images", () => {
     fireEvent.pointerUp(window);
     expect(image).toHaveAttribute("width", "380");
     await waitFor(() => expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({
-      bodyHtml: expect.stringContaining('src="cid:inline-1@dispatch.local"'),
+      bodyHtml: expect.stringContaining('src="cid:inline-1@threestrands.local"'),
     })));
 
     fireEvent.click(screen.getByRole("button", { name: "Remove pasted image" }));
@@ -142,8 +142,8 @@ describe("Composer pasted images", () => {
   it("restores an inline image preview when a saved draft is reopened", async () => {
     const savedDraft = {
       ...draft,
-      bodyHtml: '<p>See below</p><img src="cid:inline-1@dispatch.local" alt="Screenshot" width="320">',
-      attachments: [{ id: "inline-1", name: "screenshot.png", mime: "image/png", size: 4, ready: true, messageId: null, providerId: null, inline: true, contentId: "inline-1@dispatch.local" }],
+      bodyHtml: '<p>See below</p><img src="cid:inline-1@threestrands.local" alt="Screenshot" width="320">',
+      attachments: [{ id: "inline-1", name: "screenshot.png", mime: "image/png", size: 4, ready: true, messageId: null, providerId: null, inline: true, contentId: "inline-1@threestrands.local" }],
     };
     const readInline = vi.spyOn(mailClient, "readInlineImage").mockResolvedValue("data:image/png;base64,iVBORw==");
 
@@ -383,10 +383,10 @@ describe("Composer recipient autocomplete", () => {
 
   it("shows a prefilled reply recipient as a badge immediately, with no mail history query needed", () => {
     vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([]);
-    const prefilled = { ...draft, to: "hello@dispatch.local" };
+    const prefilled = { ...draft, to: "hello@threestrands.local" };
     render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
 
-    expect(screen.getByRole("button", { name: "Remove hello@dispatch.local" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove hello@threestrands.local" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "To" })).toHaveValue("");
   });
 
@@ -420,11 +420,11 @@ describe("Composer recipient autocomplete", () => {
   });
 
   it("drags a recipient badge from To into Cc, moving it rather than copying it", () => {
-    const prefilled = { ...draft, to: "hello@dispatch.local", cc: "" };
+    const prefilled = { ...draft, to: "hello@threestrands.local", cc: "" };
     render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "To" }));
 
-    const chip = screen.getByRole("button", { name: "Remove hello@dispatch.local" }).closest(".recipient-chip");
+    const chip = screen.getByRole("button", { name: "Remove hello@threestrands.local" }).closest(".recipient-chip");
     const ccRow = screen.getByRole("textbox", { name: "Cc" }).closest(".recipient-chip-row");
     expect(chip).toBeTruthy();
     expect(ccRow).toBeTruthy();
@@ -444,7 +444,7 @@ describe("Composer recipient autocomplete", () => {
 
     const toField = screen.getByRole("textbox", { name: "To" }).closest(".compose-field") as HTMLElement;
     const ccField = screen.getByRole("textbox", { name: "Cc" }).closest(".compose-field") as HTMLElement;
-    expect(within(toField).queryByRole("button", { name: "Remove hello@dispatch.local" })).not.toBeInTheDocument();
-    expect(within(ccField).getByRole("button", { name: "Remove hello@dispatch.local" })).toBeInTheDocument();
+    expect(within(toField).queryByRole("button", { name: "Remove hello@threestrands.local" })).not.toBeInTheDocument();
+    expect(within(ccField).getByRole("button", { name: "Remove hello@threestrands.local" })).toBeInTheDocument();
   });
 });

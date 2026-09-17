@@ -15,7 +15,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-const SERVICE: &str = "app.dispatch.mail";
+const SERVICE: &str = "app.threestrands.mail";
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const PROFILE_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
@@ -73,20 +73,20 @@ pub struct GoogleAuthConfig {
 
 impl GoogleAuthConfig {
     pub fn from_environment() -> Result<Self, String> {
-        let client_id = std::env::var("DISPATCH_GOOGLE_CLIENT_ID")
+        let client_id = std::env::var("THREESTRANDS_GOOGLE_CLIENT_ID")
             .ok()
-            .or_else(|| option_env!("DISPATCH_GOOGLE_CLIENT_ID").map(str::to_owned))
+            .or_else(|| option_env!("THREESTRANDS_GOOGLE_CLIENT_ID").map(str::to_owned))
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| {
-                "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_ID to an installed-app client ID."
+                "Google OAuth is not configured. Set THREESTRANDS_GOOGLE_CLIENT_ID to an installed-app client ID."
                     .to_string()
             })?;
-        let client_secret = std::env::var("DISPATCH_GOOGLE_CLIENT_SECRET")
+        let client_secret = std::env::var("THREESTRANDS_GOOGLE_CLIENT_SECRET")
             .ok()
-            .or_else(|| option_env!("DISPATCH_GOOGLE_CLIENT_SECRET").map(str::to_owned))
+            .or_else(|| option_env!("THREESTRANDS_GOOGLE_CLIENT_SECRET").map(str::to_owned))
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| {
-                "Google OAuth is not configured. Set DISPATCH_GOOGLE_CLIENT_SECRET to the value from the Desktop app credential."
+                "Google OAuth is not configured. Set THREESTRANDS_GOOGLE_CLIENT_SECRET to the value from the Desktop app credential."
                     .to_string()
             })?;
         Ok(Self {
@@ -229,11 +229,11 @@ impl GoogleAuth {
             self.exchange_code(code, &verifier, &redirect_uri).await
         };
         let (status, body) = if result.is_ok() {
-            ("200 OK", "Dispatch is connected. You can close this tab.")
+            ("200 OK", "ThreeStrands is connected. You can close this tab.")
         } else {
             (
                 "400 Bad Request",
-                "Dispatch could not complete sign-in. Return to the app.",
+                "ThreeStrands could not complete sign-in. Return to the app.",
             )
         };
         let response = format!(

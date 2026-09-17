@@ -1,4 +1,4 @@
-export const FONT_SCALE_KEY = "dispatch.fontScale";
+export const FONT_SCALE_KEY = "threestrands.fontScale";
 export const DEFAULT_FONT_SCALE = 100;
 export const MIN_FONT_SCALE = 80;
 export const MAX_FONT_SCALE = 140;

@@ -1,10 +1,10 @@
 # Email rendering policy
 
-Dispatch treats every message body as untrusted HTML. `SafeMessage` sanitizes structure and capabilities, resolves remote images through the native proxy, then renders the result in a sandboxed iframe with a restrictive CSP. Links are intercepted and opened by the native opener.
+ThreeStrands treats every message body as untrusted HTML. `SafeMessage` sanitizes structure and capabilities, resolves remote images through the native proxy, then renders the result in a sandboxed iframe with a restrictive CSP. Links are intercepted and opened by the native opener.
 
 The pipeline has deliberately separate stages: structural sanitization removes unsafe nodes and attributes while preserving harmless structure; CSS sanitization applies the shared typed policy; remote-resource gating parks image URLs until the proxy resolves them; quote folding selects only high-confidence semantic boundaries; isolated rendering applies the iframe CSP and document-height containment. A stage may enforce its boundary, but does not perform visual cleanup belonging to another stage.
 
-The renderer is sender-fidelity-first inside that boundary. Safe layout is preserved; the sanitizer does not delete empty elements or rewrite table structure merely to impose Dispatch spacing. Fallback CSS is deliberately low-specificity so inline sender CSS and HTML presentational attributes win.
+The renderer is sender-fidelity-first inside that boundary. Safe layout is preserved; the sanitizer does not delete empty elements or rewrite table structure merely to impose ThreeStrands spacing. Fallback CSS is deliberately low-specificity so inline sender CSS and HTML presentational attributes win.
 
 All inline declarations, embedded stylesheet declarations, and HTML dimensions use `src/emailRenderingPolicy.ts`. The policy accepts bounded, finite presentation values and rejects values outside the shared limits rather than rewriting them: absolute lengths are capped at 4096px, relative lengths at 64em/rem, percentages at 100%, font sizes at 256px/16em/rem/1600%, unitless line-height and flex factors at 16, opacity at 1, and the isolated frame at 50,000px. External resources, scripts, forms, generated content, animations, viewport overlays, and unproxied `url(...)` values remain forbidden.
 

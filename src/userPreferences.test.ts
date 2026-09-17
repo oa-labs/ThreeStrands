@@ -33,9 +33,9 @@ describe("exportable preferences", () => {
   });
 
   it("does not collect secrets or transient storage", () => {
-    localStorage.setItem("dispatch.settings.ai.apiKey", "do-not-export");
-    localStorage.setItem("dispatch.crashReports", "private diagnostics");
-    localStorage.setItem("dispatch.demoCorrespondence", "cached mail");
+    localStorage.setItem("threestrands.settings.ai.apiKey", "do-not-export");
+    localStorage.setItem("threestrands.crashReports", "private diagnostics");
+    localStorage.setItem("threestrands.demoCorrespondence", "cached mail");
 
     const exported = JSON.stringify(readExportablePreferences());
 

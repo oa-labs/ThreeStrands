@@ -1,7 +1,7 @@
 import type { CorrespondenceClient, Draft, OutboxItem } from "../correspondence";
 import type { ThreadDetail } from "../domain";
 
-const key = "dispatch.demoCorrespondence";
+const key = "threestrands.demoCorrespondence";
 const inlineImages = new Map<string, string>();
 type Store = { drafts: Draft[]; outbox: OutboxItem[] };
 function read(): Store {
@@ -49,7 +49,7 @@ export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDeta
         } else {
           d.to = message.sender;
           d.threadId = detail.thread.providerThreadId;
-          d.replyId = `${sourceId}@dispatch.local`;
+          d.replyId = `${sourceId}@threestrands.local`;
           d.references = [d.replyId];
         }
       }
@@ -100,7 +100,7 @@ export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDeta
       const size = Math.floor(data.length * 3 / 4);
       if (size + d.attachments.reduce((sum, attachment) => sum + attachment.size, 0) > 18 * 1024 * 1024) throw new Error("Attachments exceed the 18 MB local limit");
       const attachmentId = crypto.randomUUID();
-      const contentId = `${attachmentId}@dispatch.local`;
+      const contentId = `${attachmentId}@threestrands.local`;
       d.attachments.push({ id: attachmentId, name: name || "pasted-image", mime, size, ready: true, messageId: null, providerId: null, inline: true, contentId });
       inlineImages.set(attachmentId, `data:${mime};base64,${data}`);
       d.revision++; write(store); return d;

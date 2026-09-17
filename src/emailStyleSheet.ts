@@ -77,7 +77,7 @@ export function sanitizeStyleSheet(css: string, theme?: "light" | "dark"): strin
     const specifiedThemes = preferredThemes.filter((value): value is string => value !== undefined);
     if (specifiedThemes.length > 0) {
       // A comma list mixing themed and unthemed branches cannot be faithfully
-      // mapped to the selected Dispatch theme without changing its meaning.
+      // mapped to the selected ThreeStrands theme without changing its meaning.
       if (specifiedThemes.length !== branches.length) {
         atRule.remove();
         return;

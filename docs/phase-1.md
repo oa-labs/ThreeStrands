@@ -25,9 +25,9 @@ This document tracks implementation against the Phase 1 exit criteria in
 - Google installed-app OAuth Authorization Code flow with PKCE, a random
   loopback port, state validation, and browser handoff. The non-secret client
   ID and Google-required Desktop client-secret value are configured with
-  `DISPATCH_GOOGLE_CLIENT_ID` and `DISPATCH_GOOGLE_CLIENT_SECRET`.
+  `THREESTRANDS_GOOGLE_CLIENT_ID` and `THREESTRANDS_GOOGLE_CLIENT_SECRET`.
 - OAuth access and refresh tokens stored only in the operating-system
-  credential store (`app.dispatch.mail`), never SQLite or the webview.
+  credential store (`app.threestrands.mail`), never SQLite or the webview.
 - Gmail REST integration with bounded `Retry-After`/exponential backoff,
   recognition of quota failures returned as either HTTP 429 or 403, paced
   high-cost thread retrieval, base64url MIME decoding, nested multipart
@@ -70,8 +70,8 @@ Create a Google OAuth client of type **Desktop app**, enable the Gmail API, and
 provide its public client ID when launching/building:
 
 ```sh
-DISPATCH_GOOGLE_CLIENT_ID="1234.apps.googleusercontent.com" \
-DISPATCH_GOOGLE_CLIENT_SECRET="value-from-downloaded-desktop-client-json" \
+THREESTRANDS_GOOGLE_CLIENT_ID="1234.apps.googleusercontent.com" \
+THREESTRANDS_GOOGLE_CLIENT_SECRET="value-from-downloaded-desktop-client-json" \
 pnpm tauri dev
 ```
 

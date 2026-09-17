@@ -1,6 +1,6 @@
 # Crash reporting policy
 
-Crash reporting is disabled by default and is never required to use Dispatch.
+Crash reporting is disabled by default and is never required to use ThreeStrands.
 The user enables or disables it from Sync diagnostics.
 
 When enabled, the client retains at most 20 sanitized reports locally. A build

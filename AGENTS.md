@@ -12,7 +12,7 @@ Treat the encrypted settings export as a persistent, cross-version format. Do no
 
 ## Email rendering
 
-Dispatch renders untrusted sender HTML inside a sandboxed, CSP-scoped iframe. Keep that trust boundary intact, but treat safe sender-authored structure as the source of truth.
+ThreeStrands renders untrusted sender HTML inside a sandboxed, CSP-scoped iframe. Keep that trust boundary intact, but treat safe sender-authored structure as the source of truth.
 
 - Do not remove markup solely because it is empty, whitespace-only, or visually redundant. Sanitization removes unsafe capabilities, not layout structure.
 - Never branch on a sender, domain, brand, provider class, provider ID, or one captured template. A compatibility fix must express a provider-neutral rendering or security invariant and include at least two structurally different fixtures.
@@ -39,6 +39,6 @@ Keep the application version identical in:
 - `package.json`
 - `src-tauri/tauri.conf.json`
 - `src-tauri/Cargo.toml`
-- the `dispatch` package entry in `src-tauri/Cargo.lock`
+- the `threestrands` package entry in `src-tauri/Cargo.lock`
 
 Mention the version change in the final summary.

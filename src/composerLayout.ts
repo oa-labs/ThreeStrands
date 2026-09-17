@@ -1,5 +1,5 @@
-export const composerSizeKey = "dispatch.composerSize";
-export const composerPositionKey = "dispatch.composerPosition";
+export const composerSizeKey = "threestrands.composerSize";
+export const composerPositionKey = "threestrands.composerPosition";
 export const minimumComposerWidth = 480;
 export const minimumComposerHeight = 380;
 

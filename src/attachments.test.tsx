@@ -18,9 +18,9 @@ describe("message attachments", () => {
 
   it("shows a list paperclip only when a thread has attachments", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
-    const welcomeRow = screen.getAllByText("Welcome to Dispatch")
+    const welcomeRow = screen.getAllByText("Welcome to ThreeStrands")
       .find((element) => element.classList.contains("thread-subject"))
       ?.closest(".thread-row");
     const roadmapRow = screen.getByText("Phase 1: read and triage").closest(".thread-row");
@@ -34,10 +34,10 @@ describe("message attachments", () => {
     const open = vi.spyOn(mailClient, "openAttachment").mockResolvedValue();
     const save = vi.spyOn(mailClient, "saveAttachment").mockResolvedValue();
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
-    const view = await screen.findByRole("button", { name: "View dispatch-shortcuts.txt" });
-    const download = screen.getByRole("button", { name: "Download dispatch-shortcuts.txt" });
+    const view = await screen.findByRole("button", { name: "View threestrands-shortcuts.txt" });
+    const download = screen.getByRole("button", { name: "Download threestrands-shortcuts.txt" });
     expect(view).toBeVisible();
 
     await act(async () => {

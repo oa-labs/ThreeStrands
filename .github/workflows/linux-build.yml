@@ -29,21 +29,21 @@ jobs:
       - name: Build and verify packages in the devcontainer
         uses: devcontainers/ci@v0.3
         env:
-          DISPATCH_GOOGLE_CLIENT_ID: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && secrets.DISPATCH_GOOGLE_CLIENT_ID || '' }}
-          DISPATCH_GOOGLE_CLIENT_SECRET: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && secrets.DISPATCH_GOOGLE_CLIENT_SECRET || '' }}
-          DISPATCH_RELEASE_BUILD: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && '1' || '0' }}
+          THREESTRANDS_GOOGLE_CLIENT_ID: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && secrets.THREESTRANDS_GOOGLE_CLIENT_ID || '' }}
+          THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET || '' }}
+          THREESTRANDS_RELEASE_BUILD: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && '1' || '0' }}
         with:
           platform: linux/amd64
           push: never
           runCmd: ./scripts/build-linux.sh
           env: |
-            DISPATCH_GOOGLE_CLIENT_ID
-            DISPATCH_GOOGLE_CLIENT_SECRET
-            DISPATCH_RELEASE_BUILD
+            THREESTRANDS_GOOGLE_CLIENT_ID
+            THREESTRANDS_GOOGLE_CLIENT_SECRET
+            THREESTRANDS_RELEASE_BUILD
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v6
         with:
-          name: dispatch-linux-amd64
+          name: threestrands-linux-amd64
           path: artifacts/linux-amd64/
           if-no-files-found: error

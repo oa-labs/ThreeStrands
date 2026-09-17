@@ -1,3 +1,3 @@
 fn main() {
-    dispatch_lib::run();
+    threestrands_lib::run();
 }

@@ -1,6 +1,6 @@
-# Dispatch
+# ThreeStrands
 
-Dispatch is an open-source, keyboard-first, local-first email client inspired
+ThreeStrands is an open-source, keyboard-first, local-first email client inspired
 by some of the best email clients available. It is designed for people who
 spend significant time in email and want to process important conversations
 quickly without losing follow-ups, context, or control of their data.
@@ -12,9 +12,9 @@ The core experience combines:
 - reliable archive, read, star, label, and eventual follow-up workflows;
 - offline access backed by a local SQLite cache; and
 - a privacy-conscious desktop architecture that connects directly to mail
-  providers without requiring a Dispatch backend.
+  providers without requiring a ThreeStrands backend.
 
-Dispatch currently targets Gmail through a standalone Tauri desktop
+ThreeStrands currently targets Gmail through a standalone Tauri desktop
 application. OAuth credentials are kept in the operating-system keychain,
 message data and search indexes stay in local SQLite, and a durable mutation
 queue reconciles local actions with Gmail.
@@ -56,8 +56,8 @@ OAuth client of type **Desktop app**, and launch the native client with its
 client ID and client-secret value:
 
 ```sh
-DISPATCH_GOOGLE_CLIENT_ID="1234.apps.googleusercontent.com" \
-DISPATCH_GOOGLE_CLIENT_SECRET="value-from-downloaded-desktop-client-json" \
+THREESTRANDS_GOOGLE_CLIENT_ID="1234.apps.googleusercontent.com" \
+THREESTRANDS_GOOGLE_CLIENT_SECRET="value-from-downloaded-desktop-client-json" \
 pnpm tauri dev
 ```
 
@@ -80,6 +80,6 @@ operating-system keychain. Never commit the credential value.
 
 ## Independent implementation
 
-Dispatch uses its own name, visual identity, product language, and
+ThreeStrands uses its own name, visual identity, product language, and
 implementation. It learns from established interaction patterns across the
 email category without copying proprietary code, assets, or trademarks.

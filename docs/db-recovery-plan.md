@@ -1,13 +1,13 @@
 # Database recovery plan
 
-Dispatch's local cache (`<app_data_dir>/dispatch.sqlite`) already gets WAL mode,
+ThreeStrands's local cache (`<app_data_dir>/threestrands.sqlite`) already gets WAL mode,
 foreign keys, and transactional mutations right (`src-tauri/src/db.rs`,
 `src-tauri/src/schema.rs`). What it has never had is a plan for the day the
 file itself is damaged: no startup integrity check, no backup of any kind, no
 durability pragmas beyond the two defaults baked into `INITIAL_SCHEMA`, no
 bounded WAL checkpoint policy, and no tested behavior when a migration or a
 write fails partway or the disk fills up. Today any open/migration failure is
-fatal — it panics the whole app via `.expect("error while building Dispatch")`
+fatal — it panics the whole app via `.expect("error while building ThreeStrands")`
 in `lib.rs`, with no recovery path and no user-facing explanation.
 
 Because Gmail remains the source of truth and the local database is a
@@ -85,14 +85,14 @@ already uses.
   `schema::migrate`, compare the on-disk `user_version` against the latest
   version the binary knows about. If a migration is about to run, first
   `VACUUM INTO` a sibling file named
-  `dispatch.sqlite.pre-migration-v<old_version>.bak` in the same
+  `threestrands.sqlite.pre-migration-v<old_version>.bak` in the same
   `app_data_dir`. Keep only the most recent 3 pre-migration backups (delete
   older ones by version number) so this can't grow unbounded across repeated
   upgrades. On migration failure, leave the backup in place and include its
   path in the returned error — no automatic restore, since a failed migration
   might indicate a hardware problem worth surfacing rather than papering over.
 - **Periodic backup.** In the existing 6-hour maintenance loop, after the
-  checkpoint in step 2, `VACUUM INTO` a rotating `dispatch.sqlite.backup-N`
+  checkpoint in step 2, `VACUUM INTO` a rotating `threestrands.sqlite.backup-N`
   (keep the last 7, i.e. roughly the last 1.75 days at this interval — tune
   once real mailbox sizes/timings are known). Run this via `spawn_blocking`
   like the other maintenance calls.
@@ -131,7 +131,7 @@ small recovery ladder, implemented as an `open_with_recovery` wrapper that
 
 1. Try the normal `Database::open`.
 2. On failure, move the broken file aside to
-   `dispatch.sqlite.corrupt-<timestamp>` (keeping it for support/diagnosis,
+   `threestrands.sqlite.corrupt-<timestamp>` (keeping it for support/diagnosis,
    not deleting it) and attempt to restore the most recent periodic backup
    from step 3 in its place, then retry `Database::open` and confirm the
    restored copy passes `quick_check`.

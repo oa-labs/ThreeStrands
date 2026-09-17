@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main Dispatch window",
+  "description": "Capabilities for the main ThreeStrands window",
   "windows": ["main"],
   "permissions": [
     "core:default",

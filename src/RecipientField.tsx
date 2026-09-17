@@ -194,7 +194,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
           event.preventDefault();
           setDragOver(false);
           if (disabled) return;
-          const raw = event.dataTransfer.getData("application/x-dispatch-recipient");
+          const raw = event.dataTransfer.getData("application/x-threestrands-recipient");
           const origin = dragOrigin;
           dragOrigin = null;
           if (!raw || origin?.field === id) return;
@@ -217,7 +217,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
             draggable={!disabled}
             onDragStart={(event) => {
               dragOrigin = { field: id, remove: () => removeChip(chip) };
-              event.dataTransfer.setData("application/x-dispatch-recipient", JSON.stringify(chip));
+              event.dataTransfer.setData("application/x-threestrands-recipient", JSON.stringify(chip));
               event.dataTransfer.effectAllowed = "move";
             }}
             onDragEnd={() => {

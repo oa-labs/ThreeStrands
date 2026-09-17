@@ -662,7 +662,7 @@ fn build_mime(
         .bcc(bcc)
         .subject(d.subject.clone())
         .text_body(d.body.clone())
-        .message_id(format!("{id}@dispatch.local"));
+        .message_id(format!("{id}@threestrands.local"));
     if !d.body_html.trim().is_empty() {
         builder = builder.html_body(d.body_html.clone());
     }
@@ -942,7 +942,7 @@ impl Correspondence {
                     return Err("Attachments exceed the 18 MB local limit".into());
                 }
                 let attachment_id = Uuid::new_v4().to_string();
-                let content_id = format!("{attachment_id}@dispatch.local");
+                let content_id = format!("{attachment_id}@threestrands.local");
                 let safe_name = Path::new(&name)
                     .file_name()
                     .and_then(|value| value.to_str())
@@ -1410,7 +1410,7 @@ mod tests {
         });
         let raw = build_mime(&d, Some("Joel Reed"), "test-id", &root).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
-        assert_eq!(parsed.message_id(), Some("test-id@dispatch.local"));
+        assert_eq!(parsed.message_id(), Some("test-id@threestrands.local"));
         assert_eq!(
             parsed
                 .from()
@@ -1452,7 +1452,7 @@ mod tests {
         let root = std::env::temp_dir().join(Uuid::new_v4().to_string());
         std::fs::create_dir_all(&root).unwrap();
         let attachment_id = Uuid::new_v4().to_string();
-        let content_id = format!("{attachment_id}@dispatch.local");
+        let content_id = format!("{attachment_id}@threestrands.local");
         let bytes = vec![137, 80, 78, 71];
         std::fs::write(root.join(&attachment_id), &bytes).unwrap();
         d.body_html = format!("<p>Screenshot</p><img src=\"cid:{content_id}\">");

@@ -43,7 +43,7 @@ it("puts 'and' before the final message recipient", async () => {
   });
 
   render(<App />);
-  await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
   const recipientLine = document.querySelector(".message-recipients");
   expect(recipientLine?.querySelectorAll(".address-name")).toHaveLength(3);
@@ -96,7 +96,7 @@ it("refreshes the open conversation when its inbox row receives a sent reply", a
         id: "sent-reply",
         threadId: "welcome",
         sender: "<demo@example.com>",
-        recipients: ["hello@dispatch.local"],
+        recipients: ["hello@threestrands.local"],
         sentAt: "2026-03-05T17:30:00Z",
         bodyHtml: "<p>Sent reply body</p>",
         bodyText: "Sent reply body",
@@ -108,7 +108,7 @@ it("refreshes the open conversation when its inbox row receives a sent reply", a
   });
 
   render(<App />);
-  await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
   fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
 
   await waitFor(() => {
@@ -150,7 +150,7 @@ it("shows a queued reply immediately and replaces it with the provider copy", as
         messageId: null,
         providerId: null,
         inline: true,
-        contentId: "inline-1@dispatch.local",
+        contentId: "inline-1@threestrands.local",
       }],
       updatedAt: Date.now(),
     },
@@ -167,7 +167,7 @@ it("shows a queued reply immediately and replaces it with the provider copy", as
       filename: "image.png",
       mimeType: "image/png",
       inline: true,
-      contentId: "inline-1@dispatch.local",
+      contentId: "inline-1@threestrands.local",
     }],
   });
 
@@ -202,12 +202,12 @@ it("resolves a queued reply's inline image from its outbox draft", async () => {
       threadId: detail.thread.providerThreadId,
       replyId: "source@example.com",
       references: [],
-      to: "hello@dispatch.local",
+      to: "hello@threestrands.local",
       cc: "",
       bcc: "",
       subject: detail.thread.subject,
       body: "Screenshot",
-      bodyHtml: '<p>Screenshot</p><img src="cid:inline-1@dispatch.local" alt="image.png">',
+      bodyHtml: '<p>Screenshot</p><img src="cid:inline-1@threestrands.local" alt="image.png">',
       attachments: [{
         id: "inline-1",
         name: "image.png",
@@ -217,7 +217,7 @@ it("resolves a queued reply's inline image from its outbox draft", async () => {
         messageId: null,
         providerId: null,
         inline: true,
-        contentId: "inline-1@dispatch.local",
+        contentId: "inline-1@threestrands.local",
       }],
       updatedAt: Date.now(),
     },
@@ -228,7 +228,7 @@ it("resolves a queued reply's inline image from its outbox draft", async () => {
     .mockResolvedValue("data:image/png;base64,iVBORw==");
 
   render(<App />);
-  await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
   await waitFor(() => expect(readInline).toHaveBeenCalledWith("inline-reply-draft", "inline-1"));
   await waitFor(() => {
@@ -238,10 +238,10 @@ it("resolves a queued reply's inline image from its outbox draft", async () => {
 });
 
 it("renders a reply in the open conversation as soon as Send queues it", async () => {
-  localStorage.removeItem("dispatch.demoCorrespondence");
+  localStorage.removeItem("threestrands.demoCorrespondence");
   try {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
 
     const editor = await screen.findByRole("textbox", { name: "Message body" });
@@ -256,16 +256,16 @@ it("renders a reply in the open conversation as soon as Send queues it", async (
     });
     expect(screen.getByRole("status")).toHaveTextContent("Sending in");
   } finally {
-    localStorage.removeItem("dispatch.demoCorrespondence");
+    localStorage.removeItem("threestrands.demoCorrespondence");
   }
 });
 
 it("sends and marks the open conversation done with Mod+Shift+Enter", async () => {
-  localStorage.removeItem("dispatch.demoCorrespondence");
+  localStorage.removeItem("threestrands.demoCorrespondence");
   const mutateThreads = vi.spyOn(mailClient, "mutateThreads").mockResolvedValue();
   try {
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
 
     const editor = await screen.findByRole("textbox", { name: "Message body" });
@@ -278,6 +278,6 @@ it("sends and marks the open conversation done with Mod+Shift+Enter", async () =
       { kind: "archive", threadId: "welcome", value: true },
     ]));
   } finally {
-    localStorage.removeItem("dispatch.demoCorrespondence");
+    localStorage.removeItem("threestrands.demoCorrespondence");
   }
 });

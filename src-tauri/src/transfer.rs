@@ -247,9 +247,11 @@ pub fn export(
     };
     let encoded = encrypt(&payload, password)?;
     let Some(path) = rfd::FileDialog::new()
-        .set_title("Export Dispatch settings")
-        .add_filter("Dispatch settings", &[EXTENSION])
-        .set_file_name("dispatch-settings.dispatch-settings")
+        .set_title("Export ThreeStrands settings")
+        .add_filter("ThreeStrands settings", &[EXTENSION])
+        // Keep the legacy extension and envelope marker so settings exported
+        // by Dispatch remain directly importable after the rename.
+        .set_file_name("threestrands-settings.dispatch-settings")
         .save_file()
     else {
         return Ok(None);
@@ -261,8 +263,8 @@ pub fn export(
 pub fn import(database: &Database, password: &str) -> Result<Option<ImportResult>, String> {
     validate_password(password)?;
     let Some(path) = rfd::FileDialog::new()
-        .set_title("Import Dispatch settings")
-        .add_filter("Dispatch settings", &[EXTENSION])
+        .set_title("Import ThreeStrands settings")
+        .add_filter("ThreeStrands settings", &[EXTENSION])
         .pick_file()
     else {
         return Ok(None);
@@ -285,7 +287,7 @@ fn read_and_decrypt(path: &Path, password: &str) -> Result<TransferPayload, Stri
     let metadata =
         fs::metadata(path).map_err(|error| format!("Could not read the export: {error}"))?;
     if metadata.len() > MAX_FILE_BYTES {
-        return Err("The selected file is too large to be a Dispatch settings export".to_string());
+        return Err("The selected file is too large to be a ThreeStrands settings export".to_string());
     }
     let encoded = fs::read(path).map_err(|error| format!("Could not read the export: {error}"))?;
     decrypt(&encoded, password)
@@ -316,13 +318,13 @@ fn encrypt(payload: &TransferPayload, password: &str) -> Result<Vec<u8>, String>
 
 fn decrypt(encoded: &[u8], password: &str) -> Result<TransferPayload, String> {
     let envelope: EncryptedEnvelope = serde_json::from_slice(encoded)
-        .map_err(|_| "This is not a valid Dispatch settings export".to_string())?;
+        .map_err(|_| "This is not a valid ThreeStrands settings export".to_string())?;
     if envelope.format != FORMAT
         || envelope.version != VERSION
         || envelope.kdf != "argon2id"
         || envelope.cipher != "xchacha20poly1305"
     {
-        return Err("This Dispatch settings export uses an unsupported format".to_string());
+        return Err("This ThreeStrands settings export uses an unsupported format".to_string());
     }
     let salt = STANDARD
         .decode(envelope.salt)
@@ -435,6 +437,19 @@ mod tests {
         let decoded = decrypt(&encoded, "correct horse").unwrap();
         assert_eq!(decoded.accounts[0].email, "person@example.com");
         assert_eq!(decoded.preferences.theme, "dark");
+    }
+
+    #[test]
+    fn dispatch_v1_envelope_marker_remains_importable() {
+        let encoded = encrypt(&payload(), "correct horse").unwrap();
+        let envelope: EncryptedEnvelope = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(envelope.format, "dispatch-settings");
+        assert_eq!(envelope.version, 1);
+        assert_eq!(
+            decrypt(&encoded, "correct horse").unwrap().accounts[0].email,
+            "person@example.com"
+        );
     }
 
     #[test]

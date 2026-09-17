@@ -359,7 +359,7 @@ fn quarantine_platform(path: &Path) -> io::Result<()> {
         .unwrap_or_default()
         .as_secs();
     let value = format!(
-        "0083;{timestamp:x};Dispatch;{}",
+        "0083;{timestamp:x};ThreeStrands;{}",
         uuid::Uuid::new_v4().hyphenated()
     );
     xattr::set(path, "com.apple.quarantine", value.as_bytes())
@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn applies_macos_gatekeeper_quarantine() {
         let path =
-            std::env::temp_dir().join(format!("dispatch-quarantine-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("threestrands-quarantine-{}", uuid::Uuid::new_v4()));
         std::fs::write(&path, b"attachment").unwrap();
 
         quarantine(&path).unwrap();
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn applies_freedesktop_download_origin() {
         let path =
-            std::env::temp_dir().join(format!("dispatch-quarantine-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("threestrands-quarantine-{}", uuid::Uuid::new_v4()));
         std::fs::write(&path, b"attachment").unwrap();
 
         quarantine(&path).unwrap();
@@ -521,7 +521,7 @@ mod tests {
         use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
         let path =
-            std::env::temp_dir().join(format!("dispatch-quarantine-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("threestrands-quarantine-{}", uuid::Uuid::new_v4()));
         std::fs::write(&path, b"attachment").unwrap();
 
         quarantine(&path).unwrap();

@@ -17,6 +17,6 @@ set -e
 binary="$1"
 shift
 
-codesign --force --sign "Dispatch Dev Signing" --options runtime "$binary"
+codesign --force --sign "ThreeStrands Dev Signing" --options runtime "$binary"
 
 exec "$binary" "$@"

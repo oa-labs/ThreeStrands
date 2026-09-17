@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("processes the inbox from the keyboard", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
   await page.keyboard.press("s");
   await expect(page.getByRole("button", { name: "Unstar (s)" })).toBeVisible();
@@ -27,11 +27,11 @@ test("keeps an email address popover open while moving to its copy button", asyn
     });
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
   const address = page.locator(".message-sender-row .address").first();
   const popover = address.locator(".address-popover");
-  const copy = address.getByRole("button", { name: "Copy hello@dispatch.local" });
+  const copy = address.getByRole("button", { name: "Copy hello@threestrands.local" });
 
   await address.hover();
   await expect(popover).toBeVisible();
@@ -51,13 +51,13 @@ test("keeps an email address popover open while moving to its copy button", asyn
 
 test("confirms unsubscribe with Cmd/Ctrl+U when the message advertises one-click support", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Unsubscribe (⌘U)" })).toBeVisible();
 
   await page.keyboard.press("ControlOrMeta+u");
   const dialog = page.getByRole("dialog", { name: "Unsubscribe" });
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("dispatch.example");
+  await expect(dialog).toContainText("threestrands.example");
   await expect(dialog).toContainText("one-click request");
 
   await dialog.getByRole("button", { name: "Send one-click request" }).click();
@@ -87,7 +87,7 @@ test("searches and opens the command palette", async ({ page }) => {
 
 test("dismisses search with Escape", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
   await page.keyboard.press("/");
   const search = page.getByRole("textbox", { name: "Search mail" });
   await search.fill("SQLite");
@@ -105,7 +105,7 @@ test("changes the app font size with desktop shortcuts and restores it", async (
 
   await page.keyboard.press("ControlOrMeta+=");
   await expect(messageBody).toHaveCSS("font-size", "16.5px");
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("dispatch.fontScale"))).toBe("110");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("threestrands.fontScale"))).toBe("110");
 
   await page.reload();
   await expect(messageBody).toHaveCSS("font-size", "16.5px");
@@ -118,7 +118,7 @@ test("changes the app font size with desktop shortcuts and restores it", async (
 
 test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
   await page.keyboard.press("Shift+/");
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
@@ -332,7 +332,7 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
 
 test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
   const eyebrow = page.locator(".thread-header .eyebrow");
 
   await page.keyboard.press("g");
@@ -361,12 +361,12 @@ test("opens Superhuman-compatible folder destinations", async ({ page }) => {
 
 test("marks an unread conversation read after the configured delay", async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("dispatch.settings.autoReadDelaySeconds", "60");
+    localStorage.setItem("threestrands.settings.autoReadDelaySeconds", "60");
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
-  const welcome = page.getByRole("option").filter({ hasText: "Welcome to Dispatch" });
+  const welcome = page.getByRole("option").filter({ hasText: "Welcome to ThreeStrands" });
   await expect(welcome.locator(".unread-dot")).toHaveClass(/visible/);
 
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
@@ -386,7 +386,7 @@ test("loads message images according to the privacy setting", async ({ page }) =
     headers: { "access-control-allow-origin": "*" },
   }));
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
   const messageImage = page.frameLocator('[data-testid="message-body"]').locator("img");
   await expect(messageImage).not.toHaveAttribute("src");
@@ -438,7 +438,7 @@ test("archived and trashed threads move between Inbox, All Mail, and Trash", asy
 
 test("shows folder labels and shortcuts on hover", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
   await page.getByRole("button", { name: "Inbox (g then i)" }).hover();
   const inboxTooltip = page.getByRole("tooltip").filter({ hasText: "Inbox" });
@@ -488,7 +488,7 @@ test("resizes the inbox with pointer and keyboard and restores the preferred wid
   await page.mouse.move(bounds.x + bounds.width / 2 + 120, bounds.y + 150);
   await page.mouse.up();
   await expect(page.locator(".thread-column")).toHaveCSS("width", "520px");
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("dispatch.inboxWidth"))).toBe("520");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("threestrands.inboxWidth"))).toBe("520");
   await page.reload();
   await expect(divider).toHaveAttribute("aria-valuenow", "520");
   await divider.focus();

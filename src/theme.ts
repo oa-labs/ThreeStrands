@@ -1,6 +1,6 @@
 export type Theme = "light" | "dark" | "system";
 export type EffectiveTheme = "light" | "dark";
-const storageKey = "dispatch.theme";
+const storageKey = "threestrands.theme";
 
 function systemTheme(): EffectiveTheme {
   return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";

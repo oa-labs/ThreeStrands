@@ -1,6 +1,6 @@
 export type FontFamily = string;
 
-const FONT_FAMILY_KEY = "dispatch.settings.fontFamily";
+const FONT_FAMILY_KEY = "threestrands.settings.fontFamily";
 const MAX_FONT_FAMILY_LENGTH = 200;
 const LEGACY_FONT_FAMILIES: Record<string, FontFamily> = {
   serif: "Georgia",
@@ -37,10 +37,10 @@ export function fontFamilyStack(value: FontFamily): string {
     : `${quoteCssString(value)}, ${SYSTEM_FONT_STACK}`;
 }
 
-const AUTO_READ_DELAY_SECONDS_KEY = "dispatch.settings.autoReadDelaySeconds";
+const AUTO_READ_DELAY_SECONDS_KEY = "threestrands.settings.autoReadDelaySeconds";
 
-const LOAD_REMOTE_IMAGES_KEY = "dispatch.settings.loadRemoteImages";
-const SELECTED_ACCOUNT_ID_KEY = "dispatch.settings.selectedAccountId";
+const LOAD_REMOTE_IMAGES_KEY = "threestrands.settings.loadRemoteImages";
+const SELECTED_ACCOUNT_ID_KEY = "threestrands.settings.selectedAccountId";
 const ALL_ACCOUNTS_VALUE = "all";
 const MAX_ACCOUNT_ID_LENGTH = 320;
 
@@ -126,7 +126,7 @@ export function saveSelectedAccountId(value: string | null): string | null {
   return next;
 }
 
-const SELECTED_TAB_BY_ACCOUNT_KEY = "dispatch.settings.selectedTabByAccount";
+const SELECTED_TAB_BY_ACCOUNT_KEY = "threestrands.settings.selectedTabByAccount";
 const ALL_ACCOUNTS_TAB_KEY = "all";
 const MAX_SPLIT_INBOX_ID_LENGTH = 200;
 

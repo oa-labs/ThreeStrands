@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Dispatch",
-  "version": "0.5.11",
-  "identifier": "app.dispatch.mail",
+  "productName": "ThreeStrands",
+  "version": "0.5.12",
+  "identifier": "app.threestrands.mail",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Dispatch",
+        "title": "ThreeStrands",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
