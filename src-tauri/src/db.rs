@@ -3506,14 +3506,15 @@ mod tests {
             0
         );
         assert_eq!(
-            count("SELECT COUNT(*) FROM sync_recovery_threads WHERE account_id = 'you@gmail.com'"),
+            count(
+                "SELECT COUNT(*) FROM sync_recovery_threads WHERE account_id = 'you@gmail.com'"
+            ),
             0
         );
         assert_eq!(
             count("SELECT COUNT(*) FROM quarantined_messages WHERE account_id = 'you@gmail.com'"),
             0
         );
-        assert!(database.get_account("you@gmail.com").unwrap().is_none());
 
         assert_eq!(
             count("SELECT COUNT(*) FROM mutations WHERE account_id = 'other@gmail.com'"),
@@ -3532,13 +3533,18 @@ mod tests {
             1
         );
         assert_eq!(
-            count("SELECT COUNT(*) FROM sync_recovery_threads WHERE account_id = 'other@gmail.com'"),
+            count(
+                "SELECT COUNT(*) FROM sync_recovery_threads WHERE account_id = 'other@gmail.com'"
+            ),
             1
         );
         assert_eq!(
             count("SELECT COUNT(*) FROM quarantined_messages WHERE account_id = 'other@gmail.com'"),
             1
         );
+        drop(connection);
+
+        assert!(database.get_account("you@gmail.com").unwrap().is_none());
         assert!(database.get_account("other@gmail.com").unwrap().is_some());
     }
 
