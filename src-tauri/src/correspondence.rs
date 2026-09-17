@@ -1334,8 +1334,10 @@ mod tests {
         assert!(db.cancel_send(&item.id, false).is_err());
     }
     #[test]
-    fn pausing_ready_sends_for_one_account_never_touches_another_accounts_outbox() {
+    fn staging_removal_for_one_account_never_touches_another_accounts_outbox() {
         let db = database();
+        db.adopt_account("you@example.com").unwrap();
+        db.adopt_account("other@example.com").unwrap();
         let a = saved(&db);
         let item_a = db.queue(&a.id, a.revision, Path::new("/unused")).unwrap();
 
@@ -1343,7 +1345,7 @@ mod tests {
         let b = saved(&db);
         let item_b = db.queue(&b.id, b.revision, Path::new("/unused")).unwrap();
 
-        db.pause_ready_sends_for("you@example.com").unwrap();
+        db.mark_account_removal_pending("you@example.com").unwrap();
 
         let outbox = db.outbox().unwrap();
         let state_of = |id: &str| outbox.iter().find(|o| o.id == id).unwrap().state.clone();
