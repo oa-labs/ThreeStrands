@@ -123,6 +123,10 @@ struct AppState {
     /// that rekeys onto the real address on first connect otherwise.
     auth: Option<GoogleAuth>,
     sync: Option<SyncService>,
+    /// Abort handle for the primary account's polling loop. Kept separately
+    /// from `sync` so staged removal can stop provider work before changing
+    /// the durable account state.
+    primary_poll_task: Arc<std::sync::Mutex<Option<JoinHandle<()>>>>,
     /// Every other connected account, keyed by email — each with its own
     /// sync cursor and polling loop, independent of the primary and of each
     /// other. Populated at startup from the `accounts` table and by
@@ -259,6 +263,115 @@ fn spawn_synced_account(database: Arc<Database>, auth: GoogleAuth) -> ConnectedA
         service.polling_loop().await;
     });
     ConnectedAccount { auth, poll_task }
+}
+
+fn complete_pending_account_removal(
+    database: &Database,
+    email: &str,
+    delete_credentials: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    delete_credentials()?;
+    database.remove_account(email)
+}
+
+fn recover_pending_account_removals_with(
+    database: &Database,
+    mut delete_credentials: impl FnMut(&str) -> Result<(), String>,
+) {
+    let Ok(emails) = database.pending_account_removals() else {
+        return;
+    };
+    for email in emails {
+        let _ = complete_pending_account_removal(database, &email, || delete_credentials(&email));
+    }
+}
+
+#[cfg(test)]
+mod account_removal_tests {
+    use super::{complete_pending_account_removal, recover_pending_account_removals_with};
+    use crate::db::Database;
+    use uuid::Uuid;
+
+    #[test]
+    fn credential_failure_leaves_mail_and_a_pending_tombstone() {
+        let database = Database::open_memory();
+        database.adopt_account("you@example.com").unwrap();
+        let thread_count = database
+            .list_threads(Some("you@example.com"))
+            .unwrap()
+            .len();
+
+        database
+            .mark_account_removal_pending("you@example.com")
+            .unwrap();
+        let result = complete_pending_account_removal(&database, "you@example.com", || {
+            Err("keychain unavailable".into())
+        });
+
+        assert_eq!(result.unwrap_err(), "keychain unavailable");
+        assert_eq!(
+            database
+                .get_account("you@example.com")
+                .unwrap()
+                .unwrap()
+                .status,
+            "removal_pending"
+        );
+        assert_eq!(
+            database
+                .list_threads(Some("you@example.com"))
+                .unwrap()
+                .len(),
+            thread_count,
+            "local mail must not be purged before credential deletion succeeds"
+        );
+    }
+
+    #[test]
+    fn pending_removal_can_retry_after_keychain_recovers() {
+        let database = Database::open_memory();
+        database.adopt_account("you@example.com").unwrap();
+        database
+            .mark_account_removal_pending("you@example.com")
+            .unwrap();
+        let _ = complete_pending_account_removal(&database, "you@example.com", || {
+            Err("keychain unavailable".into())
+        });
+
+        complete_pending_account_removal(&database, "you@example.com", || Ok(())).unwrap();
+
+        assert!(database.get_account("you@example.com").unwrap().is_none());
+    }
+
+    #[test]
+    fn restart_recovery_finishes_a_pending_removal() {
+        let path = std::env::temp_dir().join(format!("dispatch-removal-{}.sqlite", Uuid::new_v4()));
+        {
+            let database = Database::open(&path).unwrap();
+            database.adopt_account("you@example.com").unwrap();
+            database
+                .mark_account_removal_pending("you@example.com")
+                .unwrap();
+        }
+
+        let reopened = Database::open(&path).unwrap();
+        let mut deleted = Vec::new();
+        recover_pending_account_removals_with(&reopened, |email| {
+            deleted.push(email.to_string());
+            Ok(())
+        });
+
+        assert_eq!(deleted, ["you@example.com"]);
+        assert!(reopened.get_account("you@example.com").unwrap().is_none());
+        drop(reopened);
+        for candidate in [
+            path.clone(),
+            std::path::PathBuf::from(format!("{}-shm", path.display())),
+            std::path::PathBuf::from(format!("{}-wal", path.display())),
+        ] {
+            let _ = std::fs::remove_file(candidate);
+        }
+    }
 }
 
 #[tauri::command]
@@ -714,21 +827,24 @@ async fn add_account(state: State<'_, AppState>) -> Result<Account, String> {
 async fn remove_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
     let _guard = state.correspondence.gate.lock().await;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
-    state.database.pause_ready_sends_for(&email)?;
-    // Purge local data first: if this fails, the account is untouched and
-    // its credentials are still live, so the caller can safely retry rather
-    // than being left with a still-listed account whose credentials are
-    // already gone.
-    state.database.remove_account(&email)?;
     let removed = state.additional_accounts.lock().await.remove(&email);
-    match (&state.auth, removed) {
-        (Some(primary), _) if primary.key() == email => primary.disconnect(),
+    let auth = match (&state.auth, removed) {
+        (Some(primary), _) if primary.key() == email => {
+            if let Ok(mut task) = state.primary_poll_task.lock() {
+                if let Some(task) = task.take() {
+                    task.abort();
+                }
+            }
+            primary.clone()
+        }
         (_, Some(connected)) => {
             connected.poll_task.abort();
-            connected.auth.disconnect()
+            connected.auth
         }
-        _ => config.account(&email).disconnect(),
-    }
+        _ => config.account(&email),
+    };
+    state.database.mark_account_removal_pending(&email)?;
+    complete_pending_account_removal(&state.database, &email, || auth.disconnect())
 }
 
 #[tauri::command]
@@ -830,7 +946,9 @@ fn update_split_inbox(
     request: UpdateSplitInboxRequest,
     state: State<'_, AppState>,
 ) -> Result<SplitInbox, String> {
-    state.database.update_split_inbox(&request.id, &request.name)
+    state
+        .database
+        .update_split_inbox(&request.id, &request.name)
 }
 
 #[tauri::command]
@@ -850,7 +968,9 @@ fn list_split_inbox_page(
     limit: usize,
     state: State<'_, AppState>,
 ) -> Result<ThreadPage, String> {
-    state.database.list_split_inbox_page(&split_inbox_id, offset, limit)
+    state
+        .database
+        .list_split_inbox_page(&split_inbox_id, offset, limit)
 }
 
 #[tauri::command]
@@ -1087,6 +1207,14 @@ pub fn run() {
                 }
             }
             let auth_config = GoogleAuthConfig::from_environment().ok();
+            if let Some(config) = &auth_config {
+                // Finish any removal interrupted after its durable tombstone
+                // was committed. A keychain failure leaves the tombstone in
+                // place for another launch or an explicit user retry.
+                recover_pending_account_removals_with(&database, |email| {
+                    config.account(email).disconnect()
+                });
+            }
             // The primary account, used by the single sync loop and
             // correspondence pipeline. Any run after the first already has
             // it in the `accounts` table (rekeyed onto its real address by a
@@ -1094,10 +1222,11 @@ pub fn run() {
             // than restarting at the placeholder key each launch — that
             // placeholder only applies before the very first successful
             // connect/migration.
-            let existing_primary = database
-                .list_accounts()
-                .ok()
-                .and_then(|accounts| accounts.into_iter().next());
+            let existing_primary = database.list_accounts().ok().and_then(|accounts| {
+                accounts
+                    .into_iter()
+                    .find(|account| account.status != "removal_pending")
+            });
             let auth = auth_config.as_ref().map(|config| match &existing_primary {
                 Some(account) => config.account(&account.email),
                 None => config.legacy_account(),
@@ -1105,13 +1234,15 @@ pub fn run() {
             let sync = auth
                 .as_ref()
                 .map(|auth| SyncService::new(database.clone(), auth.clone()));
+            let primary_poll_task = Arc::new(std::sync::Mutex::new(None));
             if let Some(service) = sync.clone() {
-                tauri::async_runtime::spawn(async move {
+                let task = tauri::async_runtime::spawn(async move {
                     if service.is_connected() {
                         let _ = service.sync().await;
                     }
                     service.polling_loop().await;
                 });
+                *primary_poll_task.lock().unwrap() = Some(task);
             }
             {
                 let database = database.clone();
@@ -1214,6 +1345,9 @@ pub fn run() {
                         let primary_email = worker.primary.as_ref().map(GoogleAuth::key);
                         if let Ok(accounts) = database.list_accounts() {
                             for account in accounts {
+                                if account.status == "removal_pending" {
+                                    continue;
+                                }
                                 if Some(&account.email) == primary_email.as_ref() {
                                     continue;
                                 }
@@ -1236,6 +1370,7 @@ pub fn run() {
                 auth_config,
                 auth,
                 sync,
+                primary_poll_task,
                 additional_accounts,
                 correspondence,
                 authorize_slot: AuthorizeSlot::default(),
