@@ -18,6 +18,14 @@ use crate::{
 pub const MIN_POLL_INTERVAL: Duration = Duration::from_secs(15);
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(300);
 
+/// How often the background poll loop re-derives inbox membership from
+/// Gmail's live INBOX listing, independent of history-based incremental
+/// sync. History sync can miss a label change reaching us — e.g. Gmail-side
+/// propagation lag on a change made outside Dispatch — and nothing else
+/// self-heals that short of a historyId 404. This is a safety net, not the
+/// primary sync path, so it runs rarely.
+const RECONCILE_INTERVAL_SECS: i64 = 6 * 60 * 60;
+
 #[derive(Clone)]
 pub struct SyncService {
     database: Arc<Database>,
@@ -149,7 +157,27 @@ impl SyncService {
                 .map(|status| status.pending_mutations)
                 .unwrap_or_default();
             delay = next_poll_delay(delay, before, self.sync_provider().await);
+            self.reconcile_if_due().await;
         }
+    }
+
+    /// Best-effort periodic reconciliation; see [`RECONCILE_INTERVAL_SECS`].
+    /// Failures are swallowed (and simply retried after the next interval)
+    /// since this runs alongside the primary sync path, which already
+    /// surfaces its own errors.
+    async fn reconcile_if_due(&self) {
+        let account_id = self.account_id();
+        let due = self
+            .database
+            .reconciliation_due(&account_id, RECONCILE_INTERVAL_SECS)
+            .unwrap_or(false);
+        if !due {
+            return;
+        }
+        let _guard = self.gate.lock().await;
+        let provider = GmailClient::new(self.auth.clone());
+        let _ = reconcile_inbox(self.database.as_ref(), &account_id, &provider).await;
+        let _ = self.database.mark_reconciled(&account_id);
     }
 }
 
@@ -267,6 +295,42 @@ async fn incremental_sync(
     database
         .finish_sync(account_id, &final_cursor)
         .map_err(ProviderError::Other)
+}
+
+/// Diffs Gmail's current INBOX thread listing against what's cached
+/// locally and re-ingests only the threads that drifted, correcting their
+/// labels/archived state. Unlike [`full_sync`], this never wipes the local
+/// cache, so it's safe to run on a timer without disturbing Archive/All
+/// Mail/Trash views (which `full_sync`'s INBOX-only relist would otherwise
+/// leave empty until independently touched again).
+async fn reconcile_inbox(
+    database: &Database,
+    account_id: &str,
+    provider: &(impl GmailProvider + ?Sized),
+) -> ProviderResult<()> {
+    let mut page = None;
+    let mut server_inbox_ids = HashSet::new();
+    loop {
+        let result = provider.list_threads(page.as_deref()).await?;
+        server_inbox_ids.extend(result.thread_ids);
+        page = result.next_page_token;
+        if page.is_none() {
+            break;
+        }
+    }
+    let local_inbox_ids: HashSet<String> = database
+        .local_inbox_provider_thread_ids(account_id)
+        .map_err(ProviderError::Other)?
+        .into_iter()
+        .collect();
+    let drifted: Vec<String> = server_inbox_ids
+        .symmetric_difference(&local_inbox_ids)
+        .cloned()
+        .collect();
+    if drifted.is_empty() {
+        return Ok(());
+    }
+    ingest_threads(database, account_id, provider, drifted).await
 }
 
 async fn ingest_threads(
@@ -889,6 +953,158 @@ mod tests {
             .unwrap();
         assert_eq!(provider.modifies.load(Ordering::SeqCst), 0);
         assert_eq!(provider.full_lists.load(Ordering::SeqCst), 0);
+    }
+
+    struct ReconcileProvider {
+        inbox_ids: Vec<String>,
+        threads: std::collections::HashMap<String, GmailMessage>,
+    }
+
+    #[async_trait]
+    impl GmailProvider for ReconcileProvider {
+        async fn profile_history_id(&self) -> ProviderResult<String> {
+            unreachable!()
+        }
+
+        async fn list_threads(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
+            assert!(page.is_none());
+            Ok(ThreadPage {
+                thread_ids: self.inbox_ids.clone(),
+                next_page_token: None,
+            })
+        }
+
+        async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>> {
+            Ok(vec![self
+                .threads
+                .get(id)
+                .unwrap_or_else(|| panic!("unexpected thread id: {id}"))
+                .clone()])
+        }
+
+        async fn history(&self, _cursor: &str, _page: Option<&str>) -> ProviderResult<HistoryPage> {
+            unreachable!()
+        }
+
+        async fn modify_thread(
+            &self,
+            _id: &str,
+            _add: &[String],
+            _remove: &[String],
+        ) -> ProviderResult<()> {
+            unreachable!()
+        }
+
+        async fn modify_messages(
+            &self,
+            _ids: &[String],
+            _add: &[String],
+            _remove: &[String],
+        ) -> ProviderResult<()> {
+            unreachable!()
+        }
+
+        async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
+            unreachable!()
+        }
+
+        async fn create_label(&self, _name: &str) -> ProviderResult<Label> {
+            unreachable!()
+        }
+
+        async fn update_label(&self, _id: &str, _name: &str) -> ProviderResult<Label> {
+            unreachable!()
+        }
+
+        async fn delete_label(&self, _id: &str) -> ProviderResult<()> {
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn reconcile_inbox_corrects_drift_without_touching_undrifted_threads() {
+        // A distinct account id so the demo threads `Database::open_memory`
+        // seeds under "default" don't factor into the inbox diff.
+        let account = "acct";
+        let database = Database::open_memory();
+
+        // Locally archived, but Gmail's live INBOX listing says it's back —
+        // the exact scenario a missed/delayed label change produces.
+        let mut restored = ContractProvider::message();
+        restored.id = "restored-message".into();
+        restored.thread_id = "restored-thread".into();
+        database
+            .upsert_gmail_thread(account, &[crate::mime::normalize(&restored).unwrap()])
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: format!("{account}:restored-thread"),
+                value: true,
+            })
+            .unwrap();
+
+        // Locally still shown as inbox, but Gmail no longer lists it there.
+        let mut orphaned = ContractProvider::message();
+        orphaned.id = "orphaned-message".into();
+        orphaned.thread_id = "orphaned-thread".into();
+        database
+            .upsert_gmail_thread(account, &[crate::mime::normalize(&orphaned).unwrap()])
+            .unwrap();
+
+        // Untouched by drift: stays archived, and reconcile must never fetch it.
+        let mut settled = ContractProvider::message();
+        settled.id = "settled-message".into();
+        settled.thread_id = "settled-thread".into();
+        settled.label_ids = vec![];
+        database
+            .upsert_gmail_thread(account, &[crate::mime::normalize(&settled).unwrap()])
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: format!("{account}:settled-thread"),
+                value: true,
+            })
+            .unwrap();
+
+        assert!(
+            database
+                .list_all_mail(Some(account))
+                .unwrap()
+                .iter()
+                .find(|thread| thread.id == format!("{account}:restored-thread"))
+                .unwrap()
+                .archived
+        );
+
+        let mut server_orphaned = ContractProvider::message();
+        server_orphaned.id = "orphaned-message".into();
+        server_orphaned.thread_id = "orphaned-thread".into();
+        server_orphaned.label_ids = vec![];
+
+        let provider = ReconcileProvider {
+            inbox_ids: vec!["restored-thread".into()],
+            threads: [
+                ("restored-thread".to_string(), restored),
+                ("orphaned-thread".to_string(), server_orphaned),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        reconcile_inbox(&database, account, &provider).await.unwrap();
+
+        let threads = database.list_all_mail(Some(account)).unwrap();
+        let restored = threads
+            .iter()
+            .find(|thread| thread.id == format!("{account}:restored-thread"))
+            .unwrap();
+        assert!(!restored.archived, "drifted-back thread must be un-archived");
+
+        let orphaned = threads
+            .iter()
+            .find(|thread| thread.id == format!("{account}:orphaned-thread"))
+            .unwrap();
+        assert!(orphaned.archived, "drifted-away thread must be archived");
     }
 
     #[tokio::test]

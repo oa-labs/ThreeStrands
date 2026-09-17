@@ -1118,6 +1118,47 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
+    /// Whether it's been at least `interval_secs` since this account's last
+    /// inbox reconciliation pass (or one has never run).
+    pub fn reconciliation_due(&self, account_id: &str, interval_secs: i64) -> Result<bool, String> {
+        self.connection()?
+            .query_row(
+                "SELECT last_reconciled_at IS NULL
+                    OR (strftime('%s', 'now') - strftime('%s', last_reconciled_at)) >= ?2
+                 FROM sync_state WHERE account_id = ?1",
+                params![account_id, interval_secs],
+                |row| row.get(0),
+            )
+            .map_err(display_error)
+    }
+
+    pub fn mark_reconciled(&self, account_id: &str) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "UPDATE sync_state SET last_reconciled_at = ?1 WHERE account_id = ?2",
+                params![Utc::now().to_rfc3339(), account_id],
+            )
+            .map(|_| ())
+            .map_err(display_error)
+    }
+
+    /// Gmail thread ids this account currently caches as inbox mail (not
+    /// archived), for diffing against Gmail's live INBOX listing.
+    pub fn local_inbox_provider_thread_ids(&self, account_id: &str) -> Result<Vec<String>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT provider_thread_id FROM threads WHERE account_id = ?1 AND archived = 0",
+            )
+            .map_err(display_error)?;
+        let ids = statement
+            .query_map([account_id], |row| row.get(0))
+            .map_err(display_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(display_error)?;
+        Ok(ids)
+    }
+
     pub fn delete_gmail_thread(
         &self,
         account_id: &str,

@@ -336,6 +336,13 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 15 {
+        tx.execute_batch(
+            "ALTER TABLE sync_state ADD COLUMN last_reconciled_at TEXT;
+            PRAGMA user_version=15;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
