@@ -130,6 +130,7 @@ const status: SyncStatus = {
   lastSuccessfulSync: null,
   cursor: "demo",
   pendingMutations: 0,
+  failedMutations: [],
   error: null,
 };
 

@@ -262,11 +262,23 @@ impl ThreadMutation {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FailedMutation {
+    pub id: String,
+    pub kind: String,
+    pub thread_id: String,
+    pub attempts: i64,
+    pub error: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncStatus {
     pub state: &'static str,
     pub last_successful_sync: Option<String>,
     pub cursor: Option<String>,
     pub pending_mutations: i64,
+    pub failed_mutations: Vec<FailedMutation>,
     pub error: Option<String>,
 }
 

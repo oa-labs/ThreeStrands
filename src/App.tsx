@@ -1645,6 +1645,18 @@ export function App() {
           >
             <RefreshCw size={19} className={syncStatus?.state === "syncing" ? "spin" : ""} />
           </button>
+          {(syncStatus?.failedMutations?.length ?? 0) > 0 ? (
+            <button
+              className="nav-button mutation-failure-button"
+              aria-label={`${syncStatus!.failedMutations.length} permanently failed mailbox ${
+                syncStatus!.failedMutations.length === 1 ? "operation" : "operations"
+              }`}
+              title="Mailbox operations need attention"
+              onClick={() => setDiagnosticsOpen(true)}
+            >
+              <AlertCircle size={19} />
+            </button>
+          ) : null}
           <button
             className="nav-button"
             aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
@@ -2947,7 +2959,7 @@ function ShortcutKeys({ shortcut }: { shortcut: string }) {
   );
 }
 
-function Diagnostics({
+export function Diagnostics({
   status,
   onClose,
 }: {
@@ -2962,6 +2974,25 @@ function Diagnostics({
         <dd>{status?.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Never"}</dd>
         <dt>History cursor</dt><dd>{status?.cursor ?? "Not initialized"}</dd>
         <dt>Pending mutations</dt><dd>{status?.pendingMutations ?? 0}</dd>
+        <dt>Permanently failed operations</dt>
+        <dd>
+          {status?.failedMutations?.length ? (
+            <ul className="failed-mutations">
+              {status.failedMutations.map((mutation) => (
+                <li key={mutation.id}>
+                  <strong>{mutation.kind}</strong>
+                  {" · "}
+                  {mutation.error}
+                  <small>
+                    {mutation.attempts} {mutation.attempts === 1 ? "attempt" : "attempts"}
+                    {" · "}
+                    {new Date(mutation.createdAt).toLocaleString()}
+                  </small>
+                </li>
+              ))}
+            </ul>
+          ) : "None"}
+        </dd>
         <dt>Last error</dt><dd>{status?.error ?? "None"}</dd>
       </dl>
     </Modal>
