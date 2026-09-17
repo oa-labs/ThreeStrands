@@ -975,9 +975,7 @@ fn update_split_inbox(
     request: UpdateSplitInboxRequest,
     state: State<'_, AppState>,
 ) -> Result<SplitInbox, String> {
-    state
-        .database
-        .update_split_inbox(&request.id, &request.name)
+    state.database.update_split_inbox(&request.id, &request.name)
 }
 
 #[tauri::command]
@@ -997,9 +995,7 @@ fn list_split_inbox_page(
     limit: usize,
     state: State<'_, AppState>,
 ) -> Result<ThreadPage, String> {
-    state
-        .database
-        .list_split_inbox_page(&split_inbox_id, offset, limit)
+    state.database.list_split_inbox_page(&split_inbox_id, offset, limit)
 }
 
 #[tauri::command]
