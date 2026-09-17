@@ -345,11 +345,26 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
     }
     if version < 16 {
         tx.execute_batch(
+            "CREATE TABLE sync_recovery (
+                account_id TEXT PRIMARY KEY,
+                history_id TEXT NOT NULL
+            );
+            CREATE TABLE sync_recovery_threads (
+                account_id TEXT NOT NULL,
+                provider_thread_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, provider_thread_id)
+            );
+            PRAGMA user_version=16;",
+        )
+        .map_err(error)?;
+    }
+    if version < 17 {
+        tx.execute_batch(
             "ALTER TABLE mutations ADD COLUMN next_attempt_at TEXT;
             DROP INDEX IF EXISTS mutations_pending;
             CREATE INDEX mutations_pending
                 ON mutations(state, next_attempt_at, created_at);
-            PRAGMA user_version=16;",
+            PRAGMA user_version=17;",
         )
         .map_err(error)?;
     }
