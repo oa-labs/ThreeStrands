@@ -166,6 +166,7 @@ button { color: inherit; }
 }
 .nav-button:hover, .icon-button:hover { background: var(--hover); }
 .nav-button.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--accent); }
+.nav-button.mutation-failure-button { color: var(--error); }
 
 .tooltip-anchor {
   position: relative;
@@ -985,6 +986,9 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .diagnostics { display: grid; grid-template-columns: 1fr 1.5fr; gap: 10px 20px; padding: 10px 20px 24px; font-size: calc(13px * var(--font-scale)); }
 .diagnostics dt { color: var(--muted); }
 .diagnostics dd { margin: 0; overflow-wrap: anywhere; }
+.failed-mutations { margin: 0; padding: 0; list-style: none; }
+.failed-mutations li + li { margin-top: 10px; }
+.failed-mutations small { display: block; color: var(--muted); margin-top: 2px; }
 .reporting-settings { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 0 20px 20px; padding-top: 14px; border-top: 1px solid var(--border); font-size: calc(12px * var(--font-scale)); }
 .reporting-settings label { display: flex; align-items: center; gap: 8px; font-size: calc(13px * var(--font-scale)); }
 .reporting-settings span { color: var(--muted); }

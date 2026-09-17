@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chrono::{Duration as ChronoDuration, Utc};
 use rand::Rng;
 use tokio::sync::Mutex;
 
@@ -18,6 +19,8 @@ use crate::{
 /// Floor used by adaptive polling and by resume/foreground catch-up.
 pub const MIN_POLL_INTERVAL: Duration = Duration::from_secs(15);
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(300);
+const MUTATION_RETRY_BASE_SECS: i64 = 30;
+const MUTATION_RETRY_MAX_SECS: i64 = 60 * 60;
 
 /// How often the background poll loop re-derives inbox membership from
 /// Gmail's live INBOX listing, independent of history-based incremental
@@ -195,7 +198,7 @@ fn next_poll_delay(
     match result {
         Ok(status) if pending_before > 0 || status.pending_mutations > 0 => MIN_POLL_INTERVAL,
         Ok(_) => (current * 2).min(MAX_POLL_INTERVAL),
-        Err(ProviderError::RateLimited) => MAX_POLL_INTERVAL,
+        Err(ProviderError::RetryableServer(_)) => MAX_POLL_INTERVAL,
         Err(_) => Duration::from_secs(60),
     }
 }
@@ -457,14 +460,10 @@ async fn deliver_mutations(
                     match mutation.target_message_id.as_ref() {
                         Some(message_id) => {
                             provider
-                                .modify_messages(
-                                    std::slice::from_ref(message_id),
-                                    &add,
-                                    &remove,
-                                )
+                                .modify_messages(std::slice::from_ref(message_id), &add, &remove)
                                 .await
                         }
-                        None => Err(ProviderError::Other(
+                        None => Err(ProviderError::InvalidOperation(
                             "Mutation target message is unavailable".into(),
                         )),
                     }
@@ -483,16 +482,17 @@ async fn deliver_mutations(
                             .map_err(ProviderError::Other)?;
                     }
                 }
-                Err(error @ ProviderError::RateLimited) => {
+                Err(error) if error.retry_mutation() => {
                     // Every mutation still claimed in this batch — not just
-                    // the group that hit the limit — must go back to
-                    // `pending`. Anything left `running` here would
+                    // the group that hit the temporary failure — must go back
+                    // to `pending` with a durable retry time. Anything left `running` here would
                     // otherwise sit unclaimed and undelivered until the next
                     // app restart, since only startup recovery clears stuck
                     // `running` rows.
                     for item in &mutations[index..] {
+                        let next_attempt_at = mutation_next_attempt_at(item.attempts);
                         database
-                            .reject_mutation(&item.id, &error.to_string(), true)
+                            .reject_mutation(&item.id, &error.to_string(), Some(&next_attempt_at))
                             .map_err(ProviderError::Other)?;
                     }
                     return Err(error);
@@ -500,7 +500,7 @@ async fn deliver_mutations(
                 Err(error) => {
                     for item in &mutations[index..batch_end] {
                         database
-                            .reject_mutation(&item.id, &error.to_string(), false)
+                            .reject_mutation(&item.id, &error.to_string(), None)
                             .map_err(ProviderError::Other)?;
                     }
                 }
@@ -508,6 +508,18 @@ async fn deliver_mutations(
             index = batch_end;
         }
     }
+}
+
+fn mutation_next_attempt_at(attempts: u32) -> String {
+    let delay = mutation_retry_delay_secs(attempts);
+    (Utc::now() + ChronoDuration::seconds(delay)).to_rfc3339()
+}
+
+fn mutation_retry_delay_secs(attempts: u32) -> i64 {
+    let exponent = attempts.saturating_sub(1).min(16);
+    MUTATION_RETRY_BASE_SECS
+        .saturating_mul(1_i64 << exponent)
+        .min(MUTATION_RETRY_MAX_SECS)
 }
 
 fn mutation_labels(mutation: &PendingMutation) -> (Vec<String>, Vec<String>) {
@@ -567,6 +579,7 @@ mod tests {
         modifies: AtomicUsize,
         message_modifies: StdMutex<Vec<(Vec<String>, Vec<String>, Vec<String>)>>,
         fail_mutation: bool,
+        permanently_fail_mutation: bool,
     }
 
     impl ContractProvider {
@@ -577,6 +590,7 @@ mod tests {
                 modifies: AtomicUsize::new(0),
                 message_modifies: StdMutex::new(vec![]),
                 fail_mutation: false,
+                permanently_fail_mutation: false,
             }
         }
 
@@ -654,8 +668,12 @@ mod tests {
             _remove: &[String],
         ) -> ProviderResult<()> {
             self.modifies.fetch_add(1, Ordering::SeqCst);
-            if self.fail_mutation {
-                Err(ProviderError::RateLimited)
+            if self.permanently_fail_mutation {
+                Err(ProviderError::PermanentClientRejection(
+                    "invalid label".into(),
+                ))
+            } else if self.fail_mutation {
+                Err(ProviderError::RetryableServer("rate limited".into()))
             } else {
                 Ok(())
             }
@@ -673,8 +691,12 @@ mod tests {
                 add.to_vec(),
                 remove.to_vec(),
             ));
-            if self.fail_mutation {
-                Err(ProviderError::RateLimited)
+            if self.permanently_fail_mutation {
+                Err(ProviderError::PermanentClientRejection(
+                    "invalid label".into(),
+                ))
+            } else if self.fail_mutation {
+                Err(ProviderError::RetryableServer("rate limited".into()))
             } else {
                 Ok(())
             }
@@ -700,7 +722,11 @@ mod tests {
     #[test]
     fn polling_backoff_uses_structured_rate_limit_classification() {
         assert_eq!(
-            next_poll_delay(MIN_POLL_INTERVAL, 0, Err(ProviderError::RateLimited),),
+            next_poll_delay(
+                MIN_POLL_INTERVAL,
+                0,
+                Err(ProviderError::RetryableServer("rate limited".into())),
+            ),
             MAX_POLL_INTERVAL
         );
         assert_eq!(
@@ -762,12 +788,47 @@ mod tests {
         };
         assert!(matches!(
             sync_with(&database, "default", &provider).await,
-            Err(ProviderError::RateLimited)
+            Err(ProviderError::RetryableServer(_))
         ));
         assert_eq!(
             database.sync_status("default").unwrap().pending_mutations,
             1
         );
+        assert!(
+            database.claim_mutations("default", 10).unwrap().is_empty(),
+            "a retry must not be claimable before its persisted next_attempt_at"
+        );
+    }
+
+    #[test]
+    fn mutation_backoff_is_exponential_and_bounded() {
+        assert_eq!(mutation_retry_delay_secs(1), 30);
+        assert_eq!(mutation_retry_delay_secs(2), 60);
+        assert_eq!(mutation_retry_delay_secs(8), 3_600);
+        assert_eq!(mutation_retry_delay_secs(u32::MAX), 3_600);
+    }
+
+    #[tokio::test]
+    async fn permanent_mutation_failure_is_exposed_by_sync_status() {
+        let database = Database::open_memory();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+        let provider = ContractProvider {
+            permanently_fail_mutation: true,
+            ..ContractProvider::normal()
+        };
+
+        sync_with(&database, "default", &provider).await.unwrap();
+
+        let status = database.sync_status("default").unwrap();
+        assert_eq!(status.pending_mutations, 0);
+        assert_eq!(status.failed_mutations.len(), 1);
+        assert_eq!(status.failed_mutations[0].kind, "archive");
+        assert!(status.failed_mutations[0].error.contains("invalid label"));
     }
 
     #[tokio::test]
@@ -802,7 +863,7 @@ mod tests {
         };
         assert!(matches!(
             sync_with(&database, "default", &provider).await,
-            Err(ProviderError::RateLimited)
+            Err(ProviderError::RetryableServer(_))
         ));
         assert_eq!(
             database.sync_status("default").unwrap().pending_mutations,
@@ -817,6 +878,7 @@ mod tests {
             id: "m1".into(),
             provider_thread_id: "gmail-thread".into(),
             target_message_id: None,
+            attempts: 1,
             mutation: ThreadMutation::Trash {
                 thread_id: "welcome".into(),
                 value: true,
@@ -834,6 +896,7 @@ mod tests {
             id: "m1".into(),
             provider_thread_id: "gmail-thread".into(),
             target_message_id: None,
+            attempts: 1,
             mutation: ThreadMutation::Trash {
                 thread_id: "welcome".into(),
                 value: false,
@@ -851,6 +914,7 @@ mod tests {
             id: "m1".into(),
             provider_thread_id: "gmail-thread".into(),
             target_message_id: None,
+            attempts: 1,
             mutation: ThreadMutation::Spam {
                 thread_id: "welcome".into(),
                 value: true,
@@ -868,6 +932,7 @@ mod tests {
             id: "m1".into(),
             provider_thread_id: "gmail-thread".into(),
             target_message_id: None,
+            attempts: 1,
             mutation: ThreadMutation::Spam {
                 thread_id: "welcome".into(),
                 value: false,
@@ -1079,7 +1144,7 @@ mod tests {
             let mut fail_thread = self.fail_thread_once.lock().unwrap();
             if fail_thread.as_deref() == Some(id) {
                 fail_thread.take();
-                return Err(ProviderError::RateLimited);
+                return Err(ProviderError::RetryableServer("rate limited".into()));
             }
             drop(fail_thread);
             Ok(vec![self
@@ -1336,7 +1401,7 @@ mod tests {
 
         assert!(matches!(
             sync_with(&database, account, &provider).await,
-            Err(ProviderError::RateLimited)
+            Err(ProviderError::RetryableServer(_))
         ));
         assert_eq!(provider.list_calls.load(Ordering::SeqCst), 1);
         assert_eq!(

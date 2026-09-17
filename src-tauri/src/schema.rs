@@ -358,6 +358,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 17 {
+        tx.execute_batch(
+            "ALTER TABLE mutations ADD COLUMN next_attempt_at TEXT;
+            DROP INDEX IF EXISTS mutations_pending;
+            CREATE INDEX mutations_pending
+                ON mutations(state, next_attempt_at, created_at);
+            PRAGMA user_version=17;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;

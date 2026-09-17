@@ -10,9 +10,10 @@ use uuid::Uuid;
 
 use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
-    Account, ContactSuggestion, MailboxUnreadCounts, Message, SearchThreadsRequest, SplitInbox,
-    SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageAction, TriageContext,
-    TriageEvent, TriageEventKind, TriageSenderStats, UnsubscribeMethod, UnsubscribeTarget,
+    Account, ContactSuggestion, FailedMutation, MailboxUnreadCounts, Message, SearchThreadsRequest,
+    SplitInbox, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageAction,
+    TriageContext, TriageEvent, TriageEventKind, TriageSenderStats, UnsubscribeMethod,
+    UnsubscribeTarget,
 };
 use crate::transfer::{TransferAccount, TransferSplitInbox};
 
@@ -35,6 +36,7 @@ pub struct PendingMutation {
     pub provider_thread_id: String,
     pub target_message_id: Option<String>,
     pub mutation: ThreadMutation,
+    pub attempts: u32,
 }
 
 /// `threads.id`, derived from the pair that's actually unique: Gmail thread
@@ -1042,11 +1044,38 @@ impl Database {
                 |row| row.get(0),
             )
             .map_err(display_error)?;
+        let failed_mutations = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, kind, thread_id, attempts,
+                            COALESCE(last_error, 'Unknown failure'), created_at
+                     FROM mutations
+                     WHERE state = 'failed' AND account_id = ?1
+                     ORDER BY created_at DESC",
+                )
+                .map_err(display_error)?;
+            let failed = statement
+                .query_map([account_id], |row| {
+                    Ok(FailedMutation {
+                        id: row.get(0)?,
+                        kind: row.get(1)?,
+                        thread_id: row.get(2)?,
+                        attempts: row.get(3)?,
+                        error: row.get(4)?,
+                        created_at: row.get(5)?,
+                    })
+                })
+                .map_err(display_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(display_error)?;
+            failed
+        };
         Ok(SyncStatus {
             state: if error.is_some() { "error" } else { "idle" },
             last_successful_sync,
             cursor,
             pending_mutations,
+            failed_mutations,
             error,
         })
     }
@@ -1613,26 +1642,32 @@ impl Database {
         let (claimable, orphaned) = {
             let mut statement = transaction
                 .prepare(
-                    "SELECT m.id, t.provider_thread_id, m.target_message_id, m.payload_json
+                    "SELECT m.id, t.provider_thread_id, m.target_message_id, m.payload_json,
+                            m.attempts
                      FROM mutations m LEFT JOIN threads t ON t.id = m.thread_id
                      WHERE m.state = 'pending' AND m.account_id = ?1
-                     ORDER BY m.created_at LIMIT ?2",
+                       AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= ?2)
+                     ORDER BY m.created_at LIMIT ?3",
                 )
                 .map_err(display_error)?;
             let rows = statement
-                .query_map(params![account_id, limit as i64], |row| {
-                    let id: String = row.get(0)?;
-                    let provider_thread_id: Option<String> = row.get(1)?;
-                    let target_message_id: Option<String> = row.get(2)?;
-                    let payload: String = row.get(3)?;
-                    Ok((id, provider_thread_id, target_message_id, payload))
-                })
+                .query_map(
+                    params![account_id, Utc::now().to_rfc3339(), limit as i64],
+                    |row| {
+                        let id: String = row.get(0)?;
+                        let provider_thread_id: Option<String> = row.get(1)?;
+                        let target_message_id: Option<String> = row.get(2)?;
+                        let payload: String = row.get(3)?;
+                        let attempts: u32 = row.get(4)?;
+                        Ok((id, provider_thread_id, target_message_id, payload, attempts))
+                    },
+                )
                 .map_err(display_error)?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(display_error)?;
             let mut claimable = Vec::new();
             let mut orphaned = Vec::new();
-            for (id, provider_thread_id, target_message_id, payload) in rows {
+            for (id, provider_thread_id, target_message_id, payload, attempts) in rows {
                 match provider_thread_id {
                     Some(provider_thread_id) => {
                         let mutation = serde_json::from_str(&payload).map_err(|error| {
@@ -1647,6 +1682,7 @@ impl Database {
                             provider_thread_id,
                             target_message_id,
                             mutation,
+                            attempts: attempts + 1,
                         });
                     }
                     None => orphaned.push(id),
@@ -1680,18 +1716,34 @@ impl Database {
     pub fn complete_mutation(&self, id: &str) -> Result<(), String> {
         self.connection()?
             .execute(
-                "UPDATE mutations SET state = 'done', last_error = NULL WHERE id = ?1",
+                "UPDATE mutations SET state = 'done', last_error = NULL,
+                    next_attempt_at = NULL WHERE id = ?1",
                 [id],
             )
             .map(|_| ())
             .map_err(display_error)
     }
 
-    pub fn reject_mutation(&self, id: &str, error: &str, retry: bool) -> Result<(), String> {
+    pub fn reject_mutation(
+        &self,
+        id: &str,
+        error: &str,
+        next_attempt_at: Option<&str>,
+    ) -> Result<(), String> {
         self.connection()?
             .execute(
-                "UPDATE mutations SET state = ?1, last_error = ?2 WHERE id = ?3",
-                params![if retry { "pending" } else { "failed" }, error, id],
+                "UPDATE mutations SET state = ?1, last_error = ?2, next_attempt_at = ?3
+                 WHERE id = ?4",
+                params![
+                    if next_attempt_at.is_some() {
+                        "pending"
+                    } else {
+                        "failed"
+                    },
+                    error,
+                    next_attempt_at,
+                    id
+                ],
             )
             .map(|_| ())
             .map_err(display_error)

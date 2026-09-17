@@ -17,12 +17,29 @@ const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 pub enum ProviderError {
     #[error("Gmail history cursor is invalid or expired")]
     InvalidCursor,
-    #[error("Gmail rate limit persisted after retries")]
-    RateLimited,
     #[error("Gmail object was not found")]
     NotFound,
+    #[error("Temporary Gmail transport failure: {0}")]
+    TransientTransport(String),
+    #[error("Gmail authentication failed: {0}")]
+    Authentication(String),
+    #[error("Gmail server rejected a retryable request: {0}")]
+    RetryableServer(String),
+    #[error("Invalid Gmail operation: {0}")]
+    InvalidOperation(String),
+    #[error("Gmail permanently rejected the request: {0}")]
+    PermanentClientRejection(String),
     #[error("{0}")]
     Other(String),
+}
+
+impl ProviderError {
+    pub fn retry_mutation(&self) -> bool {
+        matches!(
+            self,
+            Self::TransientTransport(_) | Self::Authentication(_) | Self::RetryableServer(_)
+        )
+    }
 }
 
 pub type ProviderResult<T> = Result<T, ProviderError>;
@@ -102,7 +119,7 @@ impl GmailClient {
             .auth
             .access_token()
             .await
-            .map_err(ProviderError::Other)?;
+            .map_err(ProviderError::Authentication)?;
         Ok(self.http.request(method, url).bearer_auth(token))
     }
 
@@ -112,13 +129,19 @@ impl GmailClient {
         history: bool,
     ) -> ProviderResult<reqwest::Response> {
         for attempt in 0..=4 {
-            let cloned = request
-                .try_clone()
-                .ok_or_else(|| ProviderError::Other("Unable to retry Gmail request".into()))?;
-            let response = cloned
-                .send()
-                .await
-                .map_err(|error| ProviderError::Other(error.to_string()))?;
+            let cloned = request.try_clone().ok_or_else(|| {
+                ProviderError::InvalidOperation("Unable to retry Gmail request".into())
+            })?;
+            let response = match cloned.send().await {
+                Ok(response) => response,
+                Err(_) if attempt < 4 => {
+                    sleep(retry_delay(attempt, false) + jitter()).await;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(ProviderError::TransientTransport(error.to_string()));
+                }
+            };
             if response.status().is_success() {
                 return Ok(response);
             }
@@ -134,21 +157,29 @@ impl GmailClient {
             let quota_limited = status == StatusCode::TOO_MANY_REQUESTS
                 || (status == StatusCode::FORBIDDEN && is_quota_error(&body));
             if quota_limited
+                || status == StatusCode::REQUEST_TIMEOUT
                 || status == StatusCode::SERVICE_UNAVAILABLE
                 || status.is_server_error()
             {
                 if attempt == 4 {
-                    return Err(ProviderError::RateLimited);
+                    return Err(ProviderError::RetryableServer(format!("{status}: {body}")));
                 }
                 let delay = retry_after.unwrap_or_else(|| retry_delay(attempt, quota_limited));
                 sleep(delay + jitter()).await;
                 continue;
             }
-            return Err(ProviderError::Other(format!(
-                "Gmail returned {status}: {body}"
-            )));
+            let detail = format!("{status}: {body}");
+            if status == StatusCode::UNAUTHORIZED {
+                return Err(ProviderError::Authentication(detail));
+            }
+            if status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY {
+                return Err(ProviderError::InvalidOperation(detail));
+            }
+            return Err(ProviderError::PermanentClientRejection(detail));
         }
-        Err(ProviderError::RateLimited)
+        Err(ProviderError::RetryableServer(
+            "retry budget exhausted".into(),
+        ))
     }
 
     async fn json<T: DeserializeOwned>(
@@ -160,7 +191,7 @@ impl GmailClient {
             .await?
             .json()
             .await
-            .map_err(|error| ProviderError::Other(error.to_string()))
+            .map_err(|error| ProviderError::RetryableServer(error.to_string()))
     }
 }
 
@@ -363,7 +394,11 @@ impl GmailProvider for GmailClient {
         remove: &[String],
     ) -> ProviderResult<()> {
         let request = match ids {
-            [] => return Err(ProviderError::Other("No Gmail messages to modify".into())),
+            [] => {
+                return Err(ProviderError::InvalidOperation(
+                    "No Gmail messages to modify".into(),
+                ))
+            }
             [_] => self
                 .request(Method::POST, message_modify_url(ids).unwrap())
                 .await?
@@ -471,6 +506,17 @@ mod tests {
         assert_eq!(retry_delay(0, true), Duration::from_secs(15));
         assert_eq!(retry_delay(2, true), Duration::from_secs(60));
         assert_eq!(retry_delay(2, false), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn only_temporary_and_authentication_errors_retry_mutations() {
+        assert!(ProviderError::TransientTransport("offline".into()).retry_mutation());
+        assert!(ProviderError::RetryableServer("503".into()).retry_mutation());
+        assert!(ProviderError::Authentication("expired token".into()).retry_mutation());
+        assert!(!ProviderError::InvalidOperation("bad label".into()).retry_mutation());
+        assert!(
+            !ProviderError::PermanentClientRejection("permission denied".into()).retry_mutation()
+        );
     }
 
     #[test]

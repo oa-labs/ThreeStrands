@@ -184,7 +184,17 @@ export type SyncStatus = {
   lastSuccessfulSync: string | null;
   cursor: string | null;
   pendingMutations: number;
+  failedMutations: FailedMutation[];
   error: string | null;
+};
+
+export type FailedMutation = {
+  id: string;
+  kind: ThreadMutation["kind"];
+  threadId: string;
+  attempts: number;
+  error: string;
+  createdAt: string;
 };
 
 export type AuthStatus = {
