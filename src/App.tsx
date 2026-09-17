@@ -542,6 +542,7 @@ export function App() {
   const selectedThreadLastMessageAt = selectedThread?.lastMessageAt;
   const selectedThreadSnippet = selectedThread?.snippet;
   const selectedThreadRowRef = useRef<HTMLButtonElement | null>(null);
+  const autoReadSuppressedForId = useRef<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const {
     accounts,
@@ -1013,6 +1014,9 @@ export function App() {
   const mutateIds = useCallback(async (ids: string[], template: MutationTemplate): Promise<CommandResult> => {
     const targetIds = ids.filter((id) => threads.some((thread) => thread.id === id));
     if (targetIds.length === 0) return {};
+    if (template.kind === "read" && !template.value && selectedId && targetIds.includes(selectedId)) {
+      autoReadSuppressedForId.current = selectedId;
+    }
     const triageContext: TriageEvent["context"] = mailbox === "inbox" && !includeArchived ? "inbox" : "other";
     const triageEvents = template.kind === "archive" || template.kind === "trash"
       ? new Map(targetIds.map((threadId) => {
@@ -1193,14 +1197,11 @@ export function App() {
   const mutateIdsRef = useRef(mutateIds);
   mutateIdsRef.current = mutateIds;
 
-  // Tracks the selection the auto-read timer has already considered, so that
-  // explicitly marking the open thread unread again (e.g. pressing "u")
-  // doesn't get silently reverted by this same timer a moment later. Reset
-  // whenever the selection itself changes, so reopening a thread still
-  // re-arms the timer.
-  const autoReadArmedForId = useRef<string | null>(null);
+  // Explicitly marking the open thread unread suppresses auto-read until the
+  // selection changes. The timer itself is not recorded here, so changing the
+  // configured delay can cancel and reschedule it with the new duration.
   useEffect(() => {
-    autoReadArmedForId.current = null;
+    autoReadSuppressedForId.current = null;
   }, [selectedId]);
 
   useEffect(() => {
@@ -1208,9 +1209,8 @@ export function App() {
       !selectedId
       || visibleDetail?.thread.id !== selectedId
       || !isThreadMailbox
-      || autoReadArmedForId.current === selectedId
+      || autoReadSuppressedForId.current === selectedId
     ) return;
-    autoReadArmedForId.current = selectedId;
     if (!selected?.unread) return;
 
     const timer = window.setTimeout(() => {
