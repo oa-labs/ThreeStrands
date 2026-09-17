@@ -8,6 +8,8 @@ import type {
 } from "./domain";
 import { readSelectedAccountId, saveSelectedAccountId } from "./settings";
 
+export const ACCOUNT_STATUS_REFRESH_MS = 15_000;
+
 /**
  * Coordinates account identity, authentication, sync status, and account-
  * scoped unread counts. Mailbox content remains outside this hook so changing
@@ -72,7 +74,10 @@ export function useAccounts(settingsOpen: boolean) {
   useEffect(refreshMailboxUnreadCounts, [refreshMailboxUnreadCounts]);
 
   useEffect(() => {
-    if (settingsOpen) void refreshAccounts();
+    if (!settingsOpen) return;
+    void refreshAccounts();
+    const interval = window.setInterval(refreshAccounts, ACCOUNT_STATUS_REFRESH_MS);
+    return () => window.clearInterval(interval);
   }, [settingsOpen, refreshAccounts]);
 
   useEffect(() => {

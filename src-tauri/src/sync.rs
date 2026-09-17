@@ -63,6 +63,10 @@ impl SyncService {
     /// Whether this service's account currently has usable Google credentials.
     pub fn is_connected(&self) -> bool {
         self.auth.available()
+            && !self
+                .database
+                .account_needs_reauth(&self.account_id())
+                .unwrap_or(false)
     }
 
     /// The local key for this account's cursor/threads/mutations rows. Reads
@@ -178,6 +182,13 @@ impl SyncService {
     /// alongside the primary sync path, which already surfaces its own errors.
     async fn reconcile_if_due(&self) {
         let account_id = self.account_id();
+        if self
+            .database
+            .account_needs_reauth(&account_id)
+            .unwrap_or(false)
+        {
+            return;
+        }
         let due = self
             .database
             .reconciliation_due(&account_id, RECONCILE_INTERVAL_SECS)
@@ -218,6 +229,12 @@ pub async fn flush_pending_with(
     provider: &(impl GmailProvider + ?Sized),
 ) -> ProviderResult<()> {
     if database
+        .account_needs_reauth(account_id)
+        .map_err(ProviderError::Other)?
+    {
+        return Ok(());
+    }
+    if database
         .sync_status(account_id)
         .map_err(ProviderError::Other)?
         .pending_mutations
@@ -225,10 +242,26 @@ pub async fn flush_pending_with(
     {
         return Ok(());
     }
-    deliver_mutations(database, account_id, provider).await
+    let result = deliver_mutations(database, account_id, provider).await;
+    pause_for_permanent_auth_failure(database, account_id, result)
 }
 
 pub async fn sync_with(
+    database: &Database,
+    account_id: &str,
+    provider: &(impl GmailProvider + ?Sized),
+) -> ProviderResult<()> {
+    if database
+        .account_needs_reauth(account_id)
+        .map_err(ProviderError::Other)?
+    {
+        return Ok(());
+    }
+    let result = sync_active_with(database, account_id, provider).await;
+    pause_for_permanent_auth_failure(database, account_id, result)
+}
+
+async fn sync_active_with(
     database: &Database,
     account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
@@ -241,6 +274,21 @@ pub async fn sync_with(
         },
         None => full_sync(database, account_id, provider).await,
     }
+}
+
+fn pause_for_permanent_auth_failure(
+    database: &Database,
+    account_id: &str,
+    result: ProviderResult<()>,
+) -> ProviderResult<()> {
+    if let Err(error) = &result {
+        if error.requires_reauthentication() {
+            database
+                .mark_account_needs_reauth(account_id, &error.to_string())
+                .map_err(ProviderError::Other)?;
+        }
+    }
+    result
 }
 
 async fn full_sync(
@@ -538,6 +586,12 @@ async fn deliver_mutations(
                             .map_err(ProviderError::Other)?;
                     }
                 }
+                Err(error) if error.requires_reauthentication() => {
+                    database
+                        .mark_account_needs_reauth(account_id, &error.to_string())
+                        .map_err(ProviderError::Other)?;
+                    return Err(error);
+                }
                 Err(error) if error.retry_mutation() => {
                     // Every mutation still claimed in this batch — not just
                     // the group that hit the temporary failure — must go back
@@ -636,6 +690,7 @@ mod tests {
         message_modifies: StdMutex<Vec<(Vec<String>, Vec<String>, Vec<String>)>>,
         fail_mutation: bool,
         permanently_fail_mutation: bool,
+        reauth_mutation: bool,
         thread_messages: Option<Vec<GmailMessage>>,
     }
 
@@ -648,6 +703,7 @@ mod tests {
                 message_modifies: StdMutex::new(vec![]),
                 fail_mutation: false,
                 permanently_fail_mutation: false,
+                reauth_mutation: false,
                 thread_messages: None,
             }
         }
@@ -733,6 +789,10 @@ mod tests {
                 Err(ProviderError::PermanentClientRejection(
                     "invalid label".into(),
                 ))
+            } else if self.reauth_mutation {
+                Err(ProviderError::ReauthenticationRequired(
+                    "invalid_grant".into(),
+                ))
             } else if self.fail_mutation {
                 Err(ProviderError::RetryableServer("rate limited".into()))
             } else {
@@ -755,6 +815,10 @@ mod tests {
             if self.permanently_fail_mutation {
                 Err(ProviderError::PermanentClientRejection(
                     "invalid label".into(),
+                ))
+            } else if self.reauth_mutation {
+                Err(ProviderError::ReauthenticationRequired(
+                    "persistent 401".into(),
                 ))
             } else if self.fail_mutation {
                 Err(ProviderError::RetryableServer("rate limited".into()))
@@ -903,10 +967,7 @@ mod tests {
 
         assert_eq!(normalized.len(), MAX_THREAD_MESSAGES);
         assert_eq!(quarantined.len(), 1);
-        assert_eq!(
-            quarantined[0].0,
-            format!("message-{MAX_THREAD_MESSAGES}")
-        );
+        assert_eq!(quarantined[0].0, format!("message-{MAX_THREAD_MESSAGES}"));
         assert!(quarantined[0].1.contains("message limit"));
     }
 
@@ -965,6 +1026,135 @@ mod tests {
         assert!(
             database.claim_mutations("default", 10).unwrap().is_empty(),
             "a retry must not be claimable before its persisted next_attempt_at"
+        );
+    }
+
+    #[tokio::test]
+    async fn permanent_auth_failure_marks_account_and_pauses_queued_work() {
+        let database = Database::open_memory();
+        database.adopt_account("work@example.com").unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Star {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+        let provider = ContractProvider {
+            reauth_mutation: true,
+            ..ContractProvider::normal()
+        };
+
+        assert!(matches!(
+            sync_with(&database, "work@example.com", &provider).await,
+            Err(ProviderError::ReauthenticationRequired(_))
+        ));
+        assert_eq!(
+            database
+                .get_account("work@example.com")
+                .unwrap()
+                .unwrap()
+                .status,
+            "needs_reauth"
+        );
+        assert_eq!(
+            database
+                .sync_status("work@example.com")
+                .unwrap()
+                .pending_mutations,
+            1
+        );
+        let attempts = provider.modifies.load(Ordering::SeqCst);
+        sync_with(&database, "work@example.com", &provider)
+            .await
+            .unwrap();
+        assert_eq!(
+            provider.modifies.load(Ordering::SeqCst),
+            attempts,
+            "paused accounts must not retry provider work"
+        );
+        assert!(database
+            .claim_mutations("work@example.com", 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn transient_token_failure_keeps_account_connected_and_retryable() {
+        let database = Database::open_memory();
+        database.adopt_account("work@example.com").unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Star {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+        struct TransientAuthProvider;
+        #[async_trait]
+        impl GmailProvider for TransientAuthProvider {
+            async fn profile_history_id(&self) -> ProviderResult<String> {
+                unreachable!()
+            }
+            async fn list_threads(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+                unreachable!()
+            }
+            async fn get_thread(&self, _: &str) -> ProviderResult<Vec<GmailMessage>> {
+                unreachable!()
+            }
+            async fn history(&self, _: &str, _: Option<&str>) -> ProviderResult<HistoryPage> {
+                unreachable!()
+            }
+            async fn modify_thread(
+                &self,
+                _: &str,
+                _: &[String],
+                _: &[String],
+            ) -> ProviderResult<()> {
+                Err(ProviderError::Authentication(
+                    "token endpoint unavailable".into(),
+                ))
+            }
+            async fn modify_messages(
+                &self,
+                _: &[String],
+                _: &[String],
+                _: &[String],
+            ) -> ProviderResult<()> {
+                Err(ProviderError::Authentication(
+                    "token endpoint unavailable".into(),
+                ))
+            }
+            async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
+                unreachable!()
+            }
+            async fn create_label(&self, _: &str) -> ProviderResult<Label> {
+                unreachable!()
+            }
+            async fn update_label(&self, _: &str, _: &str) -> ProviderResult<Label> {
+                unreachable!()
+            }
+            async fn delete_label(&self, _: &str) -> ProviderResult<()> {
+                unreachable!()
+            }
+        }
+
+        assert!(matches!(
+            sync_with(&database, "work@example.com", &TransientAuthProvider).await,
+            Err(ProviderError::Authentication(_))
+        ));
+        assert_eq!(
+            database
+                .get_account("work@example.com")
+                .unwrap()
+                .unwrap()
+                .status,
+            "connected"
+        );
+        assert_eq!(
+            database
+                .sync_status("work@example.com")
+                .unwrap()
+                .pending_mutations,
+            1
         );
     }
 
@@ -1442,14 +1632,19 @@ mod tests {
             fail_thread_once: StdMutex::new(None),
         };
 
-        reconcile_inbox(&database, account, &provider).await.unwrap();
+        reconcile_inbox(&database, account, &provider)
+            .await
+            .unwrap();
 
         let threads = database.list_all_mail(Some(account)).unwrap();
         let restored = threads
             .iter()
             .find(|thread| thread.id == format!("{account}:restored-thread"))
             .unwrap();
-        assert!(!restored.archived, "drifted-back thread must be un-archived");
+        assert!(
+            !restored.archived,
+            "drifted-back thread must be un-archived"
+        );
 
         let orphaned = threads
             .iter()
@@ -1531,10 +1726,7 @@ mod tests {
         stale_common.thread_id = "common-thread".into();
         stale_common.snippet = "stale snippet".into();
         database
-            .upsert_gmail_thread(
-                account,
-                &[crate::mime::normalize(&stale_common).unwrap()],
-            )
+            .upsert_gmail_thread(account, &[crate::mime::normalize(&stale_common).unwrap()])
             .unwrap();
         let mut fresh_common = stale_common;
         fresh_common.snippet = "fresh snippet".into();
@@ -1548,8 +1740,8 @@ mod tests {
                 ("common-thread".to_string(), fresh_common),
                 ("inbox-thread".to_string(), inbox_message),
             ]
-                .into_iter()
-                .collect(),
+            .into_iter()
+            .collect(),
             list_calls: AtomicUsize::new(0),
             fail_thread_once: StdMutex::new(None),
         };

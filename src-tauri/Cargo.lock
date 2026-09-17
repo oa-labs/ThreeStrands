@@ -966,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "dispatch"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "argon2",
  "async-trait",

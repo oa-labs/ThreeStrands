@@ -2031,6 +2031,10 @@ impl Database {
                             m.attempts
                      FROM mutations m LEFT JOIN threads t ON t.id = m.thread_id
                      WHERE m.state = 'pending' AND m.account_id = ?1
+                       AND NOT EXISTS (
+                           SELECT 1 FROM accounts a
+                           WHERE a.email = m.account_id AND a.status = 'needs_reauth'
+                       )
                        AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= ?2)
                      ORDER BY m.created_at LIMIT ?3",
                 )

@@ -9,7 +9,11 @@ use tokio::{
     time::{sleep, Instant},
 };
 
-use crate::{auth::GoogleAuth, mime::GmailMessage, models::Label};
+use crate::{
+    auth::{AccessTokenError, GoogleAuth},
+    mime::GmailMessage,
+    models::Label,
+};
 
 const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -23,6 +27,8 @@ pub enum ProviderError {
     TransientTransport(String),
     #[error("Gmail authentication failed: {0}")]
     Authentication(String),
+    #[error("Gmail credentials require reconnection: {0}")]
+    ReauthenticationRequired(String),
     #[error("Gmail server rejected a retryable request: {0}")]
     RetryableServer(String),
     #[error("Invalid Gmail operation: {0}")]
@@ -39,6 +45,10 @@ impl ProviderError {
             self,
             Self::TransientTransport(_) | Self::Authentication(_) | Self::RetryableServer(_)
         )
+    }
+
+    pub fn requires_reauthentication(&self) -> bool {
+        matches!(self, Self::ReauthenticationRequired(_))
     }
 }
 
@@ -119,7 +129,12 @@ impl GmailClient {
             .auth
             .access_token()
             .await
-            .map_err(ProviderError::Authentication)?;
+            .map_err(|error| match error {
+                AccessTokenError::ReauthenticationRequired(message) => {
+                    ProviderError::ReauthenticationRequired(message)
+                }
+                AccessTokenError::Transient(message) => ProviderError::Authentication(message),
+            })?;
         Ok(self.http.request(method, url).bearer_auth(token))
     }
 
@@ -169,13 +184,7 @@ impl GmailClient {
                 continue;
             }
             let detail = format!("{status}: {body}");
-            if status == StatusCode::UNAUTHORIZED {
-                return Err(ProviderError::Authentication(detail));
-            }
-            if status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY {
-                return Err(ProviderError::InvalidOperation(detail));
-            }
-            return Err(ProviderError::PermanentClientRejection(detail));
+            return Err(classify_client_rejection(status, detail));
         }
         Err(ProviderError::RetryableServer(
             "retry budget exhausted".into(),
@@ -192,6 +201,20 @@ impl GmailClient {
             .json()
             .await
             .map_err(|error| ProviderError::RetryableServer(error.to_string()))
+    }
+}
+
+fn classify_client_rejection(status: StatusCode, detail: String) -> ProviderError {
+    if status == StatusCode::UNAUTHORIZED {
+        // A bearer token accepted from local storage or the refresh endpoint
+        // but rejected by Gmail is not repaired by replaying the same
+        // request. Treat the provider's persistent 401 as a revoked/invalid
+        // credential and require a fresh grant.
+        ProviderError::ReauthenticationRequired(detail)
+    } else if status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY {
+        ProviderError::InvalidOperation(detail)
+    } else {
+        ProviderError::PermanentClientRejection(detail)
     }
 }
 
@@ -509,14 +532,32 @@ mod tests {
     }
 
     #[test]
-    fn only_temporary_and_authentication_errors_retry_mutations() {
+    fn only_temporary_authentication_errors_retry_mutations() {
         assert!(ProviderError::TransientTransport("offline".into()).retry_mutation());
         assert!(ProviderError::RetryableServer("503".into()).retry_mutation());
-        assert!(ProviderError::Authentication("expired token".into()).retry_mutation());
+        assert!(
+            ProviderError::Authentication("token endpoint unavailable".into()).retry_mutation()
+        );
+        assert!(
+            ProviderError::ReauthenticationRequired("invalid_grant".into())
+                .requires_reauthentication()
+        );
+        assert!(
+            !ProviderError::ReauthenticationRequired("401".into()).retry_mutation(),
+            "persistent authentication failures must pause instead of rescheduling"
+        );
         assert!(!ProviderError::InvalidOperation("bad label".into()).retry_mutation());
         assert!(
             !ProviderError::PermanentClientRejection("permission denied".into()).retry_mutation()
         );
+    }
+
+    #[test]
+    fn persistent_unauthorized_response_requires_reauthentication() {
+        assert!(matches!(
+            classify_client_rejection(StatusCode::UNAUTHORIZED, "401".into()),
+            ProviderError::ReauthenticationRequired(_)
+        ));
     }
 
     #[test]
