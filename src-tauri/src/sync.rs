@@ -174,9 +174,8 @@ impl SyncService {
     }
 
     /// Best-effort periodic reconciliation; see [`RECONCILE_INTERVAL_SECS`].
-    /// Failures are swallowed (and simply retried after the next interval)
-    /// since this runs alongside the primary sync path, which already
-    /// surfaces its own errors.
+    /// Failures are swallowed and retried on a subsequent poll since this runs
+    /// alongside the primary sync path, which already surfaces its own errors.
     async fn reconcile_if_due(&self) {
         let account_id = self.account_id();
         let due = self
@@ -188,8 +187,7 @@ impl SyncService {
         }
         let _guard = self.gate.lock().await;
         let provider = GmailClient::new(self.auth.clone());
-        let _ = reconcile_inbox(self.database.as_ref(), &account_id, &provider).await;
-        let _ = self.database.mark_reconciled(&account_id);
+        let _ = reconcile_and_mark(self.database.as_ref(), &account_id, &provider).await;
     }
 }
 
@@ -382,6 +380,17 @@ async fn reconcile_inbox(
         return Ok(());
     }
     ingest_threads(database, account_id, provider, drifted).await
+}
+
+async fn reconcile_and_mark(
+    database: &Database,
+    account_id: &str,
+    provider: &(impl GmailProvider + ?Sized),
+) -> ProviderResult<()> {
+    reconcile_inbox(database, account_id, provider).await?;
+    database
+        .mark_reconciled(account_id)
+        .map_err(ProviderError::Other)
 }
 
 async fn ingest_threads(
@@ -1447,6 +1456,40 @@ mod tests {
             .find(|thread| thread.id == format!("{account}:orphaned-thread"))
             .unwrap();
         assert!(orphaned.archived, "drifted-away thread must be archived");
+    }
+
+    #[tokio::test]
+    async fn failed_reconciliation_remains_due_until_a_successful_retry() {
+        let account = "acct-reconcile-retry";
+        let database = Database::open_memory();
+        database
+            .connection()
+            .unwrap()
+            .execute("INSERT INTO sync_state(account_id) VALUES (?1)", [account])
+            .unwrap();
+
+        let mut message = ContractProvider::message();
+        message.id = "retry-message".into();
+        message.thread_id = "retry-thread".into();
+        let provider = ReconcileProvider {
+            inbox_ids: vec!["retry-thread".into()],
+            threads: [("retry-thread".to_string(), message)]
+                .into_iter()
+                .collect(),
+            list_calls: AtomicUsize::new(0),
+            fail_thread_once: StdMutex::new(Some("retry-thread".into())),
+        };
+
+        assert!(reconcile_and_mark(&database, account, &provider)
+            .await
+            .is_err());
+        assert!(database.reconciliation_due(account, 1).unwrap());
+
+        reconcile_and_mark(&database, account, &provider)
+            .await
+            .unwrap();
+        assert!(!database.reconciliation_due(account, 1).unwrap());
+        assert_eq!(provider.list_calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
