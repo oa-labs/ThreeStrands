@@ -2429,12 +2429,18 @@ export function App() {
             await refreshAccounts();
           }}
           onRemoveAccount={async (email) => {
-            await mailClient.removeAccount(email);
-            const wasActive = activeAccountId === email;
-            if (wasActive) setActiveAccountId(null);
-            await refreshAccounts();
-            void loadThreads(query, wasActive ? null : undefined);
-            setAuthStatus(await mailClient.googleAuthStatus());
+            try {
+              await mailClient.removeAccount(email);
+              const wasActive = activeAccountId === email;
+              if (wasActive) setActiveAccountId(null);
+              void loadThreads(query, wasActive ? null : undefined);
+              setAuthStatus(await mailClient.googleAuthStatus());
+            } finally {
+              // A keychain failure intentionally leaves a durable pending
+              // row. Surface that state immediately so the retry action is
+              // available instead of continuing to show "Connected".
+              await refreshAccounts();
+            }
           }}
           onReconnectAccount={async (email) => {
             await mailClient.reconnectAccount(email);
@@ -3597,8 +3603,12 @@ function AccountsSettings({
                   <div className="account-card-heading">
                     <strong>{account.displayName ?? account.email}</strong>
                     <span className={`account-status ${account.status}`}>
-                      {account.status === "needs_reauth" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
-                      {account.status === "needs_reauth" ? "Needs reconnect" : "Connected"}
+                      {account.status === "connected" ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                      {account.status === "needs_reauth"
+                        ? "Needs reconnect"
+                        : account.status === "removal_pending"
+                          ? "Removal pending"
+                          : "Connected"}
                     </span>
                   </div>
                   <span className="account-card-email">
@@ -3665,7 +3675,7 @@ function AccountsSettings({
                     disabled={busyEmail !== null}
                     onClick={() => act(account.email, () => onRemove(account.email))}
                   >
-                    Disconnect
+                    {account.status === "removal_pending" ? "Retry removal" : "Disconnect"}
                   </button>
                 </span>
               </div>

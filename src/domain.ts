@@ -222,7 +222,7 @@ export type Account = {
   email: string;
   displayName: string | null;
   color: string;
-  status: "connected" | "needs_reauth";
+  status: "connected" | "needs_reauth" | "removal_pending";
   sortOrder: number;
   connectedAt: string;
   lastSyncedAt: string | null;

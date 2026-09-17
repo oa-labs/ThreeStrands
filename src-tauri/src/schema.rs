@@ -12,7 +12,7 @@ use crate::mime::GmailMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 18;
+pub(crate) const LATEST_VERSION: i64 = 19;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     email TEXT PRIMARY KEY,
     display_name TEXT,
     color TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('connected', 'needs_reauth')),
+    status TEXT NOT NULL CHECK(status IN ('connected', 'needs_reauth', 'removal_pending')),
     sort_order INTEGER NOT NULL,
     connected_at TEXT NOT NULL,
     last_synced_at TEXT
@@ -399,6 +399,29 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             CREATE INDEX quarantined_messages_account_time
                 ON quarantined_messages(account_id, created_at DESC);
             PRAGMA user_version=18;",
+        )
+        .map_err(error)?;
+    }
+    if version < 19 {
+        // Account removal is a durable two-phase operation. The row remains
+        // present (but inactive) until keychain deletion succeeds, after
+        // which the account and all of its local mail can be purged safely.
+        tx.execute_batch(
+            "CREATE TABLE accounts_v19 (
+                email TEXT PRIMARY KEY,
+                display_name TEXT,
+                color TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('connected', 'needs_reauth', 'removal_pending')),
+                sort_order INTEGER NOT NULL,
+                connected_at TEXT NOT NULL,
+                last_synced_at TEXT
+            );
+            INSERT INTO accounts_v19
+                SELECT email, display_name, color, status, sort_order, connected_at, last_synced_at
+                FROM accounts;
+            DROP TABLE accounts;
+            ALTER TABLE accounts_v19 RENAME TO accounts;
+            PRAGMA user_version=19;",
         )
         .map_err(error)?;
     }

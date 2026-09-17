@@ -627,12 +627,6 @@ impl Database {
             .map_err(error)?
             > 0)
     }
-    /// Pauses undo-pending/ready outbox items for one account, so removing a
-    /// connected account never pauses another account's in-flight sends.
-    pub fn pause_ready_sends_for(&self, account: &str) -> Result<(), String> {
-        self.connection()?.execute("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE account=?1 AND state IN ('undo_pending','ready')",[account]).map_err(error)?;
-        Ok(())
-    }
 }
 
 fn build_mime(
@@ -1340,8 +1334,10 @@ mod tests {
         assert!(db.cancel_send(&item.id, false).is_err());
     }
     #[test]
-    fn pausing_ready_sends_for_one_account_never_touches_another_accounts_outbox() {
+    fn staging_removal_for_one_account_never_touches_another_accounts_outbox() {
         let db = database();
+        db.adopt_account("you@example.com").unwrap();
+        db.adopt_account("other@example.com").unwrap();
         let a = saved(&db);
         let item_a = db.queue(&a.id, a.revision, Path::new("/unused")).unwrap();
 
@@ -1349,7 +1345,7 @@ mod tests {
         let b = saved(&db);
         let item_b = db.queue(&b.id, b.revision, Path::new("/unused")).unwrap();
 
-        db.pause_ready_sends_for("you@example.com").unwrap();
+        db.mark_account_removal_pending("you@example.com").unwrap();
 
         let outbox = db.outbox().unwrap();
         let state_of = |id: &str| outbox.iter().find(|o| o.id == id).unwrap().state.clone();

@@ -1057,6 +1057,7 @@ form.split-inbox-add select {
 .account-status { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 20px; color: var(--muted); background: var(--hover); font-size: calc(11px * var(--font-scale)); }
 .account-status.connected { color: var(--secondary); background: color-mix(in srgb, var(--secondary) 12%, transparent); }
 .account-status.needs_reauth { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
+.account-status.removal_pending { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
 .accounts-footnote { width: 100%; margin: 2px 0 0; color: var(--muted); font-size: calc(11px * var(--font-scale)); line-height: 1.45; }
 .accounts-list-actions { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
 .accounts-manager .accounts-list-actions button { display: inline-flex; align-items: center; padding: 5px 8px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: calc(12px * var(--font-scale)); cursor: pointer; }

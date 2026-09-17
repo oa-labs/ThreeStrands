@@ -126,9 +126,75 @@ impl Database {
             .map_err(display_error)
     }
 
-    /// Wipes every trace of an account: credentials are revoked by the
-    /// caller only after this commits, so a failure here leaves the account
-    /// fully intact rather than stripped of credentials but still listed.
+    pub fn account_is_connected(&self, email: &str) -> Result<bool, String> {
+        self.connection()?
+            .query_row(
+                "SELECT status = 'connected' FROM accounts WHERE email = ?1",
+                [email],
+                |row| row.get(0),
+            )
+            .optional()
+            // Before the first successful identity migration there is no
+            // account row yet; that legacy primary is still allowed to sync.
+            .map(|status| status.unwrap_or(true))
+            .map_err(display_error)
+    }
+
+    /// Durably enters the inactive removal stage before credentials are
+    /// touched. Repeating this operation is safe, which lets the user and
+    /// startup recovery retry a failed keychain deletion.
+    pub fn mark_account_removal_pending(&self, email: &str) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        let changed = transaction
+            .execute(
+                "UPDATE accounts SET status = 'removal_pending' WHERE email = ?1",
+                [email],
+            )
+            .map_err(display_error)?;
+        if changed == 0 {
+            return Err("Account not found".to_string());
+        }
+        transaction
+            .execute(
+                "UPDATE outbox_messages
+                 SET state = 'failed',
+                     error = 'Account removal pending. Restore this draft after reconnecting to send.'
+                 WHERE account = ?1 AND state IN ('undo_pending', 'ready')",
+                [email],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "UPDATE mutations
+                 SET state = 'pending',
+                     last_error = 'Account removal pending',
+                     next_attempt_at = NULL
+                 WHERE account_id = ?1 AND state = 'running'",
+                [email],
+            )
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)
+    }
+
+    pub fn pending_account_removals(&self) -> Result<Vec<String>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT email FROM accounts WHERE status = 'removal_pending' ORDER BY sort_order",
+            )
+            .map_err(display_error)?;
+        let removals = statement
+            .query_map([], |row| row.get(0))
+            .map_err(display_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(display_error)?;
+        Ok(removals)
+    }
+
+    /// Final stage: credentials have already been deleted, so purge all
+    /// remaining local state in one transaction. If this fails, the durable
+    /// pending row keeps the account visibly inactive and recovery retries.
     pub fn remove_account(&self, email: &str) -> Result<(), String> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;

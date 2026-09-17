@@ -63,9 +63,9 @@ impl SyncService {
     /// Whether this service's account currently has usable Google credentials.
     pub fn is_connected(&self) -> bool {
         self.auth.available()
-            && !self
+            && self
                 .database
-                .account_needs_reauth(&self.account_id())
+                .account_is_connected(&self.account_id())
                 .unwrap_or(false)
     }
 
@@ -163,7 +163,7 @@ impl SyncService {
             // stays deterministic so its unit tests aren't flaky.
             let jitter = Duration::from_millis(rand::thread_rng().gen_range(0..250));
             tokio::time::sleep(delay + jitter).await;
-            if !self.auth.available() {
+            if !self.is_connected() {
                 delay = Duration::from_secs(30);
                 continue;
             }
