@@ -84,6 +84,48 @@ impl Database {
             .map_err(display_error)
     }
 
+    /// Atomically records that an account's OAuth grant is unusable and
+    /// releases any in-flight mutations back to the durable queue. Claiming
+    /// is status-gated, so those mutations remain paused until reconnecting
+    /// changes the account back to `connected`.
+    pub fn mark_account_needs_reauth(&self, email: &str, error: &str) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        transaction
+            .execute(
+                "UPDATE accounts SET status = 'needs_reauth' WHERE email = ?1",
+                [email],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "UPDATE mutations
+                 SET state = 'pending', last_error = ?2, next_attempt_at = NULL
+                 WHERE account_id = ?1 AND state = 'running'",
+                params![email, error],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "UPDATE sync_state SET last_error = ?2 WHERE account_id = ?1",
+                params![email, error],
+            )
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)
+    }
+
+    pub fn account_needs_reauth(&self, email: &str) -> Result<bool, String> {
+        self.connection()?
+            .query_row(
+                "SELECT status = 'needs_reauth' FROM accounts WHERE email = ?1",
+                [email],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(|status| status.unwrap_or(false))
+            .map_err(display_error)
+    }
+
     /// Wipes every trace of an account: credentials are revoked by the
     /// caller only after this commits, so a failure here leaves the account
     /// fully intact rather than stripped of credentials but still listed.

@@ -33,6 +33,14 @@ const PENDING_KEY: &str = "pending";
 /// Returned when a newer sign-in attempt superseded this one.
 const CANCELED: &str = "Sign-in was canceled by a newer attempt.";
 
+#[derive(Debug, thiserror::Error)]
+pub enum AccessTokenError {
+    #[error("{0}")]
+    ReauthenticationRequired(String),
+    #[error("{0}")]
+    Transient(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tokens {
     pub access_token: String,
@@ -314,15 +322,18 @@ impl GoogleAuth {
         })
     }
 
-    pub async fn access_token(&self) -> Result<String, String> {
-        let mut tokens = self.load()?;
+    pub async fn access_token(&self) -> Result<String, AccessTokenError> {
+        let mut tokens = self
+            .load()
+            .map_err(AccessTokenError::ReauthenticationRequired)?;
         if tokens.expires_at > now() {
             return Ok(tokens.access_token);
         }
-        let refresh_token = tokens
-            .refresh_token
-            .as_deref()
-            .ok_or_else(|| "Google session expired; reconnect the account".to_string())?;
+        let refresh_token = tokens.refresh_token.as_deref().ok_or_else(|| {
+            AccessTokenError::ReauthenticationRequired(
+                "Google session expired; reconnect the account".to_string(),
+            )
+        })?;
         let response = self
             .client
             .post(TOKEN_URL)
@@ -334,12 +345,15 @@ impl GoogleAuth {
             ])
             .send()
             .await
-            .map_err(display)?;
-        let response = checked(response).await?;
-        let refreshed: TokenResponse = response.json().await.map_err(display)?;
+            .map_err(|error| AccessTokenError::Transient(error.to_string()))?;
+        let response = checked_refresh(response).await?;
+        let refreshed: TokenResponse = response
+            .json()
+            .await
+            .map_err(|error| AccessTokenError::Transient(error.to_string()))?;
         tokens.access_token = refreshed.access_token;
         tokens.expires_at = now() + refreshed.expires_in.saturating_sub(60);
-        self.save(&tokens)?;
+        self.save(&tokens).map_err(AccessTokenError::Transient)?;
         Ok(tokens.access_token)
     }
 
@@ -423,6 +437,34 @@ async fn checked(response: reqwest::Response) -> Result<reqwest::Response, Strin
     }
 }
 
+async fn checked_refresh(
+    response: reqwest::Response,
+) -> Result<reqwest::Response, AccessTokenError> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let message = format!("Google OAuth returned {status}: {body}");
+    if oauth_error_code(&body).as_deref() == Some("invalid_grant") {
+        Err(AccessTokenError::ReauthenticationRequired(message))
+    } else {
+        // Endpoint outages, throttling, malformed upstream responses, and
+        // configuration errors must not revoke an otherwise valid local
+        // account. Only Google's explicit invalid_grant signal proves that
+        // this account's refresh grant is permanently unusable.
+        Err(AccessTokenError::Transient(message))
+    }
+}
+
+fn oauth_error_code(body: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()?
+        .get("error")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 fn build_oauth_client(
     connect_timeout: Duration,
     request_timeout: Duration,
@@ -497,5 +539,19 @@ mod tests {
 
         assert!(error.is_timeout(), "unexpected request error: {error}");
         server.abort();
+    }
+
+    #[test]
+    fn only_invalid_grant_is_a_permanent_refresh_failure() {
+        assert_eq!(
+            oauth_error_code(r#"{"error":"invalid_grant","error_description":"revoked"}"#)
+                .as_deref(),
+            Some("invalid_grant")
+        );
+        assert_eq!(
+            oauth_error_code(r#"{"error":"temporarily_unavailable"}"#).as_deref(),
+            Some("temporarily_unavailable")
+        );
+        assert_eq!(oauth_error_code("<html>upstream failure</html>"), None);
     }
 }

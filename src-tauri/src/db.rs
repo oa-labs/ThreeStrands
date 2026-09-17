@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
-    Account, ContactSuggestion, FailedMutation, MailboxUnreadCounts, Message, SearchThreadsRequest,
-    QuarantinedMessage, SplitInbox, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage,
+    Account, ContactSuggestion, FailedMutation, MailboxUnreadCounts, Message, QuarantinedMessage,
+    SearchThreadsRequest, SplitInbox, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage,
     TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
     UnsubscribeMethod, UnsubscribeTarget,
 };
@@ -140,7 +140,11 @@ fn prune_backups(dir: &Path, prefix: &str, keep: usize) {
 /// pre-migration copy behind rather than only the mid-upgrade result. Best
 /// effort: the caller does not treat a failure here as fatal, since the
 /// migration transaction's own atomicity is the real safety net.
-fn pre_migration_backup(connection: &Connection, db_path: &Path, old_version: i64) -> Result<(), String> {
+fn pre_migration_backup(
+    connection: &Connection,
+    db_path: &Path,
+    old_version: i64,
+) -> Result<(), String> {
     let dir = db_path.parent().unwrap_or_else(|| Path::new("."));
     let stem = db_path.file_name().unwrap_or_default().to_string_lossy();
     let prefix = format!("{stem}.pre-migration-v");
@@ -165,7 +169,10 @@ fn backup_prefix(db_path: &Path) -> String {
 fn periodic_backup(connection: &Connection, db_path: &Path) -> Result<(), String> {
     let dir = db_path.parent().unwrap_or_else(|| Path::new("."));
     let prefix = backup_prefix(db_path);
-    let dest = dir.join(format!("{prefix}{}", Utc::now().format("%Y%m%dT%H%M%S%.3fZ")));
+    let dest = dir.join(format!(
+        "{prefix}{}",
+        Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
+    ));
     vacuum_into(connection, &dest)?;
     prune_backups(dir, &prefix, PERIODIC_BACKUPS_KEPT);
     Ok(())
@@ -433,15 +440,20 @@ impl Database {
     ) -> Result<ThreadPage, String> {
         let rules = self.list_split_inboxes()?;
         if rules.is_empty() {
-            return self.list_threads_page_where(account_id, "archived = 0 AND trashed = 0", offset, limit);
+            return self.list_threads_page_where(
+                account_id,
+                "archived = 0 AND trashed = 0",
+                offset,
+                limit,
+            );
         }
         let matched: Vec<Thread> = self
             .list_threads(account_id)?
             .into_iter()
             .filter(|thread| {
-                !rules
-                    .iter()
-                    .any(|rule| rule.account_id == thread.account_id && split_inbox_matches(rule, thread))
+                !rules.iter().any(|rule| {
+                    rule.account_id == thread.account_id && split_inbox_matches(rule, thread)
+                })
             })
             .collect();
         let page_limit = limit.min(200);
@@ -2031,6 +2043,10 @@ impl Database {
                             m.attempts
                      FROM mutations m LEFT JOIN threads t ON t.id = m.thread_id
                      WHERE m.state = 'pending' AND m.account_id = ?1
+                       AND NOT EXISTS (
+                           SELECT 1 FROM accounts a
+                           WHERE a.email = m.account_id AND a.status = 'needs_reauth'
+                       )
                        AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= ?2)
                      ORDER BY m.created_at LIMIT ?3",
                 )
@@ -2732,9 +2748,7 @@ mod tests {
     /// counts (e.g. retention pruning) without the seed data participating.
     fn clear_seed_threads(database: &Database) {
         let connection = database.connection().unwrap();
-        connection
-            .execute("DELETE FROM thread_search", [])
-            .unwrap();
+        connection.execute("DELETE FROM thread_search", []).unwrap();
         connection.execute("DELETE FROM threads", []).unwrap();
     }
 
@@ -3494,7 +3508,10 @@ mod tests {
         database.remove_account("you@gmail.com").unwrap();
 
         let remaining = database.list_split_inboxes().unwrap();
-        assert_eq!(remaining.iter().map(|s| &s.id).collect::<Vec<_>>(), vec![&kept.id]);
+        assert_eq!(
+            remaining.iter().map(|s| &s.id).collect::<Vec<_>>(),
+            vec![&kept.id]
+        );
     }
 
     #[test]
@@ -3572,9 +3589,7 @@ mod tests {
             0
         );
         assert_eq!(
-            count(
-                "SELECT COUNT(*) FROM sync_recovery_threads WHERE account_id = 'you@gmail.com'"
-            ),
+            count("SELECT COUNT(*) FROM sync_recovery_threads WHERE account_id = 'you@gmail.com'"),
             0
         );
         assert_eq!(
@@ -3721,14 +3736,29 @@ mod tests {
     fn split_inbox_matches_covers_domain_label_and_pattern_rules() {
         let thread = test_thread(&["Jane Doe <jane@Acme.com>"], &["IMPORTANT"]);
 
-        assert!(split_inbox_matches(&test_rule("domain", "acme.com"), &thread));
-        assert!(!split_inbox_matches(&test_rule("domain", "other.com"), &thread));
+        assert!(split_inbox_matches(
+            &test_rule("domain", "acme.com"),
+            &thread
+        ));
+        assert!(!split_inbox_matches(
+            &test_rule("domain", "other.com"),
+            &thread
+        ));
 
-        assert!(split_inbox_matches(&test_rule("label", "IMPORTANT"), &thread));
-        assert!(!split_inbox_matches(&test_rule("label", "STARRED"), &thread));
+        assert!(split_inbox_matches(
+            &test_rule("label", "IMPORTANT"),
+            &thread
+        ));
+        assert!(!split_inbox_matches(
+            &test_rule("label", "STARRED"),
+            &thread
+        ));
 
         assert!(split_inbox_matches(&test_rule("pattern", "jane@"), &thread));
-        assert!(!split_inbox_matches(&test_rule("pattern", "john@"), &thread));
+        assert!(!split_inbox_matches(
+            &test_rule("pattern", "john@"),
+            &thread
+        ));
     }
 
     #[test]
@@ -3744,11 +3774,17 @@ mod tests {
             .unwrap();
 
         let listed = database.list_split_inboxes().unwrap();
-        assert_eq!(listed.iter().map(|s| &s.name).collect::<Vec<_>>(), vec!["Acme", "Widgets Co"]);
+        assert_eq!(
+            listed.iter().map(|s| &s.name).collect::<Vec<_>>(),
+            vec!["Acme", "Widgets Co"]
+        );
 
         let renamed = database.update_split_inbox(&acme.id, "Acme Corp").unwrap();
         assert_eq!(renamed.name, "Acme Corp");
-        assert_eq!(renamed.match_value, "acme.com", "rename leaves the rule untouched");
+        assert_eq!(
+            renamed.match_value, "acme.com",
+            "rename leaves the rule untouched"
+        );
 
         database
             .reorder_split_inboxes(&[widgets.id.clone(), acme.id.clone()])
@@ -3760,9 +3796,15 @@ mod tests {
         database.delete_split_inbox(&widgets.id).unwrap();
         assert_eq!(database.list_split_inboxes().unwrap().len(), 1);
 
-        assert!(database.create_split_inbox("", "domain", "acme.com", "default").is_err());
-        assert!(database.create_split_inbox("Acme", "domain", "", "default").is_err());
-        assert!(database.create_split_inbox("Acme", "bogus", "acme.com", "default").is_err());
+        assert!(database
+            .create_split_inbox("", "domain", "acme.com", "default")
+            .is_err());
+        assert!(database
+            .create_split_inbox("Acme", "domain", "", "default")
+            .is_err());
+        assert!(database
+            .create_split_inbox("Acme", "bogus", "acme.com", "default")
+            .is_err());
     }
 
     #[test]
@@ -3808,23 +3850,41 @@ mod tests {
         let split_inbox = database
             .create_split_inbox("Inbox label", "label", "INBOX", "default")
             .unwrap();
-        let page = database.list_split_inbox_page(&split_inbox.id, 0, 10).unwrap();
-        assert!(page.threads.iter().all(|thread| thread.account_id == "default"));
+        let page = database
+            .list_split_inbox_page(&split_inbox.id, 0, 10)
+            .unwrap();
+        assert!(page
+            .threads
+            .iter()
+            .all(|thread| thread.account_id == "default"));
     }
 
     #[test]
     fn list_threads_page_excludes_threads_claimed_by_a_split_inbox() {
         let database = database();
         let before = database.list_threads_page(None, 0, 10).unwrap();
-        assert_eq!(before.threads.len(), 2, "welcome and roadmap are both seeded, unclaimed by any split");
+        assert_eq!(
+            before.threads.len(),
+            2,
+            "welcome and roadmap are both seeded, unclaimed by any split"
+        );
 
         // "roadmap"'s only participant is "Product Team" (see `insert_demo`),
         // which the `pattern` rule matches on the sender's normalized address.
         // Both seeded threads are account "default" (see `insert_demo`).
-        database.create_split_inbox("Product", "pattern", "product", "default").unwrap();
+        database
+            .create_split_inbox("Product", "pattern", "product", "default")
+            .unwrap();
 
         let after = database.list_threads_page(None, 0, 10).unwrap();
-        assert_eq!(after.threads.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["welcome"]);
+        assert_eq!(
+            after
+                .threads
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["welcome"]
+        );
     }
 
     #[test]
@@ -3865,7 +3925,10 @@ mod tests {
             .create_split_inbox("Product", "domain", "product.example", "work@example.com")
             .unwrap();
         let after = database.mailbox_unread_counts(None).unwrap();
-        assert_eq!(after.inbox, 1, "the product thread moved out of the Inbox bucket");
+        assert_eq!(
+            after.inbox, 1,
+            "the product thread moved out of the Inbox bucket"
+        );
         assert_eq!(after.splits.get(&split.id), Some(&1));
     }
 
@@ -3890,7 +3953,10 @@ mod tests {
             .unwrap();
 
         let counts = database.mailbox_unread_counts(None).unwrap();
-        assert_eq!(counts.inbox, 2, "the product thread stays in the Inbox bucket");
+        assert_eq!(
+            counts.inbox, 2,
+            "the product thread stays in the Inbox bucket"
+        );
         assert!(counts.splits.is_empty());
     }
 
@@ -3956,11 +4022,7 @@ mod tests {
             "2026-01-02T00:00:00Z",
             "latest",
         );
-        latest.labels = vec![
-            "INBOX".into(),
-            "UNREAD".into(),
-            "Label_latest".into(),
-        ];
+        latest.labels = vec!["INBOX".into(), "UNREAD".into(), "Label_latest".into()];
 
         database
             .upsert_gmail_thread("work@example.com", &[latest.clone(), root.clone()])
@@ -4385,10 +4447,7 @@ mod tests {
         database
             .connection()
             .unwrap()
-            .execute(
-                "DELETE FROM threads WHERE id = 'work@example.com:t1'",
-                [],
-            )
+            .execute("DELETE FROM threads WHERE id = 'work@example.com:t1'", [])
             .unwrap();
 
         let claimed = database.claim_mutations("work@example.com", 10).unwrap();
@@ -4616,7 +4675,10 @@ mod tests {
                 .open(&temp.path)
                 .unwrap();
             let len = file.metadata().unwrap().len();
-            assert!(len > 8192, "expected more than one page of data to truncate");
+            assert!(
+                len > 8192,
+                "expected more than one page of data to truncate"
+            );
             file.set_len(len / 2).unwrap();
         }
 
@@ -4688,7 +4750,10 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
 
-        assert_eq!(list_matching(&temp.dir, ".backup-").len(), PERIODIC_BACKUPS_KEPT);
+        assert_eq!(
+            list_matching(&temp.dir, ".backup-").len(),
+            PERIODIC_BACKUPS_KEPT
+        );
 
         let latest = latest_periodic_backup(&temp.path).unwrap();
         let restored_path = temp.dir.join("restored.sqlite");
@@ -4722,7 +4787,9 @@ mod tests {
 
         let threads = database.list_threads(None).unwrap();
         assert!(threads.iter().any(|t| t.subject == "Welcome to Dispatch"));
-        assert!(!threads.iter().any(|t| t.id == "work@example.com:lost-thread"));
+        assert!(!threads
+            .iter()
+            .any(|t| t.id == "work@example.com:lost-thread"));
         assert!(
             !list_matching(&temp.dir, ".corrupt-").is_empty(),
             "the broken original should be quarantined, not deleted"
@@ -4818,7 +4885,9 @@ mod tests {
         let database = Database::open(&temp.path).unwrap();
         let threads = database.list_threads(Some("work@example.com")).unwrap();
         assert!(
-            threads.iter().any(|t| t.id == "work@example.com:kept-thread"),
+            threads
+                .iter()
+                .any(|t| t.id == "work@example.com:kept-thread"),
             "the original database must survive untouched"
         );
     }
