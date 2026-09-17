@@ -314,6 +314,28 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
         tx.pragma_update(None, "user_version", 13).map_err(error)?;
     }
+    if version < 14 {
+        tx.execute_batch(
+            "ALTER TABLE mutations ADD COLUMN target_message_id TEXT;
+            UPDATE mutations
+            SET target_message_id = CASE
+                WHEN kind IN ('star', 'label') THEN (
+                    SELECT id FROM messages
+                    WHERE thread_id = mutations.thread_id
+                    ORDER BY sent_at ASC, id ASC LIMIT 1
+                )
+                WHEN kind = 'read'
+                     AND json_extract(payload_json, '$.value') = 0 THEN (
+                    SELECT id FROM messages
+                    WHERE thread_id = mutations.thread_id
+                    ORDER BY sent_at DESC, id DESC LIMIT 1
+                )
+            END
+            WHERE state IN ('pending', 'running');
+            PRAGMA user_version=14;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;

@@ -322,28 +322,49 @@ async fn deliver_mutations(
             let mutation = &mutations[index];
             let (add, remove) = mutation_labels(mutation);
             let mut batch_end = index + 1;
-            let result = if let ThreadMutation::Spam { value, .. } = &mutation.mutation {
-                while batch_end < mutations.len()
-                    && matches!(
-                        &mutations[batch_end].mutation,
-                        ThreadMutation::Spam { value: next, .. } if next == value
-                    )
-                {
-                    batch_end += 1;
+            let result = match &mutation.mutation {
+                ThreadMutation::Spam { value, .. } => {
+                    while batch_end < mutations.len()
+                        && matches!(
+                            &mutations[batch_end].mutation,
+                            ThreadMutation::Spam { value: next, .. } if next == value
+                        )
+                    {
+                        batch_end += 1;
+                    }
+                    let message_ids = mutations[index..batch_end]
+                        .iter()
+                        .map(|item| database.message_ids_for_thread(item.mutation.thread_id()))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(ProviderError::Other)?
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    provider.modify_messages(&message_ids, &add, &remove).await
                 }
-                let message_ids = mutations[index..batch_end]
-                    .iter()
-                    .map(|item| database.message_ids_for_thread(item.mutation.thread_id()))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(ProviderError::Other)?
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>();
-                provider.modify_messages(&message_ids, &add, &remove).await
-            } else {
-                provider
-                    .modify_thread(&mutation.provider_thread_id, &add, &remove)
-                    .await
+                ThreadMutation::Star { .. }
+                | ThreadMutation::Label { .. }
+                | ThreadMutation::Read { value: false, .. } => {
+                    match mutation.target_message_id.as_ref() {
+                        Some(message_id) => {
+                            provider
+                                .modify_messages(
+                                    std::slice::from_ref(message_id),
+                                    &add,
+                                    &remove,
+                                )
+                                .await
+                        }
+                        None => Err(ProviderError::Other(
+                            "Mutation target message is unavailable".into(),
+                        )),
+                    }
+                }
+                _ => {
+                    provider
+                        .modify_thread(&mutation.provider_thread_id, &add, &remove)
+                        .await
+                }
             };
             match result {
                 Ok(()) => {
@@ -633,6 +654,7 @@ mod tests {
         let mutation = PendingMutation {
             id: "m1".into(),
             provider_thread_id: "gmail-thread".into(),
+            target_message_id: None,
             mutation: ThreadMutation::Trash {
                 thread_id: "welcome".into(),
                 value: true,
@@ -649,6 +671,7 @@ mod tests {
         let mutation = PendingMutation {
             id: "m1".into(),
             provider_thread_id: "gmail-thread".into(),
+            target_message_id: None,
             mutation: ThreadMutation::Trash {
                 thread_id: "welcome".into(),
                 value: false,
@@ -665,6 +688,7 @@ mod tests {
         let mutation = PendingMutation {
             id: "m1".into(),
             provider_thread_id: "gmail-thread".into(),
+            target_message_id: None,
             mutation: ThreadMutation::Spam {
                 thread_id: "welcome".into(),
                 value: true,
@@ -681,6 +705,7 @@ mod tests {
         let mutation = PendingMutation {
             id: "m1".into(),
             provider_thread_id: "gmail-thread".into(),
+            target_message_id: None,
             mutation: ThreadMutation::Spam {
                 thread_id: "welcome".into(),
                 value: false,
@@ -728,6 +753,115 @@ mod tests {
                 vec!["INBOX".to_string()],
             )],
         );
+    }
+
+    #[tokio::test]
+    async fn metadata_targets_root_and_mark_unread_targets_captured_latest_message() {
+        let database = Database::open_memory();
+        let mut root = ContractProvider::message();
+        root.id = "root-message".into();
+        root.internal_date = "1700000000000".into();
+        let mut latest = ContractProvider::message();
+        latest.id = "latest-message".into();
+        latest.internal_date = "1700000001000".into();
+        database
+            .upsert_gmail_thread(
+                "default",
+                &[
+                    crate::mime::normalize(&latest).unwrap(),
+                    crate::mime::normalize(&root).unwrap(),
+                ],
+            )
+            .unwrap();
+        database
+            .mutate_threads(&[
+                ThreadMutation::Star {
+                    thread_id: "default:gmail-thread".into(),
+                    value: true,
+                },
+                ThreadMutation::Label {
+                    thread_id: "default:gmail-thread".into(),
+                    label_id: "Label_project".into(),
+                    value: true,
+                },
+                ThreadMutation::Read {
+                    thread_id: "default:gmail-thread".into(),
+                    value: false,
+                },
+            ])
+            .unwrap();
+
+        // Delivery is deliberately delayed until a newer message exists. The
+        // unread action must still target the message that was latest when the
+        // user performed it.
+        let mut newer = ContractProvider::message();
+        newer.id = "newer-message".into();
+        newer.internal_date = "1700000002000".into();
+        database
+            .upsert_gmail_thread(
+                "default",
+                &[
+                    crate::mime::normalize(&root).unwrap(),
+                    crate::mime::normalize(&latest).unwrap(),
+                    crate::mime::normalize(&newer).unwrap(),
+                ],
+            )
+            .unwrap();
+        let provider = ContractProvider::normal();
+
+        deliver_mutations(&database, "default", &provider)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *provider.message_modifies.lock().unwrap(),
+            vec![
+                (
+                    vec!["root-message".to_string()],
+                    vec!["STARRED".to_string()],
+                    vec![],
+                ),
+                (
+                    vec!["root-message".to_string()],
+                    vec!["Label_project".to_string()],
+                    vec![],
+                ),
+                (
+                    vec!["latest-message".to_string()],
+                    vec!["UNREAD".to_string()],
+                    vec![],
+                ),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_read_and_archive_remain_thread_wide() {
+        let database = Database::open_memory();
+        let message = ContractProvider::message();
+        database
+            .upsert_gmail_thread("default", &[crate::mime::normalize(&message).unwrap()])
+            .unwrap();
+        database
+            .mutate_threads(&[
+                ThreadMutation::Read {
+                    thread_id: "default:gmail-thread".into(),
+                    value: true,
+                },
+                ThreadMutation::Archive {
+                    thread_id: "default:gmail-thread".into(),
+                    value: true,
+                },
+            ])
+            .unwrap();
+        let provider = ContractProvider::normal();
+
+        deliver_mutations(&database, "default", &provider)
+            .await
+            .unwrap();
+
+        assert_eq!(provider.modifies.load(Ordering::SeqCst), 2);
+        assert!(provider.message_modifies.lock().unwrap().is_empty());
     }
 
     #[test]

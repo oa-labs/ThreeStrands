@@ -33,6 +33,7 @@ const ACCOUNT_COLORS: [&str; 8] = [
 pub struct PendingMutation {
     pub id: String,
     pub provider_thread_id: String,
+    pub target_message_id: Option<String>,
     pub mutation: ThreadMutation,
 }
 
@@ -42,6 +43,24 @@ pub struct PendingMutation {
 /// once more than one account is connected.
 fn local_thread_id(account_id: &str, provider_thread_id: &str) -> String {
     format!("{account_id}:{provider_thread_id}")
+}
+
+fn is_gmail_system_label(id: &str) -> bool {
+    id.starts_with("CATEGORY_")
+        || matches!(
+            id,
+            "CHAT"
+                | "SENT"
+                | "INBOX"
+                | "IMPORTANT"
+                | "TRASH"
+                | "DRAFT"
+                | "SPAM"
+                | "STARRED"
+                | "UNREAD"
+                | "SCHEDULED"
+                | "MUTED"
+        )
 }
 
 /// Best-effort: narrow the database file to owner-only access. Not fatal if
@@ -873,8 +892,9 @@ impl Database {
                     transaction
                         .execute(
                             "UPDATE messages SET unread = 1
-                             WHERE thread_id = ?1 AND sent_at = (
-                                 SELECT MAX(sent_at) FROM messages WHERE thread_id = ?1
+                             WHERE id = (
+                                 SELECT id FROM messages WHERE thread_id = ?1
+                                 ORDER BY sent_at DESC, id DESC LIMIT 1
                              )",
                             [thread_id],
                         )
@@ -912,6 +932,31 @@ impl Database {
                 |row| row.get(0),
             )
             .map_err(display_error)?;
+        // Metadata actions use one stable representative message rather than
+        // rewriting the state of every message in a Gmail conversation.
+        // Capture the target now so an offline mutation cannot drift if a new
+        // message arrives before it is delivered.
+        let target_message_id: Option<String> = match mutation {
+            ThreadMutation::Star { .. } | ThreadMutation::Label { .. } => transaction
+                .query_row(
+                    "SELECT id FROM messages WHERE thread_id = ?1
+                     ORDER BY sent_at ASC, id ASC LIMIT 1",
+                    [mutation.thread_id()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(display_error)?,
+            ThreadMutation::Read { value: false, .. } => transaction
+                .query_row(
+                    "SELECT id FROM messages WHERE thread_id = ?1
+                     ORDER BY sent_at DESC, id DESC LIMIT 1",
+                    [mutation.thread_id()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(display_error)?,
+            _ => None,
+        };
         let payload = serde_json::to_string(mutation).map_err(display_error)?;
         let duplicate: bool = transaction
             .query_row(
@@ -928,12 +973,13 @@ impl Database {
             transaction
                 .execute(
                     "INSERT INTO mutations(
-                    id, account_id, thread_id, kind, payload_json, state, created_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
+                    id, account_id, thread_id, target_message_id, kind, payload_json, state, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7)",
                     params![
                         Uuid::new_v4().to_string(),
                         account_id,
                         mutation.thread_id(),
+                        target_message_id,
                         kind,
                         payload,
                         Utc::now().to_rfc3339(),
@@ -1204,7 +1250,10 @@ impl Database {
         account_id: &str,
         messages: &[NormalizedMessage],
     ) -> Result<(), String> {
-        let Some(latest) = messages.iter().max_by(|a, b| a.date.cmp(&b.date)) else {
+        let Some(latest) = messages
+            .iter()
+            .max_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)))
+        else {
             return Ok(());
         };
         let provider_thread_id = &latest.thread_id;
@@ -1226,9 +1275,32 @@ impl Database {
             .collect();
         search_participants.sort();
         search_participants.dedup();
+        let root = messages
+            .iter()
+            .min_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)))
+            .expect("a latest message implies a root message");
         let mut labels: Vec<String> = messages
             .iter()
-            .flat_map(|message| message.labels.iter().cloned())
+            .flat_map(|message| message.labels.iter())
+            .filter(|label| {
+                is_gmail_system_label(label)
+                    && label.as_str() != "STARRED"
+                    && label.as_str() != "UNREAD"
+            })
+            .cloned()
+            .chain(
+                root.labels
+                    .iter()
+                    .filter(|label| !is_gmail_system_label(label) || label.as_str() == "STARRED")
+                    .cloned(),
+            )
+            .chain(
+                latest
+                    .labels
+                    .iter()
+                    .filter(|label| label.as_str() == "UNREAD")
+                    .cloned(),
+            )
             .collect();
         labels.sort();
         labels.dedup();
@@ -1379,7 +1451,7 @@ impl Database {
         let result = {
             let mut statement = transaction
                 .prepare(
-                    "SELECT m.id, t.provider_thread_id, m.payload_json
+                    "SELECT m.id, t.provider_thread_id, m.target_message_id, m.payload_json
                      FROM mutations m JOIN threads t ON t.id = m.thread_id
                      WHERE m.state = 'pending' AND m.account_id = ?1
                      ORDER BY m.created_at LIMIT ?2",
@@ -1387,7 +1459,7 @@ impl Database {
                 .map_err(display_error)?;
             let rows = statement
                 .query_map(params![account_id, limit as i64], |row| {
-                    let payload: String = row.get(2)?;
+                    let payload: String = row.get(3)?;
                     let mutation = serde_json::from_str(&payload).map_err(|error| {
                         rusqlite::Error::FromSqlConversionFailure(
                             payload.len(),
@@ -1398,6 +1470,7 @@ impl Database {
                     Ok(PendingMutation {
                         id: row.get(0)?,
                         provider_thread_id: row.get(1)?,
+                        target_message_id: row.get(2)?,
                         mutation,
                     })
                 })
@@ -3109,6 +3182,65 @@ mod tests {
             unsubscribe: None,
             attachments: vec![],
         }
+    }
+
+    #[test]
+    fn conversation_metadata_comes_from_root_and_unread_comes_from_latest_message() {
+        let database = database();
+        let mut root = message(
+            "root-message",
+            "metadata-thread",
+            "2026-01-01T00:00:00Z",
+            "root",
+        );
+        root.labels = vec![
+            "INBOX".into(),
+            "STARRED".into(),
+            "Label_root".into(),
+            "IMPORTANT".into(),
+        ];
+        let mut latest = message(
+            "latest-message",
+            "metadata-thread",
+            "2026-01-02T00:00:00Z",
+            "latest",
+        );
+        latest.labels = vec![
+            "INBOX".into(),
+            "UNREAD".into(),
+            "Label_latest".into(),
+        ];
+
+        database
+            .upsert_gmail_thread("work@example.com", &[latest.clone(), root.clone()])
+            .unwrap();
+
+        let thread = database
+            .get_thread("work@example.com:metadata-thread")
+            .unwrap()
+            .thread;
+        assert!(thread.starred);
+        assert!(thread.unread);
+        assert!(thread.labels.contains(&"Label_root".to_string()));
+        assert!(!thread.labels.contains(&"Label_latest".to_string()));
+        assert!(
+            thread.labels.contains(&"IMPORTANT".to_string()),
+            "non-metadata system labels remain conversation-wide"
+        );
+
+        root.labels.retain(|label| label != "STARRED");
+        latest.labels.push("STARRED".into());
+        database
+            .upsert_gmail_thread("work@example.com", &[root, latest])
+            .unwrap();
+        assert!(
+            !database
+                .get_thread("work@example.com:metadata-thread")
+                .unwrap()
+                .thread
+                .starred,
+            "a star on a later message does not become the conversation star"
+        );
     }
 
     #[test]
