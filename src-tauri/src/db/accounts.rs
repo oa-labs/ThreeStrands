@@ -184,11 +184,12 @@ impl Database {
                 "SELECT email FROM accounts WHERE status = 'removal_pending' ORDER BY sort_order",
             )
             .map_err(display_error)?;
-        statement
+        let removals = statement
             .query_map([], |row| row.get(0))
             .map_err(display_error)?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(display_error)
+            .map_err(display_error)?;
+        Ok(removals)
     }
 
     /// Final stage: credentials have already been deleted, so purge all
