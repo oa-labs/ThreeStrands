@@ -1,5 +1,6 @@
 mod ai;
 mod attachment_reader;
+mod attachment_security;
 mod auth;
 mod calendar;
 mod correspondence;
@@ -400,12 +401,7 @@ async fn load_attachment(
                 .map_err(|error| error.to_string())?
         }
     };
-    let filename = std::path::Path::new(&attachment.filename)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
-        .unwrap_or("attachment")
-        .to_string();
+    let filename = attachment_security::normalize_filename(&attachment.filename);
     Ok((filename, attachment.mime_type, bytes))
 }
 
@@ -451,9 +447,26 @@ async fn preview_calendar_attachment(
 async fn open_attachment(
     message_id: String,
     attachment_id: String,
+    window: tauri::Window,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let (filename, _, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
+    if let Some(description) = attachment_security::opening_confirmation(&filename, &bytes) {
+        let confirmed = rfd::AsyncMessageDialog::new()
+            .set_level(rfd::MessageLevel::Warning)
+            .set_title("Open potentially unsafe attachment?")
+            .set_description(description)
+            .set_buttons(rfd::MessageButtons::OkCancelCustom(
+                "Cancel".into(),
+                "Open anyway".into(),
+            ))
+            .set_parent(&window)
+            .show()
+            .await;
+        if !attachment_security::confirmation_allows_open(&confirmed) {
+            return Ok(());
+        }
+    }
     let path = state
         .attachment_reader
         .write(&filename, &bytes)
@@ -476,7 +489,18 @@ async fn save_attachment(
         return Ok(());
     };
     std::fs::write(destination.path(), bytes)
-        .map_err(|error| format!("Unable to save attachment: {error}"))
+        .map_err(|error| format!("Unable to save attachment: {error}"))?;
+    if let Err(error) = attachment_security::quarantine(destination.path()) {
+        return match std::fs::remove_file(destination.path()) {
+            Ok(()) => Err(format!(
+                "Unable to save attachment safely because quarantine metadata could not be applied: {error}"
+            )),
+            Err(remove_error) => Err(format!(
+                "Quarantine metadata could not be applied to the saved attachment ({error}), and the unsafe copy could not be removed ({remove_error})"
+            )),
+        };
+    }
+    Ok(())
 }
 
 #[tauri::command]

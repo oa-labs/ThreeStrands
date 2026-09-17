@@ -287,7 +287,13 @@ impl Database {
                 })
             })
             .map_err(display_error)?;
-        let messages = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
+        let mut messages = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
+        for message in &mut messages {
+            for attachment in &mut message.attachments {
+                attachment.filename =
+                    crate::attachment_security::normalize_filename(&attachment.filename);
+            }
+        }
         Ok(ThreadDetail { thread, messages })
     }
 
@@ -3505,7 +3511,7 @@ mod tests {
             .attachments
             .push(crate::models::MessageAttachment {
                 id: "gmail-attachment-id".into(),
-                filename: "invoice.pdf".into(),
+                filename: "invoice\u{202e}fdp.ｅｘｅ".into(),
                 mime_type: "application/pdf".into(),
                 size: 42,
                 content_id: None,
@@ -3519,7 +3525,10 @@ mod tests {
             .get_thread("work@example.com:attachment-thread")
             .unwrap();
         assert!(detail.thread.has_attachments);
-        assert_eq!(detail.messages[0].attachments[0].filename, "invoice.pdf");
+        assert_eq!(
+            detail.messages[0].attachments[0].filename,
+            "invoice_fdp.exe"
+        );
     }
 
     #[test]

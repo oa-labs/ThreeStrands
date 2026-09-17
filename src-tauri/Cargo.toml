@@ -1,6 +1,6 @@
 [package]
 name = "dispatch"
-version = "0.5.2"
+version = "0.5.3"
 description = "A local-first, keyboard-driven email client"
 authors = ["Dispatch contributors"]
 edition = "2021"
@@ -38,6 +38,11 @@ tauri-plugin-window-state = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["net", "sync", "time", "io-util", "macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", default-features = false }
+unicode-general-category = "1"
+unicode-normalization = "0.1"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 zstd = "0.13"
+
+[target.'cfg(unix)'.dependencies]
+xattr = "1"

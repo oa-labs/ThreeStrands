@@ -191,7 +191,7 @@ fn collect_attachments(
             filename: if part.filename.is_empty() {
                 "inline-image".into()
             } else {
-                part.filename.clone()
+                crate::attachment_security::normalize_filename(&part.filename)
             },
             mime_type: if part.mime_type.is_empty() {
                 "application/octet-stream".into()

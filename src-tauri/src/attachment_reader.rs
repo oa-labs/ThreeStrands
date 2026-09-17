@@ -63,6 +63,10 @@ impl ReaderCache {
             let _ = fs::remove_dir_all(directory);
             return Err(error);
         }
+        if let Err(error) = crate::attachment_security::quarantine(&path) {
+            let _ = fs::remove_dir_all(directory);
+            return Err(error);
+        }
         Ok(path)
     }
 }
@@ -178,6 +182,9 @@ mod tests {
         assert!(cache.write("/etc/passwd", b"x").is_err());
 
         assert!(cache.write("legitimate.txt", b"x").is_ok());
+        let normalized =
+            crate::attachment_security::normalize_filename("../invoice\u{202e}cod.ｅｘｅ");
+        assert!(cache.write(&normalized, b"x").is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 
