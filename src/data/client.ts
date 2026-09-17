@@ -10,6 +10,7 @@ import type {
   ContactSuggestion,
   Label,
   MailboxUnreadCounts,
+  RecoveryStatus,
   ReplyAssistContext,
   ReplyAssistResult,
   SearchThreadsRequest,
@@ -79,6 +80,8 @@ export interface MailClient extends CorrespondenceClient {
   sync(): Promise<SyncStatus>;
   flushPending(): Promise<SyncStatus>;
   syncStatus(): Promise<SyncStatus>;
+  /** `null` unless this launch had to recover the local database cache. */
+  recoveryStatus(): Promise<RecoveryStatus | null>;
   googleAuthStatus(): Promise<AuthStatus>;
   connectGoogle(): Promise<SyncStatus>;
   disconnectGoogle(): Promise<void>;
@@ -145,6 +148,7 @@ const tauriClient: MailClient = {
   sync: () => complete("sync_account"),
   flushPending: () => complete("flush_pending_mutations"),
   syncStatus: () => read("sync_status"),
+  recoveryStatus: () => read("recovery_status"),
   googleAuthStatus: () => read("google_auth_status"),
   connectGoogle: () => complete("connect_google"),
   disconnectGoogle: () => complete("disconnect_google"),

@@ -489,6 +489,9 @@ export const demoClient: MailClient = {
   async syncStatus() {
     return { ...status };
   },
+  async recoveryStatus() {
+    return null;
+  },
   async googleAuthStatus() {
     return { configured: false, connected: false };
   },

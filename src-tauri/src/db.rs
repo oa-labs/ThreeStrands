@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
 };
 
@@ -77,26 +77,237 @@ fn restrict_to_owner(path: &Path) {
 #[cfg(not(unix))]
 fn restrict_to_owner(_path: &Path) {}
 
-pub struct Database(Mutex<Connection>);
+const PRE_MIGRATION_BACKUPS_KEPT: usize = 3;
+const PERIODIC_BACKUPS_KEPT: usize = 7;
+
+fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+fn wal_sidecar_nonempty(path: &Path) -> bool {
+    std::fs::metadata(sidecar_path(path, "-wal"))
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false)
+}
+
+fn path_string(path: &Path) -> String {
+    path.display().to_string()
+}
+
+/// Runs `PRAGMA quick_check` (a cheap, non-exhaustive integrity check, unlike
+/// the much slower `integrity_check`). Only called when startup looked
+/// suspicious in the first place — see the callers in [`Database::open`].
+fn run_quick_check(connection: &Connection) -> Result<(), String> {
+    let result: String = connection
+        .query_row("PRAGMA quick_check", [], |row| row.get(0))
+        .map_err(display_error)?;
+    if result == "ok" {
+        Ok(())
+    } else {
+        Err(format!("Database integrity check failed: {result}"))
+    }
+}
+
+fn vacuum_into(connection: &Connection, dest: &Path) -> Result<(), String> {
+    connection
+        .execute("VACUUM INTO ?1", params![path_string(dest)])
+        .map_err(display_error)?;
+    Ok(())
+}
+
+/// Deletes every file under `dir` whose name starts with `prefix` beyond the
+/// `keep` most recent (names are chosen so lexicographic order is
+/// chronological order — see [`pre_migration_backup`]/[`periodic_backup`]).
+fn prune_backups(dir: &Path, prefix: &str, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with(prefix))
+        .collect();
+    names.sort();
+    if names.len() > keep {
+        for name in &names[..names.len() - keep] {
+            let _ = std::fs::remove_file(dir.join(name));
+        }
+    }
+}
+
+/// Snapshots the database via `VACUUM INTO` before a migration actually runs,
+/// so a bad migration (or the hardware issue that caused it) leaves a
+/// pre-migration copy behind rather than only the mid-upgrade result. Best
+/// effort: the caller does not treat a failure here as fatal, since the
+/// migration transaction's own atomicity is the real safety net.
+fn pre_migration_backup(connection: &Connection, db_path: &Path, old_version: i64) -> Result<(), String> {
+    let dir = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = db_path.file_name().unwrap_or_default().to_string_lossy();
+    let prefix = format!("{stem}.pre-migration-v");
+    // Zero-padded so lexicographic sort (used by `prune_backups`) matches
+    // numeric/chronological order across single- and multi-digit versions.
+    let dest = dir.join(format!("{prefix}{old_version:04}.bak"));
+    vacuum_into(connection, &dest)?;
+    prune_backups(dir, &prefix, PRE_MIGRATION_BACKUPS_KEPT);
+    Ok(())
+}
+
+fn backup_prefix(db_path: &Path) -> String {
+    format!(
+        "{}.backup-",
+        db_path.file_name().unwrap_or_default().to_string_lossy()
+    )
+}
+
+/// Snapshots the database via `VACUUM INTO` to a timestamped sibling file,
+/// then prunes older snapshots. The timestamp format is fixed-width, so
+/// lexicographic filename order is chronological order.
+fn periodic_backup(connection: &Connection, db_path: &Path) -> Result<(), String> {
+    let dir = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let prefix = backup_prefix(db_path);
+    let dest = dir.join(format!("{prefix}{}", Utc::now().format("%Y%m%dT%H%M%S%.3fZ")));
+    vacuum_into(connection, &dest)?;
+    prune_backups(dir, &prefix, PERIODIC_BACKUPS_KEPT);
+    Ok(())
+}
+
+fn latest_periodic_backup(db_path: &Path) -> Option<PathBuf> {
+    let dir = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let prefix = backup_prefix(db_path);
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with(&prefix))
+        .collect();
+    names.sort();
+    names.pop().map(|name| dir.join(name))
+}
+
+/// Moves a broken database file (and its `-wal`/`-shm` sidecars, if present)
+/// aside rather than deleting it, so it remains available for support/
+/// diagnosis. Returns the quarantined main file's path.
+fn quarantine_broken_database(path: &Path) -> Option<PathBuf> {
+    if !path.exists() {
+        return None;
+    }
+    let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let suffix = format!(".corrupt-{timestamp}");
+    let quarantined = sidecar_path(path, &suffix);
+    for extra in ["-wal", "-shm"] {
+        let source = sidecar_path(path, extra);
+        if source.exists() {
+            let _ = std::fs::rename(&source, sidecar_path(&quarantined, extra));
+        }
+    }
+    std::fs::rename(path, &quarantined).ok()?;
+    Some(quarantined)
+}
+
+/// What [`open_with_recovery`] had to do to get a usable database open.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum RecoveryOutcome {
+    /// The database opened normally; no recovery was needed.
+    Clean,
+    /// The original file failed to open (or failed its post-open integrity
+    /// check) and was replaced with the most recent periodic backup.
+    RestoredFromBackup {
+        corrupt_path: Option<String>,
+        backup_path: String,
+    },
+    /// No usable backup existed, or the restored copy was itself broken, so
+    /// a brand-new empty database was created. The caller is expected to
+    /// trigger a full resync.
+    FreshDatabase { corrupt_path: Option<String> },
+}
+
+/// Opens the database at `path`, recovering from a corrupt file rather than
+/// failing to launch at all: retries against the most recent periodic
+/// backup, and falls all the way back to a fresh empty database if no usable
+/// backup exists. The original file is quarantined (renamed aside, not
+/// deleted) at each step so it stays available for diagnosis.
+pub fn open_with_recovery(path: &Path) -> (Database, RecoveryOutcome) {
+    if let Ok(database) = Database::open(path) {
+        return (database, RecoveryOutcome::Clean);
+    }
+    let corrupt_path = quarantine_broken_database(path).map(|p| path_string(&p));
+
+    if let Some(backup) = latest_periodic_backup(path) {
+        if std::fs::copy(&backup, path).is_ok() {
+            match Database::open(path) {
+                Ok(database) => {
+                    return (
+                        database,
+                        RecoveryOutcome::RestoredFromBackup {
+                            corrupt_path,
+                            backup_path: path_string(&backup),
+                        },
+                    );
+                }
+                Err(_) => {
+                    // The restored copy is itself unusable; discard it and
+                    // fall through to a fresh database below.
+                    let _ = std::fs::remove_file(path);
+                    let _ = std::fs::remove_file(sidecar_path(path, "-wal"));
+                    let _ = std::fs::remove_file(sidecar_path(path, "-shm"));
+                }
+            }
+        }
+    }
+
+    let database = Database::open(path).unwrap_or_else(|error| {
+        panic!("Unable to open local database even starting fresh: {error}")
+    });
+    (database, RecoveryOutcome::FreshDatabase { corrupt_path })
+}
+
+pub struct Database {
+    connection: Mutex<Connection>,
+    /// `None` only for the in-memory test database, which has no file to
+    /// snapshot or checkpoint alongside.
+    path: Option<PathBuf>,
+}
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self, String> {
+        // Checked before opening: a clean shutdown checkpoints WAL back to
+        // (near) zero length, so a non-empty WAL here means the last run
+        // didn't shut down cleanly.
+        let had_pending_wal = wal_sidecar_nonempty(path);
         let mut connection = Connection::open(path).map_err(display_error)?;
         restrict_to_owner(path);
         connection
             .execute_batch(crate::schema::INITIAL_SCHEMA)
             .map_err(display_error)?;
-        connection
+        let reset_running = connection
             .execute(
                 "UPDATE mutations SET state = 'pending', last_error = 'Interrupted before acknowledgement'
                  WHERE state = 'running'",
                 [],
             )
             .map_err(display_error)?;
+        let version_before_migration: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(display_error)?;
+        if version_before_migration < crate::schema::LATEST_VERSION {
+            // Best-effort: a failed snapshot (e.g. a full disk) must not
+            // block the migration itself — the migration's own single
+            // transaction is the real safety net either way.
+            let _ = pre_migration_backup(&connection, path, version_before_migration);
+        }
         crate::schema::migrate(&mut connection)?;
         ensure_query_indexes(&connection).map_err(display_error)?;
+        if had_pending_wal || reset_running > 0 {
+            run_quick_check(&connection)?;
+        }
         seed_if_empty(&connection).map_err(display_error)?;
-        Ok(Self(Mutex::new(connection)))
+        Ok(Self {
+            connection: Mutex::new(connection),
+            path: Some(path.to_path_buf()),
+        })
     }
 
     #[cfg(test)]
@@ -108,13 +319,38 @@ impl Database {
         crate::schema::migrate(&mut connection).unwrap();
         ensure_query_indexes(&connection).unwrap();
         seed_if_empty(&connection).unwrap();
-        Self(Mutex::new(connection))
+        Self {
+            connection: Mutex::new(connection),
+            path: None,
+        }
     }
 
     pub(crate) fn connection(&self) -> Result<MutexGuard<'_, Connection>, String> {
-        self.0
+        self.connection
             .lock()
             .map_err(|_| "Local database lock was poisoned".to_string())
+    }
+
+    /// Checkpoints and truncates the WAL file back down. Called from the
+    /// periodic maintenance loop so a long-running session doesn't leave an
+    /// ever-growing `-wal` file between the automatic checkpoints SQLite
+    /// already performs on its own.
+    pub fn checkpoint_wal(&self) -> Result<(), String> {
+        self.connection()?
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(display_error)
+    }
+
+    /// Snapshots the database to a rotating sibling file via `VACUUM INTO`,
+    /// pruning older snapshots beyond the retention window. A no-op for the
+    /// in-memory test database, which has no path to snapshot alongside.
+    pub fn create_periodic_backup(&self) -> Result<(), String> {
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
+        let connection = self.connection()?;
+        periodic_backup(&connection, &path)?;
+        Ok(())
     }
 
     /// The Inbox is unarchived/untrashed threads *minus* anything claimed by
@@ -4119,5 +4355,278 @@ mod tests {
 
         let scoped = database.list_trash(Some("personal@example.com")).unwrap();
         assert!(scoped.is_empty());
+    }
+
+    // --- Recovery/durability plan (docs/db-recovery-plan.md) ---
+    //
+    // These need a real file on disk (corruption, backup files, and
+    // `open_with_recovery`'s file-level recovery all operate on a path, not
+    // an in-memory connection), unlike the rest of this module.
+
+    struct TempDbPath {
+        dir: PathBuf,
+        path: PathBuf,
+    }
+
+    impl TempDbPath {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("dispatch-db-test-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("test.sqlite");
+            Self { dir, path }
+        }
+    }
+
+    impl Drop for TempDbPath {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn corrupt_header(path: &Path) {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(&[0u8; 16]).unwrap();
+    }
+
+    fn list_matching(dir: &Path, needle: &str) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.contains(needle))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn quick_check_flags_a_corrupted_committed_page() {
+        let temp = TempDbPath::new();
+        {
+            let database = Database::open(&temp.path).unwrap();
+            database
+                .upsert_gmail_thread(
+                    "work@example.com",
+                    &[message(
+                        "m1",
+                        "inbox",
+                        "2026-01-01T00:00:00Z",
+                        &"padding to push this row across more than one page. ".repeat(200),
+                    )],
+                )
+                .unwrap();
+            // Merge WAL into the main file so the data we're about to
+            // corrupt actually lives there rather than in `-wal`.
+            database.checkpoint_wal().unwrap();
+        }
+
+        {
+            // Truncating partway through leaves the header's recorded page
+            // count disagreeing with the file's actual size — a page-level
+            // byte flip can land in unused free space and go unnoticed, but
+            // this mismatch is exactly what `quick_check` is designed to
+            // catch, every time.
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&temp.path)
+                .unwrap();
+            let len = file.metadata().unwrap().len();
+            assert!(len > 8192, "expected more than one page of data to truncate");
+            file.set_len(len / 2).unwrap();
+        }
+
+        let connection = Connection::open(&temp.path).unwrap();
+        let result = run_quick_check(&connection);
+        assert!(
+            result.is_err(),
+            "flipping bytes in a committed data page should be caught by quick_check"
+        );
+    }
+
+    #[test]
+    fn opening_a_brand_new_database_takes_a_pre_migration_snapshot() {
+        let temp = TempDbPath::new();
+        let database = Database::open(&temp.path).unwrap();
+        drop(database);
+
+        assert!(
+            temp.dir.join("test.sqlite.pre-migration-v0000.bak").exists(),
+            "opening a schema at version 0 should snapshot it before migrating to the latest version"
+        );
+    }
+
+    #[test]
+    fn pre_migration_backup_creates_a_versioned_snapshot_and_prunes_old_ones() {
+        let temp = TempDbPath::new();
+        // Opening already takes its own v0000 snapshot (this schema starts
+        // at version 0); use a version range well clear of that so this
+        // test's own rotation assertion isn't affected by it.
+        let database = Database::open(&temp.path).unwrap();
+        let connection = database.connection().unwrap();
+
+        for version in 100..105 {
+            pre_migration_backup(&connection, &temp.path, version).unwrap();
+        }
+        drop(connection);
+
+        assert_eq!(
+            list_matching(&temp.dir, "pre-migration-v0102")
+                .into_iter()
+                .chain(list_matching(&temp.dir, "pre-migration-v0103"))
+                .chain(list_matching(&temp.dir, "pre-migration-v0104"))
+                .count(),
+            3,
+            "the three highest injected versions should survive pruning"
+        );
+        assert!(
+            list_matching(&temp.dir, "pre-migration-v0100").is_empty()
+                && list_matching(&temp.dir, "pre-migration-v0101").is_empty(),
+            "only the most recent PRE_MIGRATION_BACKUPS_KEPT snapshots should survive"
+        );
+    }
+
+    #[test]
+    fn periodic_backup_round_trips_data_and_prunes_old_snapshots() {
+        let temp = TempDbPath::new();
+        let database = Database::open(&temp.path).unwrap();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "keep-me", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+
+        for _ in 0..(PERIODIC_BACKUPS_KEPT + 2) {
+            database.create_periodic_backup().unwrap();
+            // Keep consecutive snapshot filenames (timestamp-based) from
+            // colliding within the same millisecond.
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        assert_eq!(list_matching(&temp.dir, ".backup-").len(), PERIODIC_BACKUPS_KEPT);
+
+        let latest = latest_periodic_backup(&temp.path).unwrap();
+        let restored_path = temp.dir.join("restored.sqlite");
+        std::fs::copy(&latest, &restored_path).unwrap();
+        let restored = Database::open(&restored_path).unwrap();
+        let threads = restored.list_threads(Some("work@example.com")).unwrap();
+        assert!(threads.iter().any(|t| t.id == "work@example.com:keep-me"));
+    }
+
+    #[test]
+    fn open_with_recovery_falls_back_to_a_fresh_database_when_there_is_no_backup() {
+        let temp = TempDbPath::new();
+        {
+            let database = Database::open(&temp.path).unwrap();
+            database
+                .upsert_gmail_thread(
+                    "work@example.com",
+                    &[message("m1", "lost-thread", "2026-01-01T00:00:00Z", "body")],
+                )
+                .unwrap();
+        }
+        corrupt_header(&temp.path);
+
+        let (database, outcome) = open_with_recovery(&temp.path);
+        match &outcome {
+            RecoveryOutcome::FreshDatabase { corrupt_path } => {
+                assert!(corrupt_path.as_ref().unwrap().contains(".corrupt-"));
+            }
+            other => panic!("expected FreshDatabase, got {other:?}"),
+        }
+
+        let threads = database.list_threads(None).unwrap();
+        assert!(threads.iter().any(|t| t.subject == "Welcome to Dispatch"));
+        assert!(!threads.iter().any(|t| t.id == "work@example.com:lost-thread"));
+        assert!(
+            !list_matching(&temp.dir, ".corrupt-").is_empty(),
+            "the broken original should be quarantined, not deleted"
+        );
+    }
+
+    #[test]
+    fn open_with_recovery_restores_the_latest_backup_when_the_file_is_corrupt() {
+        let temp = TempDbPath::new();
+        {
+            let database = Database::open(&temp.path).unwrap();
+            database
+                .upsert_gmail_thread(
+                    "work@example.com",
+                    &[message(
+                        "m1",
+                        "backed-up-thread",
+                        "2026-01-01T00:00:00Z",
+                        "body",
+                    )],
+                )
+                .unwrap();
+            database.create_periodic_backup().unwrap();
+            // Written after the backup, so it must NOT survive recovery —
+            // that's the proof the restore actually came from the backup
+            // file rather than the (corrupt) live one.
+            database
+                .upsert_gmail_thread(
+                    "work@example.com",
+                    &[message(
+                        "m2",
+                        "post-backup-thread",
+                        "2026-01-02T00:00:00Z",
+                        "body",
+                    )],
+                )
+                .unwrap();
+        }
+        corrupt_header(&temp.path);
+
+        let (database, outcome) = open_with_recovery(&temp.path);
+        assert!(
+            matches!(outcome, RecoveryOutcome::RestoredFromBackup { .. }),
+            "expected RestoredFromBackup, got {outcome:?}"
+        );
+
+        let threads = database.list_threads(Some("work@example.com")).unwrap();
+        let ids: Vec<_> = threads.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains(&"work@example.com:backed-up-thread"));
+        assert!(!ids.contains(&"work@example.com:post-backup-thread"));
+    }
+
+    /// `ENOSPC` needs a genuinely space-constrained filesystem, which isn't
+    /// something to fabricate inside the normal `cargo test` sandbox. Run
+    /// this manually against a small scratch volume, e.g. on macOS:
+    /// `hdiutil create -size 2m -fs "APFS" -volname dispatch-disk-full /tmp/dispatch-disk-full.dmg`
+    /// then `hdiutil attach /tmp/dispatch-disk-full.dmg`, point
+    /// `DISPATCH_DISK_FULL_TEST_DIR` at the mounted volume, and run
+    /// `cargo test disk_full -- --ignored`.
+    #[test]
+    #[ignore = "needs a real space-constrained filesystem; see comment"]
+    fn write_failure_under_disk_full_surfaces_as_an_error_not_a_panic() {
+        let dir = std::env::var("DISPATCH_DISK_FULL_TEST_DIR")
+            .expect("set DISPATCH_DISK_FULL_TEST_DIR to a small, space-constrained mount point");
+        let path = PathBuf::from(dir).join("disk-full.sqlite");
+        let database = Database::open(&path).unwrap();
+
+        let mut hit_capacity_error = false;
+        for i in 0..100_000 {
+            let body = "x".repeat(4096);
+            let result = database.upsert_gmail_thread(
+                "work@example.com",
+                &[message(
+                    &format!("m{i}"),
+                    &format!("thread-{i}"),
+                    "2026-01-01T00:00:00Z",
+                    &body,
+                )],
+            );
+            if result.is_err() {
+                hit_capacity_error = true;
+                break;
+            }
+        }
+        assert!(
+            hit_capacity_error,
+            "expected to eventually exhaust the constrained filesystem"
+        );
     }
 }

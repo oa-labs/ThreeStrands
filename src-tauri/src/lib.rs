@@ -139,6 +139,9 @@ struct AppState {
     exiting: std::sync::atomic::AtomicBool,
     image_cache: image_proxy::ImageCache,
     attachment_reader: attachment_reader::ReaderCache,
+    /// `Some` only when the local database had to be recovered at startup
+    /// (restored from a backup, or recreated fresh) — see `open_with_recovery`.
+    recovery: Option<db::RecoveryOutcome>,
 }
 
 #[derive(Clone, Default)]
@@ -610,6 +613,15 @@ fn sync_status(state: State<'_, AppState>) -> Result<SyncStatus, String> {
     state.database.sync_status(&primary_account_id(&state))
 }
 
+/// `Some` only when this launch had to recover the local database (restored
+/// from a backup, or recreated fresh) — see `db::open_with_recovery`. The
+/// frontend uses this once at startup to explain a resync/empty inbox rather
+/// than leaving it unexplained.
+#[tauri::command]
+fn recovery_status(state: State<'_, AppState>) -> Option<db::RecoveryOutcome> {
+    state.recovery.clone()
+}
+
 #[tauri::command]
 async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatus, String> {
     let _ = state.correspondence.refresh_identity().await;
@@ -1050,10 +1062,26 @@ pub fn run() {
                 .map_err(|error| format!("Unable to find app data directory: {error}"))?;
             std::fs::create_dir_all(&data_dir)?;
             restrict_dir_to_owner(&data_dir);
-            let database = Arc::new(
-                Database::open(&data_dir.join("dispatch.sqlite"))
-                    .map_err(|error| format!("Unable to open local database: {error}"))?,
-            );
+            let (opened_database, recovery) =
+                db::open_with_recovery(&data_dir.join("dispatch.sqlite"));
+            let database = Arc::new(opened_database);
+            let recovery = match recovery {
+                db::RecoveryOutcome::Clean => None,
+                other => Some(other),
+            };
+            if recovery.is_some() {
+                // A restored-from-backup database's cursors reflect
+                // whatever history state that snapshot was taken at, which
+                // may since have diverged from Gmail; a fresh database has
+                // no cursor at all. Either way, force each known account's
+                // next sync to be a full reconciliation rather than trusting
+                // a possibly-stale incremental cursor.
+                if let Ok(accounts) = database.list_accounts() {
+                    for account in &accounts {
+                        let _ = database.clear_cursor(&account.email);
+                    }
+                }
+            }
             let auth_config = GoogleAuthConfig::from_environment().ok();
             // The primary account, used by the single sync loop and
             // correspondence pipeline. Any run after the first already has
@@ -1141,6 +1169,12 @@ pub fn run() {
                         let _ = tokio::task::spawn_blocking(move || {
                             let _ = prune_db.prune_expired_threads();
                             let _ = prune_db.reclaim_space();
+                            // Bound WAL growth, then snapshot: checkpointing
+                            // first means the backup reflects the latest
+                            // writes without carrying an ever-growing WAL of
+                            // its own.
+                            let _ = prune_db.checkpoint_wal();
+                            let _ = prune_db.create_periodic_backup();
                         })
                         .await;
                         tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
@@ -1204,6 +1238,7 @@ pub fn run() {
                 exiting: std::sync::atomic::AtomicBool::new(false),
                 image_cache: image_proxy::ImageCache::new().map_err(std::io::Error::other)?,
                 attachment_reader,
+                recovery,
             });
             Ok(())
         })
@@ -1236,6 +1271,7 @@ pub fn run() {
             sync_status,
             sync_account,
             flush_pending_mutations,
+            recovery_status,
             google_auth_status,
             connect_google,
             disconnect_google,
