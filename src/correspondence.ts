@@ -1,4 +1,9 @@
-import { invokeWithTimeout as invoke } from "./invokeWithTimeout";
+import {
+  BOUNDED_LOCAL_READ,
+  invokeWithPolicy,
+  type InvokePolicy,
+  WAIT_FOR_NATIVE_COMPLETION,
+} from "./invoke";
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
 export type Attachment = { id: string; name: string; size: number; mime: string; ready: boolean; messageId: string | null; providerId: string | null; inline?: boolean; contentId?: string | null };
@@ -29,7 +34,38 @@ export interface CorrespondenceClient {
   removeAttachment(id: string, attachmentId: string): Promise<Draft>;
   fetchAttachment(id: string, attachmentId: string): Promise<Draft>;
 }
-const request = <T>(op: string, args: object = {}) => invoke<T>("correspondence_request", { request: { op, ...args } });
+
+type CorrespondenceOperation =
+  | "identity" | "create" | "setAccount" | "save" | "listDrafts"
+  | "discard" | "queue" | "listOutbox" | "cancel" | "recover"
+  | "reconcile" | "attach" | "attachInline" | "readInline"
+  | "removeAttachment" | "fetchAttachment";
+
+const OPERATION_POLICY: Record<CorrespondenceOperation, InvokePolicy> = {
+  identity: BOUNDED_LOCAL_READ,
+  create: WAIT_FOR_NATIVE_COMPLETION,
+  setAccount: WAIT_FOR_NATIVE_COMPLETION,
+  save: WAIT_FOR_NATIVE_COMPLETION,
+  listDrafts: BOUNDED_LOCAL_READ,
+  discard: WAIT_FOR_NATIVE_COMPLETION,
+  queue: WAIT_FOR_NATIVE_COMPLETION,
+  listOutbox: BOUNDED_LOCAL_READ,
+  cancel: WAIT_FOR_NATIVE_COMPLETION,
+  recover: WAIT_FOR_NATIVE_COMPLETION,
+  reconcile: WAIT_FOR_NATIVE_COMPLETION,
+  attach: WAIT_FOR_NATIVE_COMPLETION,
+  attachInline: WAIT_FOR_NATIVE_COMPLETION,
+  readInline: BOUNDED_LOCAL_READ,
+  removeAttachment: WAIT_FOR_NATIVE_COMPLETION,
+  fetchAttachment: WAIT_FOR_NATIVE_COMPLETION,
+};
+
+const request = <T>(op: CorrespondenceOperation, args: object = {}) =>
+  invokeWithPolicy<T>(
+    "correspondence_request",
+    { request: { op, ...args } },
+    OPERATION_POLICY[op],
+  );
 export const nativeCorrespondence: CorrespondenceClient = {
   senderIdentity: () => request("identity"),
   createDraft: (mode, sourceId, account) => request("create", { mode, sourceId, account }),
