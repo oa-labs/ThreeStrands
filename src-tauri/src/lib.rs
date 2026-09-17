@@ -715,16 +715,20 @@ async fn remove_account(email: String, state: State<'_, AppState>) -> Result<(),
     let _guard = state.correspondence.gate.lock().await;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     state.database.pause_ready_sends_for(&email)?;
+    // Purge local data first: if this fails, the account is untouched and
+    // its credentials are still live, so the caller can safely retry rather
+    // than being left with a still-listed account whose credentials are
+    // already gone.
+    state.database.remove_account(&email)?;
     let removed = state.additional_accounts.lock().await.remove(&email);
     match (&state.auth, removed) {
-        (Some(primary), _) if primary.key() == email => primary.disconnect()?,
+        (Some(primary), _) if primary.key() == email => primary.disconnect(),
         (_, Some(connected)) => {
             connected.poll_task.abort();
-            connected.auth.disconnect()?;
+            connected.auth.disconnect()
         }
-        _ => config.account(&email).disconnect()?,
+        _ => config.account(&email).disconnect(),
     }
-    state.database.remove_account(&email)
 }
 
 #[tauri::command]

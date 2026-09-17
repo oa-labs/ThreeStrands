@@ -84,9 +84,48 @@ impl Database {
             .map_err(display_error)
     }
 
+    /// Wipes every trace of an account: credentials are revoked by the
+    /// caller only after this commits, so a failure here leaves the account
+    /// fully intact rather than stripped of credentials but still listed.
     pub fn remove_account(&self, email: &str) -> Result<(), String> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
+        // thread_search is an FTS5 virtual table with no FK to threads, so
+        // it needs an explicit delete; messages cascade from threads.
+        transaction
+            .execute(
+                "DELETE FROM thread_search WHERE thread_id IN
+                    (SELECT id FROM threads WHERE account_id = ?1)",
+                [email],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute("DELETE FROM threads WHERE account_id = ?1", [email])
+            .map_err(display_error)?;
+        transaction
+            .execute("DELETE FROM mutations WHERE account_id = ?1", [email])
+            .map_err(display_error)?;
+        transaction
+            .execute("DELETE FROM sync_state WHERE account_id = ?1", [email])
+            .map_err(display_error)?;
+        transaction
+            .execute("DELETE FROM pinned_contacts WHERE account_id = ?1", [email])
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
+                [email],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute("DELETE FROM sync_recovery WHERE account_id = ?1", [email])
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "DELETE FROM quarantined_messages WHERE account_id = ?1",
+                [email],
+            )
+            .map_err(display_error)?;
         transaction
             .execute("DELETE FROM triage_events WHERE account_id = ?1", [email])
             .map_err(display_error)?;

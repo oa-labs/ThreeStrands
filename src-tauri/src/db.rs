@@ -3432,6 +3432,117 @@ mod tests {
     }
 
     #[test]
+    fn removing_an_account_purges_all_its_local_data_but_not_another_accounts() {
+        let database = database();
+        // `database()` seeds one thread/message/thread_search row under the
+        // pre-multi-account 'default' bucket; adopting folds it onto the
+        // account under test the same way a real onboarding flow would.
+        database.adopt_account("you@gmail.com").unwrap();
+        database.adopt_account("other@gmail.com").unwrap();
+
+        let connection = database.connection().unwrap();
+        for account in ["you@gmail.com", "other@gmail.com"] {
+            connection
+                .execute(
+                    "INSERT INTO mutations(id, account_id, thread_id, kind, payload_json, state, created_at)
+                     VALUES (?1, ?1, 'roadmap', 'archive', '{}', 'pending', '2026-03-05T14:15:00Z')",
+                    [account],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO pinned_contacts(account_id, email, pinned_at)
+                     VALUES (?1, 'friend@example.com', '2026-03-05T14:15:00Z')",
+                    [account],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sync_recovery(account_id, history_id) VALUES (?1, '123')",
+                    [account],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sync_recovery_threads(account_id, provider_thread_id)
+                     VALUES (?1, 'thread-1')",
+                    [account],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO quarantined_messages(account_id, provider_thread_id, message_id, error, created_at)
+                     VALUES (?1, 'thread-1', 'message-1', 'blocked', '2026-03-05T14:15:00Z')",
+                    [account],
+                )
+                .unwrap();
+        }
+        drop(connection);
+
+        database.remove_account("you@gmail.com").unwrap();
+
+        let connection = database.connection().unwrap();
+        let count = |sql: &str| -> i64 { connection.query_row(sql, [], |row| row.get(0)).unwrap() };
+        assert_eq!(
+            count("SELECT COUNT(*) FROM threads WHERE account_id = 'you@gmail.com'"),
+            0
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM messages"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM thread_search"), 0);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM mutations WHERE account_id = 'you@gmail.com'"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sync_state WHERE account_id = 'you@gmail.com'"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM pinned_contacts WHERE account_id = 'you@gmail.com'"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sync_recovery WHERE account_id = 'you@gmail.com'"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sync_recovery_threads WHERE account_id = 'you@gmail.com'"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM quarantined_messages WHERE account_id = 'you@gmail.com'"),
+            0
+        );
+        assert!(database.get_account("you@gmail.com").unwrap().is_none());
+
+        assert_eq!(
+            count("SELECT COUNT(*) FROM mutations WHERE account_id = 'other@gmail.com'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sync_state WHERE account_id = 'other@gmail.com'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM pinned_contacts WHERE account_id = 'other@gmail.com'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sync_recovery WHERE account_id = 'other@gmail.com'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sync_recovery_threads WHERE account_id = 'other@gmail.com'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM quarantined_messages WHERE account_id = 'other@gmail.com'"),
+            1
+        );
+        assert!(database.get_account("other@gmail.com").unwrap().is_some());
+    }
+
+    #[test]
     fn set_account_color_updates_an_existing_account_and_rejects_an_unknown_one() {
         let database = database();
         database.adopt_account("you@gmail.com").unwrap();
