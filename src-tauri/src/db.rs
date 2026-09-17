@@ -5,7 +5,7 @@ use std::{
 };
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension, Transaction};
 use uuid::Uuid;
 
 use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
@@ -99,14 +99,12 @@ fn path_string(path: &Path) -> String {
 /// Runs `PRAGMA quick_check` (a cheap, non-exhaustive integrity check, unlike
 /// the much slower `integrity_check`). Only called when startup looked
 /// suspicious in the first place — see the callers in [`Database::open`].
-fn run_quick_check(connection: &Connection) -> Result<(), String> {
-    let result: String = connection
-        .query_row("PRAGMA quick_check", [], |row| row.get(0))
-        .map_err(display_error)?;
+fn run_quick_check(connection: &Connection) -> Result<(), OpenError> {
+    let result: String = connection.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
     if result == "ok" {
         Ok(())
     } else {
-        Err(format!("Database integrity check failed: {result}"))
+        Err(OpenError::IntegrityCheckFailed(result))
     }
 }
 
@@ -224,15 +222,88 @@ pub enum RecoveryOutcome {
     FreshDatabase { corrupt_path: Option<String> },
 }
 
+/// Error from opening or initializing the database. Kept structured (rather
+/// than collapsed to a `String`) so [`open_with_recovery`] can tell an
+/// actually-corrupt file apart from a transient/environmental failure —
+/// see [`OpenError::is_corruption`].
+#[derive(Debug)]
+pub enum OpenError {
+    Sqlite(rusqlite::Error),
+    /// `PRAGMA quick_check` ran successfully but reported a problem; the
+    /// payload is its diagnostic text.
+    IntegrityCheckFailed(String),
+    Other(String),
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OpenError::Sqlite(error) => write!(f, "{error}"),
+            OpenError::IntegrityCheckFailed(detail) => {
+                write!(f, "Database integrity check failed: {detail}")
+            }
+            OpenError::Other(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl From<rusqlite::Error> for OpenError {
+    fn from(error: rusqlite::Error) -> Self {
+        OpenError::Sqlite(error)
+    }
+}
+
+impl From<String> for OpenError {
+    fn from(message: String) -> Self {
+        OpenError::Other(message)
+    }
+}
+
+impl OpenError {
+    /// Whether this failure means the database file itself is broken, as
+    /// opposed to a transient or environmental problem (disk full,
+    /// permissions, another process holding a lock, a migration bug, …)
+    /// that replacing the file would not fix and could make worse.
+    /// [`open_with_recovery`] only quarantines and replaces the file for
+    /// this class of error.
+    fn is_corruption(&self) -> bool {
+        match self {
+            OpenError::IntegrityCheckFailed(_) => true,
+            OpenError::Sqlite(rusqlite::Error::SqliteFailure(sqlite_error, _)) => matches!(
+                sqlite_error.code,
+                ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase
+            ),
+            _ => false,
+        }
+    }
+}
+
 /// Opens the database at `path`, recovering from a corrupt file rather than
 /// failing to launch at all: retries against the most recent periodic
 /// backup, and falls all the way back to a fresh empty database if no usable
 /// backup exists. The original file is quarantined (renamed aside, not
 /// deleted) at each step so it stays available for diagnosis.
+///
+/// Only a corruption-class failure (a structured SQLite corruption error, or
+/// a failed `quick_check`) triggers this — see [`OpenError::is_corruption`].
+/// Anything else (disk full, permissions, a lock held by another process, a
+/// migration bug, …) leaves the file untouched and aborts startup instead,
+/// since replacing it in that case could discard a perfectly good database.
 pub fn open_with_recovery(path: &Path) -> (Database, RecoveryOutcome) {
-    if let Ok(database) = Database::open(path) {
-        return (database, RecoveryOutcome::Clean);
+    let error = match Database::open(path) {
+        Ok(database) => return (database, RecoveryOutcome::Clean),
+        Err(error) => error,
+    };
+
+    if !error.is_corruption() {
+        panic!(
+            "Unable to open local database at {}: {error}. This does not look like database \
+             corruption, so the existing file was left in place rather than replaced — check \
+             for a full disk, a permissions problem, or another process holding the database open.",
+            path.display()
+        );
     }
+
     let corrupt_path = quarantine_broken_database(path).map(|p| path_string(&p));
 
     if let Some(backup) = latest_periodic_backup(path) {
@@ -272,38 +343,33 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn open(path: &Path) -> Result<Self, String> {
+    pub fn open(path: &Path) -> Result<Self, OpenError> {
         // Checked before opening: a clean shutdown checkpoints WAL back to
         // (near) zero length, so a non-empty WAL here means the last run
         // didn't shut down cleanly.
         let had_pending_wal = wal_sidecar_nonempty(path);
-        let mut connection = Connection::open(path).map_err(display_error)?;
+        let mut connection = Connection::open(path)?;
         restrict_to_owner(path);
-        connection
-            .execute_batch(crate::schema::INITIAL_SCHEMA)
-            .map_err(display_error)?;
-        let reset_running = connection
-            .execute(
-                "UPDATE mutations SET state = 'pending', last_error = 'Interrupted before acknowledgement'
-                 WHERE state = 'running'",
-                [],
-            )
-            .map_err(display_error)?;
-        let version_before_migration: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .map_err(display_error)?;
+        connection.execute_batch(crate::schema::INITIAL_SCHEMA)?;
+        let reset_running = connection.execute(
+            "UPDATE mutations SET state = 'pending', last_error = 'Interrupted before acknowledgement'
+             WHERE state = 'running'",
+            [],
+        )?;
+        let version_before_migration: i64 =
+            connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version_before_migration < crate::schema::LATEST_VERSION {
             // Best-effort: a failed snapshot (e.g. a full disk) must not
             // block the migration itself — the migration's own single
             // transaction is the real safety net either way.
             let _ = pre_migration_backup(&connection, path, version_before_migration);
         }
-        crate::schema::migrate(&mut connection)?;
-        ensure_query_indexes(&connection).map_err(display_error)?;
+        crate::schema::migrate(&mut connection).map_err(OpenError::Other)?;
+        ensure_query_indexes(&connection)?;
         if had_pending_wal || reset_running > 0 {
             run_quick_check(&connection)?;
         }
-        seed_if_empty(&connection).map_err(display_error)?;
+        seed_if_empty(&connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
             path: Some(path.to_path_buf()),
@@ -4707,6 +4773,54 @@ mod tests {
         let ids: Vec<_> = threads.iter().map(|t| t.id.as_str()).collect();
         assert!(ids.contains(&"work@example.com:backed-up-thread"));
         assert!(!ids.contains(&"work@example.com:post-backup-thread"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn open_with_recovery_leaves_a_permission_denied_database_untouched() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDbPath::new();
+        {
+            let database = Database::open(&temp.path).unwrap();
+            database
+                .upsert_gmail_thread(
+                    "work@example.com",
+                    &[message("m1", "kept-thread", "2026-01-01T00:00:00Z", "body")],
+                )
+                .unwrap();
+        }
+        std::fs::set_permissions(&temp.path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // Root (or a filesystem that ignores mode bits) can't be denied this
+        // way; skip rather than produce a flaky assertion in that setup.
+        let probe_succeeded = Connection::open(&temp.path).is_ok();
+        if probe_succeeded {
+            std::fs::set_permissions(&temp.path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            return;
+        }
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            open_with_recovery(&temp.path)
+        }));
+
+        std::fs::set_permissions(&temp.path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a permission failure is not corruption and should not be silently recovered from"
+        );
+        assert!(
+            list_matching(&temp.dir, ".corrupt-").is_empty(),
+            "a non-corruption failure must not quarantine the original database"
+        );
+
+        let database = Database::open(&temp.path).unwrap();
+        let threads = database.list_threads(Some("work@example.com")).unwrap();
+        assert!(
+            threads.iter().any(|t| t.id == "work@example.com:kept-thread"),
+            "the original database must survive untouched"
+        );
     }
 
     /// `ENOSPC` needs a genuinely space-constrained filesystem, which isn't
