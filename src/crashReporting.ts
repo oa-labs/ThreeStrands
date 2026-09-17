@@ -33,6 +33,13 @@ export function redactDiagnostic(value: string): string {
   return value
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
     .replace(/https?:\/\/[^\s)]+/gi, "[url]")
+    // Defense in depth against a future error message that happens to
+    // interpolate raw mail content: strip quoted strings and header-style
+    // fragments (e.g. a MIME-build validation error quoting a subject or
+    // recipient list) rather than relying solely on the two patterns above.
+    .replace(/"[^"]*"/g, '"[redacted]"')
+    .replace(/'[^']*'/g, "'[redacted]'")
+    .replace(/\b(subject|to|cc|bcc|from)\s*:\s*[^\n]*/gi, "$1: [redacted]")
     .slice(0, 4_000);
 }
 

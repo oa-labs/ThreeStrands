@@ -35,6 +35,15 @@ impl ReaderCache {
     }
 
     pub(crate) fn write(&self, filename: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+        // Defense in depth: don't trust the caller to have already stripped
+        // path separators/`..`/absolute components out of `filename`. Only
+        // accept it if it round-trips through `Path::file_name` unchanged.
+        let name = Path::new(filename)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| *name == filename)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid attachment filename"))?;
+
         let _guard = self
             .maintenance
             .lock()
@@ -49,7 +58,7 @@ impl ReaderCache {
 
         let directory = self.root.join(uuid::Uuid::new_v4().to_string());
         fs::create_dir(&directory)?;
-        let path = directory.join(filename);
+        let path = directory.join(name);
         if let Err(error) = fs::write(&path, bytes) {
             let _ = fs::remove_dir_all(directory);
             return Err(error);
@@ -157,6 +166,20 @@ fn prune_reader_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_rejects_path_traversal_and_absolute_filenames() {
+        let root = test_root("traversal");
+        let cache = ReaderCache::new(root.clone()).unwrap();
+
+        assert!(cache.write("../../etc/passwd", b"x").is_err());
+        assert!(cache.write("nested/escape.txt", b"x").is_err());
+        #[cfg(unix)]
+        assert!(cache.write("/etc/passwd", b"x").is_err());
+
+        assert!(cache.write("legitimate.txt", b"x").is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("dispatch-reader-{name}-{}", uuid::Uuid::new_v4()))

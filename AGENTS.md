@@ -22,3 +22,23 @@ Dispatch renders untrusted sender HTML inside a sandboxed, CSP-scoped iframe. Ke
 - Quote folding must use semantic, conservative evidence. Provider-specific selectors are prohibited in production quote detection; uncertain quoted content stays visible.
 - Any remote image or background URL must remain behind the existing native proxy and blocked-source flow. Do not admit CSS URLs through a new path.
 - Rendering changes require security-negative tests and visual or fixture-based regression coverage. If a provider-specific exception appears unavoidable, stop and document the invariant and review need instead of adding it silently.
+
+## Application versioning
+
+Every task that changes the shipped application must include an appropriate
+Semantic Versioning bump before completion:
+
+- Patch: bug fixes and small behavior changes.
+- Minor: new backward-compatible functionality.
+- Major: intentionally incompatible changes.
+- Do not bump the version for documentation, tests, CI, or development-only
+  changes that do not affect the shipped application.
+
+Keep the application version identical in:
+
+- `package.json`
+- `src-tauri/tauri.conf.json`
+- `src-tauri/Cargo.toml`
+- the `dispatch` package entry in `src-tauri/Cargo.lock`
+
+Mention the version change in the final summary.

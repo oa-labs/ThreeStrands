@@ -1856,6 +1856,7 @@ export function App() {
               onUndo={correspondence.undoSendItem}
               onRestore={correspondence.restoreFailedSend}
               onReconcile={correspondence.reconcileSend}
+              pendingActions={correspondence.pendingOutboxActions}
             />
           ) : (
             <>

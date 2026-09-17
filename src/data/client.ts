@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeWithTimeout as invoke } from "../invokeWithTimeout";
 import type {
   Account,
   AuthStatus,

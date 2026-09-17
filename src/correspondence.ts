@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeWithTimeout as invoke } from "./invokeWithTimeout";
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
 export type Attachment = { id: string; name: string; size: number; mime: string; ready: boolean; messageId: string | null; providerId: string | null; inline?: boolean; contentId?: string | null };

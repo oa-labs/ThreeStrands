@@ -1091,31 +1091,25 @@ impl Database {
             .map_err(display_error)
     }
 
-    /// Wipes only `account_id`'s cached threads before a full resync, never
-    /// another connected account's mail.
-    pub fn begin_full_sync(&self, account_id: &str) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        transaction
-            .execute(
-                "DELETE FROM thread_search WHERE thread_id IN
-                    (SELECT id FROM threads WHERE account_id = ?1)",
-                [account_id],
-            )
-            .map_err(display_error)?;
-        transaction
-            .execute("DELETE FROM threads WHERE account_id = ?1", [account_id])
-            .map_err(display_error)?;
-        // An interrupted full import must restart in full. Keeping the old
-        // cursor here would make the next startup perform an incremental sync
-        // against an intentionally emptied cache.
-        transaction
+    /// Drops `account_id`'s history cursor ahead of a full inbox resync.
+    ///
+    /// This intentionally never deletes cached threads: a thread the user has
+    /// archived or trashed locally is, by definition, no longer visible in
+    /// Gmail's live INBOX listing, so a resync could never restore it — only
+    /// the sync engine's inbox-vs-local diff (see `sync::resync_inbox`) may
+    /// touch a thread row, and only when that thread actually drifted.
+    ///
+    /// An interrupted full resync must restart in full. Keeping the old
+    /// cursor here would make the next startup perform an incremental sync
+    /// against a resync that never finished.
+    pub fn clear_cursor(&self, account_id: &str) -> Result<(), String> {
+        self.connection()?
             .execute(
                 "UPDATE sync_state SET cursor = NULL WHERE account_id = ?1",
                 [account_id],
             )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)
+            .map(|_| ())
+            .map_err(display_error)
     }
 
     /// Whether it's been at least `interval_secs` since this account's last
@@ -1482,6 +1476,13 @@ impl Database {
     /// Claims only `account_id`'s pending mutations, so one account's poller
     /// never picks up and tries to deliver another account's mutation
     /// through the wrong Gmail session.
+    ///
+    /// Uses a `LEFT JOIN` rather than an inner join: a mutation whose thread
+    /// row is gone (deleted from Gmail, or — historically — wiped by a full
+    /// resync) would otherwise never match an inner join and would sit as
+    /// "pending" forever, claimed by nothing and reported nowhere. Such rows
+    /// are instead failed immediately with a clear reason and excluded from
+    /// the claimed batch.
     pub fn claim_mutations(
         &self,
         account_id: &str,
@@ -1489,36 +1490,61 @@ impl Database {
     ) -> Result<Vec<PendingMutation>, String> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
-        let result = {
+        let (claimable, orphaned) = {
             let mut statement = transaction
                 .prepare(
                     "SELECT m.id, t.provider_thread_id, m.target_message_id, m.payload_json
-                     FROM mutations m JOIN threads t ON t.id = m.thread_id
+                     FROM mutations m LEFT JOIN threads t ON t.id = m.thread_id
                      WHERE m.state = 'pending' AND m.account_id = ?1
                      ORDER BY m.created_at LIMIT ?2",
                 )
                 .map_err(display_error)?;
             let rows = statement
                 .query_map(params![account_id, limit as i64], |row| {
+                    let id: String = row.get(0)?;
+                    let provider_thread_id: Option<String> = row.get(1)?;
+                    let target_message_id: Option<String> = row.get(2)?;
                     let payload: String = row.get(3)?;
-                    let mutation = serde_json::from_str(&payload).map_err(|error| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            payload.len(),
-                            rusqlite::types::Type::Text,
-                            Box::new(error),
-                        )
-                    })?;
-                    Ok(PendingMutation {
-                        id: row.get(0)?,
-                        provider_thread_id: row.get(1)?,
-                        target_message_id: row.get(2)?,
-                        mutation,
-                    })
+                    Ok((id, provider_thread_id, target_message_id, payload))
                 })
+                .map_err(display_error)?
+                .collect::<Result<Vec<_>, _>>()
                 .map_err(display_error)?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?
+            let mut claimable = Vec::new();
+            let mut orphaned = Vec::new();
+            for (id, provider_thread_id, target_message_id, payload) in rows {
+                match provider_thread_id {
+                    Some(provider_thread_id) => {
+                        let mutation = serde_json::from_str(&payload).map_err(|error| {
+                            display_error(rusqlite::Error::FromSqlConversionFailure(
+                                payload.len(),
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            ))
+                        })?;
+                        claimable.push(PendingMutation {
+                            id,
+                            provider_thread_id,
+                            target_message_id,
+                            mutation,
+                        });
+                    }
+                    None => orphaned.push(id),
+                }
+            }
+            (claimable, orphaned)
         };
-        for mutation in &result {
+        for id in &orphaned {
+            transaction
+                .execute(
+                    "UPDATE mutations SET state = 'failed',
+                        last_error = 'Target thread no longer exists locally'
+                     WHERE id = ?1",
+                    [id],
+                )
+                .map_err(display_error)?;
+        }
+        for mutation in &claimable {
             transaction
                 .execute(
                     "UPDATE mutations SET state = 'running', attempts = attempts + 1
@@ -1528,7 +1554,7 @@ impl Database {
                 .map_err(display_error)?;
         }
         transaction.commit().map_err(display_error)?;
-        Ok(result)
+        Ok(claimable)
     }
 
     pub fn complete_mutation(&self, id: &str) -> Result<(), String> {
@@ -2143,6 +2169,16 @@ mod tests {
         transaction.commit().unwrap();
         drop(connection);
         database
+    }
+
+    /// Removes `database()`'s seeded demo thread so a test can assert exact
+    /// counts (e.g. retention pruning) without the seed data participating.
+    fn clear_seed_threads(database: &Database) {
+        let connection = database.connection().unwrap();
+        connection
+            .execute("DELETE FROM thread_search", [])
+            .unwrap();
+        connection.execute("DELETE FROM threads", []).unwrap();
     }
 
     #[test]
@@ -2826,7 +2862,7 @@ mod tests {
     fn interrupted_full_sync_cannot_reuse_the_previous_cursor() {
         let database = database();
         database.finish_sync("default", "old-cursor").unwrap();
-        database.begin_full_sync("default").unwrap();
+        database.clear_cursor("default").unwrap();
         assert_eq!(database.cursor("default").unwrap(), None);
     }
 
@@ -3420,7 +3456,7 @@ mod tests {
     }
 
     #[test]
-    fn full_sync_wipes_only_the_given_accounts_threads() {
+    fn clear_cursor_never_deletes_any_accounts_threads() {
         let database = database();
         database
             .upsert_gmail_thread(
@@ -3434,9 +3470,9 @@ mod tests {
                 &[message("m2", "t2", "2026-01-01T00:00:00Z", "body")],
             )
             .unwrap();
-        database.begin_full_sync("work@example.com").unwrap();
+        database.clear_cursor("work@example.com").unwrap();
         let threads = database.list_threads(None).unwrap();
-        assert!(!threads.iter().any(|t| t.id == "work@example.com:t1"));
+        assert!(threads.iter().any(|t| t.id == "work@example.com:t1"));
         assert!(threads.iter().any(|t| t.id == "personal@example.com:t2"));
     }
 
@@ -3461,7 +3497,7 @@ mod tests {
     #[test]
     fn prune_expired_threads_removes_only_old_unstarred_threads() {
         let database = database();
-        database.begin_full_sync("default").unwrap();
+        clear_seed_threads(&database);
         database
             .upsert_gmail_thread(
                 "work@example.com",
@@ -3485,7 +3521,7 @@ mod tests {
     #[test]
     fn prune_expired_threads_keeps_starred_threads_regardless_of_age() {
         let database = database();
-        database.begin_full_sync("default").unwrap();
+        clear_seed_threads(&database);
         database
             .upsert_gmail_thread(
                 "work@example.com",
@@ -3593,7 +3629,7 @@ mod tests {
     #[test]
     fn compress_next_body_batch_converts_legacy_rows_and_drains_to_zero() {
         let database = database();
-        database.begin_full_sync("default").unwrap();
+        clear_seed_threads(&database);
         database
             .upsert_gmail_thread(
                 "work@example.com",
@@ -3649,6 +3685,49 @@ mod tests {
         let claimed = database.claim_mutations("work@example.com", 10).unwrap();
         assert_eq!(claimed.len(), 1);
         assert_eq!(claimed[0].provider_thread_id, "t1");
+    }
+
+    #[test]
+    fn claim_mutations_fails_rather_than_orphans_a_mutation_whose_thread_is_gone() {
+        let database = database();
+        database
+            .upsert_gmail_thread(
+                "work@example.com",
+                &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Star {
+                thread_id: "work@example.com:t1".into(),
+                value: true,
+            })
+            .unwrap();
+        // Simulate the thread row disappearing out from under a still-pending
+        // mutation (e.g. the thread left Gmail entirely, or — historically —
+        // a full resync wiped it).
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "DELETE FROM threads WHERE id = 'work@example.com:t1'",
+                [],
+            )
+            .unwrap();
+
+        let claimed = database.claim_mutations("work@example.com", 10).unwrap();
+        assert!(claimed.is_empty(), "orphaned mutation must not be claimed");
+
+        let (state, error): (String, Option<String>) = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT state, last_error FROM mutations WHERE account_id = 'work@example.com'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(state, "failed");
+        assert!(error.unwrap().contains("no longer exists"));
     }
 
     #[test]

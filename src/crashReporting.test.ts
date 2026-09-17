@@ -21,6 +21,15 @@ describe("crash reporting", () => {
     );
   });
 
+  it("redacts quoted strings and header-style fragments as defense in depth", () => {
+    expect(redactDiagnostic('invalid header value "Q4 roadmap review"')).toBe(
+      'invalid header value "[redacted]"',
+    );
+    expect(redactDiagnostic("Subject: Q4 roadmap review\nTo: someone@example.com")).toBe(
+      "Subject: [redacted]\nTo: [redacted]",
+    );
+  });
+
   it("records sanitized errors only after opt-in", () => {
     const remove = installCrashReporter({ appVersion: "test" });
     window.dispatchEvent(new ErrorEvent("error", { error: new Error("from me@private.example") }));

@@ -268,6 +268,11 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
       if (generation.current !== savedGeneration.current) { event.preventDefault(); event.returnValue = ""; }
     };
     window.addEventListener("beforeunload", beforeUnload);
+    // Safety net alongside the keystroke-debounced save in `edit`/`editBody`:
+    // continuous typing/dictation keeps resetting that debounce, so bound
+    // the worst-case unsaved window regardless of how long editing continues.
+    // `flush()` already no-ops if nothing changed since the last save.
+    const autosave = window.setInterval(() => { void flush().catch(() => {}); }, 3_000);
     if (initial.mode === "forward" && initial.attachments.some((attachment) => !attachment.ready)) {
       void run(async () => {
         let next = await flush();
@@ -278,7 +283,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
         }
       });
     }
-    return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); window.removeEventListener("beforeunload", beforeUnload); previous?.focus(); };
+    return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); window.clearInterval(autosave); window.removeEventListener("beforeunload", beforeUnload); previous?.focus(); };
   }, [initial.mode]);
   useEffect(() => {
     if (!["reply", "replyAll"].includes(initial.mode)) return;

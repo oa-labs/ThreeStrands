@@ -17,6 +17,7 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   const opening = useRef(false);
   const quitting = useRef(false);
   const [clock, setClock] = useState(Date.now());
+  const [pendingOutboxActions, setPendingOutboxActions] = useState<ReadonlySet<string>>(new Set());
   const refreshing = useRef(false);
   const refresh = useCallback(async () => {
     if (refreshing.current) return;
@@ -60,12 +61,27 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     try { await editor.current?.flush(); const d = await mailClient.cancelSend(target); setActive(d); await refresh(); }
     catch (e) { setError(String(e)); }
   }, [outbox, refresh]);
+  const withOutboxActionGuard = useCallback((id: string, action: () => Promise<void>) => {
+    setPendingOutboxActions((current) => (current.has(id) ? current : new Set(current).add(id)));
+    void action().finally(() => {
+      setPendingOutboxActions((current) => {
+        if (!current.has(id)) return current;
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    });
+  }, []);
   const restoreFailedSend = useCallback((id: string) => {
-    void mailClient.recoverSend(id).then((d) => { setActive(d); void refresh(); }).catch((e: unknown) => setError(String(e)));
-  }, [refresh]);
+    if (pendingOutboxActions.has(id)) return;
+    withOutboxActionGuard(id, () =>
+      mailClient.recoverSend(id).then((d) => { setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
+    );
+  }, [pendingOutboxActions, refresh, withOutboxActionGuard]);
   const reconcileSend = useCallback((id: string) => {
-    void mailClient.reconcileSend(id).then(refresh).catch((e: unknown) => setError(String(e)));
-  }, [refresh]);
+    if (pendingOutboxActions.has(id)) return;
+    withOutboxActionGuard(id, () => mailClient.reconcileSend(id).then(refresh).catch((e: unknown) => setError(String(e))));
+  }, [pendingOutboxActions, refresh, withOutboxActionGuard]);
   useEffect(() => { if (closing) document.querySelector<HTMLElement>(".exit-notice")?.focus(); }, [closing]);
   const pending = outbox.find((o) => ["undo_pending", "ready"].includes(o.state));
   const pendingId = pending?.id ?? null;
@@ -130,6 +146,7 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     undoSendItem,
     restoreFailedSend,
     reconcileSend,
+    pendingOutboxActions,
     activeDraft: active,
     composer,
     overlay: <>
@@ -157,24 +174,29 @@ export function OutboxList({
   onUndo,
   onRestore,
   onReconcile,
+  pendingActions,
 }: {
   outbox: OutboxItem[];
   clock: number;
   onUndo(id: string): void;
   onRestore(id: string): void;
   onReconcile(id: string): void;
+  pendingActions?: ReadonlySet<string>;
 }) {
   const visible = outbox.filter((o) => o.state !== "canceled");
   if (visible.length === 0) return <p className="empty">No outgoing messages.</p>;
-  return <>{visible.map((o) => (
+  return <>{visible.map((o) => {
+    const busy = pendingActions?.has(o.id) ?? false;
+    return (
     <article className="outbox-row" key={o.id}>
       <strong>{o.draft.subject || "(no subject)"}</strong>
       <span>From {o.draft.account} · To {o.draft.to || o.draft.cc || "Bcc recipients"}</span>
       <small>{o.state === "undo_pending" ? (o.deadline > clock ? `Undo available · ${Math.ceil((o.deadline - clock) / 1000)}s` : "Waiting for connection") : o.state}</small>
       {o.error && <p>{o.error}</p>}
       {["undo_pending", "ready"].includes(o.state) && <button onClick={() => onUndo(o.id)}>Undo send</button>}
-      {o.state === "failed" && <button onClick={() => onRestore(o.id)}>Restore draft</button>}
-      {o.state === "uncertain" && <button onClick={() => onReconcile(o.id)}>Check sent mail</button>}
+      {o.state === "failed" && <button disabled={busy} onClick={() => onRestore(o.id)}>Restore draft</button>}
+      {o.state === "uncertain" && <button disabled={busy} onClick={() => onReconcile(o.id)}>Check sent mail</button>}
     </article>
-  ))}</>;
+    );
+  })}</>;
 }

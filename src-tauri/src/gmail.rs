@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use rand::Rng;
 use reqwest::{Method, RequestBuilder, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::{
@@ -140,7 +141,7 @@ impl GmailClient {
                     return Err(ProviderError::RateLimited);
                 }
                 let delay = retry_after.unwrap_or_else(|| retry_delay(attempt, quota_limited));
-                sleep(delay).await;
+                sleep(delay + jitter()).await;
                 continue;
             }
             return Err(ProviderError::Other(format!(
@@ -431,6 +432,14 @@ fn retry_after(response: &reqwest::Response) -> Option<Duration> {
 fn retry_delay(attempt: u32, quota_limited: bool) -> Duration {
     let base = if quota_limited { 15 } else { 1 };
     Duration::from_secs((base * (1_u64 << attempt.min(5))).min(60))
+}
+
+/// Small random delay added on top of a computed backoff so that multiple
+/// accounts (or app instances) recovering from the same outage don't retry
+/// in lockstep. Kept separate from `retry_delay` so that function's
+/// exact-value tests stay deterministic.
+fn jitter() -> Duration {
+    Duration::from_millis(rand::thread_rng().gen_range(0..250))
 }
 
 fn is_quota_error(body: &str) -> bool {

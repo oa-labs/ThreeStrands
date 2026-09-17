@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use rand::Rng;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -146,7 +147,11 @@ impl SyncService {
     pub async fn polling_loop(self) {
         let mut delay = MIN_POLL_INTERVAL;
         loop {
-            tokio::time::sleep(delay).await;
+            // Jitter avoids multiple accounts/instances recovering from the
+            // same outage and retrying in lockstep; `next_poll_delay` itself
+            // stays deterministic so its unit tests aren't flaky.
+            let jitter = Duration::from_millis(rand::thread_rng().gen_range(0..250));
+            tokio::time::sleep(delay + jitter).await;
             if !self.auth.available() {
                 delay = Duration::from_secs(30);
                 continue;
@@ -254,18 +259,14 @@ async fn full_sync_attempt(
     // Capture the cursor before listing. The following history pass closes the race
     // with mail arriving while the potentially long initial list is downloaded.
     let starting_cursor = provider.profile_history_id().await?;
+    // An interrupted resync must restart from scratch rather than resuming an
+    // incremental sync against a cursor whose corresponding full listing
+    // never finished. This never deletes any cached thread — see
+    // `resync_inbox`.
     database
-        .begin_full_sync(account_id)
+        .clear_cursor(account_id)
         .map_err(ProviderError::Other)?;
-    let mut page = None;
-    loop {
-        let result = provider.list_threads(page.as_deref()).await?;
-        ingest_threads(database, account_id, provider, result.thread_ids).await?;
-        page = result.next_page_token;
-        if page.is_none() {
-            break;
-        }
-    }
+    resync_inbox(database, account_id, provider).await?;
     incremental_sync(database, account_id, provider, &starting_cursor).await
 }
 
@@ -297,13 +298,14 @@ async fn incremental_sync(
         .map_err(ProviderError::Other)
 }
 
-/// Diffs Gmail's current INBOX thread listing against what's cached
-/// locally and re-ingests only the threads that drifted, correcting their
-/// labels/archived state. Unlike [`full_sync`], this never wipes the local
-/// cache, so it's safe to run on a timer without disturbing Archive/All
-/// Mail/Trash views (which `full_sync`'s INBOX-only relist would otherwise
-/// leave empty until independently touched again).
-async fn reconcile_inbox(
+/// Diffs Gmail's current INBOX thread listing against what's cached locally
+/// and re-ingests only the threads that drifted, correcting their
+/// labels/archived state. Never wipes or otherwise touches a thread outside
+/// this diff, so already-archived/trashed threads (and their local Archive/
+/// Trash/search visibility) survive untouched — including when called from
+/// [`full_sync`], where local trust in the previous cursor has been lost and
+/// every inbox thread is treated as potentially drifted.
+async fn resync_inbox(
     database: &Database,
     account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
@@ -331,6 +333,15 @@ async fn reconcile_inbox(
         return Ok(());
     }
     ingest_threads(database, account_id, provider, drifted).await
+}
+
+/// Periodic safety-net reconciliation; see [`SyncService::reconcile_if_due`].
+async fn reconcile_inbox(
+    database: &Database,
+    account_id: &str,
+    provider: &(impl GmailProvider + ?Sized),
+) -> ProviderResult<()> {
+    resync_inbox(database, account_id, provider).await
 }
 
 async fn ingest_threads(
@@ -439,7 +450,13 @@ async fn deliver_mutations(
                     }
                 }
                 Err(error @ ProviderError::RateLimited) => {
-                    for item in &mutations[index..batch_end] {
+                    // Every mutation still claimed in this batch — not just
+                    // the group that hit the limit — must go back to
+                    // `pending`. Anything left `running` here would
+                    // otherwise sit unclaimed and undelivered until the next
+                    // app restart, since only startup recovery clears stuck
+                    // `running` rows.
+                    for item in &mutations[index..] {
                         database
                             .reject_mutation(&item.id, &error.to_string(), true)
                             .map_err(ProviderError::Other)?;
@@ -574,7 +591,13 @@ mod tests {
         }
 
         async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>> {
-            assert_eq!(id, "gmail-thread");
+            // Anything besides the one thread this fake Gmail actually
+            // knows about — e.g. `Database::open_memory()`'s local-only
+            // demo/welcome thread — isn't real Gmail mail, so a real
+            // history/inbox reconciliation would 404 on it, same as here.
+            if id != "gmail-thread" {
+                return Err(ProviderError::NotFound);
+            }
             Ok(vec![Self::message()])
         }
 
@@ -710,6 +733,47 @@ mod tests {
         assert_eq!(
             database.sync_status("default").unwrap().pending_mutations,
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limit_resets_the_entire_remaining_claimed_batch_to_pending() {
+        let database = Database::open_memory();
+        let mut second = ContractProvider::message();
+        second.id = "message-2".into();
+        second.thread_id = "second-thread".into();
+        database
+            .upsert_gmail_thread("default", &[crate::mime::normalize(&second).unwrap()])
+            .unwrap();
+        // Two separately-delivered mutations (different threads, so each is
+        // its own batch group). The provider fails every delivery attempt,
+        // so only the first group is ever attempted — the regression this
+        // guards against is the second, never-attempted group being left
+        // `running` forever instead of also reset to `pending`.
+        database
+            .mutate_thread(&ThreadMutation::Star {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Star {
+                thread_id: "default:second-thread".into(),
+                value: true,
+            })
+            .unwrap();
+        let provider = ContractProvider {
+            fail_mutation: true,
+            ..ContractProvider::normal()
+        };
+        assert!(matches!(
+            sync_with(&database, "default", &provider).await,
+            Err(ProviderError::RateLimited)
+        ));
+        assert_eq!(
+            database.sync_status("default").unwrap().pending_mutations,
+            2,
+            "both mutations must be retryable, not just the one actually attempted"
         );
     }
 
@@ -963,7 +1027,7 @@ mod tests {
     #[async_trait]
     impl GmailProvider for ReconcileProvider {
         async fn profile_history_id(&self) -> ProviderResult<String> {
-            unreachable!()
+            Ok("resynced".into())
         }
 
         async fn list_threads(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
@@ -982,8 +1046,13 @@ mod tests {
                 .clone()])
         }
 
-        async fn history(&self, _cursor: &str, _page: Option<&str>) -> ProviderResult<HistoryPage> {
-            unreachable!()
+        async fn history(&self, _cursor: &str, page: Option<&str>) -> ProviderResult<HistoryPage> {
+            assert!(page.is_none());
+            Ok(HistoryPage {
+                thread_ids: vec![],
+                history_id: "resynced".into(),
+                next_page_token: None,
+            })
         }
 
         async fn modify_thread(
@@ -992,7 +1061,11 @@ mod tests {
             _add: &[String],
             _remove: &[String],
         ) -> ProviderResult<()> {
-            unreachable!()
+            // Delivering the setup mutation that produced this provider's
+            // "already archived locally" fixture state (see
+            // `full_sync_preserves_already_archived_threads`) — treat it as
+            // a successful, already-applied Gmail-side change.
+            Ok(())
         }
 
         async fn modify_messages(
@@ -1105,6 +1178,63 @@ mod tests {
             .find(|thread| thread.id == format!("{account}:orphaned-thread"))
             .unwrap();
         assert!(orphaned.archived, "drifted-away thread must be archived");
+    }
+
+    #[tokio::test]
+    async fn full_sync_preserves_already_archived_threads() {
+        // A fresh account (no cursor yet), so `sync_with` routes through
+        // `full_sync` — the regression this guards against previously wiped
+        // every cached thread here before relisting only the server's
+        // current INBOX, permanently losing anything the user had archived.
+        let account = "acct-full-sync";
+        let database = Database::open_memory();
+        // A plain new-account sync_state row, deliberately not going through
+        // `adopt_account` — that call migrates `Database::open_memory()`'s
+        // local-only demo thread onto the first adopted account, which would
+        // otherwise leak into this test's fixture.
+        database
+            .connection()
+            .unwrap()
+            .execute("INSERT INTO sync_state(account_id) VALUES (?1)", [account])
+            .unwrap();
+
+        let mut archived = ContractProvider::message();
+        archived.id = "archived-message".into();
+        archived.thread_id = "archived-thread".into();
+        database
+            .upsert_gmail_thread(account, &[crate::mime::normalize(&archived).unwrap()])
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: format!("{account}:archived-thread"),
+                value: true,
+            })
+            .unwrap();
+
+        let mut inbox_message = ContractProvider::message();
+        inbox_message.id = "inbox-message".into();
+        inbox_message.thread_id = "inbox-thread".into();
+        let provider = ReconcileProvider {
+            inbox_ids: vec!["inbox-thread".into()],
+            threads: [("inbox-thread".to_string(), inbox_message)]
+                .into_iter()
+                .collect(),
+        };
+
+        sync_with(&database, account, &provider).await.unwrap();
+
+        let threads = database.list_all_mail(Some(account)).unwrap();
+        let archived_thread = threads
+            .iter()
+            .find(|thread| thread.id == format!("{account}:archived-thread"))
+            .expect("a full resync must never delete an already-archived thread");
+        assert!(archived_thread.archived);
+        assert!(
+            threads
+                .iter()
+                .any(|thread| thread.id == format!("{account}:inbox-thread")),
+            "the server's current inbox listing must still be ingested"
+        );
     }
 
     #[tokio::test]
