@@ -627,12 +627,6 @@ impl Database {
             .map_err(error)?
             > 0)
     }
-    /// Pauses undo-pending/ready outbox items for one account, so removing a
-    /// connected account never pauses another account's in-flight sends.
-    pub fn pause_ready_sends_for(&self, account: &str) -> Result<(), String> {
-        self.connection()?.execute("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE account=?1 AND state IN ('undo_pending','ready')",[account]).map_err(error)?;
-        Ok(())
-    }
 }
 
 fn build_mime(
