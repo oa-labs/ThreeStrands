@@ -131,6 +131,7 @@ const status: SyncStatus = {
   cursor: "demo",
   pendingMutations: 0,
   failedMutations: [],
+  quarantinedMessages: [],
   error: null,
 };
 

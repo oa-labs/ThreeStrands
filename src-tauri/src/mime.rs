@@ -4,6 +4,14 @@ use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+pub(crate) const MAX_THREAD_MESSAGES: usize = 100;
+pub(crate) const MAX_MIME_DEPTH: usize = 32;
+pub(crate) const MAX_MIME_PARTS: usize = 1_000;
+pub(crate) const MAX_MESSAGE_HEADERS: usize = 2_000;
+pub(crate) const MAX_MESSAGE_HEADER_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_DECODED_BODY_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_NORMALIZED_THREAD_BYTES: usize = 16 * 1024 * 1024;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GmailMessage {
@@ -95,9 +103,16 @@ pub struct NormalizedMessage {
 }
 
 pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
+    validate_mime_structure(&message.payload)?;
     let mut html = None;
     let mut text = None;
-    select_bodies(&message.payload, &mut html, &mut text)?;
+    let mut decoded_body_bytes = 0;
+    select_bodies(
+        &message.payload,
+        &mut html,
+        &mut text,
+        &mut decoded_body_bytes,
+    )?;
     let unsubscribe = unsubscribe_metadata(&message.payload);
     let mut attachments = Vec::new();
     collect_attachments(
@@ -147,6 +162,77 @@ pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
         unsubscribe,
         attachments,
     })
+}
+
+pub(crate) fn normalized_size(message: &NormalizedMessage) -> Option<usize> {
+    let fixed_lengths = [
+        message.id.len(),
+        message.thread_id.len(),
+        message.subject.len(),
+        message.from.len(),
+        message.date.len(),
+        message.body_html.len(),
+        message.body_text.len(),
+        message.snippet.len(),
+        message.metadata_json.len(),
+    ];
+    fixed_lengths
+        .into_iter()
+        .chain(message.to.iter().map(String::len))
+        .chain(message.labels.iter().map(String::len))
+        .chain(message.attachments.iter().flat_map(|attachment| {
+            [
+                attachment.id.len(),
+                attachment.filename.len(),
+                attachment.mime_type.len(),
+                attachment.content_id.as_ref().map_or(0, String::len),
+            ]
+        }))
+        .try_fold(0_usize, usize::checked_add)
+}
+
+fn validate_mime_structure(root: &MimePart) -> Result<(), String> {
+    let mut stack = vec![(root, 1_usize)];
+    let mut part_count = 0_usize;
+    let mut header_count = 0_usize;
+    let mut header_bytes = 0_usize;
+    while let Some((part, depth)) = stack.pop() {
+        if depth > MAX_MIME_DEPTH {
+            return Err(format!(
+                "MIME depth exceeds the {MAX_MIME_DEPTH} part limit"
+            ));
+        }
+        part_count = part_count
+            .checked_add(1)
+            .ok_or_else(|| "MIME part count overflow".to_string())?;
+        if part_count > MAX_MIME_PARTS {
+            return Err(format!(
+                "MIME message exceeds the {MAX_MIME_PARTS} part limit"
+            ));
+        }
+        header_count = header_count
+            .checked_add(part.headers.len())
+            .ok_or_else(|| "MIME header count overflow".to_string())?;
+        if header_count > MAX_MESSAGE_HEADERS {
+            return Err(format!(
+                "MIME message exceeds the {MAX_MESSAGE_HEADERS} header limit"
+            ));
+        }
+        for header in &part.headers {
+            header_bytes = header_bytes
+                .checked_add(header.name.len())
+                .and_then(|size| size.checked_add(header.value.len()))
+                .ok_or_else(|| "MIME header size overflow".to_string())?;
+        }
+        if header_bytes > MAX_MESSAGE_HEADER_BYTES {
+            return Err(format!(
+                "MIME headers exceed the {} KB limit",
+                MAX_MESSAGE_HEADER_BYTES / 1024
+            ));
+        }
+        stack.extend(part.parts.iter().map(|child| (child, depth + 1)));
+    }
+    Ok(())
 }
 
 fn collect_attachments(
@@ -351,11 +437,12 @@ fn select_bodies(
     part: &MimePart,
     html: &mut Option<String>,
     text: &mut Option<String>,
+    decoded_body_bytes: &mut usize,
 ) -> Result<(), String> {
     // A named part is an attachment even when its content type is text.
     if part.filename.is_empty() {
         if let Some(data) = part.body.data.as_deref() {
-            let decoded = decode(data)?;
+            let decoded = decode_body(data, decoded_body_bytes)?;
             match part.mime_type.as_str() {
                 "text/html" if html.is_none() => *html = Some(decoded),
                 "text/plain" if text.is_none() => *text = Some(decoded),
@@ -364,15 +451,36 @@ fn select_bodies(
         }
     }
     for child in &part.parts {
-        select_bodies(child, html, text)?;
+        select_bodies(child, html, text, decoded_body_bytes)?;
     }
     Ok(())
 }
 
-fn decode(value: &str) -> Result<String, String> {
+fn decode_body(value: &str, decoded_body_bytes: &mut usize) -> Result<String, String> {
+    let encoded = value.trim_end_matches('=');
+    let decoded_len = decoded_base64_len(encoded.len())
+        .ok_or_else(|| "Gmail returned invalid body data".to_string())?;
+    let next_size = decoded_body_bytes
+        .checked_add(decoded_len)
+        .ok_or_else(|| "Decoded MIME body size overflow".to_string())?;
+    if next_size > MAX_DECODED_BODY_BYTES {
+        return Err(format!(
+            "Decoded MIME bodies exceed the {} MB limit",
+            MAX_DECODED_BODY_BYTES / 1024 / 1024
+        ));
+    }
     let bytes = URL_SAFE_NO_PAD
-        .decode(value.trim_end_matches('='))
+        .decode(encoded)
         .map_err(|error| format!("Invalid Gmail base64url body: {error}"))?;
+    *decoded_body_bytes = decoded_body_bytes
+        .checked_add(bytes.len())
+        .ok_or_else(|| "Decoded MIME body size overflow".to_string())?;
+    if *decoded_body_bytes > MAX_DECODED_BODY_BYTES {
+        return Err(format!(
+            "Decoded MIME bodies exceed the {} MB limit",
+            MAX_DECODED_BODY_BYTES / 1024 / 1024
+        ));
+    }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
@@ -519,6 +627,90 @@ mod tests {
     fn decodes_padded_and_unpadded_attachment_data() {
         assert_eq!(decode_attachment_data("SGVsbG8").unwrap(), b"Hello");
         assert_eq!(decode_attachment_data("SGVsbG8=").unwrap(), b"Hello");
+    }
+
+    #[test]
+    fn decoded_body_limit_accepts_exactly_the_limit_and_rejects_above_it() {
+        let exact = URL_SAFE_NO_PAD.encode(vec![b'a'; MAX_DECODED_BODY_BYTES]);
+        let mut decoded = 0;
+        assert_eq!(
+            decode_body(&exact, &mut decoded).unwrap().len(),
+            MAX_DECODED_BODY_BYTES
+        );
+
+        let above = URL_SAFE_NO_PAD.encode(vec![b'a'; MAX_DECODED_BODY_BYTES + 1]);
+        assert!(decode_body(&above, &mut 0).is_err());
+    }
+
+    #[test]
+    fn mime_structure_limits_include_the_boundary() {
+        let mut exact_depth = MimePart::default();
+        for _ in 1..MAX_MIME_DEPTH {
+            exact_depth = MimePart {
+                parts: vec![exact_depth],
+                ..Default::default()
+            };
+        }
+        assert!(validate_mime_structure(&exact_depth).is_ok());
+        let above_depth = MimePart {
+            parts: vec![exact_depth],
+            ..Default::default()
+        };
+        assert!(validate_mime_structure(&above_depth)
+            .unwrap_err()
+            .contains("depth"));
+
+        let exact_parts = MimePart {
+            parts: vec![MimePart::default(); MAX_MIME_PARTS - 1],
+            ..Default::default()
+        };
+        assert!(validate_mime_structure(&exact_parts).is_ok());
+        let above_parts = MimePart {
+            parts: vec![MimePart::default(); MAX_MIME_PARTS],
+            ..Default::default()
+        };
+        assert!(validate_mime_structure(&above_parts)
+            .unwrap_err()
+            .contains("part limit"));
+    }
+
+    #[test]
+    fn header_limits_include_the_boundary() {
+        let header = MimeHeader {
+            name: String::new(),
+            value: String::new(),
+        };
+        let exact_count = MimePart {
+            headers: vec![header.clone(); MAX_MESSAGE_HEADERS],
+            ..Default::default()
+        };
+        assert!(validate_mime_structure(&exact_count).is_ok());
+        let above_count = MimePart {
+            headers: vec![header; MAX_MESSAGE_HEADERS + 1],
+            ..Default::default()
+        };
+        assert!(validate_mime_structure(&above_count)
+            .unwrap_err()
+            .contains("header limit"));
+
+        let exact_bytes = MimePart {
+            headers: vec![MimeHeader {
+                name: String::new(),
+                value: "x".repeat(MAX_MESSAGE_HEADER_BYTES),
+            }],
+            ..Default::default()
+        };
+        assert!(validate_mime_structure(&exact_bytes).is_ok());
+        let above_bytes = MimePart {
+            headers: vec![MimeHeader {
+                name: String::new(),
+                value: "x".repeat(MAX_MESSAGE_HEADER_BYTES + 1),
+            }],
+            ..Default::default()
+        };
+        assert!(validate_mime_structure(&above_bytes)
+            .unwrap_err()
+            .contains("headers"));
     }
 
     fn part(kind: &str, body: &str) -> MimePart {

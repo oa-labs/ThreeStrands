@@ -185,7 +185,15 @@ export type SyncStatus = {
   cursor: string | null;
   pendingMutations: number;
   failedMutations: FailedMutation[];
+  quarantinedMessages: QuarantinedMessage[];
   error: string | null;
+};
+
+export type QuarantinedMessage = {
+  messageId: string;
+  threadId: string;
+  error: string;
+  createdAt: string;
 };
 
 export type FailedMutation = {

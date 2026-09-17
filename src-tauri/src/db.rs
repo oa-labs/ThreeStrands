@@ -11,9 +11,9 @@ use uuid::Uuid;
 use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
     Account, ContactSuggestion, FailedMutation, MailboxUnreadCounts, Message, SearchThreadsRequest,
-    SplitInbox, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageAction,
-    TriageContext, TriageEvent, TriageEventKind, TriageSenderStats, UnsubscribeMethod,
-    UnsubscribeTarget,
+    QuarantinedMessage, SplitInbox, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage,
+    TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
+    UnsubscribeMethod, UnsubscribeTarget,
 };
 use crate::transfer::{TransferAccount, TransferSplitInbox};
 
@@ -1076,12 +1076,37 @@ impl Database {
                 .map_err(display_error)?;
             failed
         };
+        let quarantined_messages = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT message_id, provider_thread_id, error, created_at
+                     FROM quarantined_messages
+                     WHERE account_id = ?1
+                     ORDER BY created_at DESC, message_id
+                     LIMIT 100",
+                )
+                .map_err(display_error)?;
+            let quarantined = statement
+                .query_map([account_id], |row| {
+                    Ok(QuarantinedMessage {
+                        message_id: row.get(0)?,
+                        thread_id: row.get(1)?,
+                        error: row.get(2)?,
+                        created_at: row.get(3)?,
+                    })
+                })
+                .map_err(display_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(display_error)?;
+            quarantined
+        };
         Ok(SyncStatus {
             state: if error.is_some() { "error" } else { "idle" },
             last_successful_sync,
             cursor,
             pending_mutations,
             failed_mutations,
+            quarantined_messages,
             error,
         })
     }
@@ -1334,6 +1359,13 @@ impl Database {
                 .execute("DELETE FROM threads WHERE id = ?1", [&thread_id])
                 .map_err(display_error)?;
         }
+        transaction
+            .execute(
+                "DELETE FROM quarantined_messages
+                 WHERE account_id = ?1 AND provider_thread_id = ?2",
+                params![account_id, provider_thread_id],
+            )
+            .map_err(display_error)?;
         transaction.commit().map_err(display_error)
     }
 
@@ -1624,6 +1656,51 @@ impl Database {
         let transaction = connection.transaction().map_err(display_error)?;
         for messages in message_groups {
             Self::apply_gmail_thread(&transaction, account_id, messages)?;
+        }
+        transaction.commit().map_err(display_error)
+    }
+
+    pub fn apply_ingested_gmail_threads(
+        &self,
+        account_id: &str,
+        threads: &[(String, Vec<NormalizedMessage>, Vec<(String, String)>)],
+    ) -> Result<(), String> {
+        if threads.is_empty() {
+            return Ok(());
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        for (provider_thread_id, messages, quarantined) in threads {
+            transaction
+                .execute(
+                    "DELETE FROM quarantined_messages
+                     WHERE account_id = ?1 AND provider_thread_id = ?2",
+                    params![account_id, provider_thread_id],
+                )
+                .map_err(display_error)?;
+            if !messages.is_empty() {
+                Self::apply_gmail_thread(&transaction, account_id, messages)?;
+            }
+            for (message_id, error) in quarantined {
+                transaction
+                    .execute(
+                        "INSERT INTO quarantined_messages(
+                            account_id, provider_thread_id, message_id, error, created_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5)
+                         ON CONFLICT(account_id, message_id) DO UPDATE SET
+                            provider_thread_id=excluded.provider_thread_id,
+                            error=excluded.error,
+                            created_at=excluded.created_at",
+                        params![
+                            account_id,
+                            provider_thread_id,
+                            message_id,
+                            error,
+                            Utc::now().to_rfc3339()
+                        ],
+                    )
+                    .map_err(display_error)?;
+            }
         }
         transaction.commit().map_err(display_error)
     }

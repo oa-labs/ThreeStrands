@@ -12,7 +12,10 @@ use crate::{
     auth::GoogleAuth,
     db::{Database, PendingMutation},
     gmail::{GmailClient, GmailProvider, ProviderError, ProviderResult},
-    mime::{normalize, NormalizedMessage},
+    mime::{
+        normalize, normalized_size, NormalizedMessage, MAX_NORMALIZED_THREAD_BYTES,
+        MAX_THREAD_MESSAGES,
+    },
     models::{Label, SyncStatus, ThreadMutation},
 };
 
@@ -387,7 +390,7 @@ async fn ingest_threads(
     provider: &(impl GmailProvider + ?Sized),
     ids: Vec<String>,
 ) -> ProviderResult<()> {
-    let mut normalized_threads: Vec<Vec<NormalizedMessage>> = Vec::with_capacity(ids.len());
+    let mut ingested_threads = Vec::with_capacity(ids.len());
     let mut deleted = Vec::new();
     for id in ids {
         let messages = match provider.get_thread(&id).await {
@@ -398,16 +401,11 @@ async fn ingest_threads(
             }
             Err(error) => return Err(error),
         };
-        normalized_threads.push(
-            messages
-                .iter()
-                .map(normalize)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(ProviderError::Other)?,
-        );
+        let (normalized, quarantined) = normalize_thread(&messages);
+        ingested_threads.push((id, normalized, quarantined));
     }
     database
-        .upsert_gmail_threads(account_id, &normalized_threads)
+        .apply_ingested_gmail_threads(account_id, &ingested_threads)
         .map_err(ProviderError::Other)?;
     for id in deleted {
         database
@@ -415,6 +413,55 @@ async fn ingest_threads(
             .map_err(ProviderError::Other)?;
     }
     Ok(())
+}
+
+fn normalize_thread(
+    messages: &[crate::mime::GmailMessage],
+) -> (Vec<NormalizedMessage>, Vec<(String, String)>) {
+    let mut normalized = Vec::with_capacity(messages.len().min(MAX_THREAD_MESSAGES));
+    let mut quarantined = Vec::new();
+    let mut thread_size = 0_usize;
+    for (index, message) in messages.iter().enumerate() {
+        if index >= MAX_THREAD_MESSAGES {
+            quarantined.push((
+                message.id.clone(),
+                format!("Thread exceeds the {MAX_THREAD_MESSAGES} message limit"),
+            ));
+            continue;
+        }
+        match normalize(message) {
+            Ok(candidate) => {
+                let Some(candidate_size) = normalized_size(&candidate) else {
+                    quarantined.push((
+                        message.id.clone(),
+                        "Normalized message size overflow".to_string(),
+                    ));
+                    continue;
+                };
+                let Some(next_size) = thread_size.checked_add(candidate_size) else {
+                    quarantined.push((
+                        message.id.clone(),
+                        "Normalized thread size overflow".to_string(),
+                    ));
+                    continue;
+                };
+                if next_size > MAX_NORMALIZED_THREAD_BYTES {
+                    quarantined.push((
+                        message.id.clone(),
+                        format!(
+                            "Normalized thread exceeds the {} MB limit",
+                            MAX_NORMALIZED_THREAD_BYTES / 1024 / 1024
+                        ),
+                    ));
+                    continue;
+                }
+                thread_size = next_size;
+                normalized.push(candidate);
+            }
+            Err(error) => quarantined.push((message.id.clone(), error)),
+        }
+    }
+    (normalized, quarantined)
 }
 
 async fn deliver_mutations(
@@ -580,6 +627,7 @@ mod tests {
         message_modifies: StdMutex<Vec<(Vec<String>, Vec<String>, Vec<String>)>>,
         fail_mutation: bool,
         permanently_fail_mutation: bool,
+        thread_messages: Option<Vec<GmailMessage>>,
     }
 
     impl ContractProvider {
@@ -591,6 +639,7 @@ mod tests {
                 message_modifies: StdMutex::new(vec![]),
                 fail_mutation: false,
                 permanently_fail_mutation: false,
+                thread_messages: None,
             }
         }
 
@@ -646,7 +695,10 @@ mod tests {
             if id != "gmail-thread" {
                 return Err(ProviderError::NotFound);
             }
-            Ok(vec![Self::message()])
+            Ok(self
+                .thread_messages
+                .clone()
+                .unwrap_or_else(|| vec![Self::message()]))
         }
 
         async fn history(&self, cursor: &str, page: Option<&str>) -> ProviderResult<HistoryPage> {
@@ -755,6 +807,113 @@ mod tests {
             database.list_threads(None).unwrap()[0].id,
             "default:gmail-thread"
         );
+    }
+
+    #[tokio::test]
+    async fn malformed_message_is_quarantined_without_blocking_cursor_or_thread() {
+        let database = Database::open_memory();
+        let valid = ContractProvider::message();
+        let mut malformed = valid.clone();
+        malformed.id = "malformed-message".into();
+        malformed.payload.body.data = Some("*** invalid base64 ***".into());
+        let provider = ContractProvider {
+            thread_messages: Some(vec![valid, malformed]),
+            ..ContractProvider::normal()
+        };
+
+        sync_with(&database, "default", &provider).await.unwrap();
+
+        assert_eq!(
+            database.cursor("default").unwrap().as_deref(),
+            Some("current")
+        );
+        assert_eq!(database.list_threads(None).unwrap().len(), 1);
+        let status = database.sync_status("default").unwrap();
+        assert_eq!(status.quarantined_messages.len(), 1);
+        assert_eq!(
+            status.quarantined_messages[0].message_id,
+            "malformed-message"
+        );
+        assert!(status.quarantined_messages[0]
+            .error
+            .contains("Invalid Gmail base64url body"));
+    }
+
+    #[tokio::test]
+    async fn successful_reingestion_clears_a_message_quarantine() {
+        let database = Database::open_memory();
+        let mut malformed = ContractProvider::message();
+        malformed.payload.body.data = Some("*** invalid base64 ***".into());
+        let malformed_provider = ContractProvider {
+            thread_messages: Some(vec![malformed]),
+            ..ContractProvider::normal()
+        };
+        ingest_threads(
+            &database,
+            "default",
+            &malformed_provider,
+            vec!["gmail-thread".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            database
+                .sync_status("default")
+                .unwrap()
+                .quarantined_messages
+                .len(),
+            1
+        );
+
+        ingest_threads(
+            &database,
+            "default",
+            &ContractProvider::normal(),
+            vec!["gmail-thread".into()],
+        )
+        .await
+        .unwrap();
+        assert!(database
+            .sync_status("default")
+            .unwrap()
+            .quarantined_messages
+            .is_empty());
+    }
+
+    #[test]
+    fn thread_message_limit_accepts_the_boundary_and_quarantines_the_remainder() {
+        let messages: Vec<_> = (0..=MAX_THREAD_MESSAGES)
+            .map(|index| {
+                let mut message = ContractProvider::message();
+                message.id = format!("message-{index}");
+                message
+            })
+            .collect();
+
+        let (normalized, quarantined) = normalize_thread(&messages);
+
+        assert_eq!(normalized.len(), MAX_THREAD_MESSAGES);
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(
+            quarantined[0].0,
+            format!("message-{MAX_THREAD_MESSAGES}")
+        );
+        assert!(quarantined[0].1.contains("message limit"));
+    }
+
+    #[test]
+    fn normalized_thread_size_quarantines_only_the_message_over_the_limit() {
+        let mut first = ContractProvider::message();
+        first.snippet = "a".repeat(5 * 1024 * 1024);
+        let mut second = first.clone();
+        second.id = "message-2".into();
+
+        let (normalized, quarantined) = normalize_thread(&[first, second]);
+
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(quarantined[0].0, "message-2");
+        assert!(quarantined[0].1.contains("Normalized thread"));
     }
 
     #[tokio::test]

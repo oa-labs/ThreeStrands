@@ -1645,13 +1645,12 @@ export function App() {
           >
             <RefreshCw size={19} className={syncStatus?.state === "syncing" ? "spin" : ""} />
           </button>
-          {(syncStatus?.failedMutations?.length ?? 0) > 0 ? (
+          {(syncStatus?.failedMutations?.length ?? 0)
+            + (syncStatus?.quarantinedMessages?.length ?? 0) > 0 ? (
             <button
               className="nav-button mutation-failure-button"
-              aria-label={`${syncStatus!.failedMutations.length} permanently failed mailbox ${
-                syncStatus!.failedMutations.length === 1 ? "operation" : "operations"
-              }`}
-              title="Mailbox operations need attention"
+              aria-label="Sync diagnostics need attention"
+              title="Sync diagnostics need attention"
               onClick={() => setDiagnosticsOpen(true)}
             >
               <AlertCircle size={19} />
@@ -2987,6 +2986,25 @@ export function Diagnostics({
                     {mutation.attempts} {mutation.attempts === 1 ? "attempt" : "attempts"}
                     {" · "}
                     {new Date(mutation.createdAt).toLocaleString()}
+                  </small>
+                </li>
+              ))}
+            </ul>
+          ) : "None"}
+        </dd>
+        <dt>Quarantined messages</dt>
+        <dd>
+          {status?.quarantinedMessages?.length ? (
+            <ul className="failed-mutations">
+              {status.quarantinedMessages.map((message) => (
+                <li key={`${message.threadId}:${message.messageId}`}>
+                  <strong>Message {message.messageId}</strong>
+                  {" · "}
+                  {message.error}
+                  <small>
+                    Thread {message.threadId}
+                    {" · "}
+                    {new Date(message.createdAt).toLocaleString()}
                   </small>
                 </li>
               ))}

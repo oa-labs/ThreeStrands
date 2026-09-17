@@ -273,12 +273,22 @@ pub struct FailedMutation {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct QuarantinedMessage {
+    pub message_id: String,
+    pub thread_id: String,
+    pub error: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncStatus {
     pub state: &'static str,
     pub last_successful_sync: Option<String>,
     pub cursor: Option<String>,
     pub pending_mutations: i64,
     pub failed_mutations: Vec<FailedMutation>,
+    pub quarantined_messages: Vec<QuarantinedMessage>,
     pub error: Option<String>,
 }
 

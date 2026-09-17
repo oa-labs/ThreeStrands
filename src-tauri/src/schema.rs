@@ -368,6 +368,22 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 18 {
+        tx.execute_batch(
+            "CREATE TABLE quarantined_messages (
+                account_id TEXT NOT NULL,
+                provider_thread_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                error TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (account_id, message_id)
+            );
+            CREATE INDEX quarantined_messages_account_time
+                ON quarantined_messages(account_id, created_at DESC);
+            PRAGMA user_version=18;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
