@@ -20,6 +20,8 @@ const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const PROFILE_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 const SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels";
+const OAUTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const OAUTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Keychain keys used before an account's real Gmail address is known.
 /// `LEGACY_KEY` names a pre-upgrade install's one connected account, still
@@ -80,7 +82,7 @@ impl GoogleAuthConfig {
                     .to_string()
             })?;
         Ok(Self {
-            client: Client::new(),
+            client: build_oauth_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT)?,
             client_id,
             client_secret,
         })
@@ -421,6 +423,17 @@ async fn checked(response: reqwest::Response) -> Result<reqwest::Response, Strin
     }
 }
 
+fn build_oauth_client(
+    connect_timeout: Duration,
+    request_timeout: Duration,
+) -> Result<Client, String> {
+    Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
+        .build()
+        .map_err(display)
+}
+
 fn random_urlsafe(bytes: usize) -> String {
     let mut value = vec![0_u8; bytes];
     OsRng.fill_bytes(&mut value);
@@ -444,7 +457,7 @@ mod tests {
 
     fn config() -> GoogleAuthConfig {
         GoogleAuthConfig {
-            client: Client::new(),
+            client: build_oauth_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT).unwrap(),
             client_id: "test-client-id".into(),
             client_secret: "test-client-secret".into(),
         }
@@ -464,5 +477,25 @@ mod tests {
     fn accept_identity_is_a_no_op_when_the_identity_already_matches() {
         let auth = config().account("work@example.com");
         assert!(auth.accept_identity("work@example.com").is_ok());
+    }
+
+    #[tokio::test]
+    async fn oauth_client_times_out_a_stalled_request() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        });
+        let client = build_oauth_client(Duration::from_secs(1), Duration::from_millis(25)).unwrap();
+
+        let error = client
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap_err();
+
+        assert!(error.is_timeout(), "unexpected request error: {error}");
+        server.abort();
     }
 }
