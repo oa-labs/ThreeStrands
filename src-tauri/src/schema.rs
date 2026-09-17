@@ -343,6 +343,21 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 16 {
+        tx.execute_batch(
+            "CREATE TABLE sync_recovery (
+                account_id TEXT PRIMARY KEY,
+                history_id TEXT NOT NULL
+            );
+            CREATE TABLE sync_recovery_threads (
+                account_id TEXT NOT NULL,
+                provider_thread_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, provider_thread_id)
+            );
+            PRAGMA user_version=16;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;

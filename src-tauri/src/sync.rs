@@ -26,6 +26,7 @@ const MAX_POLL_INTERVAL: Duration = Duration::from_secs(300);
 /// self-heals that short of a historyId 404. This is a safety net, not the
 /// primary sync path, so it runs rarely.
 const RECONCILE_INTERVAL_SECS: i64 = 6 * 60 * 60;
+const RECOVERY_BATCH_SIZE: usize = 50;
 
 #[derive(Clone)]
 pub struct SyncService {
@@ -245,6 +246,9 @@ async fn full_sync(
 ) -> ProviderResult<()> {
     match full_sync_attempt(database, account_id, provider).await {
         Err(ProviderError::InvalidCursor) => {
+            database
+                .discard_sync_recovery(account_id)
+                .map_err(ProviderError::Other)?;
             full_sync_attempt(database, account_id, provider).await
         }
         result => result,
@@ -256,17 +260,45 @@ async fn full_sync_attempt(
     account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
 ) -> ProviderResult<()> {
-    // Capture the cursor before listing. The following history pass closes the race
-    // with mail arriving while the potentially long initial list is downloaded.
-    let starting_cursor = provider.profile_history_id().await?;
-    // An interrupted resync must restart from scratch rather than resuming an
-    // incremental sync against a cursor whose corresponding full listing
-    // never finished. This never deletes any cached thread — see
-    // `resync_inbox`.
+    // An interrupted recovery must keep the normal sync cursor cleared rather
+    // than running incrementally against an incomplete snapshot. Its separate,
+    // durable generation lets the expensive thread refresh resume safely.
     database
         .clear_cursor(account_id)
         .map_err(ProviderError::Other)?;
-    resync_inbox(database, account_id, provider).await?;
+    let starting_cursor = match database
+        .recovery_cursor(account_id)
+        .map_err(ProviderError::Other)?
+    {
+        Some(cursor) => cursor,
+        None => {
+            // Capture the cursor before listing. The following history pass
+            // closes the race with mail arriving while the list is downloaded.
+            let cursor = provider.profile_history_id().await?;
+            let server_inbox_ids = list_inbox_thread_ids(provider).await?;
+            let local_inbox_ids = local_inbox_thread_ids(database, account_id)?;
+            let recovery_ids = server_inbox_ids
+                .union(&local_inbox_ids)
+                .cloned()
+                .collect::<Vec<_>>();
+            database
+                .begin_sync_recovery(account_id, &cursor, &recovery_ids)
+                .map_err(ProviderError::Other)?;
+            cursor
+        }
+    };
+    loop {
+        let batch = database
+            .pending_sync_recovery_threads(account_id, RECOVERY_BATCH_SIZE)
+            .map_err(ProviderError::Other)?;
+        if batch.is_empty() {
+            break;
+        }
+        ingest_threads(database, account_id, provider, batch.clone()).await?;
+        database
+            .complete_sync_recovery_threads(account_id, &batch)
+            .map_err(ProviderError::Other)?;
+    }
     incremental_sync(database, account_id, provider, &starting_cursor).await
 }
 
@@ -298,18 +330,9 @@ async fn incremental_sync(
         .map_err(ProviderError::Other)
 }
 
-/// Diffs Gmail's current INBOX thread listing against what's cached locally
-/// and re-ingests only the threads that drifted, correcting their
-/// labels/archived state. Never wipes or otherwise touches a thread outside
-/// this diff, so already-archived/trashed threads (and their local Archive/
-/// Trash/search visibility) survive untouched — including when called from
-/// [`full_sync`], where local trust in the previous cursor has been lost and
-/// every inbox thread is treated as potentially drifted.
-async fn resync_inbox(
-    database: &Database,
-    account_id: &str,
+async fn list_inbox_thread_ids(
     provider: &(impl GmailProvider + ?Sized),
-) -> ProviderResult<()> {
+) -> ProviderResult<HashSet<String>> {
     let mut page = None;
     let mut server_inbox_ids = HashSet::new();
     loop {
@@ -320,11 +343,31 @@ async fn resync_inbox(
             break;
         }
     }
-    let local_inbox_ids: HashSet<String> = database
+    Ok(server_inbox_ids)
+}
+
+fn local_inbox_thread_ids(
+    database: &Database,
+    account_id: &str,
+) -> ProviderResult<HashSet<String>> {
+    Ok(database
         .local_inbox_provider_thread_ids(account_id)
         .map_err(ProviderError::Other)?
         .into_iter()
-        .collect();
+        .collect())
+}
+
+/// Diffs Gmail's current INBOX thread listing against what's cached locally
+/// and re-ingests only threads whose inbox membership drifted. Unlike cursor
+/// recovery, this periodic safety net deliberately avoids refreshing common
+/// threads.
+async fn reconcile_inbox(
+    database: &Database,
+    account_id: &str,
+    provider: &(impl GmailProvider + ?Sized),
+) -> ProviderResult<()> {
+    let server_inbox_ids = list_inbox_thread_ids(provider).await?;
+    let local_inbox_ids = local_inbox_thread_ids(database, account_id)?;
     let drifted: Vec<String> = server_inbox_ids
         .symmetric_difference(&local_inbox_ids)
         .cloned()
@@ -333,15 +376,6 @@ async fn resync_inbox(
         return Ok(());
     }
     ingest_threads(database, account_id, provider, drifted).await
-}
-
-/// Periodic safety-net reconciliation; see [`SyncService::reconcile_if_due`].
-async fn reconcile_inbox(
-    database: &Database,
-    account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
-) -> ProviderResult<()> {
-    resync_inbox(database, account_id, provider).await
 }
 
 async fn ingest_threads(
@@ -1022,6 +1056,8 @@ mod tests {
     struct ReconcileProvider {
         inbox_ids: Vec<String>,
         threads: std::collections::HashMap<String, GmailMessage>,
+        list_calls: AtomicUsize,
+        fail_thread_once: StdMutex<Option<String>>,
     }
 
     #[async_trait]
@@ -1032,6 +1068,7 @@ mod tests {
 
         async fn list_threads(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
             assert!(page.is_none());
+            self.list_calls.fetch_add(1, Ordering::SeqCst);
             Ok(ThreadPage {
                 thread_ids: self.inbox_ids.clone(),
                 next_page_token: None,
@@ -1039,6 +1076,12 @@ mod tests {
         }
 
         async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>> {
+            let mut fail_thread = self.fail_thread_once.lock().unwrap();
+            if fail_thread.as_deref() == Some(id) {
+                fail_thread.take();
+                return Err(ProviderError::RateLimited);
+            }
+            drop(fail_thread);
             Ok(vec![self
                 .threads
                 .get(id)
@@ -1162,6 +1205,8 @@ mod tests {
             ]
             .into_iter()
             .collect(),
+            list_calls: AtomicUsize::new(0),
+            fail_thread_once: StdMutex::new(None),
         };
 
         reconcile_inbox(&database, account, &provider).await.unwrap();
@@ -1211,14 +1256,35 @@ mod tests {
             })
             .unwrap();
 
+        // This thread exists in both inbox snapshots, but its cached contents
+        // predate the expired cursor. Recovery must refresh it even though its
+        // inbox membership did not drift.
+        let mut stale_common = ContractProvider::message();
+        stale_common.id = "common-message".into();
+        stale_common.thread_id = "common-thread".into();
+        stale_common.snippet = "stale snippet".into();
+        database
+            .upsert_gmail_thread(
+                account,
+                &[crate::mime::normalize(&stale_common).unwrap()],
+            )
+            .unwrap();
+        let mut fresh_common = stale_common;
+        fresh_common.snippet = "fresh snippet".into();
+
         let mut inbox_message = ContractProvider::message();
         inbox_message.id = "inbox-message".into();
         inbox_message.thread_id = "inbox-thread".into();
         let provider = ReconcileProvider {
-            inbox_ids: vec!["inbox-thread".into()],
-            threads: [("inbox-thread".to_string(), inbox_message)]
+            inbox_ids: vec!["common-thread".into(), "inbox-thread".into()],
+            threads: [
+                ("common-thread".to_string(), fresh_common),
+                ("inbox-thread".to_string(), inbox_message),
+            ]
                 .into_iter()
                 .collect(),
+            list_calls: AtomicUsize::new(0),
+            fail_thread_once: StdMutex::new(None),
         };
 
         sync_with(&database, account, &provider).await.unwrap();
@@ -1234,6 +1300,60 @@ mod tests {
                 .iter()
                 .any(|thread| thread.id == format!("{account}:inbox-thread")),
             "the server's current inbox listing must still be ingested"
+        );
+        assert_eq!(
+            threads
+                .iter()
+                .find(|thread| thread.id == format!("{account}:common-thread"))
+                .unwrap()
+                .snippet,
+            "fresh snippet",
+            "cursor recovery must refresh threads common to both inbox snapshots"
+        );
+    }
+
+    #[tokio::test]
+    async fn interrupted_full_sync_resumes_its_durable_recovery_generation() {
+        let account = "acct-resume";
+        let database = Database::open_memory();
+        database
+            .connection()
+            .unwrap()
+            .execute("INSERT INTO sync_state(account_id) VALUES (?1)", [account])
+            .unwrap();
+
+        let mut message = ContractProvider::message();
+        message.id = "resume-message".into();
+        message.thread_id = "resume-thread".into();
+        let provider = ReconcileProvider {
+            inbox_ids: vec!["resume-thread".into()],
+            threads: [("resume-thread".to_string(), message)]
+                .into_iter()
+                .collect(),
+            list_calls: AtomicUsize::new(0),
+            fail_thread_once: StdMutex::new(Some("resume-thread".into())),
+        };
+
+        assert!(matches!(
+            sync_with(&database, account, &provider).await,
+            Err(ProviderError::RateLimited)
+        ));
+        assert_eq!(provider.list_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            database.recovery_cursor(account).unwrap().as_deref(),
+            Some("resynced")
+        );
+
+        sync_with(&database, account, &provider).await.unwrap();
+        assert_eq!(
+            provider.list_calls.load(Ordering::SeqCst),
+            1,
+            "recovery should resume its saved generation rather than relisting"
+        );
+        assert!(database.recovery_cursor(account).unwrap().is_none());
+        assert_eq!(
+            database.cursor(account).unwrap().as_deref(),
+            Some("resynced")
         );
     }
 

@@ -1078,6 +1078,18 @@ impl Database {
                 params![now, account_id],
             )
             .map_err(display_error)?;
+        transaction
+            .execute(
+                "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
+                [account_id],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "DELETE FROM sync_recovery WHERE account_id = ?1",
+                [account_id],
+            )
+            .map_err(display_error)?;
         transaction.commit().map_err(display_error)
     }
 
@@ -1095,13 +1107,12 @@ impl Database {
     ///
     /// This intentionally never deletes cached threads: a thread the user has
     /// archived or trashed locally is, by definition, no longer visible in
-    /// Gmail's live INBOX listing, so a resync could never restore it — only
-    /// the sync engine's inbox-vs-local diff (see `sync::resync_inbox`) may
-    /// touch a thread row, and only when that thread actually drifted.
+    /// Gmail's live INBOX listing, so recovery refreshes the current and locally
+    /// cached inbox union without wiping unrelated archived mail.
     ///
-    /// An interrupted full resync must restart in full. Keeping the old
+    /// An interrupted full resync remains in recovery. Keeping the old normal
     /// cursor here would make the next startup perform an incremental sync
-    /// against a resync that never finished.
+    /// against a snapshot that never finished.
     pub fn clear_cursor(&self, account_id: &str) -> Result<(), String> {
         self.connection()?
             .execute(
@@ -1110,6 +1121,115 @@ impl Database {
             )
             .map(|_| ())
             .map_err(display_error)
+    }
+
+    pub fn recovery_cursor(&self, account_id: &str) -> Result<Option<String>, String> {
+        self.connection()?
+            .query_row(
+                "SELECT history_id FROM sync_recovery WHERE account_id = ?1",
+                [account_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(display_error)
+    }
+
+    pub fn begin_sync_recovery(
+        &self,
+        account_id: &str,
+        history_id: &str,
+        thread_ids: &[String],
+    ) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        transaction
+            .execute(
+                "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
+                [account_id],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "INSERT INTO sync_recovery(account_id, history_id) VALUES (?1, ?2)
+                 ON CONFLICT(account_id) DO UPDATE SET history_id = excluded.history_id",
+                params![account_id, history_id],
+            )
+            .map_err(display_error)?;
+        {
+            let mut statement = transaction
+                .prepare(
+                    "INSERT INTO sync_recovery_threads(account_id, provider_thread_id)
+                     VALUES (?1, ?2)",
+                )
+                .map_err(display_error)?;
+            for thread_id in thread_ids {
+                statement
+                    .execute(params![account_id, thread_id])
+                    .map_err(display_error)?;
+            }
+        }
+        transaction.commit().map_err(display_error)
+    }
+
+    pub fn pending_sync_recovery_threads(
+        &self,
+        account_id: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT provider_thread_id FROM sync_recovery_threads
+                 WHERE account_id = ?1 ORDER BY provider_thread_id LIMIT ?2",
+            )
+            .map_err(display_error)?;
+        let ids = statement
+            .query_map(params![account_id, limit as i64], |row| row.get(0))
+            .map_err(display_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(display_error)?;
+        Ok(ids)
+    }
+
+    pub fn complete_sync_recovery_threads(
+        &self,
+        account_id: &str,
+        thread_ids: &[String],
+    ) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        {
+            let mut statement = transaction
+                .prepare(
+                    "DELETE FROM sync_recovery_threads
+                     WHERE account_id = ?1 AND provider_thread_id = ?2",
+                )
+                .map_err(display_error)?;
+            for thread_id in thread_ids {
+                statement
+                    .execute(params![account_id, thread_id])
+                    .map_err(display_error)?;
+            }
+        }
+        transaction.commit().map_err(display_error)
+    }
+
+    pub fn discard_sync_recovery(&self, account_id: &str) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        transaction
+            .execute(
+                "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
+                [account_id],
+            )
+            .map_err(display_error)?;
+        transaction
+            .execute(
+                "DELETE FROM sync_recovery WHERE account_id = ?1",
+                [account_id],
+            )
+            .map_err(display_error)?;
+        transaction.commit().map_err(display_error)
     }
 
     /// Whether it's been at least `interval_secs` since this account's last
