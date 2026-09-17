@@ -828,8 +828,13 @@ async fn remove_account(email: String, state: State<'_, AppState>) -> Result<(),
     let _guard = state.correspondence.gate.lock().await;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let removed = state.additional_accounts.lock().await.remove(&email);
+    let had_additional_runtime = removed.is_some();
+    let is_primary = state
+        .auth
+        .as_ref()
+        .is_some_and(|primary| primary.key() == email);
     let auth = match (&state.auth, removed) {
-        (Some(primary), _) if primary.key() == email => {
+        (Some(primary), _) if is_primary => {
             if let Ok(mut task) = state.primary_poll_task.lock() {
                 if let Some(task) = task.take() {
                     task.abort();
@@ -843,7 +848,31 @@ async fn remove_account(email: String, state: State<'_, AppState>) -> Result<(),
         }
         _ => config.account(&email),
     };
-    state.database.mark_account_removal_pending(&email)?;
+    if let Err(error) = state.database.mark_account_removal_pending(&email) {
+        // Stopping precedes the durable transition by design. If that
+        // transition itself fails, restore the runtime so an otherwise
+        // connected account is not left silently paused.
+        if is_primary {
+            if let Some(service) = state.sync.clone() {
+                let task = tauri::async_runtime::spawn(async move {
+                    if service.is_connected() {
+                        let _ = service.sync().await;
+                    }
+                    service.polling_loop().await;
+                });
+                if let Ok(mut slot) = state.primary_poll_task.lock() {
+                    *slot = Some(task);
+                }
+            }
+        } else if had_additional_runtime {
+            state.additional_accounts.lock().await.insert(
+                email.clone(),
+                spawn_synced_account(state.database.clone(), auth),
+            );
+            return Err(error);
+        }
+        return Err(error);
+    }
     complete_pending_account_removal(&state.database, &email, || auth.disconnect())
 }
 
