@@ -84,6 +84,7 @@ import type {
   Account,
   AuthStatus,
   Label,
+  RecoveryStatus,
   SplitInbox,
   SplitInboxMatchKind,
   SyncStatus,
@@ -596,6 +597,12 @@ export function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus | null>(null);
+  useEffect(() => {
+    // One-shot: this only ever reflects what happened during this app
+    // launch's database open, so there's nothing to refresh later.
+    void mailClient.recoveryStatus().then(setRecoveryStatus).catch(() => {});
+  }, []);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
@@ -2359,7 +2366,11 @@ export function App() {
         <ShortcutHelp extraCommands={paletteExtraCommands} onClose={() => setShortcutHelpOpen(false)} />
       ) : null}
       {diagnosticsOpen ? (
-        <Diagnostics status={syncStatus} onClose={() => setDiagnosticsOpen(false)} />
+        <Diagnostics
+          status={syncStatus}
+          recovery={recoveryStatus}
+          onClose={() => setDiagnosticsOpen(false)}
+        />
       ) : null}
       {labelTargetIds && labelTargetIds.length > 0 ? (
         <LabelManager
@@ -2959,16 +2970,35 @@ function ShortcutKeys({ shortcut }: { shortcut: string }) {
   );
 }
 
+function recoveryStatusMessage(recovery: RecoveryStatus): string {
+  switch (recovery.kind) {
+    case "restoredFromBackup":
+      return "Your mail cache was damaged and has been restored from its most recent local backup. " +
+        "A few of the most recent changes may be missing until the next sync.";
+    case "freshDatabase":
+      return "Your mail cache was damaged and could not be restored from a backup, so it was rebuilt " +
+        "from scratch. Your mail is safe on the server; Dispatch is resyncing it now.";
+  }
+}
+
 export function Diagnostics({
   status,
+  recovery,
   onClose,
 }: {
   status: SyncStatus | null;
+  recovery?: RecoveryStatus | null;
   onClose(): void;
 }) {
   return (
     <Modal title="Sync diagnostics" onClose={onClose}>
       <dl className="diagnostics">
+        {recovery ? (
+          <>
+            <dt>Database recovery</dt>
+            <dd className="recovery-notice">{recoveryStatusMessage(recovery)}</dd>
+          </>
+        ) : null}
         <dt>State</dt><dd>{status?.state ?? "unknown"}</dd>
         <dt>Last successful sync</dt>
         <dd>{status?.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Never"}</dd>

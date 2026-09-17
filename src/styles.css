@@ -989,6 +989,7 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .failed-mutations { margin: 0; padding: 0; list-style: none; }
 .failed-mutations li + li { margin-top: 10px; }
 .failed-mutations small { display: block; color: var(--muted); margin-top: 2px; }
+.recovery-notice { padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--error) 45%, var(--border)); border-radius: 8px; color: var(--error); background: color-mix(in srgb, var(--error) 8%, transparent); }
 .reporting-settings { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 0 20px 20px; padding-top: 14px; border-top: 1px solid var(--border); font-size: calc(12px * var(--font-scale)); }
 .reporting-settings label { display: flex; align-items: center; gap: 8px; font-size: calc(13px * var(--font-scale)); }
 .reporting-settings span { color: var(--muted); }

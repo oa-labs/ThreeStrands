@@ -188,6 +188,14 @@ export type SyncStatus = {
   error: string | null;
 };
 
+/// Reported once at startup only when the local cache had to be recovered
+/// (restored from a backup, or recreated fresh) — see `db::open_with_recovery`
+/// on the Rust side. `null` (from `recoveryStatus()`) means the database
+/// opened normally and no recovery happened.
+export type RecoveryStatus =
+  | { kind: "restoredFromBackup"; corruptPath: string | null; backupPath: string }
+  | { kind: "freshDatabase"; corruptPath: string | null };
+
 export type FailedMutation = {
   id: string;
   kind: ThreadMutation["kind"];

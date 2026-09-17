@@ -9,9 +9,27 @@ use rusqlite::{params, Connection};
 
 use crate::mime::GmailMessage;
 
+/// Bumped alongside the last `if version < N` block in [`migrate`]. Read
+/// before migrating so a pre-migration backup is only taken when a
+/// migration is actually about to run.
+pub(crate) const LATEST_VERSION: i64 = 17;
+
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
+-- Durability/perf tradeoff: NORMAL is safe under WAL (never corrupts the
+-- database) and only risks losing the most recent commit(s) on an OS crash
+-- or power loss. Acceptable here since Gmail remains the source of truth
+-- and the local cache is resyncable.
+PRAGMA synchronous = NORMAL;
+-- Unset defaults to 0 (immediate SQLITE_BUSY). Matters once more than one
+-- connection can touch this file at a time (e.g. a backup connection).
+PRAGMA busy_timeout = 5000;
+-- Make the checkpoint threshold explicit rather than relying on whatever
+-- SQLite's own default happens to be.
+PRAGMA wal_autocheckpoint = 1000;
+-- Bounds how large the WAL file can grow between checkpoints.
+PRAGMA journal_size_limit = 67108864;
 
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
