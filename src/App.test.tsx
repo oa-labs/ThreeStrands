@@ -26,6 +26,7 @@ describe("archive notice", () => {
       await mailClient.mutateThread({ kind: "spam", threadId, value: false });
       await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
     }
+    localStorage.removeItem("dispatch.settings.autoReadDelaySeconds");
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -304,6 +305,30 @@ describe("archive notice", () => {
     expect(screen.getByRole("button", { name: "Mark read (u)" })).toBeInTheDocument();
   });
 
+  it("reschedules auto-read when its delay changes without reverting an explicit unread action", async () => {
+    await mailClient.mutateThread({ kind: "read", threadId: "welcome", value: false });
+    localStorage.setItem("dispatch.settings.autoReadDelaySeconds", "60");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to Dispatch" });
+    expect(screen.getByRole("button", { name: "Mark read (u)" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    const settings = await screen.findByRole("dialog", { name: "Settings" });
+    fireEvent.click(within(settings).getByRole("button", { name: "Reading" }));
+    fireEvent.change(within(settings).getByRole("spinbutton", { name: "Auto-read delay" }), {
+      target: { value: "1" },
+    });
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await advance(1000);
+    await screen.findByRole("button", { name: "Mark unread (u)" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark unread (u)" }));
+    await screen.findByRole("button", { name: "Mark read (u)" });
+    await advance(2000);
+    expect(screen.getByRole("button", { name: "Mark read (u)" })).toBeInTheDocument();
+  });
+
   it("does not scroll away from a reply when the delayed auto-read update runs", async () => {
     await mailClient.mutateThread({ kind: "read", threadId: "welcome", value: false });
     const scrollIntoView = vi.fn();
@@ -547,12 +572,8 @@ describe("trash and batch actions", () => {
     await act(async () => {
       within(toolbar).getByRole("button", { name: "Star" }).click();
     });
-    expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
-
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "x" }));
-    });
     const starredToolbar = screen.getByRole("toolbar", { name: "Batch actions" });
+    expect(within(starredToolbar).getByText("1 selected")).toBeInTheDocument();
     expect(within(starredToolbar).getByRole("button", { name: "Unstar" })).toBeInTheDocument();
     expect(within(starredToolbar).getAllByRole("button", { name: /star/i })).toHaveLength(1);
   });

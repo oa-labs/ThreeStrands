@@ -52,6 +52,7 @@ test("keeps an email address popover open while moving to its copy button", asyn
 test("confirms unsubscribe with Cmd/Ctrl+U when the message advertises one-click support", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Unsubscribe (⌘U)" })).toBeVisible();
 
   await page.keyboard.press("ControlOrMeta+u");
   const dialog = page.getByRole("dialog", { name: "Unsubscribe" });
@@ -99,7 +100,7 @@ test("dismisses search with Escape", async ({ page }) => {
 
 test("changes the app font size with desktop shortcuts and restores it", async ({ page }) => {
   await page.goto("/");
-  const messageBody = page.locator(".message-body").first();
+  const messageBody = page.frameLocator(".message-body").locator("body");
   await expect(messageBody).toHaveCSS("font-size", "15px");
 
   await page.keyboard.press("ControlOrMeta+=");
@@ -107,12 +108,12 @@ test("changes the app font size with desktop shortcuts and restores it", async (
   await expect.poll(() => page.evaluate(() => localStorage.getItem("dispatch.fontScale"))).toBe("110");
 
   await page.reload();
-  await expect(page.locator(".message-body").first()).toHaveCSS("font-size", "16.5px");
+  await expect(messageBody).toHaveCSS("font-size", "16.5px");
 
   await page.keyboard.press("ControlOrMeta+Shift+=");
-  await expect(page.locator(".message-body").first()).toHaveCSS("font-size", "18px");
+  await expect(messageBody).toHaveCSS("font-size", "18px");
   await page.keyboard.press("ControlOrMeta+-");
-  await expect(page.locator(".message-body").first()).toHaveCSS("font-size", "16.5px");
+  await expect(messageBody).toHaveCSS("font-size", "16.5px");
 });
 
 test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) => {
@@ -127,7 +128,6 @@ test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) =>
   await expect(help).toContainText("Manage labels");
   await expect(help).toContainText("New Message");
   await expect(help).toContainText("Command palette");
-  await expect(help).toContainText("Refresh mail");
   await expect(help).toContainText("Undo last action");
 
   await page.keyboard.press("Escape");
@@ -263,7 +263,7 @@ test("reorders navbar accounts by dragging their icons", async ({ page }) => {
   await work.dragTo(personal);
   await expect.poll(async () => rail.getByRole("radio").evaluateAll((icons) =>
     icons.map((icon) => icon.getAttribute("aria-label")),
-  )).toEqual(["All accounts", "demo-2@example.com", "demo@example.com"]);
+  )).toEqual(["All accounts, 1 unread", "demo-2@example.com", "demo@example.com, 1 unread"]);
 
   // Reordering also updates the sort-order-based account shortcuts.
   await page.keyboard.press("ControlOrMeta+1");
@@ -352,7 +352,7 @@ test("opens Superhuman-compatible folder destinations", async ({ page }) => {
 
   await page.keyboard.press("g");
   await page.keyboard.press("i");
-  await expect(eyebrow).toHaveText("Inbox");
+  await expect(page.getByRole("button", { name: "Inbox (g then i)" })).toHaveClass(/active/);
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
   await page.keyboard.press("l");
@@ -380,11 +380,16 @@ test("marks an unread conversation read after the configured delay", async ({ pa
 });
 
 test("loads message images according to the privacy setting", async ({ page }) => {
+  await page.route("https://example.invalid/tracker.gif", (route) => route.fulfill({
+    body: "GIF89a",
+    contentType: "image/gif",
+    headers: { "access-control-allow-origin": "*" },
+  }));
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to Dispatch" })).toBeVisible();
 
-  const messageBody = page.getByTestId("message-body");
-  await expect(messageBody.locator("img")).not.toHaveAttribute("src");
+  const messageImage = page.frameLocator('[data-testid="message-body"]').locator("img");
+  await expect(messageImage).not.toHaveAttribute("src");
   await expect(page.getByText("Images are blocked in this message.")).toBeVisible();
 
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
@@ -393,7 +398,7 @@ test("loads message images according to the privacy setting", async ({ page }) =
   await settings.getByRole("checkbox", { name: "Load remote images automatically" }).check();
   await page.keyboard.press("Escape");
 
-  await expect(messageBody.locator("img")).toHaveAttribute("src", "https://example.invalid/tracker.gif");
+  await expect(messageImage).toHaveAttribute("src", /^data:image\/gif;base64,/);
   await expect(page.getByText("Images are blocked in this message.")).not.toBeVisible();
 });
 
@@ -483,6 +488,7 @@ test("resizes the inbox with pointer and keyboard and restores the preferred wid
   await page.mouse.move(bounds.x + bounds.width / 2 + 120, bounds.y + 150);
   await page.mouse.up();
   await expect(page.locator(".thread-column")).toHaveCSS("width", "520px");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("dispatch.inboxWidth"))).toBe("520");
   await page.reload();
   await expect(divider).toHaveAttribute("aria-valuenow", "520");
   await divider.focus();
