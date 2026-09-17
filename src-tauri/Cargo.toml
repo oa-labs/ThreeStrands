@@ -1,6 +1,6 @@
 [package]
 name = "dispatch"
-version = "0.5.3"
+version = "0.5.5"
 description = "A local-first, keyboard-driven email client"
 authors = ["Dispatch contributors"]
 edition = "2021"
