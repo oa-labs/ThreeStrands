@@ -184,17 +184,7 @@ impl GmailClient {
                 continue;
             }
             let detail = format!("{status}: {body}");
-            if status == StatusCode::UNAUTHORIZED {
-                // A bearer token accepted from local storage or the refresh
-                // endpoint but rejected by Gmail is not repaired by replaying
-                // the same request. Treat the provider's persistent 401 as a
-                // revoked/invalid credential and require a fresh grant.
-                return Err(ProviderError::ReauthenticationRequired(detail));
-            }
-            if status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY {
-                return Err(ProviderError::InvalidOperation(detail));
-            }
-            return Err(ProviderError::PermanentClientRejection(detail));
+            return Err(classify_client_rejection(status, detail));
         }
         Err(ProviderError::RetryableServer(
             "retry budget exhausted".into(),
@@ -211,6 +201,20 @@ impl GmailClient {
             .json()
             .await
             .map_err(|error| ProviderError::RetryableServer(error.to_string()))
+    }
+}
+
+fn classify_client_rejection(status: StatusCode, detail: String) -> ProviderError {
+    if status == StatusCode::UNAUTHORIZED {
+        // A bearer token accepted from local storage or the refresh endpoint
+        // but rejected by Gmail is not repaired by replaying the same
+        // request. Treat the provider's persistent 401 as a revoked/invalid
+        // credential and require a fresh grant.
+        ProviderError::ReauthenticationRequired(detail)
+    } else if status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY {
+        ProviderError::InvalidOperation(detail)
+    } else {
+        ProviderError::PermanentClientRejection(detail)
     }
 }
 
@@ -546,6 +550,14 @@ mod tests {
         assert!(
             !ProviderError::PermanentClientRejection("permission denied".into()).retry_mutation()
         );
+    }
+
+    #[test]
+    fn persistent_unauthorized_response_requires_reauthentication() {
+        assert!(matches!(
+            classify_client_rejection(StatusCode::UNAUTHORIZED, "401".into()),
+            ProviderError::ReauthenticationRequired(_)
+        ));
     }
 
     #[test]

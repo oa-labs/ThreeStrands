@@ -446,7 +446,7 @@ async fn checked_refresh(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     let message = format!("Google OAuth returned {status}: {body}");
-    if oauth_error_code(&body).as_deref() == Some("invalid_grant") {
+    if classify_refresh_failure(&body) == RefreshFailureKind::ReauthenticationRequired {
         Err(AccessTokenError::ReauthenticationRequired(message))
     } else {
         // Endpoint outages, throttling, malformed upstream responses, and
@@ -454,6 +454,20 @@ async fn checked_refresh(
         // account. Only Google's explicit invalid_grant signal proves that
         // this account's refresh grant is permanently unusable.
         Err(AccessTokenError::Transient(message))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum RefreshFailureKind {
+    ReauthenticationRequired,
+    Transient,
+}
+
+fn classify_refresh_failure(body: &str) -> RefreshFailureKind {
+    if oauth_error_code(body).as_deref() == Some("invalid_grant") {
+        RefreshFailureKind::ReauthenticationRequired
+    } else {
+        RefreshFailureKind::Transient
     }
 }
 
@@ -544,14 +558,18 @@ mod tests {
     #[test]
     fn only_invalid_grant_is_a_permanent_refresh_failure() {
         assert_eq!(
-            oauth_error_code(r#"{"error":"invalid_grant","error_description":"revoked"}"#)
-                .as_deref(),
-            Some("invalid_grant")
+            classify_refresh_failure(
+                r#"{"error":"invalid_grant","error_description":"revoked"}"#
+            ),
+            RefreshFailureKind::ReauthenticationRequired
         );
         assert_eq!(
-            oauth_error_code(r#"{"error":"temporarily_unavailable"}"#).as_deref(),
-            Some("temporarily_unavailable")
+            classify_refresh_failure(r#"{"error":"temporarily_unavailable"}"#),
+            RefreshFailureKind::Transient
         );
-        assert_eq!(oauth_error_code("<html>upstream failure</html>"), None);
+        assert_eq!(
+            classify_refresh_failure("<html>upstream failure</html>"),
+            RefreshFailureKind::Transient
+        );
     }
 }
