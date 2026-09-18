@@ -2046,12 +2046,6 @@ export function App() {
               ) : null}
               <kbd>/</kbd>
             </label>
-            {query.trim() && includeArchived && remoteSearchState === "searching" ? (
-              <span className="search-status" role="status" aria-live="polite">Searching Gmail…</span>
-            ) : null}
-            {query.trim() && includeArchived && remoteSearchState === "error" ? (
-              <span className="search-status error" role="status" aria-live="polite">Gmail search unavailable</span>
-            ) : null}
           </div>
         ) : null}
         <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={mailboxTitle}>
@@ -2730,6 +2724,18 @@ export function App() {
           {notice.message}
           {notice.undo ? <button onClick={notice.undo}>Undo</button> : null}
           <button aria-label="Dismiss" onClick={() => setNotice(null)}><X size={14} /></button>
+        </div>
+      ) : null}
+      {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "searching" ? (
+        <div className="toast search-status-toast" role="status" aria-live="polite">
+          <RefreshCw size={14} className="spin" />
+          Searching Gmail…
+        </div>
+      ) : null}
+      {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "error" ? (
+        <div className="toast search-status-toast error" role="status" aria-live="polite">
+          <AlertCircle size={14} />
+          Gmail search unavailable
         </div>
       ) : null}
       {lightboxImageSrc ? (

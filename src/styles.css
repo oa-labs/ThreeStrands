@@ -388,14 +388,6 @@ h2 { font-size: calc(22px * var(--font-scale)); }
   font-size: 11px;
   font-weight: 650;
 }
-.search-status {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: calc(12px * var(--font-scale));
-  white-space: nowrap;
-}
-.search-status.error { color: var(--error); }
-
 .filters-anchor { position: relative; flex: 0 0 auto; align-self: flex-start; margin-top: 1px; }
 .filters-trigger {
   display: flex;
@@ -1363,6 +1355,8 @@ form.split-inbox-add select {
   font-size: calc(13px * var(--font-scale));
 }
 .toast button { border: 0; color: var(--link); background: transparent; cursor: pointer; }
+.search-status-toast { left: 24px; right: auto; color: var(--muted); }
+.search-status-toast.error { color: var(--error); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
