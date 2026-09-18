@@ -58,6 +58,54 @@ describe("calendar sidebar", () => {
     );
   });
 
+  it("toggles the schedule sidebar closed when T is pressed again", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      {
+        email: "calendar@example.com",
+        connectedAt: "2026-09-18T00:00:00Z",
+        status: "connected",
+      },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.keyDown(window, { key: "T" });
+    await screen.findByRole("complementary", { name: "Calendar schedule" });
+
+    fireEvent.keyDown(window, { key: "T" });
+    await waitFor(() =>
+      expect(screen.queryByRole("complementary", { name: "Calendar schedule" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("moves the schedule day with - and = shortcuts", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      {
+        email: "calendar@example.com",
+        connectedAt: "2026-09-18T00:00:00Z",
+        status: "connected",
+      },
+    ]);
+    const listEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.keyDown(window, { key: "T" });
+    await screen.findByRole("complementary", { name: "Calendar schedule" });
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(1));
+    const initialTimeMin = listEvents.mock.calls[0][0];
+
+    fireEvent.keyDown(window, { key: "-" });
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(2));
+    const previousTimeMin = listEvents.mock.calls[1][0];
+    expect(new Date(previousTimeMin).getTime()).toBeLessThan(new Date(initialTimeMin).getTime());
+
+    fireEvent.keyDown(window, { key: "=" });
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(3));
+    expect(listEvents.mock.calls[2][0]).toBe(initialTimeMin);
+  });
+
   it("shows a short Calendar API error without rendering the provider response", async () => {
     const diagnostics = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
@@ -153,7 +201,7 @@ describe("calendar sidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts (?)" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
-    expect(dialog).toHaveTextContent("Open today’s schedule");
+    expect(dialog).toHaveTextContent("Toggle today’s schedule");
     expect(dialog).toHaveTextContent("T");
   });
 

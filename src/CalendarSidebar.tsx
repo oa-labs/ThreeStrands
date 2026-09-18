@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
 import type { ScheduleEvent } from "./domain";
 import { useEscapeDismiss } from "./useEscapeDismiss";
@@ -95,13 +96,29 @@ export function CalendarSidebar({
 
   const timedEvents = useMemo(() => events.filter((event) => !event.allDay), [events]);
   const allDayEvents = useMemo(() => events.filter((event) => event.allDay), [events]);
-  const moveDay = (offset: number) => {
+  const moveDay = useCallback((offset: number) => {
     setDate((current) => {
       const next = new Date(current);
       next.setDate(next.getDate() + offset);
       return next;
     });
-  };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing || event.defaultPrevented) return;
+      if (isEditableTarget(event.target)) return;
+      if (event.key === "-") {
+        event.preventDefault();
+        moveDay(-1);
+      } else if (event.key === "=") {
+        event.preventDefault();
+        moveDay(1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [moveDay]);
 
   return (
     <aside className="calendar-sidebar" aria-label="Calendar schedule">
@@ -112,10 +129,10 @@ export function CalendarSidebar({
           day: "numeric",
         }).format(date)}</h2>
         <div>
-          <button type="button" aria-label="Previous day" onClick={() => moveDay(-1)}>
+          <button type="button" aria-label="Previous day (-)" title="Previous day (-)" onClick={() => moveDay(-1)}>
             <ChevronLeft size={18} />
           </button>
-          <button type="button" aria-label="Next day" onClick={() => moveDay(1)}>
+          <button type="button" aria-label="Next day (=)" title="Next day (=)" onClick={() => moveDay(1)}>
             <ChevronRight size={18} />
           </button>
           <button type="button" aria-label="Close calendar" onClick={onClose}>

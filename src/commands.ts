@@ -308,7 +308,7 @@ export const commands: Command[] = [
   },
   {
     id: "calendar.today",
-    title: "Open today’s schedule",
+    title: "Toggle today’s schedule",
     keys: ["T"],
     group: "Application",
     enabled: (context) => !context.composerActive,

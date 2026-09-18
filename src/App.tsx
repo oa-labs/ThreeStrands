@@ -1275,17 +1275,21 @@ export function App() {
   }, []);
 
   const openToday = useCallback(() => {
-    void refreshCalendarAccounts()
-      .then((connected) => {
-        if (!connected.some((account) => account.status === "connected")) {
-          openSettingsAt("calendarAccounts");
-          return;
-        }
-        setCalendarOpen(true);
-      })
-      .catch((reason: unknown) => {
-        setNotice({ message: reason instanceof Error ? reason.message : String(reason) });
-      });
+    setCalendarOpen((current) => {
+      if (current) return false;
+      void refreshCalendarAccounts()
+        .then((connected) => {
+          if (!connected.some((account) => account.status === "connected")) {
+            openSettingsAt("calendarAccounts");
+            return;
+          }
+          setCalendarOpen(true);
+        })
+        .catch((reason: unknown) => {
+          setNotice({ message: reason instanceof Error ? reason.message : String(reason) });
+        });
+      return current;
+    });
   }, [openSettingsAt, refreshCalendarAccounts, setNotice]);
 
   /**
