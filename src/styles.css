@@ -251,13 +251,10 @@ button { color: inherit; }
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--hover);
+  width: 100%;
 }
 .batch-toolbar .batch-count {
   flex: 0 0 auto;
-  align-self: flex-start;
   display: flex;
   align-items: center;
   min-height: 34px;
@@ -268,12 +265,15 @@ button { color: inherit; }
 }
 .batch-actions {
   min-width: 0;
-  flex: 1 1 auto;
+  margin-left: auto;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-wrap: nowrap;
   gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.batch-actions::-webkit-scrollbar { display: none; }
+.batch-actions .action-button, .batch-actions .icon-button { flex: 0 0 auto; }
 .batch-toolbar .action-button span { display: none; }
 
 .eyebrow {

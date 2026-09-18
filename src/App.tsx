@@ -1890,8 +1890,8 @@ export function App() {
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
         <InboxResizeHandle {...inboxSize} />
         <header className="thread-header">
-          <div className="thread-header-title">
-            {isThreadMailbox && checkedIds.size > 0 ? (
+          {isThreadMailbox && checkedIds.size > 0 ? (
+            <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
               <label className="select-all">
                 <input
                   ref={selectAllRef}
@@ -1903,122 +1903,123 @@ export function App() {
                   }
                 />
               </label>
-            ) : null}
-            <div>
-              <span className="eyebrow">
-                {isTabbedMailbox ? null : mailboxTitle}
-                {activeAccount ? (
-                  <span className="eyebrow-account">{isTabbedMailbox ? "" : " · "}{activeAccount.email}</span>
-                ) : null}
-              </span>
-              <h1>
-                {mailbox === "drafts"
-                  ? `${correspondence.drafts.length} drafts`
-                  : mailbox === "outbox"
-                    ? `${correspondence.outbox.filter((item) => item.state !== "canceled").length} outgoing`
-                    : `${visibleThreads.length} conversations`}
-              </h1>
-              {isTabbedMailbox ? (
-                <div className="mailbox-tabs">
-                  <div className="mailbox-tab-list" role="tablist" aria-label="Mailbox views">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={mailbox === "inbox"}
-                      className={`mailbox-tab ${mailbox === "inbox" ? "active" : ""}`}
-                      onClick={() => context.openInbox()}
-                    >
-                      Inbox{mailboxUnreadCounts.inbox > 0 ? ` ${mailboxUnreadCounts.inbox}` : ""}
-                    </button>
-                    {accountSplitInboxes.map((splitInbox) => (
-                      <button
-                        key={splitInbox.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={mailbox === "split" && activeSplitInboxId === splitInbox.id}
-                        className={`mailbox-tab ${mailbox === "split" && activeSplitInboxId === splitInbox.id ? "active" : ""}`}
-                        onClick={() => context.openSplitInbox(splitInbox.id)}
-                      >
-                        {splitInbox.name}
-                        {mailboxUnreadCounts.splits[splitInbox.id] ? ` ${mailboxUnreadCounts.splits[splitInbox.id]}` : ""}
-                      </button>
-                    ))}
-                  </div>
-                  <button type="button" className="mailbox-tab-add" onClick={() => openSettingsAt("splitInboxes")}>
-                    + Add Split
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-          {isThreadMailbox ? (
-            <FiltersButton activeFilters={activeMessageFilters} onToggleFilter={toggleMessageFilter} />
-          ) : null}
-        </header>
-        {isThreadMailbox && checkedIds.size > 0 ? (
-          <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
-            <span className="batch-count">{checkedIds.size} selected</span>
-            <div className="batch-actions">
-              {mailbox === "trash" ? (
-                <HoverTooltip label="Restore" placement="bottom">
-                  <ActionButton label="Restore" onClick={() => runOnSelection("Restore", { kind: "trash", value: false })}>
-                    <RotateCcw size={16} />
+              <span className="batch-count">{checkedIds.size} selected</span>
+              <div className="batch-actions">
+                {mailbox === "trash" ? (
+                  <HoverTooltip label="Restore" placement="bottom">
+                    <ActionButton label="Restore" onClick={() => runOnSelection("Restore", { kind: "trash", value: false })}>
+                      <RotateCcw size={16} />
+                    </ActionButton>
+                  </HoverTooltip>
+                ) : (
+                  <>
+                    <HoverTooltip label="Archive" placement="bottom">
+                      <ActionButton label="Archive" onClick={() => runOnSelection("Archive", { kind: "archive", value: true })}>
+                        <Archive size={16} />
+                      </ActionButton>
+                    </HoverTooltip>
+                    <HoverTooltip label="Trash" placement="bottom">
+                      <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
+                        <Trash2 size={16} />
+                      </ActionButton>
+                    </HoverTooltip>
+                    <HoverTooltip label="Mark spam" placement="bottom">
+                      <ActionButton label="Mark spam" onClick={() => runOnSelection("Mark spam", { kind: "spam", value: true })}>
+                        <ShieldAlert size={16} />
+                      </ActionButton>
+                    </HoverTooltip>
+                  </>
+                )}
+                <HoverTooltip label="Mark read" placement="bottom">
+                  <ActionButton label="Mark read" onClick={() => runOnSelection("Mark read", { kind: "read", value: true })}>
+                    <MailOpen size={16} />
                   </ActionButton>
                 </HoverTooltip>
-              ) : (
-                <>
-                  <HoverTooltip label="Archive" placement="bottom">
-                    <ActionButton label="Archive" onClick={() => runOnSelection("Archive", { kind: "archive", value: true })}>
-                      <Archive size={16} />
-                    </ActionButton>
-                  </HoverTooltip>
-                  <HoverTooltip label="Trash" placement="bottom">
-                    <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
-                      <Trash2 size={16} />
-                    </ActionButton>
-                  </HoverTooltip>
-                  <HoverTooltip label="Mark spam" placement="bottom">
-                    <ActionButton label="Mark spam" onClick={() => runOnSelection("Mark spam", { kind: "spam", value: true })}>
-                      <ShieldAlert size={16} />
-                    </ActionButton>
-                  </HoverTooltip>
-                </>
-              )}
-              <HoverTooltip label="Mark read" placement="bottom">
-                <ActionButton label="Mark read" onClick={() => runOnSelection("Mark read", { kind: "read", value: true })}>
-                  <MailOpen size={16} />
-                </ActionButton>
-              </HoverTooltip>
-              <HoverTooltip label="Mark unread" placement="bottom">
-                <ActionButton label="Mark unread" onClick={() => runOnSelection("Mark unread", { kind: "read", value: false })}>
-                  <Mail size={16} />
-                </ActionButton>
-              </HoverTooltip>
-              <HoverTooltip label={batchStarLabel} placement="bottom">
-                <ActionButton
-                  label={batchStarLabel}
-                  onClick={() => runOnSelection(batchStarLabel, { kind: "star", value: !allSelectedThreadsStarred })}
-                >
-                  <Star size={16} fill={allSelectedThreadsStarred ? "currentColor" : "none"} />
-                </ActionButton>
-              </HoverTooltip>
-              <HoverTooltip label="Labels" placement="bottom">
-                <ActionButton label="Labels" onClick={() => setLabelTargetIds([...checkedIds])}>
-                  <Tag size={16} />
-                </ActionButton>
-              </HoverTooltip>
-              <HoverTooltip label="Clear selection" placement="bottom">
-                <button
-                  className="icon-button"
-                  aria-label="Clear selection"
-                  onClick={() => setCheckedIds(new Set())}
-                >
-                  <X size={16} />
-                </button>
-              </HoverTooltip>
+                <HoverTooltip label="Mark unread" placement="bottom">
+                  <ActionButton label="Mark unread" onClick={() => runOnSelection("Mark unread", { kind: "read", value: false })}>
+                    <Mail size={16} />
+                  </ActionButton>
+                </HoverTooltip>
+                <HoverTooltip label={batchStarLabel} placement="bottom">
+                  <ActionButton
+                    label={batchStarLabel}
+                    onClick={() => runOnSelection(batchStarLabel, { kind: "star", value: !allSelectedThreadsStarred })}
+                  >
+                    <Star size={16} fill={allSelectedThreadsStarred ? "currentColor" : "none"} />
+                  </ActionButton>
+                </HoverTooltip>
+                <HoverTooltip label="Labels" placement="bottom">
+                  <ActionButton label="Labels" onClick={() => setLabelTargetIds([...checkedIds])}>
+                    <Tag size={16} />
+                  </ActionButton>
+                </HoverTooltip>
+                <HoverTooltip label="Clear selection" placement="bottom">
+                  <button
+                    className="icon-button"
+                    aria-label="Clear selection"
+                    onClick={() => setCheckedIds(new Set())}
+                  >
+                    <X size={16} />
+                  </button>
+                </HoverTooltip>
+              </div>
             </div>
-          </div>
-        ) : null}
+          ) : (
+            <>
+              <div className="thread-header-title">
+                <div>
+                  <span className="eyebrow">
+                    {isTabbedMailbox ? null : mailboxTitle}
+                    {activeAccount ? (
+                      <span className="eyebrow-account">{isTabbedMailbox ? "" : " · "}{activeAccount.email}</span>
+                    ) : null}
+                  </span>
+                  <h1>
+                    {mailbox === "drafts"
+                      ? `${correspondence.drafts.length} drafts`
+                      : mailbox === "outbox"
+                        ? `${correspondence.outbox.filter((item) => item.state !== "canceled").length} outgoing`
+                        : `${visibleThreads.length} conversations`}
+                  </h1>
+                  {isTabbedMailbox ? (
+                    <div className="mailbox-tabs">
+                      <div className="mailbox-tab-list" role="tablist" aria-label="Mailbox views">
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={mailbox === "inbox"}
+                          className={`mailbox-tab ${mailbox === "inbox" ? "active" : ""}`}
+                          onClick={() => context.openInbox()}
+                        >
+                          Inbox{mailboxUnreadCounts.inbox > 0 ? ` ${mailboxUnreadCounts.inbox}` : ""}
+                        </button>
+                        {accountSplitInboxes.map((splitInbox) => (
+                          <button
+                            key={splitInbox.id}
+                            type="button"
+                            role="tab"
+                            aria-selected={mailbox === "split" && activeSplitInboxId === splitInbox.id}
+                            className={`mailbox-tab ${mailbox === "split" && activeSplitInboxId === splitInbox.id ? "active" : ""}`}
+                            onClick={() => context.openSplitInbox(splitInbox.id)}
+                          >
+                            {splitInbox.name}
+                            {mailboxUnreadCounts.splits[splitInbox.id] ? ` ${mailboxUnreadCounts.splits[splitInbox.id]}` : ""}
+                          </button>
+                        ))}
+                      </div>
+                      <button type="button" className="mailbox-tab-add" onClick={() => openSettingsAt("splitInboxes")}>
+                        + Add Split
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              {isThreadMailbox ? (
+                <FiltersButton activeFilters={activeMessageFilters} onToggleFilter={toggleMessageFilter} />
+              ) : null}
+            </>
+          )}
+        </header>
         {isTabbedMailbox && searchOpen ? (
           <div className="list-toolbar">
             <label className="search-box">
