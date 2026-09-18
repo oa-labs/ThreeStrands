@@ -498,6 +498,37 @@ describe("archive notice", () => {
     }
   });
 
+  it("offers a freshly created label, sorted alphabetically, as a split inbox match", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    try {
+      await act(async () => {
+        screen.getByRole("button", { name: "Labels (l)" }).click();
+      });
+      const input = await screen.findByRole("combobox", { name: "Find or create a label" });
+      fireEvent.change(input, { target: { value: "Aardvark" } });
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+      await screen.findByRole("status");
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add label" })).not.toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+      const settings = await screen.findByRole("dialog", { name: "Settings" });
+      fireEvent.click(within(settings).getByRole("button", { name: "Split Inboxes" }));
+      fireEvent.change(within(settings).getByRole("combobox", { name: "Match by" }), {
+        target: { value: "label" },
+      });
+
+      const labelSelect = within(settings).getByRole("combobox", { name: "Label" });
+      expect(within(labelSelect).getAllByRole("option").map((option) => option.textContent))
+        .toEqual(["Choose a label", "Aardvark", "Work"]);
+    } finally {
+      const aardvark = (await mailClient.listLabels()).find((label) => label.name === "Aardvark");
+      if (aardvark) await mailClient.deleteLabel(aardvark.id);
+    }
+  });
+
   it("keeps a replacement notice on screen for its own full timeout", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

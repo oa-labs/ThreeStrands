@@ -930,8 +930,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    // Warm every connected account's label catalog, not just ones whose
+    // threads happen to have been opened — otherwise a screen that lists
+    // labels across accounts (e.g. the Split Inboxes label picker) can look
+    // incomplete simply because that account hasn't been visited yet.
     const neededAccountIds = new Set(
-      [detail?.thread.accountId, labelTargetAccountId].filter(
+      [detail?.thread.accountId, labelTargetAccountId, ...accounts.map((account) => account.email)].filter(
         (accountId): accountId is string => Boolean(accountId) && !labelsByAccount[accountId as string],
       ),
     );
@@ -957,7 +961,7 @@ export function App() {
     return () => {
       current = false;
     };
-  }, [detail?.thread.accountId, labelTargetAccountId, labelsByAccount]);
+  }, [detail?.thread.accountId, labelTargetAccountId, labelsByAccount, accounts]);
 
   useEffect(() => {
     const requestId = ++detailRequest.current;
@@ -4269,7 +4273,9 @@ function SplitInboxesSettings({
 
   // A split inbox belongs to one account, so only that account's labels are
   // valid matches for it.
-  const labelOptions = (labelsByAccount[accountId] ?? []).filter((label) => label.kind === "user");
+  const labelOptions = (labelsByAccount[accountId] ?? [])
+    .filter((label) => label.kind === "user")
+    .sort((a, b) => formatLabelName(a).localeCompare(formatLabelName(b), undefined, { sensitivity: "base" }));
 
   const act = (busyKey: string, operation: () => Promise<void>) => {
     setBusyId(busyKey);
