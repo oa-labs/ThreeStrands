@@ -402,6 +402,20 @@ test("loads message images according to the privacy setting", async ({ page }) =
   await expect(page.getByText("Images are blocked in this message.")).not.toBeVisible();
 });
 
+test("keeps sync diagnostics and crash reports together in Settings", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Diagnostics", exact: true }).click();
+
+  await expect(settings.getByRole("heading", { name: "Sync diagnostics" })).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "Crash reports" })).toBeVisible();
+  await expect(settings.getByRole("checkbox", { name: "Share sanitized crash reports" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sync diagnostics need attention" })).not.toBeVisible();
+});
+
 test("archived and trashed threads move between Inbox, All Mail, and Trash", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
