@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Ensure fd 0 exists before Apple's actool launches its ibtoold helper.
+exec /usr/bin/actool "$@" </dev/null

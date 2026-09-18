@@ -10,3 +10,7 @@
 
 The two postmark rings and three cancellation waves use heavier strokes than
 the original artwork so that the mark remains distinct at 16 and 32 pixels.
+
+`pnpm tauri` runs through `scripts/tauri.mjs`, which supplies a macOS-only
+`actool` stdin workaround required by Tauri CLI 2.11.4. Remove the shim after
+tauri-apps/tauri#15991 is released and the CLI dependency is updated.
