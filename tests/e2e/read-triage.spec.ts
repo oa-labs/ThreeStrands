@@ -276,7 +276,7 @@ test("the account color picker keeps the last color picked, even while dragging 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   const swatch = settings.locator('input[aria-label="Color for demo@example.com"]');
   const initial = await swatch.inputValue();
 
@@ -306,7 +306,7 @@ test("the account color picker keeps the last color picked, even while dragging 
   await expect(settings).not.toBeVisible();
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   await expect(settings).toBeVisible();
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await expect(settings.locator('input[aria-label="Color for demo@example.com"]')).toHaveValue("#abcdef");
   expect(initial).not.toBe("#abcdef");
 });
@@ -317,7 +317,7 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
 
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.locator("li", { hasText: "demo@example.com" }).getByRole("button", { name: "Disconnect" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(0);
   await page.keyboard.press("Escape");
