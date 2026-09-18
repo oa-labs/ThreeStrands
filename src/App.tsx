@@ -416,6 +416,8 @@ function useShortcutHandler(
 ) {
   const contextRef = useRef(context);
   contextRef.current = context;
+  const executeRef = useRef(execute);
+  executeRef.current = execute;
   const extraRef = useRef(extraCommands);
   extraRef.current = extraCommands;
   const pendingStep = useRef<string | null>(null);
@@ -473,7 +475,7 @@ function useShortcutHandler(
         clearPendingStep();
         if (command) {
           event.preventDefault();
-          execute(command);
+          executeRef.current(command);
           return;
         }
       }
@@ -488,7 +490,7 @@ function useShortcutHandler(
       );
       if (command) {
         event.preventDefault();
-        execute(command);
+        executeRef.current(command);
         return;
       }
 
@@ -507,7 +509,7 @@ function useShortcutHandler(
       window.removeEventListener("keydown", onKeyDown);
       clearPendingStep();
     };
-  }, [execute]);
+  }, []);
 }
 
 export function App() {
