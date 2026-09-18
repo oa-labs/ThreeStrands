@@ -1161,19 +1161,17 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .reporting-settings label { display: flex; align-items: center; gap: 8px; font-size: calc(13px * var(--font-scale)); }
 .reporting-settings span { color: var(--muted); }
 .reporting-settings a { color: var(--link); }
-.reporting-settings button, .create-label button { padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--hover); cursor: pointer; }
+.reporting-settings button { padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--hover); cursor: pointer; }
 .reporting-settings button:disabled { opacity: .4; }
-.create-label { display: flex; gap: 8px; padding: 8px 14px 12px; }
-.create-label input { min-width: 0; flex: 1; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: 7px; outline: none; color: var(--text); background: var(--input); }
-.create-label input:focus { border-color: var(--accent); }
-.label-sort-toggle { display: flex; gap: 6px; padding: 0 14px 8px; }
-.label-sort-toggle button { padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; font-size: calc(12px * var(--font-scale)); }
-.label-sort-toggle button:hover { color: var(--text); background: var(--hover); }
-.label-sort-toggle button.active { color: var(--accent); border-color: var(--accent); background: var(--selected); font-weight: 650; }
+.label-search { padding: 8px 14px 12px; }
+.label-search input { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: 7px; outline: none; color: var(--text); background: var(--input); }
+.label-search input:focus { border-color: var(--accent); }
 .label-list { max-height: 44vh; overflow: auto; padding: 0 10px 14px; }
-.label-list > div { display: flex; align-items: center; justify-content: space-between; padding: 9px; border-radius: 7px; }
+.label-list > div { display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 9px; border-radius: 7px; font-size: calc(13px * var(--font-scale)); cursor: pointer; }
 .label-list > div:hover { background: var(--hover); }
-.label-list label { display: flex; align-items: center; gap: 9px; font-size: calc(13px * var(--font-scale)); }
+.label-list > div.highlighted { background: var(--selected); }
+.label-option-name { display: flex; align-items: center; gap: 9px; }
+.label-option-check-spacer { display: inline-block; width: 14px; }
 .label-list button { display: grid; place-items: center; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
 .label-actions { display: flex; gap: 4px; }
 .rename-label { display: flex; gap: 7px; padding: 10px 14px; border-top: 1px solid var(--border); }

@@ -200,32 +200,6 @@ export function saveFontFamily(value: FontFamily): FontFamily {
   return next;
 }
 
-export type LabelSortOrder = "alphabetical" | "recent";
-
-const LABEL_SORT_ORDER_KEY = "threestrands.settings.labelSortOrder";
-
-export const DEFAULT_LABEL_SORT_ORDER: LabelSortOrder = "alphabetical";
-
-export function readLabelSortOrder(): LabelSortOrder {
-  try {
-    const saved = localStorage.getItem(LABEL_SORT_ORDER_KEY);
-    if (saved === "alphabetical" || saved === "recent") return saved;
-  } catch {
-    // A blocked storage backend should not prevent the app from opening.
-  }
-  return DEFAULT_LABEL_SORT_ORDER;
-}
-
-export function saveLabelSortOrder(value: LabelSortOrder): LabelSortOrder {
-  const next = value === "recent" ? "recent" : "alphabetical";
-  try {
-    localStorage.setItem(LABEL_SORT_ORDER_KEY, next);
-  } catch {
-    // The preference still applies for this session when storage is unavailable.
-  }
-  return next;
-}
-
 const LABEL_USAGE_KEY = "threestrands.settings.labelUsageByAccount";
 const MAX_LABEL_ID_LENGTH = 200;
 

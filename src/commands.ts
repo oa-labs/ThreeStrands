@@ -43,7 +43,7 @@ export type CommandContext = {
   trashSelected(): Promise<CommandResult>;
   restoreSelected(): Promise<CommandResult>;
   markSpamSelected(): Promise<CommandResult>;
-  setLabelSelected(labelId: string, value: boolean): Promise<CommandResult>;
+  setLabelSelected(labelId: string, labelName: string, value: boolean): Promise<CommandResult>;
   toggleReadSelected(): Promise<CommandResult>;
   toggleStarSelected(): Promise<CommandResult>;
   toggleCheckedSelected(): void;
@@ -395,7 +395,7 @@ export function labelCommand(labelId: string, labelName: string, value: boolean)
     keys: [],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
-    run: (context) => context.setLabelSelected(labelId, value),
+    run: (context) => context.setLabelSelected(labelId, labelName, value),
     undo: undoResult,
   };
 }

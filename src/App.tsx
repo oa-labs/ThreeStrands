@@ -118,14 +118,11 @@ import {
   fontFamilyStack,
   MAX_AUTO_READ_DELAY_SECONDS,
   MIN_AUTO_READ_DELAY_SECONDS,
-  readLabelSortOrder,
   readLabelUsage,
   readSelectedTabForAccount,
   recordLabelUsed,
-  saveLabelSortOrder,
   saveSelectedTabForAccount,
   type FontFamily,
-  type LabelSortOrder,
 } from "./settings";
 import { listSystemFontFamilies } from "./systemFonts";
 import {
@@ -336,7 +333,7 @@ type MutationTemplate =
   | { kind: "spam"; value: boolean }
   | { kind: "read"; value: boolean }
   | { kind: "star"; value: boolean }
-  | { kind: "label"; labelId: string; value: boolean };
+  | { kind: "label"; labelId: string; labelName: string; value: boolean };
 
 function buildThreadMutation(threadId: string, template: MutationTemplate): ThreadMutation {
   return template.kind === "label"
@@ -1283,9 +1280,7 @@ export function App() {
       return {};
     }
 
-    const labelName = template.kind === "label"
-      ? labels.find((label) => label.id === template.labelId)?.name
-      : undefined;
+    const labelName = template.kind === "label" ? template.labelName : undefined;
     const definite = describeMutation(template, succeededIds.length, labelName);
     const singleToggle = (template.kind === "star" || template.kind === "read")
       && succeededIds.length === 1 && failedIds.length === 0;
@@ -1323,7 +1318,7 @@ export function App() {
         await loadThreads(query);
       },
     };
-  }, [threads, detail, includeArchived, mailbox, selectedId, loadThreads, query, labels, recordTriageEvent, setNotice]);
+  }, [threads, detail, includeArchived, mailbox, selectedId, loadThreads, query, recordTriageEvent, setNotice]);
 
   const visibleThreads = useMemo(
     () => filterThreadsByMessageFilters(threads, activeMessageFilters),
@@ -1593,7 +1588,8 @@ export function App() {
       return result;
     },
     markSpamSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "spam", value: true }),
-    setLabelSelected: (labelId, value) => mutateIds(labelTargetIds ?? [], { kind: "label", labelId, value }),
+    setLabelSelected: (labelId, labelName, value) =>
+      mutateIds(labelTargetIds ?? [], { kind: "label", labelId, labelName, value }),
     toggleReadSelected: () =>
       mutateIds(selected ? [selected.id] : [], { kind: "read", value: selected?.unread ?? false }),
     toggleStarSelected: () =>
@@ -2566,12 +2562,13 @@ export function App() {
           )}
           onClose={() => setLabelTargetIds(null)}
           onCreate={async (name) => {
-            if (!labelTargetAccountId) return;
+            if (!labelTargetAccountId) throw new Error("No account selected for this label");
             const label = await mailClient.createLabel(name, labelTargetAccountId);
             setLabelsByAccount((current) => ({
               ...current,
               [labelTargetAccountId]: [...(current[labelTargetAccountId] ?? []), label],
             }));
+            return label;
           }}
           onDelete={async (id) => {
             if (!labelTargetAccountId) return;
@@ -2592,11 +2589,8 @@ export function App() {
               ),
             }));
           }}
-          onToggle={(labelId, value) => {
-            const label = (labelTargetAccountId ? labelsByAccount[labelTargetAccountId] : undefined)?.find(
-              (candidate) => candidate.id === labelId,
-            );
-            executeCommand(labelCommand(labelId, label?.name ?? "Label", value));
+          onToggle={(label, value) => {
+            executeCommand(labelCommand(label.id, label.name, value));
           }}
         />
       ) : null}
@@ -3333,136 +3327,157 @@ function LabelManager({
   accountId?: string;
   checkedLabelIds: Set<string>;
   onClose(): void;
-  onCreate(name: string): Promise<void>;
+  onCreate(name: string): Promise<Label>;
   onDelete(id: string): Promise<void>;
   onRename(id: string, name: string): Promise<void>;
-  onToggle(id: string, value: boolean): void;
+  onToggle(label: Label, value: boolean): void;
 }) {
-  const [name, setName] = useState("");
+  const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<Label | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const [sortOrder, setSortOrder] = useState<LabelSortOrder>(readLabelSortOrder);
-  // Bumped whenever a label is toggled so "Recently used" sorting reorders
-  // live in this session, not just the next time the modal opens.
-  const [usageVersion, setUsageVersion] = useState(0);
-  const manageableLabels = useMemo(() => {
-    const usage = sortOrder === "recent" && accountId ? readLabelUsage(accountId) : {};
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+
+  // Labels the user hasn't touched sort alphabetically; ones applied or
+  // removed through Dispatch before bubble to the top, most-recent first,
+  // so the label you're about to reach for is usually already near the top
+  // before you've typed anything.
+  const orderedLabels = useMemo(() => {
+    const usage = accountId ? readLabelUsage(accountId) : {};
     return labels
       .filter(isManageableLabel)
       .sort((a, b) => {
-        if (sortOrder === "recent") {
-          const recencyDelta = (usage[b.id] ?? 0) - (usage[a.id] ?? 0);
-          if (recencyDelta !== 0) return recencyDelta;
-        }
+        const recencyDelta = (usage[b.id] ?? 0) - (usage[a.id] ?? 0);
+        if (recencyDelta !== 0) return recencyDelta;
         return formatLabelName(a).localeCompare(formatLabelName(b), undefined, { sensitivity: "base" });
       });
-  }, [labels, sortOrder, accountId, usageVersion]);
-  const labelInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  }, [labels, accountId]);
 
-  const toggleLabel = (label: Label, value: boolean) => {
-    onToggle(label.id, value);
-    if (accountId) {
-      recordLabelUsed(accountId, label.id);
-      setUsageVersion((version) => version + 1);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredLabels = normalizedQuery
+    ? orderedLabels.filter((label) => formatLabelName(label).toLowerCase().includes(normalizedQuery))
+    : orderedLabels;
+  const exactMatchExists = orderedLabels.some(
+    (label) => formatLabelName(label).toLowerCase() === normalizedQuery,
+  );
+  const showCreateRow = normalizedQuery.length > 0 && !exactMatchExists;
+  const rowCount = filteredLabels.length + (showCreateRow ? 1 : 0);
+  const activeIndex = rowCount === 0 ? -1 : Math.min(Math.max(highlightedIndex, 0), rowCount - 1);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [query]);
+
+  const applyLabel = (label: Label) => {
+    onToggle(label, !checkedLabelIds.has(label.id));
+    if (accountId) recordLabelUsed(accountId, label.id);
+    onClose();
+  };
+
+  const createAndApply = async () => {
+    const trimmed = query.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    try {
+      const label = await onCreate(trimmed);
+      onToggle(label, true);
+      if (accountId) recordLabelUsed(accountId, label.id);
+      onClose();
+    } catch {
+      setBusy(false);
     }
   };
 
-  useEffect(() => {
-    const firstLabel = manageableLabels[0];
-    if (!firstLabel) return;
-    labelInputRefs.current[firstLabel.id]?.focus();
-  }, [manageableLabels.length]);
-
-  const moveLabelFocus = (labelId: string, direction: -1 | 1) => {
-    const currentIndex = manageableLabels.findIndex((label) => label.id === labelId);
-    if (currentIndex === -1) return;
-    const nextIndex = Math.max(0, Math.min(manageableLabels.length - 1, currentIndex + direction));
-    if (nextIndex === currentIndex) return;
-    labelInputRefs.current[manageableLabels[nextIndex]?.id ?? ""]?.focus();
+  const selectRow = (index: number) => {
+    if (index < filteredLabels.length) {
+      applyLabel(filteredLabels[index]);
+    } else if (showCreateRow) {
+      void createAndApply();
+    }
   };
 
   return (
-    <Modal title="Manage labels" onClose={onClose}>
-      <form
-        className="create-label"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!name.trim() || busy) return;
-          setBusy(true);
-          void onCreate(name).then(() => setName("")).finally(() => setBusy(false));
-        }}
-      >
+    <Modal title="Add label" onClose={onClose}>
+      <div className="label-search">
         <input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="New label name"
-          aria-label="New label name"
+          autoFocus
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Find or create a label"
+          aria-label="Find or create a label"
+          role="combobox"
+          aria-expanded="true"
+          aria-controls="label-options"
+          aria-activedescendant={activeIndex >= 0 ? `label-option-${activeIndex}` : undefined}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setHighlightedIndex((index) => Math.min(index + 1, Math.max(rowCount - 1, 0)));
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setHighlightedIndex((index) => Math.max(index - 1, 0));
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              if (activeIndex >= 0) selectRow(activeIndex);
+            }
+          }}
         />
-        <button type="submit" disabled={!name.trim() || busy}>Create</button>
-      </form>
-      <div className="label-sort-toggle" role="group" aria-label="Sort labels">
-        <button
-          type="button"
-          className={sortOrder === "alphabetical" ? "active" : undefined}
-          onClick={() => setSortOrder(saveLabelSortOrder("alphabetical"))}
-        >
-          A–Z
-        </button>
-        <button
-          type="button"
-          className={sortOrder === "recent" ? "active" : undefined}
-          onClick={() => setSortOrder(saveLabelSortOrder("recent"))}
-        >
-          Recently used
-        </button>
       </div>
-      <div className="label-list">
-        {manageableLabels.map((label) => (
-          <div key={label.id}>
-            <label>
-              <input
-                ref={(input) => {
-                  labelInputRefs.current[label.id] = input;
-                }}
-                type="checkbox"
-                checked={checkedLabelIds.has(label.id)}
-                onChange={(event) => toggleLabel(label, event.target.checked)}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    moveLabelFocus(label.id, -1);
-                  } else if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    moveLabelFocus(label.id, 1);
-                  } else if (event.key === " " || event.key === "Spacebar" || event.key === "Space" || event.code === "Space") {
-                    event.preventDefault();
-                    toggleLabel(label, !checkedLabelIds.has(label.id));
-                  }
-                }}
-              />
+      <div className="label-list" id="label-options" role="listbox" aria-label="Labels">
+        {filteredLabels.map((label, index) => (
+          <div
+            key={label.id}
+            id={`label-option-${index}`}
+            role="option"
+            aria-label={checkedLabelIds.has(label.id) ? `${formatLabelName(label)}, added` : formatLabelName(label)}
+            aria-selected={index === activeIndex}
+            className={index === activeIndex ? "highlighted" : undefined}
+            onMouseEnter={() => setHighlightedIndex(index)}
+            onClick={() => selectRow(index)}
+          >
+            <span className="label-option-name">
+              {checkedLabelIds.has(label.id) ? <Check size={14} /> : <span className="label-option-check-spacer" />}
               {formatLabelName(label)}
-            </label>
+            </span>
             {label.kind === "user" ? (
               <span className="label-actions">
                 <button
                   aria-label={`Rename ${label.name}`}
-                  onClick={() => {
+                  onClick={(event) => {
+                    event.stopPropagation();
                     setRenaming(label);
                     setRenameValue(label.name);
                   }}
                 >
                   <Pencil size={14} />
                 </button>
-                <button aria-label={`Delete ${label.name}`} onClick={() => void onDelete(label.id)}>
+                <button
+                  aria-label={`Delete ${label.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onDelete(label.id);
+                  }}
+                >
                   <Trash2 size={14} />
                 </button>
               </span>
             ) : null}
           </div>
         ))}
-        {manageableLabels.length === 0 ? (
-          <p className="empty">No labels yet. Create one below.</p>
+        {showCreateRow ? (
+          <div
+            id={`label-option-${filteredLabels.length}`}
+            role="option"
+            aria-selected={filteredLabels.length === activeIndex}
+            className={filteredLabels.length === activeIndex ? "highlighted" : undefined}
+            onMouseEnter={() => setHighlightedIndex(filteredLabels.length)}
+            onClick={() => void createAndApply()}
+          >
+            Create label "{query.trim()}"
+          </div>
+        ) : null}
+        {filteredLabels.length === 0 && !showCreateRow ? (
+          <p className="empty">No labels yet. Type a name to create one.</p>
         ) : null}
       </div>
       {renaming ? (

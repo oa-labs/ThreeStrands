@@ -3,13 +3,11 @@ import {
   applyFontFamily,
   DEFAULT_AUTO_READ_DELAY_SECONDS,
   DEFAULT_FONT_FAMILY,
-  DEFAULT_LABEL_SORT_ORDER,
   DEFAULT_LOAD_REMOTE_IMAGES,
   MAX_AUTO_READ_DELAY_SECONDS,
   MIN_AUTO_READ_DELAY_SECONDS,
   readAutoReadDelaySeconds,
   readFontFamily,
-  readLabelSortOrder,
   readLabelUsage,
   readLoadRemoteImages,
   readSelectedAccountId,
@@ -17,7 +15,6 @@ import {
   recordLabelUsed,
   saveAutoReadDelaySeconds,
   saveFontFamily,
-  saveLabelSortOrder,
   saveLoadRemoteImages,
   saveSelectedAccountId,
   saveSelectedTabForAccount,
@@ -156,23 +153,6 @@ describe("selected mailbox tab preference", () => {
   it("ignores a corrupted stored map", () => {
     localStorage.setItem("threestrands.settings.selectedTabByAccount", "not json");
     expect(readSelectedTabForAccount("work@example.com")).toBeUndefined();
-  });
-});
-
-describe("label sort order preference", () => {
-  afterEach(() => {
-    localStorage.clear();
-  });
-
-  it("uses the default and restores a saved preference", () => {
-    expect(readLabelSortOrder()).toBe(DEFAULT_LABEL_SORT_ORDER);
-    saveLabelSortOrder("recent");
-    expect(readLabelSortOrder()).toBe("recent");
-  });
-
-  it("ignores a corrupted stored value", () => {
-    localStorage.setItem("threestrands.settings.labelSortOrder", "chronological");
-    expect(readLabelSortOrder()).toBe(DEFAULT_LABEL_SORT_ORDER);
   });
 });
 

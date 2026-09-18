@@ -27,6 +27,7 @@ describe("archive notice", () => {
       await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
     }
     localStorage.removeItem("threestrands.settings.autoReadDelaySeconds");
+    localStorage.removeItem("threestrands.settings.labelUsageByAccount");
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -387,37 +388,49 @@ describe("archive notice", () => {
   it("undoes adding and removing a label", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
     await act(async () => {
       screen.getByRole("button", { name: "Labels (l)" }).click();
     });
-    const work = await screen.findByRole("checkbox", { name: "Work" });
-
     await act(async () => {
-      work.click();
+      (await screen.findByRole("option", { name: "Work" })).click();
     });
     expect(await screen.findByRole("status")).toHaveTextContent("Work added");
-    expect(work).toBeChecked();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add label" })).not.toBeInTheDocument());
+
     await act(async () => {
       screen.getByRole("button", { name: "Undo" }).click();
     });
-    await waitFor(() => expect(work).not.toBeChecked());
 
     await act(async () => {
-      work.click();
+      screen.getByRole("button", { name: "Labels (l)" }).click();
+    });
+    await screen.findByRole("option", { name: "Work" });
+
+    await act(async () => {
+      screen.getByRole("option", { name: "Work" }).click();
     });
     await screen.findByText("Work added");
+
     await act(async () => {
-      work.click();
+      screen.getByRole("button", { name: "Labels (l)" }).click();
+    });
+    await act(async () => {
+      (await screen.findByRole("option", { name: "Work, added" })).click();
     });
     expect(await screen.findByRole("status")).toHaveTextContent("Work removed");
-    expect(work).not.toBeChecked();
+
     await act(async () => {
       screen.getByRole("button", { name: "Undo" }).click();
     });
-    await waitFor(() => expect(work).toBeChecked());
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Labels (l)" }).click();
+    });
+    await screen.findByRole("option", { name: "Work, added" });
   });
 
-  it("sorts labels alphabetically and supports keyboard navigation", async () => {
+  it("orders labels alphabetically and supports search plus keyboard navigation", async () => {
     const keyboardLabel = await mailClient.createLabel("Keyboard navigation");
     try {
       render(<App />);
@@ -426,21 +439,62 @@ describe("archive notice", () => {
         screen.getByRole("button", { name: "Labels (l)" }).click();
       });
 
-      const work = await screen.findByRole("checkbox", { name: "Work" });
-      const keyboard = await screen.findByRole("checkbox", { name: "Keyboard navigation" });
-      expect(screen.getAllByRole("checkbox").map((checkbox) => checkbox.closest("label")?.textContent?.trim()))
+      const dialog = screen.getByRole("dialog", { name: "Add label" });
+      const input = await within(dialog).findByRole("combobox", { name: "Find or create a label" });
+      expect(input).toHaveFocus();
+      expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
         .toEqual(["Keyboard navigation", "Work"]);
-      expect(keyboard).toHaveFocus();
+      expect(within(dialog).getAllByRole("option")[0]).toHaveClass("highlighted");
 
-      fireEvent.keyDown(keyboard, { key: "ArrowDown" });
-      expect(work).toHaveFocus();
-      fireEvent.keyDown(work, { key: "ArrowUp" });
-      expect(keyboard).toHaveFocus();
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      expect(within(dialog).getAllByRole("option")[1]).toHaveClass("highlighted");
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      expect(within(dialog).getAllByRole("option")[0]).toHaveClass("highlighted");
 
-      fireEvent.keyDown(keyboard, { key: " ", code: "Space" });
-      await waitFor(() => expect(keyboard).toBeChecked());
+      fireEvent.change(input, { target: { value: "key" } });
+      expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
+        .toEqual(["Keyboard navigation", 'Create label "key"']);
+
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+      expect(await screen.findByRole("status")).toHaveTextContent("Keyboard navigation added");
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add label" })).not.toBeInTheDocument());
     } finally {
       await mailClient.deleteLabel(keyboardLabel.id);
+    }
+  });
+
+  it("creates and applies a new label from the search box", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    try {
+      await act(async () => {
+        screen.getByRole("button", { name: "Labels (l)" }).click();
+      });
+
+      const input = await screen.findByRole("combobox", { name: "Find or create a label" });
+      fireEvent.change(input, { target: { value: "Project X" } });
+      const createRow = await screen.findByRole("option", { name: 'Create label "Project X"' });
+      expect(createRow).toHaveClass("highlighted");
+
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+      expect(await screen.findByRole("status")).toHaveTextContent("Project X added");
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add label" })).not.toBeInTheDocument());
+
+      await act(async () => {
+        screen.getByRole("button", { name: "Labels (l)" }).click();
+      });
+      const created = await screen.findByRole("option", { name: "Project X, added" });
+      await act(async () => {
+        created.click();
+      });
+      expect(await screen.findByRole("status")).toHaveTextContent("Project X removed");
+    } finally {
+      const projectX = (await mailClient.listLabels()).find((label) => label.name === "Project X");
+      if (projectX) await mailClient.deleteLabel(projectX.id);
     }
   });
 
