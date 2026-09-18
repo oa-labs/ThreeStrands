@@ -58,7 +58,8 @@ describe("calendar sidebar", () => {
     );
   });
 
-  it("surfaces Calendar API failures and links back to account settings", async () => {
+  it("shows a short Calendar API error without rendering the provider response", async () => {
+    const diagnostics = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
       {
         email: "calendar@example.com",
@@ -68,7 +69,9 @@ describe("calendar sidebar", () => {
     ]);
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
       events: [],
-      errors: ["calendar@example.com: Google Calendar returned 403 Forbidden: API has not been used"],
+      errors: [
+        "calendar@example.com: Google Calendar returned 404 Not Found: <html><body>Provider error</body></html>",
+      ],
     });
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
@@ -76,7 +79,16 @@ describe("calendar sidebar", () => {
     fireEvent.keyDown(window, { key: "T" });
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("403 Forbidden");
+    expect(alert).toHaveTextContent(
+      "Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.",
+    );
+    expect(alert).not.toHaveTextContent("404 Not Found");
+    expect(alert).not.toHaveTextContent("Provider error");
+    expect(diagnostics).toHaveBeenCalledWith(
+      "Calendar schedule load failed:",
+      expect.arrayContaining([expect.stringContaining("<html>")]),
+    );
+    expect(alert.closest(".calendar-grid")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Calendar Accounts" }));
     expect(await screen.findByRole("region", { name: "Calendar Accounts" })).toBeInTheDocument();
   });

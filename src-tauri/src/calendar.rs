@@ -2,6 +2,7 @@ use calcard::icalendar::{
     ICalendar, ICalendarComponent, ICalendarComponentType, ICalendarEntry, ICalendarParameterName,
     ICalendarParameterValue, ICalendarProperty, ICalendarValue,
 };
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -15,6 +16,38 @@ const MAX_CALENDAR_BYTES: usize = 2 * 1024 * 1024;
 const CALENDAR_LIST_URL: &str = "https://www.googleapis.com/calendar/v3/users/me/calendarList";
 const CALENDARS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/";
 const MAX_SCHEDULE_EVENTS: usize = 250;
+// Calendar IDs are untrusted path data. Encode every reserved URI character so
+// IDs containing `@`, `#`, or `/` remain exactly one path segment.
+const CALENDAR_ID_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'!')
+    .add(b'"')
+    .add(b'#')
+    .add(b'$')
+    .add(b'%')
+    .add(b'&')
+    .add(b'\'')
+    .add(b'(')
+    .add(b')')
+    .add(b'*')
+    .add(b'+')
+    .add(b',')
+    .add(b'/')
+    .add(b':')
+    .add(b';')
+    .add(b'<')
+    .add(b'=')
+    .add(b'>')
+    .add(b'?')
+    .add(b'@')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
 
 #[derive(Deserialize)]
 struct GoogleCalendarList {
@@ -116,12 +149,9 @@ pub async fn fetch_schedule(
     let client = calendar_client()?;
     let mut schedule = Vec::new();
     for calendar_id in calendar_ids {
-        let mut events_url = url::Url::parse(CALENDARS_URL).map_err(|error| error.to_string())?;
-        events_url
-            .path_segments_mut()
-            .map_err(|_| "Google Calendar URL cannot be extended".to_string())?
-            .push(&calendar_id)
-            .push("events");
+        let Some(events_url) = events_url(calendar_id)? else {
+            continue;
+        };
         let response = client
             .get(events_url)
             .bearer_auth(&access_token)
@@ -143,6 +173,17 @@ pub async fn fetch_schedule(
     Ok(schedule)
 }
 
+fn events_url(calendar_id: &str) -> Result<Option<url::Url>, String> {
+    let calendar_id = calendar_id.trim();
+    if calendar_id.is_empty() {
+        return Ok(None);
+    }
+    let encoded_id = utf8_percent_encode(calendar_id, CALENDAR_ID_ENCODE_SET);
+    url::Url::parse(&format!("{CALENDARS_URL}{encoded_id}/events"))
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
 async fn checked_json<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, String> {
@@ -151,7 +192,8 @@ async fn checked_json<T: serde::de::DeserializeOwned>(
     }
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    Err(format!("Google Calendar returned {status}: {body}"))
+    eprintln!("Google Calendar request failed with {status}: {body}");
+    Err(format!("Google Calendar request failed ({status})."))
 }
 
 fn normalize_events(
@@ -419,16 +461,16 @@ mod tests {
     fn maps_calendar_list_entries_for_selection_ui() {
         let options = calendar_options(
             vec![
-            GoogleCalendarListEntry {
-                id: "primary@example.com".into(),
-                summary: "My calendar".into(),
-                primary: true,
-            },
-            GoogleCalendarListEntry {
-                id: "team@example.com".into(),
-                summary: "Team".into(),
-                primary: false,
-            },
+                GoogleCalendarListEntry {
+                    id: "primary@example.com".into(),
+                    summary: "My calendar".into(),
+                    primary: true,
+                },
+                GoogleCalendarListEntry {
+                    id: "team@example.com".into(),
+                    summary: "Team".into(),
+                    primary: false,
+                },
             ],
             "work@example.com",
         );
@@ -437,5 +479,28 @@ mod tests {
         assert_eq!(options[0].name, "My calendar");
         assert!(options[0].primary);
         assert_eq!(options[1].account_id, "work@example.com");
+    }
+
+    #[test]
+    fn builds_encoded_event_urls_without_empty_segments() {
+        let url = events_url("joelreed@openarc.net").unwrap().unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://www.googleapis.com/calendar/v3/calendars/joelreed%40openarc.net/events"
+        );
+
+        let group_url = events_url("team#contacts@group.v.calendar.google.com")
+            .unwrap()
+            .unwrap();
+        assert!(group_url
+            .as_str()
+            .ends_with("team%23contacts%40group.v.calendar.google.com/events"));
+        assert!(!group_url.path().contains("calendars//"));
+    }
+
+    #[test]
+    fn does_not_build_an_event_url_for_an_empty_calendar_id() {
+        assert_eq!(events_url("").unwrap(), None);
+        assert_eq!(events_url("   ").unwrap(), None);
     }
 }

@@ -72,10 +72,14 @@ export function CalendarSidebar({
         request.timeZone,
       );
       setEvents(result.events);
-      setError(result.errors.length > 0 ? result.errors.join("\n") : null);
+      if (result.errors.length > 0) {
+        console.error("Calendar schedule load failed:", result.errors);
+        setError("Calendar schedule load failed");
+      }
     } catch (reason) {
       setEvents([]);
-      setError(reason instanceof Error ? reason.message : String(reason));
+      console.error("Calendar schedule load failed:", reason);
+      setError("Calendar schedule load failed");
     } finally {
       setLoading(false);
     }
@@ -128,6 +132,17 @@ export function CalendarSidebar({
         </div>
       ) : null}
       <div className="calendar-timezone">{timeZoneLabel(date)}</div>
+      {!loading && error ? (
+        <div className="calendar-error-notice" role="alert">
+          <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>
+          <div>
+            <button type="button" onClick={() => void load(date)}>
+              <RefreshCw size={14} /> Try again
+            </button>
+            <button type="button" onClick={onOpenSettings}>Calendar Accounts</button>
+          </div>
+        </div>
+      ) : null}
       <div className="calendar-grid-scroll" ref={gridRef}>
         <div className="calendar-grid">
           <div className="calendar-hour-labels" aria-hidden="true">
@@ -171,18 +186,6 @@ export function CalendarSidebar({
             })}
           </div>
           {loading ? <p className="calendar-grid-status">Loading schedule…</p> : null}
-          {!loading && error ? (
-            <div className="calendar-grid-status calendar-grid-error" role="alert">
-              <p>Calendar couldn’t be loaded.</p>
-              <small>{error}</small>
-              <div>
-                <button type="button" onClick={() => void load(date)}>
-                  <RefreshCw size={14} /> Try again
-                </button>
-                <button type="button" onClick={onOpenSettings}>Calendar Accounts</button>
-              </div>
-            </div>
-          ) : null}
           {!loading && !error && events.length === 0 ? (
             <p className="calendar-grid-status">No events scheduled.</p>
           ) : null}
