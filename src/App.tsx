@@ -885,6 +885,14 @@ export function App() {
     }
   }, [includeArchived, activeAccountId, mailbox, activeSplitInboxId, refreshUnreadCounts, refreshMailboxUnreadCounts]);
 
+  // Sync round trips can outlive a mailbox/split-inbox switch. Reading
+  // loadThreads through a ref at resolution time (rather than closing over
+  // whichever instance existed when the sync started) keeps a slow sync from
+  // repainting the thread list for a view the user has since navigated away
+  // from, even though the header already reflects the new view.
+  const loadThreadsRef = useRef(loadThreads);
+  loadThreadsRef.current = loadThreads;
+
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
     if ((mailbox === "drafts" || mailbox === "outbox") || loadingMore.current) return;
@@ -1073,9 +1081,9 @@ export function App() {
       // A different account may still have completed when another failed.
       // Always repaint from the local cache after an all-account refresh.
       .finally(() => {
-        void loadThreads(query);
+        void loadThreadsRef.current(query);
       });
-  }, [loadThreads, query]);
+  }, [query]);
 
   const refreshMailRef = useRef(refreshMail);
   refreshMailRef.current = refreshMail;
