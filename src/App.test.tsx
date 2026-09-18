@@ -258,6 +258,8 @@ describe("archive notice", () => {
     await act(async () => {
       includeArchived.click();
     });
+    expect(includeArchived).toHaveTextContent("Archived + trash");
+    expect(includeArchived).toHaveAttribute("aria-pressed", "true");
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await act(async () => {
@@ -678,6 +680,49 @@ describe("foreground mail refresh", () => {
     });
 
     expect(sync).not.toHaveBeenCalled();
+  });
+});
+
+describe("split inbox search shortcuts", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.removeItem("threestrands.settings.selectedAccountId");
+    localStorage.removeItem("threestrands.settings.selectedTabByAccount");
+    vi.restoreAllMocks();
+  });
+
+  it("keeps search on the selected split and lets Tab cycle from the search field", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([
+      {
+        id: "work-split",
+        name: "Work",
+        matchKind: "label",
+        matchValue: "work",
+        sortOrder: 0,
+        createdAt: "2026-03-01T00:00:00Z",
+        accountId: "demo@example.com",
+      },
+    ]);
+
+    render(<App />);
+    const splitTab = await screen.findByRole("tab", { name: "Work" });
+    fireEvent.click(splitTab);
+    await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
+
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search mail" });
+    expect(search).toHaveFocus();
+    expect(splitTab).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(search, { key: "Tab" });
+    await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.queryByRole("textbox", { name: "Search mail" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "/" });
+    const inboxSearch = await screen.findByRole("textbox", { name: "Search mail" });
+    fireEvent.keyDown(inboxSearch, { key: "Tab", shiftKey: true });
+    await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
   });
 });
 

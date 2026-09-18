@@ -371,6 +371,7 @@ h2 { font-size: calc(22px * var(--font-scale)); }
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   padding: 4px;
   border: 0;
   border-radius: 6px;
@@ -379,7 +380,14 @@ h2 { font-size: calc(22px * var(--font-scale)); }
   cursor: pointer;
 }
 .search-toggle:hover { color: var(--text); background: var(--selected); }
-.search-toggle.active { color: var(--accent); background: var(--selected); }
+.search-toggle.active {
+  padding-inline: 7px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: var(--selected);
+  font-size: 11px;
+  font-weight: 650;
+}
 
 .filters-anchor { position: relative; flex: 0 0 auto; }
 .filters-trigger {

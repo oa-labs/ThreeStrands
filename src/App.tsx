@@ -451,11 +451,16 @@ function useShortcutHandler(
       // focus isn't already on some other focusable control — otherwise
       // this would hijack Tab away from normal focus-cycling between
       // buttons/links/checkboxes, breaking keyboard/screen-reader navigation.
+      // The mailbox search input is the sole exception: Tab remains the
+      // mailbox-tab shortcut while search has focus.
+      const allowsMailboxTabShortcut = event.key === "Tab"
+        && event.target instanceof HTMLElement
+        && event.target.hasAttribute("data-mailbox-tab-shortcut");
       const focusedControl = event.key === "Tab"
         && event.target instanceof HTMLElement
         && event.target !== document.body
         && event.target.matches("button, a[href], [tabindex]");
-      if (!sendShortcut && !replyAssistShortcut && !fontShortcut && (isEditableTarget(event.target) || focusedControl || (dialog && !allowsMailboxNavigation))) {
+      if (!sendShortcut && !replyAssistShortcut && !fontShortcut && !allowsMailboxTabShortcut && (isEditableTarget(event.target) || focusedControl || (dialog && !allowsMailboxNavigation))) {
         clearPendingStep();
         return;
       }
@@ -761,7 +766,7 @@ export function App() {
     const trimmed = search.trim();
     const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
     try {
-      const page = box === "inbox" && trimmed
+      const page = (box === "inbox" || box === "split") && trimmed
         ? await mailClient.searchThreads({
             query: trimmed,
             limit: SEARCH_PAGE_SIZE,
@@ -1028,8 +1033,8 @@ export function App() {
   }, [query]);
 
   useEffect(() => {
-    if (searchOpen && mailbox === "inbox") searchRef.current?.focus();
-  }, [mailbox, searchOpen]);
+    if (searchOpen && isTabbedMailbox) searchRef.current?.focus();
+  }, [isTabbedMailbox, searchOpen]);
 
   useEffect(() => {
     setCheckedIds(new Set());
@@ -1549,8 +1554,11 @@ export function App() {
       return {};
     },
     focusSearch: () => {
-      correspondence.context.openInbox();
-      setMailbox("inbox");
+      if (!isTabbedMailbox) {
+        correspondence.context.openInbox();
+        setMailbox("inbox");
+        setActiveSplitInboxId(null);
+      }
       setSearchOpen(true);
     },
     refresh: refreshMail,
@@ -1882,7 +1890,7 @@ export function App() {
             </div>
           </div>
         ) : null}
-        {mailbox === "inbox" && searchOpen ? (
+        {isTabbedMailbox && searchOpen ? (
           <div className="list-toolbar">
             <label className="search-box">
               <Search size={16} />
@@ -1892,6 +1900,7 @@ export function App() {
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search mail"
                 aria-label="Search mail"
+                data-mailbox-tab-shortcut
                 onKeyDown={(event) => {
                   if (event.key !== "Escape") return;
                   event.preventDefault();
@@ -1906,11 +1915,12 @@ export function App() {
                   type="button"
                   className={`search-toggle ${includeArchived ? "active" : ""}`}
                   aria-pressed={includeArchived}
-                  aria-label="Include archived or trashed mail in search"
-                  title="Include archived or trashed mail in search"
+                  aria-label={includeArchived ? "Exclude archived and trashed mail from search" : "Include archived or trashed mail in search"}
+                  title={includeArchived ? "Exclude archived and trashed mail from search" : "Include archived or trashed mail in search"}
                   onClick={() => setIncludeArchived((current) => !current)}
                 >
                   <Archive size={14} />
+                  {includeArchived ? <span>Archived + trash</span> : null}
                 </button>
               ) : null}
               <kbd>/</kbd>
