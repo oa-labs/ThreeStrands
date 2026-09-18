@@ -12,7 +12,7 @@ use crate::mime::GmailMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 18;
+pub(crate) const LATEST_VERSION: i64 = 19;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -101,6 +101,11 @@ CREATE TABLE IF NOT EXISTS accounts (
     sort_order INTEGER NOT NULL,
     connected_at TEXT NOT NULL,
     last_synced_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS calendar_accounts (
+    email TEXT PRIMARY KEY,
+    connected_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS triage_events (
@@ -399,6 +404,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             CREATE INDEX quarantined_messages_account_time
                 ON quarantined_messages(account_id, created_at DESC);
             PRAGMA user_version=18;",
+        )
+        .map_err(error)?;
+    }
+    if version < 19 {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS calendar_accounts (
+                email TEXT PRIMARY KEY,
+                connected_at TEXT NOT NULL
+            );
+            PRAGMA user_version=19;",
         )
         .map_err(error)?;
     }

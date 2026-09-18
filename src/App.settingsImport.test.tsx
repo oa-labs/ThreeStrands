@@ -71,9 +71,9 @@ describe("settings import navigation", () => {
     }));
 
     await waitFor(() => {
-      expect(within(dialog).getByRole("region", { name: "Accounts" })).toBeInTheDocument();
+      expect(within(dialog).getByRole("region", { name: "Mail Accounts" })).toBeInTheDocument();
     });
-    expect(within(dialog).getByRole("button", { name: "Accounts" })).toHaveAttribute(
+    expect(within(dialog).getByRole("button", { name: "Mail Accounts" })).toHaveAttribute(
       "aria-current",
       "true",
     );

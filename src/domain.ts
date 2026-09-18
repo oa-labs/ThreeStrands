@@ -49,6 +49,21 @@ export type CalendarPreview = {
   truncated: boolean;
 };
 
+export type CalendarAccount = {
+  email: string;
+  connectedAt: string;
+  status: "connected" | "needs_reauth";
+};
+
+export type ScheduleEvent = {
+  id: string;
+  accountId: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+};
+
 export type Message = {
   id: string;
   threadId: string;

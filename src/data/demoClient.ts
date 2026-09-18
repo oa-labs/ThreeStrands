@@ -3,6 +3,7 @@ import type { MailClient } from "./client";
 import { parseAddress } from "../emailAddress";
 import type {
   Account,
+  CalendarAccount,
   ContactSuggestion,
   Label,
   ReplyAssistContext,
@@ -89,6 +90,7 @@ let accounts: Account[] = [
     lastSyncedAt: null,
   },
 ];
+let calendarAccounts: CalendarAccount[] = [];
 
 let threads = structuredClone(initialThreads);
 let labels: Label[] = [
@@ -547,6 +549,30 @@ export const demoClient: MailClient = {
         return account ? { ...account, sortOrder: index } : null;
       })
       .filter((account): account is Account => account !== null);
+  },
+  async listCalendarAccounts() {
+    return structuredClone(calendarAccounts);
+  },
+  async addCalendarAccount() {
+    const account: CalendarAccount = {
+      email: DEMO_ACCOUNT_ID,
+      connectedAt: new Date().toISOString(),
+      status: "connected",
+    };
+    calendarAccounts = [account];
+    return structuredClone(account);
+  },
+  async reconnectCalendarAccount(email) {
+    const account = calendarAccounts.find((candidate) => candidate.email === email);
+    if (!account) throw new Error("Calendar account not found");
+    account.status = "connected";
+    return structuredClone(account);
+  },
+  async removeCalendarAccount(email) {
+    calendarAccounts = calendarAccounts.filter((account) => account.email !== email);
+  },
+  async listScheduleEvents() {
+    return [];
   },
   async listLabels() {
     return structuredClone(labels);

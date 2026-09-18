@@ -15,11 +15,14 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-const SERVICE: &str = "app.threestrands.mail";
+const MAIL_SERVICE: &str = "app.threestrands.mail";
+const CALENDAR_SERVICE: &str = "app.threestrands.calendar";
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const PROFILE_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
-const SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels";
+const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
+const MAIL_SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels";
+const CALENDAR_SCOPES: &str = "openid email https://www.googleapis.com/auth/calendar.readonly";
 const OAUTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const OAUTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
@@ -57,7 +60,7 @@ struct TokenResponse {
 
 #[derive(Deserialize)]
 struct Profile {
-    #[serde(rename = "emailAddress")]
+    #[serde(rename = "emailAddress", alias = "email")]
     email_address: String,
 }
 
@@ -117,10 +120,27 @@ impl GoogleAuthConfig {
     }
 
     fn keyed(&self, key: &str) -> GoogleAuth {
+        self.keyed_for(key, MAIL_SERVICE, MAIL_SCOPES, PROFILE_URL)
+    }
+
+    /// Calendar access is deliberately authorized and stored separately from
+    /// Gmail. Connecting it can never broaden an existing mail refresh token.
+    pub fn pending_calendar_account(&self) -> GoogleAuth {
+        self.keyed_for(PENDING_KEY, CALENDAR_SERVICE, CALENDAR_SCOPES, USERINFO_URL)
+    }
+
+    pub fn calendar_account(&self, email: &str) -> GoogleAuth {
+        self.keyed_for(email, CALENDAR_SERVICE, CALENDAR_SCOPES, USERINFO_URL)
+    }
+
+    fn keyed_for(&self, key: &str, service: &str, scopes: &str, profile_url: &str) -> GoogleAuth {
         GoogleAuth {
             client: self.client.clone(),
             client_id: self.client_id.clone(),
             client_secret: self.client_secret.clone(),
+            service: service.to_string(),
+            scopes: scopes.to_string(),
+            profile_url: profile_url.to_string(),
             key: Arc::new(Mutex::new(key.to_string())),
             token_cache: Arc::new(Mutex::new(None)),
             available_cache: Arc::new(Mutex::new(None)),
@@ -133,6 +153,9 @@ pub struct GoogleAuth {
     client: Client,
     client_id: String,
     client_secret: String,
+    service: String,
+    scopes: String,
+    profile_url: String,
     key: Arc<Mutex<String>>,
     token_cache: Arc<Mutex<Option<Tokens>>>,
     available_cache: Arc<Mutex<Option<bool>>>,
@@ -171,7 +194,7 @@ impl GoogleAuth {
     /// the full timeout, silently blocking any retry that shares its slot.
     pub async fn authorize(&self, cancel: &CancellationToken) -> Result<String, String> {
         let tokens = self.run_pkce_flow(cancel).await?;
-        let email = fetch_email(&self.client, &tokens.access_token).await?;
+        let email = fetch_email(&self.client, &self.profile_url, &tokens.access_token).await?;
         self.accept_identity(&email)?;
         self.save(&tokens)?;
         Ok(email)
@@ -205,7 +228,7 @@ impl GoogleAuth {
             .append_pair("client_id", &self.client_id)
             .append_pair("redirect_uri", &redirect_uri)
             .append_pair("response_type", "code")
-            .append_pair("scope", SCOPES)
+            .append_pair("scope", &self.scopes)
             .append_pair("code_challenge", &challenge)
             .append_pair("code_challenge_method", "S256")
             .append_pair("state", &state)
@@ -394,9 +417,9 @@ impl GoogleAuth {
         if *key == email {
             return Ok(());
         }
-        if let Ok(old_entry) = Entry::new(SERVICE, key.as_str()) {
+        if let Ok(old_entry) = Entry::new(&self.service, key.as_str()) {
             if let Ok(secret) = old_entry.get_password() {
-                if let Ok(new_entry) = Entry::new(SERVICE, email) {
+                if let Ok(new_entry) = Entry::new(&self.service, email) {
                     new_entry.set_password(&secret).map_err(display)?;
                 }
                 let _ = old_entry.delete_credential();
@@ -411,13 +434,13 @@ impl GoogleAuth {
     }
 
     fn entry(&self) -> Result<Entry, String> {
-        Entry::new(SERVICE, &self.key()).map_err(display)
+        Entry::new(&self.service, &self.key()).map_err(display)
     }
 }
 
-async fn fetch_email(client: &Client, access_token: &str) -> Result<String, String> {
+async fn fetch_email(client: &Client, profile_url: &str, access_token: &str) -> Result<String, String> {
     let response = client
-        .get(PROFILE_URL)
+        .get(profile_url)
         .bearer_auth(access_token)
         .send()
         .await
@@ -571,5 +594,18 @@ mod tests {
             classify_refresh_failure("<html>upstream failure</html>"),
             RefreshFailureKind::Transient
         );
+    }
+
+    #[test]
+    fn calendar_authorization_is_read_only_and_separate_from_mail() {
+        let config = config();
+        let mail = config.account("work@example.com");
+        let calendar = config.calendar_account("work@example.com");
+
+        assert_eq!(mail.service, MAIL_SERVICE);
+        assert!(mail.scopes.contains("gmail.modify"));
+        assert_eq!(calendar.service, CALENDAR_SERVICE);
+        assert!(calendar.scopes.contains("calendar.readonly"));
+        assert!(!calendar.scopes.contains("gmail."));
     }
 }

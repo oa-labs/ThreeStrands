@@ -1,6 +1,7 @@
 import {
   Archive,
   AlertCircle,
+  CalendarDays,
   Check,
   CheckCircle2,
   CheckSquare,
@@ -83,6 +84,7 @@ import { formattingShortcuts } from "./richText";
 import type {
   Account,
   AuthStatus,
+  CalendarAccount,
   Label,
   RecoveryStatus,
   SplitInbox,
@@ -100,6 +102,7 @@ import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
+import { CalendarSidebar } from "./CalendarSidebar";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import {
@@ -151,7 +154,7 @@ import {
   type TriageSession,
 } from "./triage";
 
-type SettingsSection = "appearance" | "reading" | "accounts" | "splitInboxes" | "ai" | "privacy" | "data";
+type SettingsSection = "appearance" | "reading" | "accounts" | "calendarAccounts" | "splitInboxes" | "ai" | "privacy" | "data";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -598,6 +601,16 @@ export function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarAccounts, setCalendarAccounts] = useState<CalendarAccount[]>([]);
+  const refreshCalendarAccounts = useCallback(async () => {
+    const next = await mailClient.listCalendarAccounts();
+    setCalendarAccounts(next);
+    return next;
+  }, []);
+  useEffect(() => {
+    void refreshCalendarAccounts().catch(() => {});
+  }, [refreshCalendarAccounts]);
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus | null>(null);
   useEffect(() => {
     // One-shot: this only ever reflects what happened during this app
@@ -1241,6 +1254,20 @@ export function App() {
     setSettingsOpen(true);
   }, []);
 
+  const openToday = useCallback(() => {
+    void refreshCalendarAccounts()
+      .then((connected) => {
+        if (connected.length === 0) {
+          openSettingsAt("calendarAccounts");
+          return;
+        }
+        setCalendarOpen(true);
+      })
+      .catch((reason: unknown) => {
+        setNotice({ message: reason instanceof Error ? reason.message : String(reason) });
+      });
+  }, [openSettingsAt, refreshCalendarAccounts, setNotice]);
+
   /**
    * Always calls the provider, even when a summary is already cached — used
    * for both the first generation and an explicit "Regenerate". Guarded by
@@ -1504,6 +1531,7 @@ export function App() {
     openPalette: () => setPaletteOpen(true),
     openShortcutHelp: () => setShortcutHelpOpen(true),
     openSettings: () => openSettingsAt("appearance"),
+    openToday,
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
@@ -1515,7 +1543,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, openToday, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1584,7 +1612,7 @@ export function App() {
   const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
   return (
-    <main className="app-shell" style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${calendarOpen ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -1644,6 +1672,15 @@ export function App() {
         </div>
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
+          <HoverTooltip label="Today’s schedule" shortcut="T">
+            <button
+              className={`nav-button ${calendarOpen ? "active" : ""}`}
+              aria-label="Today’s schedule (T)"
+              onClick={() => executeById("calendar.today")}
+            >
+              <CalendarDays size={19} />
+            </button>
+          </HoverTooltip>
           <button
             className="nav-button"
             aria-label="Refresh mail"
@@ -2345,6 +2382,8 @@ export function App() {
         )}
       </section>
 
+      {calendarOpen ? <CalendarSidebar onClose={() => setCalendarOpen(false)} /> : null}
+
       {correspondence.overlay}
       {unsubscribeMessage ? (
         <UnsubscribeConfirm
@@ -2422,6 +2461,7 @@ export function App() {
           onAiConfigChange={refreshAiAvailability}
           authStatus={authStatus}
           accounts={accounts}
+          calendarAccounts={calendarAccounts}
           activeAccountId={activeAccountId}
           onAddAccount={async () => {
             await mailClient.addAccount();
@@ -2450,6 +2490,19 @@ export function App() {
             await refreshAccounts();
           }}
           onReorderAccounts={reorderAccounts}
+          onAddCalendarAccount={async () => {
+            await mailClient.addCalendarAccount();
+            await refreshCalendarAccounts();
+          }}
+          onReconnectCalendarAccount={async (email) => {
+            await mailClient.reconnectCalendarAccount(email);
+            await refreshCalendarAccounts();
+          }}
+          onRemoveCalendarAccount={async (email) => {
+            await mailClient.removeCalendarAccount(email);
+            const remaining = await refreshCalendarAccounts();
+            if (remaining.length === 0) setCalendarOpen(false);
+          }}
           onSettingsImported={async (result) => {
             const { preferences } = result;
             setTheme(preferences.theme);
@@ -3182,7 +3235,8 @@ function LabelManager({
 const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "reading", label: "Reading" },
-  { id: "accounts", label: "Accounts" },
+  { id: "accounts", label: "Mail Accounts" },
+  { id: "calendarAccounts", label: "Calendar Accounts" },
   { id: "splitInboxes", label: "Split Inboxes" },
   { id: "ai", label: "AI provider" },
   { id: "privacy", label: "Privacy" },
@@ -3206,6 +3260,7 @@ function Settings({
   onAiConfigChange,
   authStatus,
   accounts,
+  calendarAccounts,
   activeAccountId,
   onAddAccount,
   onRemoveAccount,
@@ -3213,6 +3268,9 @@ function Settings({
   onSetAccountDisplayName,
   onSetAccountColor,
   onReorderAccounts,
+  onAddCalendarAccount,
+  onReconnectCalendarAccount,
+  onRemoveCalendarAccount,
   onSettingsImported,
   splitInboxes,
   labelsByAccount,
@@ -3237,6 +3295,7 @@ function Settings({
   onAiConfigChange(): void;
   authStatus: AuthStatus | null;
   accounts: Account[];
+  calendarAccounts: CalendarAccount[];
   activeAccountId: string | null;
   onAddAccount(): Promise<void>;
   onRemoveAccount(email: string): Promise<void>;
@@ -3244,6 +3303,9 @@ function Settings({
   onSetAccountDisplayName(email: string, displayName: string | null): Promise<void>;
   onSetAccountColor(email: string, color: string): Promise<void>;
   onReorderAccounts(emails: string[]): Promise<void>;
+  onAddCalendarAccount(): Promise<void>;
+  onReconnectCalendarAccount(email: string): Promise<void>;
+  onRemoveCalendarAccount(email: string): Promise<void>;
   onSettingsImported(result: SettingsImportResult): Promise<void>;
   splitInboxes: SplitInbox[];
   labelsByAccount: Record<string, Label[]>;
@@ -3294,6 +3356,15 @@ function Settings({
               onSetDisplayName={onSetAccountDisplayName}
               onSetColor={onSetAccountColor}
               onReorder={onReorderAccounts}
+            />
+          ) : null}
+          {section === "calendarAccounts" ? (
+            <CalendarAccountsSettings
+              authStatus={authStatus}
+              accounts={calendarAccounts}
+              onAdd={onAddCalendarAccount}
+              onReconnect={onReconnectCalendarAccount}
+              onRemove={onRemoveCalendarAccount}
             />
           ) : null}
           {section === "splitInboxes" ? (
@@ -3547,10 +3618,10 @@ function AccountsSettings({
   };
 
   return (
-    <section className="settings-section accounts-manager" aria-label="Accounts">
+    <section className="settings-section accounts-manager" aria-label="Mail Accounts">
       <div className="accounts-manager-header">
         <div>
-          <h3>Connected accounts</h3>
+          <h3>Connected mail accounts</h3>
           <p>
             ThreeStrands keeps accounts separate and merges their inboxes by default.
             Use the sidebar or command palette to filter to one account.
@@ -3676,6 +3747,112 @@ function AccountsSettings({
       <p className="accounts-footnote">
         Disconnecting removes this account and its local ThreeStrands cache. Gmail and the account itself are not changed.
       </p>
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+function CalendarAccountsSettings({
+  authStatus,
+  accounts,
+  onAdd,
+  onReconnect,
+  onRemove,
+}: {
+  authStatus: AuthStatus | null;
+  accounts: CalendarAccount[];
+  onAdd(): Promise<void>;
+  onReconnect(email: string): Promise<void>;
+  onRemove(email: string): Promise<void>;
+}) {
+  const [busyEmail, setBusyEmail] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const act = (busyKey: string, operation: () => Promise<void>) => {
+    setBusyEmail(busyKey);
+    setError(null);
+    void operation()
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setBusyEmail(null));
+  };
+
+  return (
+    <section className="settings-section accounts-manager" aria-label="Calendar Accounts">
+      <div className="accounts-manager-header">
+        <div>
+          <h3>Google Calendar</h3>
+          <p>
+            Calendar access is connected separately from mail and is read-only.
+            Each account gets its own Calendar consent and keychain credential.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="primary-action settings-add-account"
+          disabled={busyEmail !== null}
+          onClick={() => act("__add__", onAdd)}
+        >
+          <Plus size={15} />
+          {busyEmail === "__add__" ? "Waiting for Google…" : "Connect calendar"}
+        </button>
+      </div>
+      {accounts.length === 0 && authStatus && !authStatus.configured ? (
+        <div className="accounts-config-notice">
+          <AlertCircle size={16} />
+          <div>
+            <strong>Google OAuth is not configured</strong>
+            <p>Configure the Google Desktop app credentials used for mail, then restart ThreeStrands.</p>
+          </div>
+        </div>
+      ) : null}
+      {accounts.length === 0 ? (
+        <div className="accounts-empty">
+          <span className="accounts-empty-icon"><CalendarDays size={18} /></span>
+          <strong>No calendars connected</strong>
+          <p>Connect Google Calendar to use the T shortcut and see your live schedule.</p>
+        </div>
+      ) : (
+        <ul className="accounts-list">
+          {accounts.map((account) => (
+            <li className="account-card" key={account.email}>
+              <div className="account-card-row">
+                <span className="account-card-avatar calendar-account-avatar" aria-hidden="true">
+                  <CalendarDays size={18} />
+                </span>
+                <div className="account-card-identity">
+                  <div className="account-card-heading">
+                    <strong>{account.email}</strong>
+                    <span className={`account-status ${account.status}`}>
+                      {account.status === "needs_reauth" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
+                      {account.status === "needs_reauth" ? "Needs reconnect" : "Connected"}
+                    </span>
+                  </div>
+                  <span className="account-card-email">Read-only calendar access</span>
+                </div>
+                <span className="accounts-list-actions">
+                  {account.status === "needs_reauth" ? (
+                    <button
+                      type="button"
+                      className="account-action-button"
+                      disabled={busyEmail !== null}
+                      onClick={() => act(account.email, () => onReconnect(account.email))}
+                    >
+                      Reconnect
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="account-action-button danger-action"
+                    disabled={busyEmail !== null}
+                    onClick={() => act(account.email, () => onRemove(account.email))}
+                  >
+                    Disconnect
+                  </button>
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
   );

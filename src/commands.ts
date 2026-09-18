@@ -59,6 +59,7 @@ export type CommandContext = {
   openPalette(): void;
   openShortcutHelp(): void;
   openSettings(): void;
+  openToday(): void;
   increaseFontSize(): void;
   decreaseFontSize(): void;
   canUndoAction: boolean;
@@ -305,6 +306,14 @@ export const commands: Command[] = [
     group: "Application",
     enabled: () => true,
     run: (context) => complete(context.openShortcutHelp),
+  },
+  {
+    id: "calendar.today",
+    title: "Open today’s schedule",
+    keys: ["T"],
+    group: "Application",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(context.openToday),
   },
   {
     id: "mail.refresh",

@@ -965,44 +965,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "threestrands"
-version = "0.5.13"
-dependencies = [
- "argon2",
- "async-trait",
- "base64 0.22.1",
- "calcard",
- "chacha20poly1305",
- "chrono",
- "fontdb",
- "imagesize",
- "keyring",
- "mail-builder",
- "mail-parser",
- "open",
- "rand 0.8.8",
- "reqwest 0.12.28",
- "rfd",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tauri-plugin-window-state",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "unicode-general-category",
- "unicode-normalization",
- "url",
- "uuid",
- "xattr",
- "zstd",
-]
-
-[[package]]
 name = "dispatch2"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4565,6 +4527,44 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
+]
+
+[[package]]
+name = "threestrands"
+version = "0.6.0"
+dependencies = [
+ "argon2",
+ "async-trait",
+ "base64 0.22.1",
+ "calcard",
+ "chacha20poly1305",
+ "chrono",
+ "fontdb",
+ "imagesize",
+ "keyring",
+ "mail-builder",
+ "mail-parser",
+ "open",
+ "rand 0.8.8",
+ "reqwest 0.12.28",
+ "rfd",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tauri-plugin-window-state",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "unicode-general-category",
+ "unicode-normalization",
+ "url",
+ "uuid",
+ "xattr",
+ "zstd",
 ]
 
 [[package]]

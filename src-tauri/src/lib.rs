@@ -26,10 +26,11 @@ use chrono::Utc;
 use db::Database;
 use gmail::{GmailClient, GmailProvider};
 use models::{
-    Account, AuthStatus, ContactSuggestion, CreateLabelRequest, CreateSplitInboxRequest, Label,
-    MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult, SearchThreadsRequest, SplitInbox,
-    SummaryResult, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage, TriageEvent,
-    TriageSenderStats, UpdateLabelRequest, UpdateSplitInboxRequest,
+    Account, AuthStatus, CalendarAccount, ContactSuggestion, CreateLabelRequest,
+    CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
+    ScheduleEvent, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
+    ThreadDetail, ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
+    UpdateSplitInboxRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -766,6 +767,91 @@ async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<
 }
 
 #[tauri::command]
+fn list_calendar_accounts(state: State<'_, AppState>) -> Result<Vec<CalendarAccount>, String> {
+    let config = state.auth_config.as_ref();
+    let mut accounts = state.database.list_calendar_accounts()?;
+    for account in &mut accounts {
+        if !config.is_some_and(|config| config.calendar_account(&account.email).available()) {
+            account.status = "needs_reauth".to_string();
+        }
+    }
+    Ok(accounts)
+}
+
+#[tauri::command]
+async fn add_calendar_account(state: State<'_, AppState>) -> Result<CalendarAccount, String> {
+    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let auth = config.pending_calendar_account();
+    let email = authorize_interactively(&state, &auth).await?;
+    state.database.adopt_calendar_account(&email)?;
+    state
+        .database
+        .list_calendar_accounts()?
+        .into_iter()
+        .find(|account| account.email == email)
+        .ok_or_else(|| "Calendar account was not saved".to_string())
+}
+
+#[tauri::command]
+async fn reconnect_calendar_account(
+    email: String,
+    state: State<'_, AppState>,
+) -> Result<CalendarAccount, String> {
+    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let auth = config.calendar_account(&email);
+    authorize_interactively(&state, &auth).await?;
+    state.database.adopt_calendar_account(&email)?;
+    state
+        .database
+        .list_calendar_accounts()?
+        .into_iter()
+        .find(|account| account.email == email)
+        .ok_or_else(|| "Calendar account was not saved".to_string())
+}
+
+#[tauri::command]
+fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
+    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    config.calendar_account(&email).disconnect()?;
+    state.database.remove_calendar_account(&email)
+}
+
+#[tauri::command]
+async fn list_schedule_events(
+    time_min: String,
+    time_max: String,
+    time_zone: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ScheduleEvent>, String> {
+    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let accounts = state.database.list_calendar_accounts()?;
+    if accounts.is_empty() {
+        return Err("Connect a Google Calendar account in Settings first.".to_string());
+    }
+    let mut merged = Vec::new();
+    let mut errors = Vec::new();
+    for account in accounts {
+        match calendar::fetch_schedule(
+            config.calendar_account(&account.email),
+            &account.email,
+            &time_min,
+            &time_max,
+            &time_zone,
+        )
+        .await
+        {
+            Ok(mut events) => merged.append(&mut events),
+            Err(error) => errors.push(format!("{}: {error}", account.email)),
+        }
+    }
+    if merged.is_empty() && !errors.is_empty() {
+        return Err(errors.join("\n"));
+    }
+    merged.sort_by(|left, right| left.start.cmp(&right.start));
+    Ok(merged)
+}
+
+#[tauri::command]
 fn set_account_color(
     email: String,
     color: String,
@@ -1283,6 +1369,11 @@ pub fn run() {
             add_account,
             remove_account,
             reconnect_account,
+            list_calendar_accounts,
+            add_calendar_account,
+            reconnect_calendar_account,
+            remove_calendar_account,
+            list_schedule_events,
             set_account_display_name,
             set_account_color,
             reorder_accounts,
