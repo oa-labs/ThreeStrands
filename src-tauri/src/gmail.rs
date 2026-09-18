@@ -71,6 +71,15 @@ pub struct HistoryPage {
 pub trait GmailProvider: Send + Sync {
     async fn profile_history_id(&self) -> ProviderResult<String>;
     async fn list_threads(&self, page: Option<&str>) -> ProviderResult<ThreadPage>;
+    async fn search_threads(
+        &self,
+        _query: &str,
+        _page: Option<&str>,
+    ) -> ProviderResult<ThreadPage> {
+        Err(ProviderError::InvalidOperation(
+            "Gmail search is not implemented by this provider".into(),
+        ))
+    }
     async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>>;
     async fn history(&self, cursor: &str, page: Option<&str>) -> ProviderResult<HistoryPage>;
     async fn modify_thread(
@@ -342,6 +351,25 @@ impl GmailProvider for GmailClient {
                 format!("{API}/threads?maxResults=100&labelIds=INBOX"),
             )
             .await?;
+        if let Some(page) = page {
+            request = request.query(&[("pageToken", page)]);
+        }
+        let result: ThreadList = self.json(request, false).await?;
+        Ok(ThreadPage {
+            thread_ids: result.threads.into_iter().map(|thread| thread.id).collect(),
+            next_page_token: result.next_page_token,
+        })
+    }
+
+    async fn search_threads(&self, query: &str, page: Option<&str>) -> ProviderResult<ThreadPage> {
+        let mut request = self
+            .request(Method::GET, format!("{API}/threads"))
+            .await?
+            .query(&[
+                ("maxResults", "100"),
+                ("includeSpamTrash", "true"),
+                ("q", query),
+            ]);
         if let Some(page) = page {
             request = request.query(&[("pageToken", page)]);
         }

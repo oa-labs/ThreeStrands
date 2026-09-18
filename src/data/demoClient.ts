@@ -418,6 +418,7 @@ export const demoClient: MailClient = {
         .slice(offset, offset + limit),
     );
   },
+  async backfillSearchThreads(_query, _accountId) {},
   async mutateThread(mutation) {
     update(mutation);
   },

@@ -1636,6 +1636,22 @@ impl Database {
         Ok(ids)
     }
 
+    /// Gmail thread ids already present in the local cache for one account.
+    /// Remote search uses this to fetch only historical matches that the
+    /// inbox-oriented synchronizer has never seen.
+    pub fn local_provider_thread_ids(&self, account_id: &str) -> Result<Vec<String>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT provider_thread_id FROM threads WHERE account_id = ?1")
+            .map_err(display_error)?;
+        let ids = statement
+            .query_map([account_id], |row| row.get(0))
+            .map_err(display_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(display_error)?;
+        Ok(ids)
+    }
+
     pub fn delete_gmail_thread(
         &self,
         account_id: &str,
@@ -2829,6 +2845,35 @@ mod tests {
             .unwrap();
         assert_eq!(result[0].id, "welcome");
         assert!(result[0].match_snippet.is_some());
+    }
+
+    #[test]
+    fn search_matches_numeric_tokens_in_archived_body_text() {
+        let database = database();
+        let mut archived = message(
+            "numeric-message",
+            "numeric-thread",
+            "2026-01-01T00:00:00Z",
+            "Historical reference 126",
+        );
+        archived.labels.clear();
+        database
+            .upsert_gmail_thread("default", &[archived])
+            .unwrap();
+
+        let matches = database
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "126".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: Some(true),
+                },
+                Some("default"),
+            )
+            .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].provider_thread_id, "numeric-thread");
     }
 
     #[test]

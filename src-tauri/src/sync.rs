@@ -33,6 +33,7 @@ const MUTATION_RETRY_MAX_SECS: i64 = 60 * 60;
 /// primary sync path, so it runs rarely.
 const RECONCILE_INTERVAL_SECS: i64 = 6 * 60 * 60;
 const RECOVERY_BATCH_SIZE: usize = 50;
+const REMOTE_SEARCH_SCAN_LIMIT: usize = 200;
 
 #[derive(Clone)]
 pub struct SyncService {
@@ -130,6 +131,27 @@ impl SyncService {
             return Err(message);
         }
         self.database.sync_status(&account_id)
+    }
+
+    /// Imports Gmail search hits absent from the local cache. Existing local
+    /// threads are deliberately skipped so an archived search does not turn
+    /// into a costly refresh of every ordinary inbox match.
+    pub async fn backfill_search(&self, query: &str) -> Result<(), String> {
+        if query.trim().is_empty() || !self.is_connected() {
+            return Ok(());
+        }
+        let _guard = self.gate.lock().await;
+        let account_id = self.account_id();
+        let provider = GmailClient::new(self.auth.clone());
+        search_and_ingest_missing(
+            self.database.as_ref(),
+            &account_id,
+            &provider,
+            query,
+            REMOTE_SEARCH_SCAN_LIMIT,
+        )
+        .await
+        .map_err(|error| error.to_string())
     }
 
     pub async fn create_label(&self, name: &str) -> Result<Label, String> {
@@ -441,6 +463,49 @@ async fn reconcile_and_mark(
         .map_err(ProviderError::Other)
 }
 
+async fn search_and_ingest_missing(
+    database: &Database,
+    account_id: &str,
+    provider: &(impl GmailProvider + ?Sized),
+    query: &str,
+    scan_limit: usize,
+) -> ProviderResult<()> {
+    if query.trim().is_empty() || scan_limit == 0 {
+        return Ok(());
+    }
+
+    let cached: HashSet<String> = database
+        .local_provider_thread_ids(account_id)
+        .map_err(ProviderError::Other)?
+        .into_iter()
+        .collect();
+    let mut seen = HashSet::new();
+    let mut missing = Vec::new();
+    let mut scanned = 0;
+    let mut page = None;
+    loop {
+        let result = provider.search_threads(query, page.as_deref()).await?;
+        for id in result.thread_ids {
+            if scanned >= scan_limit {
+                break;
+            }
+            scanned += 1;
+            if seen.insert(id.clone()) && !cached.contains(&id) {
+                missing.push(id);
+            }
+        }
+        if scanned >= scan_limit || result.next_page_token.is_none() {
+            break;
+        }
+        page = result.next_page_token;
+    }
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+    ingest_threads(database, account_id, provider, missing).await
+}
+
 async fn ingest_threads(
     database: &Database,
     account_id: &str,
@@ -686,6 +751,7 @@ mod tests {
     struct ContractProvider {
         invalidate_stale_cursor: AtomicBool,
         full_lists: AtomicUsize,
+        thread_fetches: AtomicUsize,
         modifies: AtomicUsize,
         message_modifies: StdMutex<Vec<(Vec<String>, Vec<String>, Vec<String>)>>,
         fail_mutation: bool,
@@ -699,6 +765,7 @@ mod tests {
             Self {
                 invalidate_stale_cursor: AtomicBool::new(false),
                 full_lists: AtomicUsize::new(0),
+                thread_fetches: AtomicUsize::new(0),
                 modifies: AtomicUsize::new(0),
                 message_modifies: StdMutex::new(vec![]),
                 fail_mutation: false,
@@ -752,7 +819,21 @@ mod tests {
             })
         }
 
+        async fn search_threads(
+            &self,
+            query: &str,
+            page: Option<&str>,
+        ) -> ProviderResult<ThreadPage> {
+            assert_eq!(query, "126");
+            assert!(page.is_none());
+            Ok(ThreadPage {
+                thread_ids: vec!["gmail-thread".into()],
+                next_page_token: None,
+            })
+        }
+
         async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>> {
+            self.thread_fetches.fetch_add(1, Ordering::SeqCst);
             // Anything besides the one thread this fake Gmail actually
             // knows about — e.g. `Database::open_memory()`'s local-only
             // demo/welcome thread — isn't real Gmail mail, so a real
@@ -880,6 +961,41 @@ mod tests {
             database.list_threads(None).unwrap()[0].id,
             "default:gmail-thread"
         );
+    }
+
+    #[tokio::test]
+    async fn remote_search_ingests_only_missing_archived_matches() {
+        let database = Database::open_memory();
+        let mut archived = ContractProvider::message();
+        archived.label_ids.clear();
+        archived.snippet = "Historical reference 126".into();
+        archived.payload.body.data = Some(URL_SAFE_NO_PAD.encode("Historical reference 126"));
+        let provider = ContractProvider {
+            thread_messages: Some(vec![archived]),
+            ..ContractProvider::normal()
+        };
+
+        search_and_ingest_missing(&database, "default", &provider, "126", 200)
+            .await
+            .unwrap();
+        search_and_ingest_missing(&database, "default", &provider, "126", 200)
+            .await
+            .unwrap();
+
+        let matches = database
+            .search_threads(
+                &crate::models::SearchThreadsRequest {
+                    query: "126".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: Some(true),
+                },
+                Some("default"),
+            )
+            .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].archived);
+        assert_eq!(provider.thread_fetches.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

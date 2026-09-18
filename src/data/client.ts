@@ -71,6 +71,8 @@ export interface MailClient extends CorrespondenceClient {
     endpoint: string | null,
   ): Promise<ReplyAssistResult>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
+  /** Fetches Gmail search hits missing from the local cache so a subsequent local search can include historical archived mail. */
+  backfillSearchThreads(query: string, accountId?: string): Promise<void>;
   mutateThread(mutation: ThreadMutation): Promise<void>;
   mutateThreads(mutations: ThreadMutation[]): Promise<void>;
   recordTriageEvent(event: TriageEvent): Promise<void>;
@@ -147,6 +149,7 @@ const tauriClient: MailClient = {
   generateReply: (context, instruction, provider, model, endpoint) =>
     complete("ai_generate_reply", { context, instruction, provider, model, endpoint }),
   searchThreads: (request, accountId) => read("search_threads", { request, accountId }),
+  backfillSearchThreads: (query, accountId) => complete("backfill_search_threads", { query, accountId }),
   mutateThread: (mutation) => complete("mutate_thread", { mutation }),
   mutateThreads: (mutations) => complete("mutate_threads", { mutations }),
   recordTriageEvent: (event) => complete("record_triage_event", { event }),

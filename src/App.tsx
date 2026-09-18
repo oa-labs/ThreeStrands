@@ -737,6 +737,7 @@ export function App() {
   const lastUndo = useRef<{ command: Command; result: CommandResult } | null>(null);
   const [canUndoAction, setCanUndoAction] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const remoteSearchKeyRef = useRef<string | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   const undoLastAction = useCallback(async () => {
@@ -765,21 +766,8 @@ export function App() {
     setMailboxError("");
     const trimmed = search.trim();
     const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
-    try {
-      const page = (box === "inbox" || box === "split") && trimmed
-        ? await mailClient.searchThreads({
-            query: trimmed,
-            limit: SEARCH_PAGE_SIZE,
-            includeArchived,
-          }, accountId).then((threads) => ({ threads, hasMore: threads.length === SEARCH_PAGE_SIZE }))
-        : box === "allMail"
-          ? await mailClient.listAllMailPage(accountId, 0, SEARCH_PAGE_SIZE)
-          : box === "trash"
-            ? await mailClient.listTrashPage(accountId, 0, SEARCH_PAGE_SIZE)
-            : box === "split"
-              ? await mailClient.listSplitInboxPage(activeSplitInboxId as string, 0, SEARCH_PAGE_SIZE)
-              : await mailClient.listThreadsPage(accountId, 0, SEARCH_PAGE_SIZE);
-      if (requestId !== threadsRequest.current) return;
+    const commitPage = (page: { threads: Thread[]; hasMore: boolean }) => {
+      if (requestId !== threadsRequest.current) return false;
       setMailboxError("");
       setThreads(page.threads);
       setHasMoreResults(page.hasMore);
@@ -790,6 +778,46 @@ export function App() {
           ? current
           : (page.threads[0]?.id ?? null),
       );
+      return true;
+    };
+    try {
+      if ((box === "inbox" || box === "split") && trimmed) {
+        const searchRequest = {
+          query: trimmed,
+          limit: SEARCH_PAGE_SIZE,
+          includeArchived,
+        };
+        const localThreads = await mailClient.searchThreads(searchRequest, accountId);
+        if (!commitPage({ threads: localThreads, hasMore: localThreads.length === SEARCH_PAGE_SIZE })) return;
+
+        const remoteSearchKey = `${accountId ?? "all"}\u0000${trimmed}`;
+        if (includeArchived && remoteSearchKeyRef.current !== remoteSearchKey) {
+          remoteSearchKeyRef.current = remoteSearchKey;
+          void mailClient.backfillSearchThreads(trimmed, accountId)
+            .then(async () => {
+              if (requestId !== threadsRequest.current) return;
+              const refreshed = await mailClient.searchThreads(searchRequest, accountId);
+              commitPage({ threads: refreshed, hasMore: refreshed.length === SEARCH_PAGE_SIZE });
+            })
+            .catch(() => {
+              // Gmail-backed search is an enhancement to the local result,
+              // not a reason to make search fail while offline.
+              if (remoteSearchKeyRef.current === remoteSearchKey) {
+                remoteSearchKeyRef.current = null;
+              }
+            });
+        }
+        return;
+      }
+
+      const page = box === "allMail"
+        ? await mailClient.listAllMailPage(accountId, 0, SEARCH_PAGE_SIZE)
+        : box === "trash"
+          ? await mailClient.listTrashPage(accountId, 0, SEARCH_PAGE_SIZE)
+          : box === "split"
+            ? await mailClient.listSplitInboxPage(activeSplitInboxId as string, 0, SEARCH_PAGE_SIZE)
+            : await mailClient.listThreadsPage(accountId, 0, SEARCH_PAGE_SIZE);
+      commitPage(page);
     } catch (error) {
       if (requestId !== threadsRequest.current) return;
       setMailboxError(error instanceof Error ? error.message : String(error));
@@ -1031,6 +1059,10 @@ export function App() {
     // the plain inbox view, where the backend always excludes archived mail.
     if (!query.trim()) setIncludeArchived(false);
   }, [query]);
+
+  useEffect(() => {
+    if (!includeArchived) remoteSearchKeyRef.current = null;
+  }, [includeArchived]);
 
   useEffect(() => {
     if (searchOpen && isTabbedMailbox) searchRef.current?.focus();

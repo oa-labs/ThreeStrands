@@ -14,6 +14,7 @@ describe("split inbox search shortcuts", () => {
   it("keeps the search query while cycling or clicking between mailbox tabs", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     const searchThreads = vi.spyOn(mailClient, "searchThreads");
+    const backfillSearchThreads = vi.spyOn(mailClient, "backfillSearchThreads");
     vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([
       {
         id: "work-split",
@@ -41,6 +42,8 @@ describe("split inbox search shortcuts", () => {
       expect.objectContaining({ query: "roadmap" }),
       "demo@example.com",
     ));
+    fireEvent.click(screen.getByRole("button", { name: "Include archived or trashed mail in search" }));
+    await waitFor(() => expect(backfillSearchThreads).toHaveBeenCalledWith("roadmap", "demo@example.com"));
 
     fireEvent.keyDown(search, { key: "Tab" });
     await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));

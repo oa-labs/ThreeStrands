@@ -660,6 +660,54 @@ fn search_threads(
 }
 
 #[tauri::command]
+async fn backfill_search_threads(
+    query: String,
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if query.trim().is_empty() {
+        return Ok(());
+    }
+
+    let services = match account_id.as_deref() {
+        Some(account_id) if primary_account_id(&state) == account_id => {
+            state.sync.clone().into_iter().collect::<Vec<_>>()
+        }
+        Some(account_id) => state
+            .additional_accounts
+            .lock()
+            .await
+            .get(account_id)
+            .map(|account| vec![account.sync.clone()])
+            .unwrap_or_default(),
+        None => {
+            let mut services = state.sync.clone().into_iter().collect::<Vec<_>>();
+            services.extend(
+                state
+                    .additional_accounts
+                    .lock()
+                    .await
+                    .values()
+                    .map(|account| account.sync.clone()),
+            );
+            services
+        }
+    };
+
+    let mut errors = Vec::new();
+    for service in services {
+        if let Err(error) = service.backfill_search(&query).await {
+            errors.push(error);
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+#[tauri::command]
 fn mutate_thread(mutation: ThreadMutation, state: State<'_, AppState>) -> Result<(), String> {
     state.database.mutate_thread(&mutation)
 }
@@ -1649,6 +1697,7 @@ pub fn run() {
             open_attachment,
             save_attachment,
             search_threads,
+            backfill_search_threads,
             mutate_thread,
             mutate_threads,
             record_triage_event,
