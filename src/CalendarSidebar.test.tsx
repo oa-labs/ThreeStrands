@@ -30,16 +30,19 @@ describe("calendar sidebar", () => {
         status: "connected",
       },
     ]);
-    const listEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue([
-      {
-        id: "planning",
-        accountId: "calendar@example.com",
-        title: "Product planning",
-        start: "2026-09-18T10:00:00-07:00",
-        end: "2026-09-18T10:30:00-07:00",
-        allDay: false,
-      },
-    ]);
+    const listEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [
+        {
+          id: "planning",
+          accountId: "calendar@example.com",
+          title: "Product planning",
+          start: "2026-09-18T10:00:00-07:00",
+          end: "2026-09-18T10:30:00-07:00",
+          allDay: false,
+        },
+      ],
+      errors: [],
+    });
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
@@ -52,6 +55,83 @@ describe("calendar sidebar", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() =>
       expect(screen.queryByRole("complementary", { name: "Calendar schedule" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("surfaces Calendar API failures and links back to account settings", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      {
+        email: "calendar@example.com",
+        connectedAt: "2026-09-18T00:00:00Z",
+        status: "connected",
+      },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [],
+      errors: ["calendar@example.com: Google Calendar returned 403 Forbidden: API has not been used"],
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.keyDown(window, { key: "T" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("403 Forbidden");
+    fireEvent.click(screen.getByRole("button", { name: "Calendar Accounts" }));
+    expect(await screen.findByRole("region", { name: "Calendar Accounts" })).toBeInTheDocument();
+  });
+
+  it("persists an explicit calendar selection, including empty", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      {
+        email: "calendar@example.com",
+        connectedAt: "2026-09-18T00:00:00Z",
+        status: "connected",
+      },
+    ]);
+    vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([
+      {
+        id: "primary",
+        accountId: "calendar@example.com",
+        name: "Personal",
+        primary: true,
+        selected: true,
+      },
+      {
+        id: "team",
+        accountId: "calendar@example.com",
+        name: "Team",
+        primary: false,
+        selected: false,
+      },
+    ]);
+    const setSelection = vi.spyOn(mailClient, "setCalendarSelection").mockResolvedValue([
+      {
+        id: "primary",
+        accountId: "calendar@example.com",
+        name: "Personal",
+        primary: true,
+        selected: false,
+      },
+      {
+        id: "team",
+        accountId: "calendar@example.com",
+        name: "Team",
+        primary: false,
+        selected: false,
+      },
+    ]);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Calendar Accounts" }));
+
+    const primary = await screen.findByRole("checkbox", { name: "Personal (Primary)" });
+    expect(primary).toBeChecked();
+    fireEvent.click(primary);
+
+    await waitFor(() =>
+      expect(setSelection).toHaveBeenCalledWith("calendar@example.com", []),
     );
   });
 

@@ -55,6 +55,14 @@ export type CalendarAccount = {
   status: "connected" | "needs_reauth";
 };
 
+export type CalendarOption = {
+  id: string;
+  accountId: string;
+  name: string;
+  primary: boolean;
+  selected: boolean;
+};
+
 export type ScheduleEvent = {
   id: string;
   accountId: string;
@@ -62,6 +70,11 @@ export type ScheduleEvent = {
   start: string;
   end: string;
   allDay: boolean;
+};
+
+export type ScheduleResult = {
+  events: ScheduleEvent[];
+  errors: string[];
 };
 
 export type Message = {

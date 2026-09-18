@@ -47,7 +47,13 @@ function formatEventTime(event: ScheduleEvent): string {
   return `${formatter.format(new Date(event.start))}–${formatter.format(new Date(event.end))}`;
 }
 
-export function CalendarSidebar({ onClose }: { onClose(): void }) {
+export function CalendarSidebar({
+  onClose,
+  onOpenSettings,
+}: {
+  onClose(): void;
+  onOpenSettings(): void;
+}) {
   const [date, setDate] = useState(() => startOfLocalDay(new Date()));
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,11 +66,13 @@ export function CalendarSidebar({ onClose }: { onClose(): void }) {
     setError(null);
     const request = scheduleRequestFor(target);
     try {
-      setEvents(await mailClient.listScheduleEvents(
+      const result = await mailClient.listScheduleEvents(
         request.timeMin,
         request.timeMax,
         request.timeZone,
-      ));
+      );
+      setEvents(result.events);
+      setError(result.errors.length > 0 ? result.errors.join("\n") : null);
     } catch (reason) {
       setEvents([]);
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -166,9 +174,13 @@ export function CalendarSidebar({ onClose }: { onClose(): void }) {
           {!loading && error ? (
             <div className="calendar-grid-status calendar-grid-error" role="alert">
               <p>Calendar couldn’t be loaded.</p>
-              <button type="button" onClick={() => void load(date)}>
-                <RefreshCw size={14} /> Try again
-              </button>
+              <small>{error}</small>
+              <div>
+                <button type="button" onClick={() => void load(date)}>
+                  <RefreshCw size={14} /> Try again
+                </button>
+                <button type="button" onClick={onOpenSettings}>Calendar Accounts</button>
+              </div>
             </div>
           ) : null}
           {!loading && !error && events.length === 0 ? (

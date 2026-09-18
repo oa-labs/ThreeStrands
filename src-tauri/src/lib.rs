@@ -18,7 +18,7 @@ mod transfer;
 #[path = "unsubscribe.rs"]
 mod unsubscribe_service;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use auth::{GoogleAuth, GoogleAuthConfig};
@@ -26,9 +26,9 @@ use chrono::Utc;
 use db::Database;
 use gmail::{GmailClient, GmailProvider};
 use models::{
-    Account, AuthStatus, CalendarAccount, ContactSuggestion, CreateLabelRequest,
+    Account, AuthStatus, CalendarAccount, CalendarOption, ContactSuggestion, CreateLabelRequest,
     CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
-    ScheduleEvent, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
+    ScheduleResult, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
     UpdateSplitInboxRequest,
 };
@@ -809,6 +809,76 @@ async fn reconnect_calendar_account(
         .ok_or_else(|| "Calendar account was not saved".to_string())
 }
 
+async fn calendar_options_for_account(
+    config: &GoogleAuthConfig,
+    database: &Database,
+    email: &str,
+) -> Result<Vec<CalendarOption>, String> {
+    let mut options =
+        calendar::list_calendar_options(config.calendar_account(email), email).await?;
+    let selected = match database.calendar_selection(email)? {
+        Some(selected) => selected,
+        None => {
+            let defaults = options
+                .iter()
+                .filter(|option| option.primary)
+                .map(|option| option.id.clone())
+                .collect::<Vec<_>>();
+            database.set_calendar_selection(email, &defaults)?;
+            defaults
+        }
+    };
+    let selected = selected.into_iter().collect::<HashSet<_>>();
+    for option in &mut options {
+        option.selected = selected.contains(&option.id);
+    }
+    Ok(options)
+}
+
+#[tauri::command]
+async fn list_calendar_options(
+    state: State<'_, AppState>,
+) -> Result<Vec<CalendarOption>, String> {
+    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let mut options = Vec::new();
+    for account in state.database.list_calendar_accounts()? {
+        options.extend(
+            calendar_options_for_account(config, &state.database, &account.email).await?,
+        );
+    }
+    Ok(options)
+}
+
+#[tauri::command]
+async fn set_calendar_selection(
+    account_id: String,
+    calendar_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<CalendarOption>, String> {
+    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let mut available =
+        calendar::list_calendar_options(config.calendar_account(&account_id), &account_id).await?;
+    let available_ids = available
+        .iter()
+        .map(|option| option.id.as_str())
+        .collect::<HashSet<_>>();
+    let unique = calendar_ids.iter().collect::<HashSet<_>>();
+    if unique.len() != calendar_ids.len()
+        || calendar_ids
+            .iter()
+            .any(|calendar_id| !available_ids.contains(calendar_id.as_str()))
+    {
+        return Err("Calendar selection contained an unknown or duplicate calendar".to_string());
+    }
+    state
+        .database
+        .set_calendar_selection(&account_id, &calendar_ids)?;
+    for option in &mut available {
+        option.selected = unique.contains(&option.id);
+    }
+    Ok(available)
+}
+
 #[tauri::command]
 fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
@@ -822,7 +892,7 @@ async fn list_schedule_events(
     time_max: String,
     time_zone: String,
     state: State<'_, AppState>,
-) -> Result<Vec<ScheduleEvent>, String> {
+) -> Result<ScheduleResult, String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let accounts = state.database.list_calendar_accounts()?;
     if accounts.is_empty() {
@@ -830,11 +900,34 @@ async fn list_schedule_events(
     }
     let mut merged = Vec::new();
     let mut errors = Vec::new();
-    let mut successful_accounts = 0;
     for account in accounts {
+        let calendar_ids = match state.database.calendar_selection(&account.email)? {
+            Some(selected) => selected,
+            None => match calendar_options_for_account(
+                config,
+                &state.database,
+                &account.email,
+            )
+            .await
+            {
+                Ok(options) => options
+                    .into_iter()
+                    .filter(|option| option.selected)
+                    .map(|option| option.id)
+                    .collect(),
+                Err(error) => {
+                    errors.push(format!("{}: {error}", account.email));
+                    continue;
+                }
+            },
+        };
+        if calendar_ids.is_empty() {
+            continue;
+        }
         match calendar::fetch_schedule(
             config.calendar_account(&account.email),
             &account.email,
+            &calendar_ids,
             &time_min,
             &time_max,
             &time_zone,
@@ -842,17 +935,16 @@ async fn list_schedule_events(
         .await
         {
             Ok(mut events) => {
-                successful_accounts += 1;
                 merged.append(&mut events);
             }
             Err(error) => errors.push(format!("{}: {error}", account.email)),
         }
     }
-    if successful_accounts == 0 && !errors.is_empty() {
-        return Err(errors.join("\n"));
-    }
     merged.sort_by(|left, right| left.start.cmp(&right.start));
-    Ok(merged)
+    Ok(ScheduleResult {
+        events: merged,
+        errors,
+    })
 }
 
 #[tauri::command]
@@ -1376,6 +1468,8 @@ pub fn run() {
             list_calendar_accounts,
             add_calendar_account,
             reconnect_calendar_account,
+            list_calendar_options,
+            set_calendar_selection,
             remove_calendar_account,
             list_schedule_events,
             set_account_display_name,

@@ -12,7 +12,7 @@ use crate::mime::GmailMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 19;
+pub(crate) const LATEST_VERSION: i64 = 20;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -414,6 +414,19 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
                 connected_at TEXT NOT NULL
             );
             PRAGMA user_version=19;",
+        )
+        .map_err(error)?;
+    }
+    if version < 20 {
+        tx.execute_batch(
+            "ALTER TABLE calendar_accounts
+                ADD COLUMN selection_initialized INTEGER NOT NULL DEFAULT 0;
+            CREATE TABLE calendar_selections (
+                account_id TEXT NOT NULL REFERENCES calendar_accounts(email) ON DELETE CASCADE,
+                calendar_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, calendar_id)
+            );
+            PRAGMA user_version=20;",
         )
         .map_err(error)?;
     }
