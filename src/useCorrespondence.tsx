@@ -18,6 +18,7 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   const quitting = useRef(false);
   const [clock, setClock] = useState(Date.now());
   const [pendingOutboxActions, setPendingOutboxActions] = useState<ReadonlySet<string>>(new Set());
+  const pendingOutboxActionsRef = useRef<ReadonlySet<string>>(new Set());
   const refreshing = useRef(false);
   const refresh = useCallback(async () => {
     if (refreshing.current) return;
@@ -62,24 +63,29 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     catch (e) { setError(String(e)); }
   }, [outbox, refresh]);
   const withOutboxActionGuard = useCallback((id: string, action: () => Promise<void>) => {
-    setPendingOutboxActions((current) => (current.has(id) ? current : new Set(current).add(id)));
+    if (pendingOutboxActionsRef.current.has(id)) return;
+    const pending = new Set(pendingOutboxActionsRef.current);
+    pending.add(id);
+    pendingOutboxActionsRef.current = pending;
+    setPendingOutboxActions(pending);
     void action().finally(() => {
       setPendingOutboxActions((current) => {
         if (!current.has(id)) return current;
         const next = new Set(current);
         next.delete(id);
+        pendingOutboxActionsRef.current = next;
         return next;
       });
     });
   }, []);
   const restoreFailedSend = useCallback((id: string) => {
-    if (pendingOutboxActions.has(id)) return;
+    if (pendingOutboxActionsRef.current.has(id)) return;
     withOutboxActionGuard(id, () =>
       mailClient.recoverSend(id).then((d) => { setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
     );
   }, [pendingOutboxActions, refresh, withOutboxActionGuard]);
   const reconcileSend = useCallback((id: string) => {
-    if (pendingOutboxActions.has(id)) return;
+    if (pendingOutboxActionsRef.current.has(id)) return;
     withOutboxActionGuard(id, () => mailClient.reconcileSend(id).then(refresh).catch((e: unknown) => setError(String(e))));
   }, [pendingOutboxActions, refresh, withOutboxActionGuard]);
   useEffect(() => { if (closing) document.querySelector<HTMLElement>(".exit-notice")?.focus(); }, [closing]);

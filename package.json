@@ -1,13 +1,14 @@
 {
   "name": "threestrands",
   "private": true,
-  "version": "0.8.1",
+  "version": "0.8.2",
   "packageManager": "pnpm@12.4.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "build:linux": "./scripts/build-linux.sh",
@@ -32,6 +33,7 @@
     "@types/react": "^19.0.3",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^6.1.1",
+    "@vitest/coverage-v8": "5.0.0",
     "axe-core": "^4.13.0",
     "jsdom": "^30.0.1",
     "typescript": "^7.0.2",

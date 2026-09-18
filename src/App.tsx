@@ -4,7 +4,6 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
-  CheckSquare,
   ChevronDown,
   ChevronUp,
   Command as CommandIcon,
@@ -16,7 +15,6 @@ import {
   Forward,
   Inbox,
   Keyboard,
-  ListFilter,
   Mail,
   Mails,
   MailOpen,
@@ -33,7 +31,6 @@ import {
   Settings as SettingsIcon,
   ShieldAlert,
   Sparkles,
-  Square,
   Star,
   Tag,
   Trash2,
@@ -43,10 +40,8 @@ import {
 } from "lucide-react";
 import {
   type CSSProperties,
-  type RefObject,
   useCallback,
   useEffect,
-  memo,
   useMemo,
   useRef,
   useState,
@@ -54,10 +49,7 @@ import {
 import {
   accountCommand,
   commands,
-  isEditableTarget,
   labelCommand,
-  matchesShortcut,
-  shortcutSteps,
   showAllAccountsCommand,
   splitInboxCommand,
   undoResult,
@@ -77,10 +69,9 @@ import { createForegroundRefreshController } from "./foregroundRefresh";
 import { conversationLabelGroups, formatLabelName, isManageableLabel } from "./labels";
 import {
   filterThreadsByMessageFilters,
-  MESSAGE_FILTER_OPTIONS,
   type MessageFilterKind,
 } from "./messageFilters";
-import { formattingShortcuts } from "./richText";
+import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, Modal, ShortcutHelp } from "./AppChrome";
 import type {
   Account,
   AuthStatus,
@@ -93,12 +84,12 @@ import type {
   SyncStatus,
   Thread,
   ThreadDetail,
-  ThreadMutation,
   TriageEvent,
   UnreadCounts,
   Message,
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
+import { ThreadRow } from "./ThreadList";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
@@ -149,6 +140,21 @@ import { useAccounts } from "./useAccounts";
 import { useAppPreferences } from "./useAppPreferences";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { useReaderState } from "./useReaderState";
+import { useShortcutHandler } from "./useShortcutHandler";
+import {
+  applyMutationTemplate,
+  buildThreadMutation,
+  describeMutation,
+  invertMutationTemplate,
+  type MutationTemplate,
+} from "./threadMutations";
+import {
+  formatAttachmentSize,
+  formatMailTimestamp,
+  formatTimeOnly,
+  sortByRecency,
+  triageNow,
+} from "./threadPresentation";
 import {
   buildTriageCloseEvent,
   buildTriageDispositionEvent,
@@ -156,6 +162,8 @@ import {
   resumeTriageSession,
   type TriageSession,
 } from "./triage";
+
+export { formatMailTimestamp } from "./threadPresentation";
 
 type SettingsSection = "appearance" | "reading" | "accounts" | "calendarAccounts" | "splitInboxes" | "ai" | "privacy" | "diagnostics" | "data";
 
@@ -194,25 +202,6 @@ function useNotice() {
   return [notice, setNotice] as const;
 }
 
-const timeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "2-digit",
-});
-
-export function formatMailTimestamp(iso: string, now = new Date()): string {
-  const date = new Date(iso);
-  const isToday =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  return isToday ? timeFormatter.format(date) : dateFormatter.format(date);
-}
-
 const SEARCH_PAGE_SIZE = 50;
 // While a Gmail backfill scan is running, matches land in the local cache
 // incrementally (see sync.rs's flushed ingest_threads batches), so poll
@@ -228,302 +217,6 @@ const MAILBOX_TITLES: Record<MailboxKind, string> = {
   outbox: "Outbox",
   split: "Split Inbox",
 };
-
-// Matches the \u{1}/\u{2} markers the backend's FTS5 `snippet()` call wraps
-// hits in (see search_threads in src-tauri/src/db.rs). Rendered as React
-// elements rather than HTML so a match can never inject markup.
-const MATCH_START = "";
-const MATCH_END = "";
-
-function HighlightedSnippet({ thread }: { thread: Thread }) {
-  const raw = thread.matchSnippet;
-  if (!raw) return <>{decodeHtmlEntities(thread.snippet)}</>;
-  const segments = decodeHtmlEntities(raw).split(MATCH_START);
-  return (
-    <>
-      {segments[0]}
-      {segments.slice(1).map((segment, index) => {
-        const [match, ...rest] = segment.split(MATCH_END);
-        return (
-          <span key={index}>
-            <mark>{match}</mark>
-            {rest.join(MATCH_END)}
-          </span>
-        );
-      })}
-    </>
-  );
-}
-
-function formatAttachmentSize(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-const ThreadRow = memo(function ThreadRow({
-  thread,
-  selected,
-  checked,
-  accountColor,
-  showAccount,
-  onSelect,
-  onToggleCheck,
-  rowRef,
-}: {
-  thread: Thread;
-  selected: boolean;
-  checked: boolean;
-  accountColor?: string;
-  showAccount: boolean;
-  onSelect(id: string): void;
-  onToggleCheck(id: string): void;
-  rowRef?: RefObject<HTMLButtonElement | null>;
-}) {
-  return (
-    <button
-      ref={rowRef}
-      role="option"
-      aria-selected={selected}
-      className={`thread-row ${selected ? "selected" : ""}`}
-      onClick={() => onSelect(thread.id)}
-    >
-      <span className="row-leading">
-        <span
-          className={`row-check ${checked ? "checked" : ""}`}
-          aria-hidden="true"
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleCheck(thread.id);
-          }}
-        >
-          {checked ? <CheckSquare size={16} /> : <Square size={16} />}
-        </span>
-        {thread.hasAttachments ? (
-          <Paperclip className="thread-attachment" size={13} aria-label="Has attachments" />
-        ) : null}
-      </span>
-      {checked ? <span className="sr-only">Selected for batch actions</span> : null}
-      <span className={`unread-dot ${thread.unread ? "visible" : ""}`} />
-      <span className="thread-content">
-        <span className="thread-meta">
-          <span className="thread-sender">
-            <strong>
-              {thread.participants
-                .map((participant) => formatDisplayName(parseAddress(participant).name))
-                .join(", ")}
-            </strong>
-          </span>
-          <span className="thread-meta-trailing">
-            {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
-            <time>{formatMailTimestamp(thread.lastMessageAt)}</time>
-          </span>
-        </span>
-        <span className="thread-subject">{thread.subject}</span>
-        <span className="thread-snippet"><HighlightedSnippet thread={thread} /></span>
-      </span>
-      {thread.starred ? <Star className="starred" size={15} fill="currentColor" /> : null}
-    </button>
-  );
-});
-
-type MutationTemplate =
-  | { kind: "archive"; value: boolean }
-  | { kind: "trash"; value: boolean }
-  | { kind: "spam"; value: boolean }
-  | { kind: "read"; value: boolean }
-  | { kind: "star"; value: boolean }
-  | { kind: "label"; labelId: string; labelName: string; value: boolean };
-
-function buildThreadMutation(threadId: string, template: MutationTemplate): ThreadMutation {
-  return template.kind === "label"
-    ? { kind: "label", threadId, labelId: template.labelId, value: template.value }
-    : { kind: template.kind, threadId, value: template.value };
-}
-
-function applyMutationTemplate(thread: Thread, template: MutationTemplate): Thread {
-  switch (template.kind) {
-    case "archive":
-      return { ...thread, archived: template.value };
-    case "trash":
-      return { ...thread, trashed: template.value };
-    case "spam": {
-      const next = new Set(thread.labels);
-      if (template.value) {
-        next.add("SPAM");
-        next.delete("INBOX");
-      } else {
-        next.delete("SPAM");
-        next.add("INBOX");
-      }
-      return { ...thread, archived: template.value, labels: [...next] };
-    }
-    case "read":
-      return { ...thread, unread: !template.value };
-    case "star":
-      return { ...thread, starred: template.value };
-    case "label": {
-      const next = new Set(thread.labels);
-      if (template.value) next.add(template.labelId);
-      else next.delete(template.labelId);
-      return { ...thread, labels: [...next] };
-    }
-  }
-}
-
-function invertMutationTemplate(template: MutationTemplate): MutationTemplate {
-  return { ...template, value: !template.value } as MutationTemplate;
-}
-
-function describeMutation(template: MutationTemplate, count: number, labelName?: string): string {
-  const many = count > 1;
-  switch (template.kind) {
-    case "archive":
-      return template.value
-        ? (many ? `Archived ${count} conversations` : "Conversation archived")
-        : (many ? `Marked ${count} conversations as not done` : "Conversation marked as not done");
-    case "trash":
-      return template.value
-        ? (many ? `Moved ${count} conversations to trash` : "Conversation moved to trash")
-        : (many ? `Restored ${count} conversations from trash` : "Conversation restored from trash");
-    case "spam":
-      return template.value
-        ? (many ? `Marked ${count} conversations as spam` : "Conversation marked as spam")
-        : (many ? `Restored ${count} conversations from spam` : "Conversation restored from spam");
-    case "star":
-      return template.value
-        ? (many ? `Starred ${count} conversations` : "Starred")
-        : (many ? `Unstarred ${count} conversations` : "Unstarred");
-    case "read":
-      return template.value
-        ? (many ? `Marked ${count} conversations as read` : "Marked as read")
-        : (many ? `Marked ${count} conversations as unread` : "Marked as unread");
-    case "label": {
-      const name = labelName ?? "Label";
-      return template.value
-        ? (many ? `${name} added to ${count} conversations` : `${name} added`)
-        : (many ? `${name} removed from ${count} conversations` : `${name} removed`);
-    }
-  }
-}
-
-function sortByRecency(threads: Thread[]): Thread[] {
-  return [...threads].sort((a, b) => b.lastReceivedAt.localeCompare(a.lastReceivedAt));
-}
-
-function triageNow(): number {
-  return typeof performance !== "undefined" && typeof performance.now === "function"
-    ? performance.now()
-    : Date.now();
-}
-
-function useShortcutHandler(
-  context: CommandContext,
-  execute: (command: Command) => void,
-  extraCommands: Command[] = [],
-) {
-  const contextRef = useRef(context);
-  contextRef.current = context;
-  const executeRef = useRef(execute);
-  executeRef.current = execute;
-  const extraRef = useRef(extraCommands);
-  extraRef.current = extraCommands;
-  const pendingStep = useRef<string | null>(null);
-  const pendingTimeout = useRef<number | null>(null);
-
-  useEffect(() => {
-    const clearPendingStep = () => {
-      pendingStep.current = null;
-      if (pendingTimeout.current !== null) {
-        window.clearTimeout(pendingTimeout.current);
-        pendingTimeout.current = null;
-      }
-    };
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      const currentContext = contextRef.current;
-      if (currentContext.closing || event.isComposing || event.defaultPrevented) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        clearPendingStep();
-        event.preventDefault();
-        currentContext.openPalette();
-        return;
-      }
-      const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
-      const replyAssistShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j";
-      const fontShortcut = (event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
-      const dialog = document.querySelector('[role="dialog"]');
-      const allowsMailboxNavigation = dialog?.classList.contains("correspondence-list");
-      // Tab/Shift+Tab double as the split-inbox tab cycler, but only when
-      // focus isn't already on some other focusable control — otherwise
-      // this would hijack Tab away from normal focus-cycling between
-      // buttons/links/checkboxes, breaking keyboard/screen-reader navigation.
-      // The mailbox search input is the sole exception: Tab remains the
-      // mailbox-tab shortcut while search has focus.
-      const allowsMailboxTabShortcut = event.key === "Tab"
-        && event.target instanceof HTMLElement
-        && event.target.hasAttribute("data-mailbox-tab-shortcut");
-      const focusedControl = event.key === "Tab"
-        && event.target instanceof HTMLElement
-        && event.target !== document.body
-        && event.target.matches("button, a[href], [tabindex]");
-      if (!sendShortcut && !replyAssistShortcut && !fontShortcut && !allowsMailboxTabShortcut && (isEditableTarget(event.target) || focusedControl || (dialog && !allowsMailboxNavigation))) {
-        clearPendingStep();
-        return;
-      }
-
-      const allCommands = [...commands, ...extraRef.current];
-
-      if (pendingStep.current) {
-        const command = allCommands.find(
-          (candidate) =>
-            candidate.enabled(currentContext) &&
-            candidate.keys.some((key) => {
-              const steps = shortcutSteps(key);
-              return steps.length === 2 &&
-                steps[0].toLocaleLowerCase() === pendingStep.current &&
-                matchesShortcut(event, steps[1]);
-            }),
-        );
-        clearPendingStep();
-        if (command) {
-          event.preventDefault();
-          executeRef.current(command);
-          return;
-        }
-      }
-
-      const command = allCommands.find(
-        (candidate) =>
-          candidate.enabled(currentContext) &&
-          candidate.keys.some((key) => {
-            const steps = shortcutSteps(key);
-            return steps.length === 1 && matchesShortcut(event, steps[0]);
-          }),
-      );
-      if (command) {
-        event.preventDefault();
-        executeRef.current(command);
-        return;
-      }
-
-      const prefix = allCommands
-        .filter((candidate) => candidate.enabled(currentContext))
-        .flatMap((candidate) => candidate.keys)
-        .map(shortcutSteps)
-        .find((steps) => steps.length === 2 && matchesShortcut(event, steps[0]));
-      if (!prefix) return;
-      event.preventDefault();
-      pendingStep.current = prefix[0].toLocaleLowerCase();
-      pendingTimeout.current = window.setTimeout(clearPendingStep, 1000);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      clearPendingStep();
-    };
-  }, []);
-}
 
 export function App() {
   const inboxSize = useInboxWidth();
@@ -2988,239 +2681,6 @@ function UnreadBadge({ count }: { count: number }) {
   return <span className="account-unread-badge" aria-hidden="true">{count > 99 ? "99+" : count}</span>;
 }
 
-function FiltersButton({
-  activeFilters,
-  onToggleFilter,
-}: {
-  activeFilters: Set<MessageFilterKind>;
-  onToggleFilter(kind: MessageFilterKind): void;
-}) {
-  const [open, setOpen] = useState(false);
-  const anchorRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      if (anchorRef.current?.contains(event.target as Node)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [open]);
-
-  return (
-    <div className="filters-anchor" ref={anchorRef}>
-      <button
-        type="button"
-        className={`filters-trigger ${activeFilters.size > 0 ? "active" : ""}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <ListFilter size={15} />
-        <span>Filters</span>
-        {activeFilters.size > 0 ? <span className="filters-badge">{activeFilters.size}</span> : null}
-      </button>
-      {open ? (
-        <FiltersMenu
-          activeFilters={activeFilters}
-          onToggleFilter={onToggleFilter}
-          onClose={() => setOpen(false)}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function FiltersMenu({
-  activeFilters,
-  onToggleFilter,
-  onClose,
-}: {
-  activeFilters: Set<MessageFilterKind>;
-  onToggleFilter(kind: MessageFilterKind): void;
-  onClose(): void;
-}) {
-  useEscapeDismiss(onClose);
-  return (
-    <div className="filters-menu" role="menu" aria-label="Filters">
-      <div className="filters-menu-title">Filters</div>
-      {MESSAGE_FILTER_OPTIONS.map((option) => {
-        const isActive = activeFilters.has(option.kind);
-        return (
-          <button
-            key={option.kind}
-            type="button"
-            role="menuitemcheckbox"
-            aria-checked={isActive}
-            className={`filters-menu-item ${isActive ? "active" : ""}`}
-            onClick={() => onToggleFilter(option.kind)}
-          >
-            <span className="filters-menu-item-label">
-              <span className="filters-menu-item-check" aria-hidden="true">
-                {isActive ? <Check size={13} /> : null}
-              </span>
-              {option.label}
-            </span>
-            <span className="filters-menu-item-keys">
-              <kbd>shift</kbd>
-              <kbd>{option.shortcutKey}</kbd>
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function HoverTooltip({
-  children,
-  label,
-  placement = "right",
-  shortcut,
-}: {
-  children: React.ReactNode;
-  label: string;
-  placement?: "right" | "bottom";
-  shortcut?: string;
-}) {
-  return (
-    <span className={`tooltip-anchor tooltip-${placement}`}>
-      {children}
-      <span className="hover-tooltip" role="tooltip">
-        <strong>{label}</strong>
-        {shortcut ? <kbd>{shortcut}</kbd> : null}
-      </span>
-    </span>
-  );
-}
-
-function ActionButton({
-  children,
-  label,
-  onClick,
-  shortcut,
-}: {
-  children: React.ReactNode;
-  label: string;
-  onClick(): void;
-  shortcut?: string;
-}) {
-  return (
-    <button className="action-button" aria-label={shortcut ? `${label} (${shortcut})` : label} onClick={onClick}>
-      {children}<span>{label}</span>{shortcut ? <kbd>{shortcut}</kbd> : null}
-    </button>
-  );
-}
-
-function CommandPalette({
-  context,
-  execute,
-  extraCommands = [],
-  onClose,
-}: {
-  context: CommandContext;
-  execute(command: Command): void;
-  extraCommands?: Command[];
-  onClose(): void;
-}) {
-  const [filter, setFilter] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => inputRef.current?.focus(), []);
-  const visible = [...commands, ...extraCommands].filter((command) =>
-    command.title.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
-  );
-  return (
-    <Modal title="Command palette" onClose={onClose}>
-      <label className="palette-search">
-        <Search size={18} />
-        <input
-          ref={inputRef}
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          placeholder="Type a command"
-          aria-label="Filter commands"
-        />
-      </label>
-      <div className="command-list">
-        {visible.map((command) => (
-          <button
-            key={command.id}
-            disabled={!command.enabled(context)}
-            onClick={() => {
-              execute(command);
-              onClose();
-            }}
-          >
-            <span><small>{command.group}</small>{command.title}</span>
-            <span>{command.keys.map((key) => <kbd key={key}>{key}</kbd>)}</span>
-          </button>
-        ))}
-      </div>
-    </Modal>
-  );
-}
-
-const shortcutGroupOrder = ["Navigation", "Triage", "Compose", "Application"] as const;
-
-function ShortcutHelp({
-  extraCommands = [],
-  onClose,
-}: {
-  extraCommands?: Command[];
-  onClose(): void;
-}) {
-  const shortcutCommands = [
-    ...[...commands, ...extraCommands].filter((command) => command.keys.length > 0),
-    ...formattingShortcuts.map((shortcut) => ({
-      id: shortcut.id,
-      title: shortcut.title,
-      keys: [shortcut.key],
-      group: "Compose" as const,
-    })),
-  ];
-  return (
-    <Modal title="Keyboard shortcuts" className="shortcut-help-modal" onClose={onClose}>
-      <p className="shortcut-help-intro">Use ThreeStrands without leaving the keyboard.</p>
-      <div className="shortcut-help-groups">
-        {shortcutGroupOrder.map((group) => {
-          const groupCommands = shortcutCommands.filter((command) => command.group === group);
-          if (groupCommands.length === 0) return null;
-          return (
-            <section key={group} aria-labelledby={`shortcut-group-${group.toLowerCase()}`}>
-              <h3 id={`shortcut-group-${group.toLowerCase()}`}>{group}</h3>
-              <dl>
-                {groupCommands.map((command) => (
-                  <div key={command.id}>
-                    <dt>{command.title}</dt>
-                    <dd>
-                      {command.keys.map((key) => <ShortcutKeys key={key} shortcut={key} />)}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
-          );
-        })}
-      </div>
-    </Modal>
-  );
-}
-
-function ShortcutKeys({ shortcut }: { shortcut: string }) {
-  const steps = shortcutSteps(shortcut);
-  return (
-    <span className="shortcut-keys">
-      {steps.map((step, index) => (
-        <span key={step}>
-          {index > 0 ? <small>then</small> : null}
-          <kbd>{step.replace("Mod", "⌘/Ctrl").replaceAll("+", " + ")}</kbd>
-        </span>
-      ))}
-    </span>
-  );
-}
-
 function recoveryStatusMessage(recovery: RecoveryStatus): string {
   switch (recovery.kind) {
     case "restoredFromBackup":
@@ -3994,7 +3454,7 @@ function AccountsSettings({
                   </div>
                   <span className="account-card-email">
                     {account.displayName ? `${account.email} · ` : null}
-                    {account.lastSyncedAt ? `Last synced ${timeFormatter.format(new Date(account.lastSyncedAt))}` : "Not synced yet"}
+                    {account.lastSyncedAt ? `Last synced ${formatTimeOnly(account.lastSyncedAt)}` : "Not synced yet"}
                   </span>
                 </div>
               </div>
@@ -4920,34 +4380,6 @@ function ImageLightbox({ src, onClose }: { src: string; onClose(): void }) {
         <X size={20} />
       </button>
       <img src={src} alt="" className="lightbox-image" onMouseDown={(event) => event.stopPropagation()} />
-    </div>
-  );
-}
-
-function Modal({
-  className,
-  children,
-  onClose,
-  title,
-}: {
-  className?: string;
-  children: React.ReactNode;
-  onClose(): void;
-  title: string;
-}) {
-  useEscapeDismiss(onClose);
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <div
-        className={`modal${className ? ` ${className}` : ""}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header><h2>{title}</h2><button aria-label="Close" onClick={onClose}><X size={18} /></button></header>
-        {children}
-      </div>
     </div>
   );
 }

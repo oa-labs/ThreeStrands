@@ -2,9 +2,26 @@
 
 ## Testing
 
-Agents are responsible for the automated test suite: run it (`pnpm test`, `pnpm test:e2e`), add tests that cover the change being made, and maintain existing tests (fix or update them when behavior intentionally changes, don't just delete or skip a failing test to get green).
+Agents own the automated test suite. The developer owns looking at the running app.
 
-Agents are not responsible for manually exercising the running application (starting the dev server, clicking through the UI, taking screenshots) to confirm a fix looks or feels right — that verification is done by the developer. Ship the code change backed by automated coverage and let the developer do the hands-on check.
+Treat existing tests as the current product contract.
+
+When a test fails:
+1. If this task did not mean to change that behavior, fix the implementation.
+2. If this task did change the contract, update the test to the new contract and
+   say so in the summary. Do not weaken security, settings-transfer, or
+   rendering invariants to make a change easier.
+3. Never delete a test, skip it, or comment it out to get green.
+4. Add tests for new behavior; prefer extending an existing describe over a
+   one-off assertion in an unrelated file.
+
+Run `pnpm test` for frontend changes. Run `cargo test` in `src-tauri` for Rust
+changes. Run `pnpm test:e2e` when the change touches compose, triage, or email
+rendering.
+
+Do not start the dev server, click through the UI, take screenshots, or use a
+browser to judge look and feel. Ship the change with automated coverage and
+leave hands-on UI verification to the developer.
 
 ## Settings transfer compatibility
 
