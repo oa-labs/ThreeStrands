@@ -1379,8 +1379,6 @@ export function App() {
 
   const goToInboxTab = useCallback(() => {
     correspondence.context.openInbox();
-    setQuery("");
-    setSearchOpen(false);
     setMailbox("inbox");
     setActiveSplitInboxId(null);
     saveSelectedTabForAccount(activeAccountId, null);
@@ -1388,8 +1386,6 @@ export function App() {
 
   const goToSplitTab = useCallback((id: string) => {
     correspondence.context.openInbox();
-    setQuery("");
-    setSearchOpen(false);
     setMailbox("split");
     setActiveSplitInboxId(id);
     saveSelectedTabForAccount(activeAccountId, id);
