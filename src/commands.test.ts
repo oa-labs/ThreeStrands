@@ -64,6 +64,7 @@ function noopContext(): CommandContext {
     openPalette: () => {},
     openShortcutHelp: () => {},
     openSettings: () => {},
+    openToday: () => {},
     increaseFontSize: () => {},
     decreaseFontSize: () => {},
     canUndoAction: false,

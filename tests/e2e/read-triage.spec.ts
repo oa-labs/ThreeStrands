@@ -154,7 +154,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await expect(settings).toBeVisible();
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add account" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(2);
   await page.keyboard.press("Escape");
@@ -211,7 +211,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   // Removing the second account leaves the first one's shortcuts and inbox unaffected.
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   await expect(settings).toBeVisible();
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.locator("li", { hasText: "demo-2@example.com" }).getByRole("button", { name: "Disconnect" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(1);
   await page.keyboard.press("Escape");
@@ -226,7 +226,7 @@ test("saves an independent sender name for each account", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add account" }).click();
 
   const personalName = settings.getByRole("textbox", { name: "Sender name for demo@example.com" });
@@ -241,7 +241,7 @@ test("saves an independent sender name for each account", async ({ page }) => {
   await expect(workName).toHaveValue("Joel at Work");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await expect(settings.getByRole("textbox", { name: "Sender name for demo@example.com" })).toHaveValue("Joel Reed");
   await expect(settings.getByRole("textbox", { name: "Sender name for demo-2@example.com" })).toHaveValue("Joel at Work");
 });
@@ -251,7 +251,7 @@ test("reorders navbar accounts by dragging their icons", async ({ page }) => {
 
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add account" }).click();
   await page.keyboard.press("Escape");
 
@@ -276,7 +276,7 @@ test("the account color picker keeps the last color picked, even while dragging 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   const swatch = settings.locator('input[aria-label="Color for demo@example.com"]');
   const initial = await swatch.inputValue();
 
@@ -306,7 +306,7 @@ test("the account color picker keeps the last color picked, even while dragging 
   await expect(settings).not.toBeVisible();
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   await expect(settings).toBeVisible();
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await expect(settings.locator('input[aria-label="Color for demo@example.com"]')).toHaveValue("#abcdef");
   expect(initial).not.toBe("#abcdef");
 });
@@ -317,7 +317,7 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
 
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
-  await settings.getByRole("button", { name: "Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.locator("li", { hasText: "demo@example.com" }).getByRole("button", { name: "Disconnect" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(0);
   await page.keyboard.press("Escape");

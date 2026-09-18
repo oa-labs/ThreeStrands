@@ -2,10 +2,97 @@ use calcard::icalendar::{
     ICalendar, ICalendarComponent, ICalendarComponentType, ICalendarEntry, ICalendarParameterName,
     ICalendarParameterValue, ICalendarProperty, ICalendarValue,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+use crate::{auth::GoogleAuth, models::ScheduleEvent};
 
 const MAX_EVENTS: usize = 20;
 const MAX_CALENDAR_BYTES: usize = 2 * 1024 * 1024;
+const EVENTS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+const MAX_SCHEDULE_EVENTS: usize = 250;
+
+#[derive(Deserialize)]
+struct GoogleEvents {
+    #[serde(default)]
+    items: Vec<GoogleEvent>,
+}
+
+#[derive(Deserialize)]
+struct GoogleEvent {
+    id: String,
+    summary: Option<String>,
+    status: Option<String>,
+    start: GoogleEventTime,
+    end: GoogleEventTime,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleEventTime {
+    date: Option<String>,
+    date_time: Option<String>,
+}
+
+pub async fn fetch_schedule(
+    auth: GoogleAuth,
+    account_id: &str,
+    time_min: &str,
+    time_max: &str,
+    time_zone: &str,
+) -> Result<Vec<ScheduleEvent>, String> {
+    let access_token = auth.access_token().await.map_err(|error| error.to_string())?;
+    let max_results = MAX_SCHEDULE_EVENTS.to_string();
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
+        .get(EVENTS_URL)
+        .bearer_auth(access_token)
+        .query(&[
+            ("timeMin", time_min),
+            ("timeMax", time_max),
+            ("timeZone", time_zone),
+            ("singleEvents", "true"),
+            ("orderBy", "startTime"),
+            ("maxResults", max_results.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Google Calendar returned {status}: {body}"));
+    }
+    let events: GoogleEvents = response.json().await.map_err(|error| error.to_string())?;
+    Ok(normalize_events(events.items, account_id))
+}
+
+fn normalize_events(events: Vec<GoogleEvent>, account_id: &str) -> Vec<ScheduleEvent> {
+    events
+        .into_iter()
+        .filter(|event| event.status.as_deref() != Some("cancelled"))
+        .filter_map(|event| {
+            let all_day = event.start.date_time.is_none();
+            let start = event.start.date_time.or(event.start.date)?;
+            let end = event.end.date_time.or(event.end.date)?;
+            Some(ScheduleEvent {
+                id: event.id,
+                account_id: account_id.to_string(),
+                title: event
+                    .summary
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| "Untitled event".to_string()),
+                start,
+                end,
+                all_day,
+            })
+        })
+        .collect()
+}
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -196,5 +283,46 @@ mod tests {
             parse(b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"),
             Err("Calendar attachment does not contain an event".into())
         );
+    }
+
+    #[test]
+    fn normalizes_timed_and_all_day_google_events() {
+        let events = normalize_events(
+            vec![
+                GoogleEvent {
+                    id: "timed".into(),
+                    summary: Some("Planning".into()),
+                    status: Some("confirmed".into()),
+                    start: GoogleEventTime {
+                        date: None,
+                        date_time: Some("2026-09-18T09:30:00-07:00".into()),
+                    },
+                    end: GoogleEventTime {
+                        date: None,
+                        date_time: Some("2026-09-18T10:00:00-07:00".into()),
+                    },
+                },
+                GoogleEvent {
+                    id: "all-day".into(),
+                    summary: None,
+                    status: None,
+                    start: GoogleEventTime {
+                        date: Some("2026-09-18".into()),
+                        date_time: None,
+                    },
+                    end: GoogleEventTime {
+                        date: Some("2026-09-19".into()),
+                        date_time: None,
+                    },
+                },
+            ],
+            "work@example.com",
+        );
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].title, "Planning");
+        assert!(!events[0].all_day);
+        assert_eq!(events[1].title, "Untitled event");
+        assert!(events[1].all_day);
     }
 }

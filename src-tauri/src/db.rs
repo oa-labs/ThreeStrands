@@ -10,14 +10,15 @@ use uuid::Uuid;
 
 use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
-    Account, ContactSuggestion, FailedMutation, MailboxUnreadCounts, Message, SearchThreadsRequest,
-    QuarantinedMessage, SplitInbox, SyncStatus, Thread, ThreadDetail, ThreadMutation, ThreadPage,
-    TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
+    Account, CalendarAccount, ContactSuggestion, FailedMutation, MailboxUnreadCounts, Message,
+    SearchThreadsRequest, QuarantinedMessage, SplitInbox, SyncStatus, Thread, ThreadDetail,
+    ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
     UnsubscribeMethod, UnsubscribeTarget,
 };
 use crate::transfer::{TransferAccount, TransferSplitInbox};
 
 mod accounts;
+mod calendar_accounts;
 mod contacts;
 mod split_inboxes;
 mod threads;

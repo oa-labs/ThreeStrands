@@ -6,6 +6,7 @@ import {
 import type {
   Account,
   AuthStatus,
+  CalendarAccount,
   CalendarPreview,
   ContactSuggestion,
   Label,
@@ -14,6 +15,7 @@ import type {
   ReplyAssistContext,
   ReplyAssistResult,
   SearchThreadsRequest,
+  ScheduleEvent,
   SplitInbox,
   SplitInboxMatchKind,
   SummaryResult,
@@ -92,6 +94,11 @@ export interface MailClient extends CorrespondenceClient {
   setAccountDisplayName(email: string, displayName: string | null): Promise<void>;
   setAccountColor(email: string, color: string): Promise<void>;
   reorderAccounts(emails: string[]): Promise<void>;
+  listCalendarAccounts(): Promise<CalendarAccount[]>;
+  addCalendarAccount(): Promise<CalendarAccount>;
+  reconnectCalendarAccount(email: string): Promise<CalendarAccount>;
+  removeCalendarAccount(email: string): Promise<void>;
+  listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleEvent[]>;
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
   createLabel(name: string): Promise<Label>;
@@ -159,6 +166,12 @@ const tauriClient: MailClient = {
   setAccountDisplayName: (email, displayName) => complete("set_account_display_name", { email, displayName }),
   setAccountColor: (email, color) => complete("set_account_color", { email, color }),
   reorderAccounts: (emails) => complete("reorder_accounts", { emails }),
+  listCalendarAccounts: () => read("list_calendar_accounts"),
+  addCalendarAccount: () => complete("add_calendar_account"),
+  reconnectCalendarAccount: (email) => complete("reconnect_calendar_account", { email }),
+  removeCalendarAccount: (email) => complete("remove_calendar_account", { email }),
+  listScheduleEvents: (timeMin, timeMax, timeZone) =>
+    complete("list_schedule_events", { timeMin, timeMax, timeZone }),
   listLabels: (accountId) => read("list_labels", { accountId }),
   createLabel: (name) => complete("create_label", { request: { name } }),
   updateLabel: (id, name) => complete("update_label", { request: { id, name } }),
