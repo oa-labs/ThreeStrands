@@ -9,8 +9,24 @@ use crate::{auth::GoogleAuth, models::ScheduleEvent};
 
 const MAX_EVENTS: usize = 20;
 const MAX_CALENDAR_BYTES: usize = 2 * 1024 * 1024;
-const EVENTS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+const CALENDAR_LIST_URL: &str = "https://www.googleapis.com/calendar/v3/users/me/calendarList";
+const CALENDARS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/";
 const MAX_SCHEDULE_EVENTS: usize = 250;
+
+#[derive(Deserialize)]
+struct GoogleCalendarList {
+    #[serde(default)]
+    items: Vec<GoogleCalendarListEntry>,
+}
+
+#[derive(Deserialize)]
+struct GoogleCalendarListEntry {
+    id: String,
+    #[serde(default)]
+    primary: bool,
+    #[serde(default)]
+    selected: bool,
+}
 
 #[derive(Deserialize)]
 struct GoogleEvents {
@@ -41,37 +57,82 @@ pub async fn fetch_schedule(
     time_max: &str,
     time_zone: &str,
 ) -> Result<Vec<ScheduleEvent>, String> {
-    let access_token = auth.access_token().await.map_err(|error| error.to_string())?;
+    let access_token = auth
+        .access_token()
+        .await
+        .map_err(|error| error.to_string())?;
     let max_results = MAX_SCHEDULE_EVENTS.to_string();
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(45))
         .build()
         .map_err(|error| error.to_string())?;
-    let response = client
-        .get(EVENTS_URL)
-        .bearer_auth(access_token)
+    let calendar_response = client
+        .get(CALENDAR_LIST_URL)
+        .bearer_auth(&access_token)
         .query(&[
-            ("timeMin", time_min),
-            ("timeMax", time_max),
-            ("timeZone", time_zone),
-            ("singleEvents", "true"),
-            ("orderBy", "startTime"),
+            ("showHidden", "false"),
+            ("minAccessRole", "reader"),
             ("maxResults", max_results.as_str()),
         ])
         .send()
         .await
         .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("Google Calendar returned {status}: {body}"));
+    let calendars: GoogleCalendarList = checked_json(calendar_response).await?;
+    let calendar_ids = selected_calendar_ids(calendars.items);
+    let mut schedule = Vec::new();
+    for calendar_id in calendar_ids {
+        let mut events_url = url::Url::parse(CALENDARS_URL).map_err(|error| error.to_string())?;
+        events_url
+            .path_segments_mut()
+            .map_err(|_| "Google Calendar URL cannot be extended".to_string())?
+            .push(&calendar_id)
+            .push("events");
+        let response = client
+            .get(events_url)
+            .bearer_auth(&access_token)
+            .query(&[
+                ("timeMin", time_min),
+                ("timeMax", time_max),
+                ("timeZone", time_zone),
+                ("singleEvents", "true"),
+                ("orderBy", "startTime"),
+                ("maxResults", max_results.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        let events: GoogleEvents = checked_json(response).await?;
+        schedule.extend(normalize_events(events.items, account_id, &calendar_id));
     }
-    let events: GoogleEvents = response.json().await.map_err(|error| error.to_string())?;
-    Ok(normalize_events(events.items, account_id))
+    schedule.sort_by(|left, right| left.start.cmp(&right.start));
+    Ok(schedule)
 }
 
-fn normalize_events(events: Vec<GoogleEvent>, account_id: &str) -> Vec<ScheduleEvent> {
+async fn checked_json<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, String> {
+    if response.status().is_success() {
+        return response.json().await.map_err(|error| error.to_string());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("Google Calendar returned {status}: {body}"))
+}
+
+fn selected_calendar_ids(entries: Vec<GoogleCalendarListEntry>) -> Vec<String> {
+    entries
+        .into_iter()
+        .filter(|entry| entry.primary || entry.selected)
+        .map(|entry| entry.id)
+        .collect()
+}
+
+fn normalize_events(
+    events: Vec<GoogleEvent>,
+    account_id: &str,
+    calendar_id: &str,
+) -> Vec<ScheduleEvent> {
     events
         .into_iter()
         .filter(|event| event.status.as_deref() != Some("cancelled"))
@@ -80,7 +141,7 @@ fn normalize_events(events: Vec<GoogleEvent>, account_id: &str) -> Vec<ScheduleE
             let start = event.start.date_time.or(event.start.date)?;
             let end = event.end.date_time.or(event.end.date)?;
             Some(ScheduleEvent {
-                id: event.id,
+                id: format!("{calendar_id}:{}", event.id),
                 account_id: account_id.to_string(),
                 title: event
                     .summary
@@ -317,12 +378,37 @@ mod tests {
                 },
             ],
             "work@example.com",
+            "team@example.com",
         );
 
         assert_eq!(events.len(), 2);
+        assert_eq!(events[0].id, "team@example.com:timed");
         assert_eq!(events[0].title, "Planning");
         assert!(!events[0].all_day);
         assert_eq!(events[1].title, "Untitled event");
         assert!(events[1].all_day);
+    }
+
+    #[test]
+    fn fetches_primary_and_selected_calendars_only() {
+        let ids = selected_calendar_ids(vec![
+            GoogleCalendarListEntry {
+                id: "primary@example.com".into(),
+                primary: true,
+                selected: false,
+            },
+            GoogleCalendarListEntry {
+                id: "team@example.com".into(),
+                primary: false,
+                selected: true,
+            },
+            GoogleCalendarListEntry {
+                id: "hidden@example.com".into(),
+                primary: false,
+                selected: false,
+            },
+        ]);
+
+        assert_eq!(ids, vec!["primary@example.com", "team@example.com"]);
     }
 }

@@ -55,6 +55,28 @@ describe("calendar sidebar", () => {
     );
   });
 
+  it("surfaces Calendar API failures and links back to account settings", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      {
+        email: "calendar@example.com",
+        connectedAt: "2026-09-18T00:00:00Z",
+        status: "connected",
+      },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockRejectedValue(
+      new Error("Google Calendar returned 403 Forbidden: API has not been used"),
+    );
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.keyDown(window, { key: "T" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("403 Forbidden");
+    fireEvent.click(screen.getByRole("button", { name: "Calendar Accounts" }));
+    expect(await screen.findByRole("region", { name: "Calendar Accounts" })).toBeInTheDocument();
+  });
+
   it("includes the T shortcut in keyboard help", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

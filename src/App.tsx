@@ -2384,7 +2384,15 @@ export function App() {
         )}
       </section>
 
-      {calendarOpen ? <CalendarSidebar onClose={() => setCalendarOpen(false)} /> : null}
+      {calendarOpen ? (
+        <CalendarSidebar
+          onClose={() => setCalendarOpen(false)}
+          onOpenSettings={() => {
+            setCalendarOpen(false);
+            openSettingsAt("calendarAccounts");
+          }}
+        />
+      ) : null}
 
       {correspondence.overlay}
       {unsubscribeMessage ? (
