@@ -1,13 +1,17 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { CALENDAR_SCROLL_TOP_KEY, scheduleRequestFor } from "./CalendarSidebar";
 import { mailClient } from "./data/client";
 
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+
 describe("calendar sidebar", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.mocked(openUrl).mockClear();
     localStorage.removeItem(CALENDAR_SCROLL_TOP_KEY);
   });
 
@@ -151,9 +155,9 @@ describe("calendar sidebar", () => {
     await screen.findByRole("complementary", { name: "Calendar schedule" });
     await waitFor(() => expect(screen.getByText("Standup")).toBeInTheDocument());
 
-    const standup = screen.getByText("Standup").closest("article");
-    const sync = screen.getByText("Sync").closest("article");
-    const review = screen.getByText("Review").closest("article");
+    const standup = screen.getByText("Standup").closest("button");
+    const sync = screen.getByText("Sync").closest("button");
+    const review = screen.getByText("Review").closest("button");
 
     expect(standup).toHaveClass("calendar-schedule-event-compact", "calendar-schedule-event-tight");
     expect(sync).toHaveClass("calendar-schedule-event-compact");
@@ -162,6 +166,53 @@ describe("calendar sidebar", () => {
     const standupTime = standup?.querySelector("span")?.textContent ?? "";
     expect(standupTime.match(/\b(?:am|pm)\b/gi)).toHaveLength(1);
     expect(standupTime).toMatch(/\b(?:am|pm)$/i);
+  });
+
+  it("shows event details and dismisses the viewer before the sidebar", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      {
+        email: "calendar@example.com",
+        connectedAt: "2026-09-18T00:00:00Z",
+        status: "connected",
+      },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [
+        {
+          id: "planning",
+          accountId: "calendar@example.com",
+          title: "Product planning",
+          start: "2026-09-18T10:00:00-07:00",
+          end: "2026-09-18T11:00:00-07:00",
+          allDay: false,
+          location: "Room 4B",
+          description: "Review the fall roadmap.",
+          conferenceUrl: "https://meet.google.com/abc-defg-hij",
+        },
+      ],
+      errors: [],
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(window, { key: "T" });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Product planning/ }));
+    const viewer = await screen.findByRole("dialog", { name: "Product planning details" });
+    expect(viewer).toHaveTextContent("Room 4B");
+    expect(viewer).toHaveTextContent("Review the fall roadmap.");
+    expect(viewer).toHaveTextContent("calendar@example.com");
+
+    fireEvent.click(screen.getByRole("link", { name: "Join video meeting" }));
+    expect(openUrl).toHaveBeenCalledWith("https://meet.google.com/abc-defg-hij");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Product planning details" })).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Calendar schedule" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Product planning/ }));
+    expect(screen.getByRole("dialog", { name: "Product planning details" })).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("dialog", { name: "Product planning details" })).not.toBeInTheDocument();
   });
 
   it("restores the saved calendar scroll position after a remount", async () => {
@@ -180,7 +231,7 @@ describe("calendar sidebar", () => {
     const firstSidebar = await screen.findByRole("complementary", { name: "Calendar schedule" });
     const firstGrid = firstSidebar.querySelector<HTMLElement>(".calendar-grid-scroll");
     expect(firstGrid).not.toBeNull();
-    expect(firstGrid?.scrollTop).toBe(7 * 64);
+    await waitFor(() => expect(firstGrid?.scrollTop).toBe(7 * 64));
 
     if (firstGrid) {
       firstGrid.scrollTop = 9 * 64;

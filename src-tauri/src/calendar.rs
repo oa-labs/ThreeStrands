@@ -70,12 +70,31 @@ struct GoogleEvents {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GoogleEvent {
     id: String,
     summary: Option<String>,
     status: Option<String>,
+    location: Option<String>,
+    description: Option<String>,
+    hangout_link: Option<String>,
+    conference_data: Option<GoogleConferenceData>,
     start: GoogleEventTime,
     end: GoogleEventTime,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleConferenceData {
+    #[serde(default)]
+    entry_points: Vec<GoogleConferenceEntryPoint>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleConferenceEntryPoint {
+    entry_point_type: Option<String>,
+    uri: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -218,6 +237,17 @@ fn normalize_events(
                 start,
                 end,
                 all_day,
+                location: event.location.filter(|value| !value.trim().is_empty()),
+                description: event.description.filter(|value| !value.trim().is_empty()),
+                conference_url: event.hangout_link.or_else(|| {
+                    event.conference_data.and_then(|conference| {
+                        conference.entry_points.into_iter().find_map(|entry| {
+                            (entry.entry_point_type.as_deref() == Some("video"))
+                                .then_some(entry.uri)
+                                .flatten()
+                        })
+                    })
+                }),
             })
         })
         .collect()
@@ -422,6 +452,10 @@ mod tests {
                     id: "timed".into(),
                     summary: Some("Planning".into()),
                     status: Some("confirmed".into()),
+                    location: Some("Room 4B".into()),
+                    description: Some("Review the roadmap".into()),
+                    hangout_link: Some("https://meet.google.com/abc-defg-hij".into()),
+                    conference_data: None,
                     start: GoogleEventTime {
                         date: None,
                         date_time: Some("2026-09-18T09:30:00-07:00".into()),
@@ -435,6 +469,10 @@ mod tests {
                     id: "all-day".into(),
                     summary: None,
                     status: None,
+                    location: None,
+                    description: None,
+                    hangout_link: None,
+                    conference_data: None,
                     start: GoogleEventTime {
                         date: Some("2026-09-18".into()),
                         date_time: None,
@@ -453,6 +491,12 @@ mod tests {
         assert_eq!(events[0].id, "team@example.com:timed");
         assert_eq!(events[0].title, "Planning");
         assert!(!events[0].all_day);
+        assert_eq!(events[0].location.as_deref(), Some("Room 4B"));
+        assert_eq!(events[0].description.as_deref(), Some("Review the roadmap"));
+        assert_eq!(
+            events[0].conference_url.as_deref(),
+            Some("https://meet.google.com/abc-defg-hij")
+        );
         assert_eq!(events[1].title, "Untitled event");
         assert!(events[1].all_day);
     }

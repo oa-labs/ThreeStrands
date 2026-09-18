@@ -1,4 +1,5 @@
-import { ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { AlignLeft, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, RefreshCw, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
@@ -79,6 +80,81 @@ function formatEventTime(event: ScheduleEvent): string {
   return `${start}–${end}`;
 }
 
+function eventDate(event: ScheduleEvent): Date {
+  if (!event.allDay) return new Date(event.start);
+  const [year, month, day] = event.start.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatEventDate(event: ScheduleEvent): string {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(eventDate(event));
+}
+
+function safeWebUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function EventViewer({ event, onDismiss }: { event: ScheduleEvent; onDismiss(): void }) {
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const conferenceUrl = safeWebUrl(event.conferenceUrl);
+  useEscapeDismiss(onDismiss);
+
+  useEffect(() => {
+    viewerRef.current?.focus();
+    const dismissOnOutsidePointer = (pointerEvent: PointerEvent) => {
+      const target = pointerEvent.target;
+      if (!(target instanceof Node)) return;
+      if (viewerRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest("[data-calendar-event-trigger]")) return;
+      onDismiss();
+    };
+    document.addEventListener("pointerdown", dismissOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", dismissOnOutsidePointer);
+  }, [onDismiss]);
+
+  return (
+    <div
+      className="calendar-event-viewer"
+      id="calendar-event-viewer"
+      ref={viewerRef}
+      role="dialog"
+      aria-label={`${event.title} details`}
+      tabIndex={-1}
+    >
+      <header>
+        <span className="calendar-event-color" aria-hidden="true" />
+        <h3>{event.title}</h3>
+        <button type="button" aria-label="Close event details" onClick={onDismiss}><X size={16} /></button>
+      </header>
+      <div className="calendar-event-viewer-details">
+        <p><Clock3 size={17} /><span>{formatEventDate(event)} · {formatEventTime(event)}</span></p>
+        {conferenceUrl ? (
+          <p>
+            <Video size={17} />
+            <a href={conferenceUrl} onClick={(clickEvent) => {
+              clickEvent.preventDefault();
+              void openUrl(conferenceUrl);
+            }}>Join video meeting</a>
+          </p>
+        ) : null}
+        {event.location ? <p><MapPin size={17} /><span>{event.location}</span></p> : null}
+        <p><CalendarDays size={17} /><span>{event.accountId}</span></p>
+        {event.description ? <p className="calendar-event-viewer-description"><AlignLeft size={17} /><span>{event.description}</span></p> : null}
+      </div>
+    </div>
+  );
+}
+
 export function CalendarSidebar({
   onClose,
   onOpenSettings,
@@ -90,10 +166,12 @@ export function CalendarSidebar({
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   useEscapeDismiss(onClose);
 
   const load = useCallback(async (target: Date) => {
+    setSelectedEvent(null);
     setLoading(true);
     setError(null);
     const request = scheduleRequestFor(target);
@@ -175,7 +253,21 @@ export function CalendarSidebar({
         <div className="calendar-all-day" aria-label="All-day events">
           <span>All day</span>
           <div>
-            {allDayEvents.map((event) => <strong key={`${event.accountId}:${event.id}`}>{event.title}</strong>)}
+            {allDayEvents.map((event) => {
+              const eventKey = `${event.accountId}:${event.id}`;
+              return (
+                <button
+                  type="button"
+                  key={eventKey}
+                  data-calendar-event-trigger
+                  aria-expanded={selectedEvent === event}
+                  aria-controls={selectedEvent === event ? "calendar-event-viewer" : undefined}
+                  onClick={() => setSelectedEvent((current) => current === event ? null : event)}
+                >
+                  {event.title}
+                </button>
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -230,9 +322,14 @@ export function CalendarSidebar({
                 tight && "calendar-schedule-event-tight",
               ].filter(Boolean).join(" ");
               return (
-                <article
+                <button
+                  type="button"
                   className={className}
                   key={`${event.accountId}:${event.id}`}
+                  data-calendar-event-trigger
+                  aria-expanded={selectedEvent === event}
+                  aria-controls={selectedEvent === event ? "calendar-event-viewer" : undefined}
+                  onClick={() => setSelectedEvent((current) => current === event ? null : event)}
                   style={{
                     top: (start / 60) * HOUR_HEIGHT,
                     height: duration,
@@ -241,7 +338,7 @@ export function CalendarSidebar({
                 >
                   <strong>{event.title}</strong>
                   <span>{formatEventTime(event)}</span>
-                </article>
+                </button>
               );
             })}
           </div>
@@ -251,6 +348,7 @@ export function CalendarSidebar({
           ) : null}
         </div>
       </div>
+      {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} /> : null}
     </aside>
   );
 }

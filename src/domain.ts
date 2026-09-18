@@ -70,6 +70,9 @@ export type ScheduleEvent = {
   start: string;
   end: string;
   allDay: boolean;
+  location?: string | null;
+  description?: string | null;
+  conferenceUrl?: string | null;
 };
 
 export type ScheduleResult = {

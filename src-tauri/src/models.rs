@@ -27,6 +27,9 @@ pub struct ScheduleEvent {
     pub start: String,
     pub end: String,
     pub all_day: bool,
+    pub location: Option<String>,
+    pub description: Option<String>,
+    pub conference_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
