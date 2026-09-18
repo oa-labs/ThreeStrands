@@ -1,13 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { scheduleRequestFor } from "./CalendarSidebar";
+import { CALENDAR_SCROLL_TOP_KEY, scheduleRequestFor } from "./CalendarSidebar";
 import { mailClient } from "./data/client";
 
 describe("calendar sidebar", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    localStorage.removeItem(CALENDAR_SCROLL_TOP_KEY);
   });
 
   it("routes T to Calendar Accounts until a calendar is connected", async () => {
@@ -158,6 +159,42 @@ describe("calendar sidebar", () => {
     expect(sync).toHaveClass("calendar-schedule-event-compact");
     expect(sync).not.toHaveClass("calendar-schedule-event-tight");
     expect(review).not.toHaveClass("calendar-schedule-event-compact");
+    const standupTime = standup?.querySelector("span")?.textContent ?? "";
+    expect(standupTime.match(/\b(?:am|pm)\b/gi)).toHaveLength(1);
+    expect(standupTime).toMatch(/\b(?:am|pm)$/i);
+  });
+
+  it("restores the saved calendar scroll position after a remount", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      {
+        email: "calendar@example.com",
+        connectedAt: "2026-09-18T00:00:00Z",
+        status: "connected",
+      },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+
+    const firstRender = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(window, { key: "T" });
+    const firstSidebar = await screen.findByRole("complementary", { name: "Calendar schedule" });
+    const firstGrid = firstSidebar.querySelector<HTMLElement>(".calendar-grid-scroll");
+    expect(firstGrid).not.toBeNull();
+    expect(firstGrid?.scrollTop).toBe(7 * 64);
+
+    if (firstGrid) {
+      firstGrid.scrollTop = 9 * 64;
+      fireEvent.scroll(firstGrid);
+    }
+    expect(localStorage.getItem(CALENDAR_SCROLL_TOP_KEY)).toBe(String(9 * 64));
+    firstRender.unmount();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(window, { key: "T" });
+    const restoredSidebar = await screen.findByRole("complementary", { name: "Calendar schedule" });
+    const restoredGrid = restoredSidebar.querySelector<HTMLElement>(".calendar-grid-scroll");
+    await waitFor(() => expect(restoredGrid?.scrollTop).toBe(9 * 64));
   });
 
   it("shows a short Calendar API error without rendering the provider response", async () => {

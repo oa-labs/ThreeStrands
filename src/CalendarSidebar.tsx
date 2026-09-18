@@ -7,6 +7,29 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 
 const HOUR_HEIGHT = 64;
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+export const CALENDAR_SCROLL_TOP_KEY = "threestrands.calendar.scrollTop";
+const DEFAULT_CALENDAR_SCROLL_TOP = 7 * HOUR_HEIGHT;
+const MAX_CALENDAR_SCROLL_TOP = 24 * HOUR_HEIGHT;
+
+function readCalendarScrollTop(): number {
+  try {
+    const stored = localStorage.getItem(CALENDAR_SCROLL_TOP_KEY);
+    const saved = stored === null || stored.trim() === "" ? Number.NaN : Number(stored);
+    if (Number.isFinite(saved) && saved >= 0 && saved <= MAX_CALENDAR_SCROLL_TOP) return saved;
+  } catch {
+    // A blocked storage backend should not prevent the calendar from opening.
+  }
+  return DEFAULT_CALENDAR_SCROLL_TOP;
+}
+
+function saveCalendarScrollTop(scrollTop: number): void {
+  if (!Number.isFinite(scrollTop) || scrollTop < 0 || scrollTop > MAX_CALENDAR_SCROLL_TOP) return;
+  try {
+    localStorage.setItem(CALENDAR_SCROLL_TOP_KEY, String(scrollTop));
+  } catch {
+    // The scroll position still applies for this session when storage is unavailable.
+  }
+}
 
 function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -45,7 +68,15 @@ function formatEventTime(event: ScheduleEvent): string {
     hour: "numeric",
     minute: "2-digit",
   });
-  return `${formatter.format(new Date(event.start))}–${formatter.format(new Date(event.end))}`;
+  const start = formatter.formatToParts(new Date(event.start))
+    .filter((part) => part.type !== "dayPeriod")
+    .map((part) => part.value)
+    .join("")
+    .trim();
+  const end = formatter.formatToParts(new Date(event.end))
+    .map((part) => part.type === "dayPeriod" ? part.value.toLocaleLowerCase() : part.value)
+    .join("");
+  return `${start}–${end}`;
 }
 
 export function CalendarSidebar({
@@ -91,7 +122,7 @@ export function CalendarSidebar({
   }, [date, load]);
 
   useEffect(() => {
-    if (gridRef.current) gridRef.current.scrollTop = 7 * HOUR_HEIGHT;
+    if (gridRef.current) gridRef.current.scrollTop = readCalendarScrollTop();
   }, []);
 
   const timedEvents = useMemo(() => events.filter((event) => !event.allDay), [events]);
@@ -160,7 +191,11 @@ export function CalendarSidebar({
           </div>
         </div>
       ) : null}
-      <div className="calendar-grid-scroll" ref={gridRef}>
+      <div
+        className="calendar-grid-scroll"
+        ref={gridRef}
+        onScroll={(event) => saveCalendarScrollTop(event.currentTarget.scrollTop)}
+      >
         <div className="calendar-grid">
           <div className="calendar-hour-labels" aria-hidden="true">
             {HOURS.map((hour) => (
