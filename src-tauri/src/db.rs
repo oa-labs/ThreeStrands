@@ -1067,7 +1067,7 @@ impl Database {
              FROM thread_search s
              JOIN threads t ON t.id = s.thread_id
              WHERE thread_search MATCH ?1 {archived_filter} {account_filter}
-             ORDER BY rank, t.last_received_at DESC
+             ORDER BY t.last_received_at DESC, rank
              LIMIT ?2 OFFSET ?3"
         );
         let mut statement = connection.prepare(&sql).map_err(display_error)?;
@@ -3283,6 +3283,52 @@ mod tests {
         assert_eq!(first_page.len(), 1);
         assert_eq!(second_page.len(), 1);
         assert_ne!(first_page[0].id, second_page[0].id);
+    }
+
+    #[test]
+    fn search_results_are_ordered_by_recency_over_relevance() {
+        let database = database();
+        // The older thread repeats the query term, which FTS5's bm25 rank
+        // would normally score as more relevant than a single mention — but
+        // recency should still win, since a newer email is more likely to be
+        // what the user is looking for.
+        database
+            .upsert_gmail_thread(
+                "default",
+                &[message(
+                    "old-message",
+                    "old-thread",
+                    "2026-01-01T00:00:00Z",
+                    "recency-sort-term recency-sort-term recency-sort-term",
+                )],
+            )
+            .unwrap();
+        database
+            .upsert_gmail_thread(
+                "default",
+                &[message(
+                    "new-message",
+                    "new-thread",
+                    "2026-02-01T00:00:00Z",
+                    "recency-sort-term",
+                )],
+            )
+            .unwrap();
+
+        let matches = database
+            .search_threads(
+                &SearchThreadsRequest {
+                    query: "recency-sort-term".into(),
+                    limit: None,
+                    offset: None,
+                    include_archived: None,
+                },
+                Some("default"),
+            )
+            .unwrap();
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].provider_thread_id, "new-thread");
+        assert_eq!(matches[1].provider_thread_id, "old-thread");
     }
 
     #[test]
