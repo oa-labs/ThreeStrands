@@ -33,7 +33,10 @@ const MUTATION_RETRY_MAX_SECS: i64 = 60 * 60;
 /// primary sync path, so it runs rarely.
 const RECONCILE_INTERVAL_SECS: i64 = 6 * 60 * 60;
 const RECOVERY_BATCH_SIZE: usize = 50;
-const REMOTE_SEARCH_SCAN_LIMIT: usize = 200;
+// Fetch enough of Gmail's ranked result set to fill the first local page,
+// while keeping a broad query from blocking the UI on hundreds of sequential
+// `threads.get` calls (each one is deliberately paced for Gmail quota).
+const REMOTE_SEARCH_SCAN_LIMIT: usize = 50;
 
 #[derive(Clone)]
 pub struct SyncService {
@@ -506,14 +509,21 @@ async fn search_and_ingest_missing(
     ingest_threads(database, account_id, provider, missing).await
 }
 
+// Flushed periodically, not just once at the end, so a) a transient
+// mid-scan failure doesn't discard threads already fetched, and b) matches
+// land in the local cache (and become searchable) before the whole scan
+// finishes.
+const INGEST_FLUSH_BATCH_SIZE: usize = 10;
+
 async fn ingest_threads(
     database: &Database,
     account_id: &str,
     provider: &(impl GmailProvider + ?Sized),
     ids: Vec<String>,
 ) -> ProviderResult<()> {
-    let mut ingested_threads = Vec::with_capacity(ids.len());
+    let mut ingested_threads = Vec::with_capacity(INGEST_FLUSH_BATCH_SIZE);
     let mut deleted = Vec::new();
+    let mut pending_error = None;
     for id in ids {
         let messages = match provider.get_thread(&id).await {
             Ok(messages) => messages,
@@ -521,18 +531,32 @@ async fn ingest_threads(
                 deleted.push(id);
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                pending_error = Some(error);
+                break;
+            }
         };
         let (normalized, quarantined) = normalize_thread(&messages);
         ingested_threads.push((id, normalized, quarantined));
+        if ingested_threads.len() >= INGEST_FLUSH_BATCH_SIZE {
+            database
+                .apply_ingested_gmail_threads(account_id, &ingested_threads)
+                .map_err(ProviderError::Other)?;
+            ingested_threads.clear();
+        }
     }
-    database
-        .apply_ingested_gmail_threads(account_id, &ingested_threads)
-        .map_err(ProviderError::Other)?;
+    if !ingested_threads.is_empty() {
+        database
+            .apply_ingested_gmail_threads(account_id, &ingested_threads)
+            .map_err(ProviderError::Other)?;
+    }
     for id in deleted {
         database
             .delete_gmail_thread(account_id, &id)
             .map_err(ProviderError::Other)?;
+    }
+    if let Some(error) = pending_error {
+        return Err(error);
     }
     Ok(())
 }

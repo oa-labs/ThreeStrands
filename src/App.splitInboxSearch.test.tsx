@@ -58,4 +58,36 @@ describe("split inbox search shortcuts", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("textbox", { name: "Search mail" })).toHaveValue("roadmap");
   });
+
+  it("shows when the Gmail backfill is still running", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    let finishBackfill!: () => void;
+    const backfillSearchThreads = vi.spyOn(mailClient, "backfillSearchThreads").mockImplementation(
+      () => new Promise<void>((resolve) => { finishBackfill = resolve; }),
+    );
+
+    render(<App />);
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search mail" });
+    fireEvent.change(search, { target: { value: "126" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
+
+    await waitFor(() => expect(backfillSearchThreads).toHaveBeenCalledWith("126", "demo@example.com"));
+    expect(await screen.findByText("Searching Gmail…")).toBeVisible();
+    finishBackfill();
+    await waitFor(() => expect(screen.queryByText("Searching Gmail…")).not.toBeInTheDocument());
+  });
+
+  it("reports when Gmail search cannot be reached", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    vi.spyOn(mailClient, "backfillSearchThreads").mockRejectedValue(new Error("offline"));
+
+    render(<App />);
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search mail" });
+    fireEvent.change(search, { target: { value: "126" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
+
+    expect(await screen.findByText("Gmail search unavailable")).toBeVisible();
+  });
 });

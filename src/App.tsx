@@ -212,6 +212,11 @@ export function formatMailTimestamp(iso: string, now = new Date()): string {
 }
 
 const SEARCH_PAGE_SIZE = 50;
+// While a Gmail backfill scan is running, matches land in the local cache
+// incrementally (see sync.rs's flushed ingest_threads batches), so poll
+// local search at this cadence rather than waiting for the whole scan to
+// finish before a match becomes visible.
+const REMOTE_SEARCH_POLL_MS = 1200;
 
 const MAILBOX_TITLES: Record<MailboxKind, string> = {
   inbox: "Inbox",
@@ -603,6 +608,7 @@ export function App() {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(false);
+  const [remoteSearchState, setRemoteSearchState] = useState<"idle" | "searching" | "error">("idle");
   const [hasMoreResults, setHasMoreResults] = useState(false);
   const [loading, setLoading] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -738,6 +744,9 @@ export function App() {
   const [canUndoAction, setCanUndoAction] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const remoteSearchKeyRef = useRef<string | null>(null);
+  const remoteSearchRequestRef = useRef(0);
+  const remoteSearchPromiseRef = useRef<Promise<void> | null>(null);
+  const remoteSearchInFlightRef = useRef(false);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   const undoLastAction = useCallback(async () => {
@@ -766,6 +775,14 @@ export function App() {
     setMailboxError("");
     const trimmed = search.trim();
     const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
+    const searchableMailbox = box === "inbox" || box === "split";
+    if (!searchableMailbox || !trimmed || !includeArchived) {
+      remoteSearchKeyRef.current = null;
+      remoteSearchRequestRef.current += 1;
+      remoteSearchPromiseRef.current = null;
+      remoteSearchInFlightRef.current = false;
+      setRemoteSearchState("idle");
+    }
     const commitPage = (page: { threads: Thread[]; hasMore: boolean }) => {
       if (requestId !== threadsRequest.current) return false;
       setMailboxError("");
@@ -793,19 +810,54 @@ export function App() {
         const remoteSearchKey = `${accountId ?? "all"}\u0000${trimmed}`;
         if (includeArchived && remoteSearchKeyRef.current !== remoteSearchKey) {
           remoteSearchKeyRef.current = remoteSearchKey;
-          void mailClient.backfillSearchThreads(trimmed, accountId)
+          const remoteRequestId = ++remoteSearchRequestRef.current;
+          remoteSearchInFlightRef.current = true;
+          setRemoteSearchState("searching");
+          const backfillPromise = mailClient.backfillSearchThreads(trimmed, accountId);
+          remoteSearchPromiseRef.current = backfillPromise;
+          const pollForRemoteMatches = () => {
+            if (remoteRequestId !== remoteSearchRequestRef.current) return;
+            void mailClient.searchThreads(searchRequest, accountId).then((polled) => {
+              if (remoteRequestId !== remoteSearchRequestRef.current || requestId !== threadsRequest.current) return;
+              commitPage({ threads: polled, hasMore: polled.length === SEARCH_PAGE_SIZE });
+            });
+          };
+          const pollInterval = window.setInterval(pollForRemoteMatches, REMOTE_SEARCH_POLL_MS);
+          void backfillPromise
             .then(async () => {
-              if (requestId !== threadsRequest.current) return;
+              window.clearInterval(pollInterval);
+              if (remoteRequestId !== remoteSearchRequestRef.current) return;
               const refreshed = await mailClient.searchThreads(searchRequest, accountId);
-              commitPage({ threads: refreshed, hasMore: refreshed.length === SEARCH_PAGE_SIZE });
+              if (remoteRequestId !== remoteSearchRequestRef.current) return;
+              remoteSearchInFlightRef.current = false;
+              if (requestId === threadsRequest.current) {
+                commitPage({ threads: refreshed, hasMore: refreshed.length === SEARCH_PAGE_SIZE });
+                setRemoteSearchState("idle");
+              }
             })
             .catch(() => {
+              window.clearInterval(pollInterval);
               // Gmail-backed search is an enhancement to the local result,
               // not a reason to make search fail while offline.
-              if (remoteSearchKeyRef.current === remoteSearchKey) {
+              if (remoteSearchKeyRef.current === remoteSearchKey && remoteRequestId === remoteSearchRequestRef.current) {
+                remoteSearchInFlightRef.current = false;
                 remoteSearchKeyRef.current = null;
+                setRemoteSearchState("error");
               }
             });
+        } else if (includeArchived && remoteSearchKeyRef.current === remoteSearchKey && remoteSearchInFlightRef.current) {
+          const remoteRequestId = remoteSearchRequestRef.current;
+          const remotePromise = remoteSearchPromiseRef.current;
+          if (remotePromise) {
+            void remotePromise.then(async () => {
+              if (requestId !== threadsRequest.current || remoteRequestId !== remoteSearchRequestRef.current) return;
+              const refreshed = await mailClient.searchThreads(searchRequest, accountId);
+              if (requestId !== threadsRequest.current || remoteRequestId !== remoteSearchRequestRef.current) return;
+              commitPage({ threads: refreshed, hasMore: refreshed.length === SEARCH_PAGE_SIZE });
+              remoteSearchInFlightRef.current = false;
+              setRemoteSearchState("idle");
+            }).catch(() => {});
+          }
         }
         return;
       }
@@ -1061,7 +1113,13 @@ export function App() {
   }, [query]);
 
   useEffect(() => {
-    if (!includeArchived) remoteSearchKeyRef.current = null;
+    if (!includeArchived) {
+      remoteSearchKeyRef.current = null;
+      remoteSearchRequestRef.current += 1;
+      remoteSearchPromiseRef.current = null;
+      remoteSearchInFlightRef.current = false;
+      setRemoteSearchState("idle");
+    }
   }, [includeArchived]);
 
   useEffect(() => {
@@ -1948,11 +2006,17 @@ export function App() {
                   onClick={() => setIncludeArchived((current) => !current)}
                 >
                   <Archive size={14} />
-                  {includeArchived ? <span>Archived + Trash</span> : null}
+                  <span>{includeArchived ? "Archived + Trash" : "Search all mail"}</span>
                 </button>
               ) : null}
               <kbd>/</kbd>
             </label>
+            {query.trim() && includeArchived && remoteSearchState === "searching" ? (
+              <span className="search-status" role="status" aria-live="polite">Searching Gmail…</span>
+            ) : null}
+            {query.trim() && includeArchived && remoteSearchState === "error" ? (
+              <span className="search-status error" role="status" aria-live="polite">Gmail search unavailable</span>
+            ) : null}
           </div>
         ) : null}
         <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={mailboxTitle}>
@@ -1980,8 +2044,8 @@ export function App() {
                   Add account
                 </button>
               </div>
-            ) : (
-              <p className="empty">{mailbox === "trash" ? "No trashed messages." : "Inbox zero."}</p>
+            ) : query.trim() && remoteSearchState === "searching" ? null : (
+              <p className="empty">{query.trim() ? "No conversations match your search." : mailbox === "trash" ? "No trashed messages." : "Inbox zero."}</p>
             )
           ) : null}
           {!loading && threads.length > 0 && visibleThreads.length === 0 ? (
