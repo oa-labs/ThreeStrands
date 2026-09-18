@@ -59,6 +59,46 @@ describe("split inbox search shortcuts", () => {
     expect(screen.getByRole("textbox", { name: "Search mail" })).toHaveValue("roadmap");
   });
 
+  it("closes the search box when switching accounts, but not when switching tabs", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    const [primary] = await mailClient.listAccounts();
+    vi.spyOn(mailClient, "listAccounts").mockResolvedValue([
+      primary!,
+      {
+        ...primary!,
+        email: "work@example.com",
+        displayName: "Work",
+        color: "#34A853",
+        sortOrder: 1,
+      },
+    ]);
+    vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([
+      {
+        id: "work-split",
+        name: "Work",
+        matchKind: "label",
+        matchValue: "work",
+        sortOrder: 0,
+        createdAt: "2026-03-01T00:00:00Z",
+        accountId: "demo@example.com",
+      },
+    ]);
+
+    render(<App />);
+    const splitTab = await screen.findByRole("tab", { name: "Work" });
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search mail" });
+    fireEvent.change(search, { target: { value: "roadmap" } });
+
+    fireEvent.click(splitTab);
+    await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("textbox", { name: "Search mail" })).toHaveValue("roadmap");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Work" }));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true"));
+    expect(screen.queryByRole("textbox", { name: "Search mail" })).not.toBeInTheDocument();
+  });
+
   it("shows when the Gmail backfill is still running", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     let finishBackfill!: () => void;

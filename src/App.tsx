@@ -730,7 +730,15 @@ export function App() {
     // waits for splitInboxesLoaded so a stored split id isn't mistaken for
     // deleted before the real list has a chance to arrive.
     if (!splitInboxesLoaded || restoredTabAccountRef.current === activeAccountId) return;
+    const isAccountChange = restoredTabAccountRef.current !== undefined;
     restoredTabAccountRef.current = activeAccountId;
+    // Search is scoped to a single account, so switching accounts shouldn't
+    // carry over an open search box or its query (unlike switching between
+    // Inbox/split tabs within the same account, which should preserve it).
+    if (isAccountChange) {
+      setQuery("");
+      setSearchOpen(false);
+    }
     const stored = readSelectedTabForAccount(activeAccountId);
     if (stored === undefined) return;
     const target = stored && accountSplitInboxes.some((candidate) => candidate.id === stored) ? stored : null;
