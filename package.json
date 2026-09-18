@@ -1,7 +1,7 @@
 {
   "name": "threestrands",
   "private": true,
-  "version": "0.6.2",
+  "version": "0.6.3",
   "packageManager": "pnpm@12.4.1",
   "type": "module",
   "scripts": {
@@ -14,7 +14,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-opener": "^2.5.0",
     "dompurify": "^3.2.6",
     "lucide-react": "^0.468.0",
@@ -25,9 +25,10 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
-    "@tauri-apps/cli": "^2.8.4",
+    "@tauri-apps/cli": "^2.11.4",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.1.0",
+    "@types/node": "^26.6.1",
     "@types/react": "^19.0.3",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^6.1.1",
