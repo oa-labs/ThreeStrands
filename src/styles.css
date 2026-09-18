@@ -1166,6 +1166,10 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .create-label { display: flex; gap: 8px; padding: 8px 14px 12px; }
 .create-label input { min-width: 0; flex: 1; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: 7px; outline: none; color: var(--text); background: var(--input); }
 .create-label input:focus { border-color: var(--accent); }
+.label-sort-toggle { display: flex; gap: 6px; padding: 0 14px 8px; }
+.label-sort-toggle button { padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; font-size: calc(12px * var(--font-scale)); }
+.label-sort-toggle button:hover { color: var(--text); background: var(--hover); }
+.label-sort-toggle button.active { color: var(--accent); border-color: var(--accent); background: var(--selected); font-weight: 650; }
 .label-list { max-height: 44vh; overflow: auto; padding: 0 10px 14px; }
 .label-list > div { display: flex; align-items: center; justify-content: space-between; padding: 9px; border-radius: 7px; }
 .label-list > div:hover { background: var(--hover); }

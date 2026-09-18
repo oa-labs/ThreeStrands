@@ -118,9 +118,14 @@ import {
   fontFamilyStack,
   MAX_AUTO_READ_DELAY_SECONDS,
   MIN_AUTO_READ_DELAY_SECONDS,
+  readLabelSortOrder,
+  readLabelUsage,
   readSelectedTabForAccount,
+  recordLabelUsed,
+  saveLabelSortOrder,
   saveSelectedTabForAccount,
   type FontFamily,
+  type LabelSortOrder,
 } from "./settings";
 import { listSystemFontFamilies } from "./systemFonts";
 import {
@@ -2551,6 +2556,7 @@ export function App() {
       {labelTargetIds && labelTargetIds.length > 0 ? (
         <LabelManager
           labels={labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : []}
+          accountId={labelTargetAccountId}
           checkedLabelIds={new Set(
             (labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : [])
               .filter((label) =>
@@ -3315,6 +3321,7 @@ export function DiagnosticsSettings({
 
 function LabelManager({
   labels,
+  accountId,
   checkedLabelIds,
   onClose,
   onCreate,
@@ -3323,6 +3330,7 @@ function LabelManager({
   onToggle,
 }: {
   labels: Label[];
+  accountId?: string;
   checkedLabelIds: Set<string>;
   onClose(): void;
   onCreate(name: string): Promise<void>;
@@ -3334,10 +3342,31 @@ function LabelManager({
   const [renaming, setRenaming] = useState<Label | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const manageableLabels = labels
-    .filter(isManageableLabel)
-    .sort((a, b) => formatLabelName(a).localeCompare(formatLabelName(b), undefined, { sensitivity: "base" }));
+  const [sortOrder, setSortOrder] = useState<LabelSortOrder>(readLabelSortOrder);
+  // Bumped whenever a label is toggled so "Recently used" sorting reorders
+  // live in this session, not just the next time the modal opens.
+  const [usageVersion, setUsageVersion] = useState(0);
+  const manageableLabels = useMemo(() => {
+    const usage = sortOrder === "recent" && accountId ? readLabelUsage(accountId) : {};
+    return labels
+      .filter(isManageableLabel)
+      .sort((a, b) => {
+        if (sortOrder === "recent") {
+          const recencyDelta = (usage[b.id] ?? 0) - (usage[a.id] ?? 0);
+          if (recencyDelta !== 0) return recencyDelta;
+        }
+        return formatLabelName(a).localeCompare(formatLabelName(b), undefined, { sensitivity: "base" });
+      });
+  }, [labels, sortOrder, accountId, usageVersion]);
   const labelInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const toggleLabel = (label: Label, value: boolean) => {
+    onToggle(label.id, value);
+    if (accountId) {
+      recordLabelUsed(accountId, label.id);
+      setUsageVersion((version) => version + 1);
+    }
+  };
 
   useEffect(() => {
     const firstLabel = manageableLabels[0];
@@ -3372,6 +3401,22 @@ function LabelManager({
         />
         <button type="submit" disabled={!name.trim() || busy}>Create</button>
       </form>
+      <div className="label-sort-toggle" role="group" aria-label="Sort labels">
+        <button
+          type="button"
+          className={sortOrder === "alphabetical" ? "active" : undefined}
+          onClick={() => setSortOrder(saveLabelSortOrder("alphabetical"))}
+        >
+          A–Z
+        </button>
+        <button
+          type="button"
+          className={sortOrder === "recent" ? "active" : undefined}
+          onClick={() => setSortOrder(saveLabelSortOrder("recent"))}
+        >
+          Recently used
+        </button>
+      </div>
       <div className="label-list">
         {manageableLabels.map((label) => (
           <div key={label.id}>
@@ -3382,7 +3427,7 @@ function LabelManager({
                 }}
                 type="checkbox"
                 checked={checkedLabelIds.has(label.id)}
-                onChange={(event) => onToggle(label.id, event.target.checked)}
+                onChange={(event) => toggleLabel(label, event.target.checked)}
                 onKeyDown={(event) => {
                   if (event.key === "ArrowUp") {
                     event.preventDefault();
@@ -3392,7 +3437,7 @@ function LabelManager({
                     moveLabelFocus(label.id, 1);
                   } else if (event.key === " " || event.key === "Spacebar" || event.key === "Space" || event.code === "Space") {
                     event.preventDefault();
-                    onToggle(label.id, !checkedLabelIds.has(label.id));
+                    toggleLabel(label, !checkedLabelIds.has(label.id));
                   }
                 }}
               />

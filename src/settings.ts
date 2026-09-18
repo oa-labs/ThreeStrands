@@ -199,3 +199,83 @@ export function saveFontFamily(value: FontFamily): FontFamily {
   }
   return next;
 }
+
+export type LabelSortOrder = "alphabetical" | "recent";
+
+const LABEL_SORT_ORDER_KEY = "threestrands.settings.labelSortOrder";
+
+export const DEFAULT_LABEL_SORT_ORDER: LabelSortOrder = "alphabetical";
+
+export function readLabelSortOrder(): LabelSortOrder {
+  try {
+    const saved = localStorage.getItem(LABEL_SORT_ORDER_KEY);
+    if (saved === "alphabetical" || saved === "recent") return saved;
+  } catch {
+    // A blocked storage backend should not prevent the app from opening.
+  }
+  return DEFAULT_LABEL_SORT_ORDER;
+}
+
+export function saveLabelSortOrder(value: LabelSortOrder): LabelSortOrder {
+  const next = value === "recent" ? "recent" : "alphabetical";
+  try {
+    localStorage.setItem(LABEL_SORT_ORDER_KEY, next);
+  } catch {
+    // The preference still applies for this session when storage is unavailable.
+  }
+  return next;
+}
+
+const LABEL_USAGE_KEY = "threestrands.settings.labelUsageByAccount";
+const MAX_LABEL_ID_LENGTH = 200;
+
+/**
+ * Per-account map of label id to the epoch millisecond it was last applied
+ * or removed through Dispatch. Gmail's API has no "last used" signal for
+ * labels, so recency is tracked locally and only reflects actions taken in
+ * this app — not labels applied from Gmail's own web or mobile clients.
+ */
+type LabelUsageByAccount = Record<string, Record<string, number>>;
+
+function validLabelUsageByAccount(value: unknown): value is LabelUsageByAccount {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.entries(value).every(([accountId, usage]) =>
+    accountId.length > 0
+    && accountId.length <= MAX_ACCOUNT_ID_LENGTH
+    && typeof usage === "object"
+    && usage !== null
+    && !Array.isArray(usage)
+    && Object.entries(usage).every(
+      ([labelId, timestamp]) =>
+        labelId.length > 0
+        && labelId.length <= MAX_LABEL_ID_LENGTH
+        && typeof timestamp === "number"
+        && Number.isFinite(timestamp),
+    ));
+}
+
+export function readLabelUsage(accountId: string): Record<string, number> {
+  try {
+    const saved = localStorage.getItem(LABEL_USAGE_KEY);
+    if (saved) {
+      const parsed: unknown = JSON.parse(saved);
+      if (validLabelUsageByAccount(parsed)) return parsed[accountId] ?? {};
+    }
+  } catch {
+    // A blocked or corrupted storage backend should not prevent the app from opening.
+  }
+  return {};
+}
+
+export function recordLabelUsed(accountId: string, labelId: string): void {
+  try {
+    const saved = localStorage.getItem(LABEL_USAGE_KEY);
+    const parsed: unknown = saved ? JSON.parse(saved) : {};
+    const current = validLabelUsageByAccount(parsed) ? parsed : {};
+    const accountUsage = { ...(current[accountId] ?? {}), [labelId]: Date.now() };
+    localStorage.setItem(LABEL_USAGE_KEY, JSON.stringify({ ...current, [accountId]: accountUsage }));
+  } catch {
+    // Usage tracking is best-effort; a blocked storage backend just means
+    // "recently used" sorting falls back to alphabetical order.
+  }
+}

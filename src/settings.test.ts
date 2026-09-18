@@ -3,16 +3,21 @@ import {
   applyFontFamily,
   DEFAULT_AUTO_READ_DELAY_SECONDS,
   DEFAULT_FONT_FAMILY,
+  DEFAULT_LABEL_SORT_ORDER,
   DEFAULT_LOAD_REMOTE_IMAGES,
   MAX_AUTO_READ_DELAY_SECONDS,
   MIN_AUTO_READ_DELAY_SECONDS,
   readAutoReadDelaySeconds,
   readFontFamily,
+  readLabelSortOrder,
+  readLabelUsage,
   readLoadRemoteImages,
   readSelectedAccountId,
   readSelectedTabForAccount,
+  recordLabelUsed,
   saveAutoReadDelaySeconds,
   saveFontFamily,
+  saveLabelSortOrder,
   saveLoadRemoteImages,
   saveSelectedAccountId,
   saveSelectedTabForAccount,
@@ -151,5 +156,53 @@ describe("selected mailbox tab preference", () => {
   it("ignores a corrupted stored map", () => {
     localStorage.setItem("threestrands.settings.selectedTabByAccount", "not json");
     expect(readSelectedTabForAccount("work@example.com")).toBeUndefined();
+  });
+});
+
+describe("label sort order preference", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("uses the default and restores a saved preference", () => {
+    expect(readLabelSortOrder()).toBe(DEFAULT_LABEL_SORT_ORDER);
+    saveLabelSortOrder("recent");
+    expect(readLabelSortOrder()).toBe("recent");
+  });
+
+  it("ignores a corrupted stored value", () => {
+    localStorage.setItem("threestrands.settings.labelSortOrder", "chronological");
+    expect(readLabelSortOrder()).toBe(DEFAULT_LABEL_SORT_ORDER);
+  });
+});
+
+describe("label usage tracking", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("has no usage until a label is recorded", () => {
+    expect(readLabelUsage("work@example.com")).toEqual({});
+  });
+
+  it("records a timestamp per label, scoped to its account", () => {
+    recordLabelUsed("work@example.com", "Label_1");
+    recordLabelUsed("home@example.com", "Label_9");
+    const workUsage = readLabelUsage("work@example.com");
+    expect(Object.keys(workUsage)).toEqual(["Label_1"]);
+    expect(workUsage.Label_1).toBeGreaterThan(0);
+    expect(readLabelUsage("home@example.com")).toEqual({ Label_9: expect.any(Number) });
+  });
+
+  it("updates the timestamp when the same label is used again", () => {
+    recordLabelUsed("work@example.com", "Label_1");
+    const first = readLabelUsage("work@example.com").Label_1;
+    recordLabelUsed("work@example.com", "Label_1");
+    expect(readLabelUsage("work@example.com").Label_1).toBeGreaterThanOrEqual(first);
+  });
+
+  it("ignores a corrupted stored map", () => {
+    localStorage.setItem("threestrands.settings.labelUsageByAccount", "not json");
+    expect(readLabelUsage("work@example.com")).toEqual({});
   });
 });
