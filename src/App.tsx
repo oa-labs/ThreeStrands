@@ -952,14 +952,18 @@ export function App() {
     void mailClient.sync()
       .then((status) => {
         setSyncStatus(status);
-        void loadThreads(query);
       })
-      .catch(() => {
-        void mailClient.syncStatus()
-          .then((status) => setSyncStatus(status))
-          .catch(() => {
-            setSyncStatus((current) => current ? { ...current, state: "error" } : current);
-          });
+      .catch(async () => {
+        try {
+          setSyncStatus(await mailClient.syncStatus());
+        } catch {
+          setSyncStatus((current) => current ? { ...current, state: "error" } : current);
+        }
+      })
+      // A different account may still have completed when another failed.
+      // Always repaint from the local cache after an all-account refresh.
+      .finally(() => {
+        void loadThreads(query);
       });
   }, [loadThreads, query]);
 
@@ -2494,9 +2498,14 @@ export function App() {
             setAuthStatus(await mailClient.googleAuthStatus());
           }}
           onReconnectAccount={async (email) => {
-            await mailClient.reconnectAccount(email);
+            let reconnectError = await mailClient.reconnectAccount(email)
+              .then(() => null)
+              .catch((reason: unknown) => reason);
             await refreshAccounts();
             setAuthStatus(await mailClient.googleAuthStatus());
+            setSyncStatus(await mailClient.syncStatus());
+            await loadThreads(query);
+            if (reconnectError !== null) throw reconnectError;
           }}
           onSetAccountDisplayName={async (email, displayName) => {
             await mailClient.setAccountDisplayName(email, displayName);

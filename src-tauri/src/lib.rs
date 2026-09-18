@@ -109,6 +109,7 @@ mod navigation_tests {
 /// registry rather than assuming the primary account sends everything.
 pub(crate) struct ConnectedAccount {
     pub(crate) auth: GoogleAuth,
+    sync: SyncService,
     poll_task: JoinHandle<()>,
 }
 
@@ -248,18 +249,158 @@ fn primary_account_id(state: &AppState) -> String {
         .unwrap_or_else(|| "default".into())
 }
 
+fn merge_sync_statuses(
+    statuses: Vec<(String, SyncStatus)>,
+    mut additional_errors: Vec<String>,
+) -> SyncStatus {
+    let single_account = statuses.len() == 1;
+    let mut last_successful_sync = None;
+    let mut cursor = None;
+    let mut pending_mutations = 0;
+    let mut failed_mutations = Vec::new();
+    let mut quarantined_messages = Vec::new();
+
+    for (email, status) in statuses {
+        if status.last_successful_sync > last_successful_sync {
+            last_successful_sync = status.last_successful_sync;
+        }
+        if single_account {
+            cursor = status.cursor;
+        }
+        pending_mutations += status.pending_mutations;
+        failed_mutations.extend(status.failed_mutations);
+        quarantined_messages.extend(status.quarantined_messages);
+        if let Some(error) = status.error {
+            additional_errors.push(format!("{email}: {error}"));
+        }
+    }
+
+    let error = (!additional_errors.is_empty()).then(|| additional_errors.join("\n"));
+    SyncStatus {
+        state: if error.is_some() { "error" } else { "idle" },
+        last_successful_sync,
+        cursor,
+        pending_mutations,
+        failed_mutations,
+        quarantined_messages,
+        error,
+    }
+}
+
+#[cfg(test)]
+mod combined_sync_status_tests {
+    use super::merge_sync_statuses;
+    use crate::models::SyncStatus;
+
+    fn status(
+        last_successful_sync: Option<&str>,
+        cursor: Option<&str>,
+        pending_mutations: i64,
+        error: Option<&str>,
+    ) -> SyncStatus {
+        SyncStatus {
+            state: if error.is_some() { "error" } else { "idle" },
+            last_successful_sync: last_successful_sync.map(str::to_string),
+            cursor: cursor.map(str::to_string),
+            pending_mutations,
+            failed_mutations: vec![],
+            quarantined_messages: vec![],
+            error: error.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn combines_every_accounts_sync_state_and_labels_errors() {
+        let merged = merge_sync_statuses(
+            vec![
+                (
+                    "first@example.com".into(),
+                    status(Some("2026-09-18T12:00:00Z"), Some("101"), 1, None),
+                ),
+                (
+                    "second@example.com".into(),
+                    status(
+                        Some("2026-09-18T12:05:00Z"),
+                        Some("202"),
+                        2,
+                        Some("token expired"),
+                    ),
+                ),
+            ],
+            vec![],
+        );
+
+        assert_eq!(merged.state, "error");
+        assert_eq!(
+            merged.last_successful_sync.as_deref(),
+            Some("2026-09-18T12:05:00Z")
+        );
+        assert_eq!(merged.cursor, None, "a merged cursor would be misleading");
+        assert_eq!(merged.pending_mutations, 3);
+        assert_eq!(
+            merged.error.as_deref(),
+            Some("second@example.com: token expired")
+        );
+    }
+
+    #[test]
+    fn preserves_the_cursor_for_a_single_account() {
+        let merged = merge_sync_statuses(
+            vec![(
+                "only@example.com".into(),
+                status(Some("2026-09-18T12:00:00Z"), Some("101"), 0, None),
+            )],
+            vec![],
+        );
+
+        assert_eq!(merged.state, "idle");
+        assert_eq!(merged.cursor.as_deref(), Some("101"));
+    }
+}
+
+/// Diagnostics and refresh state represent every configured account. Once an
+/// account catalog exists, never fall back to the pre-connect `default` row:
+/// after an in-process settings import that row is not a real mailbox.
+fn combined_sync_status(state: &AppState) -> Result<SyncStatus, String> {
+    let accounts = state.database.list_accounts()?;
+    if accounts.is_empty() {
+        return state.database.sync_status(&primary_account_id(state));
+    }
+    let mut statuses = Vec::new();
+    let mut errors = Vec::new();
+    for account in accounts {
+        match state.database.sync_status(&account.email) {
+            Ok(status) => statuses.push((account.email, status)),
+            Err(error) if account.status == "connected" => {
+                errors.push(format!("{}: {error}", account.email));
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(merge_sync_statuses(statuses, errors))
+}
+
 /// Builds a `SyncService` for `auth`, runs an immediate sync if it's already
 /// connected, and spawns its polling loop — the same startup behavior the
 /// primary account gets, generalized so any account can get it.
-fn spawn_synced_account(database: Arc<Database>, auth: GoogleAuth) -> ConnectedAccount {
+fn spawn_synced_account(
+    database: Arc<Database>,
+    auth: GoogleAuth,
+    sync_immediately: bool,
+) -> ConnectedAccount {
     let service = SyncService::new(database, auth.clone());
+    let polling_service = service.clone();
     let poll_task = tauri::async_runtime::spawn(async move {
-        if service.is_connected() {
-            let _ = service.sync().await;
+        if sync_immediately && polling_service.is_connected() {
+            let _ = polling_service.sync().await;
         }
-        service.polling_loop().await;
+        polling_service.polling_loop().await;
     });
-    ConnectedAccount { auth, poll_task }
+    ConnectedAccount {
+        auth,
+        sync: service,
+        poll_task,
+    }
 }
 
 #[tauri::command]
@@ -611,7 +752,7 @@ async fn unsubscribe(
 
 #[tauri::command]
 fn sync_status(state: State<'_, AppState>) -> Result<SyncStatus, String> {
-    state.database.sync_status(&primary_account_id(&state))
+    combined_sync_status(&state)
 }
 
 /// `Some` only when this launch had to recover the local database (restored
@@ -626,7 +767,56 @@ fn recovery_status(state: State<'_, AppState>) -> Option<db::RecoveryOutcome> {
 #[tauri::command]
 async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatus, String> {
     let _ = state.correspondence.refresh_identity().await;
-    state.sync.as_ref().ok_or_else(not_configured)?.sync().await
+    let mut services = Vec::new();
+    let mut account_ids = HashSet::new();
+    if let Some(service) = state.sync.clone().filter(SyncService::is_connected) {
+        let account_id = state
+            .auth
+            .as_ref()
+            .map(GoogleAuth::key)
+            .unwrap_or_else(|| "default".into());
+        account_ids.insert(account_id.clone());
+        services.push((account_id, service));
+    }
+    {
+        let additional = state.additional_accounts.lock().await;
+        for (email, connected) in additional.iter() {
+            if connected.sync.is_connected() && account_ids.insert(email.clone()) {
+                services.push((email.clone(), connected.sync.clone()));
+            }
+        }
+    }
+    if services.is_empty() {
+        return Err("No connected Google accounts are available to sync".to_string());
+    }
+
+    // Accounts are independent Gmail sessions. Run them concurrently so a
+    // full sync of one imported mailbox does not delay every other mailbox.
+    let mut tasks = tokio::task::JoinSet::new();
+    for (email, service) in services {
+        tasks.spawn(async move { (email, service.sync().await) });
+    }
+    let mut task_errors = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok((email, Err(error))) => task_errors.push(format!("{email}: {error}")),
+            Err(error) => {
+                task_errors.push(format!("A mail sync task stopped unexpectedly: {error}"))
+            }
+            Ok((_, Ok(_))) => {}
+        }
+    }
+
+    let mut status = combined_sync_status(&state)?;
+    if !task_errors.is_empty() {
+        let mut errors = status.error.take().into_iter().collect::<Vec<_>>();
+        errors.extend(task_errors);
+        let mut seen = HashSet::new();
+        errors.retain(|error| seen.insert(error.clone()));
+        status.error = Some(errors.join("\n"));
+        status.state = "error";
+    }
+    Ok(status)
 }
 
 #[tauri::command]
@@ -702,7 +892,7 @@ async fn add_account(state: State<'_, AppState>) -> Result<Account, String> {
     let auth = config.pending_account();
     let email = authorize_interactively(&state, &auth).await?;
     let account = state.database.adopt_account(&email)?;
-    let connected = spawn_synced_account(state.database.clone(), auth);
+    let connected = spawn_synced_account(state.database.clone(), auth, true);
     state
         .additional_accounts
         .lock()
@@ -748,21 +938,33 @@ async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<
         }
     };
     authorize_interactively(&state, &auth).await?;
-    if !is_primary {
+    // Make the persisted status authoritative before any newly spawned
+    // service checks it. Previously the service could observe needs_reauth,
+    // skip its initial sync, and sleep until the first polling interval.
+    let account = state.database.adopt_account(&email)?;
+    state.database.ensure_compose_identity(&email)?;
+    let service = if is_primary {
+        state.sync.clone().ok_or_else(not_configured)?
+    } else {
         // Self-heal: an account already in the `accounts` table should
         // always have a live poller from startup, but reconnecting is a
         // reasonable place to notice and repair a missing one.
         let mut accounts = state.additional_accounts.lock().await;
-        if !accounts.contains_key(&email) {
-            let connected = spawn_synced_account(state.database.clone(), auth);
-            accounts.insert(email.clone(), connected);
+        match accounts.get(&email) {
+            Some(connected) => connected.sync.clone(),
+            None => {
+                // Reconnect awaits the first sync below, so the poller itself
+                // must not launch a duplicate initial sync.
+                let connected = spawn_synced_account(state.database.clone(), auth, false);
+                let service = connected.sync.clone();
+                accounts.insert(email.clone(), connected);
+                service
+            }
         }
-    }
-    let account = state.database.adopt_account(&email)?;
-    // Imported accounts reconnect as additional accounts until the next app
-    // launch. Seed compose immediately so a new message does not fall back to
-    // the startup placeholder's nonexistent keychain entry.
-    state.database.ensure_compose_identity(&email)?;
+    };
+    // A completed reconnect means credentials were accepted *and* the first
+    // mailbox synchronization finished (or returned a useful error).
+    service.sync().await?;
     Ok(account)
 }
 
@@ -1402,6 +1604,7 @@ pub fn run() {
                                 let connected = spawn_synced_account(
                                     database.clone(),
                                     config.account(&account.email),
+                                    true,
                                 );
                                 additional_accounts
                                     .lock()

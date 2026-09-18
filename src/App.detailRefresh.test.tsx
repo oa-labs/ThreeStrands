@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
@@ -116,6 +116,62 @@ it("refreshes the open conversation when its inbox row receives a sent reply", a
     expect(bodies.some((body) => body.srcdoc.includes("Sent reply body"))).toBe(true);
   });
   expect(screen.getByText("Joel Reed", { selector: ".address-name" })).toBeInTheDocument();
+});
+
+it("reloads the local inbox after a refresh even when one account sync fails", async () => {
+  const originalList = mailClient.listThreadsPage.bind(mailClient);
+  const originalStatus = mailClient.syncStatus.bind(mailClient);
+  let listCalls = 0;
+
+  vi.spyOn(mailClient, "listThreadsPage").mockImplementation(async (...args) => {
+    listCalls += 1;
+    return originalList(...args);
+  });
+  vi.spyOn(mailClient, "sync").mockRejectedValue(new Error("second@example.com failed"));
+  vi.spyOn(mailClient, "syncStatus").mockImplementation(originalStatus);
+
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  const callsBeforeRefresh = listCalls;
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
+
+  await waitFor(() => expect(listCalls).toBeGreaterThan(callsBeforeRefresh));
+});
+
+it("reloads the inbox after reconnecting an imported account", async () => {
+  const originalAccounts = mailClient.listAccounts.bind(mailClient);
+  const originalList = mailClient.listThreadsPage.bind(mailClient);
+  let needsReconnect = true;
+  let listCalls = 0;
+
+  vi.spyOn(mailClient, "listAccounts").mockImplementation(async () =>
+    (await originalAccounts()).map((account) => ({
+      ...account,
+      status: needsReconnect ? "needs_reauth" as const : "connected" as const,
+    })),
+  );
+  vi.spyOn(mailClient, "reconnectAccount").mockImplementation(async (email) => {
+    needsReconnect = false;
+    return (await originalAccounts()).find((account) => account.email === email)!;
+  });
+  vi.spyOn(mailClient, "listThreadsPage").mockImplementation(async (...args) => {
+    listCalls += 1;
+    return originalList(...args);
+  });
+
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+  const dialog = screen.getByRole("dialog", { name: "Settings" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
+  const callsBeforeReconnect = listCalls;
+
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Reconnect" }));
+
+  await waitFor(() => expect(mailClient.reconnectAccount).toHaveBeenCalled());
+  await waitFor(() => expect(listCalls).toBeGreaterThan(callsBeforeReconnect));
+  expect(within(dialog).getByText("Connected")).toBeInTheDocument();
 });
 
 it("shows a queued reply immediately and replaces it with the provider copy", async () => {
