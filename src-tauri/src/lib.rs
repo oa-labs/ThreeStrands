@@ -28,7 +28,7 @@ use gmail::{GmailClient, GmailProvider};
 use models::{
     Account, AuthStatus, CalendarAccount, ContactSuggestion, CreateLabelRequest,
     CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
-    ScheduleEvent, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
+    ScheduleResult, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
     UpdateSplitInboxRequest,
 };
@@ -822,7 +822,7 @@ async fn list_schedule_events(
     time_max: String,
     time_zone: String,
     state: State<'_, AppState>,
-) -> Result<Vec<ScheduleEvent>, String> {
+) -> Result<ScheduleResult, String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let accounts = state.database.list_calendar_accounts()?;
     if accounts.is_empty() {
@@ -830,7 +830,6 @@ async fn list_schedule_events(
     }
     let mut merged = Vec::new();
     let mut errors = Vec::new();
-    let mut successful_accounts = 0;
     for account in accounts {
         match calendar::fetch_schedule(
             config.calendar_account(&account.email),
@@ -842,17 +841,16 @@ async fn list_schedule_events(
         .await
         {
             Ok(mut events) => {
-                successful_accounts += 1;
                 merged.append(&mut events);
             }
             Err(error) => errors.push(format!("{}: {error}", account.email)),
         }
     }
-    if successful_accounts == 0 && !errors.is_empty() {
-        return Err(errors.join("\n"));
-    }
     merged.sort_by(|left, right| left.start.cmp(&right.start));
-    Ok(merged)
+    Ok(ScheduleResult {
+        events: merged,
+        errors,
+    })
 }
 
 #[tauri::command]

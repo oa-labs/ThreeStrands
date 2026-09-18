@@ -21,6 +21,13 @@ pub struct ScheduleEvent {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ScheduleResult {
+    pub events: Vec<ScheduleEvent>,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Thread {
     pub id: String,
     pub provider_thread_id: String,

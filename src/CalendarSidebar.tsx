@@ -66,11 +66,13 @@ export function CalendarSidebar({
     setError(null);
     const request = scheduleRequestFor(target);
     try {
-      setEvents(await mailClient.listScheduleEvents(
+      const result = await mailClient.listScheduleEvents(
         request.timeMin,
         request.timeMax,
         request.timeZone,
-      ));
+      );
+      setEvents(result.events);
+      setError(result.errors.length > 0 ? result.errors.join("\n") : null);
     } catch (reason) {
       setEvents([]);
       setError(reason instanceof Error ? reason.message : String(reason));

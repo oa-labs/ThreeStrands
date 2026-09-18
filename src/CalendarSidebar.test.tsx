@@ -30,16 +30,19 @@ describe("calendar sidebar", () => {
         status: "connected",
       },
     ]);
-    const listEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue([
-      {
-        id: "planning",
-        accountId: "calendar@example.com",
-        title: "Product planning",
-        start: "2026-09-18T10:00:00-07:00",
-        end: "2026-09-18T10:30:00-07:00",
-        allDay: false,
-      },
-    ]);
+    const listEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [
+        {
+          id: "planning",
+          accountId: "calendar@example.com",
+          title: "Product planning",
+          start: "2026-09-18T10:00:00-07:00",
+          end: "2026-09-18T10:30:00-07:00",
+          allDay: false,
+        },
+      ],
+      errors: [],
+    });
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
@@ -63,9 +66,10 @@ describe("calendar sidebar", () => {
         status: "connected",
       },
     ]);
-    vi.spyOn(mailClient, "listScheduleEvents").mockRejectedValue(
-      new Error("Google Calendar returned 403 Forbidden: API has not been used"),
-    );
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [],
+      errors: ["calendar@example.com: Google Calendar returned 403 Forbidden: API has not been used"],
+    });
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 

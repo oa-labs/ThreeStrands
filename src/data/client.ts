@@ -15,7 +15,7 @@ import type {
   ReplyAssistContext,
   ReplyAssistResult,
   SearchThreadsRequest,
-  ScheduleEvent,
+  ScheduleResult,
   SplitInbox,
   SplitInboxMatchKind,
   SummaryResult,
@@ -98,7 +98,7 @@ export interface MailClient extends CorrespondenceClient {
   addCalendarAccount(): Promise<CalendarAccount>;
   reconnectCalendarAccount(email: string): Promise<CalendarAccount>;
   removeCalendarAccount(email: string): Promise<void>;
-  listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleEvent[]>;
+  listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
   createLabel(name: string): Promise<Label>;

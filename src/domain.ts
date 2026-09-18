@@ -64,6 +64,11 @@ export type ScheduleEvent = {
   allDay: boolean;
 };
 
+export type ScheduleResult = {
+  events: ScheduleEvent[];
+  errors: string[];
+};
+
 export type Message = {
   id: string;
   threadId: string;

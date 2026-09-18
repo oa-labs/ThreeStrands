@@ -572,7 +572,7 @@ export const demoClient: MailClient = {
     calendarAccounts = calendarAccounts.filter((account) => account.email !== email);
   },
   async listScheduleEvents() {
-    return [];
+    return { events: [], errors: [] };
   },
   async listLabels() {
     return structuredClone(labels);
