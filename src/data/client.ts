@@ -7,6 +7,7 @@ import type {
   Account,
   AuthStatus,
   CalendarAccount,
+  CalendarOption,
   CalendarPreview,
   ContactSuggestion,
   Label,
@@ -98,6 +99,8 @@ export interface MailClient extends CorrespondenceClient {
   addCalendarAccount(): Promise<CalendarAccount>;
   reconnectCalendarAccount(email: string): Promise<CalendarAccount>;
   removeCalendarAccount(email: string): Promise<void>;
+  listCalendarOptions(): Promise<CalendarOption[]>;
+  setCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
@@ -170,6 +173,9 @@ const tauriClient: MailClient = {
   addCalendarAccount: () => complete("add_calendar_account"),
   reconnectCalendarAccount: (email) => complete("reconnect_calendar_account", { email }),
   removeCalendarAccount: (email) => complete("remove_calendar_account", { email }),
+  listCalendarOptions: () => complete("list_calendar_options"),
+  setCalendarSelection: (accountId, calendarIds) =>
+    complete("set_calendar_selection", { accountId, calendarIds }),
   listScheduleEvents: (timeMin, timeMax, timeZone) =>
     complete("list_schedule_events", { timeMin, timeMax, timeZone }),
   listLabels: (accountId) => read("list_labels", { accountId }),

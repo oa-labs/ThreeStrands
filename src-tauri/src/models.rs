@@ -10,6 +10,16 @@ pub struct CalendarAccount {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CalendarOption {
+    pub id: String,
+    pub account_id: String,
+    pub name: String,
+    pub primary: bool,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScheduleEvent {
     pub id: String,
     pub account_id: String,

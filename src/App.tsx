@@ -85,6 +85,7 @@ import type {
   Account,
   AuthStatus,
   CalendarAccount,
+  CalendarOption,
   Label,
   RecoveryStatus,
   SplitInbox,
@@ -605,6 +606,8 @@ export function App() {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarAccounts, setCalendarAccounts] = useState<CalendarAccount[]>([]);
+  const [calendarOptions, setCalendarOptions] = useState<CalendarOption[]>([]);
+  const [calendarOptionsError, setCalendarOptionsError] = useState<string | null>(null);
   const refreshCalendarAccounts = useCallback(async () => {
     const next = await mailClient.listCalendarAccounts();
     setCalendarAccounts(next);
@@ -613,6 +616,17 @@ export function App() {
   useEffect(() => {
     void refreshCalendarAccounts().catch(() => {});
   }, [refreshCalendarAccounts]);
+  const refreshCalendarOptions = useCallback(async () => {
+    try {
+      const next = await mailClient.listCalendarOptions();
+      setCalendarOptions(next);
+      setCalendarOptionsError(null);
+      return next;
+    } catch (reason) {
+      setCalendarOptionsError(reason instanceof Error ? reason.message : String(reason));
+      throw reason;
+    }
+  }, []);
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus | null>(null);
   useEffect(() => {
     // One-shot: this only ever reflects what happened during this app
@@ -621,6 +635,11 @@ export function App() {
   }, []);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
+  useEffect(() => {
+    if (settingsOpen && settingsSection === "calendarAccounts" && calendarAccounts.length > 0) {
+      void refreshCalendarOptions().catch(() => {});
+    }
+  }, [calendarAccounts.length, refreshCalendarOptions, settingsOpen, settingsSection]);
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
@@ -2472,6 +2491,8 @@ export function App() {
           authStatus={authStatus}
           accounts={accounts}
           calendarAccounts={calendarAccounts}
+          calendarOptions={calendarOptions}
+          calendarOptionsError={calendarOptionsError}
           activeAccountId={activeAccountId}
           onAddAccount={async () => {
             await mailClient.addAccount();
@@ -2503,15 +2524,25 @@ export function App() {
           onAddCalendarAccount={async () => {
             await mailClient.addCalendarAccount();
             await refreshCalendarAccounts();
+            await refreshCalendarOptions();
           }}
           onReconnectCalendarAccount={async (email) => {
             await mailClient.reconnectCalendarAccount(email);
             await refreshCalendarAccounts();
+            await refreshCalendarOptions();
           }}
           onRemoveCalendarAccount={async (email) => {
             await mailClient.removeCalendarAccount(email);
             const remaining = await refreshCalendarAccounts();
+            setCalendarOptions((current) => current.filter((calendar) => calendar.accountId !== email));
             if (remaining.length === 0) setCalendarOpen(false);
+          }}
+          onSetCalendarSelection={async (accountId, calendarIds) => {
+            const updated = await mailClient.setCalendarSelection(accountId, calendarIds);
+            setCalendarOptions((current) => [
+              ...current.filter((calendar) => calendar.accountId !== accountId),
+              ...updated,
+            ]);
           }}
           onSettingsImported={async (result) => {
             const { preferences } = result;
@@ -3271,6 +3302,8 @@ function Settings({
   authStatus,
   accounts,
   calendarAccounts,
+  calendarOptions,
+  calendarOptionsError,
   activeAccountId,
   onAddAccount,
   onRemoveAccount,
@@ -3281,6 +3314,7 @@ function Settings({
   onAddCalendarAccount,
   onReconnectCalendarAccount,
   onRemoveCalendarAccount,
+  onSetCalendarSelection,
   onSettingsImported,
   splitInboxes,
   labelsByAccount,
@@ -3306,6 +3340,8 @@ function Settings({
   authStatus: AuthStatus | null;
   accounts: Account[];
   calendarAccounts: CalendarAccount[];
+  calendarOptions: CalendarOption[];
+  calendarOptionsError: string | null;
   activeAccountId: string | null;
   onAddAccount(): Promise<void>;
   onRemoveAccount(email: string): Promise<void>;
@@ -3316,6 +3352,7 @@ function Settings({
   onAddCalendarAccount(): Promise<void>;
   onReconnectCalendarAccount(email: string): Promise<void>;
   onRemoveCalendarAccount(email: string): Promise<void>;
+  onSetCalendarSelection(accountId: string, calendarIds: string[]): Promise<void>;
   onSettingsImported(result: SettingsImportResult): Promise<void>;
   splitInboxes: SplitInbox[];
   labelsByAccount: Record<string, Label[]>;
@@ -3372,9 +3409,12 @@ function Settings({
             <CalendarAccountsSettings
               authStatus={authStatus}
               accounts={calendarAccounts}
+              calendars={calendarOptions}
+              calendarsError={calendarOptionsError}
               onAdd={onAddCalendarAccount}
               onReconnect={onReconnectCalendarAccount}
               onRemove={onRemoveCalendarAccount}
+              onSetSelection={onSetCalendarSelection}
             />
           ) : null}
           {section === "splitInboxes" ? (
@@ -3765,15 +3805,21 @@ function AccountsSettings({
 function CalendarAccountsSettings({
   authStatus,
   accounts,
+  calendars,
+  calendarsError,
   onAdd,
   onReconnect,
   onRemove,
+  onSetSelection,
 }: {
   authStatus: AuthStatus | null;
   accounts: CalendarAccount[];
+  calendars: CalendarOption[];
+  calendarsError: string | null;
   onAdd(): Promise<void>;
   onReconnect(email: string): Promise<void>;
   onRemove(email: string): Promise<void>;
+  onSetSelection(accountId: string, calendarIds: string[]): Promise<void>;
 }) {
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -3859,10 +3905,41 @@ function CalendarAccountsSettings({
                   </button>
                 </span>
               </div>
+              {account.status === "connected" ? (
+                <fieldset className="calendar-picker">
+                  <legend>Calendars shown in the T sidebar</legend>
+                  {calendars.filter((calendar) => calendar.accountId === account.email).length === 0 ? (
+                    <p>Loading calendars…</p>
+                  ) : calendars
+                    .filter((calendar) => calendar.accountId === account.email)
+                    .map((calendar) => (
+                      <label key={calendar.id}>
+                        <input
+                          type="checkbox"
+                          checked={calendar.selected}
+                          disabled={busyEmail !== null}
+                          onChange={(event) => {
+                            const selected = calendars
+                              .filter((candidate) =>
+                                candidate.accountId === account.email
+                                && candidate.selected
+                                && candidate.id !== calendar.id
+                              )
+                              .map((candidate) => candidate.id);
+                            if (event.target.checked) selected.push(calendar.id);
+                            act(account.email, () => onSetSelection(account.email, selected));
+                          }}
+                        />
+                        <span>{calendar.name}{calendar.primary ? " (Primary)" : ""}</span>
+                      </label>
+                    ))}
+                </fieldset>
+              ) : null}
             </li>
           ))}
         </ul>
       )}
+      {calendarsError ? <p className="form-error" role="alert">{calendarsError}</p> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
   );

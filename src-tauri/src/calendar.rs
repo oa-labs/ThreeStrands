@@ -5,7 +5,10 @@ use calcard::icalendar::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::{auth::GoogleAuth, models::ScheduleEvent};
+use crate::{
+    auth::GoogleAuth,
+    models::{CalendarOption, ScheduleEvent},
+};
 
 const MAX_EVENTS: usize = 20;
 const MAX_CALENDAR_BYTES: usize = 2 * 1024 * 1024;
@@ -22,10 +25,9 @@ struct GoogleCalendarList {
 #[derive(Deserialize)]
 struct GoogleCalendarListEntry {
     id: String,
+    summary: String,
     #[serde(default)]
     primary: bool,
-    #[serde(default)]
-    selected: bool,
 }
 
 #[derive(Deserialize)]
@@ -50,24 +52,24 @@ struct GoogleEventTime {
     date_time: Option<String>,
 }
 
-pub async fn fetch_schedule(
+fn calendar_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|error| error.to_string())
+}
+
+pub async fn list_calendar_options(
     auth: GoogleAuth,
     account_id: &str,
-    time_min: &str,
-    time_max: &str,
-    time_zone: &str,
-) -> Result<Vec<ScheduleEvent>, String> {
+) -> Result<Vec<CalendarOption>, String> {
     let access_token = auth
         .access_token()
         .await
         .map_err(|error| error.to_string())?;
     let max_results = MAX_SCHEDULE_EVENTS.to_string();
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(45))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let calendar_response = client
+    let response = calendar_client()?
         .get(CALENDAR_LIST_URL)
         .bearer_auth(&access_token)
         .query(&[
@@ -78,8 +80,40 @@ pub async fn fetch_schedule(
         .send()
         .await
         .map_err(|error| error.to_string())?;
-    let calendars: GoogleCalendarList = checked_json(calendar_response).await?;
-    let calendar_ids = selected_calendar_ids(calendars.items);
+    let calendars: GoogleCalendarList = checked_json(response).await?;
+    Ok(calendar_options(calendars.items, account_id))
+}
+
+fn calendar_options(
+    entries: Vec<GoogleCalendarListEntry>,
+    account_id: &str,
+) -> Vec<CalendarOption> {
+    entries
+        .into_iter()
+        .map(|entry| CalendarOption {
+            id: entry.id,
+            account_id: account_id.to_string(),
+            name: entry.summary,
+            primary: entry.primary,
+            selected: false,
+        })
+        .collect()
+}
+
+pub async fn fetch_schedule(
+    auth: GoogleAuth,
+    account_id: &str,
+    calendar_ids: &[String],
+    time_min: &str,
+    time_max: &str,
+    time_zone: &str,
+) -> Result<Vec<ScheduleEvent>, String> {
+    let access_token = auth
+        .access_token()
+        .await
+        .map_err(|error| error.to_string())?;
+    let max_results = MAX_SCHEDULE_EVENTS.to_string();
+    let client = calendar_client()?;
     let mut schedule = Vec::new();
     for calendar_id in calendar_ids {
         let mut events_url = url::Url::parse(CALENDARS_URL).map_err(|error| error.to_string())?;
@@ -118,14 +152,6 @@ async fn checked_json<T: serde::de::DeserializeOwned>(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     Err(format!("Google Calendar returned {status}: {body}"))
-}
-
-fn selected_calendar_ids(entries: Vec<GoogleCalendarListEntry>) -> Vec<String> {
-    entries
-        .into_iter()
-        .filter(|entry| entry.primary || entry.selected)
-        .map(|entry| entry.id)
-        .collect()
 }
 
 fn normalize_events(
@@ -390,25 +416,26 @@ mod tests {
     }
 
     #[test]
-    fn fetches_primary_and_selected_calendars_only() {
-        let ids = selected_calendar_ids(vec![
+    fn maps_calendar_list_entries_for_selection_ui() {
+        let options = calendar_options(
+            vec![
             GoogleCalendarListEntry {
                 id: "primary@example.com".into(),
+                summary: "My calendar".into(),
                 primary: true,
-                selected: false,
             },
             GoogleCalendarListEntry {
                 id: "team@example.com".into(),
+                summary: "Team".into(),
                 primary: false,
-                selected: true,
             },
-            GoogleCalendarListEntry {
-                id: "hidden@example.com".into(),
-                primary: false,
-                selected: false,
-            },
-        ]);
+            ],
+            "work@example.com",
+        );
 
-        assert_eq!(ids, vec!["primary@example.com", "team@example.com"]);
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[0].name, "My calendar");
+        assert!(options[0].primary);
+        assert_eq!(options[1].account_id, "work@example.com");
     }
 }

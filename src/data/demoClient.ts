@@ -4,6 +4,7 @@ import { parseAddress } from "../emailAddress";
 import type {
   Account,
   CalendarAccount,
+  CalendarOption,
   ContactSuggestion,
   Label,
   ReplyAssistContext,
@@ -91,6 +92,7 @@ let accounts: Account[] = [
   },
 ];
 let calendarAccounts: CalendarAccount[] = [];
+let calendarOptions: CalendarOption[] = [];
 
 let threads = structuredClone(initialThreads);
 let labels: Label[] = [
@@ -560,6 +562,15 @@ export const demoClient: MailClient = {
       status: "connected",
     };
     calendarAccounts = [account];
+    calendarOptions = [
+      {
+        id: DEMO_ACCOUNT_ID,
+        accountId: DEMO_ACCOUNT_ID,
+        name: "My calendar",
+        primary: true,
+        selected: true,
+      },
+    ];
     return structuredClone(account);
   },
   async reconnectCalendarAccount(email) {
@@ -570,6 +581,19 @@ export const demoClient: MailClient = {
   },
   async removeCalendarAccount(email) {
     calendarAccounts = calendarAccounts.filter((account) => account.email !== email);
+    calendarOptions = calendarOptions.filter((calendar) => calendar.accountId !== email);
+  },
+  async listCalendarOptions() {
+    return structuredClone(calendarOptions);
+  },
+  async setCalendarSelection(accountId, calendarIds) {
+    const selected = new Set(calendarIds);
+    calendarOptions = calendarOptions.map((calendar) =>
+      calendar.accountId === accountId
+        ? { ...calendar, selected: selected.has(calendar.id) }
+        : calendar
+    );
+    return structuredClone(calendarOptions.filter((calendar) => calendar.accountId === accountId));
   },
   async listScheduleEvents() {
     return { events: [], errors: [] };

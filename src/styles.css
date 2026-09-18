@@ -1180,6 +1180,19 @@ form.split-inbox-add select {
 .account-card-row { display: flex; align-items: center; gap: 12px; }
 .account-card-avatar { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%; color: white; font-size: calc(13px * var(--font-scale)); font-weight: 700; }
 .calendar-account-avatar { background: var(--accent); }
+.calendar-picker {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 7px;
+  margin: 2px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  padding: 10px 0 0;
+}
+.calendar-picker legend { padding: 0; color: var(--muted); font-size: calc(11px * var(--font-scale)); font-weight: 650; }
+.calendar-picker label { display: flex; align-items: center; gap: 8px; font-size: calc(13px * var(--font-scale)); }
+.calendar-picker p { margin: 0; color: var(--muted); font-size: calc(12px * var(--font-scale)); }
 .account-card-identity { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
 .account-card-heading { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .account-card-heading strong { overflow: hidden; font-size: calc(13px * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }

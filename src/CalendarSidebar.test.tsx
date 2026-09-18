@@ -81,6 +81,60 @@ describe("calendar sidebar", () => {
     expect(await screen.findByRole("region", { name: "Calendar Accounts" })).toBeInTheDocument();
   });
 
+  it("persists an explicit calendar selection, including empty", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      {
+        email: "calendar@example.com",
+        connectedAt: "2026-09-18T00:00:00Z",
+        status: "connected",
+      },
+    ]);
+    vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([
+      {
+        id: "primary",
+        accountId: "calendar@example.com",
+        name: "Personal",
+        primary: true,
+        selected: true,
+      },
+      {
+        id: "team",
+        accountId: "calendar@example.com",
+        name: "Team",
+        primary: false,
+        selected: false,
+      },
+    ]);
+    const setSelection = vi.spyOn(mailClient, "setCalendarSelection").mockResolvedValue([
+      {
+        id: "primary",
+        accountId: "calendar@example.com",
+        name: "Personal",
+        primary: true,
+        selected: false,
+      },
+      {
+        id: "team",
+        accountId: "calendar@example.com",
+        name: "Team",
+        primary: false,
+        selected: false,
+      },
+    ]);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Calendar Accounts" }));
+
+    const primary = await screen.findByRole("checkbox", { name: "Personal (Primary)" });
+    expect(primary).toBeChecked();
+    fireEvent.click(primary);
+
+    await waitFor(() =>
+      expect(setSelection).toHaveBeenCalledWith("calendar@example.com", []),
+    );
+  });
+
   it("includes the T shortcut in keyboard help", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
