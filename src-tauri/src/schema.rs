@@ -105,14 +105,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 CREATE TABLE IF NOT EXISTS calendar_accounts (
     email TEXT PRIMARY KEY,
-    connected_at TEXT NOT NULL,
-    selection_initialized INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS calendar_selections (
-    account_id TEXT NOT NULL REFERENCES calendar_accounts(email) ON DELETE CASCADE,
-    calendar_id TEXT NOT NULL,
-    PRIMARY KEY (account_id, calendar_id)
+    connected_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS triage_events (
