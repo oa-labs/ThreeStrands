@@ -1175,7 +1175,6 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .label-list > div:hover { background: var(--hover); }
 .label-list label { display: flex; align-items: center; gap: 9px; font-size: calc(13px * var(--font-scale)); }
 .label-list button { display: grid; place-items: center; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
-.label-color { width: 8px; height: 8px; border-radius: 50%; }
 .label-actions { display: flex; gap: 4px; }
 .rename-label { display: flex; gap: 7px; padding: 10px 14px; border-top: 1px solid var(--border); }
 .rename-label input { min-width: 0; flex: 1; padding: 7px 9px; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); background: var(--input); }

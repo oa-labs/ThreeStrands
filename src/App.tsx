@@ -3441,7 +3441,6 @@ function LabelManager({
                   }
                 }}
               />
-              <span className="label-color" style={{ background: label.color ?? "#64646d" }} />
               {formatLabelName(label)}
             </label>
             {label.kind === "user" ? (
