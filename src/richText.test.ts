@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  applyAsteriskListShortcut,
   applyFormattingShortcut,
   formattingShortcutFor,
   formattingShortcuts,
@@ -73,6 +74,44 @@ describe("Superhuman formatting shortcuts", () => {
     expect(applyFormattingShortcut(editor, indent)).toBe(true);
     expect(execute).toHaveBeenCalledWith("indent", false, "");
   });
+});
+
+describe("asterisk list shortcut", () => {
+  it("turns a standalone asterisk into an empty bulleted list", () => {
+    const editor = document.createElement("div");
+    editor.textContent = "*";
+    document.body.append(editor);
+    const text = editor.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(applyAsteriskListShortcut(editor)).toBe(true);
+    expect(editor.innerHTML).toBe("<ul><li><br></li></ul>");
+    expect(selection.anchorNode).toBe(editor.querySelector("li"));
+  });
+
+  it.each(["<p>Hello *</p>", "<ul><li>*</li></ul>", "<p>* more</p>"]) (
+    "leaves %s unchanged",
+    (html) => {
+      const editor = document.createElement("div");
+      editor.innerHTML = html;
+      document.body.append(editor);
+      const text = editor.querySelector("p, li")?.firstChild ?? editor.firstChild!;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      range.collapse(false);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      expect(applyAsteriskListShortcut(editor)).toBe(false);
+      expect(editor.innerHTML).toBe(html);
+    },
+  );
 });
 
 it("converts plain drafts and sanitizes rich compose HTML", () => {

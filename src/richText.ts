@@ -38,6 +38,54 @@ export function selectionIsInList(editor: HTMLElement): boolean {
   return Boolean(element?.closest("li") && editor.contains(element));
 }
 
+/**
+ * Converts a standalone asterisk followed by a space into an empty bullet.
+ * The caller invokes this while handling the space key, before the browser
+ * inserts the space itself.
+ */
+export function applyAsteriskListShortcut(editor: HTMLElement): boolean {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || !selection.isCollapsed) return false;
+
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.endContainer)) return false;
+
+  const anchorElement = range.endContainer instanceof Element
+    ? range.endContainer
+    : range.endContainer.parentElement;
+  if (anchorElement?.closest("li")) return false;
+
+  const block = anchorElement?.closest("p, div, blockquote, pre");
+  const container = block && block !== editor && editor.contains(block)
+    ? block
+    : editor.textContent === "*" && !editor.querySelector("p, div, blockquote, pre, br")
+      ? editor
+      : null;
+  if (!container) return false;
+
+  const contents = document.createRange();
+  contents.selectNodeContents(container);
+  const beforeCaret = contents.cloneRange();
+  beforeCaret.setEnd(range.endContainer, range.endOffset);
+  const afterCaret = contents.cloneRange();
+  afterCaret.setStart(range.endContainer, range.endOffset);
+  if (beforeCaret.toString() !== "*" || afterCaret.toString() !== "") return false;
+
+  const list = document.createElement("ul");
+  const item = document.createElement("li");
+  item.append(document.createElement("br"));
+  list.append(item);
+  if (container === editor) editor.replaceChildren(list);
+  else container.replaceWith(list);
+
+  const caret = document.createRange();
+  caret.setStart(item, 0);
+  caret.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(caret);
+  return true;
+}
+
 export function applyFormattingShortcut(
   editor: HTMLElement,
   shortcut: FormattingShortcut,

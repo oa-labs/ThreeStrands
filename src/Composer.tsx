@@ -13,6 +13,7 @@ import {
 } from "./aiSettings";
 import { RecipientField } from "./RecipientField";
 import {
+  applyAsteriskListShortcut,
   applyFormattingShortcut,
   formattingShortcutFor,
   linkifyPlainText,
@@ -405,6 +406,12 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
               editBody(event.currentTarget);
               event.preventDefault();
               event.stopPropagation();
+              return;
+            }
+            if (!event.nativeEvent.isComposing && event.key === " " && applyAsteriskListShortcut(event.currentTarget)) {
+              event.preventDefault();
+              event.stopPropagation();
+              editBody(event.currentTarget);
               return;
             }
             const shortcut = formattingShortcutFor(event.nativeEvent);

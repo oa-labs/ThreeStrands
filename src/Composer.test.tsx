@@ -99,6 +99,30 @@ describe("Composer recipient visibility and shortcuts", () => {
   });
 });
 
+describe("Composer asterisk list shortcut", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("starts a bulleted list when space follows an asterisk", () => {
+    render(<Composer draft={{ ...draft, body: "*" }} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message body" });
+    const text = editor.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.keyDown(editor, { key: " " });
+
+    expect(editor.querySelector("ul > li")).toBeInTheDocument();
+    expect(editor).not.toHaveTextContent("*");
+  });
+});
+
 describe("Composer pasted images", () => {
   afterEach(() => {
     cleanup();
