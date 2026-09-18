@@ -1042,6 +1042,18 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .calendar-grid-error { display: grid; justify-items: center; gap: 7px; color: var(--error); }
 .calendar-grid-error p { margin: 0; }
 .calendar-grid-error button { display: flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; background: var(--hover); color: var(--text); cursor: pointer; }
+@media (max-width: 1100px) {
+  .app-shell.calendar-open {
+    grid-template-columns: 58px var(--inbox-width, 400px) minmax(0, 1fr);
+  }
+  .calendar-sidebar {
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: 5;
+    width: min(360px, calc(100vw - 58px));
+    box-shadow: -12px 0 36px var(--shadow);
+  }
+}
 
 .modal-backdrop {
   position: fixed;

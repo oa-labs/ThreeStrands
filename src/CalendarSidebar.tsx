@@ -38,11 +38,6 @@ function hourLabel(hour: number): string {
   return `${hour > 12 ? hour - 12 : hour} ${hour >= 12 ? "pm" : "am"}`;
 }
 
-function eventMinutes(value: string): number {
-  const date = new Date(value);
-  return date.getHours() * 60 + date.getMinutes();
-}
-
 function formatEventTime(event: ScheduleEvent): string {
   if (event.allDay) return "All day";
   const formatter = new Intl.DateTimeFormat(undefined, {
@@ -135,9 +130,22 @@ export function CalendarSidebar({ onClose }: { onClose(): void }) {
           <div className="calendar-day-column">
             {HOURS.map((hour) => <div className="calendar-hour-line" key={hour} />)}
             {timedEvents.map((event) => {
-              const start = eventMinutes(event.start);
-              const end = eventMinutes(event.end);
-              const duration = Math.max(24, ((end - start) / 60) * HOUR_HEIGHT);
+              const eventStart = new Date(event.start);
+              const eventEnd = new Date(event.end);
+              const dayStart = startOfLocalDay(date);
+              const dayEnd = new Date(dayStart);
+              dayEnd.setDate(dayEnd.getDate() + 1);
+              const start = eventStart <= dayStart
+                ? 0
+                : eventStart >= dayEnd
+                  ? 24 * 60
+                  : eventStart.getHours() * 60 + eventStart.getMinutes();
+              const end = eventEnd >= dayEnd
+                ? 24 * 60
+                : eventEnd <= dayStart
+                  ? 0
+                  : eventEnd.getHours() * 60 + eventEnd.getMinutes();
+              const duration = Math.max(24, ((Math.max(start, end) - start) / 60) * HOUR_HEIGHT);
               return (
                 <article
                   className="calendar-schedule-event"

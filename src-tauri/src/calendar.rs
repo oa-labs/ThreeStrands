@@ -3,6 +3,7 @@ use calcard::icalendar::{
     ICalendarParameterValue, ICalendarProperty, ICalendarValue,
 };
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use crate::{auth::GoogleAuth, models::ScheduleEvent};
 
@@ -42,7 +43,12 @@ pub async fn fetch_schedule(
 ) -> Result<Vec<ScheduleEvent>, String> {
     let access_token = auth.access_token().await.map_err(|error| error.to_string())?;
     let max_results = MAX_SCHEDULE_EVENTS.to_string();
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
         .get(EVENTS_URL)
         .bearer_auth(access_token)
         .query(&[

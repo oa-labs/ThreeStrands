@@ -1257,7 +1257,7 @@ export function App() {
   const openToday = useCallback(() => {
     void refreshCalendarAccounts()
       .then((connected) => {
-        if (connected.length === 0) {
+        if (!connected.some((account) => account.status === "connected")) {
           openSettingsAt("calendarAccounts");
           return;
         }
