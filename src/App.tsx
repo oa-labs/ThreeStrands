@@ -155,7 +155,7 @@ import {
   type TriageSession,
 } from "./triage";
 
-type SettingsSection = "appearance" | "reading" | "accounts" | "calendarAccounts" | "splitInboxes" | "ai" | "privacy" | "data";
+type SettingsSection = "appearance" | "reading" | "accounts" | "calendarAccounts" | "splitInboxes" | "ai" | "privacy" | "diagnostics" | "data";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -603,7 +603,6 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarAccounts, setCalendarAccounts] = useState<CalendarAccount[]>([]);
   const [calendarOptions, setCalendarOptions] = useState<CalendarOption[]>([]);
@@ -1547,7 +1546,6 @@ export function App() {
       setSearchOpen(true);
     },
     refresh: refreshMail,
-    openDiagnostics: () => setDiagnosticsOpen(true),
     openLabels: () => setLabelTargetIds(selected ? [selected.id] : null),
     openPalette: () => setPaletteOpen(true),
     openShortcutHelp: () => setShortcutHelpOpen(true),
@@ -1710,17 +1708,6 @@ export function App() {
           >
             <RefreshCw size={19} className={syncStatus?.state === "syncing" ? "spin" : ""} />
           </button>
-          {(syncStatus?.failedMutations?.length ?? 0)
-            + (syncStatus?.quarantinedMessages?.length ?? 0) > 0 ? (
-            <button
-              className="nav-button mutation-failure-button"
-              aria-label="Sync diagnostics need attention"
-              title="Sync diagnostics need attention"
-              onClick={() => setDiagnosticsOpen(true)}
-            >
-              <AlertCircle size={19} />
-            </button>
-          ) : null}
           <button
             className="nav-button"
             aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
@@ -2432,13 +2419,6 @@ export function App() {
       {shortcutHelpOpen ? (
         <ShortcutHelp extraCommands={paletteExtraCommands} onClose={() => setShortcutHelpOpen(false)} />
       ) : null}
-      {diagnosticsOpen ? (
-        <Diagnostics
-          status={syncStatus}
-          recovery={recoveryStatus}
-          onClose={() => setDiagnosticsOpen(false)}
-        />
-      ) : null}
       {labelTargetIds && labelTargetIds.length > 0 ? (
         <LabelManager
           labels={labels}
@@ -2487,6 +2467,8 @@ export function App() {
           onAutoReadDelayChange={setAutoReadDelaySeconds}
           loadRemoteImages={loadRemoteImages}
           onLoadRemoteImagesChange={setLoadRemoteImages}
+          syncStatus={syncStatus}
+          recoveryStatus={recoveryStatus}
           onAiConfigChange={refreshAiAvailability}
           authStatus={authStatus}
           accounts={accounts}
@@ -3074,70 +3056,113 @@ function recoveryStatusMessage(recovery: RecoveryStatus): string {
   }
 }
 
-export function Diagnostics({
+function SyncDiagnosticsDetails({
   status,
   recovery,
-  onClose,
 }: {
   status: SyncStatus | null;
   recovery?: RecoveryStatus | null;
-  onClose(): void;
 }) {
   return (
-    <Modal title="Sync diagnostics" onClose={onClose}>
-      <dl className="diagnostics">
-        {recovery ? (
-          <>
-            <dt>Database recovery</dt>
-            <dd className="recovery-notice">{recoveryStatusMessage(recovery)}</dd>
-          </>
-        ) : null}
-        <dt>State</dt><dd>{status?.state ?? "unknown"}</dd>
-        <dt>Last successful sync</dt>
-        <dd>{status?.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Never"}</dd>
-        <dt>History cursor</dt><dd>{status?.cursor ?? "Not initialized"}</dd>
-        <dt>Pending mutations</dt><dd>{status?.pendingMutations ?? 0}</dd>
-        <dt>Permanently failed operations</dt>
-        <dd>
-          {status?.failedMutations?.length ? (
-            <ul className="failed-mutations">
-              {status.failedMutations.map((mutation) => (
-                <li key={mutation.id}>
-                  <strong>{mutation.kind}</strong>
+    <dl className="diagnostics">
+      {recovery ? (
+        <>
+          <dt>Database recovery</dt>
+          <dd className="recovery-notice">{recoveryStatusMessage(recovery)}</dd>
+        </>
+      ) : null}
+      <dt>State</dt><dd>{status?.state ?? "unknown"}</dd>
+      <dt>Last successful sync</dt>
+      <dd>{status?.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Never"}</dd>
+      <dt>History cursor</dt><dd>{status?.cursor ?? "Not initialized"}</dd>
+      <dt>Pending mutations</dt><dd>{status?.pendingMutations ?? 0}</dd>
+      <dt>Permanently failed operations</dt>
+      <dd>
+        {status?.failedMutations?.length ? (
+          <ul className="failed-mutations">
+            {status.failedMutations.map((mutation) => (
+              <li key={mutation.id}>
+                <strong>{mutation.kind}</strong>
+                {" · "}
+                {mutation.error}
+                <small>
+                  {mutation.attempts} {mutation.attempts === 1 ? "attempt" : "attempts"}
                   {" · "}
-                  {mutation.error}
-                  <small>
-                    {mutation.attempts} {mutation.attempts === 1 ? "attempt" : "attempts"}
-                    {" · "}
-                    {new Date(mutation.createdAt).toLocaleString()}
-                  </small>
-                </li>
-              ))}
-            </ul>
-          ) : "None"}
-        </dd>
-        <dt>Quarantined messages</dt>
-        <dd>
-          {status?.quarantinedMessages?.length ? (
-            <ul className="failed-mutations">
-              {status.quarantinedMessages.map((message) => (
-                <li key={`${message.threadId}:${message.messageId}`}>
-                  <strong>Message {message.messageId}</strong>
+                  {new Date(mutation.createdAt).toLocaleString()}
+                </small>
+              </li>
+            ))}
+          </ul>
+        ) : "None"}
+      </dd>
+      <dt>Quarantined messages</dt>
+      <dd>
+        {status?.quarantinedMessages?.length ? (
+          <ul className="failed-mutations">
+            {status.quarantinedMessages.map((message) => (
+              <li key={`${message.threadId}:${message.messageId}`}>
+                <strong>Message {message.messageId}</strong>
+                {" · "}
+                {message.error}
+                <small>
+                  Thread {message.threadId}
                   {" · "}
-                  {message.error}
-                  <small>
-                    Thread {message.threadId}
-                    {" · "}
-                    {new Date(message.createdAt).toLocaleString()}
-                  </small>
-                </li>
-              ))}
-            </ul>
-          ) : "None"}
-        </dd>
-        <dt>Last error</dt><dd>{status?.error ?? "None"}</dd>
-      </dl>
-    </Modal>
+                  {new Date(message.createdAt).toLocaleString()}
+                </small>
+              </li>
+            ))}
+          </ul>
+        ) : "None"}
+      </dd>
+      <dt>Last error</dt><dd>{status?.error ?? "None"}</dd>
+    </dl>
+  );
+}
+
+export function DiagnosticsSettings({
+  status,
+  recovery,
+}: {
+  status: SyncStatus | null;
+  recovery?: RecoveryStatus | null;
+}) {
+  const [reporting, setReporting] = useState(crashReportingEnabled);
+  const [reportCount, setReportCount] = useState(() => localCrashReports().length);
+
+  return (
+    <section className="settings-section" aria-label="Diagnostics">
+      <h3>Sync diagnostics</h3>
+      <p className="settings-hint">
+        This information can help troubleshoot synchronization problems. Most people will not need to change anything here.
+      </p>
+      <SyncDiagnosticsDetails status={status} recovery={recovery} />
+
+      <h3>Crash reports</h3>
+      <label className="settings-checkbox">
+        <input
+          type="checkbox"
+          checked={reporting}
+          onChange={(event) => {
+            setReporting(event.target.checked);
+            setCrashReportingEnabled(event.target.checked);
+          }}
+        />
+        Share sanitized crash reports
+      </label>
+      <span className="settings-hint">
+        Disabled by default. Email addresses and URLs are redacted.{" "}
+        Policy: <code>docs/crash-reporting.md</code>
+      </span>
+      <button
+        disabled={reportCount === 0}
+        onClick={() => {
+          clearLocalCrashReports();
+          setReportCount(0);
+        }}
+      >
+        Clear {reportCount} local {reportCount === 1 ? "report" : "reports"}
+      </button>
+    </section>
   );
 }
 
@@ -3281,6 +3306,7 @@ const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "splitInboxes", label: "Split Inboxes" },
   { id: "ai", label: "AI provider" },
   { id: "privacy", label: "Privacy" },
+  { id: "diagnostics", label: "Diagnostics" },
   { id: "data", label: "Data transfer" },
 ];
 
@@ -3298,6 +3324,8 @@ function Settings({
   onAutoReadDelayChange,
   loadRemoteImages,
   onLoadRemoteImagesChange,
+  syncStatus,
+  recoveryStatus,
   onAiConfigChange,
   authStatus,
   accounts,
@@ -3336,6 +3364,8 @@ function Settings({
   onAutoReadDelayChange(value: number): void;
   loadRemoteImages: boolean;
   onLoadRemoteImagesChange(value: boolean): void;
+  syncStatus: SyncStatus | null;
+  recoveryStatus: RecoveryStatus | null;
   onAiConfigChange(): void;
   authStatus: AuthStatus | null;
   accounts: Account[];
@@ -3435,6 +3465,9 @@ function Settings({
               loadRemoteImages={loadRemoteImages}
               onLoadRemoteImagesChange={onLoadRemoteImagesChange}
             />
+          ) : null}
+          {section === "diagnostics" ? (
+            <DiagnosticsSettings status={syncStatus} recovery={recoveryStatus} />
           ) : null}
           {section === "data" ? <DataTransferSettings onImported={onSettingsImported} /> : null}
         </div>
@@ -4428,8 +4461,6 @@ function PrivacySettings({
   loadRemoteImages: boolean;
   onLoadRemoteImagesChange(value: boolean): void;
 }) {
-  const [reporting, setReporting] = useState(crashReportingEnabled);
-  const [reportCount, setReportCount] = useState(() => localCrashReports().length);
   const [retentionDays, setRetentionDaysState] = useState<number | null>(null);
 
   useEffect(() => {
@@ -4474,31 +4505,6 @@ function PrivacySettings({
         When disabled, images stay blocked until you choose Load images in a message.
       </span>
 
-      <h3>Crash reports</h3>
-      <label className="settings-checkbox">
-        <input
-          type="checkbox"
-          checked={reporting}
-          onChange={(event) => {
-            setReporting(event.target.checked);
-            setCrashReportingEnabled(event.target.checked);
-          }}
-        />
-        Share sanitized crash reports
-      </label>
-      <span className="settings-hint">
-        Disabled by default. Email addresses and URLs are redacted.{" "}
-        Policy: <code>docs/crash-reporting.md</code>
-      </span>
-      <button
-        disabled={reportCount === 0}
-        onClick={() => {
-          clearLocalCrashReports();
-          setReportCount(0);
-        }}
-      >
-        Clear {reportCount} local {reportCount === 1 ? "report" : "reports"}
-      </button>
     </section>
   );
 }

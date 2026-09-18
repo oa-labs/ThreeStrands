@@ -1,7 +1,7 @@
 # Crash reporting policy
 
 Crash reporting is disabled by default and is never required to use ThreeStrands.
-The user enables or disables it from Sync diagnostics.
+The user enables or disables it from Settings → Diagnostics.
 
 When enabled, the client retains at most 20 sanitized reports locally. A build
 may set `VITE_CRASH_REPORT_ENDPOINT` to submit the same reports to a project

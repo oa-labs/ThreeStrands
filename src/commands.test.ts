@@ -59,7 +59,6 @@ function noopContext(): CommandContext {
     summarizeSelected: async () => ({}),
     focusSearch: () => {},
     refresh: () => {},
-    openDiagnostics: () => {},
     openLabels: () => {},
     openPalette: () => {},
     openShortcutHelp: () => {},
@@ -76,6 +75,10 @@ function noopContext(): CommandContext {
 }
 
 describe("command registry", () => {
+  it("keeps diagnostics in Settings instead of exposing a standalone command", () => {
+    expect(commands.find((command) => command.id === "diagnostics.open")).toBeUndefined();
+  });
+
   it("keeps shortcut keys unambiguous", () => {
     const keys = commands.flatMap((command) => command.keys.map((key) => key.toLowerCase()));
     expect(new Set(keys).size).toBe(keys.length);

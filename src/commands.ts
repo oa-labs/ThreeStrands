@@ -54,7 +54,6 @@ export type CommandContext = {
   summarizeSelected(): Promise<CommandResult>;
   focusSearch(): void;
   refresh(): void;
-  openDiagnostics(): void;
   openLabels(): void;
   openPalette(): void;
   openShortcutHelp(): void;
@@ -354,14 +353,6 @@ export const commands: Command[] = [
     group: "Application",
     enabled: (context) => isThreadMailbox(context) && !context.composerActive,
     run: (context) => complete(() => context.toggleMessageFilter("noReply")),
-  },
-  {
-    id: "diagnostics.open",
-    title: "Open sync diagnostics",
-    keys: [],
-    group: "Application",
-    enabled: () => true,
-    run: (context) => complete(context.openDiagnostics),
   },
   {
     id: "settings.open",

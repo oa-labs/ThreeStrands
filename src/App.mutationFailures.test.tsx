@@ -1,12 +1,19 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { Diagnostics } from "./App";
+import { DiagnosticsSettings } from "./App";
 import type { SyncStatus } from "./domain";
 
 afterEach(cleanup);
 
 describe("mutation failure diagnostics", () => {
+  it("keeps crash-report controls in the diagnostics section", () => {
+    render(<DiagnosticsSettings status={null} />);
+
+    expect(screen.getByRole("heading", { name: "Crash reports" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Share sanitized crash reports" })).toBeInTheDocument();
+  });
+
   it("shows permanently rejected mailbox operations with their reason", () => {
     const status: SyncStatus = {
       state: "error",
@@ -25,7 +32,7 @@ describe("mutation failure diagnostics", () => {
       error: "Gmail permanently rejected the request: invalid label",
     };
 
-    render(<Diagnostics status={status} onClose={vi.fn()} />);
+    render(<DiagnosticsSettings status={status} />);
 
     expect(screen.getByText("Permanently failed operations")).toBeInTheDocument();
     expect(screen.getByText("label")).toBeInTheDocument();
@@ -49,7 +56,7 @@ describe("mutation failure diagnostics", () => {
       error: null,
     };
 
-    render(<Diagnostics status={status} onClose={vi.fn()} />);
+    render(<DiagnosticsSettings status={status} />);
 
     expect(screen.getByText("Quarantined messages")).toBeInTheDocument();
     expect(screen.getByText("Message bad-message")).toBeInTheDocument();
