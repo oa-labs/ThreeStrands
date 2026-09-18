@@ -3944,7 +3944,7 @@ function CalendarAccountsSettings({
               </div>
               {account.status === "connected" ? (
                 <fieldset className="calendar-picker">
-                  <legend>Calendars shown in the T sidebar</legend>
+                  <legend>Calendars shown in the sidebar</legend>
                   {calendars.filter((calendar) => calendar.accountId === account.email).length === 0 ? (
                     <p>Loading calendars…</p>
                   ) : calendars

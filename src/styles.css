@@ -1025,6 +1025,16 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 }
 .calendar-schedule-event strong { overflow: hidden; font-size: calc(12px * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
 .calendar-schedule-event span { color: var(--secondary); }
+.calendar-schedule-event-compact {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 7px;
+}
+.calendar-schedule-event-compact strong { flex: 0 1 auto; }
+.calendar-schedule-event-compact span { flex: 0 0 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.calendar-schedule-event-tight { padding: 2px 6px; font-size: calc(10px * var(--font-scale)); }
+.calendar-schedule-event-tight strong { font-size: calc(10px * var(--font-scale)); }
 .calendar-grid-status {
   position: absolute;
   top: 16px;

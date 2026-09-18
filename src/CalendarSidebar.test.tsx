@@ -106,6 +106,60 @@ describe("calendar sidebar", () => {
     expect(listEvents.mock.calls[2][0]).toBe(initialTimeMin);
   });
 
+  it("renders short meetings compactly with title and time on one line", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      {
+        email: "calendar@example.com",
+        connectedAt: "2026-09-18T00:00:00Z",
+        status: "connected",
+      },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [
+        {
+          id: "standup",
+          accountId: "calendar@example.com",
+          title: "Standup",
+          start: "2026-09-18T09:00:00-07:00",
+          end: "2026-09-18T09:15:00-07:00",
+          allDay: false,
+        },
+        {
+          id: "sync",
+          accountId: "calendar@example.com",
+          title: "Sync",
+          start: "2026-09-18T10:00:00-07:00",
+          end: "2026-09-18T10:30:00-07:00",
+          allDay: false,
+        },
+        {
+          id: "review",
+          accountId: "calendar@example.com",
+          title: "Review",
+          start: "2026-09-18T11:00:00-07:00",
+          end: "2026-09-18T12:00:00-07:00",
+          allDay: false,
+        },
+      ],
+      errors: [],
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.keyDown(window, { key: "T" });
+    await screen.findByRole("complementary", { name: "Calendar schedule" });
+    await waitFor(() => expect(screen.getByText("Standup")).toBeInTheDocument());
+
+    const standup = screen.getByText("Standup").closest("article");
+    const sync = screen.getByText("Sync").closest("article");
+    const review = screen.getByText("Review").closest("article");
+
+    expect(standup).toHaveClass("calendar-schedule-event-compact", "calendar-schedule-event-tight");
+    expect(sync).toHaveClass("calendar-schedule-event-compact");
+    expect(sync).not.toHaveClass("calendar-schedule-event-tight");
+    expect(review).not.toHaveClass("calendar-schedule-event-compact");
+  });
+
   it("shows a short Calendar API error without rendering the provider response", async () => {
     const diagnostics = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([

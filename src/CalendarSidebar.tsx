@@ -186,9 +186,17 @@ export function CalendarSidebar({
                   ? 0
                   : eventEnd.getHours() * 60 + eventEnd.getMinutes();
               const duration = Math.max(24, ((Math.max(start, end) - start) / 60) * HOUR_HEIGHT);
+              const durationMinutes = (eventEnd.getTime() - eventStart.getTime()) / 60000;
+              const compact = !event.allDay && durationMinutes <= 30;
+              const tight = !event.allDay && durationMinutes <= 15;
+              const className = [
+                "calendar-schedule-event",
+                compact && "calendar-schedule-event-compact",
+                tight && "calendar-schedule-event-tight",
+              ].filter(Boolean).join(" ");
               return (
                 <article
-                  className="calendar-schedule-event"
+                  className={className}
                   key={`${event.accountId}:${event.id}`}
                   style={{
                     top: (start / 60) * HOUR_HEIGHT,
