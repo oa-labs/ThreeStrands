@@ -1657,7 +1657,7 @@ export function App() {
           <button className="nav-button" aria-label="New Message (c)" title="New Message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
           <HoverTooltip label="Inbox" shortcut="G I">
             <button
-              className={`nav-button ${mailbox === "inbox" ? "active" : ""}`}
+              className={`nav-button ${isTabbedMailbox ? "active" : ""}`}
               aria-label="Inbox (g then i)"
               onClick={() => executeById("mailbox.inbox")}
             >
@@ -1916,7 +1916,7 @@ export function App() {
                   onClick={() => setIncludeArchived((current) => !current)}
                 >
                   <Archive size={14} />
-                  {includeArchived ? <span>Archived + trash</span> : null}
+                  {includeArchived ? <span>Archived + Trash</span> : null}
                 </button>
               ) : null}
               <kbd>/</kbd>

@@ -258,7 +258,7 @@ describe("archive notice", () => {
     await act(async () => {
       includeArchived.click();
     });
-    expect(includeArchived).toHaveTextContent("Archived + trash");
+    expect(includeArchived).toHaveTextContent("Archived + Trash");
     expect(includeArchived).toHaveAttribute("aria-pressed", "true");
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
