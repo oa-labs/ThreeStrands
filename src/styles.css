@@ -396,7 +396,7 @@ h2 { font-size: calc(22px * var(--font-scale)); }
 }
 .search-status.error { color: var(--error); }
 
-.filters-anchor { position: relative; flex: 0 0 auto; }
+.filters-anchor { position: relative; flex: 0 0 auto; align-self: flex-start; margin-top: 1px; }
 .filters-trigger {
   display: flex;
   align-items: center;
