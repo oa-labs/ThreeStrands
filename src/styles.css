@@ -584,6 +584,19 @@ kbd {
 .reader { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--reader); }
 .reader-header { flex-shrink: 0; border-bottom: 1px solid var(--border); }
 .reader-header h2, .reader-actions { transform: translateY(4px); }
+.subject-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.user-label-badges { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.user-label-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 650;
+  white-space: nowrap;
+}
 .reader-actions { display: flex; gap: 5px; }
 .action-button {
   min-height: 34px;

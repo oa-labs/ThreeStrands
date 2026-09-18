@@ -81,7 +81,8 @@ describe("archive notice", () => {
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
       expect(screen.queryByText(/Label_18/i)).not.toBeInTheDocument();
-      expect(await screen.findByText("Inbox · Projects")).toBeInTheDocument();
+      expect(await screen.findByText("Inbox", { selector: ".eyebrow" })).toBeInTheDocument();
+      expect(await screen.findByText("Projects", { selector: ".user-label-badge" })).toBeInTheDocument();
       expect(listLabels).toHaveBeenCalledWith("demo@example.com");
     } finally {
       await mailClient.mutateThread({

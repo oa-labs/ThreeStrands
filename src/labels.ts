@@ -54,3 +54,37 @@ const NON_MANAGEABLE_SYSTEM_LABEL_IDS = new Set([
 export function isManageableLabel(label: Pick<Label, "id" | "kind">): boolean {
   return label.kind === "user" || !NON_MANAGEABLE_SYSTEM_LABEL_IDS.has(label.id);
 }
+
+export type ConversationLabelGroups = {
+  /** Gmail system/category labels, formatted for display (e.g. "UPDATES"). */
+  systemLabelNames: string[];
+  /** Labels the user (or an automation) applied deliberately, resolved
+   * against the account's catalog so they carry a name, not just an id. */
+  userLabels: Label[];
+};
+
+/**
+ * Splits a conversation's labels into low-signal system context and
+ * deliberately-applied user labels, so the two can be given different visual
+ * weight instead of running together in one undifferentiated list.
+ */
+export function conversationLabelGroups(
+  labelIds: string[],
+  accountLabels: Label[] | undefined,
+): ConversationLabelGroups {
+  const systemLabelNames: string[] = [];
+  const userLabels: Label[] = [];
+  for (const id of labelIdsForConversationDisplay(labelIds)) {
+    const label = accountLabels?.find((candidate) => candidate.id === id);
+    if (label?.kind === "user") {
+      userLabels.push(label);
+    } else if (label) {
+      systemLabelNames.push(formatLabelName(label));
+    } else if (!/^label_\d+$/i.test(id)) {
+      // Opaque Gmail user-label ids (e.g. "Label_18") are not useful UI;
+      // wait for the account catalog instead of briefly flashing the id.
+      systemLabelNames.push(id);
+    }
+  }
+  return { systemLabelNames, userLabels };
+}

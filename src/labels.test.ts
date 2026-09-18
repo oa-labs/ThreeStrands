@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatLabelName, isManageableLabel, labelIdsForConversationDisplay, sortLabelIdsForDisplay } from "./labels";
+import {
+  conversationLabelGroups,
+  formatLabelName,
+  isManageableLabel,
+  labelIdsForConversationDisplay,
+  sortLabelIdsForDisplay,
+} from "./labels";
 
 describe("formatLabelName", () => {
   it("strips the CATEGORY_ prefix from Gmail's system category labels", () => {
@@ -68,5 +74,47 @@ describe("isManageableLabel", () => {
     for (const id of ["INBOX", "SENT", "DRAFT", "TRASH", "SPAM", "UNREAD", "STARRED", "CHAT"]) {
       expect(isManageableLabel({ id, kind: "system" })).toBe(false);
     }
+  });
+});
+
+describe("conversationLabelGroups", () => {
+  const catalog = [
+    { id: "INBOX", name: "Inbox", kind: "system" as const },
+    { id: "CATEGORY_PERSONAL", name: "CATEGORY_PERSONAL", kind: "system" as const },
+    { id: "Label_1", name: "Todo", kind: "user" as const },
+    { id: "Label_2", name: "Personal", kind: "user" as const },
+  ];
+
+  it("separates system labels from user labels, formatting both by name", () => {
+    const result = conversationLabelGroups(["INBOX", "CATEGORY_PERSONAL", "Label_1", "Label_2"], catalog);
+    expect(result.systemLabelNames).toEqual(["Inbox", "PERSONAL"]);
+    expect(result.userLabels).toEqual([
+      { id: "Label_1", name: "Todo", kind: "user" },
+      { id: "Label_2", name: "Personal", kind: "user" },
+    ]);
+  });
+
+  it("drops an unresolved opaque user-label id instead of flashing it", () => {
+    const result = conversationLabelGroups(["INBOX", "Label_99"], catalog);
+    expect(result.systemLabelNames).toEqual(["Inbox"]);
+    expect(result.userLabels).toEqual([]);
+  });
+
+  it("falls back to the raw id for an unresolved non-opaque id", () => {
+    const result = conversationLabelGroups(["some-custom-id"], catalog);
+    expect(result.systemLabelNames).toEqual(["some-custom-id"]);
+    expect(result.userLabels).toEqual([]);
+  });
+
+  it("treats a thread with no user labels as having an empty badge group", () => {
+    const result = conversationLabelGroups(["INBOX"], catalog);
+    expect(result.systemLabelNames).toEqual(["Inbox"]);
+    expect(result.userLabels).toEqual([]);
+  });
+
+  it("handles a missing catalog by falling back to raw system ids", () => {
+    const result = conversationLabelGroups(["INBOX", "Label_1"], undefined);
+    expect(result.systemLabelNames).toEqual(["INBOX"]);
+    expect(result.userLabels).toEqual([]);
   });
 });

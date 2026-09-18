@@ -74,7 +74,7 @@ import {
 } from "./crashReporting";
 import { mailClient } from "./data/client";
 import { createForegroundRefreshController } from "./foregroundRefresh";
-import { formatLabelName, isManageableLabel, labelIdsForConversationDisplay } from "./labels";
+import { conversationLabelGroups, formatLabelName, isManageableLabel } from "./labels";
 import {
   filterThreadsByMessageFilters,
   MESSAGE_FILTER_OPTIONS,
@@ -1348,6 +1348,9 @@ export function App() {
   const unsubscribeMessage = visibleDetail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
   const summaryPending = visibleDetail ? summarizingIds.has(visibleDetail.thread.id) : false;
   const summaryError = visibleDetail ? summaryErrors[visibleDetail.thread.id] ?? null : null;
+  const { systemLabelNames: conversationSystemLabels, userLabels: conversationUserLabels } = visibleDetail
+    ? conversationLabelGroups(visibleDetail.thread.labels, labelsByAccount[visibleDetail.thread.accountId])
+    : { systemLabelNames: [], userLabels: [] };
 
   const mutateIdsRef = useRef(mutateIds);
   mutateIdsRef.current = mutateIds;
@@ -2107,20 +2110,19 @@ export function App() {
           <>
             <header className="reader-header">
               <div>
-                <span className="eyebrow">
-                  {labelIdsForConversationDisplay(visibleDetail.thread.labels)
-                    .map((id) => {
-                      const accountLabels = labelsByAccount[visibleDetail.thread.accountId];
-                      const label = accountLabels?.find((candidate) => candidate.id === id);
-                      // Opaque Gmail user-label ids are not useful UI. Wait for
-                      // the account catalog instead of briefly flashing Label_18.
-                      if (!label && /^label_\d+$/i.test(id)) return null;
-                      return label ? formatLabelName(label) : id;
-                    })
-                    .filter((label): label is string => label !== null)
-                    .join(" · ")}
-                </span>
-                <h2>{visibleDetail.thread.subject}</h2>
+                {conversationSystemLabels.length > 0 ? (
+                  <span className="eyebrow">{conversationSystemLabels.join(" · ")}</span>
+                ) : null}
+                <div className="subject-row">
+                  <h2>{visibleDetail.thread.subject}</h2>
+                  {conversationUserLabels.length > 0 ? (
+                    <span className="user-label-badges">
+                      {conversationUserLabels.map((label) => (
+                        <span key={label.id} className="user-label-badge">{formatLabelName(label)}</span>
+                      ))}
+                    </span>
+                  ) : null}
+                </div>
               </div>
               <div className="reader-actions">
                 <HoverTooltip label={selected?.starred ? "Unstar" : "Star"} shortcut="s" placement="bottom">
