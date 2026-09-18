@@ -1322,10 +1322,8 @@ async fn create_label(
     request: CreateLabelRequest,
     state: State<'_, AppState>,
 ) -> Result<Label, String> {
-    state
-        .sync
-        .as_ref()
-        .ok_or_else(not_configured)?
+    resolve_sync(&state, request.account_id.as_deref())
+        .await?
         .create_label(&request.name)
         .await
 }
@@ -1335,20 +1333,20 @@ async fn update_label(
     request: UpdateLabelRequest,
     state: State<'_, AppState>,
 ) -> Result<Label, String> {
-    state
-        .sync
-        .as_ref()
-        .ok_or_else(not_configured)?
+    resolve_sync(&state, request.account_id.as_deref())
+        .await?
         .update_label(&request.id, &request.name)
         .await
 }
 
 #[tauri::command]
-async fn delete_label(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .sync
-        .as_ref()
-        .ok_or_else(not_configured)?
+async fn delete_label(
+    id: String,
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    resolve_sync(&state, account_id.as_deref())
+        .await?
         .delete_label(&id)
         .await
 }
@@ -1476,6 +1474,28 @@ fn not_configured() -> String {
     "Google OAuth is not configured. Set THREESTRANDS_GOOGLE_CLIENT_ID and \
      THREESTRANDS_GOOGLE_CLIENT_SECRET from a Desktop app credential."
         .into()
+}
+
+/// Resolves the sync engine for a given account, falling back to the primary
+/// account when `account_id` is `None`. Label mutations must run against the
+/// account that actually owns the label, not always the primary account.
+async fn resolve_sync(
+    state: &State<'_, AppState>,
+    account_id: Option<&str>,
+) -> Result<SyncService, String> {
+    match account_id {
+        None => state.sync.clone().ok_or_else(not_configured),
+        Some(account_id) if primary_account_id(state) == account_id => {
+            state.sync.clone().ok_or_else(not_configured)
+        }
+        Some(account_id) => state
+            .additional_accounts
+            .lock()
+            .await
+            .get(account_id)
+            .map(|account| account.sync.clone())
+            .ok_or_else(|| format!("{account_id} is not connected. Reconnect it before continuing.")),
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

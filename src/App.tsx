@@ -74,7 +74,7 @@ import {
 } from "./crashReporting";
 import { mailClient } from "./data/client";
 import { createForegroundRefreshController } from "./foregroundRefresh";
-import { formatLabelName, labelIdsForConversationDisplay } from "./labels";
+import { formatLabelName, isManageableLabel, labelIdsForConversationDisplay } from "./labels";
 import {
   filterThreadsByMessageFilters,
   MESSAGE_FILTER_OPTIONS,
@@ -644,6 +644,13 @@ export function App() {
     void mailClient.recoveryStatus().then(setRecoveryStatus).catch(() => {});
   }, []);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
+  // Label ids are only meaningful within an account (see `labelsByAccount`
+  // above), so the labels modal needs to know which account's catalog to
+  // show. Bulk actions can only ever target one account's checked rows in
+  // practice, so the first target thread's account is a safe proxy.
+  const labelTargetAccountId = labelTargetIds?.length
+    ? threads.find((thread) => thread.id === labelTargetIds[0])?.accountId ?? activeAccountId ?? undefined
+    : undefined;
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   useEffect(() => {
     if (settingsOpen && settingsSection === "calendarAccounts" && calendarAccounts.length > 0) {
@@ -921,22 +928,34 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const accountId = detail?.thread.accountId;
-    if (!accountId || labelsByAccount[accountId]) return;
+    const neededAccountIds = new Set(
+      [detail?.thread.accountId, labelTargetAccountId].filter(
+        (accountId): accountId is string => Boolean(accountId) && !labelsByAccount[accountId as string],
+      ),
+    );
+    if (neededAccountIds.size === 0) return;
     let current = true;
-    void mailClient
-      .listLabels(accountId)
-      .then((accountLabels) => {
-        if (!current) return;
-        setLabelsByAccount((catalogs) => ({ ...catalogs, [accountId]: accountLabels }));
-      })
-      .catch(() => {
-        // Leave the catalog unset so selecting this account again can retry.
+    void Promise.all(
+      [...neededAccountIds].map((accountId) =>
+        mailClient
+          .listLabels(accountId)
+          .then((accountLabels) => [accountId, accountLabels] as const)
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (!current) return;
+      setLabelsByAccount((catalogs) => {
+        const next = { ...catalogs };
+        for (const result of results) {
+          if (result) next[result[0]] = result[1];
+        }
+        return next;
       });
+    });
     return () => {
       current = false;
     };
-  }, [detail?.thread.accountId, labelsByAccount]);
+  }, [detail?.thread.accountId, labelTargetAccountId, labelsByAccount]);
 
   useEffect(() => {
     const requestId = ++detailRequest.current;
@@ -2531,10 +2550,9 @@ export function App() {
       ) : null}
       {labelTargetIds && labelTargetIds.length > 0 ? (
         <LabelManager
-          labels={labels}
+          labels={labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : []}
           checkedLabelIds={new Set(
-            labels
-              .filter((label) => label.kind === "user")
+            (labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : [])
               .filter((label) =>
                 labelTargetIds.every((id) => threads.find((thread) => thread.id === id)?.labels.includes(label.id)),
               )
@@ -2542,22 +2560,36 @@ export function App() {
           )}
           onClose={() => setLabelTargetIds(null)}
           onCreate={async (name) => {
-            const label = await mailClient.createLabel(name);
-            setLabels((current) => [...current, label]);
+            if (!labelTargetAccountId) return;
+            const label = await mailClient.createLabel(name, labelTargetAccountId);
+            setLabelsByAccount((current) => ({
+              ...current,
+              [labelTargetAccountId]: [...(current[labelTargetAccountId] ?? []), label],
+            }));
           }}
           onDelete={async (id) => {
-            await mailClient.deleteLabel(id);
-            setLabels((current) => current.filter((label) => label.id !== id));
+            if (!labelTargetAccountId) return;
+            await mailClient.deleteLabel(id, labelTargetAccountId);
+            setLabelsByAccount((current) => ({
+              ...current,
+              [labelTargetAccountId]: (current[labelTargetAccountId] ?? []).filter((label) => label.id !== id),
+            }));
             await loadThreads(query);
           }}
           onRename={async (id, name) => {
-            const updated = await mailClient.updateLabel(id, name);
-            setLabels((current) =>
-              current.map((label) => label.id === id ? { ...label, ...updated } : label),
-            );
+            if (!labelTargetAccountId) return;
+            const updated = await mailClient.updateLabel(id, name, labelTargetAccountId);
+            setLabelsByAccount((current) => ({
+              ...current,
+              [labelTargetAccountId]: (current[labelTargetAccountId] ?? []).map((label) =>
+                label.id === id ? { ...label, ...updated } : label,
+              ),
+            }));
           }}
           onToggle={(labelId, value) => {
-            const label = labels.find((candidate) => candidate.id === labelId);
+            const label = (labelTargetAccountId ? labelsByAccount[labelTargetAccountId] : undefined)?.find(
+              (candidate) => candidate.id === labelId,
+            );
             executeCommand(labelCommand(labelId, label?.name ?? "Label", value));
           }}
         />
@@ -3302,23 +3334,23 @@ function LabelManager({
   const [renaming, setRenaming] = useState<Label | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const userLabels = labels
-    .filter((label) => label.kind === "user")
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  const manageableLabels = labels
+    .filter(isManageableLabel)
+    .sort((a, b) => formatLabelName(a).localeCompare(formatLabelName(b), undefined, { sensitivity: "base" }));
   const labelInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
-    const firstLabel = userLabels[0];
+    const firstLabel = manageableLabels[0];
     if (!firstLabel) return;
     labelInputRefs.current[firstLabel.id]?.focus();
-  }, [userLabels.length]);
+  }, [manageableLabels.length]);
 
   const moveLabelFocus = (labelId: string, direction: -1 | 1) => {
-    const currentIndex = userLabels.findIndex((label) => label.id === labelId);
+    const currentIndex = manageableLabels.findIndex((label) => label.id === labelId);
     if (currentIndex === -1) return;
-    const nextIndex = Math.max(0, Math.min(userLabels.length - 1, currentIndex + direction));
+    const nextIndex = Math.max(0, Math.min(manageableLabels.length - 1, currentIndex + direction));
     if (nextIndex === currentIndex) return;
-    labelInputRefs.current[userLabels[nextIndex]?.id ?? ""]?.focus();
+    labelInputRefs.current[manageableLabels[nextIndex]?.id ?? ""]?.focus();
   };
 
   return (
@@ -3341,7 +3373,7 @@ function LabelManager({
         <button type="submit" disabled={!name.trim() || busy}>Create</button>
       </form>
       <div className="label-list">
-        {userLabels.map((label) => (
+        {manageableLabels.map((label) => (
           <div key={label.id}>
             <label>
               <input
@@ -3365,25 +3397,27 @@ function LabelManager({
                 }}
               />
               <span className="label-color" style={{ background: label.color ?? "#64646d" }} />
-              {label.name}
+              {formatLabelName(label)}
             </label>
-            <span className="label-actions">
-              <button
-                aria-label={`Rename ${label.name}`}
-                onClick={() => {
-                  setRenaming(label);
-                  setRenameValue(label.name);
-                }}
-              >
-                <Pencil size={14} />
-              </button>
-              <button aria-label={`Delete ${label.name}`} onClick={() => void onDelete(label.id)}>
-                <Trash2 size={14} />
-              </button>
-            </span>
+            {label.kind === "user" ? (
+              <span className="label-actions">
+                <button
+                  aria-label={`Rename ${label.name}`}
+                  onClick={() => {
+                    setRenaming(label);
+                    setRenameValue(label.name);
+                  }}
+                >
+                  <Pencil size={14} />
+                </button>
+                <button aria-label={`Delete ${label.name}`} onClick={() => void onDelete(label.id)}>
+                  <Trash2 size={14} />
+                </button>
+              </span>
+            ) : null}
           </div>
         ))}
-        {labels.every((label) => label.kind !== "user") ? (
+        {manageableLabels.length === 0 ? (
           <p className="empty">No labels yet. Create one below.</p>
         ) : null}
       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatLabelName, labelIdsForConversationDisplay, sortLabelIdsForDisplay } from "./labels";
+import { formatLabelName, isManageableLabel, labelIdsForConversationDisplay, sortLabelIdsForDisplay } from "./labels";
 
 describe("formatLabelName", () => {
   it("strips the CATEGORY_ prefix from Gmail's system category labels", () => {
@@ -50,5 +50,23 @@ describe("labelIdsForConversationDisplay", () => {
       "DRAFT",
       "IMPORTANT",
     ])).toEqual(["INBOX", "CATEGORY_PERSONAL", "client", "IMPORTANT"]);
+  });
+});
+
+describe("isManageableLabel", () => {
+  it("includes every user label", () => {
+    expect(isManageableLabel({ id: "Label_1", kind: "user" })).toBe(true);
+  });
+
+  it("includes system labels without a dedicated control, like categories and IMPORTANT", () => {
+    expect(isManageableLabel({ id: "CATEGORY_UPDATES", kind: "system" })).toBe(true);
+    expect(isManageableLabel({ id: "CATEGORY_PERSONAL", kind: "system" })).toBe(true);
+    expect(isManageableLabel({ id: "IMPORTANT", kind: "system" })).toBe(true);
+  });
+
+  it("excludes system labels that already have a dedicated control elsewhere", () => {
+    for (const id of ["INBOX", "SENT", "DRAFT", "TRASH", "SPAM", "UNREAD", "STARRED", "CHAT"]) {
+      expect(isManageableLabel({ id, kind: "system" })).toBe(false);
+    }
   });
 });

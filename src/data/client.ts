@@ -106,9 +106,10 @@ export interface MailClient extends CorrespondenceClient {
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
-  createLabel(name: string): Promise<Label>;
-  updateLabel(id: string, name: string): Promise<Label>;
-  deleteLabel(id: string): Promise<void>;
+  /** Mutates the primary account's labels, or the specified account's when provided. */
+  createLabel(name: string, accountId?: string): Promise<Label>;
+  updateLabel(id: string, name: string, accountId?: string): Promise<Label>;
+  deleteLabel(id: string, accountId?: string): Promise<void>;
   listSplitInboxes(): Promise<SplitInbox[]>;
   createSplitInbox(name: string, matchKind: SplitInboxMatchKind, matchValue: string, accountId: string): Promise<SplitInbox>;
   updateSplitInbox(id: string, name: string): Promise<SplitInbox>;
@@ -182,9 +183,9 @@ const tauriClient: MailClient = {
   listScheduleEvents: (timeMin, timeMax, timeZone) =>
     complete("list_schedule_events", { timeMin, timeMax, timeZone }),
   listLabels: (accountId) => read("list_labels", { accountId }),
-  createLabel: (name) => complete("create_label", { request: { name } }),
-  updateLabel: (id, name) => complete("update_label", { request: { id, name } }),
-  deleteLabel: (id) => complete("delete_label", { id }),
+  createLabel: (name, accountId) => complete("create_label", { request: { name, accountId } }),
+  updateLabel: (id, name, accountId) => complete("update_label", { request: { id, name, accountId } }),
+  deleteLabel: (id, accountId) => complete("delete_label", { id, accountId }),
   listSplitInboxes: () => read("list_split_inboxes"),
   createSplitInbox: (name, matchKind, matchValue, accountId) =>
     complete("create_split_inbox", { request: { name, matchKind, matchValue, accountId } }),

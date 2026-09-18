@@ -31,3 +31,26 @@ export function sortLabelIdsForDisplay(ids: string[]): string[] {
 export function labelIdsForConversationDisplay(ids: string[]): string[] {
   return sortLabelIdsForDisplay(ids.filter((id) => !MESSAGE_STATE_LABELS.has(id)));
 }
+
+// Gmail system labels that describe mailbox location or message state and
+// already have dedicated controls elsewhere in the app (archive, trash,
+// star, read/unread). Listing them as toggleable rows in the labels screen
+// would duplicate those controls and let toggling one silently move a
+// thread out of view.
+const NON_MANAGEABLE_SYSTEM_LABEL_IDS = new Set([
+  "INBOX",
+  "SENT",
+  "DRAFT",
+  "TRASH",
+  "SPAM",
+  "UNREAD",
+  "STARRED",
+  "CHAT",
+]);
+
+/** Whether a label belongs in the "Manage labels" screen: every user label,
+ * plus Gmail system labels (like IMPORTANT and the CATEGORY_* labels) that
+ * don't already have a dedicated control elsewhere. */
+export function isManageableLabel(label: Pick<Label, "id" | "kind">): boolean {
+  return label.kind === "user" || !NON_MANAGEABLE_SYSTEM_LABEL_IDS.has(label.id);
+}

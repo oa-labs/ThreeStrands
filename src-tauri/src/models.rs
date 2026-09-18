@@ -340,6 +340,8 @@ pub struct Label {
 #[serde(rename_all = "camelCase")]
 pub struct CreateLabelRequest {
     pub name: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -347,6 +349,8 @@ pub struct CreateLabelRequest {
 pub struct UpdateLabelRequest {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 /// A user-defined, persistent inbox view that narrows one account's inbox to
