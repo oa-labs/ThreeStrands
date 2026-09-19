@@ -14,11 +14,11 @@ use crate::{
     ai::AiProvider,
     correspondence::validate_retention_days,
     db::Database,
-    models::{is_known_account_provider, Account, SplitInbox},
+    models::{is_known_account_provider, Account, AvailabilityPreferences, SplitInbox},
 };
 
 const FORMAT: &str = "dispatch-settings";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const EXTENSION: &str = "dispatch-settings";
 const ARGON_MEMORY_KIB: u32 = 19_456;
 const ARGON_ITERATIONS: u32 = 2;
@@ -54,6 +54,23 @@ pub struct TransferPreferences {
     pub ai_model: String,
     pub ai_endpoint: String,
     pub ai_features: AiFeaturePreferences,
+    #[serde(default = "default_availability_preferences")]
+    pub availability_preferences: AvailabilityPreferences,
+}
+
+fn default_availability_preferences() -> AvailabilityPreferences {
+    AvailabilityPreferences {
+        time_zone: "UTC".to_string(),
+        working_windows: (1..=5)
+            .map(|weekday| crate::models::AvailabilityWindow {
+                weekday,
+                start: "09:00".to_string(),
+                end: "17:00".to_string(),
+            })
+            .collect(),
+        default_duration_minutes: 30,
+        slot_increment_minutes: 15,
+    }
 }
 
 impl TransferPreferences {
@@ -72,7 +89,10 @@ impl TransferPreferences {
             validate_text("selected account", account_id, 320)?;
         }
         validate_text("AI model", &self.ai_model, MAX_TEXT_LENGTH)?;
-        validate_text("AI endpoint", &self.ai_endpoint, MAX_TEXT_LENGTH)
+        validate_text("AI endpoint", &self.ai_endpoint, MAX_TEXT_LENGTH)?;
+        crate::availability::validate_preferences(&self.availability_preferences)
+            .map_err(|_| "The transfer contains invalid availability preferences".to_string())?;
+        Ok(())
     }
 }
 
@@ -159,7 +179,7 @@ impl TransferPayload {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if self.version != VERSION {
+        if !(1..=VERSION).contains(&self.version) {
             return Err(format!("Unsupported transfer version {}", self.version));
         }
         self.preferences.validate()?;
@@ -334,7 +354,7 @@ fn decrypt(encoded: &[u8], password: &str) -> Result<TransferPayload, String> {
     let envelope: EncryptedEnvelope = serde_json::from_slice(encoded)
         .map_err(|_| "This is not a valid ThreeStrands settings export".to_string())?;
     if envelope.format != FORMAT
-        || envelope.version != VERSION
+        || !(1..=VERSION).contains(&envelope.version)
         || envelope.kdf != "argon2id"
         || envelope.cipher != "xchacha20poly1305"
     {
@@ -431,6 +451,7 @@ mod tests {
                     summarize: false,
                     classify: false,
                 },
+                availability_preferences: default_availability_preferences(),
             },
             accounts: vec![TransferAccount {
                 email: "person@example.com".to_string(),
@@ -455,16 +476,27 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_v1_envelope_marker_remains_importable() {
+    fn current_envelope_uses_v2() {
         let encoded = encrypt(&payload(), "correct horse").unwrap();
         let envelope: EncryptedEnvelope = serde_json::from_slice(&encoded).unwrap();
 
         assert_eq!(envelope.format, "dispatch-settings");
-        assert_eq!(envelope.version, 1);
+        assert_eq!(envelope.version, 2);
         assert_eq!(
             decrypt(&encoded, "correct horse").unwrap().accounts[0].email,
             "person@example.com"
         );
+    }
+
+    #[test]
+    fn v1_payload_defaults_availability_preferences() {
+        let mut serialized = serde_json::to_value(payload()).unwrap();
+        serialized["version"] = serde_json::json!(1);
+        serialized["preferences"].as_object_mut().unwrap().remove("availabilityPreferences");
+        let decoded: TransferPayload = serde_json::from_value(serialized).unwrap();
+        assert_eq!(decoded.version, 1);
+        assert_eq!(decoded.preferences.availability_preferences.default_duration_minutes, 30);
+        decoded.validate().unwrap();
     }
 
     #[test]

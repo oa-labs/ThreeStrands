@@ -1013,6 +1013,24 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
   font-size: calc(11px * var(--font-scale));
   text-align: right;
 }
+.availability-panel { margin: 0 12px 10px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); }
+.availability-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.availability-panel-header button { padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--input); color: var(--text); cursor: pointer; font: inherit; font-size: calc(11px * var(--font-scale)); }
+.availability-panel-header button:disabled { cursor: wait; opacity: .65; }
+.availability-duration { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
+.availability-duration select { padding: 4px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--input); color: var(--text); font: inherit; }
+.availability-coverage { margin: 7px 0; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
+.availability-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.availability-candidate { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--input); color: var(--text); text-align: left; cursor: pointer; font: inherit; font-size: calc(11px * var(--font-scale)); }
+.availability-candidate[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.availability-candidate small { margin-top: 2px; color: var(--muted); font-size: calc(10px * var(--font-scale)); }
+.availability-verified small { color: var(--success, #2d8a56); }
+.availability-partiallyChecked small { color: var(--warning, #a16c18); }
+.availability-unverified small { color: var(--muted); }
+.availability-windows { display: grid; gap: 6px; }
+.availability-window { display: grid; grid-template-columns: minmax(92px, 1fr) 92px auto 92px; align-items: center; gap: 6px; font-size: calc(12px * var(--font-scale)); }
+.availability-window > label { display: flex; align-items: center; gap: 5px; }
+.availability-window input[type="time"] { min-width: 0; padding: 4px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--input); color: var(--text); font: inherit; font-size: calc(11px * var(--font-scale)); }
 .calendar-grid-scroll { min-height: 0; flex: 1; overflow-y: auto; }
 .calendar-grid {
   position: relative;

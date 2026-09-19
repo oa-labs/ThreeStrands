@@ -347,6 +347,34 @@ describe("calendar sidebar", () => {
     expect(dialog).toHaveTextContent("T");
   });
 
+  it("checks availability and distinguishes verified candidate slots", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    const findAvailability = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+      candidates: [
+        { start: "2026-09-18T13:00:00Z", end: "2026-09-18T13:30:00Z", status: "verified" },
+        { start: "2026-09-18T14:00:00Z", end: "2026-09-18T14:30:00Z", status: "verified" },
+      ],
+      checkedCalendarCount: 1,
+      totalCalendarCount: 1,
+      errors: [],
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(window, { key: "T" });
+    fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
+    const candidates = await screen.findAllByRole("button", { name: /Verified/ });
+    expect(candidates).toHaveLength(2);
+    fireEvent.click(candidates[0]);
+    fireEvent.click(candidates[1]);
+    expect(candidates[0]).toHaveAttribute("aria-pressed", "true");
+    expect(candidates[1]).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("2 times selected")).toBeInTheDocument();
+    expect(findAvailability).toHaveBeenCalledTimes(1);
+  });
+
   it("builds an exact local-day request", () => {
     const request = scheduleRequestFor(new Date(2026, 8, 18, 15, 30));
     const start = new Date(request.timeMin);

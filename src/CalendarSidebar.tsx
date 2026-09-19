@@ -3,7 +3,7 @@ import { AlignLeft, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, Ref
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
-import type { ScheduleEvent } from "./domain";
+import type { AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
 const HOUR_HEIGHT = 64;
@@ -158,15 +158,22 @@ function EventViewer({ event, onDismiss }: { event: ScheduleEvent; onDismiss(): 
 export function CalendarSidebar({
   onClose,
   onOpenSettings,
+  availabilityPreferences,
 }: {
   onClose(): void;
   onOpenSettings(): void;
+  availabilityPreferences: AvailabilityPreferences;
 }) {
   const [date, setDate] = useState(() => startOfLocalDay(new Date()));
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityResult | null>(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [selectedCandidates, setSelectedCandidates] = useState<Set<string>>(() => new Set());
+  const [durationMinutes, setDurationMinutes] = useState(availabilityPreferences.defaultDurationMinutes);
   const gridRef = useRef<HTMLDivElement>(null);
   useEscapeDismiss(onClose);
 
@@ -206,12 +213,34 @@ export function CalendarSidebar({
   const timedEvents = useMemo(() => events.filter((event) => !event.allDay), [events]);
   const allDayEvents = useMemo(() => events.filter((event) => event.allDay), [events]);
   const moveDay = useCallback((offset: number) => {
+    setSelectedCandidates(new Set());
     setDate((current) => {
       const next = new Date(current);
       next.setDate(next.getDate() + offset);
       return next;
     });
   }, []);
+
+  const checkAvailability = useCallback(async () => {
+    setAvailabilityLoading(true);
+    setAvailabilityError(null);
+    setSelectedCandidates(new Set());
+    const dayStart = startOfLocalDay(date);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+    try {
+      setAvailability(await mailClient.findAvailability({
+        rangeStart: dayStart.toISOString(),
+        rangeEnd: dayEnd.toISOString(),
+        preferences: { ...availabilityPreferences, defaultDurationMinutes: durationMinutes },
+      }));
+    } catch (reason) {
+      setAvailability(null);
+      setAvailabilityError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAvailabilityLoading(false);
+    }
+  }, [availabilityPreferences, date, durationMinutes]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -272,6 +301,34 @@ export function CalendarSidebar({
         </div>
       ) : null}
       <div className="calendar-timezone">{timeZoneLabel(date)}</div>
+      <section className="availability-panel" aria-label="Check availability">
+        <div className="availability-panel-header"><strong>Find a time</strong><button type="button" onClick={() => void checkAvailability()} disabled={availabilityLoading}>{availabilityLoading ? "Checking…" : "Check schedule"}</button></div>
+        <label className="availability-duration"><span>Duration</span><select value={durationMinutes} onChange={(event) => { setDurationMinutes(Number(event.target.value)); setSelectedCandidates(new Set()); }}>{[15, 30, 45, 60, 90, 120].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
+        {availabilityError ? <p className="calendar-error-notice" role="alert">{availabilityError}</p> : null}
+        {availability ? <>
+          <p className="availability-coverage">{availability.totalCalendarCount === 0 ? "Not checked against a calendar" : availability.checkedCalendarCount === availability.totalCalendarCount ? "Verified against all selected calendars" : "Partially checked — review before sharing"}</p>
+          {availability.errors.length > 0 ? <p className="calendar-error-notice" role="alert">Some calendars could not be checked. Suggested times are not fully verified.</p> : null}
+          <div className="availability-candidates" aria-label="Suggested times">
+            {availability.candidates.map((candidate) => {
+              const key = `${candidate.start}:${candidate.end}`;
+              const selected = selectedCandidates.has(key);
+              const formatCandidateTime = (value: string) => new Intl.DateTimeFormat(undefined, {
+                hour: "numeric",
+                minute: "2-digit",
+                timeZone: availabilityPreferences.timeZone,
+              }).format(new Date(value));
+              return <button type="button" key={key} className={`availability-candidate availability-${candidate.status}`} aria-pressed={selected} onClick={() => setSelectedCandidates((current) => {
+                const next = new Set(current);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              })}>{formatCandidateTime(candidate.start)}–{formatCandidateTime(candidate.end)}<small>{candidate.status === "verified" ? "Verified" : candidate.status === "partiallyChecked" ? "Partial" : "Not checked"}</small></button>;
+            })}
+          </div>
+          {selectedCandidates.size > 0 ? <p className="availability-coverage">{selectedCandidates.size} time{selectedCandidates.size === 1 ? "" : "s"} selected</p> : null}
+          {availability.candidates.length === 0 ? <p className="calendar-grid-status">No open working-hours slots found.</p> : null}
+        </> : null}
+      </section>
       {!loading && error ? (
         <div className="calendar-error-notice" role="alert">
           <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>

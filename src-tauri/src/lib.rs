@@ -1,4 +1,5 @@
 mod ai;
+mod availability;
 mod attachment_reader;
 mod attachment_security;
 mod auth;
@@ -26,9 +27,9 @@ use auth::{AccountAuth, GoogleAuthConfig};
 use chrono::Utc;
 use db::Database;
 use models::{
-    Account, AuthStatus, CalendarAccount, CalendarOption, ContactSuggestion, CreateLabelRequest,
+    Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, CreateLabelRequest,
     CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
-    ScheduleResult, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
+    FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
     UpdateLabelRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
 };
@@ -1120,6 +1121,72 @@ async fn calendar_options_for_account(
     Ok(options)
 }
 
+async fn selected_calendar_ids(
+    config: &GoogleAuthConfig,
+    database: &Database,
+    email: &str,
+) -> Result<Vec<String>, String> {
+    match database.calendar_selection(email)? {
+        Some(selected) => Ok(selected),
+        None => Ok(calendar_options_for_account(config, database, email)
+            .await?
+            .into_iter()
+            .filter(|option| option.selected)
+            .map(|option| option.id)
+            .collect()),
+    }
+}
+
+async fn freebusy_coverage(
+    time_min: &str,
+    time_max: &str,
+    time_zone: &str,
+    state: &AppState,
+) -> Result<(Vec<BusyInterval>, usize, usize, Vec<String>), String> {
+    let Some(config) = state.auth_config.as_ref() else {
+        return Ok((Vec::new(), 0, 0, Vec::new()));
+    };
+    let mut busy = Vec::new();
+    let mut checked = 0;
+    let mut total = 0;
+    let mut errors = Vec::new();
+    for account in state.database.list_calendar_accounts()? {
+        let calendar_ids = match selected_calendar_ids(config, &state.database, &account.email).await {
+            Ok(ids) => ids,
+            Err(error) => {
+                errors.push(format!("{}: {error}", account.email));
+                continue;
+            }
+        };
+        total += calendar_ids.len();
+        if calendar_ids.is_empty() {
+            continue;
+        }
+        match calendar::fetch_freebusy(
+            config.calendar_account(&account.email),
+            &calendar_ids,
+            time_min,
+            time_max,
+            time_zone,
+        )
+        .await
+        {
+            Ok(result) => {
+                checked += result.checked_calendar_count;
+                busy.extend(result.busy);
+                errors.extend(result.errors.into_iter().map(|error| format!("{}: {error}", account.email)));
+            }
+            Err(error) => errors.push(format!("{}: {error}", account.email)),
+        }
+    }
+    // Preserve an explicit partial state when an account/calendar discovery
+    // call failed before it could tell us how many calendars were selected.
+    if !errors.is_empty() && checked >= total {
+        total = checked + 1;
+    }
+    Ok((busy, checked, total, errors))
+}
+
 #[tauri::command]
 async fn list_calendar_options(
     state: State<'_, AppState>,
@@ -1228,6 +1295,73 @@ async fn list_schedule_events(
     merged.sort_by(|left, right| left.start.cmp(&right.start));
     Ok(ScheduleResult {
         events: merged,
+        errors,
+    })
+}
+
+#[tauri::command]
+async fn find_availability(
+    request: FindAvailabilityRequest,
+    state: State<'_, AppState>,
+) -> Result<models::AvailabilityResult, String> {
+    let (busy, checked, total, errors) = freebusy_coverage(
+        &request.range_start,
+        &request.range_end,
+        &request.preferences.time_zone,
+        &state,
+    )
+    .await?;
+    let candidates = availability::find_candidates(
+        &request.range_start,
+        &request.range_end,
+        &request.preferences,
+        &busy,
+        checked,
+        total,
+    )?;
+    Ok(models::AvailabilityResult {
+        candidates,
+        checked_calendar_count: checked,
+        total_calendar_count: total,
+        errors,
+    })
+}
+
+#[tauri::command]
+async fn check_proposed_time(
+    request: CheckProposedTimeRequest,
+    state: State<'_, AppState>,
+) -> Result<ProposedTimeCheck, String> {
+    if request.time_zone.parse::<chrono_tz::Tz>().is_err() {
+        return Err(format!("Unknown IANA timezone: {}", request.time_zone));
+    }
+    let (busy, checked, total, errors) = freebusy_coverage(
+        &request.start,
+        &request.end,
+        &request.time_zone,
+        &state,
+    )
+    .await?;
+    let status = availability::check_time(&request.start, &request.end, &busy, checked, total)?;
+    let start = chrono::DateTime::parse_from_rfc3339(&request.start)
+        .map_err(|_| "Proposed time must be RFC3339 timestamps".to_string())?
+        .with_timezone(&chrono::Utc);
+    let end = chrono::DateTime::parse_from_rfc3339(&request.end)
+        .map_err(|_| "Proposed time must be RFC3339 timestamps".to_string())?
+        .with_timezone(&chrono::Utc);
+    let conflicts = busy
+        .into_iter()
+        .filter(|interval| {
+            let Ok(interval_start) = chrono::DateTime::parse_from_rfc3339(&interval.start) else { return false; };
+            let Ok(interval_end) = chrono::DateTime::parse_from_rfc3339(&interval.end) else { return false; };
+            interval_start.with_timezone(&chrono::Utc) < end && interval_end.with_timezone(&chrono::Utc) > start
+        })
+        .collect();
+    Ok(ProposedTimeCheck {
+        status,
+        conflicts,
+        checked_calendar_count: checked,
+        total_calendar_count: total,
         errors,
     })
 }
@@ -1750,6 +1884,8 @@ pub fn run() {
             set_calendar_selection,
             remove_calendar_account,
             list_schedule_events,
+            find_availability,
+            check_proposed_time,
             set_account_display_name,
             set_account_color,
             reorder_accounts,

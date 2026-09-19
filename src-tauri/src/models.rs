@@ -41,6 +41,73 @@ pub struct ScheduleResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AvailabilityCandidate {
+    pub start: String,
+    pub end: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailabilityResult {
+    pub candidates: Vec<AvailabilityCandidate>,
+    pub checked_calendar_count: usize,
+    pub total_calendar_count: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BusyInterval {
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposedTimeCheck {
+    pub status: String,
+    pub conflicts: Vec<BusyInterval>,
+    pub checked_calendar_count: usize,
+    pub total_calendar_count: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailabilityWindow {
+    pub weekday: u8,
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailabilityPreferences {
+    pub time_zone: String,
+    pub working_windows: Vec<AvailabilityWindow>,
+    pub default_duration_minutes: u32,
+    pub slot_increment_minutes: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FindAvailabilityRequest {
+    pub range_start: String,
+    pub range_end: String,
+    pub preferences: AvailabilityPreferences,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckProposedTimeRequest {
+    pub start: String,
+    pub end: String,
+    pub time_zone: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ThreadTask {
     pub id: String,
     pub account_id: String,

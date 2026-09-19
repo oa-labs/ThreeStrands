@@ -4,17 +4,19 @@ use calcard::icalendar::{
 };
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::{
     auth::GoogleAuth,
-    models::{CalendarOption, ScheduleEvent},
+    models::{BusyInterval, CalendarOption, ScheduleEvent},
 };
 
 const MAX_EVENTS: usize = 20;
 const MAX_CALENDAR_BYTES: usize = 2 * 1024 * 1024;
 const CALENDAR_LIST_URL: &str = "https://www.googleapis.com/calendar/v3/users/me/calendarList";
 const CALENDARS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/";
+const FREEBUSY_URL: &str = "https://www.googleapis.com/calendar/v3/freeBusy";
 const MAX_SCHEDULE_EVENTS: usize = 250;
 // Calendar IDs are untrusted path data. Encode every reserved URI character so
 // IDs containing `@`, `#`, or `/` remain exactly one path segment.
@@ -67,6 +69,47 @@ struct GoogleCalendarListEntry {
 struct GoogleEvents {
     #[serde(default)]
     items: Vec<GoogleEvent>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FreeBusyRequest<'a> {
+    time_min: &'a str,
+    time_max: &'a str,
+    time_zone: &'a str,
+    items: Vec<FreeBusyItem>,
+}
+
+#[derive(Serialize)]
+struct FreeBusyItem {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct GoogleFreeBusy {
+    #[serde(default)]
+    calendars: HashMap<String, GoogleFreeBusyCalendar>,
+}
+
+#[derive(Deserialize)]
+struct GoogleFreeBusyCalendar {
+    #[serde(default)]
+    busy: Vec<GoogleBusyInterval>,
+    #[serde(default)]
+    errors: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct GoogleBusyInterval {
+    start: String,
+    end: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct FreeBusyResult {
+    pub busy: Vec<BusyInterval>,
+    pub checked_calendar_count: usize,
+    pub errors: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -190,6 +233,68 @@ pub async fn fetch_schedule(
     }
     schedule.sort_by(|left, right| left.start.cmp(&right.start));
     Ok(schedule)
+}
+
+/// Queries Google's FreeBusy endpoint once for all selected calendars on an
+/// account. Calendar-level errors are returned as partial failures so callers
+/// never mistake an incomplete response for confirmed availability.
+pub async fn fetch_freebusy(
+    auth: GoogleAuth,
+    calendar_ids: &[String],
+    time_min: &str,
+    time_max: &str,
+    time_zone: &str,
+) -> Result<FreeBusyResult, String> {
+    if calendar_ids.is_empty() {
+        return Ok(FreeBusyResult {
+            busy: Vec::new(),
+            checked_calendar_count: 0,
+            errors: Vec::new(),
+        });
+    }
+    let access_token = auth
+        .access_token()
+        .await
+        .map_err(|error| error.to_string())?;
+    let response = calendar_client()?
+        .post(FREEBUSY_URL)
+        .bearer_auth(&access_token)
+        .json(&FreeBusyRequest {
+            time_min: time_min,
+            time_max,
+            time_zone,
+            items: calendar_ids
+                .iter()
+                .cloned()
+                .map(|id| FreeBusyItem { id })
+                .collect(),
+        })
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let freebusy: GoogleFreeBusy = checked_json(response).await?;
+    let mut busy = Vec::new();
+    let mut checked = 0;
+    let mut errors = Vec::new();
+    for calendar_id in calendar_ids {
+        match freebusy.calendars.get(calendar_id) {
+            Some(calendar) if calendar.errors.is_empty() => {
+                checked += 1;
+                busy.extend(calendar.busy.iter().map(|interval| BusyInterval {
+                    start: interval.start.clone(),
+                    end: interval.end.clone(),
+                }));
+            }
+            Some(_calendar) => errors.push(format!("Calendar {calendar_id} returned a FreeBusy error")),
+            None => errors.push(format!("Calendar {calendar_id} was not returned by FreeBusy")),
+        }
+    }
+    busy.sort_by(|left, right| left.start.cmp(&right.start));
+    Ok(FreeBusyResult {
+        busy,
+        checked_calendar_count: checked,
+        errors,
+    })
 }
 
 fn events_url(calendar_id: &str) -> Result<Option<url::Url>, String> {
@@ -546,5 +651,18 @@ mod tests {
     fn does_not_build_an_event_url_for_an_empty_calendar_id() {
         assert_eq!(events_url("").unwrap(), None);
         assert_eq!(events_url("   ").unwrap(), None);
+    }
+
+    #[test]
+    fn freebusy_request_uses_google_field_names() {
+        let request = FreeBusyRequest {
+            time_min: "2026-09-21T00:00:00Z",
+            time_max: "2026-09-22T00:00:00Z",
+            time_zone: "America/New_York",
+            items: vec![FreeBusyItem { id: "primary".to_string() }],
+        };
+        let json = serde_json::to_value(request).unwrap();
+        assert_eq!(json["timeMin"], "2026-09-21T00:00:00Z");
+        assert!(json.get("time_min").is_none());
     }
 }

@@ -46,6 +46,65 @@ const MAX_ACCOUNT_ID_LENGTH = 320;
 
 export const DEFAULT_LOAD_REMOTE_IMAGES = false;
 
+export type AvailabilityPreferencesSetting = {
+  timeZone: string;
+  workingWindows: { weekday: number; start: string; end: string }[];
+  defaultDurationMinutes: number;
+  slotIncrementMinutes: number;
+};
+
+export const DEFAULT_AVAILABILITY_PREFERENCES: AvailabilityPreferencesSetting = {
+  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  workingWindows: [
+    ...[1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "09:00", end: "17:00" })),
+  ],
+  defaultDurationMinutes: 30,
+  slotIncrementMinutes: 15,
+};
+
+const AVAILABILITY_PREFERENCES_KEY = "threestrands.settings.availabilityPreferences";
+
+function validAvailabilityPreferences(value: unknown): value is AvailabilityPreferencesSetting {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.timeZone !== "string" || candidate.timeZone.length === 0 || candidate.timeZone.length > 100) return false;
+  if (!Array.isArray(candidate.workingWindows) || candidate.workingWindows.length > 14) return false;
+  if (!Number.isInteger(candidate.defaultDurationMinutes) || ![15, 30, 45, 60, 90, 120].includes(candidate.defaultDurationMinutes as number)) return false;
+  if (!Number.isInteger(candidate.slotIncrementMinutes) || ![5, 10, 15, 30, 60].includes(candidate.slotIncrementMinutes as number)) return false;
+  return candidate.workingWindows.every((window) => {
+    if (typeof window !== "object" || window === null) return false;
+    const item = window as Record<string, unknown>;
+    return Number.isInteger(item.weekday) && (item.weekday as number) >= 0 && (item.weekday as number) <= 6
+      && typeof item.start === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(item.start)
+      && typeof item.end === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(item.end)
+      && item.start < item.end;
+  });
+}
+
+export function readAvailabilityPreferences(): AvailabilityPreferencesSetting {
+  try {
+    const saved = localStorage.getItem(AVAILABILITY_PREFERENCES_KEY);
+    if (saved) {
+      const parsed: unknown = JSON.parse(saved);
+      if (validAvailabilityPreferences(parsed)) return parsed;
+    }
+  } catch {
+    // A blocked or corrupted storage backend should not prevent app startup.
+  }
+  return {
+    timeZone: DEFAULT_AVAILABILITY_PREFERENCES.timeZone,
+    workingWindows: DEFAULT_AVAILABILITY_PREFERENCES.workingWindows.map((window) => ({ ...window })),
+    defaultDurationMinutes: DEFAULT_AVAILABILITY_PREFERENCES.defaultDurationMinutes,
+    slotIncrementMinutes: DEFAULT_AVAILABILITY_PREFERENCES.slotIncrementMinutes,
+  };
+}
+
+export function saveAvailabilityPreferences(value: AvailabilityPreferencesSetting): AvailabilityPreferencesSetting {
+  const next = validAvailabilityPreferences(value) ? value : readAvailabilityPreferences();
+  try { localStorage.setItem(AVAILABILITY_PREFERENCES_KEY, JSON.stringify(next)); } catch { /* session value still applies */ }
+  return next;
+}
+
 export const DEFAULT_AUTO_READ_DELAY_SECONDS = 2;
 export const MIN_AUTO_READ_DELAY_SECONDS = 0;
 export const MAX_AUTO_READ_DELAY_SECONDS = 60;

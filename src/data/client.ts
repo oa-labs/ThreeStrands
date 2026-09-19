@@ -6,6 +6,8 @@ import {
 import type {
   Account,
   AuthStatus,
+  AvailabilityPreferences,
+  AvailabilityResult,
   CalendarAccount,
   CalendarOption,
   CalendarPreview,
@@ -32,6 +34,7 @@ import type {
   UnreadCounts,
   UnsubscribeResult,
   UpdateTaskRequest,
+  ProposedTimeCheck,
 } from "../domain";
 import type { AiProvider } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
@@ -107,6 +110,8 @@ export interface MailClient extends CorrespondenceClient {
   listCalendarOptions(): Promise<CalendarOption[]>;
   setCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
+  findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences }): Promise<AvailabilityResult>;
+  checkProposedTime(request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck>;
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
   /** Mutates the primary account's labels, or the specified account's when provided. */
@@ -190,6 +195,8 @@ const tauriClient: MailClient = {
     complete("set_calendar_selection", { accountId, calendarIds }),
   listScheduleEvents: (timeMin, timeMax, timeZone) =>
     complete("list_schedule_events", { timeMin, timeMax, timeZone }),
+  findAvailability: (request) => complete("find_availability", { request }),
+  checkProposedTime: (request) => complete("check_proposed_time", { request }),
   listLabels: (accountId) => read("list_labels", { accountId }),
   createLabel: (name, accountId) => complete("create_label", { request: { name, accountId } }),
   updateLabel: (id, name, accountId) => complete("update_label", { request: { id, name, accountId } }),

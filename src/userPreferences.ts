@@ -14,15 +14,18 @@ import {
 import { readFontScale, saveFontScale } from "./fontScale";
 import {
   readAutoReadDelaySeconds,
+  readAvailabilityPreferences,
   readFontFamily,
   readLoadRemoteImages,
   readSelectedAccountId,
   saveAutoReadDelaySeconds,
+  saveAvailabilityPreferences,
   saveFontFamily,
   saveLoadRemoteImages,
   saveSelectedAccountId,
 } from "./settings";
 import { readTheme, saveTheme, type Theme } from "./theme";
+import type { AvailabilityPreferences } from "./domain";
 
 /**
  * The complete allowlist of webview-owned preferences that may cross devices.
@@ -41,6 +44,7 @@ export type ExportablePreferences = {
   aiModel: string;
   aiEndpoint: string;
   aiFeatures: AiFeatureFlags;
+  availabilityPreferences: AvailabilityPreferences;
 };
 
 export type SettingsImportResult = {
@@ -61,6 +65,7 @@ export function readExportablePreferences(): ExportablePreferences {
     aiModel: readAiModel(),
     aiEndpoint: readAiEndpoint(),
     aiFeatures: readAiFeatures(),
+    availabilityPreferences: readAvailabilityPreferences(),
   };
 }
 
@@ -75,6 +80,7 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveAiModel(preferences.aiModel);
   saveAiEndpoint(preferences.aiEndpoint);
   saveAiFeatures(preferences.aiFeatures);
+  saveAvailabilityPreferences(preferences.availabilityPreferences);
 }
 
 export async function exportSettings(password: string): Promise<string | null> {

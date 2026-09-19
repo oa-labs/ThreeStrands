@@ -80,6 +80,40 @@ export type ScheduleResult = {
   errors: string[];
 };
 
+export type AvailabilityWindow = {
+  weekday: number;
+  start: string;
+  end: string;
+};
+
+export type AvailabilityPreferences = {
+  timeZone: string;
+  workingWindows: AvailabilityWindow[];
+  defaultDurationMinutes: number;
+  slotIncrementMinutes: number;
+};
+
+export type AvailabilityCandidate = {
+  start: string;
+  end: string;
+  status: "verified" | "partiallyChecked" | "unverified";
+};
+
+export type AvailabilityResult = {
+  candidates: AvailabilityCandidate[];
+  checkedCalendarCount: number;
+  totalCalendarCount: number;
+  errors: string[];
+};
+
+export type ProposedTimeCheck = {
+  status: "free" | "conflicting" | "partiallyChecked" | "unverified";
+  conflicts: { start: string; end: string }[];
+  checkedCalendarCount: number;
+  totalCalendarCount: number;
+  errors: string[];
+};
+
 export type TaskKind = "action" | "follow_up" | "waiting_for";
 export type TaskStatus = "open" | "completed" | "cancelled";
 export type TaskDueKind = "none" | "date" | "datetime";

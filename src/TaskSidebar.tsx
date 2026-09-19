@@ -26,6 +26,7 @@ export function TaskSidebar({
   currentThread,
   onOpenThread,
   onTasksChanged,
+  onCheckSchedule,
   title = "Tasks",
   initialFormOpen = false,
 }: {
@@ -34,6 +35,7 @@ export function TaskSidebar({
   currentThread: ThreadDetail | null;
   onOpenThread(threadId: string): void;
   onTasksChanged?(): void;
+  onCheckSchedule?(): void;
   title?: string;
   initialFormOpen?: boolean;
 }) {
@@ -127,6 +129,7 @@ export function TaskSidebar({
       <header className="tasks-sidebar-header">
         <h2><CheckSquare size={18} /> {title}</h2>
         <div>
+          {onCheckSchedule ? <button type="button" aria-label="Check schedule" title="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button> : null}
           {currentThread ? <button type="button" aria-label="Open add task form" title="Add task" onClick={() => setFormOpen((open) => !open)}><Plus size={17} /></button> : null}
           <button type="button" aria-label="Close tasks" onClick={onClose}><X size={18} /></button>
         </div>

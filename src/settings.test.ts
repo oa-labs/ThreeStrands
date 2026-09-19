@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   applyFontFamily,
+  DEFAULT_AVAILABILITY_PREFERENCES,
   DEFAULT_AUTO_READ_DELAY_SECONDS,
   DEFAULT_FONT_FAMILY,
   DEFAULT_LOAD_REMOTE_IMAGES,
   MAX_AUTO_READ_DELAY_SECONDS,
   MIN_AUTO_READ_DELAY_SECONDS,
   readAutoReadDelaySeconds,
+  readAvailabilityPreferences,
   readFontFamily,
   readLabelUsage,
   readLoadRemoteImages,
@@ -14,11 +16,28 @@ import {
   readSelectedTabForAccount,
   recordLabelUsed,
   saveAutoReadDelaySeconds,
+  saveAvailabilityPreferences,
   saveFontFamily,
   saveLoadRemoteImages,
   saveSelectedAccountId,
   saveSelectedTabForAccount,
 } from "./settings";
+
+describe("availability preferences", () => {
+  afterEach(() => localStorage.clear());
+
+  it("defaults to weekday working hours and persists valid changes", () => {
+    expect(readAvailabilityPreferences().workingWindows).toHaveLength(5);
+    const next = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/New_York", defaultDurationMinutes: 45 };
+    saveAvailabilityPreferences(next);
+    expect(readAvailabilityPreferences()).toEqual(next);
+  });
+
+  it("rejects malformed stored preferences", () => {
+    localStorage.setItem("threestrands.settings.availabilityPreferences", JSON.stringify({ timeZone: "", workingWindows: [] }));
+    expect(readAvailabilityPreferences()).toEqual(DEFAULT_AVAILABILITY_PREFERENCES);
+  });
+});
 
 describe("font family preference", () => {
   afterEach(() => {

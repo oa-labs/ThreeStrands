@@ -25,6 +25,18 @@ describe("exportable preferences", () => {
         draftAssist: true,
         summarize: false,
       },
+      availabilityPreferences: {
+        timeZone: "America/New_York",
+        workingWindows: [
+          { weekday: 1, start: "09:00", end: "17:00" },
+          { weekday: 2, start: "09:00", end: "17:00" },
+          { weekday: 3, start: "09:00", end: "17:00" },
+          { weekday: 4, start: "09:00", end: "17:00" },
+          { weekday: 5, start: "09:00", end: "17:00" },
+        ],
+        defaultDurationMinutes: 30,
+        slotIncrementMinutes: 15,
+      },
     };
 
     applyExportablePreferences(preferences);

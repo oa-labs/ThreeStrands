@@ -10,6 +10,8 @@ import {
   readAutoReadDelaySeconds,
   readFontFamily,
   readLoadRemoteImages,
+  readAvailabilityPreferences,
+  saveAvailabilityPreferences,
   saveAutoReadDelaySeconds,
   saveFontFamily,
   saveLoadRemoteImages,
@@ -36,6 +38,7 @@ export function useAppPreferences() {
   const [fontFamily, setFontFamilyState] = useState(readFontFamily);
   const [autoReadDelaySeconds, setAutoReadDelayState] = useState(readAutoReadDelaySeconds);
   const [loadRemoteImages, setLoadRemoteImagesState] = useState(readLoadRemoteImages);
+  const [availabilityPreferences, setAvailabilityPreferencesState] = useState(readAvailabilityPreferences);
 
   useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => applyFontScale(fontScale), [fontScale]);
@@ -75,6 +78,9 @@ export function useAppPreferences() {
   const setLoadRemoteImages = useCallback((value: boolean) => {
     setLoadRemoteImagesState(saveLoadRemoteImages(value));
   }, []);
+  const setAvailabilityPreferences = useCallback((value: Parameters<typeof saveAvailabilityPreferences>[0]) => {
+    setAvailabilityPreferencesState(saveAvailabilityPreferences(value));
+  }, []);
 
   return {
     theme,
@@ -90,5 +96,7 @@ export function useAppPreferences() {
     setAutoReadDelaySeconds,
     loadRemoteImages,
     setLoadRemoteImages,
+    availabilityPreferences,
+    setAvailabilityPreferences,
   };
 }

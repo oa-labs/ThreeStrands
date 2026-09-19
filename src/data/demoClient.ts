@@ -3,6 +3,8 @@ import type { MailClient } from "./client";
 import { parseAddress } from "../emailAddress";
 import type {
   Account,
+  AvailabilityPreferences,
+  AvailabilityResult,
   CalendarAccount,
   CalendarOption,
   ContactSuggestion,
@@ -16,6 +18,7 @@ import type {
   Thread,
   ThreadDetail,
   ThreadTask,
+  ProposedTimeCheck,
   ThreadPage,
   ThreadMutation,
   TriageEvent,
@@ -604,6 +607,39 @@ export const demoClient: MailClient = {
   },
   async listScheduleEvents() {
     return { events: [], errors: [] };
+  },
+  async findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences }): Promise<AvailabilityResult> {
+    const start = new Date(request.rangeStart);
+    const end = new Date(request.rangeEnd);
+    const total = calendarOptions.filter((option) => option.selected).length;
+    const candidates: AvailabilityResult["candidates"] = [];
+    const now = Date.now();
+    for (let cursor = new Date(start); cursor < end && candidates.length < 20; cursor.setMinutes(cursor.getMinutes() + request.preferences.slotIncrementMinutes)) {
+      const weekday = cursor.getDay();
+      const window = request.preferences.workingWindows.find((candidate) => candidate.weekday === weekday);
+      if (!window) continue;
+      const [startHour, startMinute] = window.start.split(":").map(Number);
+      const [endHour, endMinute] = window.end.split(":").map(Number);
+      const minutes = cursor.getHours() * 60 + cursor.getMinutes();
+      if (minutes < startHour * 60 + startMinute || minutes + request.preferences.defaultDurationMinutes > endHour * 60 + endMinute || cursor.getTime() <= now) continue;
+      const slotEnd = new Date(cursor.getTime() + request.preferences.defaultDurationMinutes * 60_000);
+      candidates.push({
+        start: cursor.toISOString(),
+        end: slotEnd.toISOString(),
+        status: total > 0 ? "verified" : "unverified",
+      });
+    }
+    return { candidates, checkedCalendarCount: total, totalCalendarCount: total, errors: [] };
+  },
+  async checkProposedTime(request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck> {
+    const total = calendarOptions.filter((option) => option.selected).length;
+    return {
+      status: total > 0 ? "free" : "unverified",
+      conflicts: [],
+      checkedCalendarCount: total,
+      totalCalendarCount: total,
+      errors: [],
+    };
   },
   async listTasks(accountId, status) {
     return structuredClone(tasks

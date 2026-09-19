@@ -50,6 +50,12 @@ describe("settings import navigation", () => {
           draftAssist: false,
           summarize: false,
         },
+        availabilityPreferences: {
+          timeZone: "UTC",
+          workingWindows: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "09:00", end: "17:00" })),
+          defaultDurationMinutes: 30,
+          slotIncrementMinutes: 15,
+        },
       },
       accountCount: 2,
       splitInboxCount: 1,

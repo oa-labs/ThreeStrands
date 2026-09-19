@@ -76,6 +76,7 @@ import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, Modal, Short
 import type {
   Account,
   AuthStatus,
+  AvailabilityPreferences,
   CalendarAccount,
   CalendarOption,
   Label,
@@ -167,7 +168,7 @@ import {
 
 export { formatMailTimestamp } from "./threadPresentation";
 
-type SettingsSection = "appearance" | "reading" | "accounts" | "calendarAccounts" | "splitInboxes" | "ai" | "privacy" | "diagnostics" | "data";
+type SettingsSection = "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "ai" | "privacy" | "diagnostics" | "data";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -236,6 +237,8 @@ export function App() {
     setAutoReadDelaySeconds,
     loadRemoteImages,
     setLoadRemoteImages,
+    availabilityPreferences,
+    setAvailabilityPreferences,
   } = useAppPreferences();
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeMessageFilters, setActiveMessageFilters] = useState<Set<MessageFilterKind>>(() => new Set());
@@ -1167,6 +1170,13 @@ export function App() {
     setTasksOpen(false);
     setActionsFormRequested(false);
     setActionsOpen((current) => !current);
+  }, []);
+
+  const openSchedule = useCallback(() => {
+    setTasksOpen(false);
+    setActionsOpen(false);
+    setActionsFormRequested(false);
+    setCalendarOpen(true);
   }, []);
 
   const newTask = useCallback(() => {
@@ -2312,6 +2322,7 @@ export function App() {
       {calendarOpen ? (
         <CalendarSidebar
           onClose={() => setCalendarOpen(false)}
+          availabilityPreferences={availabilityPreferences}
           onOpenSettings={() => {
             setCalendarOpen(false);
             openSettingsAt("calendarAccounts");
@@ -2325,6 +2336,7 @@ export function App() {
           currentThread={visibleDetail}
           onOpenThread={openTaskThread}
           onTasksChanged={() => void refreshTaskIndicators()}
+          onCheckSchedule={openSchedule}
         />
       ) : null}
       {actionsOpen ? (
@@ -2335,6 +2347,7 @@ export function App() {
           onOpenThread={openTaskThread}
           onTasksChanged={() => void refreshTaskIndicators()}
           title="Actions"
+          onCheckSchedule={openSchedule}
           initialFormOpen={Boolean(visibleDetail) || actionsFormRequested}
         />
       ) : null}
@@ -2418,6 +2431,8 @@ export function App() {
           onAutoReadDelayChange={setAutoReadDelaySeconds}
           loadRemoteImages={loadRemoteImages}
           onLoadRemoteImagesChange={setLoadRemoteImages}
+          availabilityPreferences={availabilityPreferences}
+          onAvailabilityPreferencesChange={setAvailabilityPreferences}
           syncStatus={syncStatus}
           recoveryStatus={recoveryStatus}
           onAiConfigChange={refreshAiAvailability}
@@ -2489,6 +2504,7 @@ export function App() {
             setFontFamily(preferences.fontFamily);
             setAutoReadDelaySeconds(preferences.autoReadDelaySeconds);
             setLoadRemoteImages(preferences.loadRemoteImages);
+            setAvailabilityPreferences(preferences.availabilityPreferences);
             setActiveAccountId(preferences.selectedAccountId);
             await Promise.all([
               refreshAccounts(),
@@ -3099,6 +3115,7 @@ const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "reading", label: "Reading" },
   { id: "accounts", label: "Mail Accounts" },
   { id: "calendarAccounts", label: "Calendar Accounts" },
+  { id: "availability", label: "Availability" },
   { id: "splitInboxes", label: "Split Inboxes" },
   { id: "ai", label: "AI provider" },
   { id: "privacy", label: "Privacy" },
@@ -3120,6 +3137,8 @@ function Settings({
   onAutoReadDelayChange,
   loadRemoteImages,
   onLoadRemoteImagesChange,
+  availabilityPreferences,
+  onAvailabilityPreferencesChange,
   syncStatus,
   recoveryStatus,
   onAiConfigChange,
@@ -3160,6 +3179,8 @@ function Settings({
   onAutoReadDelayChange(value: number): void;
   loadRemoteImages: boolean;
   onLoadRemoteImagesChange(value: boolean): void;
+  availabilityPreferences: AvailabilityPreferences;
+  onAvailabilityPreferencesChange(value: AvailabilityPreferences): void;
   syncStatus: SyncStatus | null;
   recoveryStatus: RecoveryStatus | null;
   onAiConfigChange(): void;
@@ -3241,6 +3262,12 @@ function Settings({
               onReconnect={onReconnectCalendarAccount}
               onRemove={onRemoveCalendarAccount}
               onSetSelection={onSetCalendarSelection}
+            />
+          ) : null}
+          {section === "availability" ? (
+            <AvailabilitySettings
+              preferences={availabilityPreferences}
+              onChange={onAvailabilityPreferencesChange}
             />
           ) : null}
           {section === "splitInboxes" ? (
@@ -3627,6 +3654,59 @@ function AccountsSettings({
         Disconnecting removes this account and its local ThreeStrands cache. Gmail and the account itself are not changed.
       </p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+function AvailabilitySettings({
+  preferences,
+  onChange,
+}: {
+  preferences: AvailabilityPreferences;
+  onChange(value: AvailabilityPreferences): void;
+}) {
+  const weekdayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const updateWindow = (weekday: number, patch: Partial<{ start: string; end: string }>) => {
+    const current = preferences.workingWindows.find((window) => window.weekday === weekday);
+    const next = current
+      ? preferences.workingWindows.map((window) => window.weekday === weekday ? { ...window, ...patch } : window)
+      : [...preferences.workingWindows, { weekday, start: patch.start ?? "09:00", end: patch.end ?? "17:00" }];
+    onChange({ ...preferences, workingWindows: next });
+  };
+  return (
+    <section className="settings-section" aria-label="Availability">
+      <h3>Timezone</h3>
+      <label className="settings-field">
+        <span>IANA timezone</span>
+        <input
+          value={preferences.timeZone}
+          aria-label="Availability timezone"
+          onChange={(event) => onChange({ ...preferences, timeZone: event.target.value })}
+        />
+      </label>
+      <p className="settings-hint">Times are interpreted in this timezone, including daylight-saving transitions.</p>
+      <h3>Working hours</h3>
+      <div className="availability-windows">
+        {weekdayLabels.map((label, weekday) => {
+          const window = preferences.workingWindows.find((candidate) => candidate.weekday === weekday);
+          return (
+            <div className="availability-window" key={label}>
+              <label><input type="checkbox" checked={Boolean(window)} onChange={(event) => {
+                if (event.target.checked) updateWindow(weekday, {});
+                else onChange({ ...preferences, workingWindows: preferences.workingWindows.filter((candidate) => candidate.weekday !== weekday) });
+              }} /> {label}</label>
+              {window ? <>
+                <input type="time" aria-label={`${label} start`} value={window.start} onChange={(event) => updateWindow(weekday, { start: event.target.value })} />
+                <span>to</span>
+                <input type="time" aria-label={`${label} end`} value={window.end} onChange={(event) => updateWindow(weekday, { end: event.target.value })} />
+              </> : <span className="settings-hint">Unavailable</span>}
+            </div>
+          );
+        })}
+      </div>
+      <h3>Meeting defaults</h3>
+      <label className="settings-field settings-field-inline"><span>Default duration</span><select value={preferences.defaultDurationMinutes} onChange={(event) => onChange({ ...preferences, defaultDurationMinutes: Number(event.target.value) })}>{[15, 30, 45, 60, 90, 120].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
+      <label className="settings-field settings-field-inline"><span>Slot increment</span><select value={preferences.slotIncrementMinutes} onChange={(event) => onChange({ ...preferences, slotIncrementMinutes: Number(event.target.value) })}>{[5, 10, 15, 30, 60].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
     </section>
   );
 }
