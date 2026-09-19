@@ -7,7 +7,7 @@
 use chrono::Utc;
 use rusqlite::{params, Connection};
 
-use crate::mime::GmailMessage;
+use crate::mime::RawMessage;
 
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
@@ -242,7 +242,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             rows
         };
         for (id, payload) in cached_payloads {
-            let Ok(message) = serde_json::from_str::<GmailMessage>(&payload) else {
+            let Ok(message) = serde_json::from_str::<RawMessage>(&payload) else {
                 continue;
             };
             let Ok(normalized) = crate::mime::normalize(&message) else {

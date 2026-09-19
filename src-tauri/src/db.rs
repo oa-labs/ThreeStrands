@@ -8,7 +8,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, Transaction};
 use uuid::Uuid;
 
-use crate::mime::{GmailMessage, NormalizedMessage, UnsubscribeMetadata};
+use crate::mime::{RawMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
     Account, CalendarAccount, ContactSuggestion, FailedMutation, MailboxUnreadCounts, Message,
     SearchThreadsRequest, QuarantinedMessage, SplitInbox, SyncStatus, Thread, ThreadDetail,
@@ -48,7 +48,7 @@ fn local_thread_id(account_id: &str, provider_thread_id: &str) -> String {
     format!("{account_id}:{provider_thread_id}")
 }
 
-fn is_gmail_system_label(id: &str) -> bool {
+fn is_system_label(id: &str) -> bool {
     id.starts_with("CATEGORY_")
         || matches!(
             id,
@@ -614,7 +614,7 @@ impl Database {
         self.get_thread(&thread_id)
     }
 
-    pub fn attachment_message(&self, message_id: &str) -> Result<(String, GmailMessage), String> {
+    pub fn attachment_message(&self, message_id: &str) -> Result<(String, RawMessage), String> {
         self.connection()?
             .query_row(
                 "SELECT t.account_id, mm.payload
@@ -1652,7 +1652,7 @@ impl Database {
         Ok(ids)
     }
 
-    pub fn delete_gmail_thread(
+    pub fn delete_thread(
         &self,
         account_id: &str,
         provider_thread_id: &str,
@@ -1786,7 +1786,7 @@ impl Database {
         Ok(count)
     }
 
-    fn apply_gmail_thread(
+    fn apply_thread(
         transaction: &Transaction<'_>,
         account_id: &str,
         messages: &[NormalizedMessage],
@@ -1824,7 +1824,7 @@ impl Database {
             .iter()
             .flat_map(|message| message.labels.iter())
             .filter(|label| {
-                is_gmail_system_label(label)
+                is_system_label(label)
                     && label.as_str() != "STARRED"
                     && label.as_str() != "UNREAD"
             })
@@ -1832,7 +1832,7 @@ impl Database {
             .chain(
                 root.labels
                     .iter()
-                    .filter(|label| !is_gmail_system_label(label) || label.as_str() == "STARRED")
+                    .filter(|label| !is_system_label(label) || label.as_str() == "STARRED")
                     .cloned(),
             )
             .chain(
@@ -1955,15 +1955,15 @@ impl Database {
         Ok(())
     }
 
-    pub fn upsert_gmail_thread(
+    pub fn upsert_thread(
         &self,
         account_id: &str,
         messages: &[NormalizedMessage],
     ) -> Result<(), String> {
-        self.upsert_gmail_threads(account_id, &[messages.to_vec()])
+        self.upsert_threads(account_id, &[messages.to_vec()])
     }
 
-    pub fn upsert_gmail_threads(
+    pub fn upsert_threads(
         &self,
         account_id: &str,
         message_groups: &[Vec<NormalizedMessage>],
@@ -1974,12 +1974,12 @@ impl Database {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         for messages in message_groups {
-            Self::apply_gmail_thread(&transaction, account_id, messages)?;
+            Self::apply_thread(&transaction, account_id, messages)?;
         }
         transaction.commit().map_err(display_error)
     }
 
-    pub fn apply_ingested_gmail_threads(
+    pub fn apply_ingested_threads(
         &self,
         account_id: &str,
         threads: &[(String, Vec<NormalizedMessage>, Vec<(String, String)>)],
@@ -1998,7 +1998,7 @@ impl Database {
                 )
                 .map_err(display_error)?;
             if !messages.is_empty() {
-                Self::apply_gmail_thread(&transaction, account_id, messages)?;
+                Self::apply_thread(&transaction, account_id, messages)?;
             }
             for (message_id, error) in quarantined {
                 transaction
@@ -2858,7 +2858,7 @@ mod tests {
         );
         archived.labels.clear();
         database
-            .upsert_gmail_thread("default", &[archived])
+            .upsert_thread("default", &[archived])
             .unwrap();
 
         let matches = database
@@ -2887,7 +2887,7 @@ mod tests {
         );
         quick_message.from = "Noise <Newsletter@Example.com>".into();
         database
-            .upsert_gmail_thread("work@example.com", &[quick_message])
+            .upsert_thread("work@example.com", &[quick_message])
             .unwrap();
 
         let mut engaged_message = message(
@@ -2898,7 +2898,7 @@ mod tests {
         );
         engaged_message.from = "A Person <person@example.com>".into();
         database
-            .upsert_gmail_thread("work@example.com", &[engaged_message])
+            .upsert_thread("work@example.com", &[engaged_message])
             .unwrap();
 
         for _ in 0..2 {
@@ -3010,7 +3010,7 @@ mod tests {
         sent.from = "you@example.com".into();
         sent.to = vec!["Jane Doe <jane@example.com>".into()];
         database
-            .upsert_gmail_thread("you@example.com", &[sent])
+            .upsert_thread("you@example.com", &[sent])
             .unwrap();
 
         let mut received = message(
@@ -3022,7 +3022,7 @@ mod tests {
         received.from = "Newsletter <newsletter@example.com>".into();
         received.to = vec!["you@example.com".into()];
         database
-            .upsert_gmail_thread("you@example.com", &[received])
+            .upsert_thread("you@example.com", &[received])
             .unwrap();
 
         let suggestions = database
@@ -3059,7 +3059,7 @@ mod tests {
         sent.from = "you@example.com".into();
         sent.to = vec!["Kristen Hammett <khammett@carsonwealth.com>".into()];
         database
-            .upsert_gmail_thread("you@example.com", &[sent])
+            .upsert_thread("you@example.com", &[sent])
             .unwrap();
 
         for query in ["kham", "Kristen", "hammett", "CARS", "wealth"] {
@@ -3083,7 +3083,7 @@ mod tests {
         sent.from = "you@example.com".into();
         sent.to = vec!["Frequent <frequent@example.com>".into()];
         database
-            .upsert_gmail_thread("you@example.com", &[sent])
+            .upsert_thread("you@example.com", &[sent])
             .unwrap();
 
         database
@@ -3131,7 +3131,7 @@ mod tests {
             list_id: None,
         });
         database
-            .upsert_gmail_thread("you@example.com", &[newsletter])
+            .upsert_thread("you@example.com", &[newsletter])
             .unwrap();
 
         assert!(database
@@ -3150,7 +3150,7 @@ mod tests {
         sent.from = "you@example.com".into();
         sent.to = vec!["newsletter@example.com".into()];
         database
-            .upsert_gmail_thread("you@example.com", &[sent])
+            .upsert_thread("you@example.com", &[sent])
             .unwrap();
 
         let suggestions = database
@@ -3237,7 +3237,7 @@ mod tests {
             ("beta", "2026-01-02T00:00:00Z"),
         ] {
             database
-                .upsert_gmail_thread(
+                .upsert_thread(
                     "default",
                     &[NormalizedMessage {
                         id: format!("{id}-message"),
@@ -3293,7 +3293,7 @@ mod tests {
         // recency should still win, since a newer email is more likely to be
         // what the user is looking for.
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "default",
                 &[message(
                     "old-message",
@@ -3304,7 +3304,7 @@ mod tests {
             )
             .unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "default",
                 &[message(
                     "new-message",
@@ -3410,7 +3410,7 @@ mod tests {
     fn deleting_a_thread_also_removes_its_search_index_row() {
         let database = database();
         database
-            .delete_gmail_thread("default", "demo-welcome")
+            .delete_thread("default", "demo-welcome")
             .unwrap();
         let remaining: i64 = database
             .connection()
@@ -3919,7 +3919,7 @@ mod tests {
         );
         other_message.labels = vec!["INBOX".into()];
         database
-            .upsert_gmail_thread("other@example.com", &[other_message])
+            .upsert_thread("other@example.com", &[other_message])
             .unwrap();
 
         // Both accounts have an "INBOX"-labeled thread, but the rule only
@@ -3972,7 +3972,7 @@ mod tests {
         product_message.from = "Team <team@product.example>".into();
         product_message.labels = vec!["INBOX".into(), "UNREAD".into()];
         database
-            .upsert_gmail_thread("work@example.com", &[product_message])
+            .upsert_thread("work@example.com", &[product_message])
             .unwrap();
 
         // "welcome" (seeded, unread) and the new product thread both count
@@ -4003,7 +4003,7 @@ mod tests {
         // Unread thread lives on "work@example.com"; the rule below belongs
         // to a different account and must not claim it.
         database
-            .upsert_gmail_thread("work@example.com", &[product_message])
+            .upsert_thread("work@example.com", &[product_message])
             .unwrap();
         database
             .create_split_inbox("Product", "domain", "product.example", "other@example.com")
@@ -4083,7 +4083,7 @@ mod tests {
         ];
 
         database
-            .upsert_gmail_thread("work@example.com", &[latest.clone(), root.clone()])
+            .upsert_thread("work@example.com", &[latest.clone(), root.clone()])
             .unwrap();
 
         let thread = database
@@ -4102,7 +4102,7 @@ mod tests {
         root.labels.retain(|label| label != "STARRED");
         latest.labels.push("STARRED".into());
         database
-            .upsert_gmail_thread("work@example.com", &[root, latest])
+            .upsert_thread("work@example.com", &[root, latest])
             .unwrap();
         assert!(
             !database
@@ -4134,7 +4134,7 @@ mod tests {
                 inline: false,
             });
         database
-            .upsert_gmail_thread("work@example.com", &[normalized])
+            .upsert_thread("work@example.com", &[normalized])
             .unwrap();
 
         let detail = database
@@ -4163,7 +4163,7 @@ mod tests {
             list_id: Some("news.example".into()),
         });
         database
-            .upsert_gmail_thread("work@example.com", &[normalized])
+            .upsert_thread("work@example.com", &[normalized])
             .unwrap();
 
         let detail = database.get_thread("work@example.com:newsletter").unwrap();
@@ -4204,7 +4204,7 @@ mod tests {
     fn two_accounts_with_the_same_provider_thread_id_stay_fully_separate() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message(
                     "work-msg",
@@ -4215,7 +4215,7 @@ mod tests {
             )
             .unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "personal@example.com",
                 &[message(
                     "personal-msg",
@@ -4245,7 +4245,7 @@ mod tests {
         );
 
         database
-            .delete_gmail_thread("work@example.com", "shared-id")
+            .delete_thread("work@example.com", "shared-id")
             .unwrap();
         let remaining = database.list_threads(None).unwrap();
         assert!(!remaining.iter().any(|t| t.id == work.id));
@@ -4256,13 +4256,13 @@ mod tests {
     fn clear_cursor_never_deletes_any_accounts_threads() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")],
             )
             .unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "personal@example.com",
                 &[message("m2", "t2", "2026-01-01T00:00:00Z", "body")],
             )
@@ -4277,7 +4277,7 @@ mod tests {
     fn prune_expired_threads_is_a_noop_when_retention_is_unset() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2000-01-01T00:00:00Z", "body")],
             )
@@ -4296,13 +4296,13 @@ mod tests {
         let database = database();
         clear_seed_threads(&database);
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2000-01-01T00:00:00Z", "body")],
             )
             .unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m2", "t2", &Utc::now().to_rfc3339(), "body")],
             )
@@ -4320,7 +4320,7 @@ mod tests {
         let database = database();
         clear_seed_threads(&database);
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2000-01-01T00:00:00Z", "body")],
             )
@@ -4345,7 +4345,7 @@ mod tests {
     fn pruning_a_thread_also_removes_its_search_index_row() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2000-01-01T00:00:00Z", "body")],
             )
@@ -4368,7 +4368,7 @@ mod tests {
     fn message_bodies_round_trip_through_compression() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message(
                     "m1",
@@ -4401,7 +4401,7 @@ mod tests {
     fn legacy_uncompressed_bodies_still_read_back_correctly() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2026-01-01T00:00:00Z", "placeholder")],
             )
@@ -4428,7 +4428,7 @@ mod tests {
         let database = database();
         clear_seed_threads(&database);
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2026-01-01T00:00:00Z", "placeholder")],
             )
@@ -4455,13 +4455,13 @@ mod tests {
     fn claim_mutations_only_claims_the_given_accounts_mutations() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")],
             )
             .unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "personal@example.com",
                 &[message("m2", "t2", "2026-01-01T00:00:00Z", "body")],
             )
@@ -4488,7 +4488,7 @@ mod tests {
     fn claim_mutations_fails_rather_than_orphans_a_mutation_whose_thread_is_gone() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")],
             )
@@ -4567,13 +4567,13 @@ mod tests {
     fn list_threads_merges_by_default_and_filters_when_scoped() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")],
             )
             .unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "personal@example.com",
                 &[message("m2", "t2", "2026-01-02T00:00:00Z", "body")],
             )
@@ -4593,19 +4593,19 @@ mod tests {
     fn list_all_mail_excludes_trash_but_keeps_archived() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "inbox", "2026-01-01T00:00:00Z", "body")],
             )
             .unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m2", "archived", "2026-01-02T00:00:00Z", "body")],
             )
             .unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m3", "trashed", "2026-01-03T00:00:00Z", "body")],
             )
@@ -4634,13 +4634,13 @@ mod tests {
     fn list_trash_only_returns_trashed_threads() {
         let database = database();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "inbox", "2026-01-01T00:00:00Z", "body")],
             )
             .unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m2", "trashed", "2026-01-02T00:00:00Z", "body")],
             )
@@ -4710,7 +4710,7 @@ mod tests {
         {
             let database = Database::open(&temp.path).unwrap();
             database
-                .upsert_gmail_thread(
+                .upsert_thread(
                     "work@example.com",
                     &[message(
                         "m1",
@@ -4795,7 +4795,7 @@ mod tests {
         let temp = TempDbPath::new();
         let database = Database::open(&temp.path).unwrap();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "work@example.com",
                 &[message("m1", "keep-me", "2026-01-01T00:00:00Z", "body")],
             )
@@ -4824,7 +4824,7 @@ mod tests {
         {
             let database = Database::open(&temp.path).unwrap();
             database
-                .upsert_gmail_thread(
+                .upsert_thread(
                     "work@example.com",
                     &[message("m1", "lost-thread", "2026-01-01T00:00:00Z", "body")],
                 )
@@ -4855,7 +4855,7 @@ mod tests {
         {
             let database = Database::open(&temp.path).unwrap();
             database
-                .upsert_gmail_thread(
+                .upsert_thread(
                     "work@example.com",
                     &[message(
                         "m1",
@@ -4870,7 +4870,7 @@ mod tests {
             // that's the proof the restore actually came from the backup
             // file rather than the (corrupt) live one.
             database
-                .upsert_gmail_thread(
+                .upsert_thread(
                     "work@example.com",
                     &[message(
                         "m2",
@@ -4904,7 +4904,7 @@ mod tests {
         {
             let database = Database::open(&temp.path).unwrap();
             database
-                .upsert_gmail_thread(
+                .upsert_thread(
                     "work@example.com",
                     &[message("m1", "kept-thread", "2026-01-01T00:00:00Z", "body")],
                 )
@@ -4961,7 +4961,7 @@ mod tests {
         let mut hit_capacity_error = false;
         for i in 0..100_000 {
             let body = "x".repeat(4096);
-            let result = database.upsert_gmail_thread(
+            let result = database.upsert_thread(
                 "work@example.com",
                 &[message(
                     &format!("m{i}"),

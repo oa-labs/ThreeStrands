@@ -5,12 +5,12 @@ mod auth;
 mod calendar;
 mod correspondence;
 mod db;
-mod gmail;
 mod image_format;
 mod image_proxy;
 mod mime;
 mod models;
 mod net_safety;
+mod provider;
 mod schema;
 mod sync;
 mod system_fonts;
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use auth::{GoogleAuth, GoogleAuthConfig};
 use chrono::Utc;
 use db::Database;
-use gmail::{GmailClient, GmailProvider};
+use provider::{gmail::GmailClient, MailMutate};
 use models::{
     Account, AuthStatus, CalendarAccount, CalendarOption, ContactSuggestion, CreateLabelRequest,
     CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
@@ -578,7 +578,7 @@ async fn load_attachment(
             // demand so those existing rows keep working after an upgrade.
             let provider_id = if attachment_id.starts_with("part:") {
                 let fresh = provider
-                    .get_message(message_id)
+                    .fetch_message(message_id)
                     .await
                     .map_err(|error| error.to_string())?;
                 mime::provider_attachment_id_from_payload(&fresh, attachment_id)?

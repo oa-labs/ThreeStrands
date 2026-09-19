@@ -2,8 +2,8 @@
 use crate::{
     auth::GoogleAuth,
     db::Database,
-    gmail::{GmailClient, GmailProvider},
-    mime::{GmailMessage, MimePart},
+    provider::{gmail::GmailClient, DeliveryReceipt, MailProvider, MailSend},
+    mime::{RawMessage, MimePart},
 };
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -334,7 +334,7 @@ impl Database {
                     "Reply metadata is unavailable offline. Refresh mail while connected first."
                         .to_string()
                 })?;
-            let source: GmailMessage = serde_json::from_str(&raw).map_err(error)?;
+            let source: RawMessage = serde_json::from_str(&raw).map_err(error)?;
             let normalized = crate::mime::normalize(&source)?;
             let part = &source.payload;
             let from = header(part, "From");
@@ -731,10 +731,16 @@ impl Correspondence {
             .get(account)
             .map(|connected| connected.auth.clone())
     }
-    pub(crate) async fn provider_for(&self, account: &str) -> Result<GmailClient, String> {
-        Ok(GmailClient::new(self.auth_for(account).await.ok_or_else(
-            || format!("{account} is not connected. Reconnect it before continuing."),
-        )?))
+    /// The backend a draft on `account` reads and sends through. Returned as
+    /// a trait object so the compose pipeline never names a concrete service.
+    pub(crate) async fn provider_for(
+        &self,
+        account: &str,
+    ) -> Result<Arc<dyn MailProvider>, String> {
+        let auth = self.auth_for(account).await.ok_or_else(|| {
+            format!("{account} is not connected. Reconnect it before continuing.")
+        })?;
+        Ok(Arc::new(GmailClient::new(auth)))
     }
     /// The account the compose identity bootstrap runs against. Not the only
     /// account drafts can send from — see `auth_for`.
@@ -816,7 +822,7 @@ impl Correspondence {
                         let source = self
                             .provider_for(&resolved_account)
                             .await?
-                            .get_message(id)
+                            .fetch_message(id)
                             .await
                             .map_err(error)?;
                         self.database
@@ -1030,7 +1036,7 @@ impl Correspondence {
                         .await
                         .map_err(error)?
                 } else {
-                    let source = provider.get_message(message).await.map_err(error)?;
+                    let source = provider.fetch_message(message).await.map_err(error)?;
                     fn find(part: &MimePart, name: &str) -> Option<String> {
                         if part.filename == name {
                             return part.body.data.clone();
@@ -1091,21 +1097,20 @@ impl Correspondence {
             return Err("Reconnect the original sender account".into());
         }
         if let Some(message) = provider
-            .find_sent(id, &item.draft.account)
+            .find_sent_copy(id, &item.draft.account)
             .await
             .map_err(error)?
         {
-            self.database.connection()?.execute("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.id,id]).map_err(error)?;
-            let messages = provider
-                .get_thread(&message.thread_id)
-                .await
-                .map_err(error)?;
-            let normalized = messages
-                .iter()
-                .map(crate::mime::normalize)
-                .collect::<Result<Vec<_>, _>>()?;
-            self.database
-                .upsert_gmail_thread(&item.draft.account, &normalized)?;
+            self.database.connection()?.execute("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id]).map_err(error)?;
+            if let Some(thread_id) = message.thread_id.as_deref() {
+                let messages = provider.fetch_thread(thread_id).await.map_err(error)?;
+                let normalized = messages
+                    .iter()
+                    .map(crate::mime::normalize)
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.database
+                    .upsert_thread(&item.draft.account, &normalized)?;
+            }
         } else {
             return Err("Delivery is still uncertain. No automatic retry was made. Check Gmail Sent before composing another message.".into());
         }
@@ -1161,21 +1166,22 @@ impl Correspondence {
                     continue;
                 }
                 // Obtain authorization before claiming delivery; transport errors after the claim are uncertain.
-                let request = provider.prepare_send().await.map_err(error)?;
-                let sender = &provider;
+                let permit = provider.prepare_delivery().await.map_err(error)?;
                 let sent = self
                     .dispatch_due(&item, now(), |raw, thread| async move {
-                        sender.deliver_once(request, &raw, thread.as_deref()).await
+                        permit.send_once(&raw, thread.as_deref()).await
                     })
                     .await?;
                 if let Some(sent) = sent {
-                    if let Ok(messages) = provider.get_thread(&sent.thread_id).await {
-                        if let Ok(normalized) = messages
-                            .iter()
-                            .map(crate::mime::normalize)
-                            .collect::<Result<Vec<_>, _>>()
-                        {
-                            self.database.upsert_gmail_thread(&identity, &normalized)?;
+                    if let Some(thread_id) = sent.thread_id.as_deref() {
+                        if let Ok(messages) = provider.fetch_thread(thread_id).await {
+                            if let Ok(normalized) = messages
+                                .iter()
+                                .map(crate::mime::normalize)
+                                .collect::<Result<Vec<_>, _>>()
+                            {
+                                self.database.upsert_thread(&identity, &normalized)?;
+                            }
                         }
                     }
                 }
@@ -1188,10 +1194,10 @@ impl Correspondence {
         item: &OutboxItem,
         at: i64,
         deliver: F,
-    ) -> Result<Option<crate::gmail::SentMessage>, String>
+    ) -> Result<Option<DeliveryReceipt>, String>
     where
         F: FnOnce(Vec<u8>, Option<String>) -> Fut,
-        Fut: std::future::Future<Output = Result<crate::gmail::SentMessage, (bool, String)>>,
+        Fut: std::future::Future<Output = Result<DeliveryReceipt, (bool, String)>>,
     {
         let raw: Vec<u8> = {
             let c = self.database.connection()?;
@@ -1208,7 +1214,7 @@ impl Correspondence {
         }
         match deliver(raw, item.draft.thread_id.clone()).await {
             Ok(sent) => {
-                self.database.connection()?.execute("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2",params![sent.id,item.id]).map_err(error)?;
+                self.database.connection()?.execute("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2",params![sent.provider_message_id,item.id]).map_err(error)?;
                 Ok(Some(sent))
             }
             Err((definite, message)) => {
@@ -1602,9 +1608,9 @@ mod tests {
         let send = |_, _| {
             calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             async {
-                Ok(crate::gmail::SentMessage {
-                    id: "sent".into(),
-                    thread_id: "thread".into(),
+                Ok(DeliveryReceipt {
+                    provider_message_id: "sent".into(),
+                    thread_id: Some("thread".into()),
                 })
             }
         };
@@ -1638,9 +1644,9 @@ mod tests {
             .dispatch_due(&item, item.deadline, |_, _| async {
                 panic!("Canceled mail must not send");
                 #[allow(unreachable_code)]
-                Ok(crate::gmail::SentMessage {
-                    id: String::new(),
-                    thread_id: String::new(),
+                Ok(DeliveryReceipt {
+                    provider_message_id: String::new(),
+                    thread_id: Some(String::new()),
                 })
             })
             .await
@@ -1661,9 +1667,9 @@ mod tests {
             .dispatch_due(&item, item.deadline + 1, |_, _| async {
                 panic!("Uncertain mail must not retry");
                 #[allow(unreachable_code)]
-                Ok(crate::gmail::SentMessage {
-                    id: String::new(),
-                    thread_id: String::new(),
+                Ok(DeliveryReceipt {
+                    provider_message_id: String::new(),
+                    thread_id: Some(String::new()),
                 })
             })
             .await
@@ -1699,7 +1705,7 @@ mod tests {
             .unwrap();
         let result=service.dispatch_due(&item,item.deadline,|_,_|async {
             service.database.connection().unwrap().execute_batch("CREATE TRIGGER fail_ack BEFORE UPDATE ON outbox_messages WHEN NEW.state='sent' BEGIN SELECT RAISE(FAIL,'disk failure'); END;").unwrap();
-            Ok(crate::gmail::SentMessage{id:"accepted".into(),thread_id:"thread".into()})
+            Ok(DeliveryReceipt{provider_message_id:"accepted".into(),thread_id:Some("thread".into())})
         }).await;
         assert!(result.is_err());
         assert_eq!(service.database.outbox().unwrap()[0].state, "sending");

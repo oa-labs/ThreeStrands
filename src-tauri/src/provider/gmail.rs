@@ -11,94 +11,15 @@ use tokio::{
 
 use crate::{
     auth::{AccessTokenError, GoogleAuth},
-    mime::GmailMessage,
+    mime::RawMessage,
     models::Label,
+    provider::{
+        Delivery, DeliveryReceipt, MailFetch, MailMutate, MailProvider, MailSend, MailSync,
+        ProviderCapabilities, ProviderError, ProviderResult, SyncBatch, SyncCursor, ThreadPage,
+    },
 };
 
 const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
-
-#[derive(Debug, thiserror::Error)]
-pub enum ProviderError {
-    #[error("Gmail history cursor is invalid or expired")]
-    InvalidCursor,
-    #[error("Gmail object was not found")]
-    NotFound,
-    #[error("Temporary Gmail transport failure: {0}")]
-    TransientTransport(String),
-    #[error("Gmail authentication failed: {0}")]
-    Authentication(String),
-    #[error("Gmail credentials require reconnection: {0}")]
-    ReauthenticationRequired(String),
-    #[error("Gmail server rejected a retryable request: {0}")]
-    RetryableServer(String),
-    #[error("Invalid Gmail operation: {0}")]
-    InvalidOperation(String),
-    #[error("Gmail permanently rejected the request: {0}")]
-    PermanentClientRejection(String),
-    #[error("{0}")]
-    Other(String),
-}
-
-impl ProviderError {
-    pub fn retry_mutation(&self) -> bool {
-        matches!(
-            self,
-            Self::TransientTransport(_) | Self::Authentication(_) | Self::RetryableServer(_)
-        )
-    }
-
-    pub fn requires_reauthentication(&self) -> bool {
-        matches!(self, Self::ReauthenticationRequired(_))
-    }
-}
-
-pub type ProviderResult<T> = Result<T, ProviderError>;
-
-#[derive(Debug)]
-pub struct ThreadPage {
-    pub thread_ids: Vec<String>,
-    pub next_page_token: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct HistoryPage {
-    pub thread_ids: Vec<String>,
-    pub history_id: String,
-    pub next_page_token: Option<String>,
-}
-
-#[async_trait]
-pub trait GmailProvider: Send + Sync {
-    async fn profile_history_id(&self) -> ProviderResult<String>;
-    async fn list_threads(&self, page: Option<&str>) -> ProviderResult<ThreadPage>;
-    async fn search_threads(
-        &self,
-        _query: &str,
-        _page: Option<&str>,
-    ) -> ProviderResult<ThreadPage> {
-        Err(ProviderError::InvalidOperation(
-            "Gmail search is not implemented by this provider".into(),
-        ))
-    }
-    async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>>;
-    async fn history(&self, cursor: &str, page: Option<&str>) -> ProviderResult<HistoryPage>;
-    async fn modify_thread(
-        &self,
-        id: &str,
-        add: &[String],
-        remove: &[String],
-    ) -> ProviderResult<()>;
-    async fn modify_messages(
-        &self,
-        ids: &[String],
-        add: &[String],
-        remove: &[String],
-    ) -> ProviderResult<()>;
-    async fn list_labels(&self) -> ProviderResult<Vec<Label>>;
-    async fn create_label(&self, name: &str) -> ProviderResult<Label>;
-    async fn update_label(&self, id: &str, name: &str) -> ProviderResult<Label>;
-    async fn delete_label(&self, id: &str) -> ProviderResult<()>;
-}
 
 #[derive(Clone)]
 pub struct GmailClient {
@@ -249,7 +170,7 @@ struct ThreadRef {
 #[derive(Deserialize)]
 struct GmailThread {
     #[serde(default)]
-    messages: Vec<GmailMessage>,
+    messages: Vec<RawMessage>,
 }
 
 #[derive(Default, Deserialize)]
@@ -338,13 +259,15 @@ impl From<GmailLabel> for Label {
 }
 
 #[async_trait]
-impl GmailProvider for GmailClient {
-    async fn profile_history_id(&self) -> ProviderResult<String> {
+impl MailSync for GmailClient {
+    async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
         let request = self.request(Method::GET, format!("{API}/profile")).await?;
-        Ok(self.json::<Profile>(request, false).await?.history_id)
+        Ok(SyncCursor::new(
+            self.json::<Profile>(request, false).await?.history_id,
+        ))
     }
 
-    async fn list_threads(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
+    async fn list_inbox(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
         let mut request = self
             .request(
                 Method::GET,
@@ -357,11 +280,11 @@ impl GmailProvider for GmailClient {
         let result: ThreadList = self.json(request, false).await?;
         Ok(ThreadPage {
             thread_ids: result.threads.into_iter().map(|thread| thread.id).collect(),
-            next_page_token: result.next_page_token,
+            next: result.next_page_token,
         })
     }
 
-    async fn search_threads(&self, query: &str, page: Option<&str>) -> ProviderResult<ThreadPage> {
+    async fn search(&self, query: &str, page: Option<&str>) -> ProviderResult<ThreadPage> {
         let mut request = self
             .request(Method::GET, format!("{API}/threads"))
             .await?
@@ -376,11 +299,11 @@ impl GmailProvider for GmailClient {
         let result: ThreadList = self.json(request, false).await?;
         Ok(ThreadPage {
             thread_ids: result.threads.into_iter().map(|thread| thread.id).collect(),
-            next_page_token: result.next_page_token,
+            next: result.next_page_token,
         })
     }
 
-    async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>> {
+    async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
         self.pace_thread_fetch().await;
         let request = self
             .request(Method::GET, format!("{API}/threads/{id}?format=full"))
@@ -388,14 +311,18 @@ impl GmailProvider for GmailClient {
         Ok(self.json::<GmailThread>(request, false).await?.messages)
     }
 
-    async fn history(&self, cursor: &str, page: Option<&str>) -> ProviderResult<HistoryPage> {
+    async fn poll(&self, cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
+        let position = HistoryPosition::parse(cursor);
         let mut request = self
             .request(
                 Method::GET,
-                format!("{API}/history?startHistoryId={cursor}&maxResults=100"),
+                format!(
+                    "{API}/history?startHistoryId={}&maxResults=100",
+                    position.history_id
+                ),
             )
             .await?;
-        if let Some(page) = page {
+        if let Some(page) = position.page.as_deref() {
             request = request.query(&[("pageToken", page)]);
         }
         let result: HistoryList = self.json(request, true).await?;
@@ -414,13 +341,81 @@ impl GmailProvider for GmailClient {
         }
         ids.sort();
         ids.dedup();
-        Ok(HistoryPage {
-            thread_ids: ids,
-            history_id: result.history_id,
-            next_page_token: result.next_page_token,
+        Ok(SyncBatch {
+            changed_threads: ids,
+            // Gmail reports the newest history id on every page, so advancing
+            // the cursor while paging would skip the pages not yet read.
+            // Carry the page token alongside it and only let the caller
+            // persist a page-free cursor once the round is complete.
+            cursor: HistoryPosition {
+                history_id: result.history_id,
+                page: result.next_page_token.clone(),
+            }
+            .encode(),
+            more: result.next_page_token.is_some(),
         })
     }
 
+}
+
+#[async_trait]
+impl MailFetch for GmailClient {
+    async fn fetch_message(&self, id: &str) -> ProviderResult<RawMessage> {
+        let request = self
+            .request(Method::GET, format!("{API}/messages/{id}?format=full"))
+            .await?;
+        self.json(request, false).await
+    }
+
+    async fn attachment_bytes(&self, message: &str, handle: &str) -> ProviderResult<Vec<u8>> {
+        #[derive(Deserialize)]
+        struct Body {
+            data: String,
+        }
+        let request = self
+            .request(
+                Method::GET,
+                format!("{API}/messages/{message}/attachments/{handle}"),
+            )
+            .await?;
+        let body: Body = self.json(request, false).await?;
+        crate::mime::decode_attachment_data(&body.data).map_err(ProviderError::Other)
+    }
+}
+
+/// Gmail's sync position: a `historyId`, plus the page token when a polling
+/// round spans several pages. Encoded as `historyId` alone in the common
+/// single-page case so that cursors already persisted by earlier versions
+/// keep parsing.
+struct HistoryPosition {
+    history_id: String,
+    page: Option<String>,
+}
+
+impl HistoryPosition {
+    fn parse(cursor: &SyncCursor) -> Self {
+        match cursor.as_str().split_once(' ') {
+            Some((history_id, page)) => Self {
+                history_id: history_id.to_string(),
+                page: Some(page.to_string()),
+            },
+            None => Self {
+                history_id: cursor.as_str().to_string(),
+                page: None,
+            },
+        }
+    }
+
+    fn encode(&self) -> SyncCursor {
+        match &self.page {
+            Some(page) => SyncCursor::new(format!("{} {page}", self.history_id)),
+            None => SyncCursor::new(&self.history_id),
+        }
+    }
+}
+
+#[async_trait]
+impl MailMutate for GmailClient {
     async fn modify_thread(
         &self,
         id: &str,
@@ -540,6 +535,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_cursor_persisted_before_paging_existed_still_parses() {
+        // Databases in the field hold a bare historyId. Upgrading must not
+        // read that as a paging position or force a full resynchronization.
+        let position = HistoryPosition::parse(&SyncCursor::new("12345"));
+        assert_eq!(position.history_id, "12345");
+        assert_eq!(position.page, None);
+        assert_eq!(position.encode(), SyncCursor::new("12345"));
+    }
+
+    #[test]
+    fn a_mid_round_cursor_round_trips_its_page_token() {
+        let cursor = HistoryPosition {
+            history_id: "12345".into(),
+            page: Some("tok-2".into()),
+        }
+        .encode();
+        assert_eq!(cursor, SyncCursor::new("12345 tok-2"));
+        let parsed = HistoryPosition::parse(&cursor);
+        assert_eq!(parsed.history_id, "12345");
+        assert_eq!(parsed.page.as_deref(), Some("tok-2"));
+    }
+
+    #[test]
     fn recognizes_gmail_quota_errors_returned_as_forbidden() {
         assert!(is_quota_error(
             r#"{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}"#
@@ -619,61 +637,40 @@ mod tests {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SentMessage {
-    pub id: String,
-    pub thread_id: String,
+struct SentMessage {
+    id: String,
+    thread_id: String,
 }
 
-impl GmailClient {
-    pub async fn sender_identity(&self) -> ProviderResult<String> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Identity {
-            email_address: String,
+impl From<SentMessage> for DeliveryReceipt {
+    fn from(value: SentMessage) -> Self {
+        Self {
+            provider_message_id: value.id,
+            thread_id: Some(value.thread_id),
         }
-        let request = self.request(Method::GET, format!("{API}/profile")).await?;
-        Ok(self.json::<Identity>(request, false).await?.email_address)
     }
-    pub async fn get_message(&self, id: &str) -> ProviderResult<GmailMessage> {
-        let request = self
-            .request(Method::GET, format!("{API}/messages/{id}?format=full"))
-            .await?;
-        self.json(request, false).await
-    }
-    pub async fn attachment_bytes(&self, message: &str, id: &str) -> ProviderResult<Vec<u8>> {
-        #[derive(Deserialize)]
-        struct Body {
-            data: String,
-        }
-        let request = self
-            .request(
-                Method::GET,
-                format!("{API}/messages/{message}/attachments/{id}"),
-            )
-            .await?;
-        let body: Body = self.json(request, false).await?;
-        crate::mime::decode_attachment_data(&body.data).map_err(ProviderError::Other)
-    }
-    pub async fn prepare_send(&self) -> ProviderResult<RequestBuilder> {
-        Ok(self
-            .request(Method::POST, format!("{API}/messages/send"))
-            .await?
-            .timeout(Duration::from_secs(60)))
-    }
-    // Send is non-idempotent: never use the generic HTTP retry helper here.
-    pub async fn deliver_once(
-        &self,
-        request: RequestBuilder,
+}
+
+/// A Gmail delivery permit: the `messages/send` request with its bearer token
+/// already attached, so nothing that can fail for authorization reasons
+/// remains between claiming the outbox row and the send itself.
+struct GmailDelivery(RequestBuilder);
+
+#[async_trait]
+impl Delivery for GmailDelivery {
+    // Send is non-idempotent: never route this through the retrying helper.
+    async fn send_once(
+        self: Box<Self>,
         raw: &[u8],
         thread: Option<&str>,
-    ) -> Result<SentMessage, (bool, String)> {
+    ) -> Result<DeliveryReceipt, (bool, String)> {
         use base64::Engine;
         let mut body =
             serde_json::json!({"raw":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)});
         if let Some(thread) = thread {
             body["threadId"] = thread.into();
         }
-        let response = request.json(&body).send().await.map_err(|_| {
+        let response = self.0.json(&body).send().await.map_err(|_| {
             (
                 false,
                 "Connection ended during delivery. Check sent mail before sending again.".into(),
@@ -696,19 +693,45 @@ impl GmailClient {
                 ),
             ));
         }
-        response.json().await.map_err(|_| {
-            (
-                false,
-                "Gmail accepted the request but its result could not be read. Check sent mail."
-                    .into(),
-            )
-        })
+        response
+            .json::<SentMessage>()
+            .await
+            .map(Into::into)
+            .map_err(|_| {
+                (
+                    false,
+                    "Gmail accepted the request but its result could not be read. Check sent mail."
+                        .into(),
+                )
+            })
     }
-    pub async fn find_sent(
+}
+
+#[async_trait]
+impl MailSend for GmailClient {
+    async fn sender_identity(&self) -> ProviderResult<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Identity {
+            email_address: String,
+        }
+        let request = self.request(Method::GET, format!("{API}/profile")).await?;
+        Ok(self.json::<Identity>(request, false).await?.email_address)
+    }
+
+    async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
+        Ok(Box::new(GmailDelivery(
+            self.request(Method::POST, format!("{API}/messages/send"))
+                .await?
+                .timeout(Duration::from_secs(60)),
+        )))
+    }
+
+    async fn find_sent_copy(
         &self,
         operation: &str,
         expected_sender: &str,
-    ) -> ProviderResult<Option<SentMessage>> {
+    ) -> ProviderResult<Option<DeliveryReceipt>> {
         #[derive(Deserialize)]
         struct Found {
             #[serde(default)]
@@ -724,7 +747,7 @@ impl GmailClient {
         let matches: Found = self.json(request, false).await?;
         // Verify the message identity and sender, rather than relying on search alone.
         for candidate in matches.messages {
-            let message = self.get_message(&candidate.id).await?;
+            let message = self.fetch_message(&candidate.id).await?;
             let matches_id = message.payload.headers.iter().any(|h| {
                 h.name.eq_ignore_ascii_case("Message-ID")
                     && h.value.trim().trim_matches(['<', '>'])
@@ -741,9 +764,17 @@ impl GmailClient {
                     })
                 });
             if matches_id && matches_sender && message.label_ids.iter().any(|l| l == "SENT") {
-                return Ok(Some(candidate));
+                return Ok(Some(candidate.into()));
             }
         }
         Ok(None)
+    }
+}
+
+impl MailProvider for GmailClient {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            server_search: true,
+        }
     }
 }

@@ -11,7 +11,10 @@ use tokio::sync::Mutex;
 use crate::{
     auth::GoogleAuth,
     db::{Database, PendingMutation},
-    gmail::{GmailClient, GmailProvider, ProviderError, ProviderResult},
+    provider::{
+        gmail::GmailClient, MailMutate, MailProvider, MailSync, ProviderError, ProviderResult,
+        SyncCursor,
+    },
     mime::{
         normalize, normalized_size, NormalizedMessage, MAX_NORMALIZED_THREAD_BYTES,
         MAX_THREAD_MESSAGES,
@@ -136,9 +139,9 @@ impl SyncService {
         self.database.sync_status(&account_id)
     }
 
-    /// Imports Gmail search hits absent from the local cache. Existing local
-    /// threads are deliberately skipped so an archived search does not turn
-    /// into a costly refresh of every ordinary inbox match.
+    /// Imports server-side search hits absent from the local cache. Existing
+    /// local threads are deliberately skipped so an archived search does not
+    /// turn into a costly refresh of every ordinary inbox match.
     pub async fn backfill_search(&self, query: &str) -> Result<(), String> {
         if query.trim().is_empty() || !self.is_connected() {
             return Ok(());
@@ -146,6 +149,12 @@ impl SyncService {
         let _guard = self.gate.lock().await;
         let account_id = self.account_id();
         let provider = GmailClient::new(self.auth.clone());
+        // Local search still works without this; a provider that cannot look
+        // past the local index simply has nothing to contribute, so asking is
+        // a guaranteed round trip to an error.
+        if !provider.capabilities().server_search {
+            return Ok(());
+        }
         search_and_ingest_missing(
             self.database.as_ref(),
             &account_id,
@@ -251,7 +260,7 @@ fn validate_label_name(name: &str) -> Result<(), String> {
 pub async fn flush_pending_with(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailMutate + ?Sized),
 ) -> ProviderResult<()> {
     if database
         .account_needs_reauth(account_id)
@@ -274,7 +283,7 @@ pub async fn flush_pending_with(
 pub async fn sync_with(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailSync + MailMutate + ?Sized),
 ) -> ProviderResult<()> {
     if database
         .account_needs_reauth(account_id)
@@ -289,11 +298,13 @@ pub async fn sync_with(
 async fn sync_active_with(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailSync + MailMutate + ?Sized),
 ) -> ProviderResult<()> {
     deliver_mutations(database, account_id, provider).await?;
     match database.cursor(account_id).map_err(ProviderError::Other)? {
-        Some(cursor) => match incremental_sync(database, account_id, provider, &cursor).await {
+        Some(cursor) => match incremental_sync(database, account_id, provider, &SyncCursor::new(cursor))
+            .await
+        {
             Err(ProviderError::InvalidCursor) => full_sync(database, account_id, provider).await,
             result => result,
         },
@@ -319,7 +330,7 @@ fn pause_for_permanent_auth_failure(
 async fn full_sync(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailSync + MailMutate + ?Sized),
 ) -> ProviderResult<()> {
     match full_sync_attempt(database, account_id, provider).await {
         Err(ProviderError::InvalidCursor) => {
@@ -335,7 +346,7 @@ async fn full_sync(
 async fn full_sync_attempt(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailSync + MailMutate + ?Sized),
 ) -> ProviderResult<()> {
     // An interrupted recovery must keep the normal sync cursor cleared rather
     // than running incrementally against an incomplete snapshot. Its separate,
@@ -347,11 +358,12 @@ async fn full_sync_attempt(
         .recovery_cursor(account_id)
         .map_err(ProviderError::Other)?
     {
-        Some(cursor) => cursor,
+        Some(cursor) => SyncCursor::new(cursor),
         None => {
-            // Capture the cursor before listing. The following history pass
-            // closes the race with mail arriving while the list is downloaded.
-            let cursor = provider.profile_history_id().await?;
+            // Capture the cursor before listing. The following incremental
+            // pass closes the race with mail arriving while the list is
+            // downloaded.
+            let cursor = provider.baseline_cursor().await?;
             let server_inbox_ids = list_inbox_thread_ids(provider).await?;
             let local_inbox_ids = local_inbox_thread_ids(database, account_id)?;
             let recovery_ids = server_inbox_ids
@@ -359,7 +371,7 @@ async fn full_sync_attempt(
                 .cloned()
                 .collect::<Vec<_>>();
             database
-                .begin_sync_recovery(account_id, &cursor, &recovery_ids)
+                .begin_sync_recovery(account_id, cursor.as_str(), &recovery_ids)
                 .map_err(ProviderError::Other)?;
             cursor
         }
@@ -382,18 +394,21 @@ async fn full_sync_attempt(
 async fn incremental_sync(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
-    cursor: &str,
+    provider: &(impl MailSync + ?Sized),
+    cursor: &SyncCursor,
 ) -> ProviderResult<()> {
-    let mut page = None;
+    let mut position = cursor.clone();
     let mut changed = HashSet::new();
+    // Only the cursor returned by the final page is persisted: a provider may
+    // report its newest position on every page, so advancing early would skip
+    // the pages not yet read.
     let final_cursor = loop {
-        let result = provider.history(cursor, page.as_deref()).await?;
-        changed.extend(result.thread_ids);
-        page = result.next_page_token;
-        if page.is_none() {
-            break result.history_id;
+        let batch = provider.poll(&position).await?;
+        changed.extend(batch.changed_threads);
+        if !batch.more {
+            break batch.cursor;
         }
+        position = batch.cursor;
     };
     ingest_threads(
         database,
@@ -403,19 +418,19 @@ async fn incremental_sync(
     )
     .await?;
     database
-        .finish_sync(account_id, &final_cursor)
+        .finish_sync(account_id, final_cursor.as_str())
         .map_err(ProviderError::Other)
 }
 
 async fn list_inbox_thread_ids(
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailSync + ?Sized),
 ) -> ProviderResult<HashSet<String>> {
     let mut page = None;
     let mut server_inbox_ids = HashSet::new();
     loop {
-        let result = provider.list_threads(page.as_deref()).await?;
+        let result = provider.list_inbox(page.as_deref()).await?;
         server_inbox_ids.extend(result.thread_ids);
-        page = result.next_page_token;
+        page = result.next;
         if page.is_none() {
             break;
         }
@@ -441,7 +456,7 @@ fn local_inbox_thread_ids(
 async fn reconcile_inbox(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailSync + ?Sized),
 ) -> ProviderResult<()> {
     let server_inbox_ids = list_inbox_thread_ids(provider).await?;
     let local_inbox_ids = local_inbox_thread_ids(database, account_id)?;
@@ -458,7 +473,7 @@ async fn reconcile_inbox(
 async fn reconcile_and_mark(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailSync + ?Sized),
 ) -> ProviderResult<()> {
     reconcile_inbox(database, account_id, provider).await?;
     database
@@ -469,7 +484,7 @@ async fn reconcile_and_mark(
 async fn search_and_ingest_missing(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailSync + ?Sized),
     query: &str,
     scan_limit: usize,
 ) -> ProviderResult<()> {
@@ -487,7 +502,7 @@ async fn search_and_ingest_missing(
     let mut scanned = 0;
     let mut page = None;
     loop {
-        let result = provider.search_threads(query, page.as_deref()).await?;
+        let result = provider.search(query, page.as_deref()).await?;
         for id in result.thread_ids {
             if scanned >= scan_limit {
                 break;
@@ -497,10 +512,10 @@ async fn search_and_ingest_missing(
                 missing.push(id);
             }
         }
-        if scanned >= scan_limit || result.next_page_token.is_none() {
+        if scanned >= scan_limit || result.next.is_none() {
             break;
         }
-        page = result.next_page_token;
+        page = result.next;
     }
 
     if missing.is_empty() {
@@ -518,14 +533,14 @@ const INGEST_FLUSH_BATCH_SIZE: usize = 10;
 async fn ingest_threads(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailSync + ?Sized),
     ids: Vec<String>,
 ) -> ProviderResult<()> {
     let mut ingested_threads = Vec::with_capacity(INGEST_FLUSH_BATCH_SIZE);
     let mut deleted = Vec::new();
     let mut pending_error = None;
     for id in ids {
-        let messages = match provider.get_thread(&id).await {
+        let messages = match provider.fetch_thread(&id).await {
             Ok(messages) => messages,
             Err(ProviderError::NotFound) => {
                 deleted.push(id);
@@ -540,19 +555,19 @@ async fn ingest_threads(
         ingested_threads.push((id, normalized, quarantined));
         if ingested_threads.len() >= INGEST_FLUSH_BATCH_SIZE {
             database
-                .apply_ingested_gmail_threads(account_id, &ingested_threads)
+                .apply_ingested_threads(account_id, &ingested_threads)
                 .map_err(ProviderError::Other)?;
             ingested_threads.clear();
         }
     }
     if !ingested_threads.is_empty() {
         database
-            .apply_ingested_gmail_threads(account_id, &ingested_threads)
+            .apply_ingested_threads(account_id, &ingested_threads)
             .map_err(ProviderError::Other)?;
     }
     for id in deleted {
         database
-            .delete_gmail_thread(account_id, &id)
+            .delete_thread(account_id, &id)
             .map_err(ProviderError::Other)?;
     }
     if let Some(error) = pending_error {
@@ -562,7 +577,7 @@ async fn ingest_threads(
 }
 
 fn normalize_thread(
-    messages: &[crate::mime::GmailMessage],
+    messages: &[crate::mime::RawMessage],
 ) -> (Vec<NormalizedMessage>, Vec<(String, String)>) {
     let mut normalized = Vec::with_capacity(messages.len().min(MAX_THREAD_MESSAGES));
     let mut quarantined = Vec::new();
@@ -613,7 +628,7 @@ fn normalize_thread(
 async fn deliver_mutations(
     database: &Database,
     account_id: &str,
-    provider: &(impl GmailProvider + ?Sized),
+    provider: &(impl MailMutate + ?Sized),
 ) -> ProviderResult<()> {
     loop {
         let mutations = database
@@ -768,8 +783,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        gmail::{HistoryPage, ThreadPage},
-        mime::{GmailMessage, MimeBody, MimeHeader, MimePart},
+        mime::{MimeBody, MimeHeader, MimePart, RawMessage},
+        provider::{SyncBatch, ThreadPage},
     };
 
     struct ContractProvider {
@@ -781,7 +796,7 @@ mod tests {
         fail_mutation: bool,
         permanently_fail_mutation: bool,
         reauth_mutation: bool,
-        thread_messages: Option<Vec<GmailMessage>>,
+        thread_messages: Option<Vec<RawMessage>>,
     }
 
     impl ContractProvider {
@@ -799,8 +814,8 @@ mod tests {
             }
         }
 
-        fn message() -> GmailMessage {
-            GmailMessage {
+        fn message() -> RawMessage {
+            RawMessage {
                 id: "message-1".into(),
                 thread_id: "gmail-thread".into(),
                 label_ids: vec!["INBOX".into(), "UNREAD".into()],
@@ -829,34 +844,30 @@ mod tests {
     }
 
     #[async_trait]
-    impl GmailProvider for ContractProvider {
-        async fn profile_history_id(&self) -> ProviderResult<String> {
-            Ok("current".into())
+    impl MailSync for ContractProvider {
+        async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+            Ok(SyncCursor::new("current"))
         }
 
-        async fn list_threads(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
+        async fn list_inbox(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
             assert!(page.is_none());
             self.full_lists.fetch_add(1, Ordering::SeqCst);
             Ok(ThreadPage {
                 thread_ids: vec!["gmail-thread".into()],
-                next_page_token: None,
+                next: None,
             })
         }
 
-        async fn search_threads(
-            &self,
-            query: &str,
-            page: Option<&str>,
-        ) -> ProviderResult<ThreadPage> {
+        async fn search(&self, query: &str, page: Option<&str>) -> ProviderResult<ThreadPage> {
             assert_eq!(query, "126");
             assert!(page.is_none());
             Ok(ThreadPage {
                 thread_ids: vec!["gmail-thread".into()],
-                next_page_token: None,
+                next: None,
             })
         }
 
-        async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>> {
+        async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
             self.thread_fetches.fetch_add(1, Ordering::SeqCst);
             // Anything besides the one thread this fake Gmail actually
             // knows about — e.g. `Database::open_memory()`'s local-only
@@ -871,18 +882,23 @@ mod tests {
                 .unwrap_or_else(|| vec![Self::message()]))
         }
 
-        async fn history(&self, cursor: &str, page: Option<&str>) -> ProviderResult<HistoryPage> {
-            assert!(page.is_none());
-            if cursor == "stale" && self.invalidate_stale_cursor.swap(false, Ordering::SeqCst) {
+        async fn poll(&self, cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
+            if cursor.as_str() == "stale"
+                && self.invalidate_stale_cursor.swap(false, Ordering::SeqCst)
+            {
                 return Err(ProviderError::InvalidCursor);
             }
-            Ok(HistoryPage {
-                thread_ids: vec![],
-                history_id: "current".into(),
-                next_page_token: None,
+            Ok(SyncBatch {
+                changed_threads: vec![],
+                cursor: SyncCursor::new("current"),
+                more: false,
             })
         }
 
+    }
+
+    #[async_trait]
+    impl MailMutate for ContractProvider {
         async fn modify_thread(
             &self,
             _id: &str,
@@ -984,6 +1000,72 @@ mod tests {
         assert_eq!(
             database.list_threads(None).unwrap()[0].id,
             "default:gmail-thread"
+        );
+    }
+
+    /// A provider that reports changes across two pages and, like Gmail,
+    /// names its newest position on every page — including the first.
+    struct PagedProvider {
+        polls: StdMutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl MailSync for PagedProvider {
+        async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+            unreachable!()
+        }
+
+        async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+            unreachable!()
+        }
+
+        async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
+            let mut message = ContractProvider::message();
+            message.id = id.into();
+            message.thread_id = id.into();
+            Ok(vec![message])
+        }
+
+        async fn poll(&self, cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
+            self.polls.lock().unwrap().push(cursor.as_str().into());
+            Ok(match cursor.as_str() {
+                // First page: more to come, so the position carries a token
+                // alongside the newest history id.
+                "start" => SyncBatch {
+                    changed_threads: vec!["gmail-thread".into()],
+                    cursor: SyncCursor::new("newest page-2"),
+                    more: true,
+                },
+                // Final page: a page-free cursor, safe to persist.
+                _ => SyncBatch {
+                    changed_threads: vec!["gmail-thread".into()],
+                    cursor: SyncCursor::new("newest"),
+                    more: false,
+                },
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_multi_page_poll_persists_only_the_cursor_from_its_final_page() {
+        let database = Database::open_memory();
+        let provider = PagedProvider {
+            polls: StdMutex::new(Vec::new()),
+        };
+        incremental_sync(&database, "default", &provider, &SyncCursor::new("start"))
+            .await
+            .unwrap();
+
+        // The second request resumes from the first page's position rather
+        // than restarting, and the persisted cursor is the page-free one.
+        assert_eq!(
+            *provider.polls.lock().unwrap(),
+            vec!["start".to_string(), "newest page-2".to_string()]
+        );
+        assert_eq!(
+            database.cursor("default").unwrap().as_deref(),
+            Some("newest"),
+            "persisting a mid-round cursor would skip the pages not yet read"
         );
     }
 
@@ -1230,19 +1312,23 @@ mod tests {
             .unwrap();
         struct TransientAuthProvider;
         #[async_trait]
-        impl GmailProvider for TransientAuthProvider {
-            async fn profile_history_id(&self) -> ProviderResult<String> {
+        impl MailSync for TransientAuthProvider {
+            async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
                 unreachable!()
             }
-            async fn list_threads(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+            async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
                 unreachable!()
             }
-            async fn get_thread(&self, _: &str) -> ProviderResult<Vec<GmailMessage>> {
+            async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
                 unreachable!()
             }
-            async fn history(&self, _: &str, _: Option<&str>) -> ProviderResult<HistoryPage> {
+            async fn poll(&self, _: &SyncCursor) -> ProviderResult<SyncBatch> {
                 unreachable!()
             }
+        }
+
+        #[async_trait]
+        impl MailMutate for TransientAuthProvider {
             async fn modify_thread(
                 &self,
                 _: &str,
@@ -1336,7 +1422,7 @@ mod tests {
         second.id = "message-2".into();
         second.thread_id = "second-thread".into();
         database
-            .upsert_gmail_thread("default", &[crate::mime::normalize(&second).unwrap()])
+            .upsert_thread("default", &[crate::mime::normalize(&second).unwrap()])
             .unwrap();
         // Two separately-delivered mutations (different threads, so each is
         // its own batch group). The provider fails every delivery attempt,
@@ -1450,7 +1536,7 @@ mod tests {
         let mut second = ContractProvider::message();
         second.id = "message-2".into();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "default",
                 &[
                     crate::mime::normalize(&first).unwrap(),
@@ -1490,7 +1576,7 @@ mod tests {
         latest.id = "latest-message".into();
         latest.internal_date = "1700000001000".into();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "default",
                 &[
                     crate::mime::normalize(&latest).unwrap(),
@@ -1523,7 +1609,7 @@ mod tests {
         newer.id = "newer-message".into();
         newer.internal_date = "1700000002000".into();
         database
-            .upsert_gmail_thread(
+            .upsert_thread(
                 "default",
                 &[
                     crate::mime::normalize(&root).unwrap(),
@@ -1565,7 +1651,7 @@ mod tests {
         let database = Database::open_memory();
         let message = ContractProvider::message();
         database
-            .upsert_gmail_thread("default", &[crate::mime::normalize(&message).unwrap()])
+            .upsert_thread("default", &[crate::mime::normalize(&message).unwrap()])
             .unwrap();
         database
             .mutate_threads(&[
@@ -1618,27 +1704,27 @@ mod tests {
 
     struct ReconcileProvider {
         inbox_ids: Vec<String>,
-        threads: std::collections::HashMap<String, GmailMessage>,
+        threads: std::collections::HashMap<String, RawMessage>,
         list_calls: AtomicUsize,
         fail_thread_once: StdMutex<Option<String>>,
     }
 
     #[async_trait]
-    impl GmailProvider for ReconcileProvider {
-        async fn profile_history_id(&self) -> ProviderResult<String> {
-            Ok("resynced".into())
+    impl MailSync for ReconcileProvider {
+        async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+            Ok(SyncCursor::new("resynced"))
         }
 
-        async fn list_threads(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
+        async fn list_inbox(&self, page: Option<&str>) -> ProviderResult<ThreadPage> {
             assert!(page.is_none());
             self.list_calls.fetch_add(1, Ordering::SeqCst);
             Ok(ThreadPage {
                 thread_ids: self.inbox_ids.clone(),
-                next_page_token: None,
+                next: None,
             })
         }
 
-        async fn get_thread(&self, id: &str) -> ProviderResult<Vec<GmailMessage>> {
+        async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
             let mut fail_thread = self.fail_thread_once.lock().unwrap();
             if fail_thread.as_deref() == Some(id) {
                 fail_thread.take();
@@ -1652,15 +1738,18 @@ mod tests {
                 .clone()])
         }
 
-        async fn history(&self, _cursor: &str, page: Option<&str>) -> ProviderResult<HistoryPage> {
-            assert!(page.is_none());
-            Ok(HistoryPage {
-                thread_ids: vec![],
-                history_id: "resynced".into(),
-                next_page_token: None,
+        async fn poll(&self, _cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
+            Ok(SyncBatch {
+                changed_threads: vec![],
+                cursor: SyncCursor::new("resynced"),
+                more: false,
             })
         }
 
+    }
+
+    #[async_trait]
+    impl MailMutate for ReconcileProvider {
         async fn modify_thread(
             &self,
             _id: &str,
@@ -1713,7 +1802,7 @@ mod tests {
         restored.id = "restored-message".into();
         restored.thread_id = "restored-thread".into();
         database
-            .upsert_gmail_thread(account, &[crate::mime::normalize(&restored).unwrap()])
+            .upsert_thread(account, &[crate::mime::normalize(&restored).unwrap()])
             .unwrap();
         database
             .mutate_thread(&ThreadMutation::Archive {
@@ -1727,7 +1816,7 @@ mod tests {
         orphaned.id = "orphaned-message".into();
         orphaned.thread_id = "orphaned-thread".into();
         database
-            .upsert_gmail_thread(account, &[crate::mime::normalize(&orphaned).unwrap()])
+            .upsert_thread(account, &[crate::mime::normalize(&orphaned).unwrap()])
             .unwrap();
 
         // Untouched by drift: stays archived, and reconcile must never fetch it.
@@ -1736,7 +1825,7 @@ mod tests {
         settled.thread_id = "settled-thread".into();
         settled.label_ids = vec![];
         database
-            .upsert_gmail_thread(account, &[crate::mime::normalize(&settled).unwrap()])
+            .upsert_thread(account, &[crate::mime::normalize(&settled).unwrap()])
             .unwrap();
         database
             .mutate_thread(&ThreadMutation::Archive {
@@ -1849,7 +1938,7 @@ mod tests {
         archived.id = "archived-message".into();
         archived.thread_id = "archived-thread".into();
         database
-            .upsert_gmail_thread(account, &[crate::mime::normalize(&archived).unwrap()])
+            .upsert_thread(account, &[crate::mime::normalize(&archived).unwrap()])
             .unwrap();
         database
             .mutate_thread(&ThreadMutation::Archive {
@@ -1866,7 +1955,7 @@ mod tests {
         stale_common.thread_id = "common-thread".into();
         stale_common.snippet = "stale snippet".into();
         database
-            .upsert_gmail_thread(account, &[crate::mime::normalize(&stale_common).unwrap()])
+            .upsert_thread(account, &[crate::mime::normalize(&stale_common).unwrap()])
             .unwrap();
         let mut fresh_common = stale_common;
         fresh_common.snippet = "fresh snippet".into();

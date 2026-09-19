@@ -12,9 +12,18 @@ pub(crate) const MAX_MESSAGE_HEADER_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_DECODED_BODY_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_NORMALIZED_THREAD_BYTES: usize = 16 * 1024 * 1024;
 
+/// A raw message as the provider handed it over: the MIME tree plus the
+/// provider-assigned ids and labels that came with it.
+///
+/// The shape is Gmail's REST payload because that is where it came from, but
+/// it is the ingest envelope for every provider — a MIME-native provider
+/// parses its bytes into this tree rather than bypassing it. Keeping one
+/// envelope keeps `normalize`, attachment extraction, inline-CID handling,
+/// unsubscribe parsing, and the email rendering trust boundary shared instead
+/// of reimplemented per provider.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GmailMessage {
+pub struct RawMessage {
     pub id: String,
     pub thread_id: String,
     #[serde(default)]
@@ -102,7 +111,7 @@ pub struct NormalizedMessage {
     pub attachments: Vec<crate::models::MessageAttachment>,
 }
 
-pub fn normalize(message: &GmailMessage) -> Result<NormalizedMessage, String> {
+pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
     validate_mime_structure(&message.payload)?;
     let mut html = None;
     let mut text = None;
@@ -382,7 +391,7 @@ pub(crate) fn decode_attachment_data(data: &str) -> Result<Vec<u8>, String> {
 }
 
 pub fn attachment_bytes_from_payload(
-    message: &GmailMessage,
+    message: &RawMessage,
     attachment_id: &str,
 ) -> Result<Option<Vec<u8>>, String> {
     fn find<'a>(part: &'a MimePart, path: &str, id: &str) -> Option<&'a MimePart> {
@@ -413,7 +422,7 @@ pub fn attachment_bytes_from_payload(
 /// Resolves either a Gmail attachment ID or the synthetic MIME-part reference
 /// used by older cached messages to the current provider attachment ID.
 pub fn provider_attachment_id_from_payload(
-    message: &GmailMessage,
+    message: &RawMessage,
     attachment_reference: &str,
 ) -> Result<Option<String>, String> {
     fn find(part: &MimePart, path: &str, reference: &str) -> Option<Option<String>> {
@@ -726,7 +735,7 @@ mod tests {
 
     #[test]
     fn selects_plain_and_html_from_nested_multipart_and_ignores_attachments() {
-        let message = GmailMessage {
+        let message = RawMessage {
             id: "m".into(),
             thread_id: "t".into(),
             label_ids: vec!["INBOX".into()],
@@ -772,7 +781,7 @@ mod tests {
 
     #[test]
     fn derives_body_text_from_html_when_no_plain_part_exists() {
-        let message = GmailMessage {
+        let message = RawMessage {
             id: "m".into(),
             thread_id: "t".into(),
             label_ids: vec![],
@@ -797,7 +806,7 @@ mod tests {
 
     #[test]
     fn preserves_gmail_attachment_ids_and_resolves_legacy_part_references() {
-        let message: GmailMessage = serde_json::from_value(serde_json::json!({
+        let message: RawMessage = serde_json::from_value(serde_json::json!({
             "id": "m",
             "threadId": "t",
             "payload": {
@@ -824,7 +833,7 @@ mod tests {
 
     #[test]
     fn marks_encoded_html_content_id_images_as_inline() {
-        let message: GmailMessage = serde_json::from_value(serde_json::json!({
+        let message: RawMessage = serde_json::from_value(serde_json::json!({
             "id": "m",
             "threadId": "t",
             "payload": {
@@ -858,7 +867,7 @@ mod tests {
 
     #[test]
     fn displays_a_declared_inline_image_without_an_html_placement() {
-        let message: GmailMessage = serde_json::from_value(serde_json::json!({
+        let message: RawMessage = serde_json::from_value(serde_json::json!({
             "id": "m",
             "threadId": "t",
             "payload": {
@@ -897,7 +906,7 @@ mod tests {
 
     #[test]
     fn keeps_explicit_image_attachments_downloadable_even_with_a_content_id() {
-        let message: GmailMessage = serde_json::from_value(serde_json::json!({
+        let message: RawMessage = serde_json::from_value(serde_json::json!({
             "id": "m",
             "threadId": "t",
             "payload": {
@@ -929,7 +938,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_base64_at_provider_boundary() {
-        let mut message = GmailMessage {
+        let mut message = RawMessage {
             id: "m".into(),
             thread_id: "t".into(),
             label_ids: vec![],
@@ -943,7 +952,7 @@ mod tests {
 
     #[test]
     fn extracts_authenticated_one_click_and_safe_fallbacks_in_header_order() {
-        let mut message = GmailMessage {
+        let mut message = RawMessage {
             id: "m".into(),
             thread_id: "t".into(),
             label_ids: vec![],
@@ -976,7 +985,7 @@ mod tests {
 
     #[test]
     fn does_not_offer_one_click_without_authenticated_dkim() {
-        let mut message = GmailMessage {
+        let mut message = RawMessage {
             id: "m".into(),
             thread_id: "t".into(),
             label_ids: vec![],
