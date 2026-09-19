@@ -245,6 +245,42 @@ export type SummaryResult = {
   generatedAt: string;
 };
 
+export type ProposalEvidence = {
+  sourceMessageId: string;
+  excerpt: string;
+};
+
+export type MeetingProposal = {
+  type: "meeting";
+  intent: string;
+  title: string;
+  participants: string[];
+  rawTimeLanguage: string;
+  normalizedStart: string | null;
+  normalizedEnd: string | null;
+  searchRangeStart: string | null;
+  searchRangeEnd: string | null;
+  durationMinutes: number | null;
+  timeZone: string | null;
+  confidence: number;
+  evidence: ProposalEvidence;
+};
+
+export type TaskProposal = {
+  type: "task";
+  kind: TaskKind;
+  title: string;
+  notes: string | null;
+  dueKind: TaskDueKind;
+  dueValue: string | null;
+  timeZone: string | null;
+  repeatIntervalDays: number | null;
+  confidence: number;
+  evidence: ProposalEvidence;
+};
+
+export type ActionProposal = MeetingProposal | TaskProposal;
+
 export type ReplyAssistMessage = {
   sender: string;
   sentAt: string;

@@ -24,6 +24,7 @@ describe("exportable preferences", () => {
       aiFeatures: {
         draftAssist: true,
         summarize: false,
+        actionExtraction: false,
       },
       availabilityPreferences: {
         timeZone: "America/New_York",

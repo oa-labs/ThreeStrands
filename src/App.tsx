@@ -75,6 +75,7 @@ import {
 import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, Modal, ShortcutHelp } from "./AppChrome";
 import type {
   Account,
+  ActionProposal,
   AuthStatus,
   AvailabilityPreferences,
   CalendarAccount,
@@ -89,6 +90,8 @@ import type {
   TriageEvent,
   UnreadCounts,
   Message,
+  MeetingProposal,
+  TaskProposal,
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
 import { ThreadRow } from "./ThreadList";
@@ -381,6 +384,7 @@ export function App() {
   }, [calendarAccounts.length, refreshCalendarOptions, settingsOpen, settingsSection]);
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
+  const [aiActionAvailable, setAiActionAvailable] = useState(false);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   // Keyed by thread id, not a single flag, so summarizing thread A in the
   // background doesn't show "Summarizing…" (or clear it) on thread B just
@@ -389,14 +393,24 @@ export function App() {
   const [summarizingIds, setSummarizingIds] = useState<Set<string>>(new Set());
   const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
   const refreshAiAvailability = useCallback(() => {
-    const enabled = readAiProvider() !== "none" && readAiFeatures().summarize;
-    if (!enabled) {
+    const provider = readAiProvider();
+    const features = readAiFeatures();
+    const summaryEnabled = provider !== "none" && features.summarize;
+    const actionEnabled = provider !== "none" && features.actionExtraction;
+    if (!summaryEnabled && !actionEnabled) {
       setAiSummaryAvailable(false);
+      setAiActionAvailable(false);
       return;
     }
     void isAiApiKeyConfigured()
-      .then(setAiSummaryAvailable)
-      .catch(() => setAiSummaryAvailable(false));
+      .then((configured) => {
+        setAiSummaryAvailable(configured && summaryEnabled);
+        setAiActionAvailable(configured && actionEnabled);
+      })
+      .catch(() => {
+        setAiSummaryAvailable(false);
+        setAiActionAvailable(false);
+      });
   }, []);
   useEffect(() => {
     // Also covers the initial mount, since `settingsOpen` starts `false`.
@@ -1252,6 +1266,109 @@ export function App() {
       setSummarizingIds(new Set(summarizingRef.current));
     }
   }, [selected]);
+
+  const [actionProposalSets, setActionProposalSets] = useState<Record<string, ActionProposal[]>>({});
+  const [actionAnalysisLoading, setActionAnalysisLoading] = useState(false);
+  const [actionAnalysisError, setActionAnalysisError] = useState<string | null>(null);
+  const actionProposalKey = visibleDetail
+    ? `${visibleDetail.thread.id}:${visibleDetail.thread.lastMessageAt}`
+    : null;
+  const actionProposals = actionProposalKey ? actionProposalSets[actionProposalKey] ?? [] : [];
+  const actionAnalysisRequested = Boolean(
+    actionAnalysisLoading
+      || actionAnalysisError
+      || (actionProposalKey && Object.prototype.hasOwnProperty.call(actionProposalSets, actionProposalKey)),
+  );
+  useEffect(() => {
+    setActionAnalysisError(null);
+  }, [actionProposalKey]);
+  const actionAnalysisPreview = useMemo(() => {
+    if (!visibleDetail) return null;
+    const messages = visibleDetail.messages.slice(-15).map((message) => ({
+      sourceMessageId: message.id,
+      sender: message.sender,
+      sentAt: message.sentAt,
+      bodyText: message.bodyText.slice(0, 6000),
+    }));
+    return JSON.stringify({
+      userTimeZone: availabilityPreferences.timeZone,
+      emailContext: { subject: visibleDetail.thread.subject, messages },
+    }, null, 2);
+  }, [availabilityPreferences.timeZone, visibleDetail]);
+
+  const runAnalyzeThread = useCallback(async () => {
+    if (!visibleDetail || !actionProposalKey || actionAnalysisLoading) return;
+    if (!aiActionAvailable) {
+      setActionAnalysisError("Enable Thread actions and configure an AI provider in Settings.");
+      return;
+    }
+    setActionAnalysisLoading(true);
+    setActionAnalysisError(null);
+    try {
+      const provider = readAiProvider();
+      const model = resolveAiModel(provider, readAiModel());
+      if (!model) throw new Error("Set a model in AI settings before analyzing a thread.");
+      const endpoint = provider === "custom" ? readAiEndpoint().trim() : null;
+      if (provider === "custom" && !endpoint) throw new Error("Set an endpoint URL in AI settings before analyzing a thread.");
+      const proposals = await mailClient.analyzeThread(
+        visibleDetail.thread.id,
+        availabilityPreferences.timeZone,
+        provider,
+        model,
+        endpoint,
+      );
+      setActionProposalSets((current) => ({ ...current, [actionProposalKey]: proposals }));
+    } catch (reason) {
+      setActionAnalysisError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setActionAnalysisLoading(false);
+    }
+  }, [actionAnalysisLoading, actionProposalKey, aiActionAvailable, availabilityPreferences.timeZone, visibleDetail]);
+
+  const updateActionProposal = useCallback((index: number, proposal: ActionProposal) => {
+    if (!actionProposalKey) return;
+    setActionProposalSets((current) => ({
+      ...current,
+      [actionProposalKey]: (current[actionProposalKey] ?? []).map((item, itemIndex) => itemIndex === index ? proposal : item),
+    }));
+  }, [actionProposalKey]);
+
+  const discardActionProposal = useCallback((index: number) => {
+    if (!actionProposalKey) return;
+    setActionProposalSets((current) => ({
+      ...current,
+      [actionProposalKey]: (current[actionProposalKey] ?? []).filter((_, itemIndex) => itemIndex !== index),
+    }));
+  }, [actionProposalKey]);
+
+  const addTaskFromProposal = useCallback(async (proposal: TaskProposal) => {
+    if (!visibleDetail) return;
+    try {
+      await mailClient.createTask({
+        accountId: visibleDetail.thread.accountId,
+        threadId: visibleDetail.thread.id,
+        sourceMessageId: proposal.evidence.sourceMessageId,
+        subjectSnapshot: visibleDetail.thread.subject,
+        title: proposal.title,
+        notes: proposal.notes,
+        kind: proposal.kind,
+        dueKind: proposal.dueKind,
+        dueValue: proposal.dueValue,
+        timeZone: proposal.timeZone ?? availabilityPreferences.timeZone,
+        repeatIntervalDays: proposal.repeatIntervalDays,
+        evidenceText: proposal.evidence.excerpt,
+      });
+      await refreshTaskIndicators();
+      setNotice({ message: "Task added from thread action" });
+    } catch (reason) {
+      setActionAnalysisError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, [availabilityPreferences.timeZone, refreshTaskIndicators, setNotice, visibleDetail]);
+
+  const findTimesFromProposal = useCallback((proposal: MeetingProposal) => {
+    openSchedule();
+    setNotice({ message: proposal.rawTimeLanguage ? `Check schedule for: ${proposal.rawTimeLanguage}` : "Check schedule for this meeting" });
+  }, [openSchedule, setNotice]);
 
   useEffect(() => {
     selectedThreadRowRef.current?.scrollIntoView?.({ block: "nearest" });
@@ -2348,6 +2465,16 @@ export function App() {
           onTasksChanged={() => void refreshTaskIndicators()}
           title="Actions"
           onCheckSchedule={openSchedule}
+          onAnalyzeThread={() => void runAnalyzeThread()}
+          analysisEnabled={aiActionAvailable && Boolean(visibleDetail)}
+          analysisLoading={actionAnalysisLoading}
+          analysisError={actionAnalysisError}
+          analysisPreview={actionAnalysisRequested ? actionAnalysisPreview : null}
+          proposals={actionProposals}
+          onDiscardProposal={discardActionProposal}
+          onUpdateProposal={updateActionProposal}
+          onAddTaskProposal={addTaskFromProposal}
+          onFindTimesProposal={findTimesFromProposal}
           initialFormOpen={Boolean(visibleDetail) || actionsFormRequested}
         />
       ) : null}
@@ -4325,6 +4452,14 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               onChange={(event) => updateFeature("summarize", event.target.checked)}
             />
             Thread summaries
+          </label>
+          <label className="settings-checkbox">
+            <input
+              type="checkbox"
+              checked={features.actionExtraction}
+              onChange={(event) => updateFeature("actionExtraction", event.target.checked)}
+            />
+            Thread actions
           </label>
         </>
       ) : null}

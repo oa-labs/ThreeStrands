@@ -3,6 +3,7 @@ import type { MailClient } from "./client";
 import { parseAddress } from "../emailAddress";
 import type {
   Account,
+  ActionProposal,
   AvailabilityPreferences,
   AvailabilityResult,
   CalendarAccount,
@@ -385,6 +386,27 @@ export const demoClient: MailClient = {
       candidate.id === threadId ? { ...candidate, summary, summaryGeneratedAt: generatedAt } : candidate,
     );
     return { summary, generatedAt };
+  },
+  async analyzeThread(threadId): Promise<ActionProposal[]> {
+    const detail = await this.getThread(threadId);
+    const latest = detail.messages.at(-1);
+    if (!latest) return [];
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return [{
+      type: "task",
+      kind: "action",
+      title: `Review: ${detail.thread.subject}`,
+      notes: detail.thread.snippet,
+      dueKind: "none",
+      dueValue: null,
+      timeZone: null,
+      repeatIntervalDays: null,
+      confidence: 0.72,
+      evidence: {
+        sourceMessageId: latest.id,
+        excerpt: latest.bodyText.slice(0, 240),
+      },
+    }];
   },
   async replyAssistContext(draftId): Promise<ReplyAssistContext> {
     const replyDraft = (await this.listDrafts()).find((candidate) => candidate.id === draftId);

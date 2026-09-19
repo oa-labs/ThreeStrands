@@ -27,7 +27,7 @@ use auth::{AccountAuth, GoogleAuthConfig};
 use chrono::Utc;
 use db::Database;
 use models::{
-    Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, CreateLabelRequest,
+    ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, CreateLabelRequest,
     CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
@@ -162,6 +162,10 @@ struct AppState {
     /// `Some` only when the local database had to be recovered at startup
     /// (restored from a backup, or recreated fresh) — see `open_with_recovery`.
     recovery: Option<db::RecoveryOutcome>,
+    /// Explicit thread-action proposals are session-only. The cache key
+    /// includes the newest message timestamp so a newly synced message can
+    /// never reuse an older analysis.
+    proposal_cache: Arc<std::sync::Mutex<HashMap<String, Vec<ActionProposal>>>>,
 }
 
 #[derive(Clone, Default)]
@@ -1558,6 +1562,61 @@ async fn ai_summarize_thread(
 }
 
 #[tauri::command]
+async fn ai_analyze_thread(
+    thread_id: String,
+    user_time_zone: String,
+    provider: ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ActionProposal>, String> {
+    if user_time_zone.parse::<chrono_tz::Tz>().is_err() {
+        return Err(format!("Unknown IANA timezone: {user_time_zone}"));
+    }
+    if user_time_zone.chars().count() > 100 {
+        return Err("Timezone value is too long".to_string());
+    }
+    let detail = state.database.get_thread(&thread_id)?;
+    let cache_key = format!("{thread_id}\0{}", detail.thread.last_message_at);
+    {
+        let mut cache = state
+            .proposal_cache
+            .lock()
+            .map_err(|_| "AI proposal cache is unavailable".to_string())?;
+        cache.retain(|key, _| !key.starts_with(&format!("{thread_id}\0")));
+        if let Some(cached) = cache.get(&cache_key) {
+            return Ok(cached.clone());
+        }
+    }
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
+    let request = ai::AnalyzeRequest {
+        provider,
+        model,
+        endpoint,
+        subject: detail.thread.subject,
+        messages: detail
+            .messages
+            .into_iter()
+            .map(|message| ai::ActionMessageInput {
+                id: message.id,
+                sender: message.sender,
+                sent_at: message.sent_at,
+                body_text: message.body_text,
+            })
+            .collect(),
+        current_time: Utc::now().to_rfc3339(),
+        user_time_zone,
+    };
+    let proposals = ai::analyze(request, &api_key).await?;
+    let mut cache = state
+        .proposal_cache
+        .lock()
+        .map_err(|_| "AI proposal cache is unavailable".to_string())?;
+    cache.insert(cache_key, proposals.clone());
+    Ok(proposals)
+}
+
+#[tauri::command]
 fn ai_reply_assist_context(
     draft_id: String,
     state: State<'_, AppState>,
@@ -1836,6 +1895,7 @@ pub fn run() {
                 image_cache: image_proxy::ImageCache::new().map_err(std::io::Error::other)?,
                 attachment_reader,
                 recovery,
+                proposal_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             });
             Ok(())
         })
@@ -1906,6 +1966,7 @@ pub fn run() {
             ai_api_key_configured,
             set_ai_api_key,
             ai_summarize_thread,
+            ai_analyze_thread,
             ai_reply_assist_context,
             ai_generate_reply,
             list_tasks,

@@ -5,6 +5,7 @@ import {
 } from "../invoke";
 import type {
   Account,
+  ActionProposal,
   AuthStatus,
   AvailabilityPreferences,
   AvailabilityResult,
@@ -68,6 +69,13 @@ export interface MailClient extends CorrespondenceClient {
     model: string,
     endpoint: string | null,
   ): Promise<SummaryResult>;
+  analyzeThread(
+    threadId: string,
+    userTimeZone: string,
+    provider: AiProvider,
+    model: string,
+    endpoint: string | null,
+  ): Promise<ActionProposal[]>;
   replyAssistContext(draftId: string): Promise<ReplyAssistContext>;
   generateReply(
     context: ReplyAssistContext,
@@ -159,6 +167,8 @@ const tauriClient: MailClient = {
   previewCalendarAttachment: (messageId, attachmentId) => complete("preview_calendar_attachment", { messageId, attachmentId }),
   summarizeThread: (threadId, provider, model, endpoint) =>
     complete("ai_summarize_thread", { threadId, provider, model, endpoint }),
+  analyzeThread: (threadId, userTimeZone, provider, model, endpoint) =>
+    complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
   generateReply: (context, instruction, provider, model, endpoint) =>
     complete("ai_generate_reply", { context, instruction, provider, model, endpoint }),

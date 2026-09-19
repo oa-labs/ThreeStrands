@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskSidebar } from "./TaskSidebar";
 import { mailClient } from "./data/client";
-import type { ThreadDetail, ThreadTask } from "./domain";
+import type { ActionProposal, ThreadDetail, ThreadTask } from "./domain";
 
 const detail: ThreadDetail = {
   thread: {
@@ -112,5 +112,45 @@ describe("TaskSidebar", () => {
     expect(await screen.findByText("Set up the website")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Complete Set up the website" }));
     await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-1", "completed"));
+  });
+
+  it("previews typed thread proposals with evidence and confirmation actions", async () => {
+    const proposal: ActionProposal = {
+      type: "task",
+      kind: "action",
+      title: "Set up the website",
+      notes: "Complete the requested setup.",
+      dueKind: "date",
+      dueValue: "2026-09-25",
+      timeZone: "America/New_York",
+      repeatIntervalDays: null,
+      confidence: 0.86,
+      evidence: { sourceMessageId: "message-1", excerpt: "Please set up the website by Friday." },
+    };
+    const addTask = vi.fn().mockResolvedValue(undefined);
+    const discard = vi.fn();
+    render(
+      <TaskSidebar
+        onClose={vi.fn()}
+        accountId="you@example.com"
+        currentThread={detail}
+        onOpenThread={vi.fn()}
+        title="Actions"
+        analysisEnabled
+        analysisPreview={'{"emailContext":{"messages":[]}}'}
+        proposals={[proposal]}
+        onAnalyzeThread={vi.fn()}
+        onDiscardProposal={discard}
+        onAddTaskProposal={addTask}
+      />,
+    );
+
+    expect(await screen.findByText("Set up the website")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Evidence"));
+    expect(screen.getByText("Please set up the website by Friday.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    await waitFor(() => expect(addTask).toHaveBeenCalledWith(proposal));
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(discard).toHaveBeenCalledWith(0);
   });
 });

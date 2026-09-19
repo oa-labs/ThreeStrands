@@ -74,6 +74,66 @@ pub struct ProposedTimeCheck {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProposalEvidence {
+    pub source_message_id: String,
+    pub excerpt: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MeetingProposal {
+    pub intent: String,
+    pub title: String,
+    pub participants: Vec<String>,
+    pub raw_time_language: String,
+    #[serde(default)]
+    pub normalized_start: Option<String>,
+    #[serde(default)]
+    pub normalized_end: Option<String>,
+    #[serde(default)]
+    pub search_range_start: Option<String>,
+    #[serde(default)]
+    pub search_range_end: Option<String>,
+    #[serde(default)]
+    pub duration_minutes: Option<u32>,
+    #[serde(default)]
+    pub time_zone: Option<String>,
+    pub confidence: f32,
+    pub evidence: ProposalEvidence,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskProposal {
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default = "default_proposal_due_kind")]
+    pub due_kind: String,
+    #[serde(default)]
+    pub due_value: Option<String>,
+    #[serde(default)]
+    pub time_zone: Option<String>,
+    #[serde(default)]
+    pub repeat_interval_days: Option<u32>,
+    pub confidence: f32,
+    pub evidence: ProposalEvidence,
+}
+
+fn default_proposal_due_kind() -> String {
+    "none".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ActionProposal {
+    Meeting(MeetingProposal),
+    Task(TaskProposal),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailabilityWindow {
     pub weekday: u8,

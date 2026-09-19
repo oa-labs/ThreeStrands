@@ -14,6 +14,7 @@ export type AiProvider = (typeof AI_PROVIDERS)[number]["id"];
 export type AiFeatureFlags = {
   draftAssist: boolean;
   summarize: boolean;
+  actionExtraction: boolean;
 };
 
 export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] =
@@ -22,6 +23,7 @@ export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] =
 export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
   draftAssist: false,
   summarize: false,
+  actionExtraction: false,
 };
 
 export const AI_MODEL_PLACEHOLDERS = Object.fromEntries(
@@ -105,6 +107,7 @@ export function readAiFeatures(): AiFeatureFlags {
       return {
         draftAssist: saved.draftAssist === true,
         summarize: saved.summarize === true,
+        actionExtraction: saved.actionExtraction === true,
       };
     }
   } catch {

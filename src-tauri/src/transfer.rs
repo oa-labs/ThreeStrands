@@ -34,6 +34,8 @@ const MAX_TEXT_LENGTH: usize = 2_048;
 pub struct AiFeaturePreferences {
     pub draft_assist: bool,
     pub summarize: bool,
+    #[serde(default)]
+    pub action_extraction: bool,
     // Version 1 exports originally included this flag. Keep emitting and
     // accepting it so transfers remain compatible across app updates even
     // though the webview no longer exposes the feature.
@@ -449,6 +451,7 @@ mod tests {
                 ai_features: AiFeaturePreferences {
                     draft_assist: false,
                     summarize: false,
+                    action_extraction: false,
                     classify: false,
                 },
                 availability_preferences: default_availability_preferences(),
@@ -493,9 +496,14 @@ mod tests {
         let mut serialized = serde_json::to_value(payload()).unwrap();
         serialized["version"] = serde_json::json!(1);
         serialized["preferences"].as_object_mut().unwrap().remove("availabilityPreferences");
+        serialized["preferences"]["aiFeatures"]
+            .as_object_mut()
+            .unwrap()
+            .remove("actionExtraction");
         let decoded: TransferPayload = serde_json::from_value(serialized).unwrap();
         assert_eq!(decoded.version, 1);
         assert_eq!(decoded.preferences.availability_preferences.default_duration_minutes, 30);
+        assert!(!decoded.preferences.ai_features.action_extraction);
         decoded.validate().unwrap();
     }
 

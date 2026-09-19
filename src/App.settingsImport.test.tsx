@@ -49,6 +49,7 @@ describe("settings import navigation", () => {
         aiFeatures: {
           draftAssist: false,
           summarize: false,
+          actionExtraction: false,
         },
         availabilityPreferences: {
           timeZone: "UTC",
