@@ -2,6 +2,8 @@
 
 - `AppIcon.icon` is the macOS 26+ Icon Composer source. Its SVG artwork is
   square and unmasked so the system owns the final silhouette and material.
+  It includes explicit dark and mono/tinted artwork variants so the rings and
+  strands remain recognizable when macOS applies those icon styles.
 - `threestrands-icon.svg` is an unmasked, flat reference composite of those
   layers.
 - `threestrands-icon-legacy.svg` is the compatibility source for `.icns`,

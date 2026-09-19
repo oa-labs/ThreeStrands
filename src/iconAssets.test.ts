@@ -30,6 +30,47 @@ describe("application icon assets", () => {
     }
   });
 
+  it("provides authored dark and mono/tinted variants", () => {
+    const document = JSON.parse(read("assets/AppIcon.icon/icon.json"));
+    const appearances = document["fill-specializations"].map(
+      (entry: { appearance: string }) => entry.appearance,
+    );
+
+    expect(appearances).toEqual(["dark", "tinted"]);
+
+    const specializedAssets = document.groups.flatMap(
+      (group: {
+        layers: Array<{
+          "image-name-specializations": Array<{
+            appearance: string;
+            value: string;
+          }>;
+        }>;
+      }) =>
+        group.layers.flatMap((layer) => layer["image-name-specializations"]),
+    );
+
+    expect(specializedAssets).toHaveLength(4);
+    expect(
+      specializedAssets.map((entry: { appearance: string }) => entry.appearance),
+    ).toEqual([
+      "dark",
+      "tinted",
+      "dark",
+      "tinted",
+    ]);
+
+    for (const { value } of specializedAssets) {
+      const svg = read(`assets/AppIcon.icon/Assets/${value}`);
+      expect(svg).toContain('viewBox="0 0 1024 1024"');
+      expect(svg).not.toMatch(/<(?:rect|clipPath|mask)\b/);
+    }
+
+    const monoStrands = read("assets/AppIcon.icon/Assets/strands-mono.svg");
+    expect(monoStrands).toContain('stroke="#ffffff"');
+    expect(monoStrands).not.toMatch(/stroke="#(?:9f8bcb|f3eae9|fdad81)"/i);
+  });
+
   it("keeps the postmark strokes legible at small icon sizes", () => {
     const rings = read("assets/AppIcon.icon/Assets/postmark-rings.svg");
     const strands = read("assets/AppIcon.icon/Assets/strands.svg");

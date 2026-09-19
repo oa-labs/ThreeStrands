@@ -2,12 +2,36 @@
   "fill": {
     "automatic-gradient": "srgb:0.20000,0.19216,0.51373,1.00000"
   },
+  "fill-specializations": [
+    {
+      "appearance": "dark",
+      "value": {
+        "automatic-gradient": "srgb:0.12000,0.10500,0.36000,1.00000"
+      }
+    },
+    {
+      "appearance": "tinted",
+      "value": {
+        "solid": "srgb:0.08500,0.07500,0.18000,1.00000"
+      }
+    }
+  ],
   "groups": [
     {
       "name": "Postmark rings",
       "layers": [
         {
           "image-name": "postmark-rings.svg",
+          "image-name-specializations": [
+            {
+              "appearance": "dark",
+              "value": "postmark-rings-dark.svg"
+            },
+            {
+              "appearance": "tinted",
+              "value": "postmark-rings-mono.svg"
+            }
+          ],
           "name": "Postmark rings",
           "glass": false
         }
@@ -23,6 +47,16 @@
       "layers": [
         {
           "image-name": "strands.svg",
+          "image-name-specializations": [
+            {
+              "appearance": "dark",
+              "value": "strands-dark.svg"
+            },
+            {
+              "appearance": "tinted",
+              "value": "strands-mono.svg"
+            }
+          ],
           "name": "Three strands",
           "glass": false
         }
