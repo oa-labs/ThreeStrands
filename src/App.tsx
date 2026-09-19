@@ -2,6 +2,7 @@ import {
   Archive,
   AlertCircle,
   CalendarDays,
+  CheckSquare,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -95,6 +96,7 @@ import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { CalendarSidebar } from "./CalendarSidebar";
+import { TaskSidebar } from "./TaskSidebar";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import {
@@ -246,6 +248,7 @@ export function App() {
     });
   }, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openTaskThreadIds, setOpenTaskThreadIds] = useState<Set<string>>(new Set());
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const visibleDetail = detail?.thread.id === selectedId ? detail : null;
@@ -310,6 +313,8 @@ export function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [calendarAccounts, setCalendarAccounts] = useState<CalendarAccount[]>([]);
   const [calendarOptions, setCalendarOptions] = useState<CalendarOption[]>([]);
   const [calendarOptionsError, setCalendarOptionsError] = useState<string | null>(null);
@@ -338,6 +343,24 @@ export function App() {
     // launch's database open, so there's nothing to refresh later.
     void mailClient.recoveryStatus().then(setRecoveryStatus).catch(() => {});
   }, []);
+  useEffect(() => {
+    void mailClient.reconcileTasks().catch(() => {});
+  }, []);
+  const refreshTaskIndicators = useCallback(async () => {
+    try {
+      const tasks = await mailClient.listTasks(activeAccountId ?? undefined, "open");
+      setOpenTaskThreadIds(new Set(tasks.map((task) => task.threadId)));
+    } catch {
+      // Task indicators are supplemental; mail remains usable if unavailable.
+    }
+  }, [activeAccountId]);
+  useEffect(() => { void refreshTaskIndicators(); }, [refreshTaskIndicators]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void mailClient.reconcileTasks().then(() => refreshTaskIndicators()).catch(() => {});
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [refreshTaskIndicators]);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   // Label ids are only meaningful within an account (see `labelsByAccount`
   // above), so the labels modal needs to know which account's catalog to
@@ -783,8 +806,10 @@ export function App() {
       // Always repaint from the local cache after an all-account refresh.
       .finally(() => {
         void loadThreadsRef.current(query);
+        void mailClient.reconcileTasks().catch(() => {});
+        void refreshTaskIndicators();
       });
-  }, [query]);
+  }, [query, refreshTaskIndicators]);
 
   const refreshMailRef = useRef(refreshMail);
   refreshMailRef.current = refreshMail;
@@ -1109,6 +1134,8 @@ export function App() {
   }, []);
 
   const openToday = useCallback(() => {
+    setTasksOpen(false);
+    setActionsOpen(false);
     setCalendarOpen((current) => {
       if (current) return false;
       void refreshCalendarAccounts()
@@ -1125,6 +1152,29 @@ export function App() {
       return current;
     });
   }, [openSettingsAt, refreshCalendarAccounts, setNotice]);
+
+  const openTasks = useCallback(() => {
+    setCalendarOpen(false);
+    setActionsOpen(false);
+    setTasksOpen((current) => !current);
+  }, []);
+
+  const openActions = useCallback(() => {
+    setCalendarOpen(false);
+    setTasksOpen(false);
+    setActionsOpen((current) => !current);
+  }, []);
+
+  const openTaskThread = useCallback((threadId: string) => {
+    setSelectedId(threadId);
+    if (!threads.some((thread) => thread.id === threadId)) {
+      setDetailLoading(true);
+      void mailClient.getThread(threadId)
+        .then(setDetail)
+        .catch((reason: unknown) => setNotice({ message: reason instanceof Error ? reason.message : String(reason) }))
+        .finally(() => setDetailLoading(false));
+    }
+  }, [setNotice, threads]);
 
   /**
    * Always calls the provider, even when a summary is already cached — used
@@ -1389,6 +1439,8 @@ export function App() {
     openShortcutHelp: () => setShortcutHelpOpen(true),
     openSettings: () => openSettingsAt("appearance"),
     openToday,
+    openTasks,
+    openActions,
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
@@ -1400,7 +1452,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openSettingsAt, openToday, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1469,7 +1521,7 @@ export function App() {
   const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
   return (
-    <main className={`app-shell${calendarOpen ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${calendarOpen || tasksOpen || actionsOpen ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -1529,6 +1581,15 @@ export function App() {
         </div>
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
+          <HoverTooltip label="Tasks">
+            <button
+              className={`nav-button ${tasksOpen ? "active" : ""}`}
+              aria-label="Tasks"
+              onClick={() => executeById("tasks.open")}
+            >
+              <CheckSquare size={19} />
+            </button>
+          </HoverTooltip>
           <HoverTooltip label="Today’s schedule" shortcut="T">
             <button
               className={`nav-button ${calendarOpen ? "active" : ""}`}
@@ -1793,6 +1854,7 @@ export function App() {
               onSelect={selectThread}
               onToggleCheck={toggleChecked}
               rowRef={thread.id === selectedId ? selectedThreadRowRef : undefined}
+              hasTask={openTaskThreadIds.has(thread.id)}
             />
           ))}
           {hasMoreResults ? (
@@ -1829,6 +1891,11 @@ export function App() {
                 </div>
               </div>
               <div className="reader-actions">
+                <HoverTooltip label="Actions" placement="bottom">
+                  <ActionButton label="Actions" onClick={openActions}>
+                    <Sparkles size={17} />
+                  </ActionButton>
+                </HoverTooltip>
                 <HoverTooltip label={selected?.starred ? "Unstar" : "Star"} shortcut="s" placement="bottom">
                   <ActionButton
                     label={selected?.starred ? "Unstar" : "Star"}
@@ -2237,6 +2304,26 @@ export function App() {
             setCalendarOpen(false);
             openSettingsAt("calendarAccounts");
           }}
+        />
+      ) : null}
+      {tasksOpen ? (
+        <TaskSidebar
+          onClose={() => setTasksOpen(false)}
+          accountId={activeAccountId}
+          currentThread={visibleDetail}
+          onOpenThread={openTaskThread}
+          onTasksChanged={() => void refreshTaskIndicators()}
+        />
+      ) : null}
+      {actionsOpen ? (
+        <TaskSidebar
+          onClose={() => setActionsOpen(false)}
+          accountId={activeAccountId}
+          currentThread={visibleDetail}
+          onOpenThread={openTaskThread}
+          onTasksChanged={() => void refreshTaskIndicators()}
+          title="Actions"
+          initialFormOpen={Boolean(visibleDetail)}
         />
       ) : null}
 
@@ -2886,7 +2973,7 @@ function LabelManager({
   };
 
   return (
-    <Modal title="Add label" onClose={onClose}>
+    <Modal title="Manage labels" onClose={onClose}>
       <div className="label-search">
         <input
           autoFocus

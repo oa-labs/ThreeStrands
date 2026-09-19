@@ -166,6 +166,9 @@ impl Database {
             .execute("DELETE FROM mutations WHERE account_id = ?1", [email])
             .map_err(display_error)?;
         transaction
+            .execute("DELETE FROM tasks WHERE account_id = ?1", [email])
+            .map_err(display_error)?;
+        transaction
             .execute("DELETE FROM sync_state WHERE account_id = ?1", [email])
             .map_err(display_error)?;
         transaction

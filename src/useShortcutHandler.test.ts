@@ -25,6 +25,8 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   openTrash: vi.fn(),
   openDrafts: vi.fn(),
   openOutbox: vi.fn(),
+  openTasks: vi.fn(),
+  openActions: vi.fn(),
   openSplitInbox: vi.fn(),
   goToNextSplitTab: vi.fn(),
   goToPreviousSplitTab: vi.fn(),

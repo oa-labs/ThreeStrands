@@ -80,6 +80,58 @@ export type ScheduleResult = {
   errors: string[];
 };
 
+export type TaskKind = "action" | "follow_up" | "waiting_for";
+export type TaskStatus = "open" | "completed" | "cancelled";
+export type TaskDueKind = "none" | "date" | "datetime";
+
+export type ThreadTask = {
+  id: string;
+  accountId: string;
+  threadId: string;
+  sourceMessageId?: string | null;
+  subjectSnapshot: string;
+  title: string;
+  notes?: string | null;
+  kind: TaskKind;
+  dueKind: TaskDueKind;
+  dueValue?: string | null;
+  timeZone?: string | null;
+  repeatIntervalDays?: number | null;
+  status: TaskStatus;
+  completionSource?: "user" | "reply" | "external" | null;
+  evidenceText?: string | null;
+  waitAfter?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+};
+
+export type CreateTaskRequest = {
+  accountId: string;
+  threadId: string;
+  sourceMessageId?: string | null;
+  subjectSnapshot: string;
+  title: string;
+  notes?: string | null;
+  kind: TaskKind;
+  dueKind?: TaskDueKind;
+  dueValue?: string | null;
+  timeZone?: string | null;
+  repeatIntervalDays?: number | null;
+  evidenceText?: string | null;
+};
+
+export type UpdateTaskRequest = {
+  id: string;
+  title?: string;
+  notes?: string | null;
+  kind?: TaskKind;
+  dueKind?: TaskDueKind;
+  dueValue?: string | null;
+  timeZone?: string | null;
+  repeatIntervalDays?: number | null;
+};
+
 export type Message = {
   id: string;
   threadId: string;

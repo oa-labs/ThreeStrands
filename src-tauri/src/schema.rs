@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 21;
+pub(crate) const LATEST_VERSION: i64 = 22;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -436,6 +436,36 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         tx.execute_batch(
             "ALTER TABLE accounts ADD COLUMN provider TEXT NOT NULL DEFAULT 'gmail';
             PRAGMA user_version=21;",
+        )
+        .map_err(error)?;
+    }
+    if version < 22 {
+        tx.execute_batch(
+            "CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                source_message_id TEXT,
+                subject_snapshot TEXT NOT NULL,
+                title TEXT NOT NULL,
+                notes TEXT,
+                kind TEXT NOT NULL CHECK(kind IN ('action', 'follow_up', 'waiting_for')),
+                due_kind TEXT NOT NULL CHECK(due_kind IN ('none', 'date', 'datetime')),
+                due_value TEXT,
+                time_zone TEXT,
+                repeat_interval_days INTEGER,
+                status TEXT NOT NULL CHECK(status IN ('open', 'completed', 'cancelled')),
+                completion_source TEXT CHECK(completion_source IS NULL OR completion_source IN ('user', 'reply', 'external')),
+                evidence_text TEXT,
+                wait_after TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT
+            );
+            CREATE INDEX tasks_status_due ON tasks(status, due_value, updated_at);
+            CREATE INDEX tasks_account_status ON tasks(account_id, status, updated_at);
+            CREATE INDEX tasks_thread ON tasks(thread_id, status);
+            PRAGMA user_version=22;",
         )
         .map_err(error)?;
     }

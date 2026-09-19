@@ -29,8 +29,8 @@ use models::{
     Account, AuthStatus, CalendarAccount, CalendarOption, ContactSuggestion, CreateLabelRequest,
     CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     ScheduleResult, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
-    ThreadDetail, ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
-    UpdateSplitInboxRequest,
+    ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
+    UpdateLabelRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -1486,6 +1486,40 @@ async fn ai_generate_reply(
     Ok(ReplyAssistResult { body })
 }
 
+#[tauri::command]
+fn list_tasks(
+    account_id: Option<String>,
+    status: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ThreadTask>, String> {
+    state.database.list_tasks(account_id.as_deref(), status.as_deref())
+}
+
+#[tauri::command]
+fn create_task(request: CreateTaskRequest, state: State<'_, AppState>) -> Result<ThreadTask, String> {
+    state.database.create_task(&request)
+}
+
+#[tauri::command]
+fn update_task(request: UpdateTaskRequest, state: State<'_, AppState>) -> Result<ThreadTask, String> {
+    state.database.update_task(&request)
+}
+
+#[tauri::command]
+fn set_task_status(
+    id: String,
+    status: String,
+    source: String,
+    state: State<'_, AppState>,
+) -> Result<ThreadTask, String> {
+    state.database.set_task_status(&id, &status, &source)
+}
+
+#[tauri::command]
+fn reconcile_tasks(state: State<'_, AppState>) -> Result<usize, String> {
+    state.database.reconcile_waiting_tasks()
+}
+
 fn not_configured() -> String {
     "Google OAuth is not configured. Set THREESTRANDS_GOOGLE_CLIENT_ID and \
      THREESTRANDS_GOOGLE_CLIENT_SECRET from a Desktop app credential."
@@ -1738,6 +1772,11 @@ pub fn run() {
             ai_summarize_thread,
             ai_reply_assist_context,
             ai_generate_reply,
+            list_tasks,
+            create_task,
+            update_task,
+            set_task_status,
+            reconcile_tasks,
             system_fonts::list_system_font_families,
         ])
         .build(tauri::generate_context!())

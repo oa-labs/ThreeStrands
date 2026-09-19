@@ -41,6 +41,78 @@ pub struct ScheduleResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ThreadTask {
+    pub id: String,
+    pub account_id: String,
+    pub thread_id: String,
+    pub source_message_id: Option<String>,
+    pub subject_snapshot: String,
+    pub title: String,
+    pub notes: Option<String>,
+    pub kind: String,
+    pub due_kind: String,
+    pub due_value: Option<String>,
+    pub time_zone: Option<String>,
+    pub repeat_interval_days: Option<i64>,
+    pub status: String,
+    pub completion_source: Option<String>,
+    pub evidence_text: Option<String>,
+    pub wait_after: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTaskRequest {
+    pub account_id: String,
+    pub thread_id: String,
+    #[serde(default)]
+    pub source_message_id: Option<String>,
+    pub subject_snapshot: String,
+    pub title: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+    pub kind: String,
+    #[serde(default = "default_task_due_kind")]
+    pub due_kind: String,
+    #[serde(default)]
+    pub due_value: Option<String>,
+    #[serde(default)]
+    pub time_zone: Option<String>,
+    #[serde(default)]
+    pub repeat_interval_days: Option<i64>,
+    #[serde(default)]
+    pub evidence_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTaskRequest {
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub due_kind: Option<String>,
+    #[serde(default)]
+    pub due_value: Option<String>,
+    #[serde(default)]
+    pub time_zone: Option<String>,
+    #[serde(default)]
+    pub repeat_interval_days: Option<i64>,
+}
+
+fn default_task_due_kind() -> String {
+    "none".to_string()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Thread {
     pub id: String,
     pub provider_thread_id: String,

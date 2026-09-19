@@ -37,6 +37,7 @@ export const ThreadRow = memo(function ThreadRow({
   onSelect,
   onToggleCheck,
   rowRef,
+  hasTask = false,
 }: {
   thread: Thread;
   selected: boolean;
@@ -46,6 +47,7 @@ export const ThreadRow = memo(function ThreadRow({
   onSelect(id: string): void;
   onToggleCheck(id: string): void;
   rowRef?: RefObject<HTMLButtonElement | null>;
+  hasTask?: boolean;
 }) {
   return (
     <button
@@ -81,6 +83,7 @@ export const ThreadRow = memo(function ThreadRow({
           </span>
           <span className="thread-meta-trailing">
             {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
+            {hasTask ? <CheckSquare className="thread-task-indicator" size={13} aria-label="Has open task" /> : null}
             <time>{formatMailTimestamp(thread.lastMessageAt)}</time>
           </span>
         </span>

@@ -6,6 +6,7 @@ import type {
   CalendarAccount,
   CalendarOption,
   ContactSuggestion,
+  CreateTaskRequest,
   Label,
   ReplyAssistContext,
   ReplyAssistResult,
@@ -14,11 +15,13 @@ import type {
   SyncStatus,
   Thread,
   ThreadDetail,
+  ThreadTask,
   ThreadPage,
   ThreadMutation,
   TriageEvent,
   TriageSenderStats,
   UnsubscribeResult,
+  UpdateTaskRequest,
 } from "../domain";
 
 export const DEMO_ACCOUNT_ID = "demo@example.com";
@@ -102,6 +105,7 @@ let labels: Label[] = [
   { id: "work", name: "Work", kind: "user", color: "#7b73ee" },
 ];
 let splitInboxes: SplitInbox[] = [];
+let tasks: ThreadTask[] = [];
 
 const details: Record<string, string> = {
   welcome: `
@@ -600,6 +604,75 @@ export const demoClient: MailClient = {
   },
   async listScheduleEvents() {
     return { events: [], errors: [] };
+  },
+  async listTasks(accountId, status) {
+    return structuredClone(tasks
+      .filter((task) => !accountId || accountId === "all" || task.accountId === accountId)
+      .filter((task) => !status || task.status === status)
+      .sort((left, right) => (left.dueValue ?? "9999").localeCompare(right.dueValue ?? "9999")));
+  },
+  async createTask(request: CreateTaskRequest) {
+    const thread = threads.find((candidate) => candidate.id === request.threadId);
+    if (!thread) throw new Error("Source thread not found");
+    if (!request.title.trim()) throw new Error("Task title is required");
+    const now = new Date().toISOString();
+    const task: ThreadTask = {
+      id: `demo-task-${crypto.randomUUID()}`,
+      accountId: request.accountId,
+      threadId: request.threadId,
+      sourceMessageId: request.sourceMessageId ?? null,
+      subjectSnapshot: request.subjectSnapshot,
+      title: request.title.trim(),
+      notes: request.notes?.trim() || null,
+      kind: request.kind,
+      dueKind: request.dueKind ?? "none",
+      dueValue: request.dueValue ?? null,
+      timeZone: request.timeZone ?? null,
+      repeatIntervalDays: request.repeatIntervalDays ?? null,
+      status: "open",
+      completionSource: null,
+      evidenceText: request.evidenceText ?? null,
+      waitAfter: thread.lastReceivedAt,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+    };
+    tasks = [...tasks, task];
+    return structuredClone(task);
+  },
+  async updateTask(request: UpdateTaskRequest) {
+    const index = tasks.findIndex((task) => task.id === request.id);
+    if (index === -1) throw new Error("Task not found");
+    const current = tasks[index];
+    const next: ThreadTask = {
+      ...current,
+      title: request.title?.trim() || current.title,
+      notes: request.notes === undefined ? current.notes : request.notes?.trim() || null,
+      kind: request.kind ?? current.kind,
+      dueKind: request.dueKind ?? current.dueKind,
+      dueValue: request.dueValue === undefined ? current.dueValue : request.dueValue,
+      timeZone: request.timeZone === undefined ? current.timeZone : request.timeZone,
+      repeatIntervalDays: request.repeatIntervalDays === undefined ? current.repeatIntervalDays : request.repeatIntervalDays,
+      updatedAt: new Date().toISOString(),
+    };
+    tasks = tasks.map((task, candidateIndex) => candidateIndex === index ? next : task);
+    return structuredClone(next);
+  },
+  async setTaskStatus(id, status, source = "user") {
+    const current = tasks.find((task) => task.id === id);
+    if (!current) throw new Error("Task not found");
+    const next = {
+      ...current,
+      status,
+      completionSource: status === "open" ? null : source,
+      completedAt: status === "completed" ? new Date().toISOString() : null,
+      updatedAt: new Date().toISOString(),
+    } satisfies ThreadTask;
+    tasks = tasks.map((task) => task.id === id ? next : task);
+    return structuredClone(next);
+  },
+  async reconcileTasks() {
+    return 0;
   },
   async listLabels() {
     return structuredClone(labels);

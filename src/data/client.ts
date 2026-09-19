@@ -10,6 +10,7 @@ import type {
   CalendarOption,
   CalendarPreview,
   ContactSuggestion,
+  CreateTaskRequest,
   Label,
   MailboxUnreadCounts,
   RecoveryStatus,
@@ -24,11 +25,13 @@ import type {
   Thread,
   ThreadDetail,
   ThreadPage,
+  ThreadTask,
   ThreadMutation,
   TriageEvent,
   TriageSenderStats,
   UnreadCounts,
   UnsubscribeResult,
+  UpdateTaskRequest,
 } from "../domain";
 import type { AiProvider } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
@@ -117,6 +120,11 @@ export interface MailClient extends CorrespondenceClient {
   reorderSplitInboxes(ids: string[]): Promise<void>;
   /** Always scoped to the split's own account — see `SplitInbox.accountId`. */
   listSplitInboxPage(splitInboxId: string, offset: number, limit: number): Promise<ThreadPage>;
+  listTasks(accountId?: string, status?: ThreadTask["status"]): Promise<ThreadTask[]>;
+  createTask(request: CreateTaskRequest): Promise<ThreadTask>;
+  updateTask(request: UpdateTaskRequest): Promise<ThreadTask>;
+  setTaskStatus(id: string, status: ThreadTask["status"], source?: "user" | "reply" | "external"): Promise<ThreadTask>;
+  reconcileTasks(): Promise<number>;
 }
 
 function isTauri(): boolean {
@@ -194,6 +202,11 @@ const tauriClient: MailClient = {
   reorderSplitInboxes: (ids) => complete("reorder_split_inboxes", { ids }),
   listSplitInboxPage: (splitInboxId, offset, limit) =>
     read("list_split_inbox_page", { splitInboxId, offset, limit }),
+  listTasks: (accountId, status) => read("list_tasks", { accountId, status }),
+  createTask: (request) => complete("create_task", { request }),
+  updateTask: (request) => complete("update_task", { request }),
+  setTaskStatus: (id, status, source = "user") => complete("set_task_status", { id, status, source }),
+  reconcileTasks: () => complete("reconcile_tasks"),
 };
 
 export const mailClient = isTauri() ? tauriClient : demoClient;

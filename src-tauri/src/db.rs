@@ -21,6 +21,7 @@ mod accounts;
 mod calendar_accounts;
 mod contacts;
 mod split_inboxes;
+mod tasks;
 mod threads;
 mod triage;
 

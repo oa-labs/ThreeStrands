@@ -64,6 +64,8 @@ function noopContext(): CommandContext {
     openShortcutHelp: () => {},
     openSettings: () => {},
     openToday: () => {},
+    openTasks: () => {},
+    openActions: () => {},
     increaseFontSize: () => {},
     decreaseFontSize: () => {},
     canUndoAction: false,

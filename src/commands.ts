@@ -59,6 +59,8 @@ export type CommandContext = {
   openShortcutHelp(): void;
   openSettings(): void;
   openToday(): void;
+  openTasks(): void;
+  openActions(): void;
   increaseFontSize(): void;
   decreaseFontSize(): void;
   canUndoAction: boolean;
@@ -313,6 +315,22 @@ export const commands: Command[] = [
     group: "Application",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.openToday),
+  },
+  {
+    id: "tasks.open",
+    title: "Open tasks",
+    keys: ["g then k"],
+    group: "Navigation",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(context.openTasks),
+  },
+  {
+    id: "actions.open",
+    title: "Open conversation actions",
+    keys: ["Mod+Shift+j"],
+    group: "Application",
+    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    run: (context) => complete(context.openActions),
   },
   {
     id: "mail.refresh",

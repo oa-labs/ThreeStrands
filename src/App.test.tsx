@@ -440,7 +440,7 @@ describe("archive notice", () => {
         screen.getByRole("button", { name: "Labels (l)" }).click();
       });
 
-      const dialog = screen.getByRole("dialog", { name: "Add label" });
+      const dialog = screen.getByRole("dialog", { name: "Manage labels" });
       const input = await within(dialog).findByRole("combobox", { name: "Find or create a label" });
       expect(input).toHaveFocus();
       expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
