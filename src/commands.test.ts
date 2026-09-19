@@ -66,6 +66,7 @@ function noopContext(): CommandContext {
     openToday: () => {},
     openTasks: () => {},
     openActions: () => {},
+    newTask: () => {},
     increaseFontSize: () => {},
     decreaseFontSize: () => {},
     canUndoAction: false,
@@ -111,6 +112,16 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "mailbox.trash")?.keys).toEqual(["g then t"]);
     expect(commands.find((command) => command.id === "drafts.open")?.keys).toEqual(["g then d"]);
     expect(commands.find((command) => command.id === "labels.open")?.keys).toEqual(["l"]);
+  });
+
+  it("uses d for tasks and Mod+d for adding a task from the conversation", async () => {
+    const openTasks = commands.find((command) => command.id === "tasks.open");
+    const newTask = commands.find((command) => command.id === "tasks.new");
+    expect(openTasks?.keys).toEqual(["d", "g then k"]);
+    expect(newTask?.keys).toEqual(["Mod+d"]);
+    const start = vi.fn();
+    await newTask?.run({ ...noopContext(), selectedId: "thread-1", newTask: start });
+    expect(start).toHaveBeenCalledTimes(1);
   });
 
   it("binds reply to r and reply all to a", () => {

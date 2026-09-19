@@ -62,7 +62,10 @@ export function TaskSidebar({
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (initialFormOpen && currentThread && !taskTitle) setTaskTitle(currentThread.thread.subject);
+    if (initialFormOpen && currentThread) {
+      setFormOpen(true);
+      if (!taskTitle) setTaskTitle(currentThread.thread.subject);
+    }
   }, [currentThread, initialFormOpen, taskTitle]);
 
   const grouped = useMemo(() => {

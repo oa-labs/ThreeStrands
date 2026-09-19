@@ -315,6 +315,7 @@ export function App() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [actionsFormRequested, setActionsFormRequested] = useState(false);
   const [calendarAccounts, setCalendarAccounts] = useState<CalendarAccount[]>([]);
   const [calendarOptions, setCalendarOptions] = useState<CalendarOption[]>([]);
   const [calendarOptionsError, setCalendarOptionsError] = useState<string | null>(null);
@@ -1136,6 +1137,7 @@ export function App() {
   const openToday = useCallback(() => {
     setTasksOpen(false);
     setActionsOpen(false);
+    setActionsFormRequested(false);
     setCalendarOpen((current) => {
       if (current) return false;
       void refreshCalendarAccounts()
@@ -1156,13 +1158,22 @@ export function App() {
   const openTasks = useCallback(() => {
     setCalendarOpen(false);
     setActionsOpen(false);
+    setActionsFormRequested(false);
     setTasksOpen((current) => !current);
   }, []);
 
   const openActions = useCallback(() => {
     setCalendarOpen(false);
     setTasksOpen(false);
+    setActionsFormRequested(false);
     setActionsOpen((current) => !current);
+  }, []);
+
+  const newTask = useCallback(() => {
+    setCalendarOpen(false);
+    setTasksOpen(false);
+    setActionsFormRequested(true);
+    setActionsOpen(true);
   }, []);
 
   const openTaskThread = useCallback((threadId: string) => {
@@ -1441,6 +1452,7 @@ export function App() {
     openToday,
     openTasks,
     openActions,
+    newTask,
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
@@ -1452,7 +1464,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -2317,13 +2329,13 @@ export function App() {
       ) : null}
       {actionsOpen ? (
         <TaskSidebar
-          onClose={() => setActionsOpen(false)}
+          onClose={() => { setActionsOpen(false); setActionsFormRequested(false); }}
           accountId={activeAccountId}
           currentThread={visibleDetail}
           onOpenThread={openTaskThread}
           onTasksChanged={() => void refreshTaskIndicators()}
           title="Actions"
-          initialFormOpen={Boolean(visibleDetail)}
+          initialFormOpen={Boolean(visibleDetail) || actionsFormRequested}
         />
       ) : null}
 

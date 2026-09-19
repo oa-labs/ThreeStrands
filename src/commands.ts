@@ -61,6 +61,7 @@ export type CommandContext = {
   openToday(): void;
   openTasks(): void;
   openActions(): void;
+  newTask(): void;
   increaseFontSize(): void;
   decreaseFontSize(): void;
   canUndoAction: boolean;
@@ -319,10 +320,18 @@ export const commands: Command[] = [
   {
     id: "tasks.open",
     title: "Open tasks",
-    keys: ["g then k"],
+    keys: ["d", "g then k"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.openTasks),
+  },
+  {
+    id: "tasks.new",
+    title: "Add task from conversation",
+    keys: ["Mod+d"],
+    group: "Application",
+    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    run: (context) => complete(context.newTask),
   },
   {
     id: "actions.open",
