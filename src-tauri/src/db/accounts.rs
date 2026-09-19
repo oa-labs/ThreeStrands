@@ -3,6 +3,22 @@
 use super::*;
 
 impl Database {
+    /// The account the compose pipeline defaults to and the legacy
+    /// single-account commands (`google_auth_status`, `connect_google`,
+    /// `disconnect_google`) act on: the first row in `accounts`, or the
+    /// pre-connect placeholder key before anything has been connected.
+    ///
+    /// Derived rather than cached so it cannot drift from the account
+    /// catalog — this is the same rule startup used when it built a distinct
+    /// "primary" `GoogleAuth` from `list_accounts().next()`.
+    pub fn primary_account_id(&self) -> String {
+        self.list_accounts()
+            .ok()
+            .and_then(|accounts| accounts.into_iter().next())
+            .map(|account| account.email)
+            .unwrap_or_else(|| crate::auth::LEGACY_KEY.to_string())
+    }
+
     pub fn list_accounts(&self) -> Result<Vec<Account>, String> {
         let connection = self.connection()?;
         let mut statement = connection

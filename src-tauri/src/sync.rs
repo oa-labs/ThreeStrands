@@ -77,7 +77,7 @@ impl SyncService {
     /// through to `auth`'s live keychain key, so it stays correct across a
     /// rekey (e.g. the primary account resolving its real address after
     /// startup) without this service needing to be reconstructed.
-    fn account_id(&self) -> String {
+    pub(crate) fn account_id(&self) -> String {
         self.auth.key()
     }
 

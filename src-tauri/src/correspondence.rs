@@ -713,30 +713,19 @@ fn build_mime(
 #[derive(Clone)]
 pub struct Correspondence {
     pub database: Arc<Database>,
-    /// The account driving today's single-account UI and the compose
-    /// identity bootstrap. Not the only account drafts can send from — see
-    /// `auth_for`.
-    pub primary: Option<GoogleAuth>,
-    /// Every other connected account, shared with `AppState` in `lib.rs` (the
-    /// same `Arc`, so add/remove/reconnect there is immediately visible
-    /// here). Lets a draft addressed to any connected account resolve and
-    /// send through *that* account's credentials, regardless of which
-    /// account is active in the UI.
-    pub additional_accounts: Arc<tokio::sync::Mutex<HashMap<String, crate::ConnectedAccount>>>,
+    /// Every connected account, shared with `AppState` in `lib.rs` (the same
+    /// `Arc`, so add/remove/reconnect there is immediately visible here).
+    /// Lets a draft addressed to any connected account resolve and send
+    /// through *that* account's credentials, regardless of which account is
+    /// active in the UI.
+    pub accounts: crate::AccountRegistry,
     pub root: PathBuf,
     pub gate: Arc<tokio::sync::Mutex<()>>,
     pub edits: Arc<tokio::sync::Mutex<()>>,
 }
 impl Correspondence {
     async fn auth_for(&self, account: &str) -> Option<GoogleAuth> {
-        if self
-            .primary
-            .as_ref()
-            .is_some_and(|auth| auth.key() == account)
-        {
-            return self.primary.clone();
-        }
-        self.additional_accounts
+        self.accounts
             .lock()
             .await
             .get(account)
@@ -747,13 +736,20 @@ impl Correspondence {
             || format!("{account} is not connected. Reconnect it before continuing."),
         )?))
     }
-    pub fn is_connected(&self) -> bool {
-        self.primary.as_ref().is_some_and(GoogleAuth::available)
+    /// The account the compose identity bootstrap runs against. Not the only
+    /// account drafts can send from — see `auth_for`.
+    async fn primary_auth(&self) -> Option<GoogleAuth> {
+        self.auth_for(&self.database.primary_account_id()).await
+    }
+    pub async fn is_connected(&self) -> bool {
+        self.primary_auth()
+            .await
+            .is_some_and(|auth| auth.available())
     }
     pub async fn refresh_identity(&self) -> Result<String, String> {
         let auth = self
-            .primary
-            .clone()
+            .primary_auth()
+            .await
             .ok_or("Google OAuth is not configured")?;
         let identity = GmailClient::new(auth.clone())
             .sender_identity()
@@ -762,6 +758,11 @@ impl Correspondence {
         self.database.set_compose_identity(&identity)?;
         auth.accept_identity(&identity)?;
         self.database.adopt_account(&identity)?;
+        // `accept_identity` rekeyed `auth` onto the real address; move its
+        // registry entry so the map is keyed by that address too. Doing it
+        // here covers every caller — startup, `connect_google`, and each
+        // `sync_account` — rather than each remembering to.
+        crate::rekey_placeholder_account(&self.accounts, &identity).await;
         Ok(identity)
     }
     pub async fn request(&self, request: Request) -> Result<serde_json::Value, String> {
@@ -1583,8 +1584,7 @@ mod tests {
     fn service() -> Correspondence {
         Correspondence {
             database: Arc::new(database()),
-            primary: None,
-            additional_accounts: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            accounts: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             root: PathBuf::from("/unused"),
             gate: Arc::new(tokio::sync::Mutex::new(())),
             edits: Arc::new(tokio::sync::Mutex::new(())),

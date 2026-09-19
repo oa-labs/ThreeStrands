@@ -3767,6 +3767,30 @@ mod tests {
     }
 
     #[test]
+    fn primary_account_id_tracks_the_first_account_and_falls_back_to_the_placeholder() {
+        let database = database();
+        // Before anything is connected the catalog is empty, so the primary
+        // is the pre-connect placeholder key.
+        assert_eq!(database.primary_account_id(), crate::auth::LEGACY_KEY);
+
+        database.adopt_account("first@gmail.com").unwrap();
+        database.adopt_account("second@gmail.com").unwrap();
+        assert_eq!(database.primary_account_id(), "first@gmail.com");
+
+        // Derived from sort order rather than insertion order, so reordering
+        // accounts in the UI moves the compose default with them.
+        database
+            .reorder_accounts(&["second@gmail.com".into(), "first@gmail.com".into()])
+            .unwrap();
+        assert_eq!(database.primary_account_id(), "second@gmail.com");
+
+        // Removing every account returns to the pre-connect placeholder.
+        database.remove_account("second@gmail.com").unwrap();
+        database.remove_account("first@gmail.com").unwrap();
+        assert_eq!(database.primary_account_id(), crate::auth::LEGACY_KEY);
+    }
+
+    #[test]
     fn reorder_accounts_updates_sort_order_by_position() {
         let database = database();
         database.adopt_account("first@gmail.com").unwrap();

@@ -103,33 +103,50 @@ mod navigation_tests {
     }
 }
 
-/// An account beyond the primary: its own credentials and the task running
-/// its own sync loop. Removing the account aborts `poll_task`. Shared with
+/// A connected account: its own credentials and the task running its own
+/// sync loop. Removing the account aborts `poll_task`. Shared with
 /// `Correspondence`, which resolves a draft's own account through the same
-/// registry rather than assuming the primary account sends everything.
+/// registry rather than assuming one account sends everything.
 pub(crate) struct ConnectedAccount {
     pub(crate) auth: GoogleAuth,
-    sync: SyncService,
+    pub(crate) sync: SyncService,
     poll_task: JoinHandle<()>,
+}
+
+/// Every connected account, keyed by account id. Held by `AppState` and
+/// shared with `Correspondence` as the same `Arc`.
+pub(crate) type AccountRegistry = Arc<tokio::sync::Mutex<HashMap<String, ConnectedAccount>>>;
+
+/// Moves the pre-connect placeholder entry onto the real address once
+/// `accept_identity` has learned it. `GoogleAuth` and `SyncService` both read
+/// their key through a shared cell, so the entry's contents already describe
+/// the real account — only the map key is stale.
+pub(crate) async fn rekey_placeholder_account(accounts: &AccountRegistry, identity: &str) {
+    if identity == auth::LEGACY_KEY {
+        return;
+    }
+    let mut accounts = accounts.lock().await;
+    if let Some(connected) = accounts.remove(auth::LEGACY_KEY) {
+        accounts.insert(identity.to_string(), connected);
+    }
 }
 
 struct AppState {
     database: Arc<Database>,
     /// Shared OAuth app credentials, used to authorize any account.
     auth_config: Option<GoogleAuthConfig>,
-    /// The account driving the compose/send pipeline and today's
-    /// single-account UI (`google_auth_status`/`connect_google`/
-    /// `disconnect_google`, and every label/list command below). Which
-    /// email this is comes from the `accounts` table when one already
-    /// exists there (any run after the first), or starts at a placeholder
-    /// that rekeys onto the real address on first connect otherwise.
-    auth: Option<GoogleAuth>,
-    sync: Option<SyncService>,
-    /// Every other connected account, keyed by email — each with its own
-    /// sync cursor and polling loop, independent of the primary and of each
-    /// other. Populated at startup from the `accounts` table and by
-    /// `add_account`.
-    additional_accounts: Arc<tokio::sync::Mutex<HashMap<String, ConnectedAccount>>>,
+    /// Every connected account, keyed by account id — each with its own sync
+    /// cursor and polling loop, independent of the others. Populated at
+    /// startup from the `accounts` table and by `add_account`.
+    ///
+    /// Before the very first connect the map instead holds one entry under
+    /// the placeholder key `auth::LEGACY_KEY`, which rekeys onto the real
+    /// address once `refresh_identity` learns it. That placeholder is an
+    /// account id like any other here, so no code path has to distinguish a
+    /// "primary" account from the rest; where one genuinely is needed (the
+    /// compose default and the legacy single-account commands) it is derived
+    /// from the account catalog by `Database::primary_account_id`.
+    accounts: AccountRegistry,
     correspondence: correspondence::Correspondence,
     /// Serializes interactive "sign in with Google" flows (connect/add/
     /// reconnect) so two never race two loopback listeners at once — without
@@ -241,12 +258,41 @@ fn restrict_dir_to_owner(path: &std::path::Path) {
 #[cfg(not(unix))]
 fn restrict_dir_to_owner(_path: &std::path::Path) {}
 
-fn primary_account_id(state: &AppState) -> String {
+/// Resolves the `ConnectedAccount` entry for `account_id`, defaulting to the
+/// primary account when the caller didn't name one.
+async fn resolve_account<T>(
+    state: &AppState,
+    account_id: Option<&str>,
+    pick: impl FnOnce(&ConnectedAccount) -> T,
+) -> Result<T, String> {
+    let account_id = match account_id {
+        Some(account_id) => account_id.to_string(),
+        None => state.database.primary_account_id(),
+    };
     state
-        .auth
-        .as_ref()
-        .map(GoogleAuth::key)
-        .unwrap_or_else(|| "default".into())
+        .accounts
+        .lock()
+        .await
+        .get(&account_id)
+        .map(pick)
+        .ok_or_else(|| format!("{account_id} is not connected. Reconnect it before continuing."))
+}
+
+/// Every connected account's sync engine, or just one account's when named.
+/// An unknown `account_id` yields no services rather than an error: callers
+/// here are best-effort refreshes, not user-visible operations.
+async fn sync_services(state: &AppState, account_id: Option<&str>) -> Vec<SyncService> {
+    let accounts = state.accounts.lock().await;
+    match account_id {
+        Some(account_id) => accounts
+            .get(account_id)
+            .map(|account| vec![account.sync.clone()])
+            .unwrap_or_default(),
+        None => accounts
+            .values()
+            .map(|account| account.sync.clone())
+            .collect(),
+    }
 }
 
 fn merge_sync_statuses(
@@ -364,7 +410,7 @@ mod combined_sync_status_tests {
 fn combined_sync_status(state: &AppState) -> Result<SyncStatus, String> {
     let accounts = state.database.list_accounts()?;
     if accounts.is_empty() {
-        return state.database.sync_status(&primary_account_id(state));
+        return state.database.sync_status(auth::LEGACY_KEY);
     }
     let mut statuses = Vec::new();
     let mut errors = Vec::new();
@@ -381,8 +427,8 @@ fn combined_sync_status(state: &AppState) -> Result<SyncStatus, String> {
 }
 
 /// Builds a `SyncService` for `auth`, runs an immediate sync if it's already
-/// connected, and spawns its polling loop — the same startup behavior the
-/// primary account gets, generalized so any account can get it.
+/// connected, and spawns its polling loop. Every account is brought up this
+/// way, including the pre-connect placeholder.
 fn spawn_synced_account(
     database: Arc<Database>,
     auth: GoogleAuth,
@@ -669,30 +715,7 @@ async fn backfill_search_threads(
         return Ok(());
     }
 
-    let services = match account_id.as_deref() {
-        Some(account_id) if primary_account_id(&state) == account_id => {
-            state.sync.clone().into_iter().collect::<Vec<_>>()
-        }
-        Some(account_id) => state
-            .additional_accounts
-            .lock()
-            .await
-            .get(account_id)
-            .map(|account| vec![account.sync.clone()])
-            .unwrap_or_default(),
-        None => {
-            let mut services = state.sync.clone().into_iter().collect::<Vec<_>>();
-            services.extend(
-                state
-                    .additional_accounts
-                    .lock()
-                    .await
-                    .values()
-                    .map(|account| account.sync.clone()),
-            );
-            services
-        }
-    };
+    let services = sync_services(&state, account_id.as_deref()).await;
 
     let mut errors = Vec::new();
     for service in services {
@@ -815,25 +838,17 @@ fn recovery_status(state: State<'_, AppState>) -> Option<db::RecoveryOutcome> {
 #[tauri::command]
 async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatus, String> {
     let _ = state.correspondence.refresh_identity().await;
-    let mut services = Vec::new();
-    let mut account_ids = HashSet::new();
-    if let Some(service) = state.sync.clone().filter(SyncService::is_connected) {
-        let account_id = state
-            .auth
-            .as_ref()
-            .map(GoogleAuth::key)
-            .unwrap_or_else(|| "default".into());
-        account_ids.insert(account_id.clone());
-        services.push((account_id, service));
-    }
-    {
-        let additional = state.additional_accounts.lock().await;
-        for (email, connected) in additional.iter() {
-            if connected.sync.is_connected() && account_ids.insert(email.clone()) {
-                services.push((email.clone(), connected.sync.clone()));
-            }
-        }
-    }
+    let services = {
+        let accounts = state.accounts.lock().await;
+        accounts
+            .iter()
+            .filter(|(_, connected)| connected.sync.is_connected())
+            // Report against the account's live key rather than the map key,
+            // which is still the placeholder until the first identity refresh
+            // rekeys it.
+            .map(|(_, connected)| (connected.sync.account_id(), connected.sync.clone()))
+            .collect::<Vec<_>>()
+    };
     if services.is_empty() {
         return Err("No connected Google accounts are available to sync".to_string());
     }
@@ -869,23 +884,31 @@ async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatus, String> 
 
 #[tauri::command]
 async fn flush_pending_mutations(state: State<'_, AppState>) -> Result<SyncStatus, String> {
-    match state.sync.as_ref() {
-        Some(service) => service.flush_pending().await,
-        None => state.database.sync_status(&primary_account_id(&state)),
+    let primary = state.database.primary_account_id();
+    match resolve_account(&state, Some(&primary), |account| account.sync.clone()).await {
+        Ok(service) => service.flush_pending().await,
+        Err(_) => state.database.sync_status(&primary),
     }
 }
 
+/// Resolves the primary account's sync engine for the background refresh
+/// helpers below, which are best-effort and stay silent when there is nothing
+/// connected to refresh.
+async fn primary_service(handle: &tauri::AppHandle) -> Option<SyncService> {
+    let state = handle.try_state::<AppState>()?;
+    let primary = state.database.primary_account_id();
+    let service = resolve_account(&state, Some(&primary), |account| account.sync.clone())
+        .await
+        .ok()?;
+    service.is_connected().then_some(service)
+}
+
 fn spawn_pending_flush(handle: &tauri::AppHandle) {
-    let Some(state) = handle.try_state::<AppState>() else {
-        return;
-    };
-    let Some(service) = state.sync.clone() else {
-        return;
-    };
-    if !service.is_connected() {
-        return;
-    }
+    let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
+        let Some(service) = primary_service(&handle).await else {
+            return;
+        };
         // Wait for an in-flight mutate_thread IPC to land in SQLite.
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         let _ = service.flush_pending().await;
@@ -893,40 +916,44 @@ fn spawn_pending_flush(handle: &tauri::AppHandle) {
 }
 
 fn spawn_foreground_sync(handle: &tauri::AppHandle) {
-    let Some(state) = handle.try_state::<AppState>() else {
-        return;
-    };
-    let Some(service) = state.sync.clone() else {
-        return;
-    };
-    if !service.is_connected() {
-        return;
-    }
+    let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
+        let Some(service) = primary_service(&handle).await else {
+            return;
+        };
         let _ = service.sync_if_stale().await;
     });
 }
 
 #[tauri::command]
-fn google_auth_status(state: State<'_, AppState>) -> AuthStatus {
-    AuthStatus {
-        configured: state.auth.is_some(),
-        connected: state.auth.as_ref().is_some_and(GoogleAuth::available),
-    }
+async fn google_auth_status(state: State<'_, AppState>) -> Result<AuthStatus, String> {
+    let primary = state.database.primary_account_id();
+    let auth = resolve_account(&state, Some(&primary), |account| account.auth.clone()).await;
+    Ok(AuthStatus {
+        configured: auth.is_ok(),
+        connected: auth.is_ok_and(|auth| auth.available()),
+    })
 }
 
 #[tauri::command]
 async fn connect_google(state: State<'_, AppState>) -> Result<SyncStatus, String> {
-    let auth = state.auth.clone().ok_or_else(not_configured)?;
+    let primary = state.database.primary_account_id();
+    let (auth, service) = resolve_account(&state, Some(&primary), |account| {
+        (account.auth.clone(), account.sync.clone())
+    })
+    .await
+    .map_err(|_| not_configured())?;
     authorize_interactively(&state, &auth).await?;
+    // Rekeys the placeholder registry entry onto the real address as a side
+    // effect, so the account is addressable by email from here on.
     let _ = state.correspondence.refresh_identity().await;
-    state.sync.as_ref().ok_or_else(not_configured)?.sync().await
+    service.sync().await
 }
 
 #[tauri::command]
 async fn disconnect_google(state: State<'_, AppState>) -> Result<(), String> {
-    let email = state.auth.as_ref().ok_or_else(not_configured)?.key();
-    remove_account(email, state).await
+    let primary = state.database.primary_account_id();
+    remove_account(primary, state).await
 }
 
 #[tauri::command]
@@ -941,11 +968,7 @@ async fn add_account(state: State<'_, AppState>) -> Result<Account, String> {
     let email = authorize_interactively(&state, &auth).await?;
     let account = state.database.adopt_account(&email)?;
     let connected = spawn_synced_account(state.database.clone(), auth, true);
-    state
-        .additional_accounts
-        .lock()
-        .await
-        .insert(email, connected);
+    state.accounts.lock().await.insert(email, connected);
     Ok(account)
 }
 
@@ -959,31 +982,41 @@ async fn remove_account(email: String, state: State<'_, AppState>) -> Result<(),
     // than being left with a still-listed account whose credentials are
     // already gone.
     state.database.remove_account(&email)?;
-    let removed = state.additional_accounts.lock().await.remove(&email);
-    match (&state.auth, removed) {
-        (Some(primary), _) if primary.key() == email => primary.disconnect(),
-        (_, Some(connected)) => {
+    let result = match state.accounts.lock().await.remove(&email) {
+        Some(connected) => {
             connected.poll_task.abort();
             connected.auth.disconnect()
         }
-        _ => config.account(&email).disconnect(),
+        None => config.account(&email).disconnect(),
+    };
+    // Removing the last account returns the app to its pre-connect state, so
+    // restore the placeholder entry `connect_google` authorizes against —
+    // otherwise disconnecting would leave no way back in.
+    ensure_placeholder_account(&state).await;
+    result
+}
+
+/// Seeds the pre-connect placeholder entry when no account is connected, so
+/// the registry is never empty while OAuth is configured.
+async fn ensure_placeholder_account(state: &AppState) {
+    let Some(config) = state.auth_config.as_ref() else {
+        return;
+    };
+    let mut accounts = state.accounts.lock().await;
+    if accounts.is_empty() {
+        accounts.insert(
+            auth::LEGACY_KEY.to_string(),
+            spawn_synced_account(state.database.clone(), config.legacy_account(), false),
+        );
     }
 }
 
 #[tauri::command]
 async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<Account, String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
-    let is_primary = state
-        .auth
-        .as_ref()
-        .is_some_and(|primary| primary.key() == email);
-    let auth = if is_primary {
-        state.auth.clone().expect("checked by is_primary")
-    } else {
-        match state.additional_accounts.lock().await.get(&email) {
-            Some(connected) => connected.auth.clone(),
-            None => config.account(&email),
-        }
+    let auth = match state.accounts.lock().await.get(&email) {
+        Some(connected) => connected.auth.clone(),
+        None => config.account(&email),
     };
     authorize_interactively(&state, &auth).await?;
     // Make the persisted status authoritative before any newly spawned
@@ -991,13 +1024,11 @@ async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<
     // skip its initial sync, and sleep until the first polling interval.
     let account = state.database.adopt_account(&email)?;
     state.database.ensure_compose_identity(&email)?;
-    let service = if is_primary {
-        state.sync.clone().ok_or_else(not_configured)?
-    } else {
+    let service = {
         // Self-heal: an account already in the `accounts` table should
         // always have a live poller from startup, but reconnecting is a
         // reasonable place to notice and repair a missing one.
-        let mut accounts = state.additional_accounts.lock().await;
+        let mut accounts = state.accounts.lock().await;
         match accounts.get(&email) {
             Some(connected) => connected.sync.clone(),
             None => {
@@ -1290,26 +1321,7 @@ async fn list_labels(
     account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Label>, String> {
-    let auth = match account_id.as_deref() {
-        None => state.auth.clone().ok_or_else(not_configured)?,
-        Some(account_id)
-            if state
-                .auth
-                .as_ref()
-                .is_some_and(|auth| auth.key() == account_id) =>
-        {
-            state.auth.clone().expect("primary account matched")
-        }
-        Some(account_id) => state
-            .additional_accounts
-            .lock()
-            .await
-            .get(account_id)
-            .map(|account| account.auth.clone())
-            .ok_or_else(|| {
-                format!("{account_id} is not connected. Reconnect it before continuing.")
-            })?,
-    };
+    let auth = resolve_account(&state, account_id.as_deref(), |account| account.auth.clone()).await?;
 
     GmailClient::new(auth)
         .list_labels()
@@ -1483,19 +1495,7 @@ async fn resolve_sync(
     state: &State<'_, AppState>,
     account_id: Option<&str>,
 ) -> Result<SyncService, String> {
-    match account_id {
-        None => state.sync.clone().ok_or_else(not_configured),
-        Some(account_id) if primary_account_id(state) == account_id => {
-            state.sync.clone().ok_or_else(not_configured)
-        }
-        Some(account_id) => state
-            .additional_accounts
-            .lock()
-            .await
-            .get(account_id)
-            .map(|account| account.sync.clone())
-            .ok_or_else(|| format!("{account_id} is not connected. Reconnect it before continuing.")),
-    }
+    resolve_account(state, account_id, |account| account.sync.clone()).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1539,32 +1539,6 @@ pub fn run() {
                 }
             }
             let auth_config = GoogleAuthConfig::from_environment().ok();
-            // The primary account, used by the single sync loop and
-            // correspondence pipeline. Any run after the first already has
-            // it in the `accounts` table (rekeyed onto its real address by a
-            // previous run), so construct it already keyed correctly rather
-            // than restarting at the placeholder key each launch — that
-            // placeholder only applies before the very first successful
-            // connect/migration.
-            let existing_primary = database
-                .list_accounts()
-                .ok()
-                .and_then(|accounts| accounts.into_iter().next());
-            let auth = auth_config.as_ref().map(|config| match &existing_primary {
-                Some(account) => config.account(&account.email),
-                None => config.legacy_account(),
-            });
-            let sync = auth
-                .as_ref()
-                .map(|auth| SyncService::new(database.clone(), auth.clone()));
-            if let Some(service) = sync.clone() {
-                tauri::async_runtime::spawn(async move {
-                    if service.is_connected() {
-                        let _ = service.sync().await;
-                    }
-                    service.polling_loop().await;
-                });
-            }
             {
                 let database = database.clone();
                 let handle = app.handle().clone();
@@ -1641,55 +1615,49 @@ pub fn run() {
             std::fs::create_dir_all(&root)?;
             restrict_dir_to_owner(&root);
             let attachment_reader = attachment_reader::ReaderCache::new(root.join("reader"))?;
-            let additional_accounts = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+            // Bring up every account in the catalog, each with its own
+            // credentials and polling loop. Before the very first connect the
+            // catalog is empty and the placeholder key stands in for the
+            // account about to be added, so `connect_google` has something to
+            // authorize; it rekeys onto the real address once the identity is
+            // known. Built before `manage` so the registry is never observed
+            // empty by a command racing startup.
+            let mut registry = HashMap::new();
+            if let Some(config) = &auth_config {
+                let catalog = database.list_accounts().unwrap_or_default();
+                let keys = if catalog.is_empty() {
+                    vec![auth::LEGACY_KEY.to_string()]
+                } else {
+                    catalog.into_iter().map(|account| account.email).collect()
+                };
+                for key in keys {
+                    let auth = if key == auth::LEGACY_KEY {
+                        config.legacy_account()
+                    } else {
+                        config.account(&key)
+                    };
+                    registry.insert(key, spawn_synced_account(database.clone(), auth, true));
+                }
+            }
+            let accounts: AccountRegistry = Arc::new(tokio::sync::Mutex::new(registry));
             let correspondence = correspondence::Correspondence {
                 database: database.clone(),
-                primary: auth.clone(),
-                additional_accounts: additional_accounts.clone(),
+                accounts: accounts.clone(),
                 root,
                 gate: Arc::new(tokio::sync::Mutex::new(())),
                 edits: Arc::new(tokio::sync::Mutex::new(())),
             };
             let worker = correspondence.clone();
-            {
-                let database = database.clone();
-                let auth_config = auth_config.clone();
-                let additional_accounts = additional_accounts.clone();
-                tauri::async_runtime::spawn(async move {
-                    if worker.is_connected() {
-                        let _ = worker.refresh_identity().await;
-                    }
-                    // Bring up every other already-connected account's own
-                    // sync loop. Sequenced after identity resolution above
-                    // so the primary's now-final key can be excluded here.
-                    if let Some(config) = &auth_config {
-                        let primary_email = worker.primary.as_ref().map(GoogleAuth::key);
-                        if let Ok(accounts) = database.list_accounts() {
-                            for account in accounts {
-                                if Some(&account.email) == primary_email.as_ref() {
-                                    continue;
-                                }
-                                let connected = spawn_synced_account(
-                                    database.clone(),
-                                    config.account(&account.email),
-                                    true,
-                                );
-                                additional_accounts
-                                    .lock()
-                                    .await
-                                    .insert(account.email, connected);
-                            }
-                        }
-                    }
-                    worker.run().await;
-                });
-            }
+            tauri::async_runtime::spawn(async move {
+                if worker.is_connected().await {
+                    let _ = worker.refresh_identity().await;
+                }
+                worker.run().await;
+            });
             app.manage(AppState {
                 database,
                 auth_config,
-                auth,
-                sync,
-                additional_accounts,
+                accounts,
                 correspondence,
                 authorize_slot: AuthorizeSlot::default(),
                 exiting: std::sync::atomic::AtomicBool::new(false),

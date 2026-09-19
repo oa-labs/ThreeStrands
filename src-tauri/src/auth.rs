@@ -31,7 +31,7 @@ const OAUTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 /// stored under the fixed key used before multi-account support existed.
 /// `PENDING_KEY` names an in-progress "add account" flow. Both are replaced
 /// by the real address the moment it's learned, via `GoogleAuth::rekey_to`.
-const LEGACY_KEY: &str = "default";
+pub(crate) const LEGACY_KEY: &str = "default";
 const PENDING_KEY: &str = "pending";
 /// Returned when a newer sign-in attempt superseded this one.
 const CANCELED: &str = "Sign-in was canceled by a newer attempt.";
