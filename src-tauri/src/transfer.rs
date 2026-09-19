@@ -14,7 +14,7 @@ use crate::{
     ai::AiProvider,
     correspondence::validate_retention_days,
     db::Database,
-    models::{Account, SplitInbox},
+    models::{is_known_account_provider, Account, SplitInbox},
 };
 
 const FORMAT: &str = "dispatch-settings";
@@ -82,7 +82,17 @@ pub(crate) struct TransferAccount {
     pub email: String,
     pub display_name: Option<String>,
     pub color: String,
+    // Every account exported before this field existed authenticated
+    // through Gmail, so an absent value defaults to it rather than an empty
+    // string — no `migrate_legacy_fields` fixup needed, unlike
+    // `TransferSplitInbox::account_id`.
+    #[serde(default = "default_account_provider")]
+    pub provider: String,
     pub sort_order: i64,
+}
+
+fn default_account_provider() -> String {
+    "gmail".to_string()
 }
 
 impl From<Account> for TransferAccount {
@@ -91,6 +101,7 @@ impl From<Account> for TransferAccount {
             email: account.email,
             display_name: account.display_name,
             color: account.color,
+            provider: account.provider,
             sort_order: account.sort_order,
         }
     }
@@ -173,6 +184,9 @@ impl TransferPayload {
                     .all(|character| character.is_ascii_hexdigit())
             {
                 return Err("The transfer contains an invalid account color".to_string());
+            }
+            if !is_known_account_provider(&account.provider) {
+                return Err("The transfer contains an unrecognized account provider".to_string());
             }
         }
         let mut split_ids = HashSet::new();
@@ -422,6 +436,7 @@ mod tests {
                 email: "person@example.com".to_string(),
                 display_name: Some("Person".to_string()),
                 color: "#4285F4".to_string(),
+                provider: "gmail".to_string(),
                 sort_order: 0,
             }],
             split_inboxes: vec![],
@@ -497,6 +512,30 @@ mod tests {
                 "The transfer contains an invalid retention period"
             );
         }
+    }
+
+    #[test]
+    fn an_export_from_before_the_provider_field_existed_defaults_to_gmail() {
+        let mut serialized = serde_json::to_value(payload()).unwrap();
+        serialized["accounts"] = serde_json::json!([{
+            "email": "person@example.com",
+            "displayName": "Person",
+            "color": "#4285F4",
+            "sortOrder": 0
+        }]);
+        let decoded: TransferPayload = serde_json::from_value(serialized).unwrap();
+        assert_eq!(decoded.accounts[0].provider, "gmail");
+        decoded.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_an_unrecognized_account_provider() {
+        let mut candidate = payload();
+        candidate.accounts[0].provider = "imap".to_string();
+        assert_eq!(
+            candidate.validate().unwrap_err(),
+            "The transfer contains an unrecognized account provider"
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@ mod attachment_security;
 mod auth;
 mod calendar;
 mod correspondence;
+mod credentials;
 mod db;
 mod image_format;
 mod image_proxy;
@@ -21,10 +22,9 @@ mod unsubscribe_service;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use auth::{GoogleAuth, GoogleAuthConfig};
+use auth::{AccountAuth, GoogleAuthConfig};
 use chrono::Utc;
 use db::Database;
-use provider::{gmail::GmailClient, MailMutate};
 use models::{
     Account, AuthStatus, CalendarAccount, CalendarOption, ContactSuggestion, CreateLabelRequest,
     CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
@@ -108,7 +108,7 @@ mod navigation_tests {
 /// `Correspondence`, which resolves a draft's own account through the same
 /// registry rather than assuming one account sends everything.
 pub(crate) struct ConnectedAccount {
-    pub(crate) auth: GoogleAuth,
+    pub(crate) auth: AccountAuth,
     pub(crate) sync: SyncService,
     poll_task: JoinHandle<()>,
 }
@@ -193,7 +193,7 @@ impl AuthorizeSlot {
 
 /// Runs `auth.authorize()` behind the app-wide sign-in slot, canceling
 /// whichever attempt it replaces and always releasing the slot afterward.
-async fn authorize_interactively(state: &AppState, auth: &GoogleAuth) -> Result<String, String> {
+async fn authorize_interactively(state: &AppState, auth: &AccountAuth) -> Result<String, String> {
     let token = state.authorize_slot.claim().await;
     let result = auth.authorize(&token).await;
     state.authorize_slot.release(&token).await;
@@ -431,7 +431,7 @@ fn combined_sync_status(state: &AppState) -> Result<SyncStatus, String> {
 /// way, including the pre-connect placeholder.
 fn spawn_synced_account(
     database: Arc<Database>,
-    auth: GoogleAuth,
+    auth: AccountAuth,
     sync_immediately: bool,
 ) -> ConnectedAccount {
     let service = SyncService::new(database, auth.clone());
@@ -964,7 +964,7 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, String> {
 #[tauri::command]
 async fn add_account(state: State<'_, AppState>) -> Result<Account, String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
-    let auth = config.pending_account();
+    let auth = AccountAuth::Google(config.pending_account());
     let email = authorize_interactively(&state, &auth).await?;
     let account = state.database.adopt_account(&email)?;
     let connected = spawn_synced_account(state.database.clone(), auth, true);
@@ -987,7 +987,7 @@ async fn remove_account(email: String, state: State<'_, AppState>) -> Result<(),
             connected.poll_task.abort();
             connected.auth.disconnect()
         }
-        None => config.account(&email).disconnect(),
+        None => AccountAuth::Google(config.account(&email)).disconnect(),
     };
     // Removing the last account returns the app to its pre-connect state, so
     // restore the placeholder entry `connect_google` authorizes against —
@@ -1006,7 +1006,11 @@ async fn ensure_placeholder_account(state: &AppState) {
     if accounts.is_empty() {
         accounts.insert(
             auth::LEGACY_KEY.to_string(),
-            spawn_synced_account(state.database.clone(), config.legacy_account(), false),
+            spawn_synced_account(
+                state.database.clone(),
+                AccountAuth::Google(config.legacy_account()),
+                false,
+            ),
         );
     }
 }
@@ -1016,7 +1020,7 @@ async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let auth = match state.accounts.lock().await.get(&email) {
         Some(connected) => connected.auth.clone(),
-        None => config.account(&email),
+        None => AccountAuth::Google(config.account(&email)),
     };
     authorize_interactively(&state, &auth).await?;
     // Make the persisted status authoritative before any newly spawned
@@ -1063,7 +1067,7 @@ fn list_calendar_accounts(state: State<'_, AppState>) -> Result<Vec<CalendarAcco
 async fn add_calendar_account(state: State<'_, AppState>) -> Result<CalendarAccount, String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let auth = config.pending_calendar_account();
-    let email = authorize_interactively(&state, &auth).await?;
+    let email = authorize_interactively(&state, &AccountAuth::Google(auth)).await?;
     state.database.adopt_calendar_account(&email)?;
     state
         .database
@@ -1080,7 +1084,7 @@ async fn reconnect_calendar_account(
 ) -> Result<CalendarAccount, String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let auth = config.calendar_account(&email);
-    authorize_interactively(&state, &auth).await?;
+    authorize_interactively(&state, &AccountAuth::Google(auth)).await?;
     state.database.adopt_calendar_account(&email)?;
     state
         .database
@@ -1323,7 +1327,7 @@ async fn list_labels(
 ) -> Result<Vec<Label>, String> {
     let auth = resolve_account(&state, account_id.as_deref(), |account| account.auth.clone()).await?;
 
-    GmailClient::new(auth)
+    auth.provider()
         .list_labels()
         .await
         .map_err(|error| error.to_string())
@@ -1631,11 +1635,11 @@ pub fn run() {
                     catalog.into_iter().map(|account| account.email).collect()
                 };
                 for key in keys {
-                    let auth = if key == auth::LEGACY_KEY {
+                    let auth = AccountAuth::Google(if key == auth::LEGACY_KEY {
                         config.legacy_account()
                     } else {
                         config.account(&key)
-                    };
+                    });
                     registry.insert(key, spawn_synced_account(database.clone(), auth, true));
                 }
             }

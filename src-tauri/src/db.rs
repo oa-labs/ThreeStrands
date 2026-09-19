@@ -2178,8 +2178,8 @@ impl Database {
             transaction
                 .execute(
                     "INSERT INTO accounts(
-                         email, display_name, color, status, sort_order, connected_at, last_synced_at
-                     ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, NULL)
+                         email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
+                     ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, ?6, NULL)
                      ON CONFLICT(email) DO UPDATE SET
                          display_name = excluded.display_name,
                          color = excluded.color,
@@ -2188,6 +2188,7 @@ impl Database {
                         account.email,
                         account.display_name,
                         account.color,
+                        account.provider,
                         account.sort_order,
                         connected_at,
                     ],
@@ -2517,9 +2518,10 @@ fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         display_name: row.get(1)?,
         color: row.get(2)?,
         status: row.get(3)?,
-        sort_order: row.get(4)?,
-        connected_at: row.get(5)?,
-        last_synced_at: row.get(6)?,
+        provider: row.get(4)?,
+        sort_order: row.get(5)?,
+        connected_at: row.get(6)?,
+        last_synced_at: row.get(7)?,
     })
 }
 
@@ -2786,12 +2788,14 @@ mod tests {
                         email: "new@example.com".to_string(),
                         display_name: Some("New account".to_string()),
                         color: "#123456".to_string(),
+                        provider: "gmail".to_string(),
                         sort_order: 0,
                     },
                     TransferAccount {
                         email: "connected@example.com".to_string(),
                         display_name: Some("Connected account".to_string()),
                         color: "#654321".to_string(),
+                        provider: "gmail".to_string(),
                         sort_order: 1,
                     },
                 ],
@@ -3532,6 +3536,7 @@ mod tests {
         let account = database.adopt_account("you@gmail.com").unwrap();
         assert_eq!(account.email, "you@gmail.com");
         assert_eq!(account.status, "connected");
+        assert_eq!(account.provider, "gmail");
         assert_eq!(account.sort_order, 0);
 
         let connection = database.connection().unwrap();

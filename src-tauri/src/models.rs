@@ -414,7 +414,21 @@ pub struct Account {
     pub display_name: Option<String>,
     pub color: String,
     pub status: String,
+    /// Which backend this account authenticates and syncs through, e.g.
+    /// `"gmail"`. A plain string, like `status`, rather than a Rust enum: the
+    /// set of valid values is enforced in `db::accounts` and mirrored by the
+    /// frontend's `MailProvider` type, and a string round-trips through the
+    /// database and the settings-transfer format without a mapping layer.
+    pub provider: String,
     pub sort_order: i64,
     pub connected_at: String,
     pub last_synced_at: Option<String>,
+}
+
+/// The `accounts.provider` values this build understands. Checked wherever a
+/// provider string reaches storage from outside the process — today that is
+/// only the settings-transfer import path, since every other writer sets it
+/// to a literal known value itself.
+pub fn is_known_account_provider(value: &str) -> bool {
+    matches!(value, "gmail")
 }

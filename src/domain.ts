@@ -254,6 +254,8 @@ export type Account = {
   displayName: string | null;
   color: string;
   status: "connected" | "needs_reauth";
+  /** Which backend this account authenticates and syncs through. */
+  provider: "gmail";
   sortOrder: number;
   connectedAt: string;
   lastSyncedAt: string | null;

@@ -23,7 +23,7 @@ impl Database {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT email, display_name, color, status, sort_order, connected_at, last_synced_at
+                "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
                  FROM accounts ORDER BY sort_order",
             )
             .map_err(display_error)?;
@@ -62,8 +62,10 @@ impl Database {
             let color = ACCOUNT_COLORS[(sort_order as usize) % ACCOUNT_COLORS.len()];
             transaction
                 .execute(
-                    "INSERT INTO accounts(email, color, status, sort_order, connected_at)
-                     VALUES (?1, ?2, 'connected', ?3, ?4)",
+                    // Every account adopted through this path today comes
+                    // from the Gmail OAuth flow.
+                    "INSERT INTO accounts(email, color, status, provider, sort_order, connected_at)
+                     VALUES (?1, ?2, 'connected', 'gmail', ?3, ?4)",
                     params![email, color, sort_order, Utc::now().to_rfc3339()],
                 )
                 .map_err(display_error)?;
@@ -91,7 +93,7 @@ impl Database {
     pub fn get_account(&self, email: &str) -> Result<Option<Account>, String> {
         self.connection()?
             .query_row(
-                "SELECT email, display_name, color, status, sort_order, connected_at, last_synced_at
+                "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
                  FROM accounts WHERE email = ?1",
                 [email],
                 account_from_row,

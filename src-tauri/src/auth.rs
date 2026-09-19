@@ -64,6 +64,21 @@ struct Profile {
     email_address: String,
 }
 
+/// The OAuth endpoints and scope one authorization flow runs against.
+///
+/// Separated from [`GoogleAuth`] itself because a single Google Cloud OAuth
+/// client already authorizes two different flows under it — full Gmail
+/// access and read-only Calendar access — that share `auth_url`/`token_url`
+/// but differ in `scopes`/`profile_url`. A future non-Google provider would
+/// differ in every field instead.
+#[derive(Clone)]
+pub struct OAuthEndpoints {
+    pub auth_url: String,
+    pub token_url: String,
+    pub scopes: String,
+    pub profile_url: String,
+}
+
 /// The app's shared Google OAuth client credentials. One Google Cloud OAuth
 /// client is used for every connected account; only the token and consent
 /// are per-account, so this is what constructs a [`GoogleAuth`] for each one.
@@ -120,27 +135,44 @@ impl GoogleAuthConfig {
     }
 
     fn keyed(&self, key: &str) -> GoogleAuth {
-        self.keyed_for(key, MAIL_SERVICE, MAIL_SCOPES, PROFILE_URL)
+        self.keyed_for(key, MAIL_SERVICE, Self::mail_endpoints())
+    }
+
+    fn mail_endpoints() -> OAuthEndpoints {
+        OAuthEndpoints {
+            auth_url: AUTH_URL.to_string(),
+            token_url: TOKEN_URL.to_string(),
+            scopes: MAIL_SCOPES.to_string(),
+            profile_url: PROFILE_URL.to_string(),
+        }
     }
 
     /// Calendar access is deliberately authorized and stored separately from
     /// Gmail. Connecting it can never broaden an existing mail refresh token.
     pub fn pending_calendar_account(&self) -> GoogleAuth {
-        self.keyed_for(PENDING_KEY, CALENDAR_SERVICE, CALENDAR_SCOPES, USERINFO_URL)
+        self.keyed_for(PENDING_KEY, CALENDAR_SERVICE, Self::calendar_endpoints())
     }
 
     pub fn calendar_account(&self, email: &str) -> GoogleAuth {
-        self.keyed_for(email, CALENDAR_SERVICE, CALENDAR_SCOPES, USERINFO_URL)
+        self.keyed_for(email, CALENDAR_SERVICE, Self::calendar_endpoints())
     }
 
-    fn keyed_for(&self, key: &str, service: &str, scopes: &str, profile_url: &str) -> GoogleAuth {
+    fn calendar_endpoints() -> OAuthEndpoints {
+        OAuthEndpoints {
+            auth_url: AUTH_URL.to_string(),
+            token_url: TOKEN_URL.to_string(),
+            scopes: CALENDAR_SCOPES.to_string(),
+            profile_url: USERINFO_URL.to_string(),
+        }
+    }
+
+    fn keyed_for(&self, key: &str, service: &str, endpoints: OAuthEndpoints) -> GoogleAuth {
         GoogleAuth {
             client: self.client.clone(),
             client_id: self.client_id.clone(),
             client_secret: self.client_secret.clone(),
             service: service.to_string(),
-            scopes: scopes.to_string(),
-            profile_url: profile_url.to_string(),
+            endpoints,
             key: Arc::new(Mutex::new(key.to_string())),
             token_cache: Arc::new(Mutex::new(None)),
             available_cache: Arc::new(Mutex::new(None)),
@@ -154,8 +186,7 @@ pub struct GoogleAuth {
     client_id: String,
     client_secret: String,
     service: String,
-    scopes: String,
-    profile_url: String,
+    endpoints: OAuthEndpoints,
     key: Arc<Mutex<String>>,
     token_cache: Arc<Mutex<Option<Tokens>>>,
     available_cache: Arc<Mutex<Option<bool>>>,
@@ -194,7 +225,7 @@ impl GoogleAuth {
     /// the full timeout, silently blocking any retry that shares its slot.
     pub async fn authorize(&self, cancel: &CancellationToken) -> Result<String, String> {
         let tokens = self.run_pkce_flow(cancel).await?;
-        let email = fetch_email(&self.client, &self.profile_url, &tokens.access_token).await?;
+        let email = fetch_email(&self.client, &self.endpoints.profile_url, &tokens.access_token).await?;
         self.accept_identity(&email)?;
         self.save(&tokens)?;
         Ok(email)
@@ -222,13 +253,13 @@ impl GoogleAuth {
         let verifier = random_urlsafe(64);
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
         let state = random_urlsafe(32);
-        let mut authorization = Url::parse(AUTH_URL).map_err(display)?;
+        let mut authorization = Url::parse(&self.endpoints.auth_url).map_err(display)?;
         authorization
             .query_pairs_mut()
             .append_pair("client_id", &self.client_id)
             .append_pair("redirect_uri", &redirect_uri)
             .append_pair("response_type", "code")
-            .append_pair("scope", &self.scopes)
+            .append_pair("scope", &self.endpoints.scopes)
             .append_pair("code_challenge", &challenge)
             .append_pair("code_challenge_method", "S256")
             .append_pair("state", &state)
@@ -324,7 +355,7 @@ impl GoogleAuth {
     ) -> Result<Tokens, String> {
         let response = self
             .client
-            .post(TOKEN_URL)
+            .post(&self.endpoints.token_url)
             .form(&[
                 ("client_id", self.client_id.as_str()),
                 ("client_secret", self.client_secret.as_str()),
@@ -359,7 +390,7 @@ impl GoogleAuth {
         })?;
         let response = self
             .client
-            .post(TOKEN_URL)
+            .post(&self.endpoints.token_url)
             .form(&[
                 ("client_id", self.client_id.as_str()),
                 ("client_secret", self.client_secret.as_str()),
@@ -397,13 +428,14 @@ impl GoogleAuth {
             return Ok(tokens);
         }
         let value = self.entry()?.get_password().map_err(display)?;
-        let tokens: Tokens = serde_json::from_str(&value).map_err(display)?;
+        let crate::credentials::StoredCredential::GoogleOAuth(tokens) =
+            crate::credentials::StoredCredential::decode(&value)?;
         *self.token_cache.lock().unwrap() = Some(tokens.clone());
         Ok(tokens)
     }
 
     fn save(&self, tokens: &Tokens) -> Result<(), String> {
-        let value = serde_json::to_string(tokens).map_err(display)?;
+        let value = crate::credentials::StoredCredential::GoogleOAuth(tokens.clone()).encode()?;
         self.entry()?.set_password(&value).map_err(display)?;
         *self.token_cache.lock().unwrap() = Some(tokens.clone());
         *self.available_cache.lock().unwrap() = Some(true);
@@ -603,9 +635,78 @@ mod tests {
         let calendar = config.calendar_account("work@example.com");
 
         assert_eq!(mail.service, MAIL_SERVICE);
-        assert!(mail.scopes.contains("gmail.modify"));
+        assert!(mail.endpoints.scopes.contains("gmail.modify"));
         assert_eq!(calendar.service, CALENDAR_SERVICE);
-        assert!(calendar.scopes.contains("calendar.readonly"));
-        assert!(!calendar.scopes.contains("gmail."));
+        assert!(calendar.endpoints.scopes.contains("calendar.readonly"));
+        assert!(!calendar.endpoints.scopes.contains("gmail."));
+    }
+
+    // `.available()`/`.authorize()`/`.disconnect()` touch the OS keychain or
+    // network and aren't exercised here for the same reason
+    // `accept_identity_rejects_a_different_already_known_account` isn't —
+    // see its comment. `.key()` and `.provider()` are pure, so they cover
+    // that `AccountAuth` actually dispatches to its wrapped credential
+    // rather than, say, always returning a fresh unkeyed one.
+    #[test]
+    fn account_auth_key_and_provider_delegate_to_the_wrapped_credential() {
+        let auth = AccountAuth::Google(config().account("work@example.com"));
+        assert_eq!(auth.key(), "work@example.com");
+        assert!(auth.provider().capabilities().server_search);
+    }
+}
+
+/// An account's credential handle, abstracting over which provider it
+/// authenticates through. `SyncService`, `ConnectedAccount`, and
+/// `Correspondence` hold this rather than a concrete credential type, so
+/// none of them has to change shape when a second provider exists — they
+/// gain a variant here and a new arm in `provider()` instead.
+///
+/// Every method below is a thin dispatch to the wrapped credential; this
+/// type carries no state of its own.
+#[derive(Clone)]
+pub enum AccountAuth {
+    Google(GoogleAuth),
+}
+
+impl AccountAuth {
+    /// This account's id, once known — see the equivalent method on the
+    /// wrapped credential for what that means before then.
+    pub fn key(&self) -> String {
+        match self {
+            Self::Google(auth) => auth.key(),
+        }
+    }
+
+    pub fn available(&self) -> bool {
+        match self {
+            Self::Google(auth) => auth.available(),
+        }
+    }
+
+    pub fn disconnect(&self) -> Result<(), String> {
+        match self {
+            Self::Google(auth) => auth.disconnect(),
+        }
+    }
+
+    pub fn accept_identity(&self, email: &str) -> Result<(), String> {
+        match self {
+            Self::Google(auth) => auth.accept_identity(email),
+        }
+    }
+
+    pub async fn authorize(&self, cancel: &CancellationToken) -> Result<String, String> {
+        match self {
+            Self::Google(auth) => auth.authorize(cancel).await,
+        }
+    }
+
+    /// The mail backend this credential authorizes access to.
+    pub fn provider(&self) -> std::sync::Arc<dyn crate::provider::MailProvider> {
+        match self {
+            Self::Google(auth) => {
+                std::sync::Arc::new(crate::provider::gmail::GmailClient::new(auth.clone()))
+            }
+        }
     }
 }

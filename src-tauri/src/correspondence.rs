@@ -1,8 +1,8 @@
 //! Local drafts and a send queue deliberately separate from retryable label mutations.
 use crate::{
-    auth::GoogleAuth,
+    auth::AccountAuth,
     db::Database,
-    provider::{gmail::GmailClient, DeliveryReceipt, MailProvider, MailSend},
+    provider::{DeliveryReceipt, MailProvider},
     mime::{RawMessage, MimePart},
 };
 use base64::{
@@ -724,7 +724,7 @@ pub struct Correspondence {
     pub edits: Arc<tokio::sync::Mutex<()>>,
 }
 impl Correspondence {
-    async fn auth_for(&self, account: &str) -> Option<GoogleAuth> {
+    async fn auth_for(&self, account: &str) -> Option<AccountAuth> {
         self.accounts
             .lock()
             .await
@@ -740,11 +740,11 @@ impl Correspondence {
         let auth = self.auth_for(account).await.ok_or_else(|| {
             format!("{account} is not connected. Reconnect it before continuing.")
         })?;
-        Ok(Arc::new(GmailClient::new(auth)))
+        Ok(auth.provider())
     }
     /// The account the compose identity bootstrap runs against. Not the only
     /// account drafts can send from — see `auth_for`.
-    async fn primary_auth(&self) -> Option<GoogleAuth> {
+    async fn primary_auth(&self) -> Option<AccountAuth> {
         self.auth_for(&self.database.primary_account_id()).await
     }
     pub async fn is_connected(&self) -> bool {
@@ -757,7 +757,8 @@ impl Correspondence {
             .primary_auth()
             .await
             .ok_or("Google OAuth is not configured")?;
-        let identity = GmailClient::new(auth.clone())
+        let identity = auth
+            .provider()
             .sender_identity()
             .await
             .map_err(error)?;

@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 20;
+pub(crate) const LATEST_VERSION: i64 = 21;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -430,6 +430,15 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 21 {
+        // Every account created so far authenticated through Gmail, so the
+        // default backfills correctly with no data to reconcile.
+        tx.execute_batch(
+            "ALTER TABLE accounts ADD COLUMN provider TEXT NOT NULL DEFAULT 'gmail';
+            PRAGMA user_version=21;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -440,4 +449,55 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    /// A pre-v21 database: `INITIAL_SCHEMA` alone, with no `migrate()` run
+    /// yet, so `PRAGMA user_version` is still 0 and `accounts` lacks
+    /// `provider` — that column is added exclusively by the `version < 21`
+    /// migration rather than baked into the baseline table, matching every
+    /// other post-baseline column (`calendar_accounts.selection_initialized`,
+    /// `outbox_messages.attempts`, ...).
+    fn unmigrated_database_with_one_account() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO accounts(email, color, status, sort_order, connected_at)
+                 VALUES ('you@gmail.com', '#4285F4', 'connected', 0, '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        connection
+    }
+
+    fn account_provider(connection: &Connection, email: &str) -> String {
+        connection
+            .query_row(
+                "SELECT provider FROM accounts WHERE email = ?1",
+                [email],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn upgrading_past_v21_backfills_every_existing_account_as_gmail() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(account_provider(&connection, "you@gmail.com"), "gmail");
+    }
+
+    #[test]
+    fn migrating_twice_does_not_fail_on_a_column_already_added() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(account_provider(&connection, "you@gmail.com"), "gmail");
+    }
 }

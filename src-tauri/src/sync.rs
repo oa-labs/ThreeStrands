@@ -9,12 +9,9 @@ use rand::Rng;
 use tokio::sync::Mutex;
 
 use crate::{
-    auth::GoogleAuth,
+    auth::AccountAuth,
     db::{Database, PendingMutation},
-    provider::{
-        gmail::GmailClient, MailMutate, MailProvider, MailSync, ProviderError, ProviderResult,
-        SyncCursor,
-    },
+    provider::{MailMutate, MailSync, ProviderError, ProviderResult, SyncCursor},
     mime::{
         normalize, normalized_size, NormalizedMessage, MAX_NORMALIZED_THREAD_BYTES,
         MAX_THREAD_MESSAGES,
@@ -44,7 +41,7 @@ const REMOTE_SEARCH_SCAN_LIMIT: usize = 50;
 #[derive(Clone)]
 pub struct SyncService {
     database: Arc<Database>,
-    auth: GoogleAuth,
+    auth: AccountAuth,
     gate: Arc<Mutex<()>>,
     last_attempt: Arc<StdMutex<Option<Instant>>>,
 }
@@ -58,7 +55,7 @@ pub fn should_skip_stale_sync(
 }
 
 impl SyncService {
-    pub fn new(database: Arc<Database>, auth: GoogleAuth) -> Self {
+    pub fn new(database: Arc<Database>, auth: AccountAuth) -> Self {
         Self {
             database,
             auth,
@@ -93,8 +90,8 @@ impl SyncService {
     async fn sync_provider(&self) -> ProviderResult<SyncStatus> {
         let _guard = self.gate.lock().await;
         let account_id = self.account_id();
-        let provider = GmailClient::new(self.auth.clone());
-        let result = sync_with(self.database.as_ref(), &account_id, &provider).await;
+        let provider = self.auth.provider();
+        let result = sync_with(self.database.as_ref(), &account_id, provider.as_ref()).await;
         if let Ok(mut last_attempt) = self.last_attempt.lock() {
             *last_attempt = Some(Instant::now());
         }
@@ -129,8 +126,9 @@ impl SyncService {
             return self.database.sync_status(&account_id);
         }
         let _guard = self.gate.lock().await;
-        let provider = GmailClient::new(self.auth.clone());
-        if let Err(error) = flush_pending_with(self.database.as_ref(), &account_id, &provider).await
+        let provider = self.auth.provider();
+        if let Err(error) =
+            flush_pending_with(self.database.as_ref(), &account_id, provider.as_ref()).await
         {
             let message = error.to_string();
             self.database.fail_sync(&account_id, &message)?;
@@ -148,7 +146,7 @@ impl SyncService {
         }
         let _guard = self.gate.lock().await;
         let account_id = self.account_id();
-        let provider = GmailClient::new(self.auth.clone());
+        let provider = self.auth.provider();
         // Local search still works without this; a provider that cannot look
         // past the local index simply has nothing to contribute, so asking is
         // a guaranteed round trip to an error.
@@ -158,7 +156,7 @@ impl SyncService {
         search_and_ingest_missing(
             self.database.as_ref(),
             &account_id,
-            &provider,
+            provider.as_ref(),
             query,
             REMOTE_SEARCH_SCAN_LIMIT,
         )
@@ -168,7 +166,8 @@ impl SyncService {
 
     pub async fn create_label(&self, name: &str) -> Result<Label, String> {
         validate_label_name(name)?;
-        GmailClient::new(self.auth.clone())
+        self.auth
+            .provider()
             .create_label(name)
             .await
             .map_err(|error| error.to_string())
@@ -176,14 +175,16 @@ impl SyncService {
 
     pub async fn update_label(&self, id: &str, name: &str) -> Result<Label, String> {
         validate_label_name(name)?;
-        GmailClient::new(self.auth.clone())
+        self.auth
+            .provider()
             .update_label(id, name)
             .await
             .map_err(|error| error.to_string())
     }
 
     pub async fn delete_label(&self, id: &str) -> Result<(), String> {
-        GmailClient::new(self.auth.clone())
+        self.auth
+            .provider()
             .delete_label(id)
             .await
             .map_err(|error| error.to_string())
@@ -231,8 +232,8 @@ impl SyncService {
             return;
         }
         let _guard = self.gate.lock().await;
-        let provider = GmailClient::new(self.auth.clone());
-        let _ = reconcile_and_mark(self.database.as_ref(), &account_id, &provider).await;
+        let provider = self.auth.provider();
+        let _ = reconcile_and_mark(self.database.as_ref(), &account_id, provider.as_ref()).await;
     }
 }
 
