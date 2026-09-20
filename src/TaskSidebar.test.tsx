@@ -137,6 +137,7 @@ describe("TaskSidebar", () => {
         onOpenThread={vi.fn()}
         title="Actions"
         analysisEnabled
+        analysisReady
         analysisPreview={'{"emailContext":{"messages":[]}}'}
         proposals={[proposal]}
         onAnalyzeThread={vi.fn()}
@@ -152,5 +153,22 @@ describe("TaskSidebar", () => {
     await waitFor(() => expect(addTask).toHaveBeenCalledWith(proposal));
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(discard).toHaveBeenCalledWith(0);
+  });
+
+  it("explains missing provider credentials separately from the feature flag", () => {
+    render(
+      <TaskSidebar
+        onClose={vi.fn()}
+        accountId="you@example.com"
+        currentThread={detail}
+        onOpenThread={vi.fn()}
+        title="Actions"
+        analysisEnabled
+        analysisReady={false}
+        onAnalyzeThread={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Configure an AI provider and API key in AI settings to analyze this conversation.")).toBeInTheDocument();
+    expect(screen.queryByText("Enable Thread actions in AI settings to analyze this conversation.")).not.toBeInTheDocument();
   });
 });

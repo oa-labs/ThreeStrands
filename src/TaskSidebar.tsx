@@ -29,6 +29,7 @@ export function TaskSidebar({
   onCheckSchedule,
   onAnalyzeThread,
   analysisEnabled = false,
+  analysisReady = false,
   analysisLoading = false,
   analysisError = null,
   analysisPreview = null,
@@ -48,6 +49,7 @@ export function TaskSidebar({
   onCheckSchedule?(): void;
   onAnalyzeThread?(): void;
   analysisEnabled?: boolean;
+  analysisReady?: boolean;
   analysisLoading?: boolean;
   analysisError?: string | null;
   analysisPreview?: string | null;
@@ -174,7 +176,7 @@ export function TaskSidebar({
       <header className="tasks-sidebar-header">
         <h2><CheckSquare size={18} /> {title}</h2>
         <div>
-          {title === "Actions" && onAnalyzeThread ? <button type="button" aria-label="Analyze thread" title={analysisEnabled ? "Analyze thread" : "Enable Thread actions in AI settings"} onClick={onAnalyzeThread} disabled={!analysisEnabled || analysisLoading}><Sparkles size={17} /></button> : null}
+          {title === "Actions" && onAnalyzeThread ? <button type="button" aria-label="Analyze thread" title={!analysisEnabled ? "Enable Thread actions in AI settings" : !analysisReady ? "Configure an AI provider and API key" : "Analyze thread"} onClick={onAnalyzeThread} disabled={!analysisReady || analysisLoading}><Sparkles size={17} /></button> : null}
           {onCheckSchedule ? <button type="button" aria-label="Check schedule" title="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button> : null}
           {currentThread ? <button type="button" aria-label="Open add task form" title="Add task" onClick={() => setFormOpen((open) => !open)}><Plus size={17} /></button> : null}
           <button type="button" aria-label="Close tasks" onClick={onClose}><X size={18} /></button>
@@ -193,7 +195,7 @@ export function TaskSidebar({
       {title === "Actions" && onAnalyzeThread ? (
         <section className="action-analysis" aria-label="Thread actions">
           <div className="action-analysis-heading"><strong>Thread actions</strong>{analysisLoading ? <span role="status">Analyzing…</span> : null}</div>
-          {!analysisEnabled ? <p className="tasks-status">Enable Thread actions in AI settings to analyze this conversation.</p> : null}
+          {!analysisEnabled ? <p className="tasks-status">Enable Thread actions in AI settings to analyze this conversation.</p> : !analysisReady ? <p className="tasks-status">Configure an AI provider and API key in AI settings to analyze this conversation.</p> : null}
           {analysisError ? <p className="tasks-error" role="alert">{analysisError}</p> : null}
           {analysisPreview ? <details className="action-analysis-preview"><summary>Exact bounded content sent</summary><pre>{analysisPreview}</pre></details> : null}
           {!analysisLoading && analysisEnabled && proposals.length === 0 && analysisPreview ? <p className="tasks-status">No meeting or task proposals found.</p> : null}

@@ -384,6 +384,7 @@ export function App() {
   }, [calendarAccounts.length, refreshCalendarOptions, settingsOpen, settingsSection]);
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
+  const [aiActionFeatureEnabled, setAiActionFeatureEnabled] = useState(false);
   const [aiActionAvailable, setAiActionAvailable] = useState(false);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   // Keyed by thread id, not a single flag, so summarizing thread A in the
@@ -397,6 +398,7 @@ export function App() {
     const features = readAiFeatures();
     const summaryEnabled = provider !== "none" && features.summarize;
     const actionEnabled = provider !== "none" && features.actionExtraction;
+    setAiActionFeatureEnabled(features.actionExtraction);
     if (!summaryEnabled && !actionEnabled) {
       setAiSummaryAvailable(false);
       setAiActionAvailable(false);
@@ -1299,7 +1301,9 @@ export function App() {
   const runAnalyzeThread = useCallback(async () => {
     if (!visibleDetail || !actionProposalKey || actionAnalysisLoading) return;
     if (!aiActionAvailable) {
-      setActionAnalysisError("Enable Thread actions and configure an AI provider in Settings.");
+      setActionAnalysisError(aiActionFeatureEnabled
+        ? "Configure an AI provider and API key in Settings before analyzing a thread."
+        : "Enable Thread actions in AI settings before analyzing a thread.");
       return;
     }
     setActionAnalysisLoading(true);
@@ -1323,7 +1327,7 @@ export function App() {
     } finally {
       setActionAnalysisLoading(false);
     }
-  }, [actionAnalysisLoading, actionProposalKey, aiActionAvailable, availabilityPreferences.timeZone, visibleDetail]);
+  }, [actionAnalysisLoading, actionProposalKey, aiActionAvailable, aiActionFeatureEnabled, availabilityPreferences.timeZone, visibleDetail]);
 
   const updateActionProposal = useCallback((index: number, proposal: ActionProposal) => {
     if (!actionProposalKey) return;
@@ -2466,7 +2470,8 @@ export function App() {
           title="Actions"
           onCheckSchedule={openSchedule}
           onAnalyzeThread={() => void runAnalyzeThread()}
-          analysisEnabled={aiActionAvailable && Boolean(visibleDetail)}
+          analysisEnabled={aiActionFeatureEnabled && Boolean(visibleDetail)}
+          analysisReady={aiActionAvailable && Boolean(visibleDetail)}
           analysisLoading={actionAnalysisLoading}
           analysisError={actionAnalysisError}
           analysisPreview={actionAnalysisRequested ? actionAnalysisPreview : null}
