@@ -318,7 +318,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     panel.current?.querySelector<HTMLInputElement>(`[name="${field}"]`)?.focus();
   }, [showBlankCopies]);
   useEscapeDismiss(close);
-  return <div ref={panel} className="composer composer-inline" role="dialog" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
+  return <div ref={panel} className="composer composer-inline" role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
         if ((event.metaKey || event.ctrlKey) && event.shiftKey && ["o", "c", "b"].includes(event.key.toLowerCase())) {

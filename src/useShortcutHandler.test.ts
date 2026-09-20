@@ -4,6 +4,7 @@ import type { CommandContext } from "./commands";
 import { useShortcutHandler } from "./useShortcutHandler";
 
 const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
+  interactionScope: "read",
   mailbox: "inbox",
   selectedId: null,
   selectedArchived: false,
@@ -122,5 +123,26 @@ describe("useShortcutHandler", () => {
     hook.unmount();
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("respects explicit entry scopes and preserves native button activation", () => {
+    const current = context();
+    const execute = vi.fn();
+    const hook = renderHook(() => useShortcutHandler(current, execute));
+    const modal = document.createElement("div");
+    modal.dataset.shortcutScope = "modal";
+    const modalButton = document.createElement("button");
+    modal.append(modalButton);
+    document.body.append(modal);
+
+    modalButton.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+    modalButton.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+
+    const readButton = document.createElement("button");
+    document.body.append(readButton);
+    readButton.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+    hook.unmount();
   });
 });

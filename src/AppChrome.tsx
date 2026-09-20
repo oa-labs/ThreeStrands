@@ -1,5 +1,6 @@
 import { Check, ListFilter, Search, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import {
   commands,
   shortcutSteps,
@@ -133,7 +134,7 @@ export function CommandPalette({
   useEffect(() => inputRef.current?.focus(), []);
   const visible = [...commands, ...extraCommands].filter((command) => command.title.toLocaleLowerCase().includes(filter.toLocaleLowerCase()));
   return (
-    <Modal title="Command palette" onClose={onClose}>
+    <Modal title="Command palette" onClose={onClose} shortcutScope="palette" initialFocusRef={inputRef}>
       <label className="palette-search">
         <Search size={18} />
         <input ref={inputRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Type a command" aria-label="Filter commands" />
@@ -183,22 +184,93 @@ function ShortcutKeys({ shortcut }: { shortcut: string }) {
 export function Modal({
   className,
   children,
+  initialFocusRef,
   onClose,
+  shortcutScope = "modal",
   title,
 }: {
   className?: string;
   children: ReactNode;
+  initialFocusRef?: RefObject<HTMLElement | null>;
   onClose(): void;
+  shortcutScope?: "modal" | "palette";
   title: string;
 }) {
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   useEscapeDismiss(onClose);
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <div className={`modal${className ? ` ${className}` : ""}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+
+  useEffect(() => {
+    const backdrop = backdropRef.current;
+    const background = [...document.body.children].filter((element) => element !== backdrop);
+    const previousBackgroundState = background.map((element) => ({
+      element,
+      ariaHidden: element.getAttribute("aria-hidden"),
+      inert: (element as HTMLElement).inert,
+    }));
+    for (const element of background) {
+      element.setAttribute("aria-hidden", "true");
+      (element as HTMLElement).inert = true;
+    }
+
+    const currentFocus = document.activeElement instanceof HTMLElement && dialogRef.current?.contains(document.activeElement)
+      ? document.activeElement
+      : null;
+    const focusTarget = initialFocusRef?.current
+      ?? currentFocus
+      ?? dialogRef.current?.querySelector<HTMLElement>("[autofocus], [data-autofocus], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])")
+      ?? dialogRef.current;
+    focusTarget?.focus();
+
+    return () => {
+      for (const { element, ariaHidden, inert } of previousBackgroundState) {
+        if (ariaHidden === null) element.removeAttribute("aria-hidden");
+        else element.setAttribute("aria-hidden", ariaHidden);
+        (element as HTMLElement).inert = inert;
+      }
+      previousFocusRef.current?.focus({ preventScroll: true });
+    };
+  }, [initialFocusRef]);
+
+  const trapFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+      "button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
+    ) ?? [])].filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialogRef.current?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable.at(-1)!;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  return createPortal(
+    <div ref={backdropRef} className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div
+        ref={dialogRef}
+        className={`modal${className ? ` ${className}` : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        data-shortcut-scope={shortcutScope}
+        tabIndex={-1}
+        onKeyDown={trapFocus}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <header><h2>{title}</h2><button aria-label="Close" onClick={onClose}><X size={18} /></button></header>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
-

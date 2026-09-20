@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandContext } from "./commands";
-import { ActionButton, CommandPalette, FiltersButton, ShortcutHelp } from "./AppChrome";
+import { ActionButton, CommandPalette, FiltersButton, Modal, ShortcutHelp } from "./AppChrome";
 
 afterEach(cleanup);
 
@@ -54,16 +55,36 @@ describe("App chrome", () => {
   it("renders shortcut help and reusable action buttons", () => {
     const action = vi.fn();
     const close = vi.fn();
-    render(
-      <>
-        <ActionButton label="Refresh" shortcut="r" onClick={action}>↻</ActionButton>
-        <ShortcutHelp onClose={close} />
-      </>,
-    );
+    const view = render(<ActionButton label="Refresh" shortcut="r" onClick={action}>↻</ActionButton>);
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh (r)" }));
     expect(action).toHaveBeenCalledTimes(1);
+    view.rerender(<ShortcutHelp onClose={close} />);
     expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
     expect(screen.getByText("Use ThreeStrands without leaving the keyboard.")).toBeInTheDocument();
+  });
+
+  it("traps modal focus, makes the background inert, and restores the trigger", () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      const inputRef = useRef<HTMLInputElement>(null);
+      return <><button type="button" onClick={() => setOpen(true)}>Open editor</button>{open ? <Modal title="Editor" onClose={() => setOpen(false)} initialFocusRef={inputRef}><input ref={inputRef} aria-label="Editor value" /><button type="button">Last action</button></Modal> : null}</>;
+    }
+    const { container } = render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "Open editor" });
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    expect(screen.getByRole("textbox", { name: "Editor value" })).toHaveFocus();
+    expect(container).toHaveAttribute("aria-hidden", "true");
+    const last = screen.getByRole("button", { name: "Last action" });
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Editor" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(container).not.toHaveAttribute("aria-hidden");
   });
 });

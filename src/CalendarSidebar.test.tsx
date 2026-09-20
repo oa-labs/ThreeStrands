@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -365,6 +365,7 @@ describe("calendar sidebar", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.keyDown(window, { key: "T" });
     fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Check availability" })).getByRole("button", { name: "Check schedule" }));
     const candidates = await screen.findAllByRole("button", { name: /Verified/ });
     expect(candidates).toHaveLength(2);
     fireEvent.click(candidates[0]);
@@ -398,12 +399,38 @@ describe("calendar sidebar", () => {
       />,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Check availability" })).getByRole("button", { name: "Check schedule" }));
     const candidate = await screen.findByRole("button", { name: /Verified/ });
     fireEvent.click(candidate);
     fireEvent.click(screen.getByRole("button", { name: "Draft reply with selected times" }));
     expect(onDraftAvailability).toHaveBeenCalledWith([
       { start: "2026-09-18T13:00:00Z", end: "2026-09-18T13:30:00Z", status: "verified" },
     ]);
+  });
+
+  it("keeps availability parameters visible when the check fails", async () => {
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    vi.spyOn(mailClient, "findAvailability").mockRejectedValue(new Error("Calendar check failed"));
+    render(
+      <CalendarSidebar
+        onClose={vi.fn()}
+        onOpenSettings={vi.fn()}
+        availabilityPreferences={{
+          timeZone: "America/New_York",
+          workingWindows: [],
+          defaultDurationMinutes: 30,
+          slotIncrementMinutes: 15,
+        }}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
+    const dialog = await screen.findByRole("dialog", { name: "Check availability" });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Duration" }), { target: { value: "45" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check schedule" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Calendar check failed");
+    expect(within(dialog).getByRole("combobox", { name: "Duration" })).toHaveValue("45");
   });
 
   it("builds an exact local-day request", () => {

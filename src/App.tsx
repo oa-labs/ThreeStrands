@@ -104,6 +104,8 @@ import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachm
 import { CalendarSidebar } from "./CalendarSidebar";
 import { formatAvailabilityText } from "./actionDrafting";
 import { TaskSidebar } from "./TaskSidebar";
+import { MeetingProposalDialog } from "./MeetingProposalDialog";
+import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import {
@@ -171,6 +173,12 @@ import {
   resumeTriageSession,
   type TriageSession,
 } from "./triage";
+
+type RightWorkspace = "actions" | "calendar" | "tasks" | null;
+type TaskEditorState =
+  | { kind: "new"; thread: ThreadDetail }
+  | { kind: "proposal"; thread: ThreadDetail; index: number; proposal: TaskProposal; intent: "edit" | "accept" };
+type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
 export { formatMailTimestamp } from "./threadPresentation";
 
@@ -321,10 +329,9 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
-  const [calendarOpen, setCalendarOpen] = useState(false);
-  const [tasksOpen, setTasksOpen] = useState(false);
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const [actionsFormRequested, setActionsFormRequested] = useState(false);
+  const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(null);
+  const [taskEditor, setTaskEditor] = useState<TaskEditorState | null>(null);
+  const [meetingEditor, setMeetingEditor] = useState<MeetingEditorState | null>(null);
   const [calendarAccounts, setCalendarAccounts] = useState<CalendarAccount[]>([]);
   const [calendarOptions, setCalendarOptions] = useState<CalendarOption[]>([]);
   const [calendarOptionsError, setCalendarOptionsError] = useState<string | null>(null);
@@ -356,6 +363,7 @@ export function App() {
   useEffect(() => {
     void mailClient.reconcileTasks().catch(() => {});
   }, []);
+  const [taskRevision, setTaskRevision] = useState(0);
   const refreshTaskIndicators = useCallback(async () => {
     try {
       const tasks = await mailClient.listTasks(activeAccountId ?? undefined, "open");
@@ -1157,53 +1165,39 @@ export function App() {
   }, []);
 
   const openToday = useCallback(() => {
-    setTasksOpen(false);
-    setActionsOpen(false);
-    setActionsFormRequested(false);
-    setCalendarOpen((current) => {
-      if (current) return false;
-      void refreshCalendarAccounts()
-        .then((connected) => {
-          if (!connected.some((account) => account.status === "connected")) {
-            openSettingsAt("calendarAccounts");
-            return;
-          }
-          setCalendarOpen(true);
-        })
-        .catch((reason: unknown) => {
-          setNotice({ message: reason instanceof Error ? reason.message : String(reason) });
-        });
-      return current;
-    });
-  }, [openSettingsAt, refreshCalendarAccounts, setNotice]);
+    if (rightWorkspace === "calendar") {
+      setRightWorkspace(null);
+      return;
+    }
+    setRightWorkspace(null);
+    void refreshCalendarAccounts()
+      .then((connected) => {
+        if (!connected.some((account) => account.status === "connected")) {
+          openSettingsAt("calendarAccounts");
+          return;
+        }
+        setRightWorkspace("calendar");
+      })
+      .catch((reason: unknown) => {
+        setNotice({ message: reason instanceof Error ? reason.message : String(reason) });
+      });
+  }, [openSettingsAt, refreshCalendarAccounts, rightWorkspace, setNotice]);
 
   const openTasks = useCallback(() => {
-    setCalendarOpen(false);
-    setActionsOpen(false);
-    setActionsFormRequested(false);
-    setTasksOpen((current) => !current);
+    setRightWorkspace((current) => current === "tasks" ? null : "tasks");
   }, []);
 
   const openActions = useCallback(() => {
-    setCalendarOpen(false);
-    setTasksOpen(false);
-    setActionsFormRequested(false);
-    setActionsOpen((current) => !current);
+    setRightWorkspace((current) => current === "actions" ? null : "actions");
   }, []);
 
   const openSchedule = useCallback(() => {
-    setTasksOpen(false);
-    setActionsOpen(false);
-    setActionsFormRequested(false);
-    setCalendarOpen(true);
+    setRightWorkspace("calendar");
   }, []);
 
   const newTask = useCallback(() => {
-    setCalendarOpen(false);
-    setTasksOpen(false);
-    setActionsFormRequested(true);
-    setActionsOpen(true);
-  }, []);
+    if (visibleDetail) setTaskEditor({ kind: "new", thread: visibleDetail });
+  }, [visibleDetail]);
 
   const openTaskThread = useCallback((threadId: string) => {
     setSelectedId(threadId);
@@ -1223,7 +1217,7 @@ export function App() {
       formatAvailabilityText(candidates, availabilityPreferences.timeZone),
       sourceMessageId,
     );
-    setCalendarOpen(false);
+    setRightWorkspace(null);
   }, [availabilityPreferences.timeZone, correspondence, visibleDetail]);
 
   const draftFollowUp = useCallback(async (task: ThreadTask) => {
@@ -1375,29 +1369,45 @@ export function App() {
     }));
   }, [actionProposalKey]);
 
-  const addTaskFromProposal = useCallback(async (proposal: TaskProposal) => {
+  const reviewActionProposal = useCallback((index: number, proposal: ActionProposal, intent: "edit" | "accept") => {
     if (!visibleDetail) return;
-    try {
-      await mailClient.createTask({
-        accountId: visibleDetail.thread.accountId,
-        threadId: visibleDetail.thread.id,
-        sourceMessageId: proposal.evidence.sourceMessageId,
-        subjectSnapshot: visibleDetail.thread.subject,
-        title: proposal.title,
-        notes: proposal.notes,
-        kind: proposal.kind,
-        dueKind: proposal.dueKind,
-        dueValue: proposal.dueValue,
-        timeZone: proposal.timeZone ?? availabilityPreferences.timeZone,
-        repeatIntervalDays: proposal.repeatIntervalDays,
-        evidenceText: proposal.evidence.excerpt,
-      });
-      await refreshTaskIndicators();
-      setNotice({ message: "Task added from thread action" });
-    } catch (reason) {
-      setActionAnalysisError(reason instanceof Error ? reason.message : String(reason));
+    if (proposal.type === "task") {
+      setTaskEditor({ kind: "proposal", thread: visibleDetail, index, proposal, intent });
+    } else {
+      setMeetingEditor({ index, proposal });
     }
-  }, [availabilityPreferences.timeZone, refreshTaskIndicators, setNotice, visibleDetail]);
+  }, [visibleDetail]);
+
+  const submitTaskEditor = useCallback(async (values: TaskEditorValues) => {
+    if (!taskEditor) return;
+    if (taskEditor.kind === "proposal" && taskEditor.intent === "edit") {
+      updateActionProposal(taskEditor.index, { ...taskEditor.proposal, ...values });
+      setTaskEditor(null);
+      return;
+    }
+
+    const sourceMessage = taskEditor.kind === "proposal"
+      ? taskEditor.proposal.evidence.sourceMessageId
+      : taskEditor.thread.messages.at(-1)?.id ?? null;
+    const evidenceText = taskEditor.kind === "proposal"
+      ? taskEditor.proposal.evidence.excerpt
+      : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000) ?? null;
+    await mailClient.createTask({
+      accountId: taskEditor.thread.thread.accountId,
+      threadId: taskEditor.thread.thread.id,
+      sourceMessageId: sourceMessage,
+      subjectSnapshot: taskEditor.thread.thread.subject,
+      ...values,
+      evidenceText,
+    });
+    if (taskEditor.kind === "proposal") {
+      updateActionProposal(taskEditor.index, { ...taskEditor.proposal, ...values });
+    }
+    setTaskEditor(null);
+    setTaskRevision((current) => current + 1);
+    await refreshTaskIndicators();
+    setNotice({ message: taskEditor.kind === "proposal" ? "Task added from thread action" : "Task added" });
+  }, [refreshTaskIndicators, setNotice, taskEditor, updateActionProposal]);
 
   const findTimesFromProposal = useCallback((proposal: MeetingProposal) => {
     openSchedule();
@@ -1450,9 +1460,17 @@ export function App() {
   }, [accountSplitInboxes, mailbox, activeSplitInboxId, goToInboxTab, goToSplitTab]);
   const goToNextSplitTab = useCallback(() => goToRelativeSplitTab(1), [goToRelativeSplitTab]);
   const goToPreviousSplitTab = useCallback(() => goToRelativeSplitTab(-1), [goToRelativeSplitTab]);
+  const interactionScope = correspondence.activeDraft
+    ? "compose"
+    : paletteOpen
+      ? "palette"
+      : settingsOpen || shortcutHelpOpen || Boolean(unsubscribeMessage) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
+        ? "modal"
+        : "read";
 
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
+    interactionScope,
     mailbox,
     selectedId,
     selectedArchived: selected?.archived ?? false,
@@ -1625,7 +1643,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1694,7 +1712,7 @@ export function App() {
   const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
   return (
-    <main className={`app-shell${calendarOpen || tasksOpen || actionsOpen ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -1754,10 +1772,10 @@ export function App() {
         </div>
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
-          <HoverTooltip label="Tasks">
+          <HoverTooltip label="Tasks" shortcut="D">
             <button
-              className={`nav-button ${tasksOpen ? "active" : ""}`}
-              aria-label="Tasks"
+              className={`nav-button ${rightWorkspace === "tasks" ? "active" : ""}`}
+              aria-label="Tasks (d)"
               onClick={() => executeById("tasks.open")}
             >
               <CheckSquare size={19} />
@@ -1765,7 +1783,7 @@ export function App() {
           </HoverTooltip>
           <HoverTooltip label="Today’s schedule" shortcut="T">
             <button
-              className={`nav-button ${calendarOpen ? "active" : ""}`}
+              className={`nav-button ${rightWorkspace === "calendar" ? "active" : ""}`}
               aria-label="Today’s schedule (T)"
               onClick={() => executeById("calendar.today")}
             >
@@ -1958,6 +1976,7 @@ export function App() {
                 placeholder="Search mail"
                 aria-label="Search mail"
                 data-mailbox-tab-shortcut
+                data-shortcut-scope="search"
                 onKeyDown={(event) => {
                   if (event.key !== "Escape") return;
                   event.preventDefault();
@@ -2064,8 +2083,8 @@ export function App() {
                 </div>
               </div>
               <div className="reader-actions">
-                <HoverTooltip label="Actions" placement="bottom">
-                  <ActionButton label="Actions" onClick={openActions}>
+                <HoverTooltip label="Actions" shortcut="Shift+A" placement="bottom">
+                  <ActionButton label="Actions" shortcut="Shift+A" onClick={openActions}>
                     <Sparkles size={17} />
                   </ActionButton>
                 </HoverTooltip>
@@ -2470,31 +2489,33 @@ export function App() {
         )}
       </section>
 
-      {calendarOpen ? (
+      {rightWorkspace === "calendar" ? (
         <CalendarSidebar
-          onClose={() => setCalendarOpen(false)}
+          onClose={() => setRightWorkspace(null)}
           availabilityPreferences={availabilityPreferences}
           onDraftAvailability={draftAvailabilityReply}
           onOpenSettings={() => {
-            setCalendarOpen(false);
+            setRightWorkspace(null);
             openSettingsAt("calendarAccounts");
           }}
         />
       ) : null}
-      {tasksOpen ? (
+      {rightWorkspace === "tasks" ? (
         <TaskSidebar
-          onClose={() => setTasksOpen(false)}
+          onClose={() => setRightWorkspace(null)}
           accountId={activeAccountId}
           currentThread={visibleDetail}
           onOpenThread={openTaskThread}
           onTasksChanged={() => void refreshTaskIndicators()}
           onDraftFollowUp={(task) => void draftFollowUp(task)}
           onCheckSchedule={openSchedule}
+          onNewTask={newTask}
+          refreshKey={taskRevision}
         />
       ) : null}
-      {actionsOpen ? (
+      {rightWorkspace === "actions" ? (
         <TaskSidebar
-          onClose={() => { setActionsOpen(false); setActionsFormRequested(false); }}
+          onClose={() => setRightWorkspace(null)}
           accountId={activeAccountId}
           currentThread={visibleDetail}
           onOpenThread={openTaskThread}
@@ -2510,14 +2531,39 @@ export function App() {
           analysisPreview={actionAnalysisRequested ? actionAnalysisPreview : null}
           proposals={actionProposals}
           onDiscardProposal={discardActionProposal}
-          onUpdateProposal={updateActionProposal}
-          onAddTaskProposal={addTaskFromProposal}
+          onReviewProposal={reviewActionProposal}
           onFindTimesProposal={findTimesFromProposal}
-          initialFormOpen={Boolean(visibleDetail) || actionsFormRequested}
+          onNewTask={newTask}
+          refreshKey={taskRevision}
         />
       ) : null}
 
       {correspondence.overlay}
+      {taskEditor ? (
+        <TaskEditorDialog
+          initial={taskEditor.kind === "proposal" ? taskEditor.proposal : {
+            title: taskEditor.thread.thread.subject,
+            kind: "action",
+            dueKind: "none",
+            timeZone: availabilityPreferences.timeZone,
+          }}
+          sourceSubject={taskEditor.thread.thread.subject}
+          evidence={taskEditor.kind === "proposal" ? taskEditor.proposal.evidence.excerpt : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000)}
+          submitLabel={taskEditor.kind === "proposal" && taskEditor.intent === "edit" ? "Save proposal" : "Add task"}
+          onClose={() => setTaskEditor(null)}
+          onSubmit={submitTaskEditor}
+        />
+      ) : null}
+      {meetingEditor ? (
+        <MeetingProposalDialog
+          proposal={meetingEditor.proposal}
+          onClose={() => setMeetingEditor(null)}
+          onSave={(proposal) => {
+            updateActionProposal(meetingEditor.index, proposal);
+            setMeetingEditor(null);
+          }}
+        />
+      ) : null}
       {unsubscribeMessage ? (
         <UnsubscribeConfirm
           message={unsubscribeMessage}
@@ -2653,7 +2699,7 @@ export function App() {
             await mailClient.removeCalendarAccount(email);
             const remaining = await refreshCalendarAccounts();
             setCalendarOptions((current) => current.filter((calendar) => calendar.accountId !== email));
-            if (remaining.length === 0) setCalendarOpen(false);
+            if (remaining.length === 0) setRightWorkspace(null);
           }}
           onSetCalendarSelection={async (accountId, calendarIds) => {
             const updated = await mailClient.setCalendarSelection(accountId, calendarIds);

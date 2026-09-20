@@ -2,8 +2,10 @@ import type { MessageFilterKind } from "./messageFilters";
 import type { SplitInbox } from "./domain";
 
 export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox" | "split";
+export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
 
 export type CommandContext = {
+  interactionScope: InteractionScope;
   mailbox: MailboxKind;
   selectedId: string | null;
   selectedArchived: boolean;
@@ -336,7 +338,7 @@ export const commands: Command[] = [
   {
     id: "actions.open",
     title: "Open conversation actions",
-    keys: ["Mod+Shift+j"],
+    keys: ["Shift+a", "Mod+Shift+j"],
     group: "Application",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
     run: (context) => complete(context.openActions),

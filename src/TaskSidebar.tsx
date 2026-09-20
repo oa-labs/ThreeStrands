@@ -1,6 +1,6 @@
 import { Check, CheckSquare, Clock3, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ActionProposal, MeetingProposal, TaskProposal, ThreadDetail, ThreadTask, TaskDueKind, TaskKind } from "./domain";
+import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask } from "./domain";
 import { mailClient } from "./data/client";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
@@ -54,12 +54,12 @@ export function TaskSidebar({
   analysisPreview = null,
   proposals = [],
   onDiscardProposal,
-  onUpdateProposal,
-  onAddTaskProposal,
+  onReviewProposal,
   onFindTimesProposal,
   onDraftFollowUp,
+  onNewTask,
+  refreshKey = 0,
   title = "Tasks",
-  initialFormOpen = false,
 }: {
   onClose(): void;
   accountId: string | null;
@@ -75,28 +75,16 @@ export function TaskSidebar({
   analysisPreview?: string | null;
   proposals?: ActionProposal[];
   onDiscardProposal?(index: number): void;
-  onUpdateProposal?(index: number, proposal: ActionProposal): void;
-  onAddTaskProposal?(proposal: TaskProposal): Promise<void> | void;
+  onReviewProposal?(index: number, proposal: ActionProposal, intent: "edit" | "accept"): void;
   onFindTimesProposal?(proposal: MeetingProposal): void;
   onDraftFollowUp?(task: ThreadTask): void;
+  onNewTask?(): void;
+  refreshKey?: number;
   title?: string;
-  initialFormOpen?: boolean;
 }) {
   const [tasks, setTasks] = useState<ThreadTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [formOpen, setFormOpen] = useState(initialFormOpen);
-  const [taskTitle, setTaskTitle] = useState("");
-  const [kind, setKind] = useState<TaskKind>("action");
-  const [dueValue, setDueValue] = useState("");
-  const [notes, setNotes] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [editingProposal, setEditingProposal] = useState<number | null>(null);
-  const [editingTitle, setEditingTitle] = useState("");
-  const [editingDueKind, setEditingDueKind] = useState<TaskDueKind>("none");
-  const [editingDueValue, setEditingDueValue] = useState("");
-  const [editingEndValue, setEditingEndValue] = useState("");
-  const [editingTimeZone, setEditingTimeZone] = useState("");
   useEscapeDismiss(onClose);
 
   const load = useCallback(async () => {
@@ -111,14 +99,7 @@ export function TaskSidebar({
     }
   }, [accountId]);
 
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    if (initialFormOpen && currentThread) {
-      setFormOpen(true);
-      if (!taskTitle) setTaskTitle(currentThread.thread.subject);
-    }
-  }, [currentThread, initialFormOpen, taskTitle]);
-
+  useEffect(() => { void load(); }, [load, refreshKey]);
   const grouped = useMemo(() => {
     const groups = new Map<string, ThreadTask[]>();
     for (const task of tasks) {
@@ -132,37 +113,6 @@ export function TaskSidebar({
       .filter((group) => group.tasks.length > 0);
   }, [tasks]);
 
-  const create = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!currentThread || !taskTitle.trim() || busy) return;
-    setBusy(true);
-    try {
-      const created = await mailClient.createTask({
-        accountId: currentThread.thread.accountId,
-        threadId: currentThread.thread.id,
-        sourceMessageId: currentThread.messages.at(-1)?.id ?? null,
-        subjectSnapshot: currentThread.thread.subject,
-        title: taskTitle,
-        notes: notes || null,
-        kind,
-        dueKind: dueValue ? "date" : "none",
-        dueValue: dueValue || null,
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-        evidenceText: currentThread.messages.at(-1)?.bodyText.slice(0, 1000) ?? null,
-      });
-      setTasks((current) => [created, ...current]);
-      setTaskTitle("");
-      setNotes("");
-      setDueValue("");
-      setFormOpen(false);
-      onTasksChanged?.();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const setStatus = async (task: ThreadTask, status: "open" | "completed") => {
     try {
       const updated = await mailClient.setTaskStatus(task.id, status);
@@ -173,25 +123,6 @@ export function TaskSidebar({
     }
   };
 
-  const beginProposalEdit = (index: number, proposal: ActionProposal) => {
-    setEditingProposal(index);
-    setEditingTitle(proposal.title);
-    setEditingDueKind(proposal.type === "task" ? proposal.dueKind : "none");
-    setEditingDueValue(proposal.type === "task" ? proposal.dueValue ?? "" : proposal.normalizedStart ?? proposal.searchRangeStart ?? "");
-    setEditingEndValue(proposal.type === "meeting" ? proposal.normalizedEnd ?? proposal.searchRangeEnd ?? "" : "");
-    setEditingTimeZone(proposal.timeZone ?? "");
-  };
-
-  const saveProposalEdit = (index: number, proposal: ActionProposal) => {
-    if (!editingTitle.trim() || !onUpdateProposal) return;
-    const updated = proposal.type === "task"
-      ? { ...proposal, title: editingTitle.trim(), dueKind: editingDueKind, dueValue: editingDueKind === "none" ? null : editingDueValue || null, timeZone: editingTimeZone || null }
-      : { ...proposal, title: editingTitle.trim(), normalizedStart: editingDueValue || null, normalizedEnd: editingEndValue || null, searchRangeStart: null, searchRangeEnd: null, timeZone: editingTimeZone || null };
-    onUpdateProposal(index, updated);
-    setEditingProposal(null);
-    setEditingTitle("");
-  };
-
   return (
     <aside className="tasks-sidebar" aria-label={title}>
       <header className="tasks-sidebar-header">
@@ -199,19 +130,10 @@ export function TaskSidebar({
         <div>
           {title === "Actions" && onAnalyzeThread ? <button type="button" aria-label="Analyze thread" title={!analysisEnabled ? "Enable Thread actions in AI settings" : !analysisReady ? "Configure an AI provider and API key" : "Analyze thread"} onClick={onAnalyzeThread} disabled={!analysisReady || analysisLoading}><Sparkles size={17} /></button> : null}
           {onCheckSchedule ? <button type="button" aria-label="Check schedule" title="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button> : null}
-          {currentThread ? <button type="button" aria-label="Open add task form" title="Add task" onClick={() => setFormOpen((open) => !open)}><Plus size={17} /></button> : null}
+          {currentThread && onNewTask ? <button type="button" aria-label="Add task" title="Add task" onClick={onNewTask}><Plus size={17} /></button> : null}
           <button type="button" aria-label="Close tasks" onClick={onClose}><X size={18} /></button>
         </div>
       </header>
-      {formOpen && currentThread ? (
-        <form className="task-create-form" onSubmit={(event) => void create(event)}>
-          <label><span>Task</span><input autoFocus value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="What needs doing?" /></label>
-          <label><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as TaskKind)}><option value="action">Action</option><option value="follow_up">Follow up</option><option value="waiting_for">Waiting for reply</option></select></label>
-          <label><span>Due date</span><input type="date" value={dueValue} onChange={(event) => setDueValue(event.target.value)} /></label>
-          <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} placeholder="Optional details" /></label>
-          <div className="task-create-actions"><button type="submit" disabled={busy || !taskTitle.trim()}>Add task</button><button type="button" onClick={() => setFormOpen(false)}>Cancel</button></div>
-        </form>
-      ) : null}
       {error ? <p className="tasks-error" role="alert">{error}</p> : null}
       {title === "Actions" && onAnalyzeThread ? (
         <section className="action-analysis" aria-label="Thread actions">
@@ -232,18 +154,17 @@ export function TaskSidebar({
           <div className="action-proposals">
             {proposals.map((proposal, index) => {
               const evidence = <details className="proposal-evidence"><summary>Evidence</summary><blockquote>{proposal.evidence.excerpt}</blockquote><small>Message {proposal.evidence.sourceMessageId}</small></details>;
-              const editing = editingProposal === index;
               const needsReview = (proposal.type === "meeting" && (!proposal.timeZone || (!proposal.normalizedStart && !proposal.searchRangeStart)))
                 || (proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone);
               const uncertain = proposal.confidence < 0.75;
               return <article className="action-proposal-card" key={`${proposal.type}-${index}`}>
                 <div className="action-proposal-card-header"><span className="proposal-kind">{proposal.type === "meeting" ? "Meeting" : "Task"}</span><span>{Math.round(proposal.confidence * 100)}% confidence{uncertain ? " · Uncertain" : ""}{needsReview ? " · Needs review" : ""}</span></div>
-                {editing ? <div className="proposal-edit"><input aria-label="Proposal title" value={editingTitle} onChange={(event) => setEditingTitle(event.target.value)} />{proposal.type === "task" ? <><select aria-label="Proposal due type" value={editingDueKind} onChange={(event) => setEditingDueKind(event.target.value as TaskDueKind)}><option value="none">No due date</option><option value="date">Date</option><option value="datetime">Date and time</option></select><input aria-label="Proposal due value" type={editingDueKind === "datetime" ? "datetime-local" : editingDueKind === "date" ? "date" : "text"} value={editingDueValue} onChange={(event) => setEditingDueValue(event.target.value)} disabled={editingDueKind === "none"} /></> : <><input aria-label="Proposal start" placeholder="RFC3339 start" value={editingDueValue} onChange={(event) => setEditingDueValue(event.target.value)} /><input aria-label="Proposal end" placeholder="RFC3339 end" value={editingEndValue} onChange={(event) => setEditingEndValue(event.target.value)} /><input aria-label="Proposal timezone" placeholder="IANA timezone" value={editingTimeZone} onChange={(event) => setEditingTimeZone(event.target.value)} /></>}<button type="button" onClick={() => saveProposalEdit(index, proposal)}>Save</button><button type="button" onClick={() => setEditingProposal(null)}>Cancel</button></div> : <strong>{proposal.title}</strong>}
+                <strong>{proposal.title}</strong>
                 {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
                 {evidence}
                 <div className="proposal-actions">
-                  <button type="button" onClick={() => beginProposalEdit(index, proposal)}><Pencil size={13} /> Edit</button>
-                  {proposal.type === "task" && onAddTaskProposal ? <button type="button" disabled={needsReview} title={needsReview ? "Edit this proposal before adding the task" : undefined} onClick={() => void onAddTaskProposal(proposal)}>Add task</button> : null}
+                  {onReviewProposal ? <button type="button" onClick={() => onReviewProposal(index, proposal, "edit")}><Pencil size={13} /> Edit</button> : null}
+                  {proposal.type === "task" && onReviewProposal ? <button type="button" onClick={() => onReviewProposal(index, proposal, "accept")}>Review &amp; add task</button> : null}
                   {proposal.type === "meeting" && onFindTimesProposal ? <button type="button" disabled={needsReview} title={needsReview ? "Edit this proposal before finding times" : undefined} onClick={() => onFindTimesProposal(proposal)}>Find times</button> : null}
                   {onDiscardProposal ? <button type="button" onClick={() => onDiscardProposal(index)}>Discard</button> : null}
                 </div>

@@ -11,6 +11,7 @@ import {
 
 function noopContext(): CommandContext {
   return {
+    interactionScope: "read",
     mailbox: "inbox",
     selectedId: null,
     selectedArchived: false,
@@ -122,6 +123,11 @@ describe("command registry", () => {
     const start = vi.fn();
     await newTask?.run({ ...noopContext(), selectedId: "thread-1", newTask: start });
     expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses Shift+A for Actions without replacing reply all", () => {
+    expect(commands.find((command) => command.id === "actions.open")?.keys).toContain("Shift+a");
+    expect(commands.find((command) => command.id === "draft.replyAll")?.keys).toEqual(["a"]);
   });
 
   it("binds reply to r and reply all to a", () => {

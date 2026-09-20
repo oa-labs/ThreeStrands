@@ -43,44 +43,15 @@ describe("TaskSidebar", () => {
     vi.restoreAllMocks();
   });
 
-  it("creates an email-linked task from the current conversation", async () => {
-    const created: ThreadTask = {
-      id: "task-1",
-      accountId: "you@example.com",
-      threadId: "thread-1",
-      sourceMessageId: "message-1",
-      subjectSnapshot: "Website setup",
-      title: "Set up the website",
-      notes: null,
-      kind: "action",
-      dueKind: "date",
-      dueValue: "2026-09-25",
-      timeZone: "America/New_York",
-      repeatIntervalDays: null,
-      status: "open",
-      completionSource: null,
-      evidenceText: "Please set up the website by Friday.",
-      waitAfter: "2026-09-19T10:00:00Z",
-      createdAt: "2026-09-19T10:01:00Z",
-      updatedAt: "2026-09-19T10:01:00Z",
-      completedAt: null,
-    };
+  it("keeps task creation out of the read-only sidebar", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
-    const create = vi.spyOn(mailClient, "createTask").mockResolvedValue(created);
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} />);
+    const onNewTask = vi.fn();
+    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} onNewTask={onNewTask} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open add task form" }));
-    fireEvent.change(screen.getByPlaceholderText("What needs doing?"), { target: { value: "Set up the website" } });
-    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-09-25" } });
-    fireEvent.click(screen.getByText("Add task").closest("button")!);
-
-    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      threadId: "thread-1",
-      sourceMessageId: "message-1",
-      title: "Set up the website",
-      dueKind: "date",
-    })));
-    expect(await screen.findByText("Set up the website")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
+    expect(onNewTask).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
   it("renders tasks and lets the user complete them", async () => {
@@ -157,7 +128,7 @@ describe("TaskSidebar", () => {
       confidence: 0.86,
       evidence: { sourceMessageId: "message-1", excerpt: "Please set up the website by Friday." },
     };
-    const addTask = vi.fn().mockResolvedValue(undefined);
+    const reviewProposal = vi.fn();
     const discard = vi.fn();
     render(
       <TaskSidebar
@@ -172,15 +143,15 @@ describe("TaskSidebar", () => {
         proposals={[proposal]}
         onAnalyzeThread={vi.fn()}
         onDiscardProposal={discard}
-        onAddTaskProposal={addTask}
+        onReviewProposal={reviewProposal}
       />,
     );
 
     expect(await screen.findByText("Set up the website")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Evidence"));
     expect(screen.getByText("Please set up the website by Friday.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
-    await waitFor(() => expect(addTask).toHaveBeenCalledWith(proposal));
+    fireEvent.click(screen.getByRole("button", { name: "Review & add task" }));
+    expect(reviewProposal).toHaveBeenCalledWith(0, proposal, "accept");
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(discard).toHaveBeenCalledWith(0);
   });

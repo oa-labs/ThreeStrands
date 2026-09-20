@@ -6,7 +6,21 @@ import {
   shortcutSteps,
   type Command,
   type CommandContext,
+  type InteractionScope,
 } from "./commands";
+
+function targetShortcutScope(target: EventTarget | null): InteractionScope | null {
+  if (!(target instanceof HTMLElement)) return null;
+  const value = target.closest<HTMLElement>("[data-shortcut-scope]")?.dataset.shortcutScope;
+  return value === "read" || value === "compose" || value === "search" || value === "modal" || value === "palette"
+    ? value
+    : null;
+}
+
+function reservesNativeActivation(event: KeyboardEvent): boolean {
+  if (!(event.target instanceof HTMLElement) || (event.key !== "Enter" && event.code !== "Space")) return false;
+  return Boolean(event.target.closest("button, a[href], summary, [role='button'], [role='menuitem'], [role='menuitemcheckbox'], [role='option']"));
+}
 
 export function useShortcutHandler(
   context: CommandContext,
@@ -40,11 +54,10 @@ export function useShortcutHandler(
         currentContext.openPalette();
         return;
       }
+      const interactionScope = targetShortcutScope(event.target) ?? currentContext.interactionScope;
       const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
       const replyAssistShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j";
       const fontShortcut = (event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
-      const dialog = document.querySelector('[role="dialog"]');
-      const allowsMailboxNavigation = dialog?.classList.contains("correspondence-list");
       const allowsMailboxTabShortcut = event.key === "Tab"
         && event.target instanceof HTMLElement
         && event.target.hasAttribute("data-mailbox-tab-shortcut");
@@ -52,7 +65,12 @@ export function useShortcutHandler(
         && event.target instanceof HTMLElement
         && event.target !== document.body
         && event.target.matches("button, a[href], [tabindex]");
-      if (!sendShortcut && !replyAssistShortcut && !fontShortcut && !allowsMailboxTabShortcut && (isEditableTarget(event.target) || focusedControl || (dialog && !allowsMailboxNavigation))) {
+      const entryScope = interactionScope !== "read";
+      if (
+        reservesNativeActivation(event)
+        || (!sendShortcut && !replyAssistShortcut && !fontShortcut && !allowsMailboxTabShortcut
+          && (entryScope || isEditableTarget(event.target) || focusedControl))
+      ) {
         clearPendingStep();
         return;
       }
@@ -108,4 +126,3 @@ export function useShortcutHandler(
     };
   }, []);
 }
-

@@ -21,6 +21,7 @@ async function advance(ms: number) {
 
 describe("archive notice", () => {
   beforeEach(async () => {
+    localStorage.removeItem("threestrands.demoCorrespondence");
     for (const threadId of demoThreadIds) {
       await mailClient.mutateThread({ kind: "archive", threadId, value: false });
       await mailClient.mutateThread({ kind: "spam", threadId, value: false });
@@ -563,6 +564,44 @@ describe("archive notice", () => {
     expect(clearTimeout).toHaveBeenCalledWith(dismissTimer);
     setTimeout.mockRestore();
     clearTimeout.mockRestore();
+  });
+});
+
+describe("keyboard-first task and action workspaces", () => {
+  beforeEach(async () => {
+    localStorage.removeItem("threestrands.demoCorrespondence");
+    for (const threadId of demoThreadIds) {
+      await mailClient.mutateThread({ kind: "archive", threadId, value: false });
+      await mailClient.mutateThread({ kind: "spam", threadId, value: false });
+    }
+  });
+
+  afterEach(cleanup);
+
+  it("opens task entry as a modal without changing the right workspace", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: "Archive (e)" });
+
+    fireEvent.keyDown(window, { key: "d", metaKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Add task" });
+    expect(within(dialog).getByRole("textbox", { name: "Task" })).toHaveFocus();
+    expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Add task" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Actions read-only so letter shortcuts can switch workspaces", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: "Archive (e)" });
+
+    fireEvent.keyDown(window, { key: "A", shiftKey: true });
+    const actions = screen.getByRole("complementary", { name: "Actions" });
+    expect(within(actions).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(actions).queryByRole("combobox")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "d" });
+    expect(screen.getByRole("complementary", { name: "Tasks" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
   });
 });
 
