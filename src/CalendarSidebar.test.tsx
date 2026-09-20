@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { CALENDAR_SCROLL_TOP_KEY, scheduleRequestFor } from "./CalendarSidebar";
+import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, scheduleRequestFor } from "./CalendarSidebar";
 import { mailClient } from "./data/client";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -373,6 +373,37 @@ describe("calendar sidebar", () => {
     expect(candidates[1]).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("2 times selected")).toBeInTheDocument();
     expect(findAvailability).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers selected availability slots for a deterministic reply draft", async () => {
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+      candidates: [{ start: "2026-09-18T13:00:00Z", end: "2026-09-18T13:30:00Z", status: "verified" }],
+      checkedCalendarCount: 1,
+      totalCalendarCount: 1,
+      errors: [],
+    });
+    const onDraftAvailability = vi.fn();
+    render(
+      <CalendarSidebar
+        onClose={vi.fn()}
+        onOpenSettings={vi.fn()}
+        availabilityPreferences={{
+          timeZone: "America/New_York",
+          workingWindows: [],
+          defaultDurationMinutes: 30,
+          slotIncrementMinutes: 15,
+        }}
+        onDraftAvailability={onDraftAvailability}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
+    const candidate = await screen.findByRole("button", { name: /Verified/ });
+    fireEvent.click(candidate);
+    fireEvent.click(screen.getByRole("button", { name: "Draft reply with selected times" }));
+    expect(onDraftAvailability).toHaveBeenCalledWith([
+      { start: "2026-09-18T13:00:00Z", end: "2026-09-18T13:30:00Z", status: "verified" },
+    ]);
   });
 
   it("builds an exact local-day request", () => {

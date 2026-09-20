@@ -114,6 +114,36 @@ describe("TaskSidebar", () => {
     await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-1", "completed"));
   });
 
+  it("offers a follow-up draft for a due follow-up task", async () => {
+    const task: ThreadTask = {
+      id: "follow-up-1",
+      accountId: "you@example.com",
+      threadId: "thread-1",
+      sourceMessageId: "message-1",
+      subjectSnapshot: "Website setup",
+      title: "Check in with the client",
+      notes: "Ask whether the launch date is still on track.",
+      kind: "follow_up",
+      dueKind: "date",
+      dueValue: "2020-01-01",
+      timeZone: "America/New_York",
+      repeatIntervalDays: null,
+      status: "open",
+      completionSource: null,
+      evidenceText: null,
+      waitAfter: null,
+      createdAt: "2020-01-01T10:00:00Z",
+      updatedAt: "2020-01-01T10:00:00Z",
+      completedAt: null,
+    };
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    const draftFollowUp = vi.fn();
+    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} onDraftFollowUp={draftFollowUp} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Draft follow-up" }));
+    expect(draftFollowUp).toHaveBeenCalledWith(task);
+  });
+
   it("previews typed thread proposals with evidence and confirmation actions", async () => {
     const proposal: ActionProposal = {
       type: "task",

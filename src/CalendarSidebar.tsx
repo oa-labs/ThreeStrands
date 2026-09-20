@@ -3,7 +3,7 @@ import { AlignLeft, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, Ref
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
-import type { AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
+import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
 const HOUR_HEIGHT = 64;
@@ -159,10 +159,12 @@ export function CalendarSidebar({
   onClose,
   onOpenSettings,
   availabilityPreferences,
+  onDraftAvailability,
 }: {
   onClose(): void;
   onOpenSettings(): void;
   availabilityPreferences: AvailabilityPreferences;
+  onDraftAvailability?(candidates: AvailabilityCandidate[]): void;
 }) {
   const [date, setDate] = useState(() => startOfLocalDay(new Date()));
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
@@ -326,6 +328,13 @@ export function CalendarSidebar({
             })}
           </div>
           {selectedCandidates.size > 0 ? <p className="availability-coverage">{selectedCandidates.size} time{selectedCandidates.size === 1 ? "" : "s"} selected</p> : null}
+          {selectedCandidates.size > 0 && onDraftAvailability ? (
+            <button
+              type="button"
+              className="availability-draft-reply"
+              onClick={() => onDraftAvailability(availability.candidates.filter((candidate) => selectedCandidates.has(`${candidate.start}:${candidate.end}`)))}
+            >Draft reply with selected times</button>
+          ) : null}
           {availability.candidates.length === 0 ? <p className="calendar-grid-status">No open working-hours slots found.</p> : null}
         </> : null}
       </section>

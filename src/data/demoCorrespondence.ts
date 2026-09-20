@@ -35,7 +35,7 @@ export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDeta
       const store = read();
       const existing = mode !== "new" && store.drafts.find((d) => d.mode === mode && d.sourceId === sourceId);
       if (existing) return existing;
-      const d: Draft = { id: crypto.randomUUID(), revision: 0, account: account ?? defaultAccount(), mode, sourceId: sourceId ?? null, threadId: null, replyId: null, references: [], to: "", cc: "", bcc: "", subject: "", body: "", attachments: [], updatedAt: Date.now() };
+      const d: Draft = { id: crypto.randomUUID(), revision: 0, account: account ?? defaultAccount(), mode, sourceId: sourceId ?? null, threadId: null, replyId: null, references: [], to: "", cc: "", bcc: "", subject: "", body: "", followUpTaskId: null, attachments: [], updatedAt: Date.now() };
       if (sourceId) {
         const detail = await getSource(sourceId.replace(/-message$/, ""));
         // Reply/replyAll/forward always send from the thread's owning account, never the "new message" default.

@@ -137,6 +137,7 @@ export interface MailClient extends CorrespondenceClient {
   createTask(request: CreateTaskRequest): Promise<ThreadTask>;
   updateTask(request: UpdateTaskRequest): Promise<ThreadTask>;
   setTaskStatus(id: string, status: ThreadTask["status"], source?: "user" | "reply" | "external"): Promise<ThreadTask>;
+  recordFollowUp(id: string): Promise<ThreadTask>;
   reconcileTasks(): Promise<number>;
 }
 
@@ -223,6 +224,7 @@ const tauriClient: MailClient = {
   createTask: (request) => complete("create_task", { request }),
   updateTask: (request) => complete("update_task", { request }),
   setTaskStatus: (id, status, source = "user") => complete("set_task_status", { id, status, source }),
+  recordFollowUp: (id) => complete("record_follow_up", { id }),
   reconcileTasks: () => complete("reconcile_tasks"),
 };
 

@@ -20,6 +20,12 @@ function formatDue(task: ThreadTask): string | null {
   return value.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function isDue(task: ThreadTask): boolean {
+  if (task.status !== "open" || !task.dueValue) return false;
+  const due = task.dueKind === "date" ? new Date(`${task.dueValue}T23:59:59`) : new Date(task.dueValue);
+  return due.getTime() <= Date.now();
+}
+
 export function TaskSidebar({
   onClose,
   accountId,
@@ -38,6 +44,7 @@ export function TaskSidebar({
   onUpdateProposal,
   onAddTaskProposal,
   onFindTimesProposal,
+  onDraftFollowUp,
   title = "Tasks",
   initialFormOpen = false,
 }: {
@@ -58,6 +65,7 @@ export function TaskSidebar({
   onUpdateProposal?(index: number, proposal: ActionProposal): void;
   onAddTaskProposal?(proposal: TaskProposal): Promise<void> | void;
   onFindTimesProposal?(proposal: MeetingProposal): void;
+  onDraftFollowUp?(task: ThreadTask): void;
   title?: string;
   initialFormOpen?: boolean;
 }) {
@@ -238,6 +246,9 @@ export function TaskSidebar({
                 <button type="button" className="task-status-button" aria-label={task.status === "completed" ? `Reopen ${task.title}` : `Complete ${task.title}`} onClick={() => void setStatus(task, task.status === "completed" ? "open" : "completed")}>
                   {task.status === "completed" ? <RotateCcw size={15} /> : <Check size={15} />}
                 </button>
+                {onDraftFollowUp && task.kind === "follow_up" && isDue(task) ? (
+                  <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft follow-up</button>
+                ) : null}
               </article>
             ))}
           </section>

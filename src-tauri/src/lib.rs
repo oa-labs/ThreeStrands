@@ -1709,6 +1709,11 @@ fn set_task_status(
 }
 
 #[tauri::command]
+fn record_follow_up(id: String, state: State<'_, AppState>) -> Result<ThreadTask, String> {
+    state.database.record_follow_up(&id)
+}
+
+#[tauri::command]
 fn reconcile_tasks(state: State<'_, AppState>) -> Result<usize, String> {
     state.database.reconcile_waiting_tasks()
 }
@@ -1973,6 +1978,7 @@ pub fn run() {
             create_task,
             update_task,
             set_task_status,
+            record_follow_up,
             reconcile_tasks,
             system_fonts::list_system_font_families,
         ])

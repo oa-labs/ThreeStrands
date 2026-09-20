@@ -76,6 +76,8 @@ pub struct Draft {
     pub body: String,
     #[serde(default)]
     pub body_html: String,
+    #[serde(default)]
+    pub follow_up_task_id: Option<String>,
     pub attachments: Vec<Attachment>,
     pub updated_at: i64,
 }
@@ -326,6 +328,7 @@ impl Database {
             subject: String::new(),
             body: String::new(),
             body_html: String::new(),
+            follow_up_task_id: None,
             attachments: vec![],
             updated_at: now(),
         };
@@ -440,6 +443,7 @@ impl Database {
         draft.reply_id = old.reply_id;
         draft.references = old.references;
         draft.attachments = old.attachments;
+        draft.follow_up_task_id = draft.follow_up_task_id.or(old.follow_up_task_id);
         if draft.subject != old.subject {
             draft.thread_id = None;
         }

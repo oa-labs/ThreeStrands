@@ -7,8 +7,17 @@ import { mailClient } from "./data/client";
 import type { ComposeMode, Draft, OutboxItem } from "./correspondence";
 import type { Account } from "./domain";
 
+type ComposeOptions = {
+  availabilityText?: string;
+  replyAssistInstruction?: string;
+  followUpTaskId?: string;
+};
+
 export function useCorrespondence(accounts: Account[], sourceId?: string, sourceAccountId?: string) {
   const [active, setActive] = useState<Draft | null>(null);
+  const [activeAvailabilityText, setActiveAvailabilityText] = useState<string | null>(null);
+  const [activeReplyAssistInstruction, setActiveReplyAssistInstruction] = useState<string | null>(null);
+  const [activeFollowUpTaskId, setActiveFollowUpTaskId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [outbox, setOutbox] = useState<OutboxItem[]>([]);
   const [error, setError] = useState("");
@@ -37,14 +46,20 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     });
     return () => { void listener.then((unlisten) => unlisten()); };
   }, []);
-  const start = useCallback(async (mode: ComposeMode, messageId?: string) => {
+  const start = useCallback(async (mode: ComposeMode, messageId?: string, options?: ComposeOptions) => {
     if (opening.current) return;
     opening.current = true;
     try {
       await editor.current?.flush();
-      const d = mode === "new"
+      const created = mode === "new"
         ? await mailClient.createDraft(mode)
         : await mailClient.createDraft(mode, messageId ?? sourceId, sourceAccountId);
+      const d = options?.followUpTaskId
+        ? await mailClient.saveDraft({ ...created, followUpTaskId: options.followUpTaskId })
+        : created;
+      setActiveAvailabilityText(options?.availabilityText ?? null);
+      setActiveReplyAssistInstruction(options?.replyAssistInstruction ?? null);
+      setActiveFollowUpTaskId(options?.followUpTaskId ?? null);
       setActive(d); setError("");
     }
     catch (e) { setError(String(e)); }
@@ -53,13 +68,19 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   // Called when navigating to the inline Drafts/Outbox view: makes sure
   // whatever was being edited is saved and the lists are current.
   const openList = useCallback(async () => {
-    try { await editor.current?.flush(); setActive(null); await refresh(); }
+    try { await editor.current?.flush(); setActive(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); await refresh(); }
     catch (e) { setError(String(e)); }
   }, [refresh]);
   const undo = useCallback(async (id?: string) => {
     const target = id ?? outbox.find((o) => ["undo_pending", "ready"].includes(o.state))?.id;
     if (!target) return;
-    try { await editor.current?.flush(); const d = await mailClient.cancelSend(target); setActive(d); await refresh(); }
+    try {
+      await editor.current?.flush();
+      const d = await mailClient.cancelSend(target);
+      setActiveFollowUpTaskId(d.followUpTaskId ?? null);
+      setActive(d);
+      await refresh();
+    }
     catch (e) { setError(String(e)); }
   }, [outbox, refresh]);
   const withOutboxActionGuard = useCallback((id: string, action: () => Promise<void>) => {
@@ -81,7 +102,7 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   const restoreFailedSend = useCallback((id: string) => {
     if (pendingOutboxActionsRef.current.has(id)) return;
     withOutboxActionGuard(id, () =>
-      mailClient.recoverSend(id).then((d) => { setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
+      mailClient.recoverSend(id).then((d) => { setActiveFollowUpTaskId(d.followUpTaskId ?? null); setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
     );
   }, [pendingOutboxActions, refresh, withOutboxActionGuard]);
   const reconcileSend = useCallback((id: string) => {
@@ -104,8 +125,22 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   const compose = useCallback(() => { void start("new"); }, [start]);
   const reply = useCallback((messageId?: string) => { void start("reply", messageId); }, [start]);
   const replyAll = useCallback((messageId?: string) => { void start("replyAll", messageId); }, [start]);
+  const replyWithAvailability = useCallback((text: string, messageId?: string) => {
+    void start("reply", messageId, { availabilityText: text });
+  }, [start]);
+  const replyWithFollowUp = useCallback((messageId: string, instruction: string, taskId?: string) => {
+    void start("reply", messageId, {
+      replyAssistInstruction: instruction,
+      followUpTaskId: taskId,
+    });
+  }, [start]);
   const forward = useCallback((messageId?: string) => { void start("forward", messageId); }, [start]);
-  const openInbox = useCallback(() => { setActive(null); }, []);
+  const openInbox = useCallback(() => {
+    setActive(null);
+    setActiveAvailabilityText(null);
+    setActiveReplyAssistInstruction(null);
+    setActiveFollowUpTaskId(null);
+  }, []);
   const openDrafts = useCallback(() => { void openList(); }, [openList]);
   const openOutbox = useCallback(() => { void openList(); }, [openList]);
   const sendDraft = useCallback(() => editor.current?.send(), []);
@@ -121,7 +156,10 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
     compose, reply, replyAll, forward, openInbox, openDrafts, openOutbox,
     sendDraft, sendDraftAndThen, attachFiles, draftReplyWithAI, undoSend, canUndoSend: pendingId !== null,
   }), [attachFiles, closing, compose, composerActive, draftReplyWithAI, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
-  const openDraft = useCallback((draft: Draft) => setActive(draft), []);
+  const openDraft = useCallback((draft: Draft) => {
+    setActiveFollowUpTaskId(draft.followUpTaskId ?? null);
+    setActive(draft);
+  }, []);
   const undoSendItem = useCallback((id: string) => { void undo(id); }, [undo]);
   const composer = active ? (
     <Composer
@@ -129,19 +167,30 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
       ref={editor}
       draft={active}
       accounts={accounts}
-      onClose={() => { setActive(null); void refresh(); }}
+      availabilityText={activeAvailabilityText}
+      replyAssistInstruction={activeReplyAssistInstruction}
+      onClose={() => { setActive(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); void refresh(); }}
       onQueued={(item) => {
+        const followUpTaskId = activeFollowUpTaskId ?? active.followUpTaskId ?? null;
         setActive(null);
+        setActiveAvailabilityText(null);
+        setActiveReplyAssistInstruction(null);
+        setActiveFollowUpTaskId(null);
         // queueDraft already returned the authoritative queued item. Publish
         // it immediately instead of waiting for a second listOutbox roundtrip
         // so an open conversation can render the reply optimistically.
         setOutbox((current) => [item, ...current.filter((entry) => entry.id !== item.id)]);
         void refresh();
+        if (followUpTaskId) {
+          void mailClient.recordFollowUp(followUpTaskId).catch((reason) => setError(String(reason)));
+        }
       }}
     />
   ) : null;
   return {
     context,
+    replyWithAvailability,
+    replyWithFollowUp,
     drafts,
     outbox,
     clock,

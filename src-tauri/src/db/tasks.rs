@@ -1,4 +1,5 @@
-use chrono::Utc;
+use chrono::{DateTime, Days, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
@@ -219,6 +220,66 @@ impl Database {
             .map_err(error)
     }
 
+    pub fn record_follow_up(&self, id: &str) -> Result<ThreadTask, String> {
+        let current = self
+            .list_tasks(None, None)?
+            .into_iter()
+            .find(|task| task.id == id)
+            .ok_or_else(|| "Task not found".to_string())?;
+        if current.status != "open"
+            || current.kind != "follow_up"
+            || current.repeat_interval_days.is_none()
+        {
+            return Err("Only open repeating follow-up tasks can be recorded".to_string());
+        }
+        let interval = current.repeat_interval_days.unwrap_or_default() as i64;
+        let due_value = current
+            .due_value
+            .as_deref()
+            .ok_or_else(|| "Repeating follow-up has no due date".to_string())?;
+        let next_due = match current.due_kind.as_str() {
+            "date" => NaiveDate::parse_from_str(due_value, "%Y-%m-%d")
+                .map_err(error)?
+                .checked_add_days(Days::new(interval as u64))
+                .ok_or_else(|| "Follow-up due date is out of range".to_string())?
+                .format("%Y-%m-%d")
+                .to_string(),
+            "datetime" => {
+                let parsed = DateTime::parse_from_rfc3339(due_value).map_err(error)?;
+                let time_zone = current
+                    .time_zone
+                    .as_deref()
+                    .unwrap_or("UTC")
+                    .parse::<Tz>()
+                    .map_err(error)?;
+                let local = parsed.with_timezone(&time_zone);
+                let next_local = local
+                    .naive_local()
+                    .checked_add_days(Days::new(interval as u64))
+                    .ok_or_else(|| "Follow-up due date is out of range".to_string())?;
+                time_zone
+                    .from_local_datetime(&next_local)
+                    .single()
+                    .or_else(|| time_zone.from_local_datetime(&next_local).earliest())
+                    .or_else(|| time_zone.from_local_datetime(&next_local).latest())
+                    .ok_or_else(|| "Follow-up due date is invalid in its timezone".to_string())?
+                    .to_rfc3339()
+            }
+            _ => return Err("Repeating follow-up must have a date or datetime due value".to_string()),
+        };
+        let now = Utc::now().to_rfc3339();
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "UPDATE tasks SET due_value=?1, wait_after=(SELECT last_received_at FROM threads WHERE threads.id=tasks.thread_id), completion_source=NULL, completed_at=NULL, updated_at=?2 WHERE id=?3 AND status='open'",
+                params![next_due, now, id],
+            )
+            .map_err(error)?;
+        connection
+            .query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)
+            .map_err(error)
+    }
+
     pub fn reconcile_waiting_tasks(&self) -> Result<usize, String> {
         let now = Utc::now().to_rfc3339();
         let connection = self.connection()?;
@@ -320,5 +381,31 @@ mod tests {
         assert!(database.create_task(&request).is_err());
         request.kind = "action".into();
         assert!(database.create_task(&request).is_err());
+    }
+
+    #[test]
+    fn recording_a_repeating_follow_up_advances_its_due_date() {
+        let database = database_with_thread();
+        let task = database
+            .create_task(&CreateTaskRequest {
+                account_id: "account@example.com".into(),
+                thread_id: "account:thread".into(),
+                source_message_id: None,
+                subject_snapshot: "Planning".into(),
+                title: "Check in with the client".into(),
+                notes: None,
+                kind: "follow_up".into(),
+                due_kind: "date".into(),
+                due_value: Some("2026-09-25".into()),
+                time_zone: Some("America/New_York".into()),
+                repeat_interval_days: Some(7),
+                evidence_text: None,
+            })
+            .unwrap();
+
+        let next = database.record_follow_up(&task.id).unwrap();
+        assert_eq!(next.status, "open");
+        assert_eq!(next.due_value.as_deref(), Some("2026-10-02"));
+        assert_eq!(next.completion_source, None);
     }
 }

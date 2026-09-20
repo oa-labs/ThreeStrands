@@ -25,7 +25,7 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 
 export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; draftReplyWithAI(): void };
 
-export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Account[]; onClose(): void; onQueued(item: OutboxItem): void }>(function Composer({ draft: initial, accounts, onClose, onQueued }, ref) {
+export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Account[]; onClose(): void; onQueued(item: OutboxItem): void; availabilityText?: string | null; replyAssistInstruction?: string | null }>(function Composer({ draft: initial, accounts, onClose, onQueued, availabilityText = null, replyAssistInstruction = null }, ref) {
   const [draft, setDraft] = useState(initial);
   const latest = useRef(initial);
   const generation = useRef(0);
@@ -42,6 +42,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   const [replyInstruction, setReplyInstruction] = useState("");
   const [replyAssistBusy, setReplyAssistBusy] = useState(false);
   const [replyAssistError, setReplyAssistError] = useState("");
+  const insertedAvailabilityText = useRef<string | null>(null);
   const [confirmAddToExisting, setConfirmAddToExisting] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const bodyEditor = useRef<HTMLDivElement>(null);
@@ -289,6 +290,15 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); window.clearInterval(autosave); window.removeEventListener("beforeunload", beforeUnload); previous?.focus(); };
   }, [initial.mode]);
   useEffect(() => {
+    if (!availabilityText || !bodyEditor.current || insertedAvailabilityText.current === availabilityText) return;
+    insertedAvailabilityText.current = availabilityText;
+    bodyEditor.current.insertAdjacentHTML(
+      "afterbegin",
+      sanitizeComposeHtml(plainTextToHtml(`${availabilityText}\n\n`)),
+    );
+    editBody(bodyEditor.current);
+  }, [availabilityText]);
+  useEffect(() => {
     if (!["reply", "replyAll"].includes(initial.mode)) return;
     const enabled = readAiProvider() !== "none" && readAiFeatures().draftAssist;
     if (!enabled) return;
@@ -296,6 +306,11 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
       .then((configured) => { if (mounted.current) setReplyAssistAvailable(configured); })
       .catch(() => { if (mounted.current) setReplyAssistAvailable(false); });
   }, [initial.mode]);
+  useEffect(() => {
+    if (!replyAssistInstruction || !replyAssistAvailable) return;
+    setReplyInstruction(replyAssistInstruction);
+    if (!replyAssistOpen) void openReplyAssist();
+  }, [replyAssistAvailable, replyAssistInstruction, replyAssistOpen]);
   useEffect(() => {
     const field = pendingRecipientFocus.current;
     if (!field || !showBlankCopies) return;
@@ -448,6 +463,7 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
                     disabled={replyAssistBusy}
                   />
                 </label>
+                {replyAssistInstruction ? <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction}</p> : null}
                 {replyAssistContext ? (
                   <details open className="reply-assist-context">
                     <summary>Exact email content sent to {readAiProvider()}</summary>
@@ -484,6 +500,9 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
               </section>
             )}
           </div>
+        ) : null}
+        {replyAssistInstruction && !replyAssistOpen ? (
+          <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction} Configure Reply Assist in AI settings to generate a suggestion.</p>
         ) : null}
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={14} /></button></li>)}</ul>}
         {error && <div className="compose-error" role="alert">{error} <button onClick={() => void run(async () => { await flush(); })}>Retry save</button></div>}

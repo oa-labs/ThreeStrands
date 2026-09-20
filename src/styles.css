@@ -1024,6 +1024,7 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .availability-candidate { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--input); color: var(--text); text-align: left; cursor: pointer; font: inherit; font-size: calc(11px * var(--font-scale)); }
 .availability-candidate[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .availability-candidate small { margin-top: 2px; color: var(--muted); font-size: calc(10px * var(--font-scale)); }
+.availability-draft-reply { width: 100%; margin-top: 8px; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: var(--accent-contrast, #fff); cursor: pointer; font: inherit; font-size: calc(11px * var(--font-scale)); }
 .availability-verified small { color: var(--success, #2d8a56); }
 .availability-partiallyChecked small { color: var(--warning, #a16c18); }
 .availability-unverified small { color: var(--muted); }
@@ -1210,6 +1211,7 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .task-card-main small { display: inline-flex; align-items: center; gap: 4px; color: var(--secondary); font-size: calc(10px * var(--font-scale)); }
 .task-status-button { align-self: center; margin-right: 5px; padding: 6px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; }
 .task-status-button:hover { color: var(--text); background: var(--hover); }
+.task-follow-up-button { align-self: center; margin-right: 5px; padding: 5px 7px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--hover); color: var(--text); cursor: pointer; font: inherit; font-size: calc(10px * var(--font-scale)); }
 @media (max-width: 1100px) {
   .app-shell.calendar-open {
     grid-template-columns: 58px var(--inbox-width, 400px) minmax(0, 1fr);
@@ -1653,6 +1655,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .reply-assist-heading button { border: 0; padding: 4px; background: transparent; color: var(--muted); }
 .reply-assist-panel label { display: grid; gap: 5px; color: var(--secondary); font-size: calc(12px * var(--font-scale)); }
 .reply-assist-panel input { border: 1px solid var(--border-strong); border-radius: 7px; padding: 8px 10px; background: var(--raised); color: var(--text); font: inherit; }
+.reply-assist-task-context { margin: 8px 0; color: var(--secondary); font-size: calc(12px * var(--font-scale)); }
 .reply-assist-context { margin: 10px 0; color: var(--secondary); font-size: calc(12px * var(--font-scale)); }
 .reply-assist-context summary { cursor: pointer; }
 .reply-assist-context-body { max-height: 220px; margin-top: 7px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; padding: 9px; background: var(--raised); }

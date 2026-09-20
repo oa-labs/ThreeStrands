@@ -11,6 +11,7 @@ export type Draft = {
   id: string; revision: number; account: string; mode: ComposeMode;
   sourceId: string | null; threadId: string | null; replyId: string | null; references: string[];
   to: string; cc: string; bcc: string; subject: string; body: string; bodyHtml?: string;
+  followUpTaskId?: string | null;
   attachments: Attachment[]; updatedAt: number;
 };
 export type OutboxItem = { id: string; draft: Draft; state: "undo_pending" | "ready" | "sending" | "sent" | "failed" | "uncertain" | "canceled"; deadline: number; error: string | null; providerId?: string | null };

@@ -729,6 +729,29 @@ export const demoClient: MailClient = {
     tasks = tasks.map((task) => task.id === id ? next : task);
     return structuredClone(next);
   },
+  async recordFollowUp(id) {
+    const current = tasks.find((task) => task.id === id);
+    if (!current) throw new Error("Task not found");
+    if (current.status !== "open" || current.kind !== "follow_up" || !current.repeatIntervalDays) {
+      throw new Error("Only open repeating follow-up tasks can be recorded");
+    }
+    const nextDue = current.dueValue ? new Date(current.dueValue) : new Date();
+    if (current.dueKind === "date") {
+      const [year, month, day] = (current.dueValue ?? "").split("-").map(Number);
+      nextDue.setFullYear(year, month - 1, day);
+      nextDue.setHours(12, 0, 0, 0);
+    }
+    nextDue.setDate(nextDue.getDate() + current.repeatIntervalDays);
+    const next = {
+      ...current,
+      dueValue: current.dueKind === "date"
+        ? nextDue.toISOString().slice(0, 10)
+        : nextDue.toISOString(),
+      updatedAt: new Date().toISOString(),
+    } satisfies ThreadTask;
+    tasks = tasks.map((task) => task.id === id ? next : task);
+    return structuredClone(next);
+  },
   async reconcileTasks() {
     return 0;
   },

@@ -295,6 +295,59 @@ describe("Composer Reply Assist", () => {
     expect(editor).toHaveTextContent("Can we meet Friday?");
   });
 
+  it("inserts selected availability text above the editable quoted reply", async () => {
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    render(
+      <Composer
+        draft={replyDraft}
+        accounts={accounts}
+        onClose={() => {}}
+        onQueued={() => {}}
+        availabilityText={'Here are some times that work for me:\n\n- Tuesday, September 22, 2026 · 9:00–9:30 AM EDT (America/New_York)'}
+      />,
+    );
+
+    const editor = screen.getByRole("textbox", { name: "Message body" });
+    await waitFor(() => expect(editor).toHaveTextContent("September 22, 2026"));
+    expect(editor).toHaveTextContent("Can we meet Friday?");
+    expect(editor.textContent?.indexOf("Here are some times")).toBeLessThan(editor.textContent?.indexOf("Can we meet Friday?") ?? 0);
+  });
+
+  it("shows a task-derived instruction in Reply Assist without generating automatically", async () => {
+    vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
+    const generate = vi.spyOn(mailClient, "generateReply");
+    render(
+      <Composer
+        draft={replyDraft}
+        accounts={accounts}
+        onClose={() => {}}
+        onQueued={() => {}}
+        replyAssistInstruction="Draft a concise follow-up about the launch date."
+      />,
+    );
+
+    expect(await screen.findByText(/Task-derived instruction:/)).toBeInTheDocument();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("preserves the editable draft when Reply Assist fails", async () => {
+    vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
+    vi.spyOn(mailClient, "generateReply").mockRejectedValue(new Error("Provider unavailable"));
+    render(
+      <Composer
+        draft={replyDraft}
+        accounts={accounts}
+        onClose={() => {}}
+        onQueued={() => {}}
+        replyAssistInstruction="Draft a concise follow-up."
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Generate draft" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Provider unavailable");
+    expect(screen.getByRole("textbox", { name: "Message body" })).toHaveTextContent("Can we meet Friday?");
+  });
+
   it("requires confirmation before adding a suggestion above existing authored text", async () => {
     vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
     const generate = vi.spyOn(mailClient, "generateReply").mockResolvedValue({ body: "Suggested reply." });
