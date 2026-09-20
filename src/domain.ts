@@ -255,6 +255,7 @@ export type MeetingProposal = {
   intent: string;
   title: string;
   participants: string[];
+  location: string | null;
   rawTimeLanguage: string;
   normalizedStart: string | null;
   normalizedEnd: string | null;

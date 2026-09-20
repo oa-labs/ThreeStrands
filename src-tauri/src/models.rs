@@ -86,6 +86,8 @@ pub struct MeetingProposal {
     pub intent: String,
     pub title: String,
     pub participants: Vec<String>,
+    #[serde(default)]
+    pub location: Option<String>,
     pub raw_time_language: String,
     #[serde(default)]
     pub normalized_start: Option<String>,
