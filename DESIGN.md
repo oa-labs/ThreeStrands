@@ -48,6 +48,12 @@ Modal forms must:
 - preserve entered values when validation or a provider call fails; and
 - provide a visible Cancel action and a clear primary action.
 
+Single-line controls in the same form must have the same explicit vertical
+height. This includes text, date, time, and number inputs as well as selects.
+Use shared `box-sizing` and height rules instead of relying on native padding or
+line-height, because browsers render dropdowns differently from text inputs.
+Textareas and multi-line editors are exempt from the fixed-height rule.
+
 `Cmd/Ctrl+Enter` is the standard optional shortcut for submitting a structured
 form. Textareas retain ordinary Enter for new lines.
 
