@@ -26,6 +26,19 @@ function isDue(task: ThreadTask): boolean {
   return due.getTime() <= Date.now();
 }
 
+function describeAnalysisError(message: string): { summary: string; retryable: boolean } {
+  if (/^(the )?ai provider returned/i.test(message) || /^the ai provider (cited|included)/i.test(message)) {
+    return {
+      summary: "The AI assistant couldn't make sense of this conversation. This sometimes happens with longer or unusual threads.",
+      retryable: true,
+    };
+  }
+  if (/error sending request|timed out|connection|dns/i.test(message)) {
+    return { summary: "Couldn't reach the AI provider. Check your connection and try again.", retryable: true };
+  }
+  return { summary: message, retryable: false };
+}
+
 export function TaskSidebar({
   onClose,
   accountId,
@@ -204,7 +217,16 @@ export function TaskSidebar({
         <section className="action-analysis" aria-label="Thread actions">
           <div className="action-analysis-heading"><strong>Thread actions</strong>{analysisLoading ? <span role="status">Analyzing…</span> : null}</div>
           {!analysisEnabled ? <p className="tasks-status">Enable Thread actions in AI settings to analyze this conversation.</p> : !analysisReady ? <p className="tasks-status">Configure an AI provider and API key in AI settings to analyze this conversation.</p> : null}
-          {analysisError ? <p className="tasks-error" role="alert">{analysisError}</p> : null}
+          {analysisError ? (() => {
+            const { summary, retryable } = describeAnalysisError(analysisError);
+            return <div className="action-analysis-error" role="alert">
+              <p>{summary}</p>
+              <div className="action-analysis-error-actions">
+                {retryable && onAnalyzeThread ? <button type="button" onClick={onAnalyzeThread}><RotateCcw size={13} /> Try again</button> : null}
+                {retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{analysisError}</p></details> : null}
+              </div>
+            </div>;
+          })() : null}
           {analysisPreview ? <details className="action-analysis-preview"><summary>Exact bounded content sent</summary><pre>{analysisPreview}</pre></details> : null}
           {!analysisLoading && analysisEnabled && proposals.length === 0 && analysisPreview ? <p className="tasks-status">No meeting or task proposals found.</p> : null}
           <div className="action-proposals">
