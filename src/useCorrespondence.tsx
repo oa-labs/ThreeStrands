@@ -109,7 +109,7 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
   const openDrafts = useCallback(() => { void openList(); }, [openList]);
   const openOutbox = useCallback(() => { void openList(); }, [openList]);
   const sendDraft = useCallback(() => editor.current?.send(), []);
-  const sendDraftAndThen = useCallback((action: () => void) => editor.current?.send(action), []);
+  const sendDraftAndThen = useCallback((action: () => void, archiveOnSend?: boolean) => editor.current?.send(action, archiveOnSend), []);
   const attachFiles = useCallback(() => editor.current?.attach(), []);
   const draftReplyWithAI = useCallback(() => editor.current?.draftReplyWithAI(), []);
   const undoSend = useCallback(() => { void undo(); }, [undo]);

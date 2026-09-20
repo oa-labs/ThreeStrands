@@ -1435,7 +1435,7 @@ export function App() {
       const threadId = selected.id;
       correspondence.context.sendDraftAndThen(() => {
         void mutateIds([threadId], { kind: "archive", value: true });
-      });
+      }, true);
     },
     openInbox: goToInboxTab,
     splitInboxCount: accountSplitInboxes.length,

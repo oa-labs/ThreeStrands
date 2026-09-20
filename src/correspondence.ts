@@ -23,7 +23,7 @@ export interface CorrespondenceClient {
   saveDraft(draft: Draft): Promise<Draft>;
   listDrafts(): Promise<Draft[]>;
   discardDraft(id: string): Promise<void>;
-  queueDraft(id: string, revision: number): Promise<OutboxItem>;
+  queueDraft(id: string, revision: number, archiveOnSend?: boolean): Promise<OutboxItem>;
   listOutbox(): Promise<OutboxItem[]>;
   cancelSend(id: string): Promise<Draft>;
   recoverSend(id: string): Promise<Draft>;
@@ -73,7 +73,7 @@ export const nativeCorrespondence: CorrespondenceClient = {
   saveDraft: (draft) => request("save", { draft }),
   listDrafts: () => request("listDrafts"),
   discardDraft: (id) => request("discard", { id }),
-  queueDraft: (id, revision) => request("queue", { id, revision }),
+  queueDraft: (id, revision, archiveOnSend) => request("queue", { id, revision, archiveOnSend: archiveOnSend ?? false }),
   listOutbox: () => request("listOutbox"),
   cancelSend: (id) => request("cancel", { id }),
   recoverSend: (id) => request("recover", { id }),

@@ -88,6 +88,12 @@ pub struct OutboxItem {
     pub deadline: i64,
     pub error: Option<String>,
     pub provider_id: Option<String>,
+    /// Set when this send was queued via "send and archive": once the
+    /// message actually sends, the thread's INBOX label is stripped again
+    /// server-side, since Gmail re-adds INBOX to the thread for the newly
+    /// delivered sent message. Without this, a thread archived optimistically
+    /// at queue time reappears in the inbox once the delayed send lands.
+    pub archive_on_send: bool,
 }
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -116,6 +122,8 @@ pub enum Request {
     Queue {
         id: String,
         revision: i64,
+        #[serde(default)]
+        archive_on_send: bool,
     },
     Cancel {
         id: String,
@@ -501,7 +509,7 @@ impl Database {
         let c = self.connection()?;
         let mut q = c
             .prepare(
-                "SELECT id,payload,state,deadline,error,provider_id FROM outbox_messages ORDER BY rowid DESC",
+                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send FROM outbox_messages ORDER BY rowid DESC",
             )
             .map_err(error)?;
         let rows = q
@@ -513,11 +521,13 @@ impl Database {
                     r.get::<_, i64>(3)?,
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, Option<String>>(5)?,
+                    r.get::<_, bool>(6)?,
                 ))
             })
             .map_err(error)?;
         rows.map(|r| {
-            let (id, payload, state, deadline, error, provider_id) = r.map_err(error)?;
+            let (id, payload, state, deadline, error, provider_id, archive_on_send) =
+                r.map_err(error)?;
             Ok(OutboxItem {
                 id,
                 draft: serde_json::from_str(&payload).map_err(crate::correspondence::error)?,
@@ -525,11 +535,18 @@ impl Database {
                 deadline,
                 error,
                 provider_id,
+                archive_on_send,
             })
         })
         .collect()
     }
-    pub fn queue(&self, id: &str, revision: i64, root: &Path) -> Result<OutboxItem, String> {
+    pub fn queue(
+        &self,
+        id: &str,
+        revision: i64,
+        archive_on_send: bool,
+        root: &Path,
+    ) -> Result<OutboxItem, String> {
         if let Some(item) = self
             .outbox()?
             .into_iter()
@@ -562,6 +579,7 @@ impl Database {
             deadline: now() + UNDO_MS,
             error: None,
             provider_id: None,
+            archive_on_send,
         };
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(error)?;
@@ -574,7 +592,7 @@ impl Database {
         if removed != 1 {
             return Err("Draft changed while preparing send".into());
         }
-        tx.execute("INSERT INTO outbox_messages(id,draft_id,revision,account,state,deadline,payload,raw) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![item.id,id,revision,d.account,item.state,item.deadline,json(&d)?,raw]).map_err(error)?;
+        tx.execute("INSERT INTO outbox_messages(id,draft_id,revision,account,state,deadline,payload,raw,archive_on_send) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![item.id,id,revision,d.account,item.state,item.deadline,json(&d)?,raw,item.archive_on_send]).map_err(error)?;
         tx.commit().map_err(error)?;
         Ok(item)
     }
@@ -855,9 +873,16 @@ impl Correspondence {
                 self.cleanup()?;
                 Ok(serde_json::Value::Null)
             }
-            Queue { id, revision } => Ok(serde_json::to_value(
-                self.database.queue(&id, revision, &self.root)?,
-            )
+            Queue {
+                id,
+                revision,
+                archive_on_send,
+            } => Ok(serde_json::to_value(self.database.queue(
+                &id,
+                revision,
+                archive_on_send,
+                &self.root,
+            )?)
             .map_err(error)?),
             Cancel { id } => {
                 Ok(serde_json::to_value(self.database.cancel_send(&id, false)?).map_err(error)?)
@@ -1104,6 +1129,11 @@ impl Correspondence {
         {
             self.database.connection()?.execute("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id]).map_err(error)?;
             if let Some(thread_id) = message.thread_id.as_deref() {
+                if item.archive_on_send {
+                    let _ = provider
+                        .modify_thread(thread_id, &[], &["INBOX".to_string()])
+                        .await;
+                }
                 let messages = provider.fetch_thread(thread_id).await.map_err(error)?;
                 let normalized = messages
                     .iter()
@@ -1175,6 +1205,17 @@ impl Correspondence {
                     .await?;
                 if let Some(sent) = sent {
                     if let Some(thread_id) = sent.thread_id.as_deref() {
+                        if item.archive_on_send {
+                            // Gmail attaches INBOX to the thread when the
+                            // sent message lands, which would otherwise
+                            // silently undo the archive done at queue time.
+                            // Re-assert it here, before the refetch below,
+                            // so the upserted thread reflects the archived
+                            // state regardless of timing.
+                            let _ = provider
+                                .modify_thread(thread_id, &[], &["INBOX".to_string()])
+                                .await;
+                        }
                         if let Ok(messages) = provider.fetch_thread(thread_id).await {
                             if let Ok(normalized) = messages
                                 .iter()
@@ -1315,7 +1356,7 @@ mod tests {
         db.set_account_display_name("you@example.com", Some("Joel Reed"))
             .unwrap();
         let d = saved(&db);
-        let item = db.queue(&d.id, d.revision, Path::new("/unused")).unwrap();
+        let item = db.queue(&d.id, d.revision, false, Path::new("/unused")).unwrap();
         let raw: Vec<u8> = db
             .connection()
             .unwrap()
@@ -1335,7 +1376,7 @@ mod tests {
         );
         assert!(item.deadline > now());
         assert_eq!(
-            db.queue(&d.id, d.revision, Path::new("/unused"))
+            db.queue(&d.id, d.revision, false, Path::new("/unused"))
                 .unwrap()
                 .id,
             item.id
@@ -1351,11 +1392,11 @@ mod tests {
     fn pausing_ready_sends_for_one_account_never_touches_another_accounts_outbox() {
         let db = database();
         let a = saved(&db);
-        let item_a = db.queue(&a.id, a.revision, Path::new("/unused")).unwrap();
+        let item_a = db.queue(&a.id, a.revision, false, Path::new("/unused")).unwrap();
 
         db.set_compose_identity("other@example.com").unwrap();
         let b = saved(&db);
-        let item_b = db.queue(&b.id, b.revision, Path::new("/unused")).unwrap();
+        let item_b = db.queue(&b.id, b.revision, false, Path::new("/unused")).unwrap();
 
         db.pause_ready_sends_for("you@example.com").unwrap();
 
@@ -1375,7 +1416,7 @@ mod tests {
             id = d.id.clone();
             let queued = saved(&db);
             let item = db
-                .queue(&queued.id, queued.revision, Path::new("/unused"))
+                .queue(&queued.id, queued.revision, false, Path::new("/unused"))
                 .unwrap();
             db.connection()
                 .unwrap()
@@ -1564,7 +1605,7 @@ mod tests {
         d.subject = "Hello".into();
         d.body = "Body".into();
         let d = db.save_draft(d).unwrap();
-        let item = db.queue(&d.id, d.revision, Path::new("/unused")).unwrap();
+        let item = db.queue(&d.id, d.revision, false, Path::new("/unused")).unwrap();
         assert_eq!(item.draft.account, "you@example.com");
     }
     #[test]
@@ -1579,7 +1620,7 @@ mod tests {
             )
             .unwrap();
         let d = saved(&db);
-        assert!(db.queue(&d.id, d.revision, Path::new("/unused")).is_err());
+        assert!(db.queue(&d.id, d.revision, false, Path::new("/unused")).is_err());
     }
     #[test]
     fn migrations_preserve_existing_mail_and_are_repeatable() {
@@ -1603,7 +1644,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, &service.root)
+            .queue(&d.id, d.revision, false, &service.root)
             .unwrap();
         let calls = std::sync::atomic::AtomicUsize::new(0);
         let send = |_, _| {
@@ -1638,7 +1679,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, &service.root)
+            .queue(&d.id, d.revision, false, &service.root)
             .unwrap();
         service.database.cancel_send(&item.id, false).unwrap();
         service
@@ -1655,7 +1696,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, &service.root)
+            .queue(&d.id, d.revision, false, &service.root)
             .unwrap();
         service
             .dispatch_due(&item, item.deadline, |_, _| async {
@@ -1682,7 +1723,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, &service.root)
+            .queue(&d.id, d.revision, false, &service.root)
             .unwrap();
         service
             .dispatch_due(&item, item.deadline, |_, _| async {
@@ -1702,7 +1743,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, &service.root)
+            .queue(&d.id, d.revision, false, &service.root)
             .unwrap();
         let result=service.dispatch_due(&item,item.deadline,|_,_|async {
             service.database.connection().unwrap().execute_batch("CREATE TRIGGER fail_ack BEFORE UPDATE ON outbox_messages WHEN NEW.state='sent' BEGIN SELECT RAISE(FAIL,'disk failure'); END;").unwrap();

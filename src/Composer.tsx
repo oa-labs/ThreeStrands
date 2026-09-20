@@ -23,7 +23,7 @@ import {
 } from "./richText";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
-export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void): void; attach(): void; close(): void; draftReplyWithAI(): void };
+export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; draftReplyWithAI(): void };
 
 export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Account[]; onClose(): void; onQueued(item: OutboxItem): void }>(function Composer({ draft: initial, accounts, onClose, onQueued }, ref) {
   const [draft, setDraft] = useState(initial);
@@ -96,10 +96,12 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     finally { busyRef.current = false; if (mounted.current) setBusy(false); }
   }
   function close() { void run(async () => { await flush(); onClose(); }); }
-  function send(afterQueued?: () => void) {
+  function send(afterQueued?: () => void, archiveOnSend?: boolean) {
     void run(async () => {
       const saved = await flush();
-      const item = await mailClient.queueDraft(saved.id, saved.revision);
+      const item = archiveOnSend
+        ? await mailClient.queueDraft(saved.id, saved.revision, true)
+        : await mailClient.queueDraft(saved.id, saved.revision);
       onQueued(item);
       afterQueued?.();
     });
