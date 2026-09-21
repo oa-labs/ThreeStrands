@@ -710,8 +710,9 @@ kbd {
 .message-expanded-toggle:hover { background: var(--hover); color: var(--text); }
 .message-expanded-toggle:focus-visible { outline: none; }
 .message-attachments {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, max-content));
+  justify-content: start;
   gap: 7px;
   margin-top: 20px;
 }
@@ -732,7 +733,7 @@ kbd {
   color: var(--secondary);
   cursor: pointer;
 }
-.attachment-badge { min-width: 0; gap: 7px; padding: 8px 9px; }
+.attachment-badge { min-width: 0; flex: 1 1 auto; gap: 7px; padding: 8px 9px; }
 .attachment-badge span {
   max-width: 280px;
   overflow: hidden;
@@ -741,10 +742,11 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.attachment-badge small { color: var(--muted); white-space: nowrap; }
+.attachment-badge small { margin-left: auto; color: var(--muted); white-space: nowrap; }
 .attachment-download {
   justify-content: center;
   width: 34px;
+  flex-shrink: 0;
   border-left: 1px solid var(--border);
 }
 .attachment-badge:hover, .attachment-download:hover { background: var(--hover); color: var(--text); }
