@@ -4597,7 +4597,7 @@ dependencies = [
 
 [[package]]
 name = "threestrands"
-version = "0.17.4"
+version = "0.18.1"
 dependencies = [
  "argon2",
  "async-trait",
@@ -4627,6 +4627,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-window-state",
  "thiserror 2.0.20",
+ "threestrands-sync-protocol",
  "tokio",
  "tokio-util",
  "unicode-general-category",
@@ -4635,6 +4636,14 @@ dependencies = [
  "uuid",
  "xattr",
  "zstd",
+]
+
+[[package]]
+name = "threestrands-sync-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

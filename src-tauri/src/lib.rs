@@ -4,6 +4,7 @@ mod attachment_reader;
 mod attachment_security;
 mod auth;
 mod calendar;
+mod cloud_sync;
 mod correspondence;
 mod credentials;
 mod db;
@@ -134,6 +135,7 @@ pub(crate) async fn rekey_placeholder_account(accounts: &AccountRegistry, identi
 
 struct AppState {
     database: Arc<Database>,
+    cloud_sync: cloud_sync::CloudSync,
     /// Shared OAuth app credentials, used to authorize any account.
     auth_config: Option<GoogleAuthConfig>,
     /// Every connected account, keyed by account id — each with its own sync
@@ -447,9 +449,9 @@ fn spawn_synced_account(
             let _ = polling_service.sync().await;
         }
         polling_service
-            .polling_loop(move || {
+            .polling_loop(move |account_id: &str| {
                 use tauri::Emitter;
-                let _ = app.emit("unread-counts-changed", ());
+                let _ = app.emit("unread-counts-changed", account_id);
             })
             .await;
     });
@@ -929,11 +931,133 @@ fn spawn_pending_flush(handle: &tauri::AppHandle) {
 fn spawn_foreground_sync(handle: &tauri::AppHandle) {
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
-        let Some(service) = primary_service(&handle).await else {
-            return;
-        };
-        let _ = service.sync_if_stale().await;
+        if let Some(state) = handle.try_state::<AppState>() {
+            let cloud = state.cloud_sync.clone();
+            let _ = cloud.sync_once().await;
+            reconcile_cloud_account_registry(&handle);
+        }
+        if let Some(service) = primary_service(&handle).await {
+            let _ = service.sync_if_stale().await;
+        }
     });
+}
+
+fn reconcile_cloud_account_registry(handle: &tauri::AppHandle) {
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let Some(state) = handle.try_state::<AppState>() else { return; };
+        let catalog = state.database.list_accounts().unwrap_or_default().into_iter().map(|account| account.email).collect::<HashSet<_>>();
+        let mut accounts = state.accounts.lock().await;
+        let removed = accounts.keys().filter(|email| *email != auth::LEGACY_KEY && !catalog.contains(*email)).cloned().collect::<Vec<_>>();
+        for email in removed {
+            if let Some(account) = accounts.remove(&email) { account.poll_task.abort(); }
+        }
+    });
+}
+
+fn kick_cloud_sync(state: &State<'_, AppState>) {
+    let cloud = state.cloud_sync.clone();
+    tauri::async_runtime::spawn(async move { let _ = cloud.sync_once().await; });
+}
+
+fn queue_cloud_value<T: serde::Serialize>(
+    state: &State<'_, AppState>,
+    entity_type: threestrands_sync_protocol::EntityType,
+    entity_id: &str,
+    value: &T,
+    fields: Option<std::collections::BTreeSet<String>>,
+) -> Result<(), String> {
+    state.database.enqueue_cloud_entity(
+        entity_type,
+        entity_id,
+        serde_json::to_value(value).map_err(|error| error.to_string())?,
+        fields,
+    )?;
+    kick_cloud_sync(state);
+    Ok(())
+}
+
+fn queue_mail_account(state: &State<'_, AppState>, account: &Account) -> Result<(), String> {
+    queue_cloud_value(
+        state,
+        threestrands_sync_protocol::EntityType::MailAccount,
+        &account.email.to_ascii_lowercase(),
+        &serde_json::json!({
+            "email": account.email,
+            "displayName": account.display_name,
+            "color": account.color,
+            "provider": account.provider,
+            "sortOrder": account.sort_order,
+        }),
+        None,
+    )
+}
+
+#[tauri::command]
+fn cloud_account_status(state: State<'_, AppState>) -> Result<cloud_sync::CloudAccountStatus, String> {
+    state.cloud_sync.status()
+}
+
+#[tauri::command]
+async fn cloud_sign_in(state: State<'_, AppState>) -> Result<cloud_sync::CloudAccountStatus, String> {
+    state.cloud_sync.sign_in().await
+}
+
+#[tauri::command]
+async fn cloud_sign_out(state: State<'_, AppState>) -> Result<(), String> {
+    state.cloud_sync.sign_out().await
+}
+
+#[tauri::command]
+async fn cloud_delete_account(state: State<'_, AppState>) -> Result<(), String> {
+    state.cloud_sync.delete_account().await
+}
+
+#[tauri::command]
+async fn cloud_devices(state: State<'_, AppState>) -> Result<Vec<cloud_sync::CloudDevice>, String> {
+    state.cloud_sync.devices().await
+}
+
+#[tauri::command]
+async fn cloud_revoke_device(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.cloud_sync.revoke_device(&id).await
+}
+
+#[tauri::command]
+async fn cloud_confirm_enrollment(preferences: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
+    state.cloud_sync.confirm_enrollment(preferences).await
+}
+
+#[tauri::command]
+async fn cloud_retry_sync(state: State<'_, AppState>) -> Result<(), String> {
+    state.cloud_sync.sync_once().await
+}
+
+#[tauri::command]
+async fn cloud_conflicts(state: State<'_, AppState>) -> Result<Vec<threestrands_sync_protocol::SyncConflict>, String> {
+    state.cloud_sync.conflicts().await
+}
+
+#[tauri::command]
+async fn cloud_resolve_conflict(id: String, request: threestrands_sync_protocol::ResolveConflictRequest, state: State<'_, AppState>) -> Result<(), String> {
+    state.cloud_sync.resolve_conflict(&id, request).await
+}
+
+#[tauri::command]
+fn cloud_synced_preferences(state: State<'_, AppState>) -> Result<Option<serde_json::Value>, String> {
+    state.database.synced_preferences()
+}
+
+#[tauri::command]
+fn cloud_update_preferences(preferences: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.enqueue_cloud_entity(
+        threestrands_sync_protocol::EntityType::Preferences,
+        "portable",
+        preferences,
+        None,
+    )?;
+    kick_cloud_sync(&state);
+    Ok(())
 }
 
 #[tauri::command]
@@ -980,6 +1104,7 @@ async fn add_account(state: State<'_, AppState>, app: tauri::AppHandle) -> Resul
     let account = state.database.adopt_account(&email)?;
     let connected = spawn_synced_account(state.database.clone(), auth, true, app);
     state.accounts.lock().await.insert(email, connected);
+    queue_mail_account(&state, &account)?;
     Ok(account)
 }
 
@@ -989,6 +1114,15 @@ async fn remove_account(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    remove_account_internal(email, state, app, false).await
+}
+
+async fn remove_account_internal(
+    email: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    remove_catalog: bool,
+) -> Result<(), String> {
     let _guard = state.correspondence.gate.lock().await;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     state.database.pause_ready_sends_for(&email)?;
@@ -996,7 +1130,12 @@ async fn remove_account(
     // its credentials are still live, so the caller can safely retry rather
     // than being left with a still-listed account whose credentials are
     // already gone.
-    state.database.remove_account(&email)?;
+    let cloud = state.cloud_sync.status()?;
+    if !remove_catalog && cloud.signed_in && cloud.sync_entitled && cloud.enrollment_confirmed {
+        state.database.disconnect_account_locally(&email)?;
+    } else {
+        state.database.remove_account(&email)?;
+    }
     let result = match state.accounts.lock().await.remove(&email) {
         Some(connected) => {
             connected.poll_task.abort();
@@ -1007,8 +1146,31 @@ async fn remove_account(
     // Removing the last account returns the app to its pre-connect state, so
     // restore the placeholder entry `connect_google` authorizes against —
     // otherwise disconnecting would leave no way back in.
-    ensure_placeholder_account(&state, app).await;
+    if state.database.list_accounts()?.is_empty() {
+        ensure_placeholder_account(&state, app).await;
+    }
     result
+}
+
+#[tauri::command]
+async fn remove_synced_mail_account(
+    email: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let cloud = state.cloud_sync.status()?;
+    if !cloud.signed_in || !cloud.sync_entitled || !cloud.enrollment_confirmed {
+        return Err("Sign in and enable cross-device sync before removing an account everywhere".into());
+    }
+    state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase())?;
+    for task in state.database.list_tasks(Some(&email), None)? {
+        state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::Task, &task.id)?;
+    }
+    for split in state.database.list_split_inboxes()?.into_iter().filter(|split| split.account_id == email) {
+        state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::SplitInbox, &split.id)?;
+    }
+    state.cloud_sync.sync_once().await?;
+    remove_account_internal(email, state, app, true).await
 }
 
 /// Seeds the pre-connect placeholder entry when no account is connected, so
@@ -1068,6 +1230,7 @@ async fn reconnect_account(
     // A completed reconnect means credentials were accepted *and* the first
     // mailbox synchronization finished (or returned a useful error).
     service.sync().await?;
+    queue_mail_account(&state, &account)?;
     Ok(account)
 }
 
@@ -1089,12 +1252,14 @@ async fn add_calendar_account(state: State<'_, AppState>) -> Result<CalendarAcco
     let auth = config.pending_calendar_account();
     let email = authorize_interactively(&state, &AccountAuth::Google(auth)).await?;
     state.database.adopt_calendar_account(&email)?;
-    state
+    let account = state
         .database
         .list_calendar_accounts()?
         .into_iter()
         .find(|account| account.email == email)
-        .ok_or_else(|| "Calendar account was not saved".to_string())
+        .ok_or_else(|| "Calendar account was not saved".to_string())?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email}), None)?;
+    Ok(account)
 }
 
 #[tauri::command]
@@ -1106,12 +1271,14 @@ async fn reconnect_calendar_account(
     let auth = config.calendar_account(&email);
     authorize_interactively(&state, &AccountAuth::Google(auth)).await?;
     state.database.adopt_calendar_account(&email)?;
-    state
+    let account = state
         .database
         .list_calendar_accounts()?
         .into_iter()
         .find(|account| account.email == email)
-        .ok_or_else(|| "Calendar account was not saved".to_string())
+        .ok_or_else(|| "Calendar account was not saved".to_string())?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email}), None)?;
+    Ok(account)
 }
 
 async fn calendar_options_for_account(
@@ -1244,6 +1411,13 @@ async fn set_calendar_selection(
     state
         .database
         .set_calendar_selection(&account_id, &calendar_ids)?;
+    queue_cloud_value(
+        &state,
+        threestrands_sync_protocol::EntityType::CalendarSelection,
+        &account_id.to_ascii_lowercase(),
+        &serde_json::json!({ "accountId": account_id, "calendarIds": calendar_ids }),
+        None,
+    )?;
     for option in &mut available {
         option.selected = unique.contains(&option.id);
     }
@@ -1252,6 +1426,24 @@ async fn set_calendar_selection(
 
 #[tauri::command]
 fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
+    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    config.calendar_account(&email).disconnect()?;
+    let cloud = state.cloud_sync.status()?;
+    if cloud.signed_in && cloud.sync_entitled && cloud.enrollment_confirmed {
+        state.database.disconnect_calendar_account_locally(&email)
+    } else {
+        state.database.remove_calendar_account(&email)
+    }
+}
+
+#[tauri::command]
+async fn remove_synced_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
+    let cloud = state.cloud_sync.status()?;
+    if !cloud.signed_in || !cloud.sync_entitled || !cloud.enrollment_confirmed {
+        return Err("Sign in and enable cross-device sync before removing an account everywhere".into());
+    }
+    state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase())?;
+    state.cloud_sync.sync_once().await?;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     config.calendar_account(&email).disconnect()?;
     state.database.remove_calendar_account(&email)
@@ -1391,7 +1583,11 @@ fn set_account_color(
     color: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    state.database.set_account_color(&email, &color)
+    state.database.set_account_color(&email, &color)?;
+    let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
+        &serde_json::json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+        Some(std::collections::BTreeSet::from(["color".to_string()])))
 }
 
 #[tauri::command]
@@ -1402,12 +1598,22 @@ fn set_account_display_name(
 ) -> Result<(), String> {
     state
         .database
-        .set_account_display_name(&email, display_name.as_deref())
+        .set_account_display_name(&email, display_name.as_deref())?;
+    let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
+        &serde_json::json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+        Some(std::collections::BTreeSet::from(["displayName".to_string()])))
 }
 
 #[tauri::command]
 fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.reorder_accounts(&emails)
+    state.database.reorder_accounts(&emails)?;
+    for account in state.database.list_accounts()? {
+        queue_cloud_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &account.email.to_ascii_lowercase(),
+            &serde_json::json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+            Some(std::collections::BTreeSet::from(["sortOrder".to_string()])))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1437,12 +1643,14 @@ fn create_split_inbox(
     request: CreateSplitInboxRequest,
     state: State<'_, AppState>,
 ) -> Result<SplitInbox, String> {
-    state.database.create_split_inbox(
+    let item = state.database.create_split_inbox(
         &request.name,
         &request.match_kind,
         &request.match_value,
         &request.account_id,
-    )
+    )?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item, None)?;
+    Ok(item)
 }
 
 #[tauri::command]
@@ -1450,17 +1658,28 @@ fn update_split_inbox(
     request: UpdateSplitInboxRequest,
     state: State<'_, AppState>,
 ) -> Result<SplitInbox, String> {
-    state.database.update_split_inbox(&request.id, &request.name)
+    let item = state.database.update_split_inbox(&request.id, &request.name)?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item,
+        Some(std::collections::BTreeSet::from(["name".to_string()])))?;
+    Ok(item)
 }
 
 #[tauri::command]
 fn delete_split_inbox(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.delete_split_inbox(&id)
+    state.database.delete_split_inbox(&id)?;
+    state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::SplitInbox, &id)?;
+    kick_cloud_sync(&state);
+    Ok(())
 }
 
 #[tauri::command]
 fn reorder_split_inboxes(ids: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.reorder_split_inboxes(&ids)
+    state.database.reorder_split_inboxes(&ids)?;
+    for item in state.database.list_split_inboxes()? {
+        queue_cloud_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item,
+            Some(std::collections::BTreeSet::from(["sortOrder".to_string()])))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1483,7 +1702,9 @@ fn create_snippet(
     request: CreateSnippetRequest,
     state: State<'_, AppState>,
 ) -> Result<Snippet, String> {
-    state.database.create_snippet(&request.name, &request.body)
+    let item = state.database.create_snippet(&request.name, &request.body)?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Snippet, &item.id, &item, None)?;
+    Ok(item)
 }
 
 #[tauri::command]
@@ -1491,14 +1712,20 @@ fn update_snippet(
     request: UpdateSnippetRequest,
     state: State<'_, AppState>,
 ) -> Result<Snippet, String> {
-    state
+    let item = state
         .database
-        .update_snippet(&request.id, &request.name, &request.body)
+        .update_snippet(&request.id, &request.name, &request.body)?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Snippet, &item.id, &item,
+        Some(std::collections::BTreeSet::from(["name".to_string(), "body".to_string()])))?;
+    Ok(item)
 }
 
 #[tauri::command]
 fn delete_snippet(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.delete_snippet(&id)
+    state.database.delete_snippet(&id)?;
+    state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::Snippet, &id)?;
+    kick_cloud_sync(&state);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1555,7 +1782,9 @@ fn get_retention_days(state: State<'_, AppState>) -> Result<Option<i64>, String>
 
 #[tauri::command]
 fn set_retention_days(days: Option<i64>, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.set_retention_days(days)
+    state.database.set_retention_days(days)?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Retention, "mail",
+        &serde_json::json!({"days":days}), None)
 }
 
 #[tauri::command]
@@ -1748,12 +1977,25 @@ fn list_tasks(
 
 #[tauri::command]
 fn create_task(request: CreateTaskRequest, state: State<'_, AppState>) -> Result<ThreadTask, String> {
-    state.database.create_task(&request)
+    let task = state.database.create_task(&request)?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task, None)?;
+    Ok(task)
 }
 
 #[tauri::command]
 fn update_task(request: UpdateTaskRequest, state: State<'_, AppState>) -> Result<ThreadTask, String> {
-    state.database.update_task(&request)
+    let mut fields = std::collections::BTreeSet::new();
+    if request.title.is_some() { fields.insert("title".to_string()); }
+    if request.notes.is_some() { fields.insert("notes".to_string()); }
+    if request.kind.is_some() { fields.insert("kind".to_string()); }
+    if request.due_kind.is_some() { fields.insert("dueKind".to_string()); }
+    if request.due_value.is_some() { fields.insert("dueValue".to_string()); }
+    if request.time_zone.is_some() { fields.insert("timeZone".to_string()); }
+    if request.repeat_interval_days.is_some() { fields.insert("repeatIntervalDays".to_string()); }
+    fields.insert("updatedAt".to_string());
+    let task = state.database.update_task(&request)?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task, Some(fields))?;
+    Ok(task)
 }
 
 #[tauri::command]
@@ -1763,17 +2005,30 @@ fn set_task_status(
     source: String,
     state: State<'_, AppState>,
 ) -> Result<ThreadTask, String> {
-    state.database.set_task_status(&id, &status, &source)
+    let task = state.database.set_task_status(&id, &status, &source)?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
+        Some(std::collections::BTreeSet::from(["status".to_string(), "completionSource".to_string(), "completedAt".to_string(), "updatedAt".to_string()])))?;
+    Ok(task)
 }
 
 #[tauri::command]
 fn record_follow_up(id: String, state: State<'_, AppState>) -> Result<ThreadTask, String> {
-    state.database.record_follow_up(&id)
+    let task = state.database.record_follow_up(&id)?;
+    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
+        Some(std::collections::BTreeSet::from(["dueValue".to_string(), "waitAfter".to_string(), "completionSource".to_string(), "completedAt".to_string(), "updatedAt".to_string()])))?;
+    Ok(task)
 }
 
 #[tauri::command]
 fn reconcile_tasks(state: State<'_, AppState>) -> Result<usize, String> {
-    state.database.reconcile_waiting_tasks()
+    let count = state.database.reconcile_waiting_tasks()?;
+    if count > 0 {
+        for task in state.database.list_tasks(None, None)? {
+            queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
+                Some(std::collections::BTreeSet::from(["status".to_string(), "completionSource".to_string(), "completedAt".to_string(), "updatedAt".to_string()])))?;
+        }
+    }
+    Ok(count)
 }
 
 fn not_configured() -> String {
@@ -1826,6 +2081,7 @@ pub fn run() {
             let (opened_database, recovery) =
                 db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
             let database = Arc::new(opened_database);
+            let cloud_sync = cloud_sync::CloudSync::new(database.clone())?;
             let recovery = match recovery {
                 db::RecoveryOutcome::Clean => None,
                 other => Some(other),
@@ -1962,8 +2218,10 @@ pub fn run() {
                 }
                 worker.run().await;
             });
+            cloud_sync.clone().spawn(app.handle().clone(), reconcile_cloud_account_registry);
             app.manage(AppState {
                 database,
+                cloud_sync,
                 auth_config,
                 accounts,
                 correspondence,
@@ -1977,6 +2235,18 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            cloud_account_status,
+            cloud_sign_in,
+            cloud_sign_out,
+            cloud_delete_account,
+            cloud_devices,
+            cloud_revoke_device,
+            cloud_confirm_enrollment,
+            cloud_retry_sync,
+            cloud_conflicts,
+            cloud_resolve_conflict,
+            cloud_synced_preferences,
+            cloud_update_preferences,
             correspondence_request,
             finish_exit,
             list_threads,
@@ -2013,6 +2283,7 @@ pub fn run() {
             list_accounts,
             add_account,
             remove_account,
+            remove_synced_mail_account,
             reconnect_account,
             list_calendar_accounts,
             add_calendar_account,
@@ -2020,6 +2291,7 @@ pub fn run() {
             list_calendar_options,
             set_calendar_selection,
             remove_calendar_account,
+            remove_synced_calendar_account,
             list_schedule_events,
             find_availability,
             check_proposed_time,

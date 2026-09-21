@@ -151,6 +151,24 @@ import {
 } from "./aiSettings";
 import { getRetentionDays, setRetentionDays, RETENTION_OPTIONS } from "./retentionSettings";
 import { exportSettings, importSettings, type SettingsImportResult } from "./userPreferences";
+import {
+  cloudAccountStatus,
+  cloudConflicts,
+  cloudDeleteAccount,
+  cloudDevices,
+  cloudRevokeDevice,
+  cloudSignIn,
+  cloudSignOut,
+  confirmCloudEnrollment,
+  queuePortablePreferences,
+  removeSyncedCalendarAccount,
+  removeSyncedMailAccount,
+  resolveCloudConflict,
+  retryCloudSync,
+  type CloudAccountStatus,
+  type CloudConflict,
+  type CloudDevice,
+} from "./cloudAccount";
 import { useAccounts } from "./useAccounts";
 import { useAppPreferences } from "./useAppPreferences";
 import { useEscapeDismiss } from "./useEscapeDismiss";
@@ -188,7 +206,7 @@ type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
 export { formatMailTimestamp } from "./threadPresentation";
 
-type SettingsSection = "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
+type SettingsSection = "cloudAccount" | "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -299,19 +317,6 @@ export function App() {
     void mailClient.listUnreadCounts().then(setUnreadCounts).catch(() => {});
   }, []);
   useEffect(refreshUnreadCounts, [refreshUnreadCounts]);
-  // Background accounts keep polling Gmail while a different account is
-  // active in the UI; without this, their sidebar badge only catches up to
-  // what the backend already knows the next time the mailbox reloads (e.g.
-  // switching into that account).
-  useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
-    const unlisten = listen("unread-counts-changed", () => {
-      refreshUnreadCounts();
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [refreshUnreadCounts]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const refreshSnippets = useCallback(() => {
     return mailClient.listSnippets().then(setSnippets).catch(() => {});
@@ -688,6 +693,30 @@ export function App() {
   // from, even though the header already reflects the new view.
   const loadThreadsRef = useRef(loadThreads);
   loadThreadsRef.current = loadThreads;
+
+  // Background accounts keep polling Gmail while a different account is
+  // active in the UI; without this, their sidebar badge only catches up to
+  // what the backend already knows the next time the mailbox reloads (e.g.
+  // switching into that account). The active account's Inbox badge and
+  // visible thread list need the same treatment, or a long-idle-but-focused
+  // session can silently accumulate unread mail with no on-screen change
+  // until some unrelated action (e.g. sending mail) happens to reload the
+  // mailbox.
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    const unlisten = listen<string>("unread-counts-changed", (event) => {
+      refreshUnreadCounts();
+      refreshMailboxUnreadCounts();
+      // A null activeAccountId is the merged "All accounts" view, which
+      // shows every account's mail, so any account's sync should refresh it.
+      if (activeAccountId === null || event.payload === activeAccountId) {
+        void loadThreadsRef.current(query);
+      }
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [refreshUnreadCounts, refreshMailboxUnreadCounts, activeAccountId, query]);
 
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
@@ -2798,6 +2827,10 @@ export function App() {
             void loadThreads(query, wasActive ? null : undefined);
             setAuthStatus(await mailClient.googleAuthStatus());
           }}
+          onRemoveAccountEverywhere={async (email) => {
+            await removeSyncedMailAccount(email);
+            await refreshAccounts();
+          }}
           onReconnectAccount={async (email) => {
             let reconnectError = await mailClient.reconnectAccount(email)
               .then(() => null)
@@ -2832,6 +2865,10 @@ export function App() {
             const remaining = await refreshCalendarAccounts();
             setCalendarOptions((current) => current.filter((calendar) => calendar.accountId !== email));
             if (remaining.length === 0) setRightWorkspace(null);
+          }}
+          onRemoveCalendarAccountEverywhere={async (email) => {
+            await removeSyncedCalendarAccount(email);
+            await refreshCalendarAccounts();
           }}
           onSetCalendarSelection={async (accountId, calendarIds) => {
             const updated = await mailClient.setCalendarSelection(accountId, calendarIds);
@@ -3460,6 +3497,7 @@ function LabelManager({
 const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "reading", label: "Reading" },
+  { id: "cloudAccount", label: "Three Strands Account" },
   { id: "accounts", label: "Mail Accounts" },
   { id: "calendarAccounts", label: "Calendar Accounts" },
   { id: "availability", label: "Availability" },
@@ -3498,6 +3536,7 @@ function Settings({
   activeAccountId,
   onAddAccount,
   onRemoveAccount,
+  onRemoveAccountEverywhere,
   onReconnectAccount,
   onSetAccountDisplayName,
   onSetAccountColor,
@@ -3505,6 +3544,7 @@ function Settings({
   onAddCalendarAccount,
   onReconnectCalendarAccount,
   onRemoveCalendarAccount,
+  onRemoveCalendarAccountEverywhere,
   onSetCalendarSelection,
   onSettingsImported,
   splitInboxes,
@@ -3544,6 +3584,7 @@ function Settings({
   activeAccountId: string | null;
   onAddAccount(): Promise<void>;
   onRemoveAccount(email: string): Promise<void>;
+  onRemoveAccountEverywhere(email: string): Promise<void>;
   onReconnectAccount(email: string): Promise<void>;
   onSetAccountDisplayName(email: string, displayName: string | null): Promise<void>;
   onSetAccountColor(email: string, color: string): Promise<void>;
@@ -3551,6 +3592,7 @@ function Settings({
   onAddCalendarAccount(): Promise<void>;
   onReconnectCalendarAccount(email: string): Promise<void>;
   onRemoveCalendarAccount(email: string): Promise<void>;
+  onRemoveCalendarAccountEverywhere(email: string): Promise<void>;
   onSetCalendarSelection(accountId: string, calendarIds: string[]): Promise<void>;
   onSettingsImported(result: SettingsImportResult): Promise<void>;
   splitInboxes: SplitInbox[];
@@ -3593,6 +3635,7 @@ function Settings({
           ))}
         </nav>
         <div className="settings-panel">
+          {section === "cloudAccount" ? <CloudAccountSettings /> : null}
           {section === "appearance" ? (
             <AppearanceSettings
               theme={theme}
@@ -3615,6 +3658,7 @@ function Settings({
               accounts={accounts}
               onAdd={onAddAccount}
               onRemove={onRemoveAccount}
+              onRemoveEverywhere={onRemoveAccountEverywhere}
               onReconnect={onReconnectAccount}
               onSetDisplayName={onSetAccountDisplayName}
               onSetColor={onSetAccountColor}
@@ -3630,6 +3674,7 @@ function Settings({
               onAdd={onAddCalendarAccount}
               onReconnect={onReconnectCalendarAccount}
               onRemove={onRemoveCalendarAccount}
+              onRemoveEverywhere={onRemoveCalendarAccountEverywhere}
               onSetSelection={onSetCalendarSelection}
             />
           ) : null}
@@ -3659,7 +3704,7 @@ function Settings({
               onDelete={onDeleteSnippet}
             />
           ) : null}
-          {section === "ai" ? <AiProviderSettings onChange={onAiConfigChange} /> : null}
+          {section === "ai" ? <AiProviderSettings onChange={() => { onAiConfigChange(); queuePortablePreferences(); }} /> : null}
           {section === "privacy" ? (
             <PrivacySettings
               loadRemoteImages={loadRemoteImages}
@@ -3673,6 +3718,126 @@ function Settings({
         </div>
       </div>
     </Modal>
+  );
+}
+
+function CloudAccountSettings() {
+  const [status, setStatus] = useState<CloudAccountStatus | null>(null);
+  const [devices, setDevices] = useState<CloudDevice[]>([]);
+  const [conflicts, setConflicts] = useState<CloudConflict[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const next = await cloudAccountStatus();
+    setStatus(next);
+    if (next.signedIn) {
+      const [nextDevices, nextConflicts] = await Promise.all([
+        cloudDevices().catch(() => []),
+        next.syncEntitled ? cloudConflicts().catch(() => []) : Promise.resolve([]),
+      ]);
+      setDevices(nextDevices);
+      setConflicts(nextConflicts);
+    } else {
+      setDevices([]);
+      setConflicts([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh().catch((error: unknown) => setMessage(String(error)));
+    let unlisten: (() => void) | undefined;
+    if ("__TAURI_INTERNALS__" in window) {
+      void listen("cloud-sync-status", () => void refresh()).then((stop) => { unlisten = stop; });
+    }
+    return () => unlisten?.();
+  }, [refresh]);
+
+  const act = (operation: () => Promise<unknown>) => {
+    setBusy(true);
+    setMessage(null);
+    void operation()
+      .then(refresh)
+      .catch((error: unknown) => setMessage(String(error)))
+      .finally(() => setBusy(false));
+  };
+
+  if (!status) return <section className="settings-section" aria-label="Three Strands Account"><p className="settings-hint">Loading account status…</p></section>;
+  if (!status.configured) {
+    return (
+      <section className="settings-section" aria-label="Three Strands Account">
+        <h3>Three Strands Account</h3>
+        <p className="settings-hint">This build has no Three Strands service configured. Everything continues to work locally without an account.</p>
+      </section>
+    );
+  }
+  if (!status.signedIn) {
+    return (
+      <section className="settings-section" aria-label="Three Strands Account">
+        <h3>Use Three Strands on multiple computers</h3>
+        <p className="settings-hint">Sign in separately from your mail accounts. Mail, drafts, attachments, OAuth tokens, and AI keys are never uploaded.</p>
+        <button type="button" className="primary-action" disabled={busy} onClick={() => act(cloudSignIn)}>{busy ? "Waiting for Google…" : "Sign in with Google"}</button>
+        {message ? <p role="status" className="settings-hint">{message}</p> : null}
+      </section>
+    );
+  }
+
+  return (
+    <section className="settings-section accounts-manager" aria-label="Three Strands Account">
+      <div className="accounts-manager-header">
+        <div><h3>{status.profile?.displayName ?? status.profile?.email}</h3><p className="settings-hint">{status.profile?.email}</p></div>
+        <button type="button" className="account-action-button" disabled={busy} onClick={() => act(cloudSignOut)}>Sign out</button>
+      </div>
+      {!status.syncEntitled ? (
+        <div className="accounts-config-notice"><strong>Sync is not enabled for this account</strong><p>Your account is ready, but it has not received a beta sync entitlement. Local features remain available.</p></div>
+      ) : !status.enrollmentConfirmed ? (
+        <div className="accounts-config-notice">
+          <strong>Review what will be synchronized</strong>
+          <p>Tasks (including subject snapshots and evidence), snippets, Split Inboxes, mail and calendar account metadata, calendar selections, retention, and portable preferences will be readable by the Three Strands service.</p>
+          <p>Mail bodies, drafts, attachments, provider tokens, AI keys, crash reports, and device layout stay on this computer. Existing local collections are merged without deletion; cloud portable preferences win on an already-enrolled account.</p>
+          <button type="button" className="primary-action" disabled={busy} onClick={() => act(confirmCloudEnrollment)}>Enable automatic sync</button>
+        </div>
+      ) : (
+        <>
+          <dl className="sync-details">
+            <dt>Status</dt><dd>{status.error ? "Needs attention" : status.pendingOperations ? "Synchronizing" : "Up to date"}</dd>
+            <dt>Last successful sync</dt><dd>{status.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Not yet"}</dd>
+            <dt>Pending changes</dt><dd>{status.pendingOperations}</dd>
+            <dt>Conflicts</dt><dd>{status.conflictCount}</dd>
+          </dl>
+          {status.error ? <div className="accounts-config-notice"><strong>Synchronization failed</strong><p>{status.error}</p><button type="button" className="account-action-button" disabled={busy} onClick={() => act(retryCloudSync)}>Retry now</button></div> : null}
+          {conflicts.length ? <div><h3>Resolve conflicts</h3>{conflicts.map((conflict) => <CloudConflictEditor key={conflict.id} conflict={conflict} disabled={busy} onResolve={(payload, deleted) => act(() => resolveCloudConflict(conflict.id, conflict.currentVersion, payload, deleted))} />)}</div> : null}
+          <h3>Signed-in devices</h3>
+          <ul className="accounts-list">{devices.map((device) => <li className="account-card" key={device.id}><div className="account-card-row"><div className="account-card-identity"><strong>{device.name}{device.current ? " · This device" : ""}</strong><span className="account-card-email">Last active {new Date(device.lastSeenAt).toLocaleString()}</span></div><button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => act(() => cloudRevokeDevice(device.id))}>{device.current ? "Sign out" : "Revoke"}</button></div></li>)}</ul>
+        </>
+      )}
+      <h3>Delete cloud account</h3>
+      <p className="settings-hint">Deletes synchronized cloud data and sessions. Local data remains on this computer; encrypted backups expire according to the service retention policy.</p>
+      <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => { if (window.confirm("Delete your Three Strands cloud account? Local data will remain on this computer.")) act(cloudDeleteAccount); }}>Delete cloud account</button>
+      {message ? <p role="status" className="settings-hint">{message}</p> : null}
+    </section>
+  );
+}
+
+function CloudConflictEditor({ conflict, disabled, onResolve }: { conflict: CloudConflict; disabled: boolean; onResolve(payload: Record<string, unknown> | null, deleted: boolean): void }) {
+  const fields = conflict.overlappingFields.includes("*") ? ["*"] : conflict.overlappingFields;
+  const [choices, setChoices] = useState<Record<string, "cloud" | "device">>(() => Object.fromEntries(fields.map((field) => [field, "cloud"])));
+  const resolve = () => {
+    if (fields.includes("*")) {
+      const useDevice = choices["*"] === "device";
+      onResolve(useDevice ? conflict.devicePatch : conflict.cloudPayload, useDevice ? conflict.deviceDeleted : conflict.cloudDeleted);
+      return;
+    }
+    const merged = { ...(conflict.cloudPayload ?? {}) };
+    for (const field of fields) if (choices[field] === "device" && conflict.devicePatch && field in conflict.devicePatch) merged[field] = conflict.devicePatch[field];
+    onResolve(merged, false);
+  };
+  return (
+    <div className="accounts-config-notice">
+      <strong>{conflict.entityType.replaceAll("_", " ")} conflict</strong>
+      {fields.map((field) => <fieldset key={field} className="settings-field"><legend>{field === "*" ? "Deletion and edit overlap" : field}</legend><label><input type="radio" name={`${conflict.id}-${field}`} checked={choices[field] === "cloud"} onChange={() => setChoices((value) => ({ ...value, [field]: "cloud" }))} /> Cloud: {JSON.stringify(field === "*" ? conflict.cloudPayload : conflict.cloudPayload?.[field])}</label><label><input type="radio" name={`${conflict.id}-${field}`} checked={choices[field] === "device"} onChange={() => setChoices((value) => ({ ...value, [field]: "device" }))} /> This device: {conflict.deviceDeleted ? "Delete" : JSON.stringify(field === "*" ? conflict.devicePatch : conflict.devicePatch?.[field])}</label></fieldset>)}
+      <button type="button" className="primary-action" disabled={disabled} onClick={resolve}>Resolve conflict</button>
+    </div>
   );
 }
 
@@ -3867,6 +4032,7 @@ function AccountsSettings({
   accounts,
   onAdd,
   onRemove,
+  onRemoveEverywhere,
   onReconnect,
   onSetDisplayName,
   onSetColor,
@@ -3876,6 +4042,7 @@ function AccountsSettings({
   accounts: Account[];
   onAdd(): Promise<void>;
   onRemove(email: string): Promise<void>;
+  onRemoveEverywhere(email: string): Promise<void>;
   onReconnect(email: string): Promise<void>;
   onSetDisplayName(email: string, displayName: string | null): Promise<void>;
   onSetColor(email: string, color: string): Promise<void>;
@@ -4021,6 +4188,18 @@ function AccountsSettings({
                   >
                     Disconnect
                   </button>
+                  <button
+                    type="button"
+                    className="account-action-button danger-action"
+                    disabled={busyEmail !== null}
+                    onClick={() => {
+                      if (window.confirm(`Remove ${account.email} from the synchronized account list on every device?`)) {
+                        act(account.email, () => onRemoveEverywhere(account.email));
+                      }
+                    }}
+                  >
+                    Remove everywhere
+                  </button>
                 </span>
               </div>
             </li>
@@ -4096,6 +4275,7 @@ function CalendarAccountsSettings({
   onAdd,
   onReconnect,
   onRemove,
+  onRemoveEverywhere,
   onSetSelection,
 }: {
   authStatus: AuthStatus | null;
@@ -4105,6 +4285,7 @@ function CalendarAccountsSettings({
   onAdd(): Promise<void>;
   onReconnect(email: string): Promise<void>;
   onRemove(email: string): Promise<void>;
+  onRemoveEverywhere(email: string): Promise<void>;
   onSetSelection(accountId: string, calendarIds: string[]): Promise<void>;
 }) {
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
@@ -4188,6 +4369,18 @@ function CalendarAccountsSettings({
                     onClick={() => act(account.email, () => onRemove(account.email))}
                   >
                     Disconnect
+                  </button>
+                  <button
+                    type="button"
+                    className="account-action-button danger-action"
+                    disabled={busyEmail !== null}
+                    onClick={() => {
+                      if (window.confirm(`Remove ${account.email} from the synchronized calendar list on every device?`)) {
+                        act(account.email, () => onRemoveEverywhere(account.email));
+                      }
+                    }}
+                  >
+                    Remove everywhere
                   </button>
                 </span>
               </div>

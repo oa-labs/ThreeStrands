@@ -7,14 +7,14 @@ impl Database {
     pub fn list_calendar_accounts(&self) -> Result<Vec<CalendarAccount>, String> {
         let connection = self.connection()?;
         let mut statement = connection
-            .prepare("SELECT email, connected_at FROM calendar_accounts ORDER BY connected_at, email")
+            .prepare("SELECT email, connected_at, status FROM calendar_accounts ORDER BY connected_at, email")
             .map_err(display_error)?;
         let rows = statement
             .query_map([], |row| {
                 Ok(CalendarAccount {
                     email: row.get(0)?,
                     connected_at: row.get(1)?,
-                    status: "connected".to_string(),
+                    status: row.get(2)?,
                 })
             })
             .map_err(display_error)?;
@@ -24,8 +24,8 @@ impl Database {
     pub fn adopt_calendar_account(&self, email: &str) -> Result<(), String> {
         self.connection()?
             .execute(
-                "INSERT INTO calendar_accounts(email, connected_at) VALUES (?1, ?2)
-                 ON CONFLICT(email) DO UPDATE SET connected_at = excluded.connected_at",
+                "INSERT INTO calendar_accounts(email, connected_at, status) VALUES (?1, ?2, 'connected')
+                 ON CONFLICT(email) DO UPDATE SET connected_at = excluded.connected_at, status='connected'",
                 params![email, Utc::now().to_rfc3339()],
             )
             .map_err(display_error)?;
@@ -36,6 +36,15 @@ impl Database {
         self.connection()?
             .execute("DELETE FROM calendar_accounts WHERE email = ?1", [email])
             .map_err(display_error)?;
+        Ok(())
+    }
+
+    pub fn disconnect_calendar_account_locally(&self, email: &str) -> Result<(), String> {
+        let changed = self.connection()?.execute(
+            "UPDATE calendar_accounts SET status='needs_reauth' WHERE email=?1",
+            [email],
+        ).map_err(display_error)?;
+        if changed == 0 { return Err("Calendar account not found".to_string()); }
         Ok(())
     }
 

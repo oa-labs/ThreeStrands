@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.17.4"
+version = "0.18.1"
 description = "A local-first, keyboard-driven email client"
 authors = ["ThreeStrands contributors"]
 edition = "2021"
@@ -47,6 +47,7 @@ unicode-normalization = "0.1"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 zstd = "0.13"
+threestrands-sync-protocol = { path = "../crates/sync-protocol" }
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"

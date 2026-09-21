@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 24;
+pub(crate) const LATEST_VERSION: i64 = 26;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -141,6 +141,15 @@ CREATE TABLE IF NOT EXISTS pinned_contacts (
 
 fn error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn has_column(transaction: &rusqlite::Transaction<'_>, table: &str, column: &str) -> Result<bool, String> {
+    let mut statement = transaction.prepare(&format!("PRAGMA table_info({table})")).map_err(error)?;
+    let names = statement.query_map([], |row| row.get::<_, String>(1)).map_err(error)?;
+    for name in names {
+        if name.map_err(error)? == column { return Ok(true); }
+    }
+    Ok(false)
 }
 
 fn json<T: serde::Serialize>(value: &T) -> Result<String, String> {
@@ -526,6 +535,73 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             PRAGMA user_version=25;",
         )
         .map_err(error)?;
+    }
+    if version < 26 {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cloud_account_state (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                user_id TEXT,
+                email TEXT,
+                display_name TEXT,
+                avatar_url TEXT,
+                device_id TEXT NOT NULL,
+                cursor INTEGER NOT NULL DEFAULT 0,
+                enrollment_confirmed INTEGER NOT NULL DEFAULT 0,
+                sync_entitled INTEGER NOT NULL DEFAULT 0,
+                last_successful_sync TEXT,
+                last_error TEXT
+            );
+            CREATE TABLE IF NOT EXISTS cloud_sync_metadata (
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                server_version INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(entity_type, entity_id)
+            );
+            CREATE TABLE IF NOT EXISTS cloud_sync_outbox (
+                operation_id TEXT PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                base_version INTEGER NOT NULL,
+                changed_fields TEXT NOT NULL,
+                patch TEXT,
+                deleted INTEGER NOT NULL DEFAULT 0,
+                local_sequence INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS cloud_sync_outbox_sequence ON cloud_sync_outbox(local_sequence);
+            CREATE TABLE IF NOT EXISTS cloud_sync_conflicts (
+                id TEXT PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                current_version INTEGER NOT NULL,
+                overlapping_fields TEXT NOT NULL,
+                cloud_payload TEXT,
+                device_patch TEXT,
+                device_deleted INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS cloud_preferences (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT OR IGNORE INTO cloud_account_state(singleton,device_id)
+              VALUES(1, lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-a' || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6))));
+            ",
+        )
+        .map_err(error)?;
+        if !has_column(&tx, "snippets", "updated_at")? {
+            tx.execute("ALTER TABLE snippets ADD COLUMN updated_at TEXT", []).map_err(error)?;
+        }
+        tx.execute("UPDATE snippets SET updated_at=created_at WHERE updated_at IS NULL", []).map_err(error)?;
+        if !has_column(&tx, "split_inboxes", "updated_at")? {
+            tx.execute("ALTER TABLE split_inboxes ADD COLUMN updated_at TEXT", []).map_err(error)?;
+        }
+        tx.execute("UPDATE split_inboxes SET updated_at=created_at WHERE updated_at IS NULL", []).map_err(error)?;
+        if !has_column(&tx, "calendar_accounts", "status")? {
+            tx.execute("ALTER TABLE calendar_accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'connected' CHECK(status IN ('connected','needs_reauth'))", []).map_err(error)?;
+        }
+        tx.pragma_update(None, "user_version", 26).map_err(error)?;
     }
     tx.commit().map_err(error)?;
 

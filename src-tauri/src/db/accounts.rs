@@ -201,6 +201,26 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
+    /// Removes provider-owned/cache state on this installation while keeping
+    /// Three Strands-owned workflow records and the synchronized catalog row.
+    pub fn disconnect_account_locally(&self, email: &str) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(display_error)?;
+        transaction.execute(
+            "DELETE FROM thread_search WHERE thread_id IN (SELECT id FROM threads WHERE account_id=?1)",
+            [email],
+        ).map_err(display_error)?;
+        for table in ["threads", "mutations", "sync_state", "pinned_contacts", "sync_recovery_threads", "sync_recovery", "quarantined_messages", "triage_events"] {
+            transaction.execute(&format!("DELETE FROM {table} WHERE account_id=?1"), [email]).map_err(display_error)?;
+        }
+        transaction.execute(
+            "UPDATE accounts SET status='needs_reauth',last_synced_at=NULL WHERE email=?1",
+            [email],
+        ).map_err(display_error)?;
+        transaction.execute("INSERT OR IGNORE INTO sync_state(account_id) VALUES(?1)", [email]).map_err(display_error)?;
+        transaction.commit().map_err(display_error)
+    }
+
     pub fn set_account_color(&self, email: &str, color: &str) -> Result<(), String> {
         let changed = self
             .connection()?

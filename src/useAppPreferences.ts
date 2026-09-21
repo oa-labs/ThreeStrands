@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   applyFontScale,
   changeFontScale,
@@ -24,6 +25,7 @@ import {
   saveTheme,
   type Theme,
 } from "./theme";
+import { pullCloudPreferences, queuePortablePreferences } from "./cloudAccount";
 
 /**
  * Owns the persisted preferences that affect the whole application.
@@ -40,6 +42,25 @@ export function useAppPreferences() {
   const [loadRemoteImages, setLoadRemoteImagesState] = useState(readLoadRemoteImages);
   const [availabilityPreferences, setAvailabilityPreferencesState] = useState(readAvailabilityPreferences);
 
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    const applyCloud = () => {
+      void pullCloudPreferences().then((changed) => {
+        if (!changed) return;
+        setThemeState(readTheme());
+        setFontScaleState(readFontScale());
+        setFontFamilyState(readFontFamily());
+        setAutoReadDelayState(readAutoReadDelaySeconds());
+        setLoadRemoteImagesState(readLoadRemoteImages());
+        setAvailabilityPreferencesState(readAvailabilityPreferences());
+      });
+    };
+    applyCloud();
+    let stop: (() => void) | undefined;
+    void listen("cloud-sync-status", applyCloud).then((unlisten) => { stop = unlisten; });
+    return () => stop?.();
+  }, []);
+
   useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => applyFontScale(fontScale), [fontScale]);
   useEffect(() => applyFontFamily(fontFamily), [fontFamily]);
@@ -55,31 +76,39 @@ export function useAppPreferences() {
   const setTheme = useCallback((next: Theme) => {
     saveTheme(next);
     setThemeState(next);
+    queuePortablePreferences();
   }, []);
   const toggleTheme = useCallback(() => {
     setThemeState((current) => {
       const next = effectiveTheme(current) === "dark" ? "light" : "dark";
       saveTheme(next);
+      queuePortablePreferences();
       return next;
     });
   }, []);
   const setFontScale = useCallback((value: number) => {
     setFontScaleState(saveFontScale(value));
+    queuePortablePreferences();
   }, []);
   const adjustFontScale = useCallback((direction: 1 | -1) => {
     setFontScaleState((current) => saveFontScale(changeFontScale(current, direction)));
+    queuePortablePreferences();
   }, []);
   const setFontFamily = useCallback((value: FontFamily) => {
     setFontFamilyState(saveFontFamily(value));
+    queuePortablePreferences();
   }, []);
   const setAutoReadDelaySeconds = useCallback((value: number) => {
     setAutoReadDelayState(saveAutoReadDelaySeconds(value));
+    queuePortablePreferences();
   }, []);
   const setLoadRemoteImages = useCallback((value: boolean) => {
     setLoadRemoteImagesState(saveLoadRemoteImages(value));
+    queuePortablePreferences();
   }, []);
   const setAvailabilityPreferences = useCallback((value: Parameters<typeof saveAvailabilityPreferences>[0]) => {
     setAvailabilityPreferencesState(saveAvailabilityPreferences(value));
+    queuePortablePreferences();
   }, []);
 
   return {

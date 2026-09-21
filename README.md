@@ -12,7 +12,7 @@ The core experience combines:
 - reliable archive, read, star, label, and eventual follow-up workflows;
 - offline access backed by a local SQLite cache; and
 - a privacy-conscious desktop architecture that connects directly to mail
-  providers without requiring a ThreeStrands backend.
+  providers without requiring a ThreeStrands backend in the free, signed-out mode.
 
 ThreeStrands currently targets Gmail through a standalone Tauri desktop
 application. OAuth credentials are kept in the operating-system keychain,
@@ -76,7 +76,12 @@ operating-system keychain. Never commit the credential value.
 3. Users can see and control what is synchronized or sent to optional services.
 4. Provider-specific behavior is isolated behind a tested capability contract.
 5. The desktop client connects directly to mail providers and requires no
-   project-operated backend.
+   project-operated backend for local-only use. An optional account service
+   synchronizes application-owned workflow data across devices.
+
+The optional account/sync service is documented in
+[`docs/account-sync.md`](docs/account-sync.md). It never proxies ordinary mail
+access or receives provider credentials.
 
 ## Independent implementation
 
