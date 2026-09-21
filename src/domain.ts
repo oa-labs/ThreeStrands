@@ -333,6 +333,14 @@ export type SplitInbox = {
   accountId: string;
 };
 
+/** Global (not per-account) — unlike a `SplitInbox`, a snippet has no owning account. */
+export type Snippet = {
+  id: string;
+  name: string;
+  body: string;
+  createdAt: string;
+};
+
 export type SyncStatus = {
   state: "idle" | "syncing" | "offline" | "error";
   lastSuccessfulSync: string | null;

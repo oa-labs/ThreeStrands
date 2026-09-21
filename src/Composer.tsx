@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { Paperclip, Send, Sparkles, Trash2, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem } from "./correspondence";
-import type { Account, ReplyAssistContext } from "./domain";
+import type { Account, ReplyAssistContext, Snippet } from "./domain";
 import {
   isAiApiKeyConfigured,
   readAiEndpoint,
@@ -21,6 +21,9 @@ import {
   sanitizeComposeHtml,
   serializeComposeHtml,
 } from "./richText";
+import { SnippetPicker } from "./SnippetPicker";
+import { firstNameFromRecipient, renderSnippetBody } from "./snippets";
+import { recordSnippetUsed } from "./settings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
 export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; draftReplyWithAI(): void };
@@ -44,6 +47,9 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   const [replyAssistError, setReplyAssistError] = useState("");
   const insertedAvailabilityText = useRef<string | null>(null);
   const [confirmAddToExisting, setConfirmAddToExisting] = useState(false);
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
+  const savedSnippetRange = useRef<Range | null>(null);
   const panel = useRef<HTMLDivElement>(null);
   const bodyEditor = useRef<HTMLDivElement>(null);
   const pendingRecipientFocus = useRef<"cc" | "bcc" | null>(null);
@@ -312,6 +318,9 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     if (!replyAssistOpen) void openReplyAssist();
   }, [replyAssistAvailable, replyAssistInstruction, replyAssistOpen]);
   useEffect(() => {
+    void mailClient.listSnippets().then((loaded) => { if (mounted.current) setSnippets(loaded); }).catch(() => {});
+  }, []);
+  useEffect(() => {
     const field = pendingRecipientFocus.current;
     if (!field || !showBlankCopies) return;
     pendingRecipientFocus.current = null;
@@ -410,6 +419,13 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
             window.addEventListener("pointerup", finish, { once: true });
           }}
           onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === ";") {
+              event.preventDefault();
+              const selection = window.getSelection();
+              savedSnippetRange.current = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+              setSnippetPickerOpen(true);
+              return;
+            }
             const resize = (event.target as Element).closest<HTMLElement>("[data-compose-image-resize]");
             if (resize && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
               const wrapper = resize.closest<HTMLElement>("[data-compose-image]");
@@ -509,6 +525,41 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
       </div>
       <footer><button className="send-button" onClick={() => send()} disabled={busy}><Send size={16} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button onClick={attach} disabled={busy} aria-label="Attach files"><Paperclip size={17} /></button><span className="save-status" role="status">{status}</span><button disabled={busy} aria-label="Discard draft" onClick={() => void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); })}><Trash2 size={16} /></button></footer>
       <p className="compose-note">Drafts are saved on this device. Send has a 10-second undo window.{!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}</p>
+      {snippetPickerOpen ? (
+        <SnippetPicker
+          snippets={snippets}
+          onClose={() => setSnippetPickerOpen(false)}
+          onInsert={(snippet) => {
+            recordSnippetUsed(snippet.id);
+            setSnippetPickerOpen(false);
+            const editor = bodyEditor.current;
+            if (!editor) return;
+            editor.focus();
+            const selection = window.getSelection();
+            if (selection && savedSnippetRange.current) {
+              selection.removeAllRanges();
+              selection.addRange(savedSnippetRange.current);
+            }
+            const rendered = renderSnippetBody(snippet.body, { firstName: firstNameFromRecipient(draft.to) });
+            document.execCommand("insertHTML", false, rendered);
+            editBody(editor);
+          }}
+          onCreate={async (name, body) => {
+            const snippet = await mailClient.createSnippet(name, body);
+            setSnippets((current) => [...current, snippet]);
+            return snippet;
+          }}
+          onUpdate={async (id, name, body) => {
+            const snippet = await mailClient.updateSnippet(id, name, body);
+            setSnippets((current) => current.map((candidate) => (candidate.id === id ? snippet : candidate)));
+            return snippet;
+          }}
+          onDelete={async (id) => {
+            await mailClient.deleteSnippet(id);
+            setSnippets((current) => current.filter((candidate) => candidate.id !== id));
+          }}
+        />
+      ) : null}
   </div>;
 });
 

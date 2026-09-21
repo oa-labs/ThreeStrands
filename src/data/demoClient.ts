@@ -13,6 +13,7 @@ import type {
   Label,
   ReplyAssistContext,
   ReplyAssistResult,
+  Snippet,
   SplitInbox,
   SummaryResult,
   SyncStatus,
@@ -110,6 +111,7 @@ let labels: Label[] = [
 ];
 let splitInboxes: SplitInbox[] = [];
 let tasks: ThreadTask[] = [];
+let snippets: Snippet[] = [];
 
 const details: Record<string, string> = {
   welcome: `
@@ -825,5 +827,36 @@ export const demoClient: MailClient = {
   async listSplitInboxPage(splitInboxId, offset, limit): Promise<ThreadPage> {
     const items = visibleSplitInbox(splitInboxId);
     return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
+  },
+  async listSnippets() {
+    return structuredClone(snippets);
+  },
+  async createSnippet(name, body) {
+    const normalizedName = name.trim();
+    const normalizedBody = body.trim();
+    if (!normalizedName) throw new Error("Snippet name cannot be empty");
+    if (!normalizedBody) throw new Error("Snippet body cannot be empty");
+    const snippet: Snippet = {
+      id: `demo-${crypto.randomUUID()}`,
+      name: normalizedName,
+      body: normalizedBody,
+      createdAt: new Date().toISOString(),
+    };
+    snippets = [...snippets, snippet];
+    return structuredClone(snippet);
+  },
+  async updateSnippet(id, name, body) {
+    const snippet = snippets.find((candidate) => candidate.id === id);
+    if (!snippet) throw new Error("Snippet not found");
+    const normalizedName = name.trim();
+    const normalizedBody = body.trim();
+    if (!normalizedName) throw new Error("Snippet name cannot be empty");
+    if (!normalizedBody) throw new Error("Snippet body cannot be empty");
+    snippet.name = normalizedName;
+    snippet.body = normalizedBody;
+    return structuredClone(snippet);
+  },
+  async deleteSnippet(id) {
+    snippets = snippets.filter((candidate) => candidate.id !== id);
   },
 };

@@ -1334,6 +1334,17 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .rename-label { display: flex; gap: 7px; padding: 10px 14px; border-top: 1px solid var(--border); }
 .rename-label input { min-width: 0; flex: 1; padding: 7px 9px; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); background: var(--input); }
 .rename-label button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--hover); cursor: pointer; }
+.snippet-option-name { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.snippet-option-preview { color: var(--muted); font-size: calc(12px * var(--font-scale)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+.snippet-editor-form { display: flex; flex-direction: column; gap: 12px; padding: 4px 14px 14px; }
+.snippet-field { display: flex; flex-direction: column; gap: 5px; font-size: calc(13px * var(--font-scale)); }
+.snippet-field > span { color: var(--muted); }
+.snippet-field input, .snippet-field textarea { color: var(--text); background: var(--input); border: 1px solid var(--border-strong); border-radius: 7px; padding: 8px 10px; outline: none; font: inherit; resize: vertical; }
+.snippet-field input:focus, .snippet-field textarea:focus { border-color: var(--accent); }
+.snippet-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.snippet-editor-actions button { padding: 7px 14px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--hover); cursor: pointer; }
+.snippet-editor-actions button[type="submit"] { border-color: var(--accent); background: var(--accent); color: var(--accent-contrast, #fff); }
+.snippet-editor-actions button:disabled { opacity: .5; cursor: default; }
 .accounts-manager { width: 100%; padding: 10px 20px 24px; }
 .accounts-manager-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; width: 100%; }
 .accounts-manager-header h3 { margin-top: 0; }

@@ -21,6 +21,7 @@ import type {
   ReplyAssistResult,
   SearchThreadsRequest,
   ScheduleResult,
+  Snippet,
   SplitInbox,
   SplitInboxMatchKind,
   SummaryResult,
@@ -133,6 +134,10 @@ export interface MailClient extends CorrespondenceClient {
   reorderSplitInboxes(ids: string[]): Promise<void>;
   /** Always scoped to the split's own account — see `SplitInbox.accountId`. */
   listSplitInboxPage(splitInboxId: string, offset: number, limit: number): Promise<ThreadPage>;
+  listSnippets(): Promise<Snippet[]>;
+  createSnippet(name: string, body: string): Promise<Snippet>;
+  updateSnippet(id: string, name: string, body: string): Promise<Snippet>;
+  deleteSnippet(id: string): Promise<void>;
   listTasks(accountId?: string, status?: ThreadTask["status"]): Promise<ThreadTask[]>;
   createTask(request: CreateTaskRequest): Promise<ThreadTask>;
   updateTask(request: UpdateTaskRequest): Promise<ThreadTask>;
@@ -220,6 +225,10 @@ const tauriClient: MailClient = {
   reorderSplitInboxes: (ids) => complete("reorder_split_inboxes", { ids }),
   listSplitInboxPage: (splitInboxId, offset, limit) =>
     read("list_split_inbox_page", { splitInboxId, offset, limit }),
+  listSnippets: () => read("list_snippets"),
+  createSnippet: (name, body) => complete("create_snippet", { request: { name, body } }),
+  updateSnippet: (id, name, body) => complete("update_snippet", { request: { id, name, body } }),
+  deleteSnippet: (id) => complete("delete_snippet", { id }),
   listTasks: (accountId, status) => read("list_tasks", { accountId, status }),
   createTask: (request) => complete("create_task", { request }),
   updateTask: (request) => complete("update_task", { request }),

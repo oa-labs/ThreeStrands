@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 22;
+pub(crate) const LATEST_VERSION: i64 = 24;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -473,6 +473,18 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         tx.execute_batch(
             "ALTER TABLE outbox_messages ADD COLUMN archive_on_send INTEGER NOT NULL DEFAULT 0;
             PRAGMA user_version=23;",
+        )
+        .map_err(error)?;
+    }
+    if version < 24 {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS snippets (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            PRAGMA user_version=24;",
         )
         .map_err(error)?;
     }

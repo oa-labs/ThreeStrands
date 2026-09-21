@@ -601,6 +601,33 @@ pub struct UpdateSplitInboxRequest {
     pub name: String,
 }
 
+/// A user-authored canned-text template inserted into a compose body via the
+/// snippet picker. Purely local, and global across accounts — unlike
+/// `SplitInbox`, there's no per-account ownership.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snippet {
+    pub id: String,
+    pub name: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSnippetRequest {
+    pub name: String,
+    pub body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSnippetRequest {
+    pub id: String,
+    pub name: String,
+    pub body: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatus {

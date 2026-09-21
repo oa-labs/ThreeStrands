@@ -28,10 +28,10 @@ use chrono::Utc;
 use db::Database;
 use models::{
     ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, CreateLabelRequest,
-    CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
-    FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, SplitInbox, SummaryResult, SyncStatus, Thread,
+    CreateSnippetRequest, CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
+    FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
-    UpdateLabelRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
+    UpdateLabelRequest, UpdateSnippetRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -1459,6 +1459,34 @@ fn list_split_inbox_page(
 }
 
 #[tauri::command]
+fn list_snippets(state: State<'_, AppState>) -> Result<Vec<Snippet>, String> {
+    state.database.list_snippets()
+}
+
+#[tauri::command]
+fn create_snippet(
+    request: CreateSnippetRequest,
+    state: State<'_, AppState>,
+) -> Result<Snippet, String> {
+    state.database.create_snippet(&request.name, &request.body)
+}
+
+#[tauri::command]
+fn update_snippet(
+    request: UpdateSnippetRequest,
+    state: State<'_, AppState>,
+) -> Result<Snippet, String> {
+    state
+        .database
+        .update_snippet(&request.id, &request.name, &request.body)
+}
+
+#[tauri::command]
+fn delete_snippet(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.delete_snippet(&id)
+}
+
+#[tauri::command]
 async fn list_labels(
     account_id: Option<String>,
     state: State<'_, AppState>,
@@ -1962,6 +1990,10 @@ pub fn run() {
             delete_split_inbox,
             reorder_split_inboxes,
             list_split_inbox_page,
+            list_snippets,
+            create_snippet,
+            update_snippet,
+            delete_snippet,
             list_labels,
             create_label,
             update_label,

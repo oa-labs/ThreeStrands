@@ -14,7 +14,7 @@ use crate::{
     ai::AiProvider,
     correspondence::validate_retention_days,
     db::Database,
-    models::{is_known_account_provider, Account, AvailabilityPreferences, SplitInbox},
+    models::{is_known_account_provider, Account, AvailabilityPreferences, Snippet, SplitInbox},
 };
 
 const FORMAT: &str = "dispatch-settings";
@@ -159,6 +159,26 @@ impl From<SplitInbox> for TransferSplitInbox {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TransferSnippet {
+    pub id: String,
+    pub name: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+impl From<Snippet> for TransferSnippet {
+    fn from(snippet: Snippet) -> Self {
+        Self {
+            id: snippet.id,
+            name: snippet.name,
+            body: snippet.body,
+            created_at: snippet.created_at,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TransferPayload {
@@ -167,6 +187,8 @@ struct TransferPayload {
     preferences: TransferPreferences,
     accounts: Vec<TransferAccount>,
     split_inboxes: Vec<TransferSplitInbox>,
+    #[serde(default)]
+    snippets: Vec<TransferSnippet>,
     retention_days: Option<i64>,
 }
 
@@ -232,6 +254,24 @@ impl TransferPayload {
                 );
             }
         }
+        let mut snippet_ids = HashSet::new();
+        for snippet in &self.snippets {
+            validate_required_text("Snippet id", &snippet.id, 128)?;
+            if !snippet_ids.insert(&snippet.id) {
+                return Err("The transfer contains a duplicate Snippet".to_string());
+            }
+            validate_required_text("Snippet name", &snippet.name, 200)?;
+            // Unlike the other transferred text fields, a snippet body is
+            // stored HTML and may legitimately contain newlines, so it isn't
+            // run through `validate_text`'s single-line control-character
+            // check — only its length and emptiness matter here.
+            if snippet.body.len() > 20_000 {
+                return Err("The transfer contains an invalid Snippet body".to_string());
+            }
+            if snippet.body.trim().is_empty() {
+                return Err("The transfer contains an invalid Snippet body".to_string());
+            }
+        }
         Ok(())
     }
 }
@@ -254,6 +294,7 @@ pub struct ImportResult {
     pub preferences: TransferPreferences,
     pub account_count: usize,
     pub split_inbox_count: usize,
+    pub snippet_count: usize,
 }
 
 pub fn export(
@@ -273,12 +314,18 @@ pub fn export(
         .into_iter()
         .map(TransferSplitInbox::from)
         .collect();
+    let snippets = database
+        .list_snippets()?
+        .into_iter()
+        .map(TransferSnippet::from)
+        .collect();
     let payload = TransferPayload {
         version: VERSION,
         exported_at: Utc::now().to_rfc3339(),
         preferences,
         accounts,
         split_inboxes,
+        snippets,
         retention_days: database.retention_days()?,
     };
     let encoded = encrypt(&payload, password)?;
@@ -310,12 +357,14 @@ pub fn import(database: &Database, password: &str) -> Result<Option<ImportResult
     database.import_transfer_data(
         &payload.accounts,
         &payload.split_inboxes,
+        &payload.snippets,
         payload.retention_days,
     )?;
     Ok(Some(ImportResult {
         preferences: payload.preferences,
         account_count: payload.accounts.len(),
         split_inbox_count: payload.split_inboxes.len(),
+        snippet_count: payload.snippets.len(),
     }))
 }
 
@@ -464,6 +513,7 @@ mod tests {
                 sort_order: 0,
             }],
             split_inboxes: vec![],
+            snippets: vec![],
             retention_days: Some(90),
         }
     }
@@ -595,6 +645,53 @@ mod tests {
         decoded.validate().unwrap();
 
         assert_eq!(decoded.split_inboxes[0].account_id, "person@example.com");
+    }
+
+    #[test]
+    fn snippets_round_trip_through_the_encrypted_transfer() {
+        let mut candidate = payload();
+        candidate.snippets = vec![TransferSnippet {
+            id: "snippet-1".to_string(),
+            name: "Zoom link".to_string(),
+            body: "We can use my Zoom link: zoom.us/1234567890".to_string(),
+            created_at: "2026-03-06T00:00:00Z".to_string(),
+        }];
+        candidate.validate().unwrap();
+        let encoded = encrypt(&candidate, "correct horse").unwrap();
+        let decoded = decrypt(&encoded, "correct horse").unwrap();
+        assert_eq!(decoded.snippets[0].name, "Zoom link");
+    }
+
+    #[test]
+    fn an_export_from_before_snippets_existed_defaults_to_an_empty_list() {
+        let mut serialized = serde_json::to_value(payload()).unwrap();
+        serialized.as_object_mut().unwrap().remove("snippets");
+        let decoded: TransferPayload = serde_json::from_value(serialized).unwrap();
+        assert!(decoded.snippets.is_empty());
+        decoded.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_a_duplicate_snippet_id() {
+        let mut candidate = payload();
+        candidate.snippets = vec![
+            TransferSnippet {
+                id: "dup".to_string(),
+                name: "One".to_string(),
+                body: "Body one".to_string(),
+                created_at: "2026-03-06T00:00:00Z".to_string(),
+            },
+            TransferSnippet {
+                id: "dup".to_string(),
+                name: "Two".to_string(),
+                body: "Body two".to_string(),
+                created_at: "2026-03-06T00:00:00Z".to_string(),
+            },
+        ];
+        assert_eq!(
+            candidate.validate().unwrap_err(),
+            "The transfer contains a duplicate Snippet"
+        );
     }
 
     #[test]

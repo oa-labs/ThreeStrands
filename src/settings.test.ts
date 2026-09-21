@@ -14,7 +14,9 @@ import {
   readLoadRemoteImages,
   readSelectedAccountId,
   readSelectedTabForAccount,
+  readSnippetUsage,
   recordLabelUsed,
+  recordSnippetUsed,
   saveAutoReadDelaySeconds,
   saveAvailabilityPreferences,
   saveFontFamily,
@@ -203,5 +205,35 @@ describe("label usage tracking", () => {
   it("ignores a corrupted stored map", () => {
     localStorage.setItem("threestrands.settings.labelUsageByAccount", "not json");
     expect(readLabelUsage("work@example.com")).toEqual({});
+  });
+});
+
+describe("snippet usage tracking", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("has no usage until a snippet is recorded", () => {
+    expect(readSnippetUsage()).toEqual({});
+  });
+
+  it("records a timestamp per snippet, global across accounts", () => {
+    recordSnippetUsed("snippet-1");
+    recordSnippetUsed("snippet-2");
+    const usage = readSnippetUsage();
+    expect(Object.keys(usage).sort()).toEqual(["snippet-1", "snippet-2"]);
+    expect(usage["snippet-1"]).toBeGreaterThan(0);
+  });
+
+  it("updates the timestamp when the same snippet is used again", () => {
+    recordSnippetUsed("snippet-1");
+    const first = readSnippetUsage()["snippet-1"];
+    recordSnippetUsed("snippet-1");
+    expect(readSnippetUsage()["snippet-1"]).toBeGreaterThanOrEqual(first);
+  });
+
+  it("ignores a corrupted stored map", () => {
+    localStorage.setItem("threestrands.settings.snippetUsage", "not json");
+    expect(readSnippetUsage()).toEqual({});
   });
 });

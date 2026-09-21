@@ -11,15 +11,16 @@ use uuid::Uuid;
 use crate::mime::{RawMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
     Account, CalendarAccount, ContactSuggestion, FailedMutation, MailboxUnreadCounts, Message,
-    SearchThreadsRequest, QuarantinedMessage, SplitInbox, SyncStatus, Thread, ThreadDetail,
+    SearchThreadsRequest, QuarantinedMessage, Snippet, SplitInbox, SyncStatus, Thread, ThreadDetail,
     ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
     UnsubscribeMethod, UnsubscribeTarget,
 };
-use crate::transfer::{TransferAccount, TransferSplitInbox};
+use crate::transfer::{TransferAccount, TransferSnippet, TransferSplitInbox};
 
 mod accounts;
 mod calendar_accounts;
 mod contacts;
+mod snippets;
 mod split_inboxes;
 mod tasks;
 mod threads;
@@ -2164,6 +2165,7 @@ impl Database {
         &self,
         accounts: &[TransferAccount],
         split_inboxes: &[TransferSplitInbox],
+        snippets: &[TransferSnippet],
         retention_days: Option<i64>,
     ) -> Result<(), String> {
         let mut connection = self.connection()?;
@@ -2215,6 +2217,18 @@ impl Database {
                         split.created_at,
                         split.account_id,
                     ],
+                )
+                .map_err(display_error)?;
+        }
+
+        transaction
+            .execute("DELETE FROM snippets", [])
+            .map_err(display_error)?;
+        for snippet in snippets {
+            transaction
+                .execute(
+                    "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, ?3, ?4)",
+                    params![snippet.id, snippet.name, snippet.body, snippet.created_at],
                 )
                 .map_err(display_error)?;
         }
@@ -2339,6 +2353,67 @@ impl Database {
                 .map_err(display_error)?;
         }
         transaction.commit().map_err(display_error)
+    }
+
+    pub fn create_snippet(&self, name: &str, body: &str) -> Result<Snippet, String> {
+        let name = name.trim();
+        let body = body.trim();
+        if name.is_empty() {
+            return Err("Snippet name cannot be empty".to_string());
+        }
+        if body.is_empty() {
+            return Err("Snippet body cannot be empty".to_string());
+        }
+        let id = Uuid::new_v4().to_string();
+        let created_at = Utc::now().to_rfc3339();
+        self.connection()?
+            .execute(
+                "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![id, name, body, created_at],
+            )
+            .map_err(display_error)?;
+        Ok(Snippet {
+            id,
+            name: name.to_string(),
+            body: body.to_string(),
+            created_at,
+        })
+    }
+
+    pub fn update_snippet(&self, id: &str, name: &str, body: &str) -> Result<Snippet, String> {
+        let name = name.trim();
+        let body = body.trim();
+        if name.is_empty() {
+            return Err("Snippet name cannot be empty".to_string());
+        }
+        if body.is_empty() {
+            return Err("Snippet body cannot be empty".to_string());
+        }
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE snippets SET name = ?1, body = ?2 WHERE id = ?3",
+                params![name, body, id],
+            )
+            .map_err(display_error)?;
+        if changed == 0 {
+            return Err("Snippet not found".to_string());
+        }
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT id, name, body, created_at FROM snippets WHERE id = ?1",
+                [id],
+                snippet_from_row,
+            )
+            .map_err(display_error)
+    }
+
+    pub fn delete_snippet(&self, id: &str) -> Result<(), String> {
+        self.connection()?
+            .execute("DELETE FROM snippets WHERE id = ?1", [id])
+            .map_err(display_error)?;
+        Ok(())
     }
 
     /// Filters the same unarchived/untrashed base set `list_threads` uses
@@ -2535,6 +2610,15 @@ fn split_inbox_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SplitInbox>
         sort_order: row.get(4)?,
         created_at: row.get(5)?,
         account_id: row.get(6)?,
+    })
+}
+
+fn snippet_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Snippet> {
+    Ok(Snippet {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        body: row.get(2)?,
+        created_at: row.get(3)?,
     })
 }
 
@@ -2809,6 +2893,12 @@ mod tests {
                     created_at: "2026-03-06T00:00:00Z".to_string(),
                     account_id: "new@example.com".to_string(),
                 }],
+                &[TransferSnippet {
+                    id: "imported-snippet".to_string(),
+                    name: "Imported snippet".to_string(),
+                    body: "Body".to_string(),
+                    created_at: "2026-03-06T00:00:00Z".to_string(),
+                }],
                 Some(90),
             )
             .unwrap();
@@ -2832,6 +2922,9 @@ mod tests {
         let splits = database.list_split_inboxes().unwrap();
         assert_eq!(splits.len(), 1);
         assert_eq!(splits[0].name, "Imported rule");
+        let snippets = database.list_snippets().unwrap();
+        assert_eq!(snippets.len(), 1);
+        assert_eq!(snippets[0].name, "Imported snippet");
         assert_eq!(database.retention_days().unwrap(), Some(90));
     }
 

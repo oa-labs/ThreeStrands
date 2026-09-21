@@ -312,3 +312,49 @@ export function recordLabelUsed(accountId: string, labelId: string): void {
     // "recently used" sorting falls back to alphabetical order.
   }
 }
+
+const SNIPPET_USAGE_KEY = "threestrands.settings.snippetUsage";
+const MAX_SNIPPET_ID_LENGTH = 200;
+
+/**
+ * Snippet id to the epoch millisecond it was last inserted. Snippets are
+ * global (not per-account like labels), so this is a flat map rather than
+ * one keyed by account.
+ */
+type SnippetUsage = Record<string, number>;
+
+function validSnippetUsage(value: unknown): value is SnippetUsage {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.entries(value).every(
+    ([snippetId, timestamp]) =>
+      snippetId.length > 0
+      && snippetId.length <= MAX_SNIPPET_ID_LENGTH
+      && typeof timestamp === "number"
+      && Number.isFinite(timestamp),
+  );
+}
+
+export function readSnippetUsage(): SnippetUsage {
+  try {
+    const saved = localStorage.getItem(SNIPPET_USAGE_KEY);
+    if (saved) {
+      const parsed: unknown = JSON.parse(saved);
+      if (validSnippetUsage(parsed)) return parsed;
+    }
+  } catch {
+    // A blocked or corrupted storage backend should not prevent the app from opening.
+  }
+  return {};
+}
+
+export function recordSnippetUsed(snippetId: string): void {
+  try {
+    const saved = localStorage.getItem(SNIPPET_USAGE_KEY);
+    const parsed: unknown = saved ? JSON.parse(saved) : {};
+    const current = validSnippetUsage(parsed) ? parsed : {};
+    localStorage.setItem(SNIPPET_USAGE_KEY, JSON.stringify({ ...current, [snippetId]: Date.now() }));
+  } catch {
+    // Usage tracking is best-effort; a blocked storage backend just means
+    // "recently used" sorting falls back to alphabetical order.
+  }
+}
