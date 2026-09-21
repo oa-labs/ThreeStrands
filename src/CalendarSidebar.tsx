@@ -229,14 +229,15 @@ export function CalendarSidebar({
   const gridRef = useRef<HTMLDivElement>(null);
   useEscapeDismiss(onClose, !embedded);
   const hasWorkingHours = hasWorkingHoursOnDate(date, availabilityPreferences);
+  const canCheckAvailability = hasWorkingHours && date >= startOfLocalDay(new Date());
 
   useEffect(() => {
-    if (hasWorkingHours) return;
+    if (canCheckAvailability) return;
     setAvailability(null);
     setAvailabilityError(null);
     setSelectedCandidates(new Set());
     setAvailabilityDialogOpen(false);
-  }, [hasWorkingHours]);
+  }, [canCheckAvailability]);
 
   const load = useCallback(async (target: Date) => {
     setSelectedEvent(null);
@@ -372,7 +373,7 @@ export function CalendarSidebar({
         </div>
       ) : null}
       <div className="calendar-timezone">{timeZoneLabel(date)}</div>
-      {hasWorkingHours ? (
+      {canCheckAvailability ? (
         <section className="availability-panel" aria-label="Check availability">
           <div className="availability-panel-header"><strong>Find a time</strong><button type="button" onClick={() => setAvailabilityDialogOpen(true)} disabled={availabilityLoading}>{availabilityLoading ? "Checking…" : "Check schedule"}</button></div>
           {availability ? <p className="availability-coverage">{durationMinutes} minute slots</p> : null}
@@ -409,7 +410,7 @@ export function CalendarSidebar({
           </> : null}
         </section>
       ) : null}
-      {availabilityDialogOpen && hasWorkingHours ? <AvailabilityRequestDialog date={date} durationMinutes={durationMinutes} error={availabilityError} loading={availabilityLoading} onClose={() => setAvailabilityDialogOpen(false)} onSubmit={checkAvailability} /> : null}
+      {availabilityDialogOpen && canCheckAvailability ? <AvailabilityRequestDialog date={date} durationMinutes={durationMinutes} error={availabilityError} loading={availabilityLoading} onClose={() => setAvailabilityDialogOpen(false)} onSubmit={checkAvailability} /> : null}
       {!loading && error ? (
         <div className="calendar-error-notice" role="alert">
           <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>

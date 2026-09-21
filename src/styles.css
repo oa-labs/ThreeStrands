@@ -1197,7 +1197,7 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
   overflow: hidden;
   background: var(--background);
 }
-.tasks-workspace .tasks-sidebar-header { min-height: 82px; padding-inline: clamp(24px, 5vw, 72px); }
+.tasks-workspace .tasks-sidebar-header { min-height: 82px; padding-left: 22px; padding-right: clamp(24px, 5vw, 72px); }
 .tasks-workspace-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(300px, 38%) minmax(0, 1fr); }
 .tasks-workspace .tasks-list { border-right: 1px solid var(--border); padding: 20px 16px 40px; }
 .tasks-workspace .tasks-list section + section { margin-top: 28px; }

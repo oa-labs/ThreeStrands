@@ -467,6 +467,30 @@ describe("calendar sidebar", () => {
     expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
   });
 
+  it("hides availability controls on dates in the past", async () => {
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    render(
+      <CalendarSidebar
+        onClose={vi.fn()}
+        onOpenSettings={vi.fn()}
+        availabilityPreferences={{
+          timeZone: "America/New_York",
+          workingWindows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: "09:00", end: "17:00" })),
+          defaultDurationMinutes: 30,
+          slotIncrementMinutes: 15,
+        }}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Check schedule" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Previous day (-)" }));
+    expect(screen.queryByRole("region", { name: "Check availability" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next day (=)" }));
+    expect(await screen.findByRole("button", { name: "Check schedule" })).toBeInTheDocument();
+  });
+
   it("hides the close control and ignores Escape when embedded", async () => {
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     const onClose = vi.fn();

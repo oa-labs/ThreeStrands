@@ -160,16 +160,16 @@ mod tests {
     #[test]
     fn skips_busy_slots_and_marks_coverage() {
         let candidates = find_candidates(
-            "2026-09-21T00:00:00Z",
-            "2026-09-22T00:00:00Z",
+            "2099-09-21T00:00:00Z",
+            "2099-09-22T00:00:00Z",
             &preferences(),
-            &[BusyInterval { start: "2026-09-21T13:30:00Z".to_string(), end: "2026-09-21T14:30:00Z".to_string() }],
+            &[BusyInterval { start: "2099-09-21T13:30:00Z".to_string(), end: "2099-09-21T14:30:00Z".to_string() }],
             1,
             1,
         ).unwrap();
-        assert_eq!(candidates[0].start, "2026-09-21T13:00:00+00:00");
+        assert_eq!(candidates[0].start, "2099-09-21T13:00:00+00:00");
         assert!(candidates.iter().all(|candidate| candidate.status == "verified"));
-        assert!(!candidates.iter().any(|candidate| candidate.start == "2026-09-21T13:30:00+00:00"));
+        assert!(!candidates.iter().any(|candidate| candidate.start == "2099-09-21T13:30:00+00:00"));
     }
 
     #[test]
