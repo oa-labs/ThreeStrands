@@ -207,11 +207,13 @@ export function CalendarSidebar({
   onOpenSettings,
   availabilityPreferences,
   onDraftAvailability,
+  embedded = false,
 }: {
   onClose(): void;
   onOpenSettings(): void;
   availabilityPreferences: AvailabilityPreferences;
   onDraftAvailability?(candidates: AvailabilityCandidate[]): void;
+  embedded?: boolean;
 }) {
   const [date, setDate] = useState(() => startOfLocalDay(new Date()));
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
@@ -225,7 +227,7 @@ export function CalendarSidebar({
   const [durationMinutes, setDurationMinutes] = useState(availabilityPreferences.defaultDurationMinutes);
   const [availabilityDialogOpen, setAvailabilityDialogOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
-  useEscapeDismiss(onClose);
+  useEscapeDismiss(onClose, !embedded);
   const hasWorkingHours = hasWorkingHoursOnDate(date, availabilityPreferences);
 
   useEffect(() => {
@@ -340,9 +342,11 @@ export function CalendarSidebar({
           <button type="button" aria-label="Next day (=)" title="Next day (=)" onClick={() => moveDay(1)}>
             <ChevronRight size={18} />
           </button>
-          <button type="button" aria-label="Close calendar" onClick={onClose}>
-            <X size={18} />
-          </button>
+          {!embedded ? (
+            <button type="button" aria-label="Close calendar" onClick={onClose}>
+              <X size={18} />
+            </button>
+          ) : null}
         </div>
       </header>
       {allDayEvents.length > 0 ? (

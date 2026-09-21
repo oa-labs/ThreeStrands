@@ -1221,8 +1221,21 @@ export function App() {
   }, []);
 
   const newTask = useCallback(() => {
-    if (visibleDetail) setTaskEditor({ kind: "new", thread: visibleDetail });
-  }, [visibleDetail]);
+    if (visibleDetail) {
+      setTaskEditor({ kind: "new", thread: visibleDetail });
+      return;
+    }
+    if (!selectedId) return;
+
+    // The Tasks workspace can become interactive before the selected mail
+    // conversation has finished loading. Resolve it on demand so the global
+    // read-mode shortcut works consistently from either primary view.
+    void mailClient.getThread(selectedId)
+      .then((thread) => setTaskEditor({ kind: "new", thread }))
+      .catch((reason: unknown) => {
+        setNotice({ message: reason instanceof Error ? reason.message : String(reason) });
+      });
+  }, [selectedId, setNotice, visibleDetail]);
 
   const openTaskThread = useCallback((threadId: string) => {
     setRightWorkspace(null);
@@ -1476,6 +1489,19 @@ export function App() {
     saveSelectedTabForAccount(activeAccountId, null);
   }, [correspondence.context, activeAccountId]);
 
+  const openMailView = useCallback(() => {
+    goToInboxTab();
+  }, [goToInboxTab]);
+
+  const openTasksView = useCallback(() => {
+    setRightWorkspace("tasks");
+  }, []);
+
+  const cyclePrimaryView = useCallback(() => {
+    if (rightWorkspace === "tasks") goToInboxTab();
+    else setRightWorkspace("tasks");
+  }, [goToInboxTab, rightWorkspace]);
+
   const goToSplitTab = useCallback((id: string) => {
     setRightWorkspace(null);
     correspondence.context.openInbox();
@@ -1683,6 +1709,9 @@ export function App() {
     openSettings: () => openSettingsAt("appearance"),
     openToday,
     openTasks,
+    openMailView,
+    openTasksView,
+    cyclePrimaryView,
     openActions,
     newTask,
     increaseFontSize: () => adjustFontScale(1),
@@ -1696,7 +1725,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskStatus, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskStatus, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1825,10 +1854,10 @@ export function App() {
         </div>
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
-          <HoverTooltip label="Tasks" shortcut="D">
+          <HoverTooltip label="Tasks" shortcut="3">
             <button
               className={`nav-button ${rightWorkspace === "tasks" ? "active" : ""}`}
-              aria-label="Tasks (d)"
+              aria-label="Tasks (3)"
               onClick={() => executeById("tasks.open")}
             >
               <CheckSquare size={19} />
@@ -2556,21 +2585,33 @@ export function App() {
         />
       ) : null}
       {rightWorkspace === "tasks" ? (
-        <TaskSidebar
-          ref={taskWorkspaceRef}
-          variant="workspace"
-          onClose={() => setRightWorkspace(null)}
-          accountId={activeAccountId}
-          currentThread={visibleDetail}
-          onOpenThread={openTaskThread}
-          onTasksChanged={() => void refreshTaskIndicators()}
-          onDraftFollowUp={(task) => void draftFollowUp(task)}
-          onCheckSchedule={openSchedule}
-          onNewTask={newTask}
-          onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
-          onSelectedTaskChange={(task) => setSelectedTaskStatus(task?.status ?? null)}
-          refreshKey={taskRevision}
-        />
+        <>
+          <TaskSidebar
+            ref={taskWorkspaceRef}
+            variant="workspace"
+            onClose={() => setRightWorkspace(null)}
+            accountId={activeAccountId}
+            currentThread={visibleDetail}
+            onOpenThread={openTaskThread}
+            onTasksChanged={() => void refreshTaskIndicators()}
+            onDraftFollowUp={(task) => void draftFollowUp(task)}
+            onCheckSchedule={openSchedule}
+            onNewTask={newTask}
+            onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
+            onSelectedTaskChange={(task) => setSelectedTaskStatus(task?.status ?? null)}
+            refreshKey={taskRevision}
+          />
+          <CalendarSidebar
+            embedded
+            onClose={() => {}}
+            availabilityPreferences={availabilityPreferences}
+            onDraftAvailability={draftAvailabilityReply}
+            onOpenSettings={() => {
+              setRightWorkspace(null);
+              openSettingsAt("calendarAccounts");
+            }}
+          />
+        </>
       ) : null}
       {rightWorkspace === "actions" ? (
         <TaskSidebar

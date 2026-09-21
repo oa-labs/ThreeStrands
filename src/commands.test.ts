@@ -74,6 +74,9 @@ function noopContext(): CommandContext {
     openSettings: () => {},
     openToday: () => {},
     openTasks: () => {},
+    openMailView: () => {},
+    openTasksView: () => {},
+    cyclePrimaryView: () => {},
     openActions: () => {},
     newTask: () => {},
     increaseFontSize: () => {},
@@ -130,6 +133,12 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.keys).toEqual(["Shift+e"]);
   });
 
+  it("registers direct and cycling primary-view shortcuts", () => {
+    expect(commands.find((command) => command.id === "view.mail")?.keys).toEqual(["1"]);
+    expect(commands.find((command) => command.id === "view.tasks")?.keys).toEqual(["3"]);
+    expect(commands.find((command) => command.id === "view.cycle")?.keys).toEqual(["0"]);
+  });
+
   it("matches shortcuts case-insensitively", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "J" }), "j")).toBe(true);
   });
@@ -157,11 +166,11 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "labels.open")?.keys).toEqual(["l"]);
   });
 
-  it("uses d for tasks and Mod+d for adding a task from the conversation", async () => {
+  it("uses d for adding a task from the conversation", async () => {
     const openTasks = commands.find((command) => command.id === "tasks.open");
     const newTask = commands.find((command) => command.id === "tasks.new");
-    expect(openTasks?.keys).toEqual(["d", "g then k"]);
-    expect(newTask?.keys).toEqual(["Mod+d"]);
+    expect(openTasks?.keys).toEqual(["g then k"]);
+    expect(newTask?.keys).toEqual(["d"]);
     const start = vi.fn();
     await newTask?.run({ ...noopContext(), selectedId: "thread-1", newTask: start });
     expect(start).toHaveBeenCalledTimes(1);

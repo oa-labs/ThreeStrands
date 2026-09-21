@@ -71,6 +71,9 @@ export type CommandContext = {
   openSettings(): void;
   openToday(): void;
   openTasks(): void;
+  openMailView(): void;
+  openTasksView(): void;
+  cyclePrimaryView(): void;
   openActions(): void;
   newTask(): void;
   increaseFontSize(): void;
@@ -377,9 +380,33 @@ export const commands: Command[] = [
     run: (context) => complete(context.openToday),
   },
   {
+    id: "view.mail",
+    title: "Go to mail view",
+    keys: ["1"],
+    group: "Navigation",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(context.openMailView),
+  },
+  {
+    id: "view.tasks",
+    title: "Go to task view",
+    keys: ["3"],
+    group: "Navigation",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(context.openTasksView),
+  },
+  {
+    id: "view.cycle",
+    title: "Cycle mail and task views",
+    keys: ["0"],
+    group: "Navigation",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(context.cyclePrimaryView),
+  },
+  {
     id: "tasks.open",
     title: "Open tasks",
-    keys: ["d", "g then k"],
+    keys: ["g then k"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.openTasks),
@@ -387,7 +414,7 @@ export const commands: Command[] = [
   {
     id: "tasks.new",
     title: "Add task from conversation",
-    keys: ["Mod+d"],
+    keys: ["d"],
     group: "Application",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
     run: (context) => complete(context.newTask),

@@ -77,10 +77,12 @@ read-only.
 
 Current primary commands are:
 
-- `d`: toggle Tasks;
+- `1`: open the Inbox/mail view;
+- `3`: open the Tasks view;
+- `0`: cycle between the Inbox/mail and Tasks views;
+- `d`: add a task for the selected conversation from any read-mode view;
 - `t`: toggle Calendar;
 - `Shift+A`: toggle Actions (`a` remains Reply All);
-- `Cmd/Ctrl+D`: add a task for the selected conversation; and
 - `Cmd/Ctrl+K`: open the command palette.
 
 The focused-pane model routes `j`/`k` and Up/Down to conversations or tasks.

@@ -17,11 +17,12 @@ function handleEscape(event: KeyboardEvent) {
   topmost.dismiss();
 }
 
-export function useEscapeDismiss(onDismiss: () => void) {
+export function useEscapeDismiss(onDismiss: () => void, enabled = true) {
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
 
   useEffect(() => {
+    if (!enabled) return;
     const entry: DismissEntry = {
       id: Symbol("escape-dismiss"),
       dismiss: () => dismiss.current(),
@@ -34,5 +35,5 @@ export function useEscapeDismiss(onDismiss: () => void) {
       if (index !== -1) dismissStack.splice(index, 1);
       if (dismissStack.length === 0) window.removeEventListener("keydown", handleEscape);
     };
-  }, []);
+  }, [enabled]);
 }

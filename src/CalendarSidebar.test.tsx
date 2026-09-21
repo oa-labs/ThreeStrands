@@ -467,6 +467,30 @@ describe("calendar sidebar", () => {
     expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
   });
 
+  it("hides the close control and ignores Escape when embedded", async () => {
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    const onClose = vi.fn();
+    render(
+      <CalendarSidebar
+        embedded
+        onClose={onClose}
+        onOpenSettings={vi.fn()}
+        availabilityPreferences={{
+          timeZone: "America/New_York",
+          workingWindows: [],
+          defaultDurationMinutes: 30,
+          slotIncrementMinutes: 15,
+        }}
+      />,
+    );
+
+    await screen.findByRole("complementary", { name: "Calendar schedule" });
+    expect(screen.queryByRole("button", { name: "Close calendar" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("builds an exact local-day request", () => {
     const request = scheduleRequestFor(new Date(2026, 8, 18, 15, 30));
     const start = new Date(request.timeMin);

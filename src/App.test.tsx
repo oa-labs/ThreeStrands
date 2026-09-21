@@ -582,7 +582,7 @@ describe("keyboard-first task and action workspaces", () => {
     render(<App />);
     await screen.findByRole("button", { name: "Archive (e)" });
 
-    fireEvent.keyDown(window, { key: "d", metaKey: true });
+    fireEvent.keyDown(window, { key: "d" });
     const dialog = await screen.findByRole("dialog", { name: "Add task" });
     expect(within(dialog).getByRole("textbox", { name: "Task" })).toHaveFocus();
     expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
@@ -599,11 +599,34 @@ describe("keyboard-first task and action workspaces", () => {
     expect(within(actions).queryByRole("textbox")).not.toBeInTheDocument();
     expect(within(actions).queryByRole("combobox")).not.toBeInTheDocument();
 
-    fireEvent.keyDown(window, { key: "d" });
+    fireEvent.keyDown(window, { key: "3" });
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Conversation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
+  });
+
+  it("switches directly and cyclically between mail and task views with number keys", async () => {
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    fireEvent.keyDown(window, { key: "3" });
+    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "d" });
+    expect(await screen.findByRole("dialog", { name: "Add task" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "0" });
+    expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "0" });
+    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "1" });
+    expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
   });
 
   it("replaces the mail viewport and manages tasks through the focused keyboard commands", async () => {
@@ -635,10 +658,14 @@ describe("keyboard-first task and action workspaces", () => {
       const { container } = render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
-      fireEvent.keyDown(window, { key: "d" });
+      fireEvent.keyDown(window, { key: "3" });
       const workspace = await screen.findByRole("region", { name: "Tasks" });
       expect(container.querySelector("main")).toHaveClass("tasks-open");
       await waitFor(() => expect(workspace.querySelector("#task-task-welcome")).toHaveAttribute("aria-current", "true"));
+
+      const calendar = await screen.findByRole("complementary", { name: "Calendar schedule" });
+      expect(calendar).toBeInTheDocument();
+      expect(within(calendar).queryByRole("button", { name: "Close calendar" })).not.toBeInTheDocument();
 
       fireEvent.keyDown(window, { key: "ArrowDown" });
       await waitFor(() => expect(workspace.querySelector("#task-task-roadmap")).toHaveAttribute("aria-current", "true"));

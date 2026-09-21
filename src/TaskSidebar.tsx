@@ -1,4 +1,4 @@
-import { Check, CheckSquare, Clock3, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, Clock3, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask } from "./domain";
 import { mailClient } from "./data/client";
@@ -214,8 +214,16 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   return (
     <section className={variant === "workspace" ? "tasks-workspace" : "tasks-sidebar"} role={variant === "sidebar" ? "complementary" : "region"} aria-label={title}>
       <header className="tasks-sidebar-header">
-        <h2><CheckSquare size={18} /> {title}</h2>
-        <div>
+        <div className="thread-header-title">
+          <div>
+            <span className="eyebrow">
+              {title}
+              {accountId ? <span className="eyebrow-account"> · {accountId}</span> : null}
+            </span>
+            <h1>{orderedTasks.length} {orderedTasks.length === 1 ? "task" : "tasks"}</h1>
+          </div>
+        </div>
+        <div className="tasks-sidebar-header-actions">
           {title === "Actions" && onAnalyzeThread ? <button type="button" aria-label="Analyze thread" title={!analysisEnabled ? "Enable Thread actions in AI settings" : !analysisReady ? "Configure an AI provider and API key" : "Analyze thread"} onClick={onAnalyzeThread} disabled={!analysisReady || analysisLoading}><Sparkles size={17} /></button> : null}
           {onCheckSchedule ? <button type="button" aria-label="Check schedule" title="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button> : null}
           {currentThread && onNewTask ? <button type="button" aria-label="Add task" title="Add task" onClick={onNewTask}><Plus size={17} /></button> : null}
@@ -278,13 +286,20 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               </div>
             </header>
             <dl>
-              <div><dt>Status</dt><dd>{selectedTask.status}</dd></div>
+              <div><dt>Status</dt><dd><span className={`task-status-pill task-status-${selectedTask.status}`}>{selectedTask.status}</span></dd></div>
               <div><dt>Due</dt><dd>{formatDueDetail(selectedTask) ?? "No due date"}</dd></div>
               <div><dt>Conversation</dt><dd>{selectedTask.subjectSnapshot}</dd></div>
               {selectedTask.repeatIntervalDays ? <div><dt>Repeats</dt><dd>Every {selectedTask.repeatIntervalDays} days</dd></div> : null}
             </dl>
             <section className="task-detail-notes" aria-label="Notes"><h3>Notes</h3><p>{selectedTask.notes || "No notes"}</p></section>
-            {selectedTask.evidenceText ? <section className="task-detail-notes" aria-label="Evidence"><h3>Evidence</h3><blockquote>{selectedTask.evidenceText}</blockquote></section> : null}
+            {selectedTask.evidenceText ? (
+              <section className="task-detail-notes" aria-label="Evidence">
+                <h3>Evidence</h3>
+                <button type="button" className="task-detail-evidence" title="Open conversation" onClick={() => onOpenThread(selectedTask.threadId)}>
+                  {selectedTask.evidenceText}
+                </button>
+              </section>
+            ) : null}
             <p className="task-detail-shortcuts"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> edit · {selectedTask.status === "completed" ? <><kbd>Shift+e</kbd> reopen</> : <><kbd>e</kbd> complete</>} · <kbd>o</kbd> open conversation</p>
           </> : <p className="tasks-status">Select a task to see its details.</p>}
         </section>

@@ -156,6 +156,48 @@ describe("TaskSidebar", () => {
     expect(discard).toHaveBeenCalledWith(0);
   });
 
+  it("shows the account email and a task count in the header, like the mail inbox header", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
+    expect(screen.getByText("you@example.com", { exact: false })).toBeInTheDocument();
+  });
+
+  it("renders a status pill and a clickable evidence quote in the task detail pane", async () => {
+    const task: ThreadTask = {
+      id: "task-1",
+      accountId: "you@example.com",
+      threadId: "thread-1",
+      sourceMessageId: "message-1",
+      subjectSnapshot: "Website setup",
+      title: "Set up the website",
+      notes: null,
+      kind: "action",
+      dueKind: "none",
+      dueValue: null,
+      timeZone: null,
+      repeatIntervalDays: null,
+      status: "open",
+      completionSource: null,
+      evidenceText: "Please set up the website by Friday.",
+      waitAfter: null,
+      createdAt: "2026-09-19T10:01:00Z",
+      updatedAt: "2026-09-19T10:01:00Z",
+      completedAt: null,
+    };
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    const onOpenThread = vi.fn();
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={onOpenThread} />);
+
+    const pill = await screen.findByText("open", { selector: ".task-status-pill" });
+    expect(pill).toHaveClass("task-status-open");
+
+    const evidenceButton = screen.getByRole("button", { name: "Please set up the website by Friday." });
+    fireEvent.click(evidenceButton);
+    expect(onOpenThread).toHaveBeenCalledWith("thread-1");
+  });
+
   it("explains missing provider credentials separately from the feature flag", () => {
     render(
       <TaskSidebar
