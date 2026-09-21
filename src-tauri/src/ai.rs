@@ -194,7 +194,8 @@ pub async fn analyze(request: AnalyzeRequest, api_key: &str) -> Result<Vec<Actio
         request.endpoint.as_deref(),
         ACTION_SYSTEM_PROMPT,
         &prompt,
-        1_200,
+        4_000,
+        0.1,
         api_key,
     )
     .await?;
@@ -279,39 +280,43 @@ fn parse_action_proposals(
     messages: &[ActionMessageInput],
 ) -> Result<Vec<ActionProposal>, String> {
     if content.chars().count() > MAX_ACTION_OUTPUT_CHARS {
-        eprintln!(
-            "ai_analyze_thread: oversized action proposal output ({} chars)",
+        log::error!(
+            target: "ai_analyze_thread",
+            "oversized action proposal output ({} chars)",
             content.chars().count()
         );
         return Err("The AI provider returned an oversized action proposal set".to_string());
     }
     let trimmed = strip_markdown_fences(content);
     if trimmed.is_empty() {
-        eprintln!("ai_analyze_thread: empty action proposal output (raw content: {content:?})");
+        log::error!(target: "ai_analyze_thread", "empty action proposal output (raw content: {content:?})");
         return Err("The AI provider returned an empty action proposal set".to_string());
     }
     let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|error| {
-        eprintln!(
-            "ai_analyze_thread: malformed action proposal JSON: {error} (raw content: {content:?})"
+        log::error!(
+            target: "ai_analyze_thread",
+            "malformed action proposal JSON: {error} (raw content: {content:?})"
         );
         "The AI provider returned malformed action proposal JSON".to_string()
     })?;
     let proposals: Vec<ActionProposal> = serde_json::from_value(value).map_err(|error| {
-        eprintln!(
-            "ai_analyze_thread: action proposal JSON failed schema validation: {error} (raw content: {content:?})"
+        log::error!(
+            target: "ai_analyze_thread",
+            "action proposal JSON failed schema validation: {error} (raw content: {content:?})"
         );
         "The AI provider returned action proposal JSON with an invalid schema".to_string()
     })?;
     if proposals.len() > MAX_ACTION_PROPOSALS {
-        eprintln!(
-            "ai_analyze_thread: too many action proposals ({})",
+        log::error!(
+            target: "ai_analyze_thread",
+            "too many action proposals ({})",
             proposals.len()
         );
         return Err("The AI provider returned too many action proposals".to_string());
     }
     for proposal in &proposals {
         if let Err(error) = validate_action_proposal(proposal, messages) {
-            eprintln!("ai_analyze_thread: action proposal failed validation: {error}");
+            log::error!(target: "ai_analyze_thread", "action proposal failed validation: {error} (raw content: {content:?})");
             return Err(error);
         }
     }
@@ -421,6 +426,7 @@ pub async fn summarize(request: SummarizeRequest, api_key: &str) -> Result<Strin
         SYSTEM_PROMPT,
         &prompt,
         300,
+        0.2,
         api_key,
     )
     .await?;
@@ -464,6 +470,7 @@ pub async fn generate_reply(
         REPLY_SYSTEM_PROMPT,
         &prompt,
         600,
+        0.2,
         api_key,
     )
     .await?;
@@ -522,6 +529,7 @@ async fn call_provider(
     system_prompt: &str,
     prompt: &str,
     max_tokens: usize,
+    temperature: f64,
     api_key: &str,
 ) -> Result<String, String> {
     let descriptor = provider.descriptor();
@@ -534,6 +542,7 @@ async fn call_provider(
                 system_prompt,
                 prompt,
                 max_tokens,
+                temperature,
                 api_key,
             )
             .await
@@ -545,6 +554,7 @@ async fn call_provider(
                 system_prompt,
                 prompt,
                 max_tokens,
+                temperature,
                 api_key,
             )
             .await
@@ -559,11 +569,12 @@ async fn call_openai_compatible(
     system_prompt: &str,
     prompt: &str,
     max_tokens: usize,
+    temperature: f64,
     api_key: &str,
 ) -> Result<String, String> {
     let body = json!({
         "model": model,
-        "temperature": 0.2,
+        "temperature": temperature,
         "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -588,11 +599,13 @@ async fn call_anthropic(
     system_prompt: &str,
     prompt: &str,
     max_tokens: usize,
+    temperature: f64,
     api_key: &str,
 ) -> Result<String, String> {
     let body = json!({
         "model": model,
         "max_tokens": max_tokens,
+        "temperature": temperature,
         "system": system_prompt,
         "messages": [{"role": "user", "content": prompt}],
     });

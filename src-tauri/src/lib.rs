@@ -1619,7 +1619,7 @@ async fn ai_analyze_thread(
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     let request = ai::AnalyzeRequest {
         provider,
-        model,
+        model: model.clone(),
         endpoint,
         subject: detail.thread.subject,
         messages: detail
@@ -1635,7 +1635,22 @@ async fn ai_analyze_thread(
         current_time: Utc::now().to_rfc3339(),
         user_time_zone,
     };
-    let proposals = ai::analyze(request, &api_key).await?;
+    log::info!(
+        target: "ai_analyze_thread",
+        "starting analysis for thread {thread_id} with provider {provider:?} model {model}"
+    );
+    let proposals = match ai::analyze(request, &api_key).await {
+        Ok(proposals) => proposals,
+        Err(error) => {
+            log::error!(target: "ai_analyze_thread", "analysis failed for thread {thread_id}: {error}");
+            return Err(error);
+        }
+    };
+    log::info!(
+        target: "ai_analyze_thread",
+        "analysis succeeded for thread {thread_id} with {} proposal(s)",
+        proposals.len()
+    );
     let mut cache = state
         .proposal_cache
         .lock()
@@ -1765,6 +1780,17 @@ async fn resolve_sync(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: None,
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                ])
+                .build(),
+        )
         .plugin(external_navigation_guard())
         .plugin(tauri_plugin_opener::init())
         .plugin(
