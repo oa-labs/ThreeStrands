@@ -77,7 +77,7 @@ async fn apply_operation(
     .fetch_optional(&mut **tx).await?;
 
     let ack = match current {
-        None if operation.base_version != 0 => create_conflict(tx, auth, operation, None, 0, BTreeSet::from(["*".into()])).await?,
+        None if operation.base_version != 0 => create_conflict(tx, auth, operation, None, true, 0, BTreeSet::from(["*".into()])).await?,
         None => {
             if operation.deleted {
                 create_version(tx, auth, operation, None, true).await?
@@ -89,6 +89,9 @@ async fn apply_operation(
         }
         Some(current) if current.version == operation.base_version => {
             apply_to_current(tx, auth, operation, current).await?
+        }
+        Some(current) if operation.base_version > current.version => {
+            create_conflict(tx, auth, operation, current.payload, current.deleted, current.version, BTreeSet::from(["*".into()])).await?
         }
         Some(current) => {
             let changed_since = sqlx::query_scalar::<_, Vec<String>>(
@@ -102,7 +105,7 @@ async fn apply_operation(
             if overlap.is_empty() && !current.deleted && !operation.deleted {
                 apply_to_current(tx, auth, operation, current).await?
             } else {
-                create_conflict(tx, auth, operation, current.payload, current.version, overlap).await?
+                create_conflict(tx, auth, operation, current.payload, current.deleted, current.version, overlap).await?
             }
         }
     };
@@ -123,7 +126,7 @@ async fn apply_to_current(
         return create_version(tx, auth, operation, None, true).await;
     }
     if current.deleted {
-        return create_conflict(tx, auth, operation, None, current.version, BTreeSet::from(["*".into()])).await;
+        return create_conflict(tx, auth, operation, None, true, current.version, BTreeSet::from(["*".into()])).await;
     }
     let mut payload = current.payload.ok_or_else(|| ApiError::conflict("Stored record has no payload"))?;
     merge_patch(&mut payload, operation.patch.as_ref().ok_or_else(|| ApiError::bad_request("Missing patch"))?)
@@ -168,6 +171,7 @@ async fn create_conflict(
     auth: &AuthContext,
     operation: &SyncOperation,
     cloud_payload: Option<Value>,
+    cloud_deleted: bool,
     current_version: i64,
     mut overlapping_fields: BTreeSet<String>,
 ) -> Result<OperationAck, ApiError> {
@@ -175,10 +179,10 @@ async fn create_conflict(
     let id = Uuid::new_v4();
     let fields: Vec<String> = overlapping_fields.into_iter().collect();
     sqlx::query(
-        "INSERT INTO sync_conflicts(id,user_id,entity_type,entity_id,current_version,overlapping_fields,cloud_payload,device_patch,device_deleted,device_id)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+        "INSERT INTO sync_conflicts(id,user_id,entity_type,entity_id,current_version,overlapping_fields,cloud_payload,cloud_deleted,device_patch,device_deleted,device_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
     ).bind(id).bind(auth.user_id).bind(operation.entity_type.as_str()).bind(&operation.entity_id)
-    .bind(current_version).bind(fields).bind(cloud_payload).bind(&operation.patch)
+    .bind(current_version).bind(fields).bind(cloud_payload).bind(cloud_deleted).bind(&operation.patch)
     .bind(operation.deleted).bind(auth.device_id).execute(&mut **tx).await?;
     Ok(OperationAck { operation_id: operation.operation_id.clone(), status: OperationStatus::Conflict, version: Some(current_version), conflict_id: Some(id.to_string()) })
 }
@@ -218,6 +222,7 @@ struct ConflictRow {
     current_version: i64,
     overlapping_fields: Vec<String>,
     cloud_payload: Option<Value>,
+    cloud_deleted: bool,
     device_patch: Option<Value>,
     device_deleted: bool,
     created_at: chrono::DateTime<Utc>,
@@ -229,7 +234,7 @@ impl TryFrom<ConflictRow> for SyncConflict {
         Ok(Self {
             id: value.id.to_string(), entity_type: EntityType::from_str(&value.entity_type).map_err(ApiError::bad_request)?,
             entity_id: value.entity_id, current_version: value.current_version,
-            overlapping_fields: value.overlapping_fields.into_iter().collect(), cloud_payload: value.cloud_payload,
+            overlapping_fields: value.overlapping_fields.into_iter().collect(), cloud_payload: value.cloud_payload, cloud_deleted: value.cloud_deleted,
             device_patch: value.device_patch, device_deleted: value.device_deleted, created_at: value.created_at.to_rfc3339(),
         })
     }
@@ -237,7 +242,7 @@ impl TryFrom<ConflictRow> for SyncConflict {
 
 async fn fetch_conflicts(tx: &mut Transaction<'_, Postgres>, user_id: Uuid) -> Result<Vec<SyncConflict>, ApiError> {
     let rows = sqlx::query_as::<_, ConflictRow>(
-        "SELECT id,entity_type,entity_id,current_version,overlapping_fields,cloud_payload,device_patch,device_deleted,created_at
+        "SELECT id,entity_type,entity_id,current_version,overlapping_fields,cloud_payload,cloud_deleted,device_patch,device_deleted,created_at
          FROM sync_conflicts WHERE user_id=$1 AND resolved_at IS NULL ORDER BY created_at",
     ).bind(user_id).fetch_all(&mut **tx).await?;
     rows.into_iter().map(TryInto::try_into).collect()
@@ -262,7 +267,7 @@ pub async fn resolve_conflict(
     let mut tx = state.pool.begin().await?;
     set_tenant(&mut tx, auth.user_id).await?;
     let conflict = sqlx::query_as::<_, ConflictRow>(
-        "SELECT id,entity_type,entity_id,current_version,overlapping_fields,cloud_payload,device_patch,device_deleted,created_at
+        "SELECT id,entity_type,entity_id,current_version,overlapping_fields,cloud_payload,cloud_deleted,device_patch,device_deleted,created_at
          FROM sync_conflicts WHERE id=$1 AND user_id=$2 AND resolved_at IS NULL FOR UPDATE",
     ).bind(id).bind(auth.user_id).fetch_optional(&mut *tx).await?.ok_or_else(ApiError::not_found)?;
     if request.current_version != conflict.current_version {

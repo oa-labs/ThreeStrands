@@ -63,7 +63,7 @@ describe("Composer From selector", () => {
     });
 
     render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const selector = screen.getByRole("combobox", { name: "Send from" });
+    const selector = screen.getByRole("combobox", { name: "Send From" });
 
     expect(fireEvent.pointerDown(selector, { button: 0, pointerId: 1 })).toBe(true);
     fireEvent.change(selector, { target: { value: "second@example.com" } });
@@ -74,12 +74,12 @@ describe("Composer From selector", () => {
 
   it("keeps the From selector inside the composer's keyboard focus loop", () => {
     render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const selector = screen.getByRole("combobox", { name: "Send from" });
+    const selector = screen.getByRole("combobox", { name: "Send From" });
 
     selector.focus();
     fireEvent.keyDown(selector, { key: "Tab", shiftKey: true });
 
-    expect(screen.getByRole("button", { name: "Discard draft" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Discard Draft" })).toHaveFocus();
   });
 });
 
@@ -125,7 +125,7 @@ describe("Composer asterisk list shortcut", () => {
 
   it("starts a bulleted list when space follows an asterisk", () => {
     render(<Composer draft={{ ...draft, body: "*" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const editor = screen.getByRole("textbox", { name: "Message body" });
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
     const text = editor.firstChild!;
     const range = document.createRange();
     range.setStart(text, 1);
@@ -153,7 +153,7 @@ describe("Composer pasted images", () => {
     const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
     const removeAttachment = vi.spyOn(mailClient, "removeAttachment").mockResolvedValue({ ...draft, revision: 3 });
     render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const editor = screen.getByRole("textbox", { name: "Message body" });
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
     Object.defineProperty(editor, "clientWidth", { configurable: true, value: 800 });
     const imageFile = new File([new Uint8Array([137, 80, 78, 71])], "screenshot.png", { type: "image/png" });
 
@@ -167,7 +167,7 @@ describe("Composer pasted images", () => {
       return pasted!;
     });
     expect(attachInline).toHaveBeenCalledWith("draft-1", "screenshot.png", "image/png", expect.any(String));
-    const handle = screen.getByRole("slider", { name: "Resize pasted image" });
+    const handle = screen.getByRole("slider", { name: "Resize Pasted Image" });
     fireEvent.pointerDown(handle, { clientX: 100 });
     fireEvent.pointerMove(window, { clientX: 160 });
     fireEvent.pointerUp(window);
@@ -176,7 +176,7 @@ describe("Composer pasted images", () => {
       bodyHtml: expect.stringContaining('src="cid:inline-1@threestrands.local"'),
     })));
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove pasted image" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Pasted Image" }));
     expect(editor.querySelector("img")).not.toBeInTheDocument();
     await waitFor(() => expect(removeAttachment).toHaveBeenCalledWith("draft-1", "inline-1"));
   });
@@ -194,7 +194,7 @@ describe("Composer pasted images", () => {
     const image = screen.getByRole("img", { name: "Screenshot" });
     await waitFor(() => expect(image).toHaveAttribute("src", "data:image/png;base64,iVBORw=="));
     expect(readInline).toHaveBeenCalledWith("draft-1", "inline-1");
-    expect(screen.getByRole("button", { name: "Remove pasted image" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Pasted Image" })).toBeInTheDocument();
   });
 });
 
@@ -290,14 +290,14 @@ describe("Composer Reply Assist", () => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
 
     render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Draft reply with AI/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Draft Reply With AI/ }));
 
     expect(await screen.findByText("Can we meet Friday?")).toBeInTheDocument();
     expect(screen.getByText("Project timing")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox", { name: "Optional short instruction" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Optional Short Instruction" }), {
       target: { value: "Accept and ask what time." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Generate draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate Draft" }));
 
     await waitFor(() => expect(generate).toHaveBeenCalledWith(
       context,
@@ -306,7 +306,7 @@ describe("Composer Reply Assist", () => {
       "gpt-4o",
       null,
     ));
-    const editor = screen.getByRole("textbox", { name: "Message body" });
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
     await waitFor(() => expect(editor).toHaveTextContent('<img src=x onerror="alert(1)">Friday works for me.'));
     expect(editor.querySelector("img")).toBeNull();
     expect(editor).toHaveTextContent("Can we meet Friday?");
@@ -324,7 +324,7 @@ describe("Composer Reply Assist", () => {
       />,
     );
 
-    const editor = screen.getByRole("textbox", { name: "Message body" });
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
     await waitFor(() => expect(editor).toHaveTextContent("September 22, 2026"));
     expect(editor).toHaveTextContent("Can we meet Friday?");
     expect(editor.textContent?.indexOf("Here are some times")).toBeLessThan(editor.textContent?.indexOf("Can we meet Friday?") ?? 0);
@@ -360,9 +360,9 @@ describe("Composer Reply Assist", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Generate draft" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Generate Draft" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Provider unavailable");
-    expect(screen.getByRole("textbox", { name: "Message body" })).toHaveTextContent("Can we meet Friday?");
+    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent("Can we meet Friday?");
   });
 
   it("requires confirmation before adding a suggestion above existing authored text", async () => {
@@ -372,16 +372,16 @@ describe("Composer Reply Assist", () => {
     const existing = { ...replyDraft, body: `My existing words.${replyDraft.body}` };
 
     render(<Composer draft={existing} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Draft reply with AI/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Draft Reply With AI/ }));
     await screen.findByText("Can we meet Friday?");
-    fireEvent.click(screen.getByRole("button", { name: "Generate draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate Draft" }));
 
     expect(generate).not.toHaveBeenCalled();
     expect(screen.getByText(/already contains text/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add anyway" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Anyway" }));
 
     await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
-    const editor = screen.getByRole("textbox", { name: "Message body" });
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
     await waitFor(() => expect(editor).toHaveTextContent("Suggested reply."));
     expect(editor).toHaveTextContent("My existing words.");
   });
@@ -391,7 +391,7 @@ describe("Composer Reply Assist", () => {
     const ref = createRef<ComposerHandle>();
 
     render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    await screen.findByRole("button", { name: /Draft reply with AI/ });
+    await screen.findByRole("button", { name: /Draft Reply With AI/ });
 
     ref.current?.draftReplyWithAI();
 

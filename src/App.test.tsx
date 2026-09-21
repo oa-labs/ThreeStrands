@@ -198,7 +198,7 @@ describe("archive notice", () => {
       Array.from(senderRow.children).indexOf(receivedTime),
     );
     expect(within(actions).getAllByRole("button").map((button) => button.getAttribute("aria-label")))
-      .toEqual(["Reply", "Reply all", "Forward"]);
+      .toEqual(["Reply", "Reply All", "Forward"]);
   });
 
   it("keeps multiple unread messages expanded when auto-read marks the conversation read", async () => {
@@ -237,7 +237,7 @@ describe("archive notice", () => {
       expect(screen.getAllByTestId("message-body")).toHaveLength(3);
 
       await advance(3000);
-      await screen.findByRole("button", { name: "Mark unread (u)" });
+      await screen.findByRole("button", { name: "Mark Unread (u)" });
 
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(0);
       expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(3);
@@ -255,7 +255,7 @@ describe("archive notice", () => {
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "/" }));
     });
-    const search = await screen.findByRole("textbox", { name: "Search mail" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "Welcome" } });
     const includeArchived = await screen.findByRole("button", { name: "Include archived or trashed mail in search" });
     await act(async () => {
@@ -283,9 +283,9 @@ describe("archive notice", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Unsubscribe" });
     expect(dialog).toHaveTextContent("threestrands.example");
-    expect(dialog).toHaveTextContent("one-click request");
+    expect(dialog).toHaveTextContent("One-Click Request");
     await act(async () => {
-      screen.getByRole("button", { name: "Send one-click request" }).click();
+      screen.getByRole("button", { name: "Send One-Click Request" }).click();
     });
 
     expect(await screen.findByRole("status")).toHaveTextContent("Unsubscribe request sent");
@@ -299,15 +299,15 @@ describe("archive notice", () => {
     // Let the conversation's own auto-read timer (armed on open, since it
     // started unread) run out first so it doesn't interfere with the assertion below.
     await advance(3000);
-    await screen.findByRole("button", { name: "Mark unread (u)" });
+    await screen.findByRole("button", { name: "Mark Unread (u)" });
 
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "u" }));
     });
-    await screen.findByRole("button", { name: "Mark read (u)" });
+    await screen.findByRole("button", { name: "Mark Read (u)" });
 
     await advance(3000);
-    expect(screen.getByRole("button", { name: "Mark read (u)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark Read (u)" })).toBeInTheDocument();
   });
 
   it("reschedules auto-read when its delay changes without reverting an explicit unread action", async () => {
@@ -315,23 +315,23 @@ describe("archive notice", () => {
     localStorage.setItem("threestrands.settings.autoReadDelaySeconds", "60");
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    expect(screen.getByRole("button", { name: "Mark read (u)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark Read (u)" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
     const settings = await screen.findByRole("dialog", { name: "Settings" });
     fireEvent.click(within(settings).getByRole("button", { name: "Reading" }));
-    fireEvent.change(within(settings).getByRole("spinbutton", { name: "Auto-read delay" }), {
+    fireEvent.change(within(settings).getByRole("spinbutton", { name: "Auto-Read Delay" }), {
       target: { value: "1" },
     });
     fireEvent.keyDown(window, { key: "Escape" });
 
     await advance(1000);
-    await screen.findByRole("button", { name: "Mark unread (u)" });
+    await screen.findByRole("button", { name: "Mark Unread (u)" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Mark unread (u)" }));
-    await screen.findByRole("button", { name: "Mark read (u)" });
+    fireEvent.click(screen.getByRole("button", { name: "Mark Unread (u)" }));
+    await screen.findByRole("button", { name: "Mark Read (u)" });
     await advance(2000);
-    expect(screen.getByRole("button", { name: "Mark read (u)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark Read (u)" })).toBeInTheDocument();
   });
 
   it("does not scroll away from a reply when the delayed auto-read update runs", async () => {
@@ -349,10 +349,10 @@ describe("archive notice", () => {
       await act(async () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "r" }));
       });
-      await screen.findByRole("dialog", { name: "Reply message" });
+      await screen.findByRole("dialog", { name: "Reply Message" });
 
       await advance(3000);
-      await screen.findByRole("button", { name: "Mark unread (u)" });
+      await screen.findByRole("button", { name: "Mark Unread (u)" });
       expect(scrollIntoView).not.toHaveBeenCalled();
     } finally {
       if (originalScrollIntoView) HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
@@ -441,8 +441,8 @@ describe("archive notice", () => {
         screen.getByRole("button", { name: "Labels (l)" }).click();
       });
 
-      const dialog = screen.getByRole("dialog", { name: "Manage labels" });
-      const input = await within(dialog).findByRole("combobox", { name: "Find or create a label" });
+      const dialog = screen.getByRole("dialog", { name: "Manage Labels" });
+      const input = await within(dialog).findByRole("combobox", { name: "Find or Create a Label" });
       expect(input).toHaveFocus();
       expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
         .toEqual(["Keyboard navigation", "Work"]);
@@ -475,7 +475,7 @@ describe("archive notice", () => {
         screen.getByRole("button", { name: "Labels (l)" }).click();
       });
 
-      const input = await screen.findByRole("combobox", { name: "Find or create a label" });
+      const input = await screen.findByRole("combobox", { name: "Find or Create a Label" });
       fireEvent.change(input, { target: { value: "Project X" } });
       const createRow = await screen.findByRole("option", { name: 'Create label "Project X"' });
       expect(createRow).toHaveClass("highlighted");
@@ -507,7 +507,7 @@ describe("archive notice", () => {
       await act(async () => {
         screen.getByRole("button", { name: "Labels (l)" }).click();
       });
-      const input = await screen.findByRole("combobox", { name: "Find or create a label" });
+      const input = await screen.findByRole("combobox", { name: "Find or Create a Label" });
       fireEvent.change(input, { target: { value: "Aardvark" } });
       await act(async () => {
         fireEvent.keyDown(input, { key: "Enter" });
@@ -518,7 +518,7 @@ describe("archive notice", () => {
       fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
       const settings = await screen.findByRole("dialog", { name: "Settings" });
       fireEvent.click(within(settings).getByRole("button", { name: "Split Inboxes" }));
-      fireEvent.change(within(settings).getByRole("combobox", { name: "Match by" }), {
+      fireEvent.change(within(settings).getByRole("combobox", { name: "Match By" }), {
         target: { value: "label" },
       });
 
@@ -583,11 +583,11 @@ describe("keyboard-first task and action workspaces", () => {
     await screen.findByRole("button", { name: "Archive (e)" });
 
     fireEvent.keyDown(window, { key: "d" });
-    const dialog = await screen.findByRole("dialog", { name: "Add task" });
+    const dialog = await screen.findByRole("dialog", { name: "Add Task" });
     expect(within(dialog).getByRole("textbox", { name: "Task" })).toHaveFocus();
     expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Add task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument();
   });
 
   it("keeps Actions read-only so letter shortcuts can switch workspaces", async () => {
@@ -614,7 +614,7 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "d" });
-    const taskDialog = await screen.findByRole("dialog", { name: "Add task" });
+    const taskDialog = await screen.findByRole("dialog", { name: "Add Task" });
     expect(within(taskDialog).getByRole("textbox", { name: "Task" })).toHaveValue("");
     expect(within(taskDialog).queryByText(/^From:/)).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
@@ -677,10 +677,10 @@ describe("keyboard-first task and action workspaces", () => {
       await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-roadmap", "completed"));
 
       fireEvent.keyDown(window, { key: "Enter" });
-      const dialog = await screen.findByRole("dialog", { name: "Edit task" });
+      const dialog = await screen.findByRole("dialog", { name: "Edit Task" });
       fireEvent.change(within(dialog).getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
-      fireEvent.change(within(dialog).getByLabelText("Due date"), { target: { value: "2026-09-30" } });
-      fireEvent.click(within(dialog).getByRole("button", { name: "Save task" }));
+      fireEvent.change(within(dialog).getByLabelText("Due Date"), { target: { value: "2026-09-30" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Save Task" }));
       await waitFor(() => expect(updateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "task-roadmap", dueKind: "date", dueValue: "2026-09-30" })));
 
       fireEvent.keyDown(window, { key: "o" });
@@ -838,13 +838,13 @@ describe("Escape dismissal", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
     const composer = await screen.findByRole("dialog", { name: "New Message" });
-    fireEvent.click(screen.getByRole("button", { name: "Command palette" }));
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette" }));
 
-    const filter = await screen.findByRole("textbox", { name: "Filter commands" });
+    const filter = await screen.findByRole("textbox", { name: "Filter Commands" });
     fireEvent.keyDown(filter, { key: "Escape" });
 
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("dialog", { name: "Command Palette" })).not.toBeInTheDocument(),
     );
     expect(composer).toBeInTheDocument();
   });
@@ -927,13 +927,13 @@ describe("account selection persistence", () => {
     const secondRun = render(<App />);
     await act(async () => {});
     expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByRole("radio", { name: "All accounts" }));
+    fireEvent.click(screen.getByRole("radio", { name: "All Accounts" }));
     expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("all");
     secondRun.unmount();
 
     render(<App />);
     await act(async () => {});
-    expect(screen.getByRole("radio", { name: "All accounts" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "All Accounts" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("shows unread inbox totals on each account and the combined account icon", async () => {

@@ -103,6 +103,28 @@ Evidence remains visible during review. Failure must preserve the proposal and
 the user's edits. AI analysis itself must not focus an editor or weaken global
 keyboard navigation.
 
+## Text capitalization
+
+Follow macOS convention: title-style for anything a user picks as a discrete
+control, sentence-style for anything read as a phrase.
+
+- **Title-style** (capitalize each major word) for button text, menu items,
+  dialog and modal titles, section headings, and form field labels —
+  including the `aria-label` that stands in for a field or icon-only
+  button's visible label. Do not capitalize articles, conjunctions, or short
+  prepositions (a, an, and, as, at, but, by, for, in, of, on, or, the, to)
+  unless one is the first or last word of the label. Hyphenated compounds
+  capitalize both halves ("Signed-In Devices").
+- **Sentence-style** (capitalize only the first word and proper nouns) for
+  the native `title` attribute (tooltip), inline help text, placeholders,
+  and status or error messages.
+
+A single control's tooltip and its label may differ in case even though
+they share nearby text, because they serve different roles: the label names
+the control, the tooltip describes what it does. Dynamic content (email
+subjects, contact names, user-entered text) is exempt — this convention
+governs application chrome, not sender or user data.
+
 ## Accessibility and testing
 
 ARIA semantics do not define shortcut behavior by themselves. A read-only

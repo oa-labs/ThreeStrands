@@ -217,9 +217,9 @@ export function useCorrespondence(
     activeDraft: active,
     composer,
     overlay: <>
-      {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button onClick={() => void undo(pending.id)}>Undo send</button></div>}
-      {closing && <div className="exit-backdrop"><div className="exit-notice" tabIndex={-1} role="dialog" aria-modal="true" aria-label="Closing ThreeStrands" onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Tab") { e.preventDefault(); e.currentTarget.querySelector("button")?.focus(); } }}><span>Saving drafts and finishing pending delivery before closing… Queued mail remains saved for the next launch.</span>{pending && <button onClick={() => void undo(pending.id)}>Undo queued send</button>}</div></div>}
-      {error && <div className="compose-notice" role="alert">{error}<button aria-label="Dismiss compose error" onClick={() => setError("")}><X size={16} /></button></div>}
+      {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button onClick={() => void undo(pending.id)}>Undo Send</button></div>}
+      {closing && <div className="exit-backdrop"><div className="exit-notice" tabIndex={-1} role="dialog" aria-modal="true" aria-label="Closing ThreeStrands" onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Tab") { e.preventDefault(); e.currentTarget.querySelector("button")?.focus(); } }}><span>Saving drafts and finishing pending delivery before closing… Queued mail remains saved for the next launch.</span>{pending && <button onClick={() => void undo(pending.id)}>Undo Queued Send</button>}</div></div>}
+      {error && <div className="compose-notice" role="alert">{error}<button aria-label="Dismiss Compose Error" onClick={() => setError("")}><X size={16} /></button></div>}
     </>,
   };
 }
@@ -260,9 +260,9 @@ export function OutboxList({
       <span>From {o.draft.account} · To {o.draft.to || o.draft.cc || "Bcc recipients"}</span>
       <small>{o.state === "undo_pending" ? (o.deadline > clock ? `Undo available · ${Math.ceil((o.deadline - clock) / 1000)}s` : "Waiting for connection") : o.state}</small>
       {o.error && <p>{o.error}</p>}
-      {["undo_pending", "ready"].includes(o.state) && <button onClick={() => onUndo(o.id)}>Undo send</button>}
-      {o.state === "failed" && <button disabled={busy} onClick={() => onRestore(o.id)}>Restore draft</button>}
-      {o.state === "uncertain" && <button disabled={busy} onClick={() => onReconcile(o.id)}>Check sent mail</button>}
+      {["undo_pending", "ready"].includes(o.state) && <button onClick={() => onUndo(o.id)}>Undo Send</button>}
+      {o.state === "failed" && <button disabled={busy} onClick={() => onRestore(o.id)}>Restore Draft</button>}
+      {o.state === "uncertain" && <button disabled={busy} onClick={() => onReconcile(o.id)}>Check Sent Mail</button>}
     </article>
     );
   })}</>;

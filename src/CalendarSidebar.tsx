@@ -61,7 +61,7 @@ function AvailabilityRequestDialog({
   const [duration, setDuration] = useState(durationMinutes);
   const dateRef = useRef<HTMLInputElement>(null);
   return (
-    <Modal title="Check availability" className="availability-request-modal" onClose={onClose} initialFocusRef={dateRef}>
+    <Modal title="Check Availability" className="availability-request-modal" onClose={onClose} initialFocusRef={dateRef}>
       <form className="modal-form" onSubmit={(event) => {
         event.preventDefault();
         const [year, month, day] = dateValue.split("-").map(Number);
@@ -70,7 +70,7 @@ function AvailabilityRequestDialog({
         <label><span>Date</span><input ref={dateRef} type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value)} required /></label>
         <label><span>Duration</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{[15, 30, 45, 60, 90, 120].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
         {error ? <p className="modal-form-error" role="alert">{error}</p> : null}
-        <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={loading}>{loading ? "Checking…" : "Check schedule"}</button></div>
+        <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={loading}>{loading ? "Checking…" : "Check Schedule"}</button></div>
       </form>
     </Modal>
   );
@@ -181,7 +181,7 @@ function EventViewer({ event, onDismiss }: { event: ScheduleEvent; onDismiss(): 
       <header>
         <span className="calendar-event-color" aria-hidden="true" />
         <h3>{event.title}</h3>
-        <button type="button" aria-label="Close event details" onClick={onDismiss}><X size={16} /></button>
+        <button type="button" aria-label="Close Event Details" onClick={onDismiss}><X size={16} /></button>
       </header>
       <div className="calendar-event-viewer-details">
         <p><Clock3 size={17} /><span>{formatEventDate(event)} · {formatEventTime(event)}</span></p>
@@ -337,14 +337,14 @@ export function CalendarSidebar({
           day: "numeric",
         }).format(date)}</h2>
         <div>
-          <button type="button" aria-label="Previous day (-)" title="Previous day (-)" onClick={() => moveDay(-1)}>
+          <button type="button" aria-label="Previous Day (-)" title="Previous day (-)" onClick={() => moveDay(-1)}>
             <ChevronLeft size={18} />
           </button>
-          <button type="button" aria-label="Next day (=)" title="Next day (=)" onClick={() => moveDay(1)}>
+          <button type="button" aria-label="Next Day (=)" title="Next day (=)" onClick={() => moveDay(1)}>
             <ChevronRight size={18} />
           </button>
           {!embedded ? (
-            <button type="button" aria-label="Close calendar" onClick={onClose}>
+            <button type="button" aria-label="Close Calendar" onClick={onClose}>
               <X size={18} />
             </button>
           ) : null}
@@ -375,7 +375,7 @@ export function CalendarSidebar({
       <div className="calendar-timezone">{timeZoneLabel(date)}</div>
       {canCheckAvailability ? (
         <section className="availability-panel" aria-label="Check availability">
-          <div className="availability-panel-header"><strong>Find a time</strong><button type="button" onClick={() => setAvailabilityDialogOpen(true)} disabled={availabilityLoading}>{availabilityLoading ? "Checking…" : "Check schedule"}</button></div>
+          <div className="availability-panel-header"><strong>Find a time</strong><button type="button" onClick={() => setAvailabilityDialogOpen(true)} disabled={availabilityLoading}>{availabilityLoading ? "Checking…" : "Check Schedule"}</button></div>
           {availability ? <p className="availability-coverage">{durationMinutes} minute slots</p> : null}
           {availabilityError ? <p className="calendar-error-notice" role="alert">{availabilityError}</p> : null}
           {availability ? <>
@@ -395,7 +395,7 @@ export function CalendarSidebar({
                   if (next.has(key)) next.delete(key);
                   else next.add(key);
                   return next;
-                })}>{formatCandidateTime(candidate.start)}–{formatCandidateTime(candidate.end)}<small>{candidate.status === "verified" ? "Verified" : candidate.status === "partiallyChecked" ? "Partial" : "Not checked"}</small></button>;
+                })}>{formatCandidateTime(candidate.start)}–{formatCandidateTime(candidate.end)}<small>{candidate.status === "verified" ? "Verified" : candidate.status === "partiallyChecked" ? "Partial" : "Not Checked"}</small></button>;
               })}
             </div>
             {selectedCandidates.size > 0 ? <p className="availability-coverage">{selectedCandidates.size} time{selectedCandidates.size === 1 ? "" : "s"} selected</p> : null}
@@ -404,7 +404,7 @@ export function CalendarSidebar({
                 type="button"
                 className="availability-draft-reply"
                 onClick={() => onDraftAvailability(availability.candidates.filter((candidate) => selectedCandidates.has(`${candidate.start}:${candidate.end}`)))}
-              >Draft reply with selected times</button>
+              >Draft Reply With Selected Times</button>
             ) : null}
             {availability.candidates.length === 0 ? <p className="calendar-grid-status">No open working-hours slots found.</p> : null}
           </> : null}
@@ -416,7 +416,7 @@ export function CalendarSidebar({
           <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>
           <div>
             <button type="button" onClick={() => void load(date)}>
-              <RefreshCw size={14} /> Try again
+              <RefreshCw size={14} /> Try Again
             </button>
             <button type="button" onClick={onOpenSettings}>Calendar Accounts</button>
           </div>

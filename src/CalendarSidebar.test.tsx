@@ -347,10 +347,10 @@ describe("calendar sidebar", () => {
   it("includes the T shortcut in keyboard help", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts (?)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keyboard Shortcuts (?)" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
-    expect(dialog).toHaveTextContent("Toggle today’s schedule");
+    const dialog = await screen.findByRole("dialog", { name: "Keyboard Shortcuts" });
+    expect(dialog).toHaveTextContent("Toggle Today’s Schedule");
     expect(dialog).toHaveTextContent("T");
   });
 
@@ -377,8 +377,8 @@ describe("calendar sidebar", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.keyDown(window, { key: "T" });
-    fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Check availability" })).getByRole("button", { name: "Check schedule" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Check Schedule" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Check Availability" })).getByRole("button", { name: "Check Schedule" }));
     const candidates = await screen.findAllByRole("button", { name: /Verified/ });
     expect(candidates).toHaveLength(2);
     fireEvent.click(candidates[0]);
@@ -411,11 +411,11 @@ describe("calendar sidebar", () => {
         onDraftAvailability={onDraftAvailability}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Check availability" })).getByRole("button", { name: "Check schedule" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Check Schedule" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Check Availability" })).getByRole("button", { name: "Check Schedule" }));
     const candidate = await screen.findByRole("button", { name: /Verified/ });
     fireEvent.click(candidate);
-    fireEvent.click(screen.getByRole("button", { name: "Draft reply with selected times" }));
+    fireEvent.click(screen.getByRole("button", { name: "Draft Reply With Selected Times" }));
     expect(onDraftAvailability).toHaveBeenCalledWith([
       { start: "2026-09-18T13:00:00Z", end: "2026-09-18T13:30:00Z", status: "verified" },
     ]);
@@ -437,10 +437,10 @@ describe("calendar sidebar", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
-    const dialog = await screen.findByRole("dialog", { name: "Check availability" });
+    fireEvent.click(await screen.findByRole("button", { name: "Check Schedule" }));
+    const dialog = await screen.findByRole("dialog", { name: "Check Availability" });
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Duration" }), { target: { value: "45" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Check schedule" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check Schedule" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Calendar check failed");
     expect(within(dialog).getByRole("combobox", { name: "Duration" })).toHaveValue("45");
@@ -463,8 +463,8 @@ describe("calendar sidebar", () => {
     );
 
     await screen.findByRole("complementary", { name: "Calendar schedule" });
-    expect(screen.queryByRole("region", { name: "Check availability" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Check Availability" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check Schedule" })).not.toBeInTheDocument();
   });
 
   it("hides availability controls on dates in the past", async () => {
@@ -482,13 +482,13 @@ describe("calendar sidebar", () => {
       />,
     );
 
-    expect(await screen.findByRole("button", { name: "Check schedule" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Previous day (-)" }));
-    expect(screen.queryByRole("region", { name: "Check availability" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Check Schedule" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Previous Day (-)" }));
+    expect(screen.queryByRole("region", { name: "Check Availability" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check Schedule" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Next day (=)" }));
-    expect(await screen.findByRole("button", { name: "Check schedule" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next Day (=)" }));
+    expect(await screen.findByRole("button", { name: "Check Schedule" })).toBeInTheDocument();
   });
 
   it("hides the close control and ignores Escape when embedded", async () => {

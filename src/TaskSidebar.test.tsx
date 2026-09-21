@@ -48,7 +48,7 @@ describe("TaskSidebar", () => {
     const onNewTask = vi.fn();
     render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} onNewTask={onNewTask} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
     expect(onNewTask).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -111,7 +111,7 @@ describe("TaskSidebar", () => {
     const draftFollowUp = vi.fn();
     render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} onDraftFollowUp={draftFollowUp} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Draft follow-up" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Draft Follow-Up" }));
     expect(draftFollowUp).toHaveBeenCalledWith(task);
   });
 
@@ -150,7 +150,7 @@ describe("TaskSidebar", () => {
     expect(await screen.findByText("Set up the website")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Evidence"));
     expect(screen.getByText("Please set up the website by Friday.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review & add task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review & Add Task" }));
     expect(reviewProposal).toHaveBeenCalledWith(0, proposal, "accept");
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(discard).toHaveBeenCalledWith(0);

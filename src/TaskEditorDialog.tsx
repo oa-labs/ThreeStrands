@@ -33,7 +33,7 @@ export function TaskEditorDialog({
   initial,
   sourceSubject,
   evidence,
-  submitLabel = "Add task",
+  submitLabel = "Add Task",
   onClose,
   onSubmit,
 }: {
@@ -79,7 +79,7 @@ export function TaskEditorDialog({
   };
 
   return (
-    <Modal title={submitLabel === "Save proposal" ? "Edit task proposal" : submitLabel === "Save task" ? "Edit task" : "Add task"} className="task-editor-modal" onClose={onClose} initialFocusRef={titleRef}>
+    <Modal title={submitLabel === "Save Proposal" ? "Edit Task Proposal" : submitLabel === "Save Task" ? "Edit Task" : "Add Task"} className="task-editor-modal" onClose={onClose} initialFocusRef={titleRef}>
       <form className="modal-form" onSubmit={(event) => void submit(event)} onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           event.preventDefault();
@@ -90,9 +90,9 @@ export function TaskEditorDialog({
         <label><span>Task</span><input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs doing?" /></label>
         <label><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as TaskKind)}><option value="action">Action</option><option value="follow_up">Follow up</option><option value="waiting_for">Waiting for reply</option></select></label>
         <label><span>Due</span><select value={dueKind} onChange={(event) => { setDueKind(event.target.value as TaskDueKind); setDueValue(""); }}><option value="none">No due date</option><option value="date">Date</option><option value="datetime">Date and time</option></select></label>
-        {dueKind !== "none" ? <label><span>{dueKind === "date" ? "Due date" : "Due date and time"}</span><input type={dueKind === "date" ? "date" : "datetime-local"} value={dueValue} onChange={(event) => setDueValue(event.target.value)} required /></label> : null}
+        {dueKind !== "none" ? <label><span>{dueKind === "date" ? "Due Date" : "Due Date and Time"}</span><input type={dueKind === "date" ? "date" : "datetime-local"} value={dueValue} onChange={(event) => setDueValue(event.target.value)} required /></label> : null}
         {dueKind !== "none" ? <label><span>Timezone</span><input value={timeZone} onChange={(event) => setTimeZone(event.target.value)} placeholder="America/New_York" /></label> : null}
-        {kind === "follow_up" ? <label><span>Repeat every (days)</span><input type="number" min="1" max="3650" value={repeatIntervalDays} onChange={(event) => setRepeatIntervalDays(event.target.value)} placeholder="Optional" /></label> : null}
+        {kind === "follow_up" ? <label><span>Repeat Every (Days)</span><input type="number" min="1" max="3650" value={repeatIntervalDays} onChange={(event) => setRepeatIntervalDays(event.target.value)} placeholder="Optional" /></label> : null}
         <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional details" /></label>
         {evidence ? <div className="modal-form-evidence"><span>Evidence</span><blockquote>{evidence}</blockquote></div> : null}
         {error ? <p className="modal-form-error" role="alert">{error}</p> : null}

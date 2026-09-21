@@ -134,10 +134,10 @@ export function CommandPalette({
   useEffect(() => inputRef.current?.focus(), []);
   const visible = [...commands, ...extraCommands].filter((command) => command.title.toLocaleLowerCase().includes(filter.toLocaleLowerCase()));
   return (
-    <Modal title="Command palette" onClose={onClose} shortcutScope="palette" initialFocusRef={inputRef}>
+    <Modal title="Command Palette" onClose={onClose} shortcutScope="palette" initialFocusRef={inputRef}>
       <label className="palette-search">
         <Search size={18} />
-        <input ref={inputRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Type a command" aria-label="Filter commands" />
+        <input ref={inputRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Type a command" aria-label="Filter Commands" />
       </label>
       <div className="command-list">
         {visible.map((command) => (
@@ -159,7 +159,7 @@ export function ShortcutHelp({ extraCommands = [], onClose }: { extraCommands?: 
     ...formattingShortcuts.map((shortcut) => ({ id: shortcut.id, title: shortcut.title, keys: [shortcut.key], group: "Compose" as const })),
   ];
   return (
-    <Modal title="Keyboard shortcuts" className="shortcut-help-modal" onClose={onClose}>
+    <Modal title="Keyboard Shortcuts" className="shortcut-help-modal" onClose={onClose}>
       <p className="shortcut-help-intro">Use ThreeStrands without leaving the keyboard.</p>
       <div className="shortcut-help-groups">
         {shortcutGroupOrder.map((group) => {

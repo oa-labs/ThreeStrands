@@ -19,13 +19,13 @@ export const formattingShortcuts: FormattingShortcut[] = [
   { id: "format.link", title: "Hyperlink", key: "Mod+k", command: "createLink", prompt: "link" },
   { id: "format.color", title: "Color", key: "Mod+Shift+c", command: "foreColor", prompt: "color" },
   { id: "format.strike", title: "Strikethrough", key: "Mod+Shift+x", command: "strikeThrough" },
-  { id: "format.numbers", title: "Numbered list", key: "Mod+Shift+7", command: "insertOrderedList" },
-  { id: "format.bullets", title: "Bulleted list", key: "Mod+Shift+8", command: "insertUnorderedList" },
+  { id: "format.numbers", title: "Numbered List", key: "Mod+Shift+7", command: "insertOrderedList" },
+  { id: "format.bullets", title: "Bulleted List", key: "Mod+Shift+8", command: "insertUnorderedList" },
   { id: "format.quote", title: "Quote", key: "Mod+Shift+9", command: "formatBlock", value: "blockquote" },
-  { id: "format.indentList", title: "Indent list", key: "Tab", command: "indent", listOnly: true },
-  { id: "format.outdentList", title: "Outdent list", key: "Shift+Tab", command: "outdent", listOnly: true },
-  { id: "format.indent", title: "Increase indent", key: "Mod+]", command: "indent" },
-  { id: "format.outdent", title: "Decrease indent", key: "Mod+[", command: "outdent" },
+  { id: "format.indentList", title: "Indent List", key: "Tab", command: "indent", listOnly: true },
+  { id: "format.outdentList", title: "Outdent List", key: "Shift+Tab", command: "outdent", listOnly: true },
+  { id: "format.indent", title: "Increase Indent", key: "Mod+]", command: "indent" },
+  { id: "format.outdent", title: "Decrease Indent", key: "Mod+[", command: "outdent" },
 ];
 
 export function formattingShortcutFor(event: KeyboardEvent): FormattingShortcut | undefined {

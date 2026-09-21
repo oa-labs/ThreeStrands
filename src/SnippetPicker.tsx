@@ -81,14 +81,14 @@ export function SnippetPicker({
   }
 
   return (
-    <Modal title="Insert snippet" onClose={onClose} className="snippet-picker">
+    <Modal title="Insert Snippet" onClose={onClose} className="snippet-picker">
       <div className="label-search">
         <input
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Find or create a snippet"
-          aria-label="Find or create a snippet"
+          aria-label="Find or Create a Snippet"
           role="combobox"
           aria-expanded="true"
           aria-controls="snippet-options"
@@ -203,7 +203,7 @@ export function SnippetEditor({
   };
 
   return (
-    <Modal title={target === "new" ? "New snippet" : "Edit snippet"} onClose={onClose} className="snippet-editor">
+    <Modal title={target === "new" ? "New Snippet" : "Edit Snippet"} onClose={onClose} className="snippet-editor">
       <form
         className="snippet-editor-form"
         onSubmit={(event) => {

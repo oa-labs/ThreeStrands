@@ -18,4 +18,3 @@ async fn main() -> anyhow::Result<()> {
 async fn shutdown() {
     let _ = tokio::signal::ctrl_c().await;
 }
-

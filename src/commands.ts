@@ -117,7 +117,7 @@ const isThreadMailbox = (context: CommandContext): boolean =>
 export const commands: Command[] = [
   { id: "draft.new", title: "New Message", keys: ["c"], group: "Compose", enabled: () => true, run: (c) => complete(c.compose) },
   { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.reply) },
-  { id: "draft.replyAll", title: "Reply all", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.replyAll) },
+  { id: "draft.replyAll", title: "Reply All", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.replyAll) },
   { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.forward) },
   { id: "mailbox.inbox", title: "Go to Inbox", keys: ["g then i"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openInbox) },
   { id: "mailbox.allMail", title: "Go to All Mail", keys: ["g then a"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openAllMail) },
@@ -125,7 +125,7 @@ export const commands: Command[] = [
   { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openDrafts) },
   {
     id: "mailbox.nextSplit",
-    title: "Next split inbox",
+    title: "Next Split Inbox",
     keys: ["Tab"],
     group: "Navigation",
     enabled: (c) => !c.composerActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
@@ -133,21 +133,21 @@ export const commands: Command[] = [
   },
   {
     id: "mailbox.previousSplit",
-    title: "Previous split inbox",
+    title: "Previous Split Inbox",
     keys: ["Shift+Tab"],
     group: "Navigation",
     enabled: (c) => !c.composerActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
     run: (c) => complete(c.goToPreviousSplitTab),
   },
-  { id: "outbox.open", title: "Open outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => complete(c.openOutbox) },
-  { id: "draft.send", title: "Send draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
+  { id: "outbox.open", title: "Open Outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => complete(c.openOutbox) },
+  { id: "draft.send", title: "Send Draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
   { id: "draft.sendAndMarkDone", title: "Send & Mark Done", keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
-  { id: "draft.attach", title: "Attach files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
-  { id: "draft.replyAssist", title: "Draft reply with AI", keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.draftReplyWithAI) },
-  { id: "send.undo", title: "Undo send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
+  { id: "draft.attach", title: "Attach Files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
+  { id: "draft.replyAssist", title: "Draft Reply With AI", keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.draftReplyWithAI) },
+  { id: "send.undo", title: "Undo Send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {
     id: "thread.next",
-    title: "Next conversation",
+    title: "Next Conversation",
     keys: ["j", "ArrowDown"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "mail" && !context.composerActive,
@@ -155,7 +155,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.previous",
-    title: "Previous conversation",
+    title: "Previous Conversation",
     keys: ["k", "ArrowUp"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "mail" && !context.composerActive,
@@ -163,7 +163,7 @@ export const commands: Command[] = [
   },
   {
     id: "tasks.next",
-    title: "Next task",
+    title: "Next Task",
     keys: ["j", "ArrowDown"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
@@ -171,7 +171,7 @@ export const commands: Command[] = [
   },
   {
     id: "tasks.previous",
-    title: "Previous task",
+    title: "Previous Task",
     keys: ["k", "ArrowUp"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
@@ -179,7 +179,7 @@ export const commands: Command[] = [
   },
   {
     id: "tasks.editSelected",
-    title: "Edit selected task",
+    title: "Edit Selected Task",
     keys: ["Enter"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
@@ -187,7 +187,7 @@ export const commands: Command[] = [
   },
   {
     id: "tasks.openSelected",
-    title: "Open task conversation",
+    title: "Open Task Conversation",
     keys: ["o"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskHasThread && !context.composerActive,
@@ -195,7 +195,7 @@ export const commands: Command[] = [
   },
   {
     id: "tasks.completeSelected",
-    title: "Complete selected task",
+    title: "Complete Selected Task",
     keys: ["e"],
     group: "Triage",
     enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus === "open" && !context.composerActive,
@@ -203,7 +203,7 @@ export const commands: Command[] = [
   },
   {
     id: "tasks.reopenSelected",
-    title: "Reopen selected task",
+    title: "Reopen Selected Task",
     keys: ["Shift+e"],
     group: "Triage",
     enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus === "completed" && !context.composerActive,
@@ -211,7 +211,7 @@ export const commands: Command[] = [
   },
   {
     id: "message.next",
-    title: "Next message",
+    title: "Next Message",
     keys: ["n", "ArrowRight"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "mail" && context.canNavigateMessages && !context.composerActive,
@@ -219,7 +219,7 @@ export const commands: Command[] = [
   },
   {
     id: "message.previous",
-    title: "Previous message",
+    title: "Previous Message",
     keys: ["p", "ArrowLeft"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "mail" && context.canNavigateMessages && !context.composerActive,
@@ -236,7 +236,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.unarchive",
-    title: "Mark not done",
+    title: "Mark Not Done",
     keys: ["Shift+e"],
     group: "Triage",
     enabled: (context) =>
@@ -246,7 +246,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.check",
-    title: "Select for batch actions",
+    title: "Select for Batch Actions",
     keys: ["x"],
     group: "Triage",
     enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
@@ -274,7 +274,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.spam",
-    title: "Mark spam",
+    title: "Mark Spam",
     keys: ["!"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
@@ -283,7 +283,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.read",
-    title: "Toggle read",
+    title: "Toggle Read",
     keys: ["u"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
@@ -300,7 +300,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.star",
-    title: "Toggle star",
+    title: "Toggle Star",
     keys: ["s"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
@@ -309,7 +309,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.toggleOlderMessages",
-    title: "Expand message",
+    title: "Expand Message",
     keys: ["o"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
@@ -317,7 +317,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.pageDown",
-    title: "Scroll message down",
+    title: "Scroll Message Down",
     keys: ["Space"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && !context.composerActive,
@@ -325,7 +325,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.pageUp",
-    title: "Scroll message up",
+    title: "Scroll Message Up",
     keys: ["Shift+Space"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && !context.composerActive,
@@ -333,7 +333,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.summarize",
-    title: "Summarize with AI",
+    title: "Summarize With AI",
     keys: ["i"],
     group: "Triage",
     enabled: (context) =>
@@ -342,7 +342,7 @@ export const commands: Command[] = [
   },
   {
     id: "labels.open",
-    title: "Manage labels",
+    title: "Manage Labels",
     keys: ["l"],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
@@ -350,7 +350,7 @@ export const commands: Command[] = [
   },
   {
     id: "search.focus",
-    title: "Search mail",
+    title: "Search Mail",
     keys: ["/"],
     group: "Application",
     enabled: () => true,
@@ -358,7 +358,7 @@ export const commands: Command[] = [
   },
   {
     id: "palette.open",
-    title: "Command palette",
+    title: "Command Palette",
     keys: ["Mod+k"],
     group: "Application",
     enabled: () => true,
@@ -366,7 +366,7 @@ export const commands: Command[] = [
   },
   {
     id: "shortcuts.open",
-    title: "Keyboard shortcuts",
+    title: "Keyboard Shortcuts",
     keys: ["?"],
     group: "Application",
     enabled: () => true,
@@ -374,7 +374,7 @@ export const commands: Command[] = [
   },
   {
     id: "calendar.today",
-    title: "Toggle today’s schedule",
+    title: "Toggle Today’s Schedule",
     keys: ["T"],
     group: "Application",
     enabled: (context) => !context.composerActive,
@@ -382,7 +382,7 @@ export const commands: Command[] = [
   },
   {
     id: "view.mail",
-    title: "Go to mail view",
+    title: "Go to Mail View",
     keys: ["1"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
@@ -390,7 +390,7 @@ export const commands: Command[] = [
   },
   {
     id: "view.tasks",
-    title: "Go to task view",
+    title: "Go to Task View",
     keys: ["3"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
@@ -398,7 +398,7 @@ export const commands: Command[] = [
   },
   {
     id: "view.cycle",
-    title: "Cycle mail and task views",
+    title: "Cycle Mail and Task Views",
     keys: ["0"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
@@ -406,7 +406,7 @@ export const commands: Command[] = [
   },
   {
     id: "tasks.open",
-    title: "Open tasks",
+    title: "Open Tasks",
     keys: ["g then k"],
     group: "Navigation",
     enabled: (context) => !context.composerActive,
@@ -414,7 +414,7 @@ export const commands: Command[] = [
   },
   {
     id: "tasks.new",
-    title: "Add task from conversation",
+    title: "Add Task From Conversation",
     keys: ["d"],
     group: "Application",
     enabled: (context) => (context.focusedPane === "tasks" || context.selectedId !== null) && !context.composerActive,
@@ -422,7 +422,7 @@ export const commands: Command[] = [
   },
   {
     id: "actions.open",
-    title: "Open conversation actions",
+    title: "Open Conversation Actions",
     keys: ["Shift+a", "Mod+Shift+j"],
     group: "Application",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
@@ -430,7 +430,7 @@ export const commands: Command[] = [
   },
   {
     id: "mail.refresh",
-    title: "Refresh mail",
+    title: "Refresh Mail",
     keys: [],
     group: "Application",
     enabled: () => true,
@@ -438,7 +438,7 @@ export const commands: Command[] = [
   },
   {
     id: "filter.unread",
-    title: "Toggle Unread filter",
+    title: "Toggle Unread Filter",
     keys: ["Shift+u"],
     group: "Application",
     enabled: (context) => isThreadMailbox(context) && !context.composerActive,
@@ -446,7 +446,7 @@ export const commands: Command[] = [
   },
   {
     id: "filter.starred",
-    title: "Toggle Starred filter",
+    title: "Toggle Starred Filter",
     keys: ["Shift+s"],
     group: "Application",
     enabled: (context) => isThreadMailbox(context) && !context.composerActive,
@@ -454,7 +454,7 @@ export const commands: Command[] = [
   },
   {
     id: "filter.important",
-    title: "Toggle Important filter",
+    title: "Toggle Important Filter",
     keys: ["Shift+i"],
     group: "Application",
     enabled: (context) => isThreadMailbox(context) && !context.composerActive,
@@ -462,7 +462,7 @@ export const commands: Command[] = [
   },
   {
     id: "filter.noReply",
-    title: "Toggle No Reply filter",
+    title: "Toggle No Reply Filter",
     keys: ["Shift+r"],
     group: "Application",
     enabled: (context) => isThreadMailbox(context) && !context.composerActive,
@@ -470,7 +470,7 @@ export const commands: Command[] = [
   },
   {
     id: "settings.open",
-    title: "Open settings",
+    title: "Open Settings",
     keys: ["Mod+,"],
     group: "Application",
     enabled: () => true,
@@ -478,7 +478,7 @@ export const commands: Command[] = [
   },
   {
     id: "font.increase",
-    title: "Increase font size",
+    title: "Increase Font Size",
     keys: ["Mod+=", "Mod++"],
     group: "Application",
     enabled: () => true,
@@ -486,7 +486,7 @@ export const commands: Command[] = [
   },
   {
     id: "font.decrease",
-    title: "Decrease font size",
+    title: "Decrease Font Size",
     keys: ["Mod+-"],
     group: "Application",
     enabled: () => true,
@@ -494,7 +494,7 @@ export const commands: Command[] = [
   },
   {
     id: "action.undo",
-    title: "Undo last action",
+    title: "Undo Last Action",
     keys: ["z", "Mod+z"],
     group: "Application",
     enabled: (context) => context.canUndoAction && !context.composerActive,
@@ -505,7 +505,7 @@ export const commands: Command[] = [
 export function labelCommand(labelId: string, labelName: string, value: boolean): Command {
   return {
     id: value ? "thread.label.add" : "thread.label.remove",
-    title: `${value ? "Add" : "Remove"} label ${labelName}`,
+    title: `${value ? "Add" : "Remove"} Label ${labelName}`,
     keys: [],
     group: "Triage",
     enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
@@ -541,7 +541,7 @@ export function splitInboxCommand(splitInbox: SplitInbox): Command {
 export function showAllAccountsCommand(): Command {
   return {
     id: "account.showAll",
-    title: "Show all accounts",
+    title: "Show All Accounts",
     keys: ["Mod+0"],
     group: "Application",
     enabled: () => true,

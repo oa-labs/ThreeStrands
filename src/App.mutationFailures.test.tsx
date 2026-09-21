@@ -10,8 +10,8 @@ describe("mutation failure diagnostics", () => {
   it("keeps crash-report controls in the diagnostics section", () => {
     render(<DiagnosticsSettings status={null} />);
 
-    expect(screen.getByRole("heading", { name: "Crash reports" })).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Share sanitized crash reports" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Crash Reports" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Share Sanitized Crash Reports" })).toBeInTheDocument();
   });
 
   it("shows permanently rejected mailbox operations with their reason", () => {

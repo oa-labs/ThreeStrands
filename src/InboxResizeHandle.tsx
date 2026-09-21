@@ -52,7 +52,7 @@ export function InboxResizeHandle({ width, maxWidth, resize }: ReturnType<typeof
       className={`inbox-resizer${dragging ? " dragging" : ""}`}
       role="separator"
       tabIndex={0}
-      aria-label="Resize inbox"
+      aria-label="Resize Inbox"
       aria-orientation="vertical"
       aria-controls="inbox-panel"
       aria-valuemin={minimumWidth}

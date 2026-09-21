@@ -109,7 +109,7 @@ it("refreshes the open conversation when its inbox row receives a sent reply", a
 
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
 
   await waitFor(() => {
     const bodies = screen.getAllByTestId("message-body") as HTMLIFrameElement[];
@@ -134,7 +134,7 @@ it("reloads the local inbox after a refresh even when one account sync fails", a
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
   const callsBeforeRefresh = listCalls;
 
-  fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
 
   await waitFor(() => expect(listCalls).toBeGreaterThan(callsBeforeRefresh));
 });
@@ -300,7 +300,7 @@ it("renders a reply in the open conversation as soon as Send queues it", async (
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
 
-    const editor = await screen.findByRole("textbox", { name: "Message body" });
+    const editor = await screen.findByRole("textbox", { name: "Message Body" });
     editor.innerHTML = "<p>Visible without waiting for delivery</p>";
     fireEvent.input(editor);
     fireEvent.click(screen.getByRole("button", { name: /Send/ }));
@@ -324,7 +324,7 @@ it("sends and marks the open conversation done with Mod+Shift+Enter", async () =
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
 
-    const editor = await screen.findByRole("textbox", { name: "Message body" });
+    const editor = await screen.findByRole("textbox", { name: "Message Body" });
     editor.innerHTML = "<p>Send this and mark the conversation done</p>";
     fireEvent.input(editor);
     fireEvent.keyDown(editor, { key: "Enter", metaKey: true, shiftKey: true });

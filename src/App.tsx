@@ -1863,7 +1863,7 @@ export function App() {
           onReorder={reorderNavbarAccounts}
         />
         <div className="sidebar-nav">
-          <button className="nav-button" aria-label="New Message (c)" title="New Message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
+          <button className="nav-button" aria-label="New Message (c)" title="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
           <HoverTooltip label="Inbox" shortcut="G I">
             <button
               className={`nav-button ${isTabbedMailbox ? "active" : ""}`}
@@ -1924,7 +1924,7 @@ export function App() {
           <HoverTooltip label="Today’s schedule" shortcut="T">
             <button
               className={`nav-button ${rightWorkspace === "calendar" ? "active" : ""}`}
-              aria-label="Today’s schedule (T)"
+              aria-label="Today’s Schedule (T)"
               onClick={() => executeById("calendar.today")}
             >
               <CalendarDays size={19} />
@@ -1932,7 +1932,7 @@ export function App() {
           </HoverTooltip>
           <button
             className="nav-button"
-            aria-label="Refresh mail"
+            aria-label="Refresh Mail"
             title="Refresh mail"
             onClick={() => executeById("mail.refresh")}
           >
@@ -1948,7 +1948,7 @@ export function App() {
           </button>
           <button
             className="nav-button"
-            aria-label="Keyboard shortcuts (?)"
+            aria-label="Keyboard Shortcuts (?)"
             title="Keyboard shortcuts (?)"
             onClick={() => executeById("shortcuts.open")}
           >
@@ -1956,7 +1956,7 @@ export function App() {
           </button>
           <button
             className="nav-button"
-            aria-label="Command palette"
+            aria-label="Command Palette"
             onClick={() => executeById("palette.open")}
           >
             <CommandIcon size={19} />
@@ -1983,7 +1983,7 @@ export function App() {
                   ref={selectAllRef}
                   type="checkbox"
                   checked={threads.length > 0 && checkedIds.size === threads.length}
-                  aria-label="Select all conversations"
+                  aria-label="Select All Conversations"
                   onChange={(event) =>
                     setCheckedIds(event.target.checked ? new Set(threads.map((thread) => thread.id)) : new Set())
                   }
@@ -2010,19 +2010,19 @@ export function App() {
                       </ActionButton>
                     </HoverTooltip>
                     <HoverTooltip label="Mark spam" placement="bottom">
-                      <ActionButton label="Mark spam" onClick={() => runOnSelection("Mark spam", { kind: "spam", value: true })}>
+                      <ActionButton label="Mark Spam" onClick={() => runOnSelection("Mark Spam", { kind: "spam", value: true })}>
                         <ShieldAlert size={16} />
                       </ActionButton>
                     </HoverTooltip>
                   </>
                 )}
                 <HoverTooltip label="Mark read" placement="bottom">
-                  <ActionButton label="Mark read" onClick={() => runOnSelection("Mark read", { kind: "read", value: true })}>
+                  <ActionButton label="Mark Read" onClick={() => runOnSelection("Mark Read", { kind: "read", value: true })}>
                     <MailOpen size={16} />
                   </ActionButton>
                 </HoverTooltip>
                 <HoverTooltip label="Mark unread" placement="bottom">
-                  <ActionButton label="Mark unread" onClick={() => runOnSelection("Mark unread", { kind: "read", value: false })}>
+                  <ActionButton label="Mark Unread" onClick={() => runOnSelection("Mark Unread", { kind: "read", value: false })}>
                     <Mail size={16} />
                   </ActionButton>
                 </HoverTooltip>
@@ -2042,7 +2042,7 @@ export function App() {
                 <HoverTooltip label="Clear selection" placement="bottom">
                   <button
                     className="icon-button"
-                    aria-label="Clear selection"
+                    aria-label="Clear Selection"
                     onClick={() => setCheckedIds(new Set())}
                   >
                     <X size={16} />
@@ -2115,7 +2115,7 @@ export function App() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search mail"
-                aria-label="Search mail"
+                aria-label="Search Mail"
                 data-mailbox-tab-shortcut
                 data-shortcut-scope="search"
                 onKeyDown={(event) => {
@@ -2137,7 +2137,7 @@ export function App() {
                   onClick={() => setIncludeArchived((current) => !current)}
                 >
                   <Archive size={14} />
-                  <span>{includeArchived ? "Archived + Trash" : "Search all mail"}</span>
+                  <span>{includeArchived ? "Archived + Trash" : "Search All Mail"}</span>
                 </button>
               ) : null}
               <kbd>/</kbd>
@@ -2166,7 +2166,7 @@ export function App() {
                 <Mail size={28} />
                 <p>Connect your Gmail account to start syncing mail.</p>
                 <button type="button" onClick={() => openSettingsAt("accounts")}>
-                  Add account
+                  Add Account
                 </button>
               </div>
             ) : query.trim() && remoteSearchState === "searching" ? null : (
@@ -2192,7 +2192,7 @@ export function App() {
           ))}
           {hasMoreResults ? (
             <button className="load-more" onClick={() => void loadMoreResults()} disabled={loadingMoreState}>
-              {loadingMoreState ? "Loading…" : "Load more results"}
+              {loadingMoreState ? "Loading…" : "Load More Results"}
             </button>
           ) : null}
             </>
@@ -2244,7 +2244,7 @@ export function App() {
                   placement="bottom"
                 >
                   <ActionButton
-                    label={selected?.unread ? "Mark read" : "Mark unread"}
+                    label={selected?.unread ? "Mark Read" : "Mark Unread"}
                     shortcut="u"
                     onClick={() => executeById("thread.read")}
                   >
@@ -2265,7 +2265,7 @@ export function App() {
                 </HoverTooltip>
                 {mailbox === "trash" ? null : selected?.archived ? (
                   <HoverTooltip label="Mark not done" shortcut="Shift+E" placement="bottom">
-                    <ActionButton label="Mark not done" shortcut="Shift+E" onClick={() => executeById("thread.unarchive")}>
+                    <ActionButton label="Mark Not Done" shortcut="Shift+E" onClick={() => executeById("thread.unarchive")}>
                       <Inbox size={17} />
                     </ActionButton>
                   </HoverTooltip>
@@ -2290,7 +2290,7 @@ export function App() {
                   </HoverTooltip>
                 )}
                 <HoverTooltip label="Mark spam" shortcut="!" placement="bottom">
-                  <ActionButton label="Mark spam" shortcut="!" onClick={() => executeById("thread.spam")}>
+                  <ActionButton label="Mark Spam" shortcut="!" onClick={() => executeById("thread.spam")}>
                     <ShieldAlert size={17} />
                   </ActionButton>
                 </HoverTooltip>
@@ -2309,7 +2309,7 @@ export function App() {
                   <div className="thread-summary-error">
                     <span>{summaryError}</span>
                     <button type="button" onClick={() => void runSummarize()}>
-                      Try again
+                      Try Again
                     </button>
                   </div>
                 ) : summaryExpanded && visibleDetail.thread.summary ? (
@@ -2474,7 +2474,7 @@ export function App() {
                             <button
                               type="button"
                               className="message-header-action"
-                              aria-label="Reply all"
+                              aria-label="Reply All"
                               onClick={replyAllToMessage}
                             >
                               <ReplyAll size={14} />
@@ -2710,7 +2710,7 @@ export function App() {
           }}
           sourceSubject={taskEditor.kind === "standalone" ? null : taskEditor.kind === "edit" ? taskEditor.task.subjectSnapshot : taskEditor.thread.thread.subject}
           evidence={taskEditor.kind === "standalone" ? null : taskEditor.kind === "proposal" ? taskEditor.proposal.evidence.excerpt : taskEditor.kind === "edit" ? taskEditor.task.evidenceText : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000)}
-          submitLabel={taskEditor.kind === "proposal" && taskEditor.intent === "edit" ? "Save proposal" : taskEditor.kind === "edit" ? "Save task" : "Add task"}
+          submitLabel={taskEditor.kind === "proposal" && taskEditor.intent === "edit" ? "Save Proposal" : taskEditor.kind === "edit" ? "Save Task" : "Add Task"}
           onClose={() => setTaskEditor(null)}
           onSubmit={submitTaskEditor}
         />
@@ -3123,7 +3123,7 @@ export function AccountSwitcher({
           type="button"
           role="radio"
           aria-checked={activeAccountId === null}
-          aria-label={totalUnread > 0 ? `All accounts, ${totalUnread} unread` : "All accounts"}
+          aria-label={totalUnread > 0 ? `All accounts, ${totalUnread} unread` : "All Accounts"}
           className={`account-icon all-accounts ${activeAccountId === null ? "active" : ""}`}
           onClick={onShowAll}
         >
@@ -3266,13 +3266,13 @@ export function DiagnosticsSettings({
 
   return (
     <section className="settings-section" aria-label="Diagnostics">
-      <h3>Sync diagnostics</h3>
+      <h3>Sync Diagnostics</h3>
       <p className="settings-hint">
         This information can help troubleshoot synchronization problems. Most people will not need to change anything here.
       </p>
       <SyncDiagnosticsDetails status={status} recovery={recovery} />
 
-      <h3>Crash reports</h3>
+      <h3>Crash Reports</h3>
       <label className="settings-checkbox">
         <input
           type="checkbox"
@@ -3282,7 +3282,7 @@ export function DiagnosticsSettings({
             setCrashReportingEnabled(event.target.checked);
           }}
         />
-        Share sanitized crash reports
+        Share Sanitized Crash Reports
       </label>
       <span className="settings-hint">
         Disabled by default. Email addresses and URLs are redacted.{" "}
@@ -3385,14 +3385,14 @@ function LabelManager({
   };
 
   return (
-    <Modal title="Manage labels" onClose={onClose}>
+    <Modal title="Manage Labels" onClose={onClose}>
       <div className="label-search">
         <input
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Find or create a label"
-          aria-label="Find or create a label"
+          aria-label="Find or Create a Label"
           role="combobox"
           aria-expanded="true"
           aria-controls="label-options"
@@ -3503,10 +3503,10 @@ const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "availability", label: "Availability" },
   { id: "splitInboxes", label: "Split Inboxes" },
   { id: "snippets", label: "Snippets" },
-  { id: "ai", label: "AI provider" },
+  { id: "ai", label: "AI Provider" },
   { id: "privacy", label: "Privacy" },
   { id: "diagnostics", label: "Diagnostics" },
-  { id: "data", label: "Data transfer" },
+  { id: "data", label: "Data Transfer" },
 ];
 
 function Settings({
@@ -3774,7 +3774,7 @@ function CloudAccountSettings() {
   if (!status.signedIn) {
     return (
       <section className="settings-section" aria-label="Three Strands Account">
-        <h3>Use Three Strands on multiple computers</h3>
+        <h3>Use Three Strands on Multiple Computers</h3>
         <p className="settings-hint">Sign in separately from your mail accounts. Mail, drafts, attachments, OAuth tokens, and AI keys are never uploaded.</p>
         <button type="button" className="primary-action" disabled={busy} onClick={() => act(cloudSignIn)}>{busy ? "Waiting for Google…" : "Sign in with Google"}</button>
         {message ? <p role="status" className="settings-hint">{message}</p> : null}
@@ -3806,12 +3806,12 @@ function CloudAccountSettings() {
             <dt>Conflicts</dt><dd>{status.conflictCount}</dd>
           </dl>
           {status.error ? <div className="accounts-config-notice"><strong>Synchronization failed</strong><p>{status.error}</p><button type="button" className="account-action-button" disabled={busy} onClick={() => act(retryCloudSync)}>Retry now</button></div> : null}
-          {conflicts.length ? <div><h3>Resolve conflicts</h3>{conflicts.map((conflict) => <CloudConflictEditor key={conflict.id} conflict={conflict} disabled={busy} onResolve={(payload, deleted) => act(() => resolveCloudConflict(conflict.id, conflict.currentVersion, payload, deleted))} />)}</div> : null}
-          <h3>Signed-in devices</h3>
+          {conflicts.length ? <div><h3>Resolve Conflicts</h3>{conflicts.map((conflict) => <CloudConflictEditor key={conflict.id} conflict={conflict} disabled={busy} onResolve={(payload, deleted) => act(() => resolveCloudConflict(conflict.id, conflict.currentVersion, payload, deleted))} />)}</div> : null}
+          <h3>Signed-In Devices</h3>
           <ul className="accounts-list">{devices.map((device) => <li className="account-card" key={device.id}><div className="account-card-row"><div className="account-card-identity"><strong>{device.name}{device.current ? " · This device" : ""}</strong><span className="account-card-email">Last active {new Date(device.lastSeenAt).toLocaleString()}</span></div><button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => act(() => cloudRevokeDevice(device.id))}>{device.current ? "Sign out" : "Revoke"}</button></div></li>)}</ul>
         </>
       )}
-      <h3>Delete cloud account</h3>
+      <h3>Delete Cloud Account</h3>
       <p className="settings-hint">Deletes synchronized cloud data and sessions. Local data remains on this computer; encrypted backups expire according to the service retention policy.</p>
       <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => { if (window.confirm("Delete your Three Strands cloud account? Local data will remain on this computer.")) act(cloudDeleteAccount); }}>Delete cloud account</button>
       {message ? <p role="status" className="settings-hint">{message}</p> : null}
@@ -3887,7 +3887,7 @@ function AppearanceSettings({
   const selectedFontIsInstalled = fontFamily === DEFAULT_FONT_FAMILY
     || fontFamilies.includes(fontFamily);
   const themeOptions: { value: Theme; label: string }[] = [
-    { value: "system", label: "Match system" },
+    { value: "system", label: "Match System" },
     { value: "light", label: "Light" },
     { value: "dark", label: "Dark" },
   ];
@@ -3908,7 +3908,7 @@ function AppearanceSettings({
         ))}
       </div>
 
-      <h3>Font size</h3>
+      <h3>Font Size</h3>
       <div className="settings-row">
         <input
           type="range"
@@ -3916,13 +3916,13 @@ function AppearanceSettings({
           max={MAX_FONT_SCALE}
           step={FONT_SCALE_STEP}
           value={fontScale}
-          aria-label="Font size"
+          aria-label="Font Size"
           onChange={(event) => onFontScaleChange(Number(event.target.value))}
         />
         <span>{fontScale}%</span>
       </div>
 
-      <h3>Default font</h3>
+      <h3>Default Font</h3>
       <p className="settings-hint">Used throughout the app and for unformatted message text.</p>
       <label className="font-search">
         <Search size={15} aria-hidden="true" />
@@ -3930,7 +3930,7 @@ function AppearanceSettings({
           type="search"
           value={fontQuery}
           placeholder="Search installed fonts"
-          aria-label="Search installed fonts"
+          aria-label="Search Installed Fonts"
           onChange={(event) => setFontQuery(event.target.value)}
         />
       </label>
@@ -3947,7 +3947,7 @@ function AppearanceSettings({
               checked={fontFamily === DEFAULT_FONT_FAMILY}
               onChange={() => onFontFamilyChange(DEFAULT_FONT_FAMILY)}
             />
-            <span>System default</span>
+            <span>System Default</span>
             <span className="font-option-preview" aria-hidden="true">Aa</span>
           </label>
         ) : null}
@@ -4000,9 +4000,9 @@ function ReadingSettings({
 }) {
   return (
     <section className="settings-section" aria-label="Reading">
-      <h3>Mark as read</h3>
+      <h3>Mark as Read</h3>
       <label className="settings-field settings-field-inline">
-        <span>After opening a conversation</span>
+        <span>After Opening a Conversation</span>
         <div className="settings-row">
           <input
             type="number"
@@ -4010,7 +4010,7 @@ function ReadingSettings({
             max={MAX_AUTO_READ_DELAY_SECONDS}
             step="1"
             value={autoReadDelaySeconds}
-            aria-label="Auto-read delay"
+            aria-label="Auto-Read Delay"
             onChange={(event) => {
               if (event.target.value === "") return;
               const next = Number(event.target.value);
@@ -4071,7 +4071,7 @@ function AccountsSettings({
     <section className="settings-section accounts-manager" aria-label="Mail Accounts">
       <div className="accounts-manager-header">
         <div>
-          <h3>Connected mail accounts</h3>
+          <h3>Connected Mail Accounts</h3>
           <p>
             ThreeStrands keeps accounts separate and merges their inboxes by default.
             Use the sidebar or command palette to filter to one account.
@@ -4084,7 +4084,7 @@ function AccountsSettings({
           onClick={() => act("__add__", onAdd)}
         >
           <Plus size={15} />
-          {busyEmail === "__add__" ? "Waiting for Google…" : "Add account"}
+          {busyEmail === "__add__" ? "Waiting for Google…" : "Add Account"}
         </button>
       </div>
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
@@ -4198,7 +4198,7 @@ function AccountsSettings({
                       }
                     }}
                   >
-                    Remove everywhere
+                    Remove Everywhere
                   </button>
                 </span>
               </div>
@@ -4233,15 +4233,15 @@ function AvailabilitySettings({
     <section className="settings-section" aria-label="Availability">
       <h3>Timezone</h3>
       <label className="settings-field">
-        <span>IANA timezone</span>
+        <span>IANA Timezone</span>
         <input
           value={preferences.timeZone}
-          aria-label="Availability timezone"
+          aria-label="Availability Timezone"
           onChange={(event) => onChange({ ...preferences, timeZone: event.target.value })}
         />
       </label>
       <p className="settings-hint">Times are interpreted in this timezone, including daylight-saving transitions.</p>
-      <h3>Working hours</h3>
+      <h3>Working Hours</h3>
       <div className="availability-windows">
         {weekdayLabels.map((label, weekday) => {
           const window = preferences.workingWindows.find((candidate) => candidate.weekday === weekday);
@@ -4260,9 +4260,9 @@ function AvailabilitySettings({
           );
         })}
       </div>
-      <h3>Meeting defaults</h3>
-      <label className="settings-field settings-field-inline settings-field-fixed"><span>Default duration</span><select value={preferences.defaultDurationMinutes} onChange={(event) => onChange({ ...preferences, defaultDurationMinutes: Number(event.target.value) })}>{[15, 30, 45, 60, 90, 120].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
-      <label className="settings-field settings-field-inline settings-field-fixed"><span>Slot increment</span><select value={preferences.slotIncrementMinutes} onChange={(event) => onChange({ ...preferences, slotIncrementMinutes: Number(event.target.value) })}>{[5, 10, 15, 30, 60].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
+      <h3>Meeting Defaults</h3>
+      <label className="settings-field settings-field-inline settings-field-fixed"><span>Default Duration</span><select value={preferences.defaultDurationMinutes} onChange={(event) => onChange({ ...preferences, defaultDurationMinutes: Number(event.target.value) })}>{[15, 30, 45, 60, 90, 120].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
+      <label className="settings-field settings-field-inline settings-field-fixed"><span>Slot Increment</span><select value={preferences.slotIncrementMinutes} onChange={(event) => onChange({ ...preferences, slotIncrementMinutes: Number(event.target.value) })}>{[5, 10, 15, 30, 60].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
     </section>
   );
 }
@@ -4315,7 +4315,7 @@ function CalendarAccountsSettings({
           onClick={() => act("__add__", onAdd)}
         >
           <Plus size={15} />
-          {busyEmail === "__add__" ? "Waiting for Google…" : "Connect calendar"}
+          {busyEmail === "__add__" ? "Waiting for Google…" : "Connect Calendar"}
         </button>
       </div>
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
@@ -4380,7 +4380,7 @@ function CalendarAccountsSettings({
                       }
                     }}
                   >
-                    Remove everywhere
+                    Remove Everywhere
                   </button>
                 </span>
               </div>
@@ -4472,7 +4472,7 @@ function SplitInboxNameInput({
         onChange={(event) => setValue(event.target.value)}
       />
       <button type="submit" disabled={!normalized || normalized === splitInbox.name}>
-        Save name
+        Save Name
       </button>
     </form>
   );
@@ -4531,7 +4531,7 @@ function SplitInboxesSettings({
     <section className="settings-section accounts-manager" aria-label="Split Inboxes">
       <div className="accounts-manager-header">
         <div>
-          <h3>Split inboxes</h3>
+          <h3>Split Inboxes</h3>
           <p>
             Show a filtered slice of your inbox as its own view in the sidebar —
             for example, every message from one client's sending domain.
@@ -4559,7 +4559,7 @@ function SplitInboxesSettings({
         <input
           value={name}
           placeholder="Name (e.g. Acme Corp)"
-          aria-label="Split inbox name"
+          aria-label="Split Inbox Name"
           onChange={(event) => setName(event.target.value)}
         />
         <select
@@ -4576,7 +4576,7 @@ function SplitInboxesSettings({
         </select>
         <select
           value={matchKind}
-          aria-label="Match by"
+          aria-label="Match By"
           onChange={(event) => {
             setMatchKind(event.target.value as SplitInboxMatchKind);
             setMatchValue("");
@@ -4597,13 +4597,13 @@ function SplitInboxesSettings({
           <input
             value={matchValue}
             placeholder={matchKind === "domain" ? "acme.com" : "boss@"}
-            aria-label={matchKind === "domain" ? "Sending domain" : "Address pattern"}
+            aria-label={matchKind === "domain" ? "Sending Domain" : "Address Pattern"}
             onChange={(event) => setMatchValue(event.target.value)}
           />
         )}
         <button type="submit" className="primary-action" disabled={creating || !name.trim() || !matchValue.trim() || !accountId}>
           <Plus size={15} />
-          {creating ? "Adding…" : "Add split inbox"}
+          {creating ? "Adding…" : "Add Split Inbox"}
         </button>
       </form>
       {splitInboxes.length === 0 ? (
@@ -4698,7 +4698,7 @@ function SnippetsSettings({
           </p>
         </div>
         <button type="button" className="primary-action" onClick={() => setEditorTarget("new")}>
-          <Plus size={15} /> Add snippet
+          <Plus size={15} /> Add Snippet
         </button>
       </div>
       {orderedSnippets.length === 0 ? (
@@ -4795,7 +4795,7 @@ function AccountSenderNameInput({
         onChange={(event) => setValue(event.target.value)}
       />
       <button type="submit" disabled={saving || normalized === saved}>
-        {saving ? "Saving…" : "Save name"}
+        {saving ? "Saving…" : "Save Name"}
       </button>
     </form>
   );
@@ -4928,7 +4928,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           ) : null}
 
           <label className="settings-field">
-            <span>API key</span>
+            <span>API Key</span>
             <input
               type="password"
               value={keyInput}
@@ -4951,7 +4951,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                   .finally(() => setBusy(false));
               }}
             >
-              Save key
+              Save Key
             </button>
             <button
               disabled={busy || !keyConfigured}
@@ -4964,7 +4964,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                   .finally(() => setBusy(false));
               }}
             >
-              Remove key
+              Remove Key
             </button>
           </div>
           <span className="settings-hint">
@@ -4978,7 +4978,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               checked={features.draftAssist}
               onChange={(event) => updateFeature("draftAssist", event.target.checked)}
             />
-            Draft assist
+            Draft Assist
           </label>
           <label className="settings-checkbox">
             <input
@@ -4986,7 +4986,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               checked={features.summarize}
               onChange={(event) => updateFeature("summarize", event.target.checked)}
             />
-            Thread summaries
+            Thread Summaries
           </label>
           <label className="settings-checkbox">
             <input
@@ -4994,7 +4994,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               checked={features.actionExtraction}
               onChange={(event) => updateFeature("actionExtraction", event.target.checked)}
             />
-            Thread actions
+            Thread Actions
           </label>
         </>
       ) : null}
@@ -5017,9 +5017,9 @@ function PrivacySettings({
 
   return (
     <section className="settings-section" aria-label="Privacy">
-      <h3>Local storage</h3>
+      <h3>Local Storage</h3>
       <label className="settings-field">
-        <span>Keep mail on this device for</span>
+        <span>Keep Mail on This Device For</span>
         <select
           value={retentionDays === null ? "forever" : String(retentionDays)}
           onChange={(event) => {
@@ -5040,14 +5040,14 @@ function PrivacySettings({
         database from growing without bound. It stays on the server.
       </span>
 
-      <h3>Message images</h3>
+      <h3>Message Images</h3>
       <label className="settings-checkbox">
         <input
           type="checkbox"
           checked={loadRemoteImages}
           onChange={(event) => onLoadRemoteImagesChange(event.target.checked)}
         />
-        Load remote images automatically
+        Load Remote Images Automatically
       </label>
       <span className="settings-hint">
         When disabled, images stay blocked until you choose Load images in a message.
@@ -5076,14 +5076,14 @@ function DataTransferSettings({
 
   return (
     <section className="settings-section" aria-label="Data transfer">
-      <h3>Export settings and accounts</h3>
+      <h3>Export Settings and Accounts</h3>
       <p className="settings-hint">
         Creates a password-encrypted file containing your preferences, account
         list, Split Inboxes, and retention setting. Mail, OAuth credentials,
         API keys, and other keychain secrets are never exported.
       </p>
       <label className="settings-field">
-        <span>Export password</span>
+        <span>Export Password</span>
         <input
           type="password"
           autoComplete="new-password"
@@ -5093,7 +5093,7 @@ function DataTransferSettings({
         />
       </label>
       <label className="settings-field">
-        <span>Confirm password</span>
+        <span>Confirm Password</span>
         <input
           type="password"
           autoComplete="new-password"
@@ -5122,17 +5122,17 @@ function DataTransferSettings({
         }}
       >
         <Download size={15} aria-hidden="true" />
-        {busy === "export" ? "Exporting…" : "Export encrypted settings"}
+        {busy === "export" ? "Exporting…" : "Export Encrypted Settings"}
       </button>
 
-      <h3>Import settings and accounts</h3>
+      <h3>Import Settings and Accounts</h3>
       <p className="settings-hint">
         Importing replaces preferences and Split Inboxes from this installation.
         Existing connected accounts stay connected. Other imported accounts
         appear as “Connect on this device” and require Google authorization.
       </p>
       <label className="settings-field">
-        <span>Export password</span>
+        <span>Export Password</span>
         <input
           type="password"
           autoComplete="current-password"
@@ -5158,7 +5158,7 @@ function DataTransferSettings({
         }}
       >
         <Upload size={15} aria-hidden="true" />
-        {busy === "import" ? "Importing…" : "Choose encrypted settings file"}
+        {busy === "import" ? "Importing…" : "Choose Encrypted Settings File"}
       </button>
       {!isDesktop ? (
         <p className="settings-hint" role="status">
@@ -5183,10 +5183,10 @@ function UnsubscribeConfirm({
   const method = message.unsubscribe?.methods[0];
   const sender = parseAddress(message.sender);
   const action = method === "oneClick"
-    ? "Send one-click request"
+    ? "Send One-Click Request"
     : method === "mailto"
-      ? "Open unsubscribe email"
-      : "Open unsubscribe page";
+      ? "Open Unsubscribe Email"
+      : "Open Unsubscribe Page";
 
   return (
     <Modal title="Unsubscribe" className="unsubscribe-modal" onClose={onClose}>

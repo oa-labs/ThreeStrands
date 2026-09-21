@@ -60,36 +60,36 @@ test("confirms unsubscribe with Cmd/Ctrl+U when the message advertises one-click
   await expect(dialog).toContainText("threestrands.example");
   await expect(dialog).toContainText("one-click request");
 
-  await dialog.getByRole("button", { name: "Send one-click request" }).click();
+  await dialog.getByRole("button", { name: "Send One-Click Request" }).click();
   await expect(page.getByRole("status")).toContainText("Unsubscribe request sent");
   await expect(dialog).not.toBeVisible();
 });
 
 test("searches and opens the command palette", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("textbox", { name: "Search mail" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Search Mail" })).toHaveCount(0);
   await expect(page.locator(".thread-header").getByRole("button", { name: "Filters" })).toBeVisible();
-  await expect(page.locator(".sidebar").getByRole("button", { name: "Refresh mail" })).toBeVisible();
+  await expect(page.locator(".sidebar").getByRole("button", { name: "Refresh Mail" })).toBeVisible();
   await page.keyboard.press("/");
-  const search = page.getByRole("textbox", { name: "Search mail" });
+  const search = page.getByRole("textbox", { name: "Search Mail" });
   await expect(search).toBeFocused();
   await search.fill("SQLite");
   await expect(page.getByRole("option")).toHaveCount(1);
   await expect(page.getByRole("heading", { name: "Your inbox stays local" })).toBeVisible();
 
   await page.keyboard.press("ControlOrMeta+k");
-  const palette = page.getByRole("dialog", { name: "Command palette" });
+  const palette = page.getByRole("dialog", { name: "Command Palette" });
   await expect(palette).toBeVisible();
-  await expect(palette.getByRole("button", { name: /Increase font size/ })).toContainText("Mod+=");
-  await expect(palette.getByRole("button", { name: /Increase font size/ })).toContainText("Mod++");
-  await expect(palette.getByRole("button", { name: /Decrease font size/ })).toContainText("Mod+-");
+  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText("Mod+=");
+  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText("Mod++");
+  await expect(palette.getByRole("button", { name: /Decrease Font Size/ })).toContainText("Mod+-");
 });
 
 test("dismisses search with Escape", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
   await page.keyboard.press("/");
-  const search = page.getByRole("textbox", { name: "Search mail" });
+  const search = page.getByRole("textbox", { name: "Search Mail" });
   await search.fill("SQLite");
   await expect(page.getByRole("option")).toHaveCount(1);
 
@@ -121,26 +121,26 @@ test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) =>
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
   await page.keyboard.press("Shift+/");
-  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  const help = page.getByRole("dialog", { name: "Keyboard Shortcuts" });
   await expect(help).toBeVisible();
   await expect(help.getByRole("heading", { name: "Navigation" })).toBeVisible();
   await expect(help).toContainText("Go to Inbox");
-  await expect(help).toContainText("Manage labels");
+  await expect(help).toContainText("Manage Labels");
   await expect(help).toContainText("New Message");
-  await expect(help).toContainText("Command palette");
-  await expect(help).toContainText("Undo last action");
+  await expect(help).toContainText("Command Palette");
+  await expect(help).toContainText("Undo Last Action");
 
   await page.keyboard.press("Escape");
   await expect(help).not.toBeVisible();
 
   await page.keyboard.press("/");
-  const search = page.getByRole("textbox", { name: "Search mail" });
+  const search = page.getByRole("textbox", { name: "Search Mail" });
   await search.focus();
   await page.keyboard.type("?");
   await expect(search).toHaveValue("?");
   await expect(help).not.toBeVisible();
 
-  await page.getByRole("button", { name: "Keyboard shortcuts (?)" }).click();
+  await page.getByRole("button", { name: "Keyboard Shortcuts (?)" }).click();
   await expect(help).toBeVisible();
   await page.locator(".modal-backdrop").click({ position: { x: 5, y: 5 } });
   await expect(help).not.toBeVisible();
@@ -155,7 +155,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   const settings = page.getByRole("dialog", { name: "Settings" });
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
-  await settings.getByRole("button", { name: "Add account" }).click();
+  await settings.getByRole("button", { name: "Add Account" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
@@ -176,18 +176,18 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
 
   // The command palette offers the same switching, discoverable like any other command.
   await page.keyboard.press("ControlOrMeta+k");
-  let palette = page.getByRole("dialog", { name: "Command palette" });
+  let palette = page.getByRole("dialog", { name: "Command Palette" });
   await palette.getByRole("button", { name: /Switch to demo-2@example.com/ }).click();
   await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
   await page.keyboard.press("ControlOrMeta+k");
-  palette = page.getByRole("dialog", { name: "Command palette" });
-  await palette.getByRole("button", { name: /Show all accounts/ }).click();
+  palette = page.getByRole("dialog", { name: "Command Palette" });
+  await palette.getByRole("button", { name: /Show All Accounts/ }).click();
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
   // A new message offers a From selector once more than one account is connected.
   await page.keyboard.press("c");
   const composer = page.getByRole("dialog", { name: "New Message" });
-  const from = composer.getByRole("combobox", { name: "Send from" });
+  const from = composer.getByRole("combobox", { name: "Send From" });
   const subject = composer.getByRole("textbox", { name: "Subject" });
   await expect(from).toHaveValue("demo@example.com");
   await expect(from).toHaveCSS("box-sizing", "border-box");
@@ -196,21 +196,21 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await expect(subject).toHaveCSS("height", "32px");
   await from.selectOption("demo-2@example.com");
   await expect(from).toHaveValue("demo-2@example.com");
-  await composer.getByRole("button", { name: "Discard draft" }).click();
+  await composer.getByRole("button", { name: "Discard Draft" }).click();
   await expect(composer).not.toBeVisible();
 
   // Shortcut help documents the new per-account bindings.
   await page.keyboard.press("Shift+/");
-  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  const help = page.getByRole("dialog", { name: "Keyboard Shortcuts" });
   await expect(help).toContainText("Switch to demo@example.com");
   await expect(help).toContainText("Switch to demo-2@example.com");
-  await expect(help).toContainText("Show all accounts");
+  await expect(help).toContainText("Show All Accounts");
   await page.keyboard.press("Escape");
   await expect(help).not.toBeVisible();
 
   // The sidebar rail lists both accounts and can switch back to "All accounts", still showing per-thread account dots.
   await expect(rail.getByRole("radio", { name: /demo-2@example.com/ })).toBeVisible();
-  await rail.getByRole("radio", { name: "All accounts" }).click();
+  await rail.getByRole("radio", { name: "All Accounts" }).click();
   await expect(page.locator(".thread-row .account-dot").first()).toBeVisible();
 
   // Removing the second account leaves the first one's shortcuts and inbox unaffected.
@@ -232,15 +232,15 @@ test("saves an independent sender name for each account", async ({ page }) => {
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
-  await settings.getByRole("button", { name: "Add account" }).click();
+  await settings.getByRole("button", { name: "Add Account" }).click();
 
   const personalName = settings.getByRole("textbox", { name: "Sender name for demo@example.com" });
   await personalName.fill("Joel Reed");
-  await settings.locator(".account-card").filter({ hasText: "demo@example.com" }).getByRole("button", { name: "Save name" }).click();
+  await settings.locator(".account-card").filter({ hasText: "demo@example.com" }).getByRole("button", { name: "Save Name" }).click();
 
   const workName = settings.getByRole("textbox", { name: "Sender name for demo-2@example.com" });
   await workName.fill("Joel at Work");
-  await settings.locator(".account-card").filter({ hasText: "demo-2@example.com" }).getByRole("button", { name: "Save name" }).click();
+  await settings.locator(".account-card").filter({ hasText: "demo-2@example.com" }).getByRole("button", { name: "Save Name" }).click();
 
   await expect(personalName).toHaveValue("Joel Reed");
   await expect(workName).toHaveValue("Joel at Work");
@@ -257,7 +257,7 @@ test("reorders navbar accounts by dragging their icons", async ({ page }) => {
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
-  await settings.getByRole("button", { name: "Add account" }).click();
+  await settings.getByRole("button", { name: "Add Account" }).click();
   await page.keyboard.press("Escape");
 
   const rail = page.getByRole("radiogroup", { name: "Filter by account" });
@@ -329,9 +329,9 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
   await expect(settings).not.toBeVisible();
 
   await expect(page.getByText("Connect your Gmail account to start syncing mail.")).toBeVisible();
-  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByRole("button", { name: "Add Account" }).click();
   await expect(settings).toBeVisible();
-  await settings.getByRole("button", { name: "Add account" }).click();
+  await settings.getByRole("button", { name: "Add Account" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(1);
 });
 
@@ -361,7 +361,7 @@ test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
   await page.keyboard.press("l");
-  await expect(page.getByRole("dialog", { name: "Manage labels" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Manage Labels" })).toBeVisible();
 });
 
 test("marks an unread conversation read after the configured delay", async ({ page }) => {
@@ -377,11 +377,11 @@ test("marks an unread conversation read after the configured delay", async ({ pa
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Reading", exact: true }).click();
-  await settings.getByRole("spinbutton", { name: "Auto-read delay" }).fill("1");
+  await settings.getByRole("spinbutton", { name: "Auto-Read Delay" }).fill("1");
   await page.keyboard.press("Escape");
 
   await expect(welcome.locator(".unread-dot")).not.toHaveClass(/visible/, { timeout: 3_000 });
-  await expect(page.getByRole("button", { name: "Mark unread" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Mark Unread" })).toBeVisible();
 });
 
 test("loads message images according to the privacy setting", async ({ page }) => {
@@ -400,7 +400,7 @@ test("loads message images according to the privacy setting", async ({ page }) =
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Privacy", exact: true }).click();
-  await settings.getByRole("checkbox", { name: "Load remote images automatically" }).check();
+  await settings.getByRole("checkbox", { name: "Load Remote Images Automatically" }).check();
   await page.keyboard.press("Escape");
 
   await expect(messageImage).toHaveAttribute("src", /^data:image\/gif;base64,/);
@@ -415,9 +415,9 @@ test("keeps sync diagnostics and crash reports together in Settings", async ({ p
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Diagnostics", exact: true }).click();
 
-  await expect(settings.getByRole("heading", { name: "Sync diagnostics" })).toBeVisible();
-  await expect(settings.getByRole("heading", { name: "Crash reports" })).toBeVisible();
-  await expect(settings.getByRole("checkbox", { name: "Share sanitized crash reports" })).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "Sync Diagnostics" })).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "Crash Reports" })).toBeVisible();
+  await expect(settings.getByRole("checkbox", { name: "Share Sanitized Crash Reports" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sync diagnostics need attention" })).not.toBeVisible();
 });
 
@@ -499,7 +499,7 @@ test("switches themes and remembers the choice after reload", async ({ page }) =
 test("resizes the inbox with pointer and keyboard and restores the preferred width", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
-  const divider = page.getByRole("separator", { name: "Resize inbox" });
+  const divider = page.getByRole("separator", { name: "Resize Inbox" });
   await expect(divider).toHaveAttribute("aria-valuenow", "400");
   const bounds = (await divider.boundingBox())!;
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 150);
@@ -526,7 +526,7 @@ test("resizes the inbox with pointer and keyboard and restores the preferred wid
 test("wraps batch actions and shows their help at the minimum inbox width", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
-  const divider = page.getByRole("separator", { name: "Resize inbox" });
+  const divider = page.getByRole("separator", { name: "Resize Inbox" });
   await divider.focus();
   await page.keyboard.press("Home");
   await expect(divider).toHaveAttribute("aria-valuenow", "280");

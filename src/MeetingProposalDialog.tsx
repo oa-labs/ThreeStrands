@@ -52,7 +52,7 @@ export function MeetingProposalDialog({
   };
 
   return (
-    <Modal title="Edit meeting proposal" className="task-editor-modal" onClose={onClose} initialFocusRef={titleRef}>
+    <Modal title="Edit Meeting Proposal" className="task-editor-modal" onClose={onClose} initialFocusRef={titleRef}>
       <form className="modal-form" onSubmit={submit} onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           event.preventDefault();
@@ -63,11 +63,11 @@ export function MeetingProposalDialog({
         <label><span>Participants</span><input value={participants} onChange={(event) => setParticipants(event.target.value)} placeholder="Comma-separated email addresses" /></label>
         <label><span>Start</span><input type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label>
         <label><span>End</span><input type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} /></label>
-        <label><span>Duration (minutes)</span><input type="number" min="5" max="1440" value={duration} onChange={(event) => setDuration(event.target.value)} /></label>
+        <label><span>Duration (Minutes)</span><input type="number" min="5" max="1440" value={duration} onChange={(event) => setDuration(event.target.value)} /></label>
         <label><span>Timezone</span><input value={timeZone} onChange={(event) => setTimeZone(event.target.value)} placeholder="America/New_York" /></label>
         <label><span>Location</span><input value={location} onChange={(event) => setLocation(event.target.value)} /></label>
         <div className="modal-form-evidence"><span>Evidence</span><blockquote>{proposal.evidence.excerpt}</blockquote></div>
-        <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={!title.trim()}>Save proposal</button></div>
+        <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={!title.trim()}>Save Proposal</button></div>
       </form>
     </Modal>
   );

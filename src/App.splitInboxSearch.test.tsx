@@ -34,7 +34,7 @@ describe("split inbox search shortcuts", () => {
     expect(screen.getByRole("button", { name: "Inbox (g then i)" })).toHaveClass("active");
 
     fireEvent.keyDown(window, { key: "/" });
-    const search = await screen.findByRole("textbox", { name: "Search mail" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
     expect(search).toHaveFocus();
     expect(splitTab).toHaveAttribute("aria-selected", "true");
     fireEvent.change(search, { target: { value: "roadmap" } });
@@ -47,16 +47,16 @@ describe("split inbox search shortcuts", () => {
 
     fireEvent.keyDown(search, { key: "Tab" });
     await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));
-    expect(screen.getByRole("textbox", { name: "Search mail" })).toHaveValue("roadmap");
-    expect(screen.getByRole("textbox", { name: "Search mail" })).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
+    expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveFocus();
 
     fireEvent.click(splitTab);
     await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
-    expect(screen.getByRole("textbox", { name: "Search mail" })).toHaveValue("roadmap");
+    expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
 
-    fireEvent.keyDown(screen.getByRole("textbox", { name: "Search mail" }), { key: "Tab", shiftKey: true });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Search Mail" }), { key: "Tab", shiftKey: true });
     await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));
-    expect(screen.getByRole("textbox", { name: "Search mail" })).toHaveValue("roadmap");
+    expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
   });
 
   it("closes the search box when switching accounts, but not when switching tabs", async () => {
@@ -87,16 +87,16 @@ describe("split inbox search shortcuts", () => {
     render(<App />);
     const splitTab = await screen.findByRole("tab", { name: "Work" });
     fireEvent.keyDown(window, { key: "/" });
-    const search = await screen.findByRole("textbox", { name: "Search mail" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "roadmap" } });
 
     fireEvent.click(splitTab);
     await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
-    expect(screen.getByRole("textbox", { name: "Search mail" })).toHaveValue("roadmap");
+    expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
 
     fireEvent.click(screen.getByRole("radio", { name: "Work" }));
     await waitFor(() => expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true"));
-    expect(screen.queryByRole("textbox", { name: "Search mail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Search Mail" })).not.toBeInTheDocument();
   });
 
   it("shows when the Gmail backfill is still running", async () => {
@@ -108,7 +108,7 @@ describe("split inbox search shortcuts", () => {
 
     render(<App />);
     fireEvent.keyDown(window, { key: "/" });
-    const search = await screen.findByRole("textbox", { name: "Search mail" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "126" } });
     fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
 
@@ -124,7 +124,7 @@ describe("split inbox search shortcuts", () => {
 
     render(<App />);
     fireEvent.keyDown(window, { key: "/" });
-    const search = await screen.findByRole("textbox", { name: "Search mail" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "126" } });
     fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
 

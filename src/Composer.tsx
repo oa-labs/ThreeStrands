@@ -206,7 +206,7 @@ export const Composer = forwardRef<ComposerHandle, {
     remove.type = "button";
     remove.className = "compose-image-remove";
     remove.dataset.composeImageRemove = "true";
-    remove.setAttribute("aria-label", "Remove pasted image");
+    remove.setAttribute("aria-label", "Remove Pasted Image");
     remove.title = "Remove image";
     remove.textContent = "×";
     wrapper.append(remove);
@@ -215,7 +215,7 @@ export const Composer = forwardRef<ComposerHandle, {
     resize.className = "compose-image-resize";
     resize.dataset.composeImageResize = "true";
     resize.setAttribute("role", "slider");
-    resize.setAttribute("aria-label", "Resize pasted image");
+    resize.setAttribute("aria-label", "Resize Pasted Image");
     resize.setAttribute("aria-valuemin", "80");
     resize.setAttribute("aria-valuemax", "2000");
     resize.setAttribute("aria-valuenow", String(image.width || 320));
@@ -335,7 +335,7 @@ export const Composer = forwardRef<ComposerHandle, {
     panel.current?.querySelector<HTMLInputElement>(`[name="${field}"]`)?.focus();
   }, [showBlankCopies]);
   useEscapeDismiss(close);
-  return <div ref={panel} className="composer composer-inline" role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward message" : "Reply message"}
+  return <div ref={panel} className="composer composer-inline" role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward Message" : "Reply Message"}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
         if ((event.metaKey || event.ctrlKey) && event.shiftKey && ["o", "c", "b"].includes(event.key.toLowerCase())) {
@@ -351,11 +351,11 @@ export const Composer = forwardRef<ComposerHandle, {
           if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
         }
       }}>
-      <header className="composer-header"><div><h2>{initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply all" : "Reply"}</h2>{initial.mode === "new" && accounts.length > 1 ? (
-        <label className="compose-from"><span>From</span><select aria-label="Send from" value={draft.account} disabled={busy} onChange={(e) => changeAccount(e.target.value)}>
+      <header className="composer-header"><div><h2>{initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply All" : "Reply"}</h2>{initial.mode === "new" && accounts.length > 1 ? (
+        <label className="compose-from"><span>From</span><select aria-label="Send From" value={draft.account} disabled={busy} onChange={(e) => changeAccount(e.target.value)}>
           {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
         </select></label>
-      ) : <span>From {draft.account}</span>}</div><button className="icon-button" aria-label="Save and close draft" onClick={close} disabled={busy}><X size={19} /></button></header>
+      ) : <span>From {draft.account}</span>}</div><button className="icon-button" aria-label="Save and Close Draft" onClick={close} disabled={busy}><X size={19} /></button></header>
       <div className="composer-content">
         <RecipientField id="to" label="To" value={draft.to} account={draft.account} disabled={busy} labelExpanded={showBlankCopies} onLabelClick={() => setShowBlankCopies((visible) => !visible)} onChange={(value) => edit("to", value)} />
         {(["cc", "bcc"] as const).map((field) => (
@@ -368,7 +368,7 @@ export const Composer = forwardRef<ComposerHandle, {
           ref={bodyEditor}
           className="compose-body"
           role="textbox"
-          aria-label="Message body"
+          aria-label="Message Body"
           aria-multiline="true"
           aria-disabled={busy}
           contentEditable={!busy}
@@ -468,7 +468,7 @@ export const Composer = forwardRef<ComposerHandle, {
           <div className="reply-assist">
             {!replyAssistOpen ? (
               <button type="button" className="reply-assist-trigger" onClick={() => void openReplyAssist()}>
-                <Sparkles size={14} /> Draft reply with AI <kbd>⌘/Ctrl J</kbd>
+                <Sparkles size={14} /> Draft Reply With AI <kbd>⌘/Ctrl J</kbd>
               </button>
             ) : (
               <section className="reply-assist-panel" aria-label="Reply Assist">
@@ -479,7 +479,7 @@ export const Composer = forwardRef<ComposerHandle, {
                   </button>
                 </div>
                 <label>
-                  <span>Optional short instruction</span>
+                  <span>Optional Short Instruction</span>
                   <input
                     value={replyInstruction}
                     placeholder="e.g. Accept and ask for available times"
@@ -506,7 +506,7 @@ export const Composer = forwardRef<ComposerHandle, {
                 {confirmAddToExisting ? (
                   <div className="reply-assist-confirm" role="alert">
                     <span>Your reply already contains text. The suggestion will be added above it without replacing anything.</span>
-                    <button type="button" onClick={() => void generateReply(true)}>Add anyway</button>
+                    <button type="button" onClick={() => void generateReply(true)}>Add Anyway</button>
                     <button type="button" onClick={() => setConfirmAddToExisting(false)}>Cancel</button>
                   </div>
                 ) : null}
@@ -517,7 +517,7 @@ export const Composer = forwardRef<ComposerHandle, {
                     disabled={replyAssistBusy || !replyAssistContext || confirmAddToExisting}
                     onClick={() => void generateReply()}
                   >
-                    {replyAssistBusy ? "Preparing…" : "Generate draft"}
+                    {replyAssistBusy ? "Preparing…" : "Generate Draft"}
                   </button>
                   <span>The suggestion is never sent automatically.</span>
                 </div>
@@ -529,9 +529,9 @@ export const Composer = forwardRef<ComposerHandle, {
           <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction} Configure Reply Assist in AI settings to generate a suggestion.</p>
         ) : null}
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={14} /></button></li>)}</ul>}
-        {error && <div className="compose-error" role="alert">{error} <button onClick={() => void run(async () => { await flush(); })}>Retry save</button></div>}
+        {error && <div className="compose-error" role="alert">{error} <button onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
       </div>
-      <footer><button className="send-button" onClick={() => send()} disabled={busy}><Send size={16} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button onClick={attach} disabled={busy} aria-label="Attach files"><Paperclip size={17} /></button><span className="save-status" role="status">{status}</span><button disabled={busy} aria-label="Discard draft" onClick={() => void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); })}><Trash2 size={16} /></button></footer>
+      <footer><button className="send-button" onClick={() => send()} disabled={busy}><Send size={16} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={17} /></button><span className="save-status" role="status">{status}</span><button disabled={busy} aria-label="Discard Draft" onClick={() => void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); })}><Trash2 size={16} /></button></footer>
       <p className="compose-note">Drafts are saved on this device. Send has a 10-second undo window.{!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}</p>
       {snippetPickerOpen ? (
         <SnippetPicker

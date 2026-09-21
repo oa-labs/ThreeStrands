@@ -154,7 +154,7 @@ export function CalendarAttachment({ messageId, attachment, onError, loadedPrevi
       {preview.truncated ? <p className="calendar-card-more">Additional events are included in this file.</p> : null}
       <footer className="calendar-card-actions">
         <span><CalendarDays size={14} /> {attachment.filename}</span>
-        <button type="button" onClick={open}><ExternalLink size={14} /> Open invitation</button>
+        <button type="button" onClick={open}><ExternalLink size={14} /> Open Invitation</button>
         <button type="button" aria-label={`Download ${attachment.filename}`} title={`Download ${attachment.filename}`} onClick={download}>
           <Download size={14} />
         </button>

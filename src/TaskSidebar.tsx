@@ -6,8 +6,8 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 
 function taskGroup(task: ThreadTask): string {
   if (task.status === "completed") return "Completed";
-  if (task.kind === "waiting_for") return "Waiting for";
-  if (!task.dueValue) return "No due date";
+  if (task.kind === "waiting_for") return "Waiting For";
+  if (!task.dueValue) return "No Due Date";
   const due = task.dueKind === "date" ? new Date(`${task.dueValue}T23:59:59`) : new Date(task.dueValue);
   const now = new Date();
   if (due.toDateString() === now.toDateString()) return "Today";
@@ -133,7 +133,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       current.push(task);
       groups.set(group, current);
     }
-    return ["Today", "Upcoming", "Waiting for", "No due date", "Completed"]
+    return ["Today", "Upcoming", "Waiting For", "No Due Date", "Completed"]
       .map((name) => ({ name, tasks: groups.get(name) ?? [] }))
       .filter((group) => group.tasks.length > 0);
   }, [tasks]);
@@ -203,7 +203,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               {task.status === "completed" ? <RotateCcw size={15} /> : <Check size={15} />}
             </button>
             {onDraftFollowUp && task.threadId && task.kind === "follow_up" && isDue(task) ? (
-              <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft follow-up</button>
+              <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button>
             ) : null}
           </article>
         ))}
@@ -224,10 +224,10 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
-          {title === "Actions" && onAnalyzeThread ? <button type="button" aria-label="Analyze thread" title={!analysisEnabled ? "Enable Thread actions in AI settings" : !analysisReady ? "Configure an AI provider and API key" : "Analyze thread"} onClick={onAnalyzeThread} disabled={!analysisReady || analysisLoading}><Sparkles size={17} /></button> : null}
-          {onCheckSchedule ? <button type="button" aria-label="Check schedule" title="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button> : null}
-          {onNewTask && (variant === "workspace" || currentThread) ? <button type="button" aria-label="Add task" title="Add task" onClick={onNewTask}><Plus size={17} /></button> : null}
-          <button type="button" aria-label="Close tasks" onClick={onClose}><X size={18} /></button>
+          {title === "Actions" && onAnalyzeThread ? <button type="button" aria-label="Analyze Thread" title={!analysisEnabled ? "Enable thread actions in AI settings" : !analysisReady ? "Configure an AI provider and API key" : "Analyze thread"} onClick={onAnalyzeThread} disabled={!analysisReady || analysisLoading}><Sparkles size={17} /></button> : null}
+          {onCheckSchedule ? <button type="button" aria-label="Check Schedule" title="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button> : null}
+          {onNewTask && (variant === "workspace" || currentThread) ? <button type="button" aria-label="Add Task" title="Add task" onClick={onNewTask}><Plus size={17} /></button> : null}
+          <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>
         </div>
       </header>
       {error ? <p className="tasks-error" role="alert">{error}</p> : null}
@@ -240,7 +240,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             return <div className="action-analysis-error" role="alert">
               <p>{summary}</p>
               <div className="action-analysis-error-actions">
-                {retryable && onAnalyzeThread ? <button type="button" onClick={onAnalyzeThread}><RotateCcw size={13} /> Try again</button> : null}
+                {retryable && onAnalyzeThread ? <button type="button" onClick={onAnalyzeThread}><RotateCcw size={13} /> Try Again</button> : null}
                 {retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{analysisError}</p></details> : null}
               </div>
             </div>;
@@ -260,8 +260,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
                 {evidence}
                 <div className="proposal-actions">
                   {onReviewProposal ? <button type="button" onClick={() => onReviewProposal(index, proposal, "edit")}><Pencil size={13} /> Edit</button> : null}
-                  {proposal.type === "task" && onReviewProposal ? <button type="button" onClick={() => onReviewProposal(index, proposal, "accept")}>Review &amp; add task</button> : null}
-                  {proposal.type === "meeting" && onFindTimesProposal ? <button type="button" disabled={needsReview} title={needsReview ? "Edit this proposal before finding times" : undefined} onClick={() => onFindTimesProposal(proposal)}>Find times</button> : null}
+                  {proposal.type === "task" && onReviewProposal ? <button type="button" onClick={() => onReviewProposal(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
+                  {proposal.type === "meeting" && onFindTimesProposal ? <button type="button" disabled={needsReview} title={needsReview ? "Edit this proposal before finding times" : undefined} onClick={() => onFindTimesProposal(proposal)}>Find Times</button> : null}
                   {onDiscardProposal ? <button type="button" onClick={() => onDiscardProposal(index)}>Discard</button> : null}
                 </div>
               </article>;
@@ -280,9 +280,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               <div className="task-detail-actions">
                 {onEditTask ? <button type="button" onClick={() => onEditTask(selectedTask)}><Pencil size={14} /> Edit</button> : null}
                 <button type="button" onClick={() => void setStatus(selectedTask, selectedTask.status === "completed" ? "open" : "completed")}>
-                  {selectedTask.status === "completed" ? <><RotateCcw size={14} /> Reopen</> : <><Check size={14} /> Mark done</>}
+                  {selectedTask.status === "completed" ? <><RotateCcw size={14} /> Reopen</> : <><Check size={14} /> Mark Done</>}
                 </button>
-                {selectedTask.threadId ? <button type="button" onClick={() => onOpenThread(selectedTask.threadId!)}>Open conversation</button> : null}
+                {selectedTask.threadId ? <button type="button" onClick={() => onOpenThread(selectedTask.threadId!)}>Open Conversation</button> : null}
               </div>
             </header>
             <dl>

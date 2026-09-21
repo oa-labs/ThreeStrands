@@ -67,14 +67,14 @@ describe("settings import navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Data transfer" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Data Transfer" }));
 
     const dataTransfer = within(dialog).getByRole("region", { name: "Data transfer" });
-    fireEvent.change(within(dataTransfer).getAllByLabelText("Export password")[1], {
+    fireEvent.change(within(dataTransfer).getAllByLabelText("Export Password")[1], {
       target: { value: "password123" },
     });
     fireEvent.click(within(dataTransfer).getByRole("button", {
-      name: "Choose encrypted settings file",
+      name: "Choose Encrypted Settings File",
     }));
 
     await waitFor(() => {
@@ -132,7 +132,7 @@ describe("settings section keyboard navigation", () => {
 
     // Wraps past the first section to the last one.
     fireEvent.keyDown(appearanceButton, { key: "ArrowUp" });
-    const lastButton = within(dialog).getByRole("button", { name: "Data transfer" });
+    const lastButton = within(dialog).getByRole("button", { name: "Data Transfer" });
     expect(lastButton).toHaveAttribute("aria-current", "true");
     expect(lastButton).toHaveFocus();
   });

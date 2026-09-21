@@ -42,7 +42,7 @@ describe("App chrome", () => {
     const onClose = vi.fn();
     render(<CommandPalette context={context} execute={execute} onClose={onClose} />);
 
-    const input = screen.getByRole("textbox", { name: "Filter commands" });
+    const input = screen.getByRole("textbox", { name: "Filter Commands" });
     fireEvent.change(input, { target: { value: "new message" } });
     const newMessage = screen.getByRole("button", { name: /New Message/ });
     expect(newMessage).toBeEnabled();
@@ -60,7 +60,7 @@ describe("App chrome", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh (r)" }));
     expect(action).toHaveBeenCalledTimes(1);
     view.rerender(<ShortcutHelp onClose={close} />);
-    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
     expect(screen.getByText("Use ThreeStrands without leaving the keyboard.")).toBeInTheDocument();
   });
 

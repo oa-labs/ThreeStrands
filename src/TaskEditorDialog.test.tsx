@@ -21,8 +21,8 @@ describe("TaskEditorDialog", () => {
     await waitFor(() => expect(title).toHaveFocus());
     fireEvent.change(title, { target: { value: "Set up the client website" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
-    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-09-25" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    fireEvent.change(screen.getByLabelText("Due Date"), { target: { value: "2026-09-25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       title: "Set up the client website",
@@ -42,7 +42,7 @@ describe("TaskEditorDialog", () => {
     );
     const title = screen.getByRole("textbox", { name: "Task" });
     fireEvent.change(title, { target: { value: "Keep this value" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save task");
     expect(title).toHaveValue("Keep this value");
   });

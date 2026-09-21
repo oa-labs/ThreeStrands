@@ -50,7 +50,9 @@ Production deploys the service as a stateless OCI container behind TLS and
 runs SQL migrations before application rollout. Configure managed PostgreSQL
 encryption, backups, point-in-time recovery, and a documented backup expiration
 window for deleted accounts. Health probes use `/health/live` and
-`/health/ready`.
+`/health/ready`. See the step-by-step
+[`production deployment runbook`](sync-production-deployment.md) for Google
+configuration, secrets, migrations, client builds, rollout, and recovery.
 
 ## Synchronization behavior
 
@@ -64,4 +66,3 @@ revisions. Same-field and edit/delete races preserve both sides as a conflict;
 Settings lets the user select the cloud or device value for each overlapping
 field. Signing out clears only cloud session/sync metadata. Local workflow data
 remains available.
-

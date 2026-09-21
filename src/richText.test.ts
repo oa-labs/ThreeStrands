@@ -27,19 +27,19 @@ describe("Superhuman formatting shortcuts", () => {
       ["Hyperlink", "Mod+k"],
       ["Color", "Mod+Shift+c"],
       ["Strikethrough", "Mod+Shift+x"],
-      ["Numbered list", "Mod+Shift+7"],
-      ["Bulleted list", "Mod+Shift+8"],
+      ["Numbered List", "Mod+Shift+7"],
+      ["Bulleted List", "Mod+Shift+8"],
       ["Quote", "Mod+Shift+9"],
-      ["Indent list", "Tab"],
-      ["Outdent list", "Shift+Tab"],
-      ["Increase indent", "Mod+]"],
-      ["Decrease indent", "Mod+["],
+      ["Indent List", "Tab"],
+      ["Outdent List", "Shift+Tab"],
+      ["Increase Indent", "Mod+]"],
+      ["Decrease Indent", "Mod+["],
     ]);
   });
 
   it("matches shifted number shortcuts by physical digit key", () => {
-    expect(formattingShortcutFor(event("&", { metaKey: true, shiftKey: true, code: "Digit7" }))?.title).toBe("Numbered list");
-    expect(formattingShortcutFor(event("*", { ctrlKey: true, shiftKey: true, code: "Digit8" }))?.title).toBe("Bulleted list");
+    expect(formattingShortcutFor(event("&", { metaKey: true, shiftKey: true, code: "Digit7" }))?.title).toBe("Numbered List");
+    expect(formattingShortcutFor(event("*", { ctrlKey: true, shiftKey: true, code: "Digit8" }))?.title).toBe("Bulleted List");
     expect(formattingShortcutFor(event("(", { metaKey: true, shiftKey: true, code: "Digit9" }))?.title).toBe("Quote");
   });
 
