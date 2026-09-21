@@ -8,7 +8,7 @@ afterEach(cleanup);
 
 describe("mutation failure diagnostics", () => {
   it("keeps crash-report controls in the diagnostics section", () => {
-    render(<DiagnosticsSettings status={null} />);
+    render(<DiagnosticsSettings status={null} accountCount={1} />);
 
     expect(screen.getByRole("heading", { name: "Crash Reports" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Share Sanitized Crash Reports" })).toBeInTheDocument();
@@ -32,7 +32,7 @@ describe("mutation failure diagnostics", () => {
       error: "Gmail permanently rejected the request: invalid label",
     };
 
-    render(<DiagnosticsSettings status={status} />);
+    render(<DiagnosticsSettings status={status} accountCount={1} />);
 
     expect(screen.getByText("Permanently failed operations")).toBeInTheDocument();
     expect(screen.getByText("label")).toBeInTheDocument();
@@ -56,7 +56,7 @@ describe("mutation failure diagnostics", () => {
       error: null,
     };
 
-    render(<DiagnosticsSettings status={status} />);
+    render(<DiagnosticsSettings status={status} accountCount={1} />);
 
     expect(screen.getByText("Quarantined messages")).toBeInTheDocument();
     expect(screen.getByText("Message bad-message")).toBeInTheDocument();
@@ -65,5 +65,43 @@ describe("mutation failure diagnostics", () => {
       && element.textContent?.includes("Invalid Gmail base64url body")
       && element.textContent.includes("Thread provider-thread")
     ))).toBeInTheDocument();
+  });
+
+  it("shows the history cursor while a single account is connected", () => {
+    const status: SyncStatus = {
+      state: "idle",
+      lastSuccessfulSync: "2026-01-02T03:04:05Z",
+      cursor: null,
+      pendingMutations: 0,
+      failedMutations: [],
+      quarantinedMessages: [],
+      error: null,
+    };
+
+    render(<DiagnosticsSettings status={status} accountCount={1} />);
+
+    expect(screen.getByText("History cursor")).toBeInTheDocument();
+    expect(screen.getByText("Not initialized")).toBeInTheDocument();
+  });
+
+  it("hides the history cursor once several accounts are connected", () => {
+    // The merged status deliberately carries no cursor across accounts —
+    // one position cannot describe several mailboxes — so showing
+    // "Not initialized" here would misreport every healthy account.
+    const status: SyncStatus = {
+      state: "idle",
+      lastSuccessfulSync: "2026-01-02T03:04:05Z",
+      cursor: null,
+      pendingMutations: 0,
+      failedMutations: [],
+      quarantinedMessages: [],
+      error: null,
+    };
+
+    render(<DiagnosticsSettings status={status} accountCount={3} />);
+
+    expect(screen.queryByText("History cursor")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not initialized")).not.toBeInTheDocument();
+    expect(screen.getByText("Last successful sync")).toBeInTheDocument();
   });
 });

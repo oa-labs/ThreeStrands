@@ -11,12 +11,13 @@
 # The identity below is a free, self-signed "Code Signing" certificate meant
 # for local development only (see PLAN.MD or ask Claude to recreate it) — it
 # is not a Developer ID certificate and only satisfies local Keychain ACLs,
-# not Gatekeeper/notarization for distributed builds.
+# not Gatekeeper/notarization for distributed builds. It is named "Dispatch
+# Dev Signing" to match the certificate in this machine's keychain.
 set -e
 
 binary="$1"
 shift
 
-codesign --force --sign "ThreeStrands Dev Signing" --options runtime "$binary"
+codesign --force --sign "Dispatch Dev Signing" --options runtime "$binary"
 
 exec "$binary" "$@"

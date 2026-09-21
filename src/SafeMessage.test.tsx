@@ -323,6 +323,16 @@ describe("SafeMessage", () => {
     expect(forwarded).not.toContain("Original details.");
   });
 
+  it("folds an 'On ... wrote:' opener whose 'wrote:' hard-wrapped onto its own line or node", () => {
+    const acrossLineBreak = collapseQuotedHistoryHtml(emailRenderingFixtures.replyWrappedWroteLineBreak);
+    expect(acrossLineBreak).toContain("Here is my answer.");
+    expect(acrossLineBreak).not.toContain("Earlier message content");
+
+    const acrossParagraphs = collapseQuotedHistoryHtml(emailRenderingFixtures.replyWrappedWroteParagraphs);
+    expect(acrossParagraphs).toContain("Here is my answer.");
+    expect(acrossParagraphs).not.toContain("Earlier message content");
+  });
+
   it("keeps ambiguous quoted prose visible", () => {
     const html = "<p>My answer includes a quotation:</p><blockquote><p>Important cited text.</p></blockquote>";
     expect(collapseQuotedHistoryHtml(html)).toBeNull();
@@ -473,6 +483,18 @@ it("collapses and reveals quoted history in a plain-text reply", () => {
   expect(screen.getByTestId("message-body")).not.toHaveTextContent("Earlier message");
   fireEvent.click(screen.getByRole("button", { name: "Show quoted content" }));
   expect(screen.getByTestId("message-body")).toHaveTextContent("Earlier message");
+});
+
+it("collapses an 'On ... wrote:' opener whose 'wrote:' hard-wrapped onto the next line", () => {
+  const text = [
+    "Please let me know if there are any other edits needed.",
+    "",
+    "On Mon, Sep 21, 2026 at 2:33 PM Brian Anderson <banderson@upwardprojects.com>",
+    "wrote:",
+    "",
+    "> Yes, these are examples of several recurring issues.",
+  ].join("\n");
+  expect(collapseQuotedHistoryText(text)).toBe("Please let me know if there are any other edits needed.");
 });
 
 it("does not collapse fewer than 5 consecutive '>' lines", () => {

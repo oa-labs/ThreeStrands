@@ -42,6 +42,17 @@ export const emailRenderingFixtures = {
     <div>----- Forwarded message -----</div>
     <div>From: sender@example.com<br>Date: Tue, Sep 15, 2026<br>Subject: Details<br><br>Original details.</div>
   `,
+  replyWrappedWroteLineBreak: `
+    <p>Here is my answer.</p>
+    <p>On Mon, Sep 21, 2026 at 2:33 PM Brian Anderson &lt;banderson@upwardprojects.com&gt;<br>wrote:</p>
+    <blockquote><p>Earlier message content.</p></blockquote>
+  `,
+  replyWrappedWroteParagraphs: `
+    <p>Here is my answer.</p>
+    <p>On Mon, Sep 21, 2026 at 2:33 PM Brian Anderson &lt;banderson@upwardprojects.com&gt;</p>
+    <p>wrote:</p>
+    <blockquote><p>Earlier message content.</p></blockquote>
+  `,
   malformed: `
     <div style="position:fixed;top:0;left:0;z-index:99;animation:spin 1s;cursor:pointer">No overlay</div>
     <img src="javascript:alert(1)"><form action="https://example.com"><input value="bad"></form>

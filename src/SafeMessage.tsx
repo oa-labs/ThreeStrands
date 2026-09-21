@@ -383,6 +383,20 @@ const emailOrTimestamp = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d{1,2}:\d{2}\b|\b\d{
 const quoteLine = /^\s*>/;
 const MIN_QUOTE_RUN = 5;
 
+/**
+ * Mail clients sometimes hard-wrap the "On <date>, <name> <email> wrote:"
+ * line — most often when a long display name or address pushes "wrote:"
+ * past the wrap column — landing it on its own line or DOM text node,
+ * separated from the opener by a real line break rather than the run of
+ * whitespace `wroteMarker` expects. These two patterns recognize an opener
+ * ending mid-phrase and a bare "wrote:" continuation so the pair can still
+ * be treated as one boundary, regardless of which client produced the wrap.
+ */
+const wroteOpenerLine = /(?:^|\n)\s*On\s+\S[^\n]{0,499}$/i;
+const wroteContinuationLine = /^\s*wrote:\s*$/i;
+const WRAPPED_WROTE_LOOKAHEAD = 3;
+const WRAPPED_WROTE_MAX_LENGTH = 500;
+
 /** Index of the first line starting a run of MIN_QUOTE_RUN+ consecutive `>`-quoted lines, or -1. */
 function findQuoteRunStart(lines: string[]): number {
   let runStart = -1;
@@ -395,6 +409,29 @@ function findQuoteRunStart(lines: string[]): number {
     } else {
       runLength = 0;
       runStart = -1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Index of a line opening "On ... wrote:" whose "wrote:" landed on its own
+ * line after a hard wrap, or -1. A blank line ends the search for that
+ * opener, so the lookahead never reaches across a paragraph break.
+ */
+function findWrappedWroteMarkerLine(lines: string[]): number {
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!wroteOpenerLine.test(line) || /wrote:/i.test(line)) continue;
+    let joinedLength = line.length;
+    for (let lookahead = 1; lookahead <= WRAPPED_WROTE_LOOKAHEAD && index + lookahead < lines.length; lookahead++) {
+      const nextLine = lines[index + lookahead];
+      if (!nextLine.trim()) break;
+      joinedLength += nextLine.length;
+      if (wroteContinuationLine.test(nextLine)) {
+        if (joinedLength <= WRAPPED_WROTE_MAX_LENGTH) return index;
+        break;
+      }
     }
   }
   return -1;
@@ -449,18 +486,44 @@ export function collapseQuotedHistoryHtml(html: string): string | null {
     candidates.push({ node, kind: "element", score: 2 + (pairedQuote ? 2 : 0) });
   });
 
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  let textNode = walker.nextNode();
-  while (textNode) {
+  const textNodes: Text[] = [];
+  {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      textNodes.push(node as Text);
+      node = walker.nextNode();
+    }
+  }
+
+  textNodes.forEach((textNode, index) => {
     const text = textNode.textContent ?? "";
     const marker = quotedHistoryMarker.exec(text) ?? wroteMarker.exec(text);
+    const trailingEvidence = () => [...trailingQuotes, ...trailingHeaders]
+      .some((evidence) => nodeComesBefore(textNode, evidence));
     if (marker?.index !== undefined) {
-      const trailingEvidence = [...trailingQuotes, ...trailingHeaders]
-        .some((evidence) => nodeComesBefore(textNode as Node, evidence));
-      candidates.push({ node: textNode as Text, kind: "text", offset: marker.index, score: 3 + (trailingEvidence ? 2 : 0) });
+      candidates.push({ node: textNode, kind: "text", offset: marker.index, score: 3 + (trailingEvidence() ? 2 : 0) });
+      return;
     }
-    textNode = walker.nextNode();
-  }
+    // A mail client can hard-wrap "On ... wrote:" so "wrote:" lands in a
+    // sibling text node — e.g. across a <br> or a paragraph boundary
+    // introduced by the sender's own markup. Recognize the split pair the
+    // same way the plain-text path does, regardless of which client wrapped it.
+    const opener = wroteOpenerLine.exec(text);
+    if (!opener || /wrote:/i.test(text)) return;
+    let joinedLength = text.length;
+    for (let lookahead = 1; lookahead <= WRAPPED_WROTE_LOOKAHEAD && index + lookahead < textNodes.length; lookahead++) {
+      const nextText = textNodes[index + lookahead].textContent ?? "";
+      if (!nextText.trim()) continue;
+      joinedLength += nextText.length;
+      if (wroteContinuationLine.test(nextText)) {
+        if (joinedLength <= WRAPPED_WROTE_MAX_LENGTH) {
+          candidates.push({ node: textNode, kind: "text", offset: opener.index, score: 3 + (trailingEvidence() ? 2 : 0) });
+        }
+        break;
+      }
+    }
+  });
 
   if (candidates.length === 0) return null;
   candidates.sort((left, right) => {
@@ -490,7 +553,8 @@ export function collapseQuotedHistoryHtml(html: string): string | null {
 /** Returns the part of a plain-text reply before its quoted history. */
 export function collapseQuotedHistoryText(text: string): string | null {
   const lines = text.split(/\r?\n/);
-  const markerIndex = lines.findIndex((line) => quotedHistoryMarker.test(`\n${line}\n`) || wroteMarker.test(`\n${line}\n`));
+  const directMarkerIndex = lines.findIndex((line) => quotedHistoryMarker.test(`\n${line}\n`) || wroteMarker.test(`\n${line}\n`));
+  const markerIndex = directMarkerIndex >= 0 ? directMarkerIndex : findWrappedWroteMarkerLine(lines);
   const quoteRunIndex = findQuoteRunStart(lines);
   const cutCandidates = [markerIndex, quoteRunIndex].filter((index) => index >= 0);
   if (cutCandidates.length > 0) {

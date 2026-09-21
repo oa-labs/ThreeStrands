@@ -3194,9 +3194,13 @@ function recoveryStatusMessage(recovery: RecoveryStatus): string {
 function SyncDiagnosticsDetails({
   status,
   recovery,
+  accountCount,
 }: {
   status: SyncStatus | null;
   recovery?: RecoveryStatus | null;
+  /** Connected mail accounts. The merged status only carries a cursor when
+   * there is exactly one, so the row is meaningless beyond that. */
+  accountCount: number;
 }) {
   return (
     <dl className="diagnostics">
@@ -3209,7 +3213,12 @@ function SyncDiagnosticsDetails({
       <dt>State</dt><dd>{status?.state ?? "unknown"}</dd>
       <dt>Last successful sync</dt>
       <dd>{status?.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Never"}</dd>
-      <dt>History cursor</dt><dd>{status?.cursor ?? "Not initialized"}</dd>
+      {accountCount <= 1 ? (
+        <>
+          <dt>History cursor</dt>
+          <dd>{status?.cursor ?? "Not initialized"}</dd>
+        </>
+      ) : null}
       <dt>Pending mutations</dt><dd>{status?.pendingMutations ?? 0}</dd>
       <dt>Permanently failed operations</dt>
       <dd>
@@ -3257,9 +3266,11 @@ function SyncDiagnosticsDetails({
 export function DiagnosticsSettings({
   status,
   recovery,
+  accountCount,
 }: {
   status: SyncStatus | null;
   recovery?: RecoveryStatus | null;
+  accountCount: number;
 }) {
   const [reporting, setReporting] = useState(crashReportingEnabled);
   const [reportCount, setReportCount] = useState(() => localCrashReports().length);
@@ -3270,7 +3281,7 @@ export function DiagnosticsSettings({
       <p className="settings-hint">
         This information can help troubleshoot synchronization problems. Most people will not need to change anything here.
       </p>
-      <SyncDiagnosticsDetails status={status} recovery={recovery} />
+      <SyncDiagnosticsDetails status={status} recovery={recovery} accountCount={accountCount} />
 
       <h3>Crash Reports</h3>
       <label className="settings-checkbox">
@@ -3712,7 +3723,7 @@ function Settings({
             />
           ) : null}
           {section === "diagnostics" ? (
-            <DiagnosticsSettings status={syncStatus} recovery={recoveryStatus} />
+            <DiagnosticsSettings status={syncStatus} recovery={recoveryStatus} accountCount={accounts.length} />
           ) : null}
           {section === "data" ? <DataTransferSettings onImported={onSettingsImported} /> : null}
         </div>
