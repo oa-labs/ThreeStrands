@@ -64,6 +64,16 @@ describe("Composer From selector", () => {
     await waitFor(() => expect(selector).toHaveValue("second@example.com"));
     expect(mailClient.setDraftAccount).toHaveBeenCalledWith("draft-1", "second@example.com");
   });
+
+  it("keeps the From selector inside the composer's keyboard focus loop", () => {
+    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    const selector = screen.getByRole("combobox", { name: "Send from" });
+
+    selector.focus();
+    fireEvent.keyDown(selector, { key: "Tab", shiftKey: true });
+
+    expect(screen.getByRole("button", { name: "Discard draft" })).toHaveFocus();
+  });
 });
 
 describe("Composer recipient visibility and shortcuts", () => {

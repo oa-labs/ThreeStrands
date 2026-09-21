@@ -1621,7 +1621,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 }
 .thread-summary-actions button:hover, .thread-summary-error button:hover { background: var(--hover); }
 .composer, .correspondence-list { display: flex; flex-direction: column; width: min(720px, 100%); max-height: calc(100vh - 48px); border: 1px solid var(--border-strong); border-radius: 14px; background: var(--raised); box-shadow: 0 24px 80px var(--shadow); overflow: hidden; }
-.composer { position: relative; max-width: 840px; margin: 0 auto; }
+.composer { --composer-form-control-height: 32px; position: relative; max-width: 840px; margin: 0 auto; }
 .composer-inline { width: 100%; max-height: none; flex-shrink: 0; box-shadow: 0 2px 12px var(--shadow); }
 .draft-message-stack { flex: 1; }
 .message-stack > .composer:not(:first-child) { margin-top: 24px; }
@@ -1631,6 +1631,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-from { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
 .compose-from span { margin-top: 0; }
 .compose-from select {
+  box-sizing: border-box;
+  height: var(--composer-form-control-height);
   font: inherit;
   font-size: calc(12px * var(--font-scale));
   color: var(--text);
@@ -1648,7 +1650,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-field { display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--border); font-size: calc(13px * var(--font-scale)); flex-shrink: 0; }
 .compose-field:focus-within { border-bottom-color: var(--accent); }
 .compose-field > span, .compose-field > label { width: 50px; flex-shrink: 0; color: var(--muted); }
-.compose-field input { min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: 10px 6px; outline: none; line-height: 20px; }
+.compose-field input { box-sizing: border-box; height: var(--composer-form-control-height); min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: 4px 6px; outline: none; line-height: 20px; }
 .recipient-field { position: relative; border-bottom: 0; }
 .recipient-field:focus-within { border-bottom-color: transparent; }
 .recipient-field-label { width: 50px; flex-shrink: 0; padding: 0; border: 0; color: var(--muted); background: transparent; font: inherit; text-align: left; cursor: pointer; }

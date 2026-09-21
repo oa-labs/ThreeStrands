@@ -188,7 +188,12 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await page.keyboard.press("c");
   const composer = page.getByRole("dialog", { name: "New Message" });
   const from = composer.getByRole("combobox", { name: "Send from" });
+  const subject = composer.getByRole("textbox", { name: "Subject" });
   await expect(from).toHaveValue("demo@example.com");
+  await expect(from).toHaveCSS("box-sizing", "border-box");
+  await expect(from).toHaveCSS("height", "32px");
+  await expect(subject).toHaveCSS("box-sizing", "border-box");
+  await expect(subject).toHaveCSS("height", "32px");
   await from.selectOption("demo-2@example.com");
   await expect(from).toHaveValue("demo-2@example.com");
   await composer.getByRole("button", { name: "Discard draft" }).click();
