@@ -438,6 +438,7 @@ fn spawn_synced_account(
     database: Arc<Database>,
     auth: AccountAuth,
     sync_immediately: bool,
+    app: tauri::AppHandle,
 ) -> ConnectedAccount {
     let service = SyncService::new(database, auth.clone());
     let polling_service = service.clone();
@@ -445,7 +446,12 @@ fn spawn_synced_account(
         if sync_immediately && polling_service.is_connected() {
             let _ = polling_service.sync().await;
         }
-        polling_service.polling_loop().await;
+        polling_service
+            .polling_loop(move || {
+                use tauri::Emitter;
+                let _ = app.emit("unread-counts-changed", ());
+            })
+            .await;
     });
     ConnectedAccount {
         auth,
@@ -956,9 +962,9 @@ async fn connect_google(state: State<'_, AppState>) -> Result<SyncStatus, String
 }
 
 #[tauri::command]
-async fn disconnect_google(state: State<'_, AppState>) -> Result<(), String> {
+async fn disconnect_google(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
     let primary = state.database.primary_account_id();
-    remove_account(primary, state).await
+    remove_account(primary, state, app).await
 }
 
 #[tauri::command]
@@ -967,18 +973,22 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, String> {
 }
 
 #[tauri::command]
-async fn add_account(state: State<'_, AppState>) -> Result<Account, String> {
+async fn add_account(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<Account, String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let auth = AccountAuth::Google(config.pending_account());
     let email = authorize_interactively(&state, &auth).await?;
     let account = state.database.adopt_account(&email)?;
-    let connected = spawn_synced_account(state.database.clone(), auth, true);
+    let connected = spawn_synced_account(state.database.clone(), auth, true, app);
     state.accounts.lock().await.insert(email, connected);
     Ok(account)
 }
 
 #[tauri::command]
-async fn remove_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn remove_account(
+    email: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     let _guard = state.correspondence.gate.lock().await;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     state.database.pause_ready_sends_for(&email)?;
@@ -997,13 +1007,13 @@ async fn remove_account(email: String, state: State<'_, AppState>) -> Result<(),
     // Removing the last account returns the app to its pre-connect state, so
     // restore the placeholder entry `connect_google` authorizes against —
     // otherwise disconnecting would leave no way back in.
-    ensure_placeholder_account(&state).await;
+    ensure_placeholder_account(&state, app).await;
     result
 }
 
 /// Seeds the pre-connect placeholder entry when no account is connected, so
 /// the registry is never empty while OAuth is configured.
-async fn ensure_placeholder_account(state: &AppState) {
+async fn ensure_placeholder_account(state: &AppState, app: tauri::AppHandle) {
     let Some(config) = state.auth_config.as_ref() else {
         return;
     };
@@ -1015,13 +1025,18 @@ async fn ensure_placeholder_account(state: &AppState) {
                 state.database.clone(),
                 AccountAuth::Google(config.legacy_account()),
                 false,
+                app,
             ),
         );
     }
 }
 
 #[tauri::command]
-async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<Account, String> {
+async fn reconnect_account(
+    email: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Account, String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     let auth = match state.accounts.lock().await.get(&email) {
         Some(connected) => connected.auth.clone(),
@@ -1043,7 +1058,7 @@ async fn reconnect_account(email: String, state: State<'_, AppState>) -> Result<
             None => {
                 // Reconnect awaits the first sync below, so the poller itself
                 // must not launch a duplicate initial sync.
-                let connected = spawn_synced_account(state.database.clone(), auth, false);
+                let connected = spawn_synced_account(state.database.clone(), auth, false, app);
                 let service = connected.sync.clone();
                 accounts.insert(email.clone(), connected);
                 service
@@ -1926,7 +1941,10 @@ pub fn run() {
                     } else {
                         config.account(&key)
                     });
-                    registry.insert(key, spawn_synced_account(database.clone(), auth, true));
+                    registry.insert(
+                        key,
+                        spawn_synced_account(database.clone(), auth, true, app.handle().clone()),
+                    );
                 }
             }
             let accounts: AccountRegistry = Arc::new(tokio::sync::Mutex::new(registry));

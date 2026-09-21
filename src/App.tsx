@@ -65,6 +65,7 @@ import {
   localCrashReports,
   setCrashReportingEnabled,
 } from "./crashReporting";
+import { listen } from "@tauri-apps/api/event";
 import { mailClient } from "./data/client";
 import { createForegroundRefreshController } from "./foregroundRefresh";
 import { conversationLabelGroups, formatLabelName, isManageableLabel } from "./labels";
@@ -298,6 +299,19 @@ export function App() {
     void mailClient.listUnreadCounts().then(setUnreadCounts).catch(() => {});
   }, []);
   useEffect(refreshUnreadCounts, [refreshUnreadCounts]);
+  // Background accounts keep polling Gmail while a different account is
+  // active in the UI; without this, their sidebar badge only catches up to
+  // what the backend already knows the next time the mailbox reloads (e.g.
+  // switching into that account).
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    const unlisten = listen("unread-counts-changed", () => {
+      refreshUnreadCounts();
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [refreshUnreadCounts]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const refreshSnippets = useCallback(() => {
     return mailClient.listSnippets().then(setSnippets).catch(() => {});

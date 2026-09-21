@@ -190,7 +190,11 @@ impl SyncService {
             .map_err(|error| error.to_string())
     }
 
-    pub async fn polling_loop(self) {
+    /// `on_synced` fires after every poll that actually reached the server
+    /// successfully, so callers (e.g. the frontend's per-account unread
+    /// badges) can refresh state that this background account just changed
+    /// without waiting for the user to switch to it.
+    pub async fn polling_loop(self, on_synced: impl Fn() + Send + Sync + 'static) {
         let mut delay = MIN_POLL_INTERVAL;
         loop {
             // Jitter avoids multiple accounts/instances recovering from the
@@ -207,7 +211,11 @@ impl SyncService {
                 .sync_status(&self.account_id())
                 .map(|status| status.pending_mutations)
                 .unwrap_or_default();
-            delay = next_poll_delay(delay, before, self.sync_provider().await);
+            let result = self.sync_provider().await;
+            if result.is_ok() {
+                on_synced();
+            }
+            delay = next_poll_delay(delay, before, result);
             self.reconcile_if_due().await;
         }
     }
