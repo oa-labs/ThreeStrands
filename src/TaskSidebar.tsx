@@ -175,7 +175,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     selectNext: () => moveSelection(1),
     selectPrevious: () => moveSelection(-1),
     openSelected: () => {
-      if (selectedTask) onOpenThread(selectedTask.threadId);
+      if (selectedTask?.threadId) onOpenThread(selectedTask.threadId);
     },
     editSelected: () => { if (selectedTask) onEditTask?.(selectedTask); },
     completeSelected: () => { if (selectedTask?.status === "open") void setStatus(selectedTask, "completed"); },
@@ -194,15 +194,15 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             aria-current={variant === "workspace" && selectedTaskId === task.id ? "true" : undefined}
             key={task.id}
           >
-            <button type="button" className="task-card-main" onClick={() => variant === "workspace" ? setSelectedTaskId(task.id) : onOpenThread(task.threadId)}>
+            <button type="button" className="task-card-main" onClick={() => variant === "workspace" || !task.threadId ? setSelectedTaskId(task.id) : onOpenThread(task.threadId)}>
               <strong>{task.title}</strong>
-              <span>{task.subjectSnapshot}</span>
+              {task.subjectSnapshot ? <span>{task.subjectSnapshot}</span> : null}
               {formatDue(task) ? <small><Clock3 size={12} /> {formatDue(task)}</small> : null}
             </button>
             <button type="button" className="task-status-button" aria-label={task.status === "completed" ? `Reopen ${task.title}` : `Complete ${task.title}`} onClick={() => void setStatus(task, task.status === "completed" ? "open" : "completed")}>
               {task.status === "completed" ? <RotateCcw size={15} /> : <Check size={15} />}
             </button>
-            {onDraftFollowUp && task.kind === "follow_up" && isDue(task) ? (
+            {onDraftFollowUp && task.threadId && task.kind === "follow_up" && isDue(task) ? (
               <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft follow-up</button>
             ) : null}
           </article>
@@ -226,7 +226,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         <div className="tasks-sidebar-header-actions">
           {title === "Actions" && onAnalyzeThread ? <button type="button" aria-label="Analyze thread" title={!analysisEnabled ? "Enable Thread actions in AI settings" : !analysisReady ? "Configure an AI provider and API key" : "Analyze thread"} onClick={onAnalyzeThread} disabled={!analysisReady || analysisLoading}><Sparkles size={17} /></button> : null}
           {onCheckSchedule ? <button type="button" aria-label="Check schedule" title="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button> : null}
-          {currentThread && onNewTask ? <button type="button" aria-label="Add task" title="Add task" onClick={onNewTask}><Plus size={17} /></button> : null}
+          {onNewTask && (variant === "workspace" || currentThread) ? <button type="button" aria-label="Add task" title="Add task" onClick={onNewTask}><Plus size={17} /></button> : null}
           <button type="button" aria-label="Close tasks" onClick={onClose}><X size={18} /></button>
         </div>
       </header>
@@ -270,7 +270,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         </section>
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
-      {!loading && grouped.length === 0 ? <p className="tasks-status">No tasks yet. Add one from a conversation.</p> : null}
+      {!loading && grouped.length === 0 ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
       {variant === "workspace" ? <div className="tasks-workspace-body">
         {taskList}
         <section className="task-detail" aria-label="Task details">
@@ -282,25 +282,25 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
                 <button type="button" onClick={() => void setStatus(selectedTask, selectedTask.status === "completed" ? "open" : "completed")}>
                   {selectedTask.status === "completed" ? <><RotateCcw size={14} /> Reopen</> : <><Check size={14} /> Mark done</>}
                 </button>
-                <button type="button" onClick={() => onOpenThread(selectedTask.threadId)}>Open conversation</button>
+                {selectedTask.threadId ? <button type="button" onClick={() => onOpenThread(selectedTask.threadId!)}>Open conversation</button> : null}
               </div>
             </header>
             <dl>
               <div><dt>Status</dt><dd><span className={`task-status-pill task-status-${selectedTask.status}`}>{selectedTask.status}</span></dd></div>
               <div><dt>Due</dt><dd>{formatDueDetail(selectedTask) ?? "No due date"}</dd></div>
-              <div><dt>Conversation</dt><dd>{selectedTask.subjectSnapshot}</dd></div>
+              {selectedTask.subjectSnapshot ? <div><dt>Conversation</dt><dd>{selectedTask.subjectSnapshot}</dd></div> : null}
               {selectedTask.repeatIntervalDays ? <div><dt>Repeats</dt><dd>Every {selectedTask.repeatIntervalDays} days</dd></div> : null}
             </dl>
             <section className="task-detail-notes" aria-label="Notes"><h3>Notes</h3><p>{selectedTask.notes || "No notes"}</p></section>
-            {selectedTask.evidenceText ? (
+            {selectedTask.evidenceText && selectedTask.threadId ? (
               <section className="task-detail-notes" aria-label="Evidence">
                 <h3>Evidence</h3>
-                <button type="button" className="task-detail-evidence" title="Open conversation" onClick={() => onOpenThread(selectedTask.threadId)}>
+                <button type="button" className="task-detail-evidence" title="Open conversation" onClick={() => onOpenThread(selectedTask.threadId!)}>
                   {selectedTask.evidenceText}
                 </button>
               </section>
             ) : null}
-            <p className="task-detail-shortcuts"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> edit · {selectedTask.status === "completed" ? <><kbd>Shift+e</kbd> reopen</> : <><kbd>e</kbd> complete</>} · <kbd>o</kbd> open conversation</p>
+            <p className="task-detail-shortcuts"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> edit · {selectedTask.status === "completed" ? <><kbd>Shift+e</kbd> reopen</> : <><kbd>e</kbd> complete</>}{selectedTask.threadId ? <> · <kbd>o</kbd> open conversation</> : null}</p>
           </> : <p className="tasks-status">Select a task to see its details.</p>}
         </section>
       </div> : taskList}

@@ -111,8 +111,18 @@ impl Database {
             request.due_value.as_deref(),
             request.repeat_interval_days,
         )?;
-        if request.subject_snapshot.trim().is_empty() {
-            return Err("Task subject snapshot cannot be empty".to_string());
+        match (&request.thread_id, &request.subject_snapshot) {
+            (Some(_), Some(subject)) if !subject.trim().is_empty() => {}
+            (Some(_), _) => return Err("Task subject snapshot cannot be empty".to_string()),
+            (None, None) => {}
+            (None, Some(_)) => {
+                return Err("A standalone task cannot have a subject snapshot".to_string())
+            }
+        }
+        if request.thread_id.is_none()
+            && (request.source_message_id.is_some() || request.evidence_text.is_some())
+        {
+            return Err("A standalone task cannot have conversation context".to_string());
         }
         if request.notes.as_deref().is_some_and(|value| value.chars().count() > MAX_NOTES) {
             return Err(format!("Task notes exceed {MAX_NOTES} characters"));
@@ -121,15 +131,18 @@ impl Database {
             return Err(format!("Task evidence exceeds {MAX_EVIDENCE} characters"));
         }
         let connection = self.connection()?;
-        let wait_after: Option<String> = connection
-            .query_row(
-                "SELECT last_received_at FROM threads WHERE id = ?1 AND account_id = ?2",
-                params![request.thread_id, request.account_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(error)?
-            .ok_or_else(|| "Source thread not found".to_string())?;
+        let wait_after: Option<String> = match request.thread_id.as_deref() {
+            Some(thread_id) => connection
+                .query_row(
+                    "SELECT last_received_at FROM threads WHERE id = ?1 AND account_id = ?2",
+                    params![thread_id, request.account_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(error)?
+                .ok_or_else(|| "Source thread not found".to_string())?,
+            None => None,
+        };
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4().to_string();
         connection
@@ -146,7 +159,7 @@ impl Database {
                     request.account_id,
                     request.thread_id,
                     request.source_message_id,
-                    request.subject_snapshot.trim(),
+                    request.subject_snapshot.as_deref().map(str::trim),
                     request.title.trim(),
                     request.notes.as_deref().map(str::trim),
                     request.kind,
@@ -343,9 +356,9 @@ mod tests {
         let task = database
             .create_task(&CreateTaskRequest {
                 account_id: "account@example.com".into(),
-                thread_id: "account:thread".into(),
+                thread_id: Some("account:thread".into()),
                 source_message_id: Some("message".into()),
-                subject_snapshot: "Planning".into(),
+                subject_snapshot: Some("Planning".into()),
                 title: "Follow up with the team".into(),
                 notes: Some("Ask for an update".into()),
                 kind: "waiting_for".into(),
@@ -374,13 +387,40 @@ mod tests {
     }
 
     #[test]
+    fn standalone_task_round_trip_has_no_conversation_context() {
+        let database = database_with_thread();
+        let task = database
+            .create_task(&CreateTaskRequest {
+                account_id: "account@example.com".into(),
+                thread_id: None,
+                source_message_id: None,
+                subject_snapshot: None,
+                title: "Buy printer paper".into(),
+                notes: None,
+                kind: "action".into(),
+                due_kind: "none".into(),
+                due_value: None,
+                time_zone: None,
+                repeat_interval_days: None,
+                evidence_text: None,
+            })
+            .unwrap();
+
+        assert_eq!(task.thread_id, None);
+        assert_eq!(task.subject_snapshot, None);
+        assert_eq!(task.source_message_id, None);
+        assert_eq!(task.evidence_text, None);
+        assert_eq!(task.wait_after, None);
+    }
+
+    #[test]
     fn task_validation_rejects_invalid_kind_and_due_shape() {
         let database = database_with_thread();
         let mut request = CreateTaskRequest {
             account_id: "account@example.com".into(),
-            thread_id: "account:thread".into(),
+            thread_id: Some("account:thread".into()),
             source_message_id: None,
-            subject_snapshot: "Planning".into(),
+            subject_snapshot: Some("Planning".into()),
             title: "Do it".into(),
             notes: None,
             kind: "unknown".into(),
@@ -401,9 +441,9 @@ mod tests {
         let task = database
             .create_task(&CreateTaskRequest {
                 account_id: "account@example.com".into(),
-                thread_id: "account:thread".into(),
+                thread_id: Some("account:thread".into()),
                 source_message_id: None,
-                subject_snapshot: "Planning".into(),
+                subject_snapshot: Some("Planning".into()),
                 title: "Check in with the client".into(),
                 notes: None,
                 kind: "follow_up".into(),
@@ -427,9 +467,9 @@ mod tests {
         let task = database
             .create_task(&CreateTaskRequest {
                 account_id: "account@example.com".into(),
-                thread_id: "account:thread".into(),
+                thread_id: Some("account:thread".into()),
                 source_message_id: None,
-                subject_snapshot: "Planning".into(),
+                subject_snapshot: Some("Planning".into()),
                 title: "Check in".into(),
                 notes: Some("Bring the status report".into()),
                 kind: "follow_up".into(),

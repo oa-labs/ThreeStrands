@@ -198,6 +198,39 @@ describe("TaskSidebar", () => {
     expect(onOpenThread).toHaveBeenCalledWith("thread-1");
   });
 
+  it("shows no conversation controls for a standalone task", async () => {
+    const task: ThreadTask = {
+      id: "standalone-1",
+      accountId: "you@example.com",
+      threadId: null,
+      sourceMessageId: null,
+      subjectSnapshot: null,
+      title: "Buy printer paper",
+      notes: null,
+      kind: "action",
+      dueKind: "none",
+      dueValue: null,
+      timeZone: null,
+      repeatIntervalDays: null,
+      status: "open",
+      completionSource: null,
+      evidenceText: null,
+      waitAfter: null,
+      createdAt: "2026-09-20T10:01:00Z",
+      updatedAt: "2026-09-20T10:01:00Z",
+      completedAt: null,
+    };
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    const onOpenThread = vi.fn();
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={onOpenThread} />);
+
+    expect(await screen.findByRole("heading", { name: "Buy printer paper" })).toBeInTheDocument();
+    expect(screen.queryByText("Conversation")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open conversation" })).not.toBeInTheDocument();
+    expect(screen.queryByText("open conversation")).not.toBeInTheDocument();
+    expect(onOpenThread).not.toHaveBeenCalled();
+  });
+
   it("explains missing provider credentials separately from the feature flag", () => {
     render(
       <TaskSidebar

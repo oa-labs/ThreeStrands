@@ -121,9 +121,9 @@ export type TaskDueKind = "none" | "date" | "datetime";
 export type ThreadTask = {
   id: string;
   accountId: string;
-  threadId: string;
+  threadId: string | null;
   sourceMessageId?: string | null;
-  subjectSnapshot: string;
+  subjectSnapshot: string | null;
   title: string;
   notes?: string | null;
   kind: TaskKind;
@@ -142,9 +142,9 @@ export type ThreadTask = {
 
 export type CreateTaskRequest = {
   accountId: string;
-  threadId: string;
+  threadId: string | null;
   sourceMessageId?: string | null;
-  subjectSnapshot: string;
+  subjectSnapshot: string | null;
   title: string;
   notes?: string | null;
   kind: TaskKind;

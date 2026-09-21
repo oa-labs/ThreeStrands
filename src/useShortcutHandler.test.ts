@@ -50,6 +50,7 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   completeSelectedTask: vi.fn(),
   reopenSelectedTask: vi.fn(),
   selectedTaskStatus: null,
+  selectedTaskHasThread: false,
   selectNextMessage: vi.fn(),
   selectPreviousMessage: vi.fn(),
   archiveSelected: vi.fn(async () => ({})),

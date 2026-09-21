@@ -80,7 +80,8 @@ Current primary commands are:
 - `1`: open the Inbox/mail view;
 - `3`: open the Tasks view;
 - `0`: cycle between the Inbox/mail and Tasks views;
-- `d`: add a task for the selected conversation from any read-mode view;
+- `d`: add a task linked to the selected conversation in Mail, or a blank,
+  standalone task in the Tasks view;
 - `t`: toggle Calendar;
 - `Shift+A`: toggle Actions (`a` remains Reply All);
 - `Cmd/Ctrl+K`: open the command palette.
@@ -88,7 +89,7 @@ Current primary commands are:
 The focused-pane model routes `j`/`k` and Up/Down to conversations or tasks.
 Tasks use the same list-and-reader structure as mail: selection shows read-only
 details, Enter opens the edit modal, `e` completes, `Shift+e` reopens, and `o`
-opens the linked conversation. Keep these commands in the central command
+opens the linked conversation when one exists. Keep these commands in the central command
 registry; do not scatter competing window-level key listeners across components.
 
 ## AI actions

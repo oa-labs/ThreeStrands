@@ -49,6 +49,7 @@ function noopContext(): CommandContext {
     completeSelectedTask: () => {},
     reopenSelectedTask: () => {},
     selectedTaskStatus: null,
+    selectedTaskHasThread: false,
     selectNextMessage: () => {},
     selectPreviousMessage: () => {},
     archiveSelected: async () => ({}),
@@ -174,6 +175,7 @@ describe("command registry", () => {
     const start = vi.fn();
     await newTask?.run({ ...noopContext(), selectedId: "thread-1", newTask: start });
     expect(start).toHaveBeenCalledTimes(1);
+    expect(newTask?.enabled({ ...noopContext(), focusedPane: "tasks", selectedId: null })).toBe(true);
   });
 
   it("uses Shift+A for Actions without replacing reply all", () => {

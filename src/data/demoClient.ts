@@ -672,8 +672,10 @@ export const demoClient: MailClient = {
       .sort((left, right) => (left.dueValue ?? "9999").localeCompare(right.dueValue ?? "9999")));
   },
   async createTask(request: CreateTaskRequest) {
-    const thread = threads.find((candidate) => candidate.id === request.threadId);
-    if (!thread) throw new Error("Source thread not found");
+    const thread = request.threadId
+      ? threads.find((candidate) => candidate.id === request.threadId)
+      : null;
+    if (request.threadId && !thread) throw new Error("Source thread not found");
     if (!request.title.trim()) throw new Error("Task title is required");
     const now = new Date().toISOString();
     const task: ThreadTask = {
@@ -692,7 +694,7 @@ export const demoClient: MailClient = {
       status: "open",
       completionSource: null,
       evidenceText: request.evidenceText ?? null,
-      waitAfter: thread.lastReceivedAt,
+      waitAfter: thread?.lastReceivedAt ?? null,
       createdAt: now,
       updatedAt: now,
       completedAt: null,

@@ -46,6 +46,7 @@ export type CommandContext = {
   completeSelectedTask(): void;
   reopenSelectedTask(): void;
   selectedTaskStatus: "open" | "completed" | "cancelled" | null;
+  selectedTaskHasThread: boolean;
   selectNextMessage(): void;
   selectPreviousMessage(): void;
   archiveSelected(): Promise<CommandResult>;
@@ -189,7 +190,7 @@ export const commands: Command[] = [
     title: "Open task conversation",
     keys: ["o"],
     group: "Navigation",
-    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus !== null && !context.composerActive,
+    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskHasThread && !context.composerActive,
     run: (context) => complete(context.openSelectedTask),
   },
   {
@@ -416,7 +417,7 @@ export const commands: Command[] = [
     title: "Add task from conversation",
     keys: ["d"],
     group: "Application",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => (context.focusedPane === "tasks" || context.selectedId !== null) && !context.composerActive,
     run: (context) => complete(context.newTask),
   },
   {

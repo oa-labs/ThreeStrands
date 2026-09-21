@@ -614,7 +614,9 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "d" });
-    expect(await screen.findByRole("dialog", { name: "Add task" })).toBeInTheDocument();
+    const taskDialog = await screen.findByRole("dialog", { name: "Add task" });
+    expect(within(taskDialog).getByRole("textbox", { name: "Task" })).toHaveValue("");
+    expect(within(taskDialog).queryByText(/^From:/)).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
 

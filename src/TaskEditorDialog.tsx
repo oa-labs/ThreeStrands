@@ -38,7 +38,7 @@ export function TaskEditorDialog({
   onSubmit,
 }: {
   initial: TaskEditorInitial;
-  sourceSubject: string;
+  sourceSubject?: string | null;
   evidence?: string | null;
   submitLabel?: string;
   onClose(): void;
@@ -86,7 +86,7 @@ export function TaskEditorDialog({
           event.currentTarget.requestSubmit();
         }
       }}>
-        <p className="modal-form-context">From: {sourceSubject}</p>
+        {sourceSubject ? <p className="modal-form-context">From: {sourceSubject}</p> : null}
         <label><span>Task</span><input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs doing?" /></label>
         <label><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as TaskKind)}><option value="action">Action</option><option value="follow_up">Follow up</option><option value="waiting_for">Waiting for reply</option></select></label>
         <label><span>Due</span><select value={dueKind} onChange={(event) => { setDueKind(event.target.value as TaskDueKind); setDueValue(""); }}><option value="none">No due date</option><option value="date">Date</option><option value="datetime">Date and time</option></select></label>

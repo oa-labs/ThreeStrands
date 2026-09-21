@@ -181,9 +181,9 @@ pub struct CheckProposedTimeRequest {
 pub struct ThreadTask {
     pub id: String,
     pub account_id: String,
-    pub thread_id: String,
+    pub thread_id: Option<String>,
     pub source_message_id: Option<String>,
-    pub subject_snapshot: String,
+    pub subject_snapshot: Option<String>,
     pub title: String,
     pub notes: Option<String>,
     pub kind: String,
@@ -204,10 +204,12 @@ pub struct ThreadTask {
 #[serde(rename_all = "camelCase")]
 pub struct CreateTaskRequest {
     pub account_id: String,
-    pub thread_id: String,
+    #[serde(default)]
+    pub thread_id: Option<String>,
     #[serde(default)]
     pub source_message_id: Option<String>,
-    pub subject_snapshot: String,
+    #[serde(default)]
+    pub subject_snapshot: Option<String>,
     pub title: String,
     #[serde(default)]
     pub notes: Option<String>,

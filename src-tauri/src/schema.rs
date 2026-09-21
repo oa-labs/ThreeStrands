@@ -488,6 +488,45 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 25 {
+        // Tasks originally required an email thread. Rebuild the table so a
+        // task created directly from the Tasks workspace can remain entirely
+        // local, without a synthetic thread or misleading subject snapshot.
+        tx.execute_batch(
+            "DROP INDEX tasks_status_due;
+            DROP INDEX tasks_account_status;
+            DROP INDEX tasks_thread;
+            ALTER TABLE tasks RENAME TO tasks_v24;
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                thread_id TEXT,
+                source_message_id TEXT,
+                subject_snapshot TEXT,
+                title TEXT NOT NULL,
+                notes TEXT,
+                kind TEXT NOT NULL CHECK(kind IN ('action', 'follow_up', 'waiting_for')),
+                due_kind TEXT NOT NULL CHECK(due_kind IN ('none', 'date', 'datetime')),
+                due_value TEXT,
+                time_zone TEXT,
+                repeat_interval_days INTEGER,
+                status TEXT NOT NULL CHECK(status IN ('open', 'completed', 'cancelled')),
+                completion_source TEXT CHECK(completion_source IS NULL OR completion_source IN ('user', 'reply', 'external')),
+                evidence_text TEXT,
+                wait_after TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT
+            );
+            INSERT INTO tasks SELECT * FROM tasks_v24;
+            DROP TABLE tasks_v24;
+            CREATE INDEX tasks_status_due ON tasks(status, due_value, updated_at);
+            CREATE INDEX tasks_account_status ON tasks(account_id, status, updated_at);
+            CREATE INDEX tasks_thread ON tasks(thread_id, status);
+            PRAGMA user_version=25;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -548,5 +587,55 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         super::migrate(&mut connection).unwrap();
         assert_eq!(account_provider(&connection, "you@gmail.com"), "gmail");
+    }
+
+    #[test]
+    fn v25_task_migration_preserves_linked_tasks_and_allows_standalone_tasks() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP INDEX tasks_status_due;
+             DROP INDEX tasks_account_status;
+             DROP INDEX tasks_thread;
+             DROP TABLE tasks;
+             CREATE TABLE tasks (
+                id TEXT PRIMARY KEY, account_id TEXT NOT NULL, thread_id TEXT NOT NULL,
+                source_message_id TEXT, subject_snapshot TEXT NOT NULL, title TEXT NOT NULL,
+                notes TEXT, kind TEXT NOT NULL, due_kind TEXT NOT NULL, due_value TEXT,
+                time_zone TEXT, repeat_interval_days INTEGER, status TEXT NOT NULL,
+                completion_source TEXT, evidence_text TEXT, wait_after TEXT,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT
+             );
+             CREATE INDEX tasks_status_due ON tasks(status, due_value, updated_at);
+             CREATE INDEX tasks_account_status ON tasks(account_id, status, updated_at);
+             CREATE INDEX tasks_thread ON tasks(thread_id, status);
+             INSERT INTO tasks(id, account_id, thread_id, subject_snapshot, title, kind,
+                due_kind, status, created_at, updated_at)
+             VALUES ('linked', 'you@gmail.com', 'thread-1', 'Subject', 'Existing task',
+                'action', 'none', 'open', '2026-09-20T00:00:00Z', '2026-09-20T00:00:00Z');
+             PRAGMA user_version=24;",
+            )
+            .unwrap();
+
+        super::migrate(&mut connection).unwrap();
+
+        let preserved: (String, String) = connection
+            .query_row(
+                "SELECT thread_id, subject_snapshot FROM tasks WHERE id='linked'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(preserved, ("thread-1".into(), "Subject".into()));
+        connection
+            .execute(
+                "INSERT INTO tasks(id, account_id, thread_id, subject_snapshot, title, kind,
+                due_kind, status, created_at, updated_at)
+             VALUES ('standalone', 'you@gmail.com', NULL, NULL, 'Standalone task',
+                'action', 'none', 'open', '2026-09-20T00:00:00Z', '2026-09-20T00:00:00Z')",
+                [],
+            )
+            .unwrap();
     }
 }
