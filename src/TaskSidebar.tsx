@@ -1,5 +1,5 @@
 import { Check, CheckSquare, Clock3, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask } from "./domain";
 import { mailClient } from "./data/client";
 import { useEscapeDismiss } from "./useEscapeDismiss";
@@ -39,28 +39,15 @@ function describeAnalysisError(message: string): { summary: string; retryable: b
   return { summary: message, retryable: false };
 }
 
-export function TaskSidebar({
-  onClose,
-  accountId,
-  currentThread,
-  onOpenThread,
-  onTasksChanged,
-  onCheckSchedule,
-  onAnalyzeThread,
-  analysisEnabled = false,
-  analysisReady = false,
-  analysisLoading = false,
-  analysisError = null,
-  analysisPreview = null,
-  proposals = [],
-  onDiscardProposal,
-  onReviewProposal,
-  onFindTimesProposal,
-  onDraftFollowUp,
-  onNewTask,
-  refreshKey = 0,
-  title = "Tasks",
-}: {
+export type TaskWorkspaceHandle = {
+  selectNext(): void;
+  selectPrevious(): void;
+  openSelected(): void;
+  toggleSelected(): void;
+};
+
+export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
+  variant?: "sidebar" | "workspace";
   onClose(): void;
   accountId: string | null;
   currentThread: ThreadDetail | null;
@@ -81,10 +68,34 @@ export function TaskSidebar({
   onNewTask?(): void;
   refreshKey?: number;
   title?: string;
-}) {
+}>(function TaskSidebar({
+  variant = "sidebar",
+  onClose,
+  accountId,
+  currentThread,
+  onOpenThread,
+  onTasksChanged,
+  onCheckSchedule,
+  onAnalyzeThread,
+  analysisEnabled = false,
+  analysisReady = false,
+  analysisLoading = false,
+  analysisError = null,
+  analysisPreview = null,
+  proposals = [],
+  onDiscardProposal,
+  onReviewProposal,
+  onFindTimesProposal,
+  onDraftFollowUp,
+  onNewTask,
+  refreshKey = 0,
+  title = "Tasks",
+}, ref) {
   const [tasks, setTasks] = useState<ThreadTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const taskCards = useRef(new Map<string, HTMLElement>());
   useEscapeDismiss(onClose);
 
   const load = useCallback(async () => {
@@ -112,6 +123,19 @@ export function TaskSidebar({
       .map((name) => ({ name, tasks: groups.get(name) ?? [] }))
       .filter((group) => group.tasks.length > 0);
   }, [tasks]);
+  const orderedTasks = useMemo(() => grouped.flatMap((group) => group.tasks), [grouped]);
+
+  useEffect(() => {
+    if (orderedTasks.length === 0) {
+      setSelectedTaskId(null);
+      return;
+    }
+    setSelectedTaskId((current) => current && orderedTasks.some((task) => task.id === current) ? current : orderedTasks[0].id);
+  }, [orderedTasks]);
+
+  useEffect(() => {
+    if (variant === "workspace" && selectedTaskId) taskCards.current.get(selectedTaskId)?.scrollIntoView?.({ block: "nearest" });
+  }, [selectedTaskId, variant]);
 
   const setStatus = async (task: ThreadTask, status: "open" | "completed") => {
     try {
@@ -123,8 +147,28 @@ export function TaskSidebar({
     }
   };
 
+  const moveSelection = useCallback((direction: -1 | 1) => {
+    if (orderedTasks.length === 0) return;
+    const currentIndex = orderedTasks.findIndex((task) => task.id === selectedTaskId);
+    const from = currentIndex === -1 ? 0 : currentIndex;
+    setSelectedTaskId(orderedTasks[(from + direction + orderedTasks.length) % orderedTasks.length].id);
+  }, [orderedTasks, selectedTaskId]);
+
+  useImperativeHandle(ref, () => ({
+    selectNext: () => moveSelection(1),
+    selectPrevious: () => moveSelection(-1),
+    openSelected: () => {
+      const task = orderedTasks.find((candidate) => candidate.id === selectedTaskId);
+      if (task) onOpenThread(task.threadId);
+    },
+    toggleSelected: () => {
+      const task = orderedTasks.find((candidate) => candidate.id === selectedTaskId);
+      if (task) void setStatus(task, task.status === "completed" ? "open" : "completed");
+    },
+  }), [moveSelection, onOpenThread, orderedTasks, selectedTaskId]);
+
   return (
-    <aside className="tasks-sidebar" aria-label={title}>
+    <section className={variant === "workspace" ? "tasks-workspace" : "tasks-sidebar"} role={variant === "sidebar" ? "complementary" : "region"} aria-label={title}>
       <header className="tasks-sidebar-header">
         <h2><CheckSquare size={18} /> {title}</h2>
         <div>
@@ -180,8 +224,14 @@ export function TaskSidebar({
           <section key={group.name} aria-labelledby={`task-group-${group.name.replace(/\s/g, "-")}`}>
             <h3 id={`task-group-${group.name.replace(/\s/g, "-")}`}>{group.name}</h3>
             {group.tasks.map((task) => (
-              <article className={`task-card task-${task.status}`} key={task.id}>
-                <button type="button" className="task-card-main" onClick={() => onOpenThread(task.threadId)}>
+              <article
+                id={`task-${task.id}`}
+                ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }}
+                className={`task-card task-${task.status}${variant === "workspace" && selectedTaskId === task.id ? " selected" : ""}`}
+                aria-current={variant === "workspace" && selectedTaskId === task.id ? "true" : undefined}
+                key={task.id}
+              >
+                <button type="button" className="task-card-main" onClick={() => { setSelectedTaskId(task.id); onOpenThread(task.threadId); }}>
                   <strong>{task.title}</strong>
                   <span>{task.subjectSnapshot}</span>
                   {formatDue(task) ? <small><Clock3 size={12} /> {formatDue(task)}</small> : null}
@@ -197,6 +247,6 @@ export function TaskSidebar({
           </section>
         ))}
       </div>
-    </aside>
+    </section>
   );
-}
+});

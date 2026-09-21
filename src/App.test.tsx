@@ -600,8 +600,56 @@ describe("keyboard-first task and action workspaces", () => {
     expect(within(actions).queryByRole("combobox")).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "d" });
-    expect(screen.getByRole("complementary", { name: "Tasks" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Conversation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
+  });
+
+  it("replaces the mail viewport and manages tasks through the focused keyboard commands", async () => {
+    const tasks = [
+      {
+        id: "task-welcome", accountId: "demo@example.com", threadId: "welcome", sourceMessageId: null,
+        subjectSnapshot: "Welcome to ThreeStrands", title: "Read the welcome guide", notes: null,
+        kind: "action" as const, dueKind: "none" as const, dueValue: null, timeZone: null,
+        repeatIntervalDays: null, status: "open" as const, completionSource: null, evidenceText: null,
+        waitAfter: null, createdAt: "2026-09-19T10:00:00Z", updatedAt: "2026-09-19T10:00:00Z", completedAt: null,
+      },
+      {
+        id: "task-roadmap", accountId: "demo@example.com", threadId: "roadmap", sourceMessageId: null,
+        subjectSnapshot: "Phase 1: read and triage", title: "Review the roadmap", notes: null,
+        kind: "action" as const, dueKind: "none" as const, dueValue: null, timeZone: null,
+        repeatIntervalDays: null, status: "open" as const, completionSource: null, evidenceText: null,
+        waitAfter: null, createdAt: "2026-09-19T11:00:00Z", updatedAt: "2026-09-19T11:00:00Z", completedAt: null,
+      },
+    ];
+    const listTasks = vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
+    const setStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (id) => ({
+      ...tasks.find((task) => task.id === id)!, status: "completed", completionSource: "user",
+    }));
+
+    try {
+      const { container } = render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+      fireEvent.keyDown(window, { key: "d" });
+      const workspace = await screen.findByRole("region", { name: "Tasks" });
+      expect(container.querySelector("main")).toHaveClass("tasks-open");
+      await waitFor(() => expect(within(workspace).getByText("Read the welcome guide").closest("article")).toHaveAttribute("aria-current", "true"));
+
+      fireEvent.keyDown(window, { key: "ArrowDown" });
+      await waitFor(() => expect(within(workspace).getByText("Review the roadmap").closest("article")).toHaveAttribute("aria-current", "true"));
+
+      fireEvent.keyDown(window, { key: "x" });
+      await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-roadmap", "completed"));
+
+      fireEvent.keyDown(window, { key: "Enter" });
+      await screen.findByRole("heading", { name: "Phase 1: read and triage" });
+      expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
+    } finally {
+      listTasks.mockRestore();
+      setStatus.mockRestore();
+    }
   });
 });
 

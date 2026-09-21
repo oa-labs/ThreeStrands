@@ -16,6 +16,7 @@ import {
   applyAsteriskListShortcut,
   applyFormattingShortcut,
   formattingShortcutFor,
+  insertHtmlAtRange,
   linkifyPlainText,
   plainTextToHtml,
   sanitizeComposeHtml,
@@ -28,7 +29,18 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 
 export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; draftReplyWithAI(): void };
 
-export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Account[]; onClose(): void; onQueued(item: OutboxItem): void; availabilityText?: string | null; replyAssistInstruction?: string | null }>(function Composer({ draft: initial, accounts, onClose, onQueued, availabilityText = null, replyAssistInstruction = null }, ref) {
+export const Composer = forwardRef<ComposerHandle, {
+  draft: Draft;
+  accounts: Account[];
+  snippets: Snippet[];
+  onCreateSnippet(name: string, body: string): Promise<Snippet>;
+  onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
+  onDeleteSnippet(id: string): Promise<void>;
+  onClose(): void;
+  onQueued(item: OutboxItem): void;
+  availabilityText?: string | null;
+  replyAssistInstruction?: string | null;
+}>(function Composer({ draft: initial, accounts, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, replyAssistInstruction = null }, ref) {
   const [draft, setDraft] = useState(initial);
   const latest = useRef(initial);
   const generation = useRef(0);
@@ -47,7 +59,6 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
   const [replyAssistError, setReplyAssistError] = useState("");
   const insertedAvailabilityText = useRef<string | null>(null);
   const [confirmAddToExisting, setConfirmAddToExisting] = useState(false);
-  const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
   const savedSnippetRange = useRef<Range | null>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -318,9 +329,6 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
     if (!replyAssistOpen) void openReplyAssist();
   }, [replyAssistAvailable, replyAssistInstruction, replyAssistOpen]);
   useEffect(() => {
-    void mailClient.listSnippets().then((loaded) => { if (mounted.current) setSnippets(loaded); }).catch(() => {});
-  }, []);
-  useEffect(() => {
     const field = pendingRecipientFocus.current;
     if (!field || !showBlankCopies) return;
     pendingRecipientFocus.current = null;
@@ -535,29 +543,22 @@ export const Composer = forwardRef<ComposerHandle, { draft: Draft; accounts: Acc
             const editor = bodyEditor.current;
             if (!editor) return;
             editor.focus();
-            const selection = window.getSelection();
-            if (selection && savedSnippetRange.current) {
-              selection.removeAllRanges();
-              selection.addRange(savedSnippetRange.current);
+            const saved = savedSnippetRange.current;
+            let range: Range;
+            if (saved && editor.contains(saved.startContainer)) {
+              range = saved;
+            } else {
+              range = document.createRange();
+              range.selectNodeContents(editor);
+              range.collapse(false);
             }
             const rendered = renderSnippetBody(snippet.body, { firstName: firstNameFromRecipient(draft.to) });
-            document.execCommand("insertHTML", false, rendered);
+            insertHtmlAtRange(editor, range, rendered);
             editBody(editor);
           }}
-          onCreate={async (name, body) => {
-            const snippet = await mailClient.createSnippet(name, body);
-            setSnippets((current) => [...current, snippet]);
-            return snippet;
-          }}
-          onUpdate={async (id, name, body) => {
-            const snippet = await mailClient.updateSnippet(id, name, body);
-            setSnippets((current) => current.map((candidate) => (candidate.id === id ? snippet : candidate)));
-            return snippet;
-          }}
-          onDelete={async (id) => {
-            await mailClient.deleteSnippet(id);
-            setSnippets((current) => current.filter((candidate) => candidate.id !== id));
-          }}
+          onCreate={onCreateSnippet}
+          onUpdate={onUpdateSnippet}
+          onDelete={onDeleteSnippet}
         />
       ) : null}
   </div>;

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, scheduleRequestFor } from "./CalendarSidebar";
+import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, hasWorkingHoursOnDate, scheduleRequestFor } from "./CalendarSidebar";
 import { mailClient } from "./data/client";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -13,6 +13,13 @@ describe("calendar sidebar", () => {
     vi.restoreAllMocks();
     vi.mocked(openUrl).mockClear();
     localStorage.removeItem(CALENDAR_SCROLL_TOP_KEY);
+    localStorage.removeItem("threestrands.settings.availabilityPreferences");
+  });
+
+  it("recognizes whether a date has configured working hours", () => {
+    const preferences = { workingWindows: [{ weekday: 1, start: "09:00", end: "17:00" }] };
+    expect(hasWorkingHoursOnDate(new Date(2026, 8, 21), preferences)).toBe(true);
+    expect(hasWorkingHoursOnDate(new Date(2026, 8, 20), preferences)).toBe(false);
   });
 
   it("routes T to Calendar Accounts until a calendar is connected", async () => {
@@ -361,6 +368,12 @@ describe("calendar sidebar", () => {
       totalCalendarCount: 1,
       errors: [],
     });
+    localStorage.setItem("threestrands.settings.availabilityPreferences", JSON.stringify({
+      timeZone: "America/New_York",
+      workingWindows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: "09:00", end: "17:00" })),
+      defaultDurationMinutes: 30,
+      slotIncrementMinutes: 15,
+    }));
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.keyDown(window, { key: "T" });
@@ -391,7 +404,7 @@ describe("calendar sidebar", () => {
         onOpenSettings={vi.fn()}
         availabilityPreferences={{
           timeZone: "America/New_York",
-          workingWindows: [],
+          workingWindows: [{ weekday: new Date().getDay(), start: "09:00", end: "17:00" }],
           defaultDurationMinutes: 30,
           slotIncrementMinutes: 15,
         }}
@@ -417,7 +430,7 @@ describe("calendar sidebar", () => {
         onOpenSettings={vi.fn()}
         availabilityPreferences={{
           timeZone: "America/New_York",
-          workingWindows: [],
+          workingWindows: [{ weekday: new Date().getDay(), start: "09:00", end: "17:00" }],
           defaultDurationMinutes: 30,
           slotIncrementMinutes: 15,
         }}
@@ -431,6 +444,27 @@ describe("calendar sidebar", () => {
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Calendar check failed");
     expect(within(dialog).getByRole("combobox", { name: "Duration" })).toHaveValue("45");
+  });
+
+  it("hides availability controls when the selected day has no working hours", async () => {
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    const selectedWeekday = new Date().getDay();
+    render(
+      <CalendarSidebar
+        onClose={vi.fn()}
+        onOpenSettings={vi.fn()}
+        availabilityPreferences={{
+          timeZone: "America/New_York",
+          workingWindows: [{ weekday: (selectedWeekday + 1) % 7, start: "09:00", end: "17:00" }],
+          defaultDurationMinutes: 30,
+          slotIncrementMinutes: 15,
+        }}
+      />,
+    );
+
+    await screen.findByRole("complementary", { name: "Calendar schedule" });
+    expect(screen.queryByRole("region", { name: "Check availability" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
   });
 
   it("builds an exact local-day request", () => {

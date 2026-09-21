@@ -5,7 +5,7 @@ import { X } from "lucide-react";
 import { Composer, type ComposerHandle } from "./Composer";
 import { mailClient } from "./data/client";
 import type { ComposeMode, Draft, OutboxItem } from "./correspondence";
-import type { Account } from "./domain";
+import type { Account, Snippet } from "./domain";
 
 type ComposeOptions = {
   availabilityText?: string;
@@ -13,7 +13,15 @@ type ComposeOptions = {
   followUpTaskId?: string;
 };
 
-export function useCorrespondence(accounts: Account[], sourceId?: string, sourceAccountId?: string) {
+export function useCorrespondence(
+  accounts: Account[],
+  sourceId: string | undefined,
+  sourceAccountId: string | undefined,
+  snippets: Snippet[],
+  onCreateSnippet: (name: string, body: string) => Promise<Snippet>,
+  onUpdateSnippet: (id: string, name: string, body: string) => Promise<Snippet>,
+  onDeleteSnippet: (id: string) => Promise<void>,
+) {
   const [active, setActive] = useState<Draft | null>(null);
   const [activeAvailabilityText, setActiveAvailabilityText] = useState<string | null>(null);
   const [activeReplyAssistInstruction, setActiveReplyAssistInstruction] = useState<string | null>(null);
@@ -167,6 +175,10 @@ export function useCorrespondence(accounts: Account[], sourceId?: string, source
       ref={editor}
       draft={active}
       accounts={accounts}
+      snippets={snippets}
+      onCreateSnippet={onCreateSnippet}
+      onUpdateSnippet={onUpdateSnippet}
+      onDeleteSnippet={onDeleteSnippet}
       availabilityText={activeAvailabilityText}
       replyAssistInstruction={activeReplyAssistInstruction}
       onClose={() => { setActive(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); void refresh(); }}

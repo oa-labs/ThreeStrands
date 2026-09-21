@@ -3,9 +3,11 @@ import type { SplitInbox } from "./domain";
 
 export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox" | "split";
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
+export type FocusedPane = "mail" | "tasks";
 
 export type CommandContext = {
   interactionScope: InteractionScope;
+  focusedPane: FocusedPane;
   mailbox: MailboxKind;
   selectedId: string | null;
   selectedArchived: boolean;
@@ -37,6 +39,10 @@ export type CommandContext = {
   undoSend(): void;
   selectNext(): void;
   selectPrevious(): void;
+  selectNextTask(): void;
+  selectPreviousTask(): void;
+  openSelectedTask(): void;
+  toggleSelectedTask(): void;
   selectNextMessage(): void;
   selectPreviousMessage(): void;
   archiveSelected(): Promise<CommandResult>;
@@ -99,7 +105,7 @@ export const undoResult = async (result: CommandResult): Promise<void> => {
 
 /** Triage/reply commands only make sense against a real thread selection. */
 const isThreadMailbox = (context: CommandContext): boolean =>
-  context.mailbox !== "drafts" && context.mailbox !== "outbox";
+  context.focusedPane === "mail" && context.mailbox !== "drafts" && context.mailbox !== "outbox";
 
 export const commands: Command[] = [
   { id: "draft.new", title: "New Message", keys: ["c"], group: "Compose", enabled: () => true, run: (c) => complete(c.compose) },
@@ -137,7 +143,7 @@ export const commands: Command[] = [
     title: "Next conversation",
     keys: ["j", "ArrowDown"],
     group: "Navigation",
-    enabled: (context) => !context.composerActive,
+    enabled: (context) => context.focusedPane === "mail" && !context.composerActive,
     run: (context) => complete(context.selectNext),
   },
   {
@@ -145,15 +151,47 @@ export const commands: Command[] = [
     title: "Previous conversation",
     keys: ["k", "ArrowUp"],
     group: "Navigation",
-    enabled: (context) => !context.composerActive,
+    enabled: (context) => context.focusedPane === "mail" && !context.composerActive,
     run: (context) => complete(context.selectPrevious),
+  },
+  {
+    id: "tasks.next",
+    title: "Next task",
+    keys: ["j", "ArrowDown"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
+    run: (context) => complete(context.selectNextTask),
+  },
+  {
+    id: "tasks.previous",
+    title: "Previous task",
+    keys: ["k", "ArrowUp"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
+    run: (context) => complete(context.selectPreviousTask),
+  },
+  {
+    id: "tasks.openSelected",
+    title: "Open selected task",
+    keys: ["Enter"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
+    run: (context) => complete(context.openSelectedTask),
+  },
+  {
+    id: "tasks.toggleSelected",
+    title: "Complete or reopen selected task",
+    keys: ["x"],
+    group: "Triage",
+    enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
+    run: (context) => complete(context.toggleSelectedTask),
   },
   {
     id: "message.next",
     title: "Next message",
     keys: ["n", "ArrowRight"],
     group: "Navigation",
-    enabled: (context) => context.canNavigateMessages && !context.composerActive,
+    enabled: (context) => context.focusedPane === "mail" && context.canNavigateMessages && !context.composerActive,
     run: (context) => complete(context.selectNextMessage),
   },
   {
@@ -161,7 +199,7 @@ export const commands: Command[] = [
     title: "Previous message",
     keys: ["p", "ArrowLeft"],
     group: "Navigation",
-    enabled: (context) => context.canNavigateMessages && !context.composerActive,
+    enabled: (context) => context.focusedPane === "mail" && context.canNavigateMessages && !context.composerActive,
     run: (context) => complete(context.selectPreviousMessage),
   },
   {
@@ -169,7 +207,7 @@ export const commands: Command[] = [
     title: "Archive",
     keys: ["e"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
+    enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.archiveSelected(),
     undo: undoResult,
   },
@@ -188,7 +226,7 @@ export const commands: Command[] = [
     title: "Select for batch actions",
     keys: ["x"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
+    enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
     run: (context) => complete(context.toggleCheckedSelected),
   },
   {
@@ -259,7 +297,7 @@ export const commands: Command[] = [
     title: "Scroll message down",
     keys: ["Space"],
     group: "Navigation",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && !context.composerActive,
     run: (context) => complete(context.pageMessageDown),
   },
   {
@@ -267,7 +305,7 @@ export const commands: Command[] = [
     title: "Scroll message up",
     keys: ["Shift+Space"],
     group: "Navigation",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && !context.composerActive,
     run: (context) => complete(context.pageMessageUp),
   },
   {

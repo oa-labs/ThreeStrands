@@ -83,6 +83,7 @@ import type {
   CalendarOption,
   Label,
   RecoveryStatus,
+  Snippet,
   SplitInbox,
   SplitInboxMatchKind,
   SyncStatus,
@@ -103,9 +104,11 @@ import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { formatAvailabilityText } from "./actionDrafting";
-import { TaskSidebar } from "./TaskSidebar";
+import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
+import { SnippetEditor } from "./SnippetPicker";
+import { snippetBodyPreview } from "./snippets";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import {
@@ -182,7 +185,7 @@ type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
 export { formatMailTimestamp } from "./threadPresentation";
 
-type SettingsSection = "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "ai" | "privacy" | "diagnostics" | "data";
+type SettingsSection = "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -293,7 +296,26 @@ export function App() {
     void mailClient.listUnreadCounts().then(setUnreadCounts).catch(() => {});
   }, []);
   useEffect(refreshUnreadCounts, [refreshUnreadCounts]);
-  const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId);
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const refreshSnippets = useCallback(() => {
+    return mailClient.listSnippets().then(setSnippets).catch(() => {});
+  }, []);
+  useEffect(() => { void refreshSnippets(); }, [refreshSnippets]);
+  const onCreateSnippet = useCallback(async (name: string, body: string) => {
+    const created = await mailClient.createSnippet(name, body);
+    setSnippets((current) => [...current, created]);
+    return created;
+  }, []);
+  const onUpdateSnippet = useCallback(async (id: string, name: string, body: string) => {
+    const updated = await mailClient.updateSnippet(id, name, body);
+    setSnippets((current) => current.map((snippet) => (snippet.id === id ? updated : snippet)));
+    return updated;
+  }, []);
+  const onDeleteSnippet = useCallback(async (id: string) => {
+    await mailClient.deleteSnippet(id);
+    setSnippets((current) => current.filter((snippet) => snippet.id !== id));
+  }, []);
+  const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet);
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft
     && correspondence.activeDraft.mode !== "new"
@@ -330,6 +352,7 @@ export function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(null);
+  const taskWorkspaceRef = useRef<TaskWorkspaceHandle>(null);
   const [taskEditor, setTaskEditor] = useState<TaskEditorState | null>(null);
   const [meetingEditor, setMeetingEditor] = useState<MeetingEditorState | null>(null);
   const [calendarAccounts, setCalendarAccounts] = useState<CalendarAccount[]>([]);
@@ -1200,6 +1223,7 @@ export function App() {
   }, [visibleDetail]);
 
   const openTaskThread = useCallback((threadId: string) => {
+    setRightWorkspace(null);
     setSelectedId(threadId);
     if (!threads.some((thread) => thread.id === threadId)) {
       setDetailLoading(true);
@@ -1435,6 +1459,7 @@ export function App() {
   }, [displayedMessages]);
 
   const goToInboxTab = useCallback(() => {
+    setRightWorkspace(null);
     correspondence.context.openInbox();
     setMailbox("inbox");
     setActiveSplitInboxId(null);
@@ -1442,6 +1467,7 @@ export function App() {
   }, [correspondence.context, activeAccountId]);
 
   const goToSplitTab = useCallback((id: string) => {
+    setRightWorkspace(null);
     correspondence.context.openInbox();
     setMailbox("split");
     setActiveSplitInboxId(id);
@@ -1471,6 +1497,11 @@ export function App() {
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     interactionScope,
+    focusedPane: rightWorkspace === "tasks" ? "tasks" : "mail",
+    compose: () => {
+      setRightWorkspace(null);
+      correspondence.context.compose();
+    },
     mailbox,
     selectedId,
     selectedArchived: selected?.archived ?? false,
@@ -1490,12 +1521,14 @@ export function App() {
     goToNextSplitTab,
     goToPreviousSplitTab,
     openAllMail: () => {
+      setRightWorkspace(null);
       correspondence.context.openInbox();
       setQuery("");
       setSearchOpen(false);
       setMailbox("allMail");
     },
     openTrash: () => {
+      setRightWorkspace(null);
       correspondence.context.openInbox();
       setQuery("");
       setSearchOpen(false);
@@ -1503,6 +1536,7 @@ export function App() {
     },
     openSplitInbox: goToSplitTab,
     openDrafts: () => {
+      setRightWorkspace(null);
       correspondence.context.openDrafts();
       setQuery("");
       setSearchOpen(false);
@@ -1511,6 +1545,7 @@ export function App() {
       setDetail(null);
     },
     openOutbox: () => {
+      setRightWorkspace(null);
       correspondence.context.openOutbox();
       setQuery("");
       setSearchOpen(false);
@@ -1528,6 +1563,10 @@ export function App() {
     },
     selectNextMessage: () => selectAdjacentMessage(1),
     selectPreviousMessage: () => selectAdjacentMessage(-1),
+    selectNextTask: () => taskWorkspaceRef.current?.selectNext(),
+    selectPreviousTask: () => taskWorkspaceRef.current?.selectPrevious(),
+    openSelectedTask: () => taskWorkspaceRef.current?.openSelected(),
+    toggleSelectedTask: () => taskWorkspaceRef.current?.toggleSelected(),
     archiveSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: true }),
     markNotDoneSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: false }),
     unsubscribeSelected: () => {
@@ -1616,6 +1655,7 @@ export function App() {
       return {};
     },
     focusSearch: () => {
+      setRightWorkspace(null);
       if (!isTabbedMailbox) {
         correspondence.context.openInbox();
         setMailbox("inbox");
@@ -1643,7 +1683,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1712,7 +1752,7 @@ export function App() {
   const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
   return (
-    <main className={`app-shell${rightWorkspace ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -1832,6 +1872,7 @@ export function App() {
         </div>
       </nav>
 
+      {rightWorkspace !== "tasks" ? <>
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
         <InboxResizeHandle {...inboxSize} />
         <header className="thread-header">
@@ -2488,6 +2529,7 @@ export function App() {
           </div>
         )}
       </section>
+      </> : null}
 
       {rightWorkspace === "calendar" ? (
         <CalendarSidebar
@@ -2502,6 +2544,8 @@ export function App() {
       ) : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
+          ref={taskWorkspaceRef}
+          variant="workspace"
           onClose={() => setRightWorkspace(null)}
           accountId={activeAccountId}
           currentThread={visibleDetail}
@@ -2745,6 +2789,10 @@ export function App() {
             await mailClient.reorderSplitInboxes(ids);
             await refreshSplitInboxes();
           }}
+          snippets={snippets}
+          onCreateSnippet={onCreateSnippet}
+          onUpdateSnippet={onUpdateSnippet}
+          onDeleteSnippet={onDeleteSnippet}
         />
       ) : null}
       {notice ? (
@@ -3328,6 +3376,7 @@ const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "calendarAccounts", label: "Calendar Accounts" },
   { id: "availability", label: "Availability" },
   { id: "splitInboxes", label: "Split Inboxes" },
+  { id: "snippets", label: "Snippets" },
   { id: "ai", label: "AI provider" },
   { id: "privacy", label: "Privacy" },
   { id: "diagnostics", label: "Diagnostics" },
@@ -3376,6 +3425,10 @@ function Settings({
   onRenameSplitInbox,
   onDeleteSplitInbox,
   onReorderSplitInboxes,
+  snippets,
+  onCreateSnippet,
+  onUpdateSnippet,
+  onDeleteSnippet,
 }: {
   section: SettingsSection;
   onSectionChange(section: SettingsSection): void;
@@ -3418,6 +3471,10 @@ function Settings({
   onRenameSplitInbox(id: string, name: string): Promise<void>;
   onDeleteSplitInbox(id: string): Promise<void>;
   onReorderSplitInboxes(ids: string[]): Promise<void>;
+  snippets: Snippet[];
+  onCreateSnippet(name: string, body: string): Promise<Snippet>;
+  onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
+  onDeleteSnippet(id: string): Promise<void>;
 }) {
   return (
     <Modal title="Settings" className="settings-modal" onClose={onClose}>
@@ -3491,6 +3548,14 @@ function Settings({
               onRename={onRenameSplitInbox}
               onDelete={onDeleteSplitInbox}
               onReorder={onReorderSplitInboxes}
+            />
+          ) : null}
+          {section === "snippets" ? (
+            <SnippetsSettings
+              snippets={snippets}
+              onCreate={onCreateSnippet}
+              onUpdate={onUpdateSnippet}
+              onDelete={onDeleteSnippet}
             />
           ) : null}
           {section === "ai" ? <AiProviderSettings onChange={onAiConfigChange} /> : null}
@@ -4305,6 +4370,98 @@ function SplitInboxesSettings({
         </ul>
       )}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+function SnippetsSettings({
+  snippets,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: {
+  snippets: Snippet[];
+  onCreate(name: string, body: string): Promise<Snippet>;
+  onUpdate(id: string, name: string, body: string): Promise<Snippet>;
+  onDelete(id: string): Promise<void>;
+}) {
+  const [editorTarget, setEditorTarget] = useState<Snippet | "new" | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const orderedSnippets = [...snippets].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+
+  return (
+    <section className="settings-section accounts-manager" aria-label="Snippets">
+      <div className="accounts-manager-header">
+        <div>
+          <h3>Snippets</h3>
+          <p>
+            Canned text you can insert into a reply with <kbd>⌘/Ctrl ;</kbd>. Use{" "}
+            <code>{"{first_name}"}</code> to insert the recipient's first name.
+          </p>
+        </div>
+        <button type="button" className="primary-action" onClick={() => setEditorTarget("new")}>
+          <Plus size={15} /> Add snippet
+        </button>
+      </div>
+      {orderedSnippets.length === 0 ? (
+        <div className="accounts-empty">
+          <strong>No snippets yet</strong>
+          <p>Add one above, or create one from the snippet picker (<kbd>⌘/Ctrl ;</kbd>) while composing.</p>
+        </div>
+      ) : (
+        <ul className="accounts-list">
+          {orderedSnippets.map((snippet) => (
+            <li className="account-card" key={snippet.id}>
+              <div className="account-card-row">
+                <span className="account-card-avatar split-inbox-avatar" aria-hidden="true">
+                  {snippet.name.charAt(0).toUpperCase()}
+                </span>
+                <div className="account-card-identity">
+                  <strong>{snippet.name}</strong>
+                  <span className="account-card-email">{snippetBodyPreview(snippet.body)}</span>
+                </div>
+              </div>
+              <div className="account-card-controls">
+                <span className="accounts-list-actions">
+                  <button type="button" className="account-action-button" onClick={() => setEditorTarget(snippet)}>
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="account-action-button danger-action"
+                    disabled={busyId !== null}
+                    onClick={() => {
+                      setBusyId(snippet.id);
+                      setError(null);
+                      void onDelete(snippet.id)
+                        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+                        .finally(() => setBusyId(null));
+                    }}
+                  >
+                    Delete
+                  </button>
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+      {editorTarget ? (
+        <SnippetEditor
+          target={editorTarget}
+          initialName={editorTarget === "new" ? "" : editorTarget.name}
+          backLabel="Cancel"
+          onClose={() => setEditorTarget(null)}
+          onBack={() => setEditorTarget(null)}
+          onCreate={async (name, body) => { await onCreate(name, body); setEditorTarget(null); }}
+          onUpdate={async (id, name, body) => { await onUpdate(id, name, body); setEditorTarget(null); }}
+        />
+      ) : null}
     </section>
   );
 }

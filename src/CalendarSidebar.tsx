@@ -87,6 +87,13 @@ export function scheduleRequestFor(date: Date) {
   };
 }
 
+export function hasWorkingHoursOnDate(
+  date: Date,
+  preferences: Pick<AvailabilityPreferences, "workingWindows">,
+): boolean {
+  return preferences.workingWindows.some((window) => window.weekday === date.getDay());
+}
+
 function timeZoneLabel(date: Date): string {
   const part = new Intl.DateTimeFormat(undefined, {
     timeZoneName: "short",
@@ -219,6 +226,15 @@ export function CalendarSidebar({
   const [availabilityDialogOpen, setAvailabilityDialogOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   useEscapeDismiss(onClose);
+  const hasWorkingHours = hasWorkingHoursOnDate(date, availabilityPreferences);
+
+  useEffect(() => {
+    if (hasWorkingHours) return;
+    setAvailability(null);
+    setAvailabilityError(null);
+    setSelectedCandidates(new Set());
+    setAvailabilityDialogOpen(false);
+  }, [hasWorkingHours]);
 
   const load = useCallback(async (target: Date) => {
     setSelectedEvent(null);
@@ -257,6 +273,9 @@ export function CalendarSidebar({
   const allDayEvents = useMemo(() => events.filter((event) => event.allDay), [events]);
   const moveDay = useCallback((offset: number) => {
     setSelectedCandidates(new Set());
+    setAvailability(null);
+    setAvailabilityError(null);
+    setAvailabilityDialogOpen(false);
     setDate((current) => {
       const next = new Date(current);
       next.setDate(next.getDate() + offset);
@@ -267,6 +286,7 @@ export function CalendarSidebar({
   const checkAvailability = useCallback(async (targetDate: Date, targetDurationMinutes: number) => {
     setDate(targetDate);
     setDurationMinutes(targetDurationMinutes);
+    setAvailability(null);
     setAvailabilityLoading(true);
     setAvailabilityError(null);
     setSelectedCandidates(new Set());
@@ -348,42 +368,44 @@ export function CalendarSidebar({
         </div>
       ) : null}
       <div className="calendar-timezone">{timeZoneLabel(date)}</div>
-      <section className="availability-panel" aria-label="Check availability">
-        <div className="availability-panel-header"><strong>Find a time</strong><button type="button" onClick={() => setAvailabilityDialogOpen(true)} disabled={availabilityLoading}>{availabilityLoading ? "Checking…" : "Check schedule"}</button></div>
-        {availability ? <p className="availability-coverage">{durationMinutes} minute slots</p> : null}
-        {availabilityError ? <p className="calendar-error-notice" role="alert">{availabilityError}</p> : null}
-        {availability ? <>
-          <p className="availability-coverage">{availability.totalCalendarCount === 0 ? "Not checked against a calendar" : availability.checkedCalendarCount === availability.totalCalendarCount ? "Verified against all selected calendars" : "Partially checked — review before sharing"}</p>
-          {availability.errors.length > 0 ? <p className="calendar-error-notice" role="alert">Some calendars could not be checked. Suggested times are not fully verified.</p> : null}
-          <div className="availability-candidates" aria-label="Suggested times">
-            {availability.candidates.map((candidate) => {
-              const key = `${candidate.start}:${candidate.end}`;
-              const selected = selectedCandidates.has(key);
-              const formatCandidateTime = (value: string) => new Intl.DateTimeFormat(undefined, {
-                hour: "numeric",
-                minute: "2-digit",
-                timeZone: availabilityPreferences.timeZone,
-              }).format(new Date(value));
-              return <button type="button" key={key} className={`availability-candidate availability-${candidate.status}`} aria-pressed={selected} onClick={() => setSelectedCandidates((current) => {
-                const next = new Set(current);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              })}>{formatCandidateTime(candidate.start)}–{formatCandidateTime(candidate.end)}<small>{candidate.status === "verified" ? "Verified" : candidate.status === "partiallyChecked" ? "Partial" : "Not checked"}</small></button>;
-            })}
-          </div>
-          {selectedCandidates.size > 0 ? <p className="availability-coverage">{selectedCandidates.size} time{selectedCandidates.size === 1 ? "" : "s"} selected</p> : null}
-          {selectedCandidates.size > 0 && onDraftAvailability ? (
-            <button
-              type="button"
-              className="availability-draft-reply"
-              onClick={() => onDraftAvailability(availability.candidates.filter((candidate) => selectedCandidates.has(`${candidate.start}:${candidate.end}`)))}
-            >Draft reply with selected times</button>
-          ) : null}
-          {availability.candidates.length === 0 ? <p className="calendar-grid-status">No open working-hours slots found.</p> : null}
-        </> : null}
-      </section>
-      {availabilityDialogOpen ? <AvailabilityRequestDialog date={date} durationMinutes={durationMinutes} error={availabilityError} loading={availabilityLoading} onClose={() => setAvailabilityDialogOpen(false)} onSubmit={checkAvailability} /> : null}
+      {hasWorkingHours ? (
+        <section className="availability-panel" aria-label="Check availability">
+          <div className="availability-panel-header"><strong>Find a time</strong><button type="button" onClick={() => setAvailabilityDialogOpen(true)} disabled={availabilityLoading}>{availabilityLoading ? "Checking…" : "Check schedule"}</button></div>
+          {availability ? <p className="availability-coverage">{durationMinutes} minute slots</p> : null}
+          {availabilityError ? <p className="calendar-error-notice" role="alert">{availabilityError}</p> : null}
+          {availability ? <>
+            <p className="availability-coverage">{availability.totalCalendarCount === 0 ? "Not checked against a calendar" : availability.checkedCalendarCount === availability.totalCalendarCount ? "Verified against all selected calendars" : "Partially checked — review before sharing"}</p>
+            {availability.errors.length > 0 ? <p className="calendar-error-notice" role="alert">Some calendars could not be checked. Suggested times are not fully verified.</p> : null}
+            <div className="availability-candidates" aria-label="Suggested times">
+              {availability.candidates.map((candidate) => {
+                const key = `${candidate.start}:${candidate.end}`;
+                const selected = selectedCandidates.has(key);
+                const formatCandidateTime = (value: string) => new Intl.DateTimeFormat(undefined, {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  timeZone: availabilityPreferences.timeZone,
+                }).format(new Date(value));
+                return <button type="button" key={key} className={`availability-candidate availability-${candidate.status}`} aria-pressed={selected} onClick={() => setSelectedCandidates((current) => {
+                  const next = new Set(current);
+                  if (next.has(key)) next.delete(key);
+                  else next.add(key);
+                  return next;
+                })}>{formatCandidateTime(candidate.start)}–{formatCandidateTime(candidate.end)}<small>{candidate.status === "verified" ? "Verified" : candidate.status === "partiallyChecked" ? "Partial" : "Not checked"}</small></button>;
+              })}
+            </div>
+            {selectedCandidates.size > 0 ? <p className="availability-coverage">{selectedCandidates.size} time{selectedCandidates.size === 1 ? "" : "s"} selected</p> : null}
+            {selectedCandidates.size > 0 && onDraftAvailability ? (
+              <button
+                type="button"
+                className="availability-draft-reply"
+                onClick={() => onDraftAvailability(availability.candidates.filter((candidate) => selectedCandidates.has(`${candidate.start}:${candidate.end}`)))}
+              >Draft reply with selected times</button>
+            ) : null}
+            {availability.candidates.length === 0 ? <p className="calendar-grid-status">No open working-hours slots found.</p> : null}
+          </> : null}
+        </section>
+      ) : null}
+      {availabilityDialogOpen && hasWorkingHours ? <AvailabilityRequestDialog date={date} durationMinutes={durationMinutes} error={availabilityError} loading={availabilityLoading} onClose={() => setAvailabilityDialogOpen(false)} onSubmit={checkAvailability} /> : null}
       {!loading && error ? (
         <div className="calendar-error-notice" role="alert">
           <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>

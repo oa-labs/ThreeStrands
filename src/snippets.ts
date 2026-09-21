@@ -22,3 +22,10 @@ export function firstNameFromRecipient(to: string): string | undefined {
   if (name === email) return undefined;
   return name.split(" ")[0] || undefined;
 }
+
+/** Strips a snippet's stored HTML body down to a single-line plain-text preview. */
+export function snippetBodyPreview(html: string): string {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  return (container.textContent ?? "").replace(/\s+/g, " ").trim();
+}

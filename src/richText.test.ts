@@ -4,6 +4,7 @@ import {
   applyFormattingShortcut,
   formattingShortcutFor,
   formattingShortcuts,
+  insertHtmlAtRange,
   plainTextToHtml,
   sanitizeComposeHtml,
   serializeComposeHtml,
@@ -126,6 +127,55 @@ it("keeps safe pasted images and strips compose-only image controls", () => {
 
   expect(serializeComposeHtml(editor)).toBe('<img src="data:image/png;base64,aGVsbG8=" alt="Screenshot" width="320">');
   expect(sanitizeComposeHtml('<img src="javascript:alert(1)"><img src="data:text/html;base64,aGk=">')).toBe("");
+});
+
+describe("insertHtmlAtRange", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("inserts HTML at a collapsed range and leaves the caret just after it", () => {
+    const editor = document.createElement("div");
+    editor.textContent = "Hello world";
+    document.body.append(editor);
+    const textNode = editor.firstChild!;
+    const range = document.createRange();
+    range.setStart(textNode, 5); // "Hello| world"
+    range.collapse(true);
+
+    insertHtmlAtRange(editor, range, "<b>!</b>");
+
+    expect(editor.innerHTML).toBe("Hello<b>!</b> world");
+    const selection = window.getSelection()!;
+    expect(selection.isCollapsed).toBe(true);
+    expect(editor.contains(selection.anchorNode)).toBe(true);
+  });
+
+  it("replaces a non-collapsed selection with the inserted HTML", () => {
+    const editor = document.createElement("div");
+    editor.textContent = "Hello world";
+    document.body.append(editor);
+    const textNode = editor.firstChild!;
+    const range = document.createRange();
+    range.setStart(textNode, 0);
+    range.setEnd(textNode, 5); // selects "Hello"
+
+    insertHtmlAtRange(editor, range, "Goodbye");
+
+    expect(editor.textContent).toBe("Goodbye world");
+  });
+
+  it("inserts into an empty editor", () => {
+    const editor = document.createElement("div");
+    document.body.append(editor);
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+
+    insertHtmlAtRange(editor, range, "Hi there");
+
+    expect(editor.textContent).toBe("Hi there");
+  });
 });
 
 it("serializes inline attachment previews back to their content IDs", () => {

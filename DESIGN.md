@@ -62,11 +62,13 @@ candidate time may remain buttons on read-only surfaces. Data entry, ambiguous
 AI output, destructive actions, and external writes require a review or form
 boundary appropriate to their risk.
 
-## Right-side workspace
+## Workspaces
 
-Actions, Calendar, and Tasks share one mutually exclusive right-side workspace.
-Represent it with one state value (`null`, `actions`, `calendar`, or `tasks`),
-not multiple booleans that must be synchronized manually.
+Actions and Calendar share a mutually exclusive right-side workspace. Tasks is
+a primary navigation workspace: it replaces the mailbox and reader while
+leaving the application sidebar available. Represent the active workspace with
+one state value (`null`, `actions`, `calendar`, or `tasks`), not multiple
+booleans that must be synchronized manually.
 
 Opening a workspace must not steal focus or open a form. Workspace cards and
 candidate choices should use buttons and semantic disclosure elements. A plus,
@@ -81,9 +83,10 @@ Current primary commands are:
 - `Cmd/Ctrl+D`: add a task for the selected conversation; and
 - `Cmd/Ctrl+K`: open the command palette.
 
-If pane-local keyboard navigation is added, introduce an explicit focused-pane
-model first. Do not scatter competing window-level key listeners across
-components.
+The focused-pane model routes `j`/`k` and Up/Down to conversations or tasks.
+In Tasks, Enter opens the selected task's conversation and `x` completes or
+reopens it. Keep these commands in the central command registry; do not scatter
+competing window-level key listeners across components.
 
 ## AI actions
 

@@ -12,6 +12,7 @@ import {
 function noopContext(): CommandContext {
   return {
     interactionScope: "read",
+    focusedPane: "mail",
     mailbox: "inbox",
     selectedId: null,
     selectedArchived: false,
@@ -41,6 +42,10 @@ function noopContext(): CommandContext {
     undoSend: () => {},
     selectNext: () => {},
     selectPrevious: () => {},
+    selectNextTask: () => {},
+    selectPreviousTask: () => {},
+    openSelectedTask: () => {},
+    toggleSelectedTask: () => {},
     selectNextMessage: () => {},
     selectPreviousMessage: () => {},
     archiveSelected: async () => ({}),
@@ -83,9 +88,36 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "diagnostics.open")).toBeUndefined();
   });
 
-  it("keeps shortcut keys unambiguous", () => {
-    const keys = commands.flatMap((command) => command.keys.map((key) => key.toLowerCase()));
-    expect(new Set(keys).size).toBe(keys.length);
+  it("keeps shortcut collisions limited to commands in mutually exclusive focused panes", () => {
+    const owners = new Map<string, string[]>();
+    for (const command of commands) {
+      for (const key of command.keys) {
+        const normalized = key.toLowerCase();
+        owners.set(normalized, [...(owners.get(normalized) ?? []), command.id]);
+      }
+    }
+    expect(Object.fromEntries([...owners].filter(([, ids]) => ids.length > 1))).toEqual({
+      j: ["thread.next", "tasks.next"],
+      arrowdown: ["thread.next", "tasks.next"],
+      k: ["thread.previous", "tasks.previous"],
+      arrowup: ["thread.previous", "tasks.previous"],
+      x: ["tasks.toggleSelected", "thread.check"],
+    });
+
+    for (const focusedPane of ["mail", "tasks"] as const) {
+      const context = { ...noopContext(), focusedPane, selectedId: "thread-1" };
+      for (const ids of [...owners.values()].filter((candidateIds) => candidateIds.length > 1)) {
+        expect(ids.filter((id) => commands.find((command) => command.id === id)?.enabled(context))).toHaveLength(1);
+      }
+    }
+  });
+
+  it("routes task navigation only while the Tasks pane is focused", () => {
+    const taskContext = { ...noopContext(), focusedPane: "tasks" as const };
+    expect(commands.find((command) => command.id === "tasks.next")?.enabled(taskContext)).toBe(true);
+    expect(commands.find((command) => command.id === "thread.next")?.enabled(taskContext)).toBe(false);
+    expect(commands.find((command) => command.id === "tasks.openSelected")?.keys).toEqual(["Enter"]);
+    expect(commands.find((command) => command.id === "tasks.toggleSelected")?.keys).toEqual(["x"]);
   });
 
   it("matches shortcuts case-insensitively", () => {

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer, type ComposerHandle } from "./Composer";
 import type { Draft } from "./correspondence";
 import { mailClient } from "./data/client";
-import type { Account } from "./domain";
+import type { Account, Snippet } from "./domain";
 import {
   clearAiApiKey,
   DEFAULT_AI_FEATURES,
@@ -42,6 +42,13 @@ const accounts: Account[] = ["first@example.com", "second@example.com"].map((ema
   lastSyncedAt: null,
 }));
 
+const snippetProps = {
+  snippets: [] as Snippet[],
+  onCreateSnippet: vi.fn(),
+  onUpdateSnippet: vi.fn(),
+  onDeleteSnippet: vi.fn(),
+};
+
 describe("Composer From selector", () => {
   afterEach(() => {
     cleanup();
@@ -55,7 +62,7 @@ describe("Composer From selector", () => {
       account: "second@example.com",
     });
 
-    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const selector = screen.getByRole("combobox", { name: "Send from" });
 
     expect(fireEvent.pointerDown(selector, { button: 0, pointerId: 1 })).toBe(true);
@@ -66,7 +73,7 @@ describe("Composer From selector", () => {
   });
 
   it("keeps the From selector inside the composer's keyboard focus loop", () => {
-    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const selector = screen.getByRole("combobox", { name: "Send from" });
 
     selector.focus();
@@ -83,7 +90,7 @@ describe("Composer recipient visibility and shortcuts", () => {
   });
 
   it("shows populated copy fields by default and toggles only blank fields from the To label", () => {
-    render(<Composer draft={{ ...draft, cc: "copy@example.com" }} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={{ ...draft, cc: "copy@example.com" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
 
     expect(screen.getByRole("textbox", { name: "Cc" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Bcc" })).not.toBeInTheDocument();
@@ -102,7 +109,7 @@ describe("Composer recipient visibility and shortcuts", () => {
     ["c", "Cc"],
     ["b", "Bcc"],
   ])("focuses the %s recipient using its shortcut", (key, label) => {
-    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
 
     fireEvent.keyDown(screen.getByRole("dialog"), { key, metaKey: true, shiftKey: true });
 
@@ -117,7 +124,7 @@ describe("Composer asterisk list shortcut", () => {
   });
 
   it("starts a bulleted list when space follows an asterisk", () => {
-    render(<Composer draft={{ ...draft, body: "*" }} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={{ ...draft, body: "*" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const editor = screen.getByRole("textbox", { name: "Message body" });
     const text = editor.firstChild!;
     const range = document.createRange();
@@ -145,7 +152,7 @@ describe("Composer pasted images", () => {
     const attachInline = vi.spyOn(mailClient, "attachInlineImage").mockResolvedValue({ ...draft, revision: 1, attachments: [inlineAttachment] });
     const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
     const removeAttachment = vi.spyOn(mailClient, "removeAttachment").mockResolvedValue({ ...draft, revision: 3 });
-    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const editor = screen.getByRole("textbox", { name: "Message body" });
     Object.defineProperty(editor, "clientWidth", { configurable: true, value: 800 });
     const imageFile = new File([new Uint8Array([137, 80, 78, 71])], "screenshot.png", { type: "image/png" });
@@ -182,7 +189,7 @@ describe("Composer pasted images", () => {
     };
     const readInline = vi.spyOn(mailClient, "readInlineImage").mockResolvedValue("data:image/png;base64,iVBORw==");
 
-    render(<Composer draft={savedDraft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={savedDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
 
     const image = screen.getByRole("img", { name: "Screenshot" });
     await waitFor(() => expect(image).toHaveAttribute("src", "data:image/png;base64,iVBORw=="));
@@ -231,7 +238,7 @@ describe("Composer forwarded attachments", () => {
     const queueDraft = vi.spyOn(mailClient, "queueDraft").mockResolvedValue(queued);
     const onQueued = vi.fn();
 
-    render(<Composer draft={forwarded} accounts={accounts} onClose={() => {}} onQueued={onQueued} />);
+    render(<Composer draft={forwarded} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={onQueued} />);
 
     await waitFor(() => expect(fetchAttachment).toHaveBeenCalledWith("draft-1", "forwarded-image"));
     await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
@@ -282,7 +289,7 @@ describe("Composer Reply Assist", () => {
     });
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
 
-    render(<Composer draft={replyDraft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: /Draft reply with AI/ }));
 
     expect(await screen.findByText("Can we meet Friday?")).toBeInTheDocument();
@@ -310,7 +317,7 @@ describe("Composer Reply Assist", () => {
     render(
       <Composer
         draft={replyDraft}
-        accounts={accounts}
+        accounts={accounts} {...snippetProps}
         onClose={() => {}}
         onQueued={() => {}}
         availabilityText={'Here are some times that work for me:\n\n- Tuesday, September 22, 2026 · 9:00–9:30 AM EDT (America/New_York)'}
@@ -329,7 +336,7 @@ describe("Composer Reply Assist", () => {
     render(
       <Composer
         draft={replyDraft}
-        accounts={accounts}
+        accounts={accounts} {...snippetProps}
         onClose={() => {}}
         onQueued={() => {}}
         replyAssistInstruction="Draft a concise follow-up about the launch date."
@@ -346,7 +353,7 @@ describe("Composer Reply Assist", () => {
     render(
       <Composer
         draft={replyDraft}
-        accounts={accounts}
+        accounts={accounts} {...snippetProps}
         onClose={() => {}}
         onQueued={() => {}}
         replyAssistInstruction="Draft a concise follow-up."
@@ -364,7 +371,7 @@ describe("Composer Reply Assist", () => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
     const existing = { ...replyDraft, body: `My existing words.${replyDraft.body}` };
 
-    render(<Composer draft={existing} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={existing} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: /Draft reply with AI/ }));
     await screen.findByText("Can we meet Friday?");
     fireEvent.click(screen.getByRole("button", { name: "Generate draft" }));
@@ -383,7 +390,7 @@ describe("Composer Reply Assist", () => {
     vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
     const ref = createRef<ComposerHandle>();
 
-    render(<Composer ref={ref} draft={replyDraft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     await screen.findByRole("button", { name: /Draft reply with AI/ });
 
     ref.current?.draftReplyWithAI();
@@ -395,7 +402,7 @@ describe("Composer Reply Assist", () => {
     saveAiProvider("none");
     const ref = createRef<ComposerHandle>();
 
-    render(<Composer ref={ref} draft={replyDraft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     ref.current?.draftReplyWithAI();
 
     expect(screen.queryByText("Reply Assist")).not.toBeInTheDocument();
@@ -424,7 +431,7 @@ describe("Composer recipient autocomplete", () => {
 
   it("suggests a past correspondent from local history and fills the field on selection", async () => {
     const suggest = vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([contact]);
-    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const to = screen.getByRole("textbox", { name: "To" });
 
     fireEvent.change(to, { target: { value: "ja" } });
@@ -440,7 +447,7 @@ describe("Composer recipient autocomplete", () => {
   it("pins a suggested contact without inserting it into the field", async () => {
     vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([contact]);
     const pin = vi.spyOn(mailClient, "pinContact").mockResolvedValue();
-    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const to = screen.getByRole("textbox", { name: "To" });
 
     fireEvent.change(to, { target: { value: "ja" } });
@@ -455,7 +462,7 @@ describe("Composer recipient autocomplete", () => {
   it("offers to pin a brand-new address that has no mail history at all", async () => {
     vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([]);
     const pin = vi.spyOn(mailClient, "pinContact").mockResolvedValue();
-    render(<Composer draft={draft} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const to = screen.getByRole("textbox", { name: "To" });
 
     fireEvent.change(to, { target: { value: "wife@example.com" } });
@@ -472,7 +479,7 @@ describe("Composer recipient autocomplete", () => {
   it("shows a prefilled reply recipient as a badge immediately, with no mail history query needed", () => {
     vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([]);
     const prefilled = { ...draft, to: "hello@threestrands.local" };
-    render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={prefilled} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
 
     expect(screen.getByRole("button", { name: "Remove hello@threestrands.local" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "To" })).toHaveValue("");
@@ -480,7 +487,7 @@ describe("Composer recipient autocomplete", () => {
 
   it("removes a recipient badge via its remove button and via Backspace on an empty field", () => {
     const prefilled = { ...draft, to: "a@example.com, b@example.com" };
-    render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={prefilled} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Remove a@example.com" }));
     expect(screen.queryByRole("button", { name: "Remove a@example.com" })).not.toBeInTheDocument();
@@ -492,7 +499,7 @@ describe("Composer recipient autocomplete", () => {
 
   it("removes a newly added recipient without activating the first recipient's remove button", () => {
     const prefilled = { ...draft, to: "original@example.com" };
-    render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={prefilled} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const to = screen.getByRole("textbox", { name: "To" });
 
     fireEvent.change(to, { target: { value: "added@example.com" } });
@@ -509,7 +516,7 @@ describe("Composer recipient autocomplete", () => {
 
   it("drags a recipient badge from To into Cc, moving it rather than copying it", () => {
     const prefilled = { ...draft, to: "hello@threestrands.local", cc: "" };
-    render(<Composer draft={prefilled} accounts={accounts} onClose={() => {}} onQueued={() => {}} />);
+    render(<Composer draft={prefilled} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "To" }));
 
     const chip = screen.getByRole("button", { name: "Remove hello@threestrands.local" }).closest(".recipient-chip");

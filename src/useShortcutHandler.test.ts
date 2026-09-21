@@ -5,6 +5,7 @@ import { useShortcutHandler } from "./useShortcutHandler";
 
 const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   interactionScope: "read",
+  focusedPane: "mail",
   mailbox: "inbox",
   selectedId: null,
   selectedArchived: false,
@@ -39,6 +40,10 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   undoSend: vi.fn(),
   selectNext: vi.fn(),
   selectPrevious: vi.fn(),
+  selectNextTask: vi.fn(),
+  selectPreviousTask: vi.fn(),
+  openSelectedTask: vi.fn(),
+  toggleSelectedTask: vi.fn(),
   selectNextMessage: vi.fn(),
   selectPreviousMessage: vi.fn(),
   archiveSelected: vi.fn(async () => ({})),

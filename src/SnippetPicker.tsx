@@ -4,12 +4,7 @@ import { Modal } from "./AppChrome";
 import type { Snippet } from "./domain";
 import { readSnippetUsage } from "./settings";
 import { linkifyPlainText, sanitizeComposeHtml } from "./richText";
-
-function stripHtml(html: string): string {
-  const container = document.createElement("div");
-  container.innerHTML = html;
-  return (container.textContent ?? "").replace(/\s+/g, " ").trim();
-}
+import { snippetBodyPreview } from "./snippets";
 
 function htmlToPlainText(html: string): string {
   const container = document.createElement("div");
@@ -125,7 +120,7 @@ export function SnippetPicker({
           >
             <span className="snippet-option-name">
               <strong>{snippet.name}</strong>
-              <span className="snippet-option-preview">{stripHtml(snippet.body)}</span>
+              <span className="snippet-option-preview">{snippetBodyPreview(snippet.body)}</span>
             </span>
             <span className="label-actions">
               <button
@@ -169,9 +164,10 @@ export function SnippetPicker({
   );
 }
 
-function SnippetEditor({
+export function SnippetEditor({
   target,
   initialName,
+  backLabel = "Back",
   onClose,
   onBack,
   onCreate,
@@ -179,6 +175,7 @@ function SnippetEditor({
 }: {
   target: Snippet | "new";
   initialName: string;
+  backLabel?: string;
   onClose(): void;
   onBack(): void;
   onCreate(name: string, body: string): Promise<void>;
@@ -230,7 +227,7 @@ function SnippetEditor({
         </label>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="snippet-editor-actions">
-          <button type="button" onClick={onBack} disabled={busy}>Back</button>
+          <button type="button" onClick={onBack} disabled={busy}>{backLabel}</button>
           <button type="submit" disabled={!name.trim() || !body.trim() || busy}>Save</button>
         </div>
       </form>

@@ -178,6 +178,31 @@ export function sanitizeComposeHtml(html: string): string {
   return container.innerHTML;
 }
 
+/**
+ * Inserts an HTML string at a `Range`, then collapses the selection to just
+ * after the inserted content. Used instead of `execCommand("insertHTML", …)`
+ * when the range was captured before focus moved elsewhere (e.g. into a
+ * modal) and then restored — some WebKit-based webviews normalize or drop a
+ * programmatically restored selection on focus, so `execCommand` can insert
+ * nothing even though the range object itself is still valid.
+ */
+export function insertHtmlAtRange(editor: HTMLElement, range: Range, html: string): void {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const fragment = template.content;
+  const lastNode = fragment.lastChild;
+  range.deleteContents();
+  range.insertNode(fragment);
+  const selection = window.getSelection();
+  if (!selection) return;
+  const after = document.createRange();
+  if (lastNode && editor.contains(lastNode)) after.setStartAfter(lastNode);
+  else after.selectNodeContents(editor);
+  after.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(after);
+}
+
 /** Removes compose-only image controls before a draft is saved or sent. */
 export function serializeComposeHtml(editor: HTMLElement): string {
   const clone = editor.cloneNode(true) as HTMLElement;
