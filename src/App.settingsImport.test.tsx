@@ -88,3 +88,52 @@ describe("settings import navigation", () => {
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 });
+
+describe("settings section keyboard navigation", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {
+        transformCallback: vi.fn(() => 1),
+        unregisterCallback: vi.fn(),
+        invoke: vi.fn().mockResolvedValue(1),
+      },
+    });
+    Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
+      configurable: true,
+      value: { unregisterListener: vi.fn() },
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("cycles between sections with the arrow keys, wrapping at each end", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const appearanceButton = within(dialog).getByRole("button", { name: "Appearance" });
+    expect(appearanceButton).toHaveAttribute("aria-current", "true");
+
+    fireEvent.keyDown(appearanceButton, { key: "ArrowDown" });
+    const readingButton = within(dialog).getByRole("button", { name: "Reading" });
+    expect(readingButton).toHaveAttribute("aria-current", "true");
+    expect(readingButton).toHaveFocus();
+    expect(within(dialog).getByRole("region", { name: "Reading" })).toBeInTheDocument();
+
+    fireEvent.keyDown(readingButton, { key: "ArrowUp" });
+    expect(appearanceButton).toHaveAttribute("aria-current", "true");
+    expect(appearanceButton).toHaveFocus();
+
+    // Wraps past the first section to the last one.
+    fireEvent.keyDown(appearanceButton, { key: "ArrowUp" });
+    const lastButton = within(dialog).getByRole("button", { name: "Data transfer" });
+    expect(lastButton).toHaveAttribute("aria-current", "true");
+    expect(lastButton).toHaveFocus();
+  });
+});

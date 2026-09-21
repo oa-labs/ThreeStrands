@@ -174,9 +174,22 @@ impl Database {
         let title = request.title.as_deref().unwrap_or(&current.title);
         let kind = request.kind.as_deref().unwrap_or(&current.kind);
         let due_kind = request.due_kind.as_deref().unwrap_or(&current.due_kind);
-        let due_value = request.due_value.as_deref().or(current.due_value.as_deref());
-        validate_task_fields(title, kind, due_kind, due_value, request.repeat_interval_days.or(current.repeat_interval_days))?;
-        let notes = request.notes.as_deref().or(current.notes.as_deref());
+        let due_value = request
+            .due_value
+            .as_ref()
+            .map_or(current.due_value.as_deref(), |value| value.as_deref());
+        let repeat_interval_days = request
+            .repeat_interval_days
+            .unwrap_or(current.repeat_interval_days);
+        validate_task_fields(title, kind, due_kind, due_value, repeat_interval_days)?;
+        let notes = request
+            .notes
+            .as_ref()
+            .map_or(current.notes.as_deref(), |value| value.as_deref());
+        let time_zone = request
+            .time_zone
+            .as_ref()
+            .map_or(current.time_zone.as_deref(), |value| value.as_deref());
         if notes.is_some_and(|value| value.chars().count() > MAX_NOTES) {
             return Err(format!("Task notes exceed {MAX_NOTES} characters"));
         }
@@ -188,8 +201,7 @@ impl Database {
                     time_zone=?6, repeat_interval_days=?7, updated_at=?8 WHERE id=?9",
                 params![
                     title.trim(), notes.map(str::trim), kind, due_kind, due_value,
-                    request.time_zone.as_deref().or(current.time_zone.as_deref()),
-                    request.repeat_interval_days.or(current.repeat_interval_days), now, request.id
+                    time_zone, repeat_interval_days, now, request.id
                 ],
             )
             .map_err(error)?;
@@ -407,5 +419,44 @@ mod tests {
         assert_eq!(next.status, "open");
         assert_eq!(next.due_value.as_deref(), Some("2026-10-02"));
         assert_eq!(next.completion_source, None);
+    }
+
+    #[test]
+    fn updating_a_task_can_clear_optional_details() {
+        let database = database_with_thread();
+        let task = database
+            .create_task(&CreateTaskRequest {
+                account_id: "account@example.com".into(),
+                thread_id: "account:thread".into(),
+                source_message_id: None,
+                subject_snapshot: "Planning".into(),
+                title: "Check in".into(),
+                notes: Some("Bring the status report".into()),
+                kind: "follow_up".into(),
+                due_kind: "date".into(),
+                due_value: Some("2026-09-25".into()),
+                time_zone: Some("America/New_York".into()),
+                repeat_interval_days: Some(7),
+                evidence_text: None,
+            })
+            .unwrap();
+
+        let request: UpdateTaskRequest = serde_json::from_value(serde_json::json!({
+            "id": task.id,
+            "notes": null,
+            "kind": "action",
+            "dueKind": "none",
+            "dueValue": null,
+            "timeZone": null,
+            "repeatIntervalDays": null
+        }))
+        .unwrap();
+        let updated = database.update_task(&request).unwrap();
+
+        assert_eq!(updated.notes, None);
+        assert_eq!(updated.due_kind, "none");
+        assert_eq!(updated.due_value, None);
+        assert_eq!(updated.time_zone, None);
+        assert_eq!(updated.repeat_interval_days, None);
     }
 }

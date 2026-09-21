@@ -180,6 +180,7 @@ import {
 type RightWorkspace = "actions" | "calendar" | "tasks" | null;
 type TaskEditorState =
   | { kind: "new"; thread: ThreadDetail }
+  | { kind: "edit"; task: ThreadTask }
   | { kind: "proposal"; thread: ThreadDetail; index: number; proposal: TaskProposal; intent: "edit" | "accept" };
 type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
@@ -353,6 +354,7 @@ export function App() {
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(null);
   const taskWorkspaceRef = useRef<TaskWorkspaceHandle>(null);
+  const [selectedTaskStatus, setSelectedTaskStatus] = useState<ThreadTask["status"] | null>(null);
   const [taskEditor, setTaskEditor] = useState<TaskEditorState | null>(null);
   const [meetingEditor, setMeetingEditor] = useState<MeetingEditorState | null>(null);
   const [calendarAccounts, setCalendarAccounts] = useState<CalendarAccount[]>([]);
@@ -1404,6 +1406,14 @@ export function App() {
 
   const submitTaskEditor = useCallback(async (values: TaskEditorValues) => {
     if (!taskEditor) return;
+    if (taskEditor.kind === "edit") {
+      await mailClient.updateTask({ id: taskEditor.task.id, ...values });
+      setTaskEditor(null);
+      setTaskRevision((current) => current + 1);
+      await refreshTaskIndicators();
+      setNotice({ message: "Task updated" });
+      return;
+    }
     if (taskEditor.kind === "proposal" && taskEditor.intent === "edit") {
       updateActionProposal(taskEditor.index, { ...taskEditor.proposal, ...values });
       setTaskEditor(null);
@@ -1566,7 +1576,10 @@ export function App() {
     selectNextTask: () => taskWorkspaceRef.current?.selectNext(),
     selectPreviousTask: () => taskWorkspaceRef.current?.selectPrevious(),
     openSelectedTask: () => taskWorkspaceRef.current?.openSelected(),
-    toggleSelectedTask: () => taskWorkspaceRef.current?.toggleSelected(),
+    editSelectedTask: () => taskWorkspaceRef.current?.editSelected(),
+    completeSelectedTask: () => taskWorkspaceRef.current?.completeSelected(),
+    reopenSelectedTask: () => taskWorkspaceRef.current?.reopenSelected(),
+    selectedTaskStatus,
     archiveSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: true }),
     markNotDoneSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: false }),
     unsubscribeSelected: () => {
@@ -1683,7 +1696,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openSettingsAt, openTasks, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskStatus, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -2554,6 +2567,8 @@ export function App() {
           onDraftFollowUp={(task) => void draftFollowUp(task)}
           onCheckSchedule={openSchedule}
           onNewTask={newTask}
+          onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
+          onSelectedTaskChange={(task) => setSelectedTaskStatus(task?.status ?? null)}
           refreshKey={taskRevision}
         />
       ) : null}
@@ -2585,15 +2600,15 @@ export function App() {
       {correspondence.overlay}
       {taskEditor ? (
         <TaskEditorDialog
-          initial={taskEditor.kind === "proposal" ? taskEditor.proposal : {
+          initial={taskEditor.kind === "proposal" ? taskEditor.proposal : taskEditor.kind === "edit" ? taskEditor.task : {
             title: taskEditor.thread.thread.subject,
             kind: "action",
             dueKind: "none",
             timeZone: availabilityPreferences.timeZone,
           }}
-          sourceSubject={taskEditor.thread.thread.subject}
-          evidence={taskEditor.kind === "proposal" ? taskEditor.proposal.evidence.excerpt : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000)}
-          submitLabel={taskEditor.kind === "proposal" && taskEditor.intent === "edit" ? "Save proposal" : "Add task"}
+          sourceSubject={taskEditor.kind === "edit" ? taskEditor.task.subjectSnapshot : taskEditor.thread.thread.subject}
+          evidence={taskEditor.kind === "proposal" ? taskEditor.proposal.evidence.excerpt : taskEditor.kind === "edit" ? taskEditor.task.evidenceText : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000)}
+          submitLabel={taskEditor.kind === "proposal" && taskEditor.intent === "edit" ? "Save proposal" : taskEditor.kind === "edit" ? "Save task" : "Add task"}
           onClose={() => setTaskEditor(null)}
           onSubmit={submitTaskEditor}
         />
@@ -3479,10 +3494,23 @@ function Settings({
   return (
     <Modal title="Settings" className="settings-modal" onClose={onClose}>
       <div className="settings-body">
-        <nav className="settings-nav" aria-label="Settings sections">
+        <nav
+          className="settings-nav"
+          aria-label="Settings sections"
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+            event.preventDefault();
+            const currentIndex = SETTINGS_SECTIONS.findIndex((item) => item.id === section);
+            const delta = event.key === "ArrowDown" ? 1 : -1;
+            const next = SETTINGS_SECTIONS[(currentIndex + delta + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length]!;
+            onSectionChange(next.id);
+            event.currentTarget.querySelector<HTMLButtonElement>(`[data-section-id="${next.id}"]`)?.focus();
+          }}
+        >
           {SETTINGS_SECTIONS.map((item) => (
             <button
               key={item.id}
+              data-section-id={item.id}
               className={item.id === section ? "active" : ""}
               aria-current={item.id === section}
               onClick={() => onSectionChange(item.id)}

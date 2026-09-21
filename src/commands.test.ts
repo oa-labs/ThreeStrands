@@ -45,7 +45,10 @@ function noopContext(): CommandContext {
     selectNextTask: () => {},
     selectPreviousTask: () => {},
     openSelectedTask: () => {},
-    toggleSelectedTask: () => {},
+    editSelectedTask: () => {},
+    completeSelectedTask: () => {},
+    reopenSelectedTask: () => {},
+    selectedTaskStatus: null,
     selectNextMessage: () => {},
     selectPreviousMessage: () => {},
     archiveSelected: async () => ({}),
@@ -101,13 +104,19 @@ describe("command registry", () => {
       arrowdown: ["thread.next", "tasks.next"],
       k: ["thread.previous", "tasks.previous"],
       arrowup: ["thread.previous", "tasks.previous"],
-      x: ["tasks.toggleSelected", "thread.check"],
+      e: ["tasks.completeSelected", "thread.archive"],
+      "shift+e": ["tasks.reopenSelected", "thread.unarchive"],
+      o: ["tasks.openSelected", "thread.toggleOlderMessages"],
     });
 
     for (const focusedPane of ["mail", "tasks"] as const) {
-      const context = { ...noopContext(), focusedPane, selectedId: "thread-1" };
-      for (const ids of [...owners.values()].filter((candidateIds) => candidateIds.length > 1)) {
-        expect(ids.filter((id) => commands.find((command) => command.id === id)?.enabled(context))).toHaveLength(1);
+      for (const selectedTaskStatus of ["open", "completed"] as const) {
+        for (const selectedArchived of [false, true]) {
+          const context = { ...noopContext(), focusedPane, selectedId: "thread-1", selectedArchived, selectedTaskStatus };
+          for (const ids of [...owners.values()].filter((candidateIds) => candidateIds.length > 1)) {
+            expect(ids.filter((id) => commands.find((command) => command.id === id)?.enabled(context)).length).toBeLessThanOrEqual(1);
+          }
+        }
       }
     }
   });
@@ -116,8 +125,9 @@ describe("command registry", () => {
     const taskContext = { ...noopContext(), focusedPane: "tasks" as const };
     expect(commands.find((command) => command.id === "tasks.next")?.enabled(taskContext)).toBe(true);
     expect(commands.find((command) => command.id === "thread.next")?.enabled(taskContext)).toBe(false);
-    expect(commands.find((command) => command.id === "tasks.openSelected")?.keys).toEqual(["Enter"]);
-    expect(commands.find((command) => command.id === "tasks.toggleSelected")?.keys).toEqual(["x"]);
+    expect(commands.find((command) => command.id === "tasks.editSelected")?.keys).toEqual(["Enter"]);
+    expect(commands.find((command) => command.id === "tasks.completeSelected")?.keys).toEqual(["e"]);
+    expect(commands.find((command) => command.id === "tasks.reopenSelected")?.keys).toEqual(["Shift+e"]);
   });
 
   it("matches shortcuts case-insensitively", () => {

@@ -79,7 +79,7 @@ export function TaskEditorDialog({
   };
 
   return (
-    <Modal title={submitLabel === "Save proposal" ? "Edit task proposal" : "Add task"} className="task-editor-modal" onClose={onClose} initialFocusRef={titleRef}>
+    <Modal title={submitLabel === "Save proposal" ? "Edit task proposal" : submitLabel === "Save task" ? "Edit task" : "Add task"} className="task-editor-modal" onClose={onClose} initialFocusRef={titleRef}>
       <form className="modal-form" onSubmit={(event) => void submit(event)} onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           event.preventDefault();

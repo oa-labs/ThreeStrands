@@ -1,4 +1,12 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+fn deserialize_optional_field<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -222,18 +230,18 @@ pub struct UpdateTaskRequest {
     pub id: String,
     #[serde(default)]
     pub title: Option<String>,
-    #[serde(default)]
-    pub notes: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub notes: Option<Option<String>>,
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]
     pub due_kind: Option<String>,
-    #[serde(default)]
-    pub due_value: Option<String>,
-    #[serde(default)]
-    pub time_zone: Option<String>,
-    #[serde(default)]
-    pub repeat_interval_days: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub due_value: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub time_zone: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub repeat_interval_days: Option<Option<i64>>,
 }
 
 fn default_task_due_kind() -> String {

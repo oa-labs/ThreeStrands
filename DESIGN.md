@@ -84,9 +84,10 @@ Current primary commands are:
 - `Cmd/Ctrl+K`: open the command palette.
 
 The focused-pane model routes `j`/`k` and Up/Down to conversations or tasks.
-In Tasks, Enter opens the selected task's conversation and `x` completes or
-reopens it. Keep these commands in the central command registry; do not scatter
-competing window-level key listeners across components.
+Tasks use the same list-and-reader structure as mail: selection shows read-only
+details, Enter opens the edit modal, `e` completes, `Shift+e` reopens, and `o`
+opens the linked conversation. Keep these commands in the central command
+registry; do not scatter competing window-level key listeners across components.
 
 ## AI actions
 

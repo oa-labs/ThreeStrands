@@ -42,7 +42,10 @@ export type CommandContext = {
   selectNextTask(): void;
   selectPreviousTask(): void;
   openSelectedTask(): void;
-  toggleSelectedTask(): void;
+  editSelectedTask(): void;
+  completeSelectedTask(): void;
+  reopenSelectedTask(): void;
+  selectedTaskStatus: "open" | "completed" | "cancelled" | null;
   selectNextMessage(): void;
   selectPreviousMessage(): void;
   archiveSelected(): Promise<CommandResult>;
@@ -171,20 +174,36 @@ export const commands: Command[] = [
     run: (context) => complete(context.selectPreviousTask),
   },
   {
-    id: "tasks.openSelected",
-    title: "Open selected task",
+    id: "tasks.editSelected",
+    title: "Edit selected task",
     keys: ["Enter"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
+    run: (context) => complete(context.editSelectedTask),
+  },
+  {
+    id: "tasks.openSelected",
+    title: "Open task conversation",
+    keys: ["o"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus !== null && !context.composerActive,
     run: (context) => complete(context.openSelectedTask),
   },
   {
-    id: "tasks.toggleSelected",
-    title: "Complete or reopen selected task",
-    keys: ["x"],
+    id: "tasks.completeSelected",
+    title: "Complete selected task",
+    keys: ["e"],
     group: "Triage",
-    enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
-    run: (context) => complete(context.toggleSelectedTask),
+    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus === "open" && !context.composerActive,
+    run: (context) => complete(context.completeSelectedTask),
+  },
+  {
+    id: "tasks.reopenSelected",
+    title: "Reopen selected task",
+    keys: ["Shift+e"],
+    group: "Triage",
+    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus === "completed" && !context.composerActive,
+    run: (context) => complete(context.reopenSelectedTask),
   },
   {
     id: "message.next",

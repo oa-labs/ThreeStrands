@@ -20,6 +20,14 @@ function formatDue(task: ThreadTask): string | null {
   return value.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function formatDueDetail(task: ThreadTask): string | null {
+  if (!task.dueValue) return null;
+  const value = task.dueKind === "date" ? new Date(`${task.dueValue}T12:00:00`) : new Date(task.dueValue);
+  return task.dueKind === "datetime"
+    ? value.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+    : value.toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
 function isDue(task: ThreadTask): boolean {
   if (task.status !== "open" || !task.dueValue) return false;
   const due = task.dueKind === "date" ? new Date(`${task.dueValue}T23:59:59`) : new Date(task.dueValue);
@@ -43,7 +51,9 @@ export type TaskWorkspaceHandle = {
   selectNext(): void;
   selectPrevious(): void;
   openSelected(): void;
-  toggleSelected(): void;
+  editSelected(): void;
+  completeSelected(): void;
+  reopenSelected(): void;
 };
 
 export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
@@ -66,6 +76,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onFindTimesProposal?(proposal: MeetingProposal): void;
   onDraftFollowUp?(task: ThreadTask): void;
   onNewTask?(): void;
+  onEditTask?(task: ThreadTask): void;
+  onSelectedTaskChange?(task: ThreadTask | null): void;
   refreshKey?: number;
   title?: string;
 }>(function TaskSidebar({
@@ -88,6 +100,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onFindTimesProposal,
   onDraftFollowUp,
   onNewTask,
+  onEditTask,
+  onSelectedTaskChange,
   refreshKey = 0,
   title = "Tasks",
 }, ref) {
@@ -124,6 +138,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       .filter((group) => group.tasks.length > 0);
   }, [tasks]);
   const orderedTasks = useMemo(() => grouped.flatMap((group) => group.tasks), [grouped]);
+  const selectedTask = orderedTasks.find((task) => task.id === selectedTaskId) ?? null;
 
   useEffect(() => {
     if (orderedTasks.length === 0) {
@@ -136,6 +151,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   useEffect(() => {
     if (variant === "workspace" && selectedTaskId) taskCards.current.get(selectedTaskId)?.scrollIntoView?.({ block: "nearest" });
   }, [selectedTaskId, variant]);
+
+  useEffect(() => { onSelectedTaskChange?.(selectedTask); }, [onSelectedTaskChange, selectedTask]);
 
   const setStatus = async (task: ThreadTask, status: "open" | "completed") => {
     try {
@@ -158,14 +175,41 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     selectNext: () => moveSelection(1),
     selectPrevious: () => moveSelection(-1),
     openSelected: () => {
-      const task = orderedTasks.find((candidate) => candidate.id === selectedTaskId);
-      if (task) onOpenThread(task.threadId);
+      if (selectedTask) onOpenThread(selectedTask.threadId);
     },
-    toggleSelected: () => {
-      const task = orderedTasks.find((candidate) => candidate.id === selectedTaskId);
-      if (task) void setStatus(task, task.status === "completed" ? "open" : "completed");
-    },
-  }), [moveSelection, onOpenThread, orderedTasks, selectedTaskId]);
+    editSelected: () => { if (selectedTask) onEditTask?.(selectedTask); },
+    completeSelected: () => { if (selectedTask?.status === "open") void setStatus(selectedTask, "completed"); },
+    reopenSelected: () => { if (selectedTask?.status === "completed") void setStatus(selectedTask, "open"); },
+  }), [moveSelection, onEditTask, onOpenThread, selectedTask]);
+
+  const taskList = <div className="tasks-list">
+    {grouped.map((group) => (
+      <section key={group.name} aria-labelledby={`task-group-${group.name.replace(/\s/g, "-")}`}>
+        <h3 id={`task-group-${group.name.replace(/\s/g, "-")}`}>{group.name}</h3>
+        {group.tasks.map((task) => (
+          <article
+            id={`task-${task.id}`}
+            ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }}
+            className={`task-card task-${task.status}${variant === "workspace" && selectedTaskId === task.id ? " selected" : ""}`}
+            aria-current={variant === "workspace" && selectedTaskId === task.id ? "true" : undefined}
+            key={task.id}
+          >
+            <button type="button" className="task-card-main" onClick={() => variant === "workspace" ? setSelectedTaskId(task.id) : onOpenThread(task.threadId)}>
+              <strong>{task.title}</strong>
+              <span>{task.subjectSnapshot}</span>
+              {formatDue(task) ? <small><Clock3 size={12} /> {formatDue(task)}</small> : null}
+            </button>
+            <button type="button" className="task-status-button" aria-label={task.status === "completed" ? `Reopen ${task.title}` : `Complete ${task.title}`} onClick={() => void setStatus(task, task.status === "completed" ? "open" : "completed")}>
+              {task.status === "completed" ? <RotateCcw size={15} /> : <Check size={15} />}
+            </button>
+            {onDraftFollowUp && task.kind === "follow_up" && isDue(task) ? (
+              <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft follow-up</button>
+            ) : null}
+          </article>
+        ))}
+      </section>
+    ))}
+  </div>;
 
   return (
     <section className={variant === "workspace" ? "tasks-workspace" : "tasks-sidebar"} role={variant === "sidebar" ? "complementary" : "region"} aria-label={title}>
@@ -219,34 +263,32 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
       {!loading && grouped.length === 0 ? <p className="tasks-status">No tasks yet. Add one from a conversation.</p> : null}
-      <div className="tasks-list">
-        {grouped.map((group) => (
-          <section key={group.name} aria-labelledby={`task-group-${group.name.replace(/\s/g, "-")}`}>
-            <h3 id={`task-group-${group.name.replace(/\s/g, "-")}`}>{group.name}</h3>
-            {group.tasks.map((task) => (
-              <article
-                id={`task-${task.id}`}
-                ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }}
-                className={`task-card task-${task.status}${variant === "workspace" && selectedTaskId === task.id ? " selected" : ""}`}
-                aria-current={variant === "workspace" && selectedTaskId === task.id ? "true" : undefined}
-                key={task.id}
-              >
-                <button type="button" className="task-card-main" onClick={() => { setSelectedTaskId(task.id); onOpenThread(task.threadId); }}>
-                  <strong>{task.title}</strong>
-                  <span>{task.subjectSnapshot}</span>
-                  {formatDue(task) ? <small><Clock3 size={12} /> {formatDue(task)}</small> : null}
+      {variant === "workspace" ? <div className="tasks-workspace-body">
+        {taskList}
+        <section className="task-detail" aria-label="Task details">
+          {selectedTask ? <>
+            <header>
+              <div><span className="eyebrow">{selectedTask.kind.replace("_", " ")}</span><h2>{selectedTask.title}</h2></div>
+              <div className="task-detail-actions">
+                {onEditTask ? <button type="button" onClick={() => onEditTask(selectedTask)}><Pencil size={14} /> Edit</button> : null}
+                <button type="button" onClick={() => void setStatus(selectedTask, selectedTask.status === "completed" ? "open" : "completed")}>
+                  {selectedTask.status === "completed" ? <><RotateCcw size={14} /> Reopen</> : <><Check size={14} /> Mark done</>}
                 </button>
-                <button type="button" className="task-status-button" aria-label={task.status === "completed" ? `Reopen ${task.title}` : `Complete ${task.title}`} onClick={() => void setStatus(task, task.status === "completed" ? "open" : "completed")}>
-                  {task.status === "completed" ? <RotateCcw size={15} /> : <Check size={15} />}
-                </button>
-                {onDraftFollowUp && task.kind === "follow_up" && isDue(task) ? (
-                  <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft follow-up</button>
-                ) : null}
-              </article>
-            ))}
-          </section>
-        ))}
-      </div>
+                <button type="button" onClick={() => onOpenThread(selectedTask.threadId)}>Open conversation</button>
+              </div>
+            </header>
+            <dl>
+              <div><dt>Status</dt><dd>{selectedTask.status}</dd></div>
+              <div><dt>Due</dt><dd>{formatDueDetail(selectedTask) ?? "No due date"}</dd></div>
+              <div><dt>Conversation</dt><dd>{selectedTask.subjectSnapshot}</dd></div>
+              {selectedTask.repeatIntervalDays ? <div><dt>Repeats</dt><dd>Every {selectedTask.repeatIntervalDays} days</dd></div> : null}
+            </dl>
+            <section className="task-detail-notes" aria-label="Notes"><h3>Notes</h3><p>{selectedTask.notes || "No notes"}</p></section>
+            {selectedTask.evidenceText ? <section className="task-detail-notes" aria-label="Evidence"><h3>Evidence</h3><blockquote>{selectedTask.evidenceText}</blockquote></section> : null}
+            <p className="task-detail-shortcuts"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> edit · {selectedTask.status === "completed" ? <><kbd>Shift+e</kbd> reopen</> : <><kbd>e</kbd> complete</>} · <kbd>o</kbd> open conversation</p>
+          </> : <p className="tasks-status">Select a task to see its details.</p>}
+        </section>
+      </div> : taskList}
     </section>
   );
 });
