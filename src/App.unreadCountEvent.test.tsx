@@ -8,14 +8,17 @@ import { mailClient } from "./data/client";
 // otherwise leak between tests sharing App.test.tsx's demo-mode module
 // instance.
 describe("background unread count updates", () => {
+  const transformCallback = vi.fn();
+  const invoke = vi.fn();
+
   beforeEach(() => {
     localStorage.clear();
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {
-        transformCallback: vi.fn(() => 1),
+        transformCallback,
         unregisterCallback: vi.fn(),
-        invoke: vi.fn().mockResolvedValue(1),
+        invoke,
       },
     });
     Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
@@ -34,16 +37,12 @@ describe("background unread count updates", () => {
     const listenIdsByEvent = new Map<string, number>();
     let nextId = 1;
 
-    const internals = window.__TAURI_INTERNALS__ as unknown as {
-      transformCallback: ReturnType<typeof vi.fn>;
-      invoke: ReturnType<typeof vi.fn>;
-    };
-    internals.transformCallback.mockImplementation((callback: (event: unknown) => void) => {
+    transformCallback.mockImplementation((callback: (event: unknown) => void) => {
       const id = nextId++;
       handlersById.set(id, callback);
       return id;
     });
-    internals.invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+    invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === "plugin:event|listen") {
         const handlerId = args?.handler as number;
         listenIdsByEvent.set(args?.event as string, handlerId);
