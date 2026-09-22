@@ -70,7 +70,7 @@ describe("settings import navigation", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Data Transfer" }));
 
     const dataTransfer = within(dialog).getByRole("region", { name: "Data transfer" });
-    fireEvent.change(within(dataTransfer).getAllByLabelText("Export Password")[1], {
+    fireEvent.change(within(dataTransfer).getByLabelText("Backup File Password"), {
       target: { value: "password123" },
     });
     fireEvent.click(within(dataTransfer).getByRole("button", {
@@ -135,5 +135,43 @@ describe("settings section keyboard navigation", () => {
     const lastButton = within(dialog).getByRole("button", { name: "Data Transfer" });
     expect(lastButton).toHaveAttribute("aria-current", "true");
     expect(lastButton).toHaveFocus();
+  });
+
+  it("groups and searches settings by control keywords", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByText("General")).toBeInTheDocument();
+    expect(within(dialog).getByText("Accounts")).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+    expect(within(dialog).getByText("Preference changes save automatically")).toBeInTheDocument();
+
+    const search = within(dialog).getByRole("searchbox", { name: "Search Settings" });
+    search.focus();
+    fireEvent.change(search, {
+      target: { value: "remote images" },
+    });
+
+    expect(search).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: "Privacy" })).toHaveAttribute("aria-current", "true");
+    expect(within(dialog).getByRole("region", { name: "Privacy" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Appearance" })).not.toBeInTheDocument();
+  });
+
+  it("reveals device-wide account removal behind a scoped confirmation", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "More…" }));
+
+    expect(within(dialog).getByText("Remove from every device?")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Remove on all devices" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(within(dialog).queryByText("Remove from every device?")).not.toBeInTheDocument();
   });
 });

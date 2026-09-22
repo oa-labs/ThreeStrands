@@ -3314,7 +3314,8 @@ export function DiagnosticsSettings({
       <SyncDiagnosticsDetails status={status} recovery={recovery} accountCount={accountCount} />
 
       <h3>Crash Reports</h3>
-      <label className="settings-checkbox">
+      <label className="settings-switch">
+        <span>Share Sanitized Crash Reports</span>
         <input
           type="checkbox"
           checked={reporting}
@@ -3323,7 +3324,6 @@ export function DiagnosticsSettings({
             setCrashReportingEnabled(event.target.checked);
           }}
         />
-        Share Sanitized Crash Reports
       </label>
       <span className="settings-hint">
         Disabled by default. Email addresses and URLs are redacted.{" "}
@@ -3535,20 +3535,32 @@ function LabelManager({
   );
 }
 
-const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
-  { id: "appearance", label: "Appearance" },
-  { id: "reading", label: "Reading" },
-  { id: "cloudAccount", label: "Three Strands Account" },
-  { id: "replicatedSync", label: "Replicated Sync (Beta)" },
-  { id: "accounts", label: "Mail Accounts" },
-  { id: "calendarAccounts", label: "Calendar Accounts" },
-  { id: "availability", label: "Availability" },
-  { id: "splitInboxes", label: "Split Inboxes" },
-  { id: "snippets", label: "Snippets" },
-  { id: "ai", label: "AI Provider" },
-  { id: "privacy", label: "Privacy" },
-  { id: "diagnostics", label: "Diagnostics" },
-  { id: "data", label: "Data Transfer" },
+type SettingsGroup = "General" | "Accounts" | "Workflow" | "Integrations" | "System";
+
+type SettingsSectionDefinition = {
+  id: SettingsSection;
+  label: string;
+  group: SettingsGroup;
+  description: string;
+  keywords: string;
+};
+
+const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Integrations", "System"];
+
+const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
+  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and reads.", keywords: "theme light dark font size family" },
+  { id: "reading", label: "Reading", group: "General", description: "Control what happens when you open a conversation.", keywords: "mark read delay conversation" },
+  { id: "cloudAccount", label: "Three Strands Account", group: "Accounts", description: "Manage your profile, devices, and cross-device sync.", keywords: "cloud profile devices sign in sync" },
+  { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail sender name color reconnect disconnect" },
+  { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection" },
+  { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings" },
+  { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern" },
+  { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose" },
+  { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions" },
+  { id: "replicatedSync", label: "Replicated Sync (Beta)", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted beta" },
+  { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache" },
+  { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect synchronization health and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting" },
+  { id: "data", label: "Data Transfer", group: "System", description: "Move encrypted settings and account metadata between devices.", keywords: "import export backup password" },
 ];
 
 function Settings({
@@ -3653,42 +3665,108 @@ function Settings({
   // enabled, so a normal build's Settings menu is byte-for-byte what it was
   // before this feature existed.
   const [replicatedSyncAvailable, setReplicatedSyncAvailable] = useState(false);
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const selectedSectionButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     void replicatedSyncEnabled().then(setReplicatedSyncAvailable);
   }, []);
-  const visibleSections = SETTINGS_SECTIONS.filter(
+  const availableSections = SETTINGS_SECTIONS.filter(
     (item) => item.id !== "replicatedSync" || replicatedSyncAvailable,
   );
+  const normalizedSettingsQuery = settingsQuery.trim().toLocaleLowerCase();
+  const visibleSections = availableSections.filter((item) =>
+    !normalizedSettingsQuery
+    || `${item.label} ${item.group} ${item.description} ${item.keywords}`.toLocaleLowerCase().includes(normalizedSettingsQuery)
+  );
+  const selectedSection = availableSections.find((item) => item.id === section) ?? availableSections[0]!;
+
+  useEffect(() => {
+    if (settingsPanelRef.current) settingsPanelRef.current.scrollTop = 0;
+  }, [section]);
 
   return (
-    <Modal title="Settings" className="settings-modal" onClose={onClose}>
+    <Modal title="Settings" className="settings-modal" initialFocusRef={selectedSectionButtonRef} onClose={onClose}>
       <div className="settings-body">
         <nav
           className="settings-nav"
           aria-label="Settings sections"
           onKeyDown={(event) => {
             if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+            if (event.target instanceof HTMLInputElement) return;
             event.preventDefault();
+            if (visibleSections.length === 0) return;
             const currentIndex = visibleSections.findIndex((item) => item.id === section);
             const delta = event.key === "ArrowDown" ? 1 : -1;
-            const next = visibleSections[(currentIndex + delta + visibleSections.length) % visibleSections.length]!;
+            const startIndex = currentIndex < 0 ? (delta === 1 ? -1 : 0) : currentIndex;
+            const next = visibleSections[(startIndex + delta + visibleSections.length) % visibleSections.length]!;
             onSectionChange(next.id);
             event.currentTarget.querySelector<HTMLButtonElement>(`[data-section-id="${next.id}"]`)?.focus();
           }}
         >
-          {visibleSections.map((item) => (
-            <button
-              key={item.id}
-              data-section-id={item.id}
-              className={item.id === section ? "active" : ""}
-              aria-current={item.id === section}
-              onClick={() => onSectionChange(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
+          <label className="settings-search">
+            <Search size={14} aria-hidden="true" />
+            <input
+              type="search"
+              value={settingsQuery}
+              aria-label="Search Settings"
+              placeholder="Search settings"
+              onChange={(event) => {
+                const nextQuery = event.target.value;
+                setSettingsQuery(nextQuery);
+                const normalized = nextQuery.trim().toLocaleLowerCase();
+                if (!normalized) return;
+                const matches = availableSections.filter((item) =>
+                  `${item.label} ${item.group} ${item.description} ${item.keywords}`.toLocaleLowerCase().includes(normalized)
+                );
+                if (matches.length > 0 && !matches.some((item) => item.id === section)) {
+                  onSectionChange(matches[0]!.id);
+                }
+              }}
+            />
+          </label>
+          <div className="settings-nav-sections">
+            {SETTINGS_GROUPS.map((group) => {
+              const groupSections = visibleSections.filter((item) => item.group === group);
+              if (groupSections.length === 0) return null;
+              return (
+                <div className="settings-nav-group" key={group}>
+                  <span className="settings-nav-group-label">{group}</span>
+                  {groupSections.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      data-section-id={item.id}
+                      className={item.id === section ? "active" : ""}
+                      aria-current={item.id === section ? "true" : undefined}
+                      ref={item.id === section ? selectedSectionButtonRef : undefined}
+                      onClick={() => onSectionChange(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
+            {visibleSections.length === 0 ? <p className="settings-nav-empty">No settings found</p> : null}
+          </div>
         </nav>
-        <div className="settings-panel">
+        <div className="settings-panel" ref={settingsPanelRef}>
+          <header className="settings-page-header">
+            <div>
+              <h2>{visibleSections.length === 0 ? "Search settings" : selectedSection.label}</h2>
+              <p>{visibleSections.length === 0 ? "No matching controls or sections are currently visible." : selectedSection.description}</p>
+            </div>
+            <span className="settings-save-note"><Check size={13} aria-hidden="true" /> Preference changes save automatically</span>
+          </header>
+          {visibleSections.length === 0 ? (
+            <div className="settings-search-empty">
+              <strong>No settings match “{settingsQuery.trim()}”</strong>
+              <p>Try a feature name, account, privacy, or sync.</p>
+              <button type="button" onClick={() => setSettingsQuery("")}>Clear search</button>
+            </div>
+          ) : (
+            <>
           {section === "cloudAccount" ? <CloudAccountSettings /> : null}
           {section === "replicatedSync" ? <ReplicatedSyncSettings /> : null}
           {section === "appearance" ? (
@@ -3770,6 +3848,8 @@ function Settings({
             <DiagnosticsSettings status={syncStatus} recovery={recoveryStatus} accountCount={accounts.length} />
           ) : null}
           {section === "data" ? <DataTransferSettings onImported={onSettingsImported} /> : null}
+            </>
+          )}
         </div>
       </div>
     </Modal>
@@ -3782,6 +3862,7 @@ function CloudAccountSettings() {
   const [conflicts, setConflicts] = useState<CloudConflict[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
 
   const refresh = useCallback(async () => {
     const next = await cloudAccountStatus();
@@ -3868,7 +3949,16 @@ function CloudAccountSettings() {
       )}
       <h3>Delete Cloud Account</h3>
       <p className="settings-hint">Deletes synchronized cloud data and sessions. Local data remains on this computer; encrypted backups expire according to the service retention policy.</p>
-      <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => { if (window.confirm("Delete your Three Strands cloud account? Local data will remain on this computer.")) act(cloudDeleteAccount); }}>Delete cloud account</button>
+      <button type="button" className="account-action-button danger-action" disabled={busy} aria-expanded={confirmDeleteAccount} onClick={() => setConfirmDeleteAccount(true)}>Delete cloud account…</button>
+      {confirmDeleteAccount ? (
+        <div className="settings-inline-confirm" role="group" aria-label="Delete cloud account confirmation">
+          <p><strong>Delete synchronized cloud data and sessions?</strong><br />Local data on this computer remains. This cloud data cannot be recovered after backup retention expires.</p>
+          <span className="settings-inline-confirm-actions">
+            <button type="button" disabled={busy} onClick={() => setConfirmDeleteAccount(false)}>Cancel</button>
+            <button type="button" className="danger-action" disabled={busy} onClick={() => { setConfirmDeleteAccount(false); act(cloudDeleteAccount); }}>Delete cloud account</button>
+          </span>
+        </div>
+      ) : null}
       {message ? <p role="status" className="settings-hint">{message}</p> : null}
     </section>
   );
@@ -3901,6 +3991,8 @@ function ReplicatedSyncSettings() {
   const [ipfsBaseUrl, setIpfsBaseUrl] = useState("");
   const [ipfsToken, setIpfsToken] = useState("");
   const [ipfsProbe, setIpfsProbe] = useState<IpfsRpcProbeReport | null>(null);
+  const [disconnectingTransport, setDisconnectingTransport] = useState<string | null>(null);
+  const [revokingDevice, setRevokingDevice] = useState<string | null>(null);
   const [recoveryPhrase, setRecoveryPhrase] = useState<string | null>(null);
   const [recoveryPhraseInput, setRecoveryPhraseInput] = useState("");
 
@@ -4019,14 +4111,6 @@ function ReplicatedSyncSettings() {
       })
       .catch((error: unknown) => setMessage(String(error)))
       .finally(() => setBusy(false));
-  };
-
-  const revokeDevice = (deviceId: string) => {
-    const confirmed = window.confirm(
-      "Revoke this device? It will stop receiving future encrypted data and this device's other replicas will treat its future writes as untrusted. It keeps whatever it already has.",
-    );
-    if (!confirmed) return;
-    act(() => replicatedSyncRotateEpoch(deviceId));
   };
 
   if (available === null) {
@@ -4192,11 +4276,20 @@ function ReplicatedSyncSettings() {
                     </span>
                   </div>
                   {!device.isSelf && device.status === "active" ? (
-                    <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => revokeDevice(device.deviceId)}>
-                      Revoke
+                    <button type="button" className="account-action-button danger-action" disabled={busy} aria-expanded={revokingDevice === device.deviceId} onClick={() => setRevokingDevice(device.deviceId)}>
+                      Revoke…
                     </button>
                   ) : null}
                 </div>
+                {revokingDevice === device.deviceId ? (
+                  <div className="settings-inline-confirm" role="group" aria-label="Revoke device confirmation">
+                    <p><strong>Revoke this device?</strong><br />It keeps existing data, but future writes from it will no longer be trusted.</p>
+                    <span className="settings-inline-confirm-actions">
+                      <button type="button" disabled={busy} onClick={() => setRevokingDevice(null)}>Cancel</button>
+                      <button type="button" className="danger-action" disabled={busy} onClick={() => { setRevokingDevice(null); act(() => replicatedSyncRotateEpoch(device.deviceId)); }}>Revoke device</button>
+                    </span>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -4227,23 +4320,29 @@ function ReplicatedSyncSettings() {
                   type="button"
                   className="account-action-button danger-action"
                   disabled={busy}
-                  onClick={() => {
-                    if (transport.kind === "ipfs_rpc") {
-                      const disconnect = window.confirm(
-                        `Stop syncing to "${transport.location}"? This only forgets the endpoint on this device — objects already pinned there stay pinned. Remove them yourself through your provider if you want them erased.`,
-                      );
-                      if (disconnect) act(() => replicatedSyncRemoveTransport(transport.instanceId, false));
-                      return;
-                    }
-                    const deleteData = window.confirm(
-                      `Delete the synchronized data in "${transport.location}"? This removes this device's copy from that folder; it does not erase copies on other devices or elsewhere. Choose Cancel to just stop syncing to it and keep the files there.`,
-                    );
-                    act(() => replicatedSyncRemoveTransport(transport.instanceId, deleteData));
-                  }}
+                  aria-expanded={disconnectingTransport === transport.instanceId}
+                  onClick={() => setDisconnectingTransport(transport.instanceId)}
                 >
-                  Disconnect
+                  Disconnect…
                 </button>
               </div>
+              {disconnectingTransport === transport.instanceId ? (
+                <div className="settings-inline-confirm" role="group" aria-label="Disconnect sync transport confirmation">
+                  <p>
+                    <strong>Stop syncing to this {transport.kind === "ipfs_rpc" ? "endpoint" : "folder"}?</strong><br />
+                    {transport.kind === "ipfs_rpc"
+                      ? "Pinned objects remain with the provider until you remove them there."
+                      : "You can keep the encrypted files for another device or delete this device’s copy."}
+                  </p>
+                  <span className="settings-inline-confirm-actions">
+                    <button type="button" disabled={busy} onClick={() => setDisconnectingTransport(null)}>Cancel</button>
+                    <button type="button" disabled={busy} onClick={() => { setDisconnectingTransport(null); act(() => replicatedSyncRemoveTransport(transport.instanceId, false)); }}>Disconnect and keep data</button>
+                    {transport.kind !== "ipfs_rpc" ? (
+                      <button type="button" className="danger-action" disabled={busy} onClick={() => { setDisconnectingTransport(null); act(() => replicatedSyncRemoveTransport(transport.instanceId, true)); }}>Delete files and disconnect</button>
+                    ) : null}
+                  </span>
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -4558,6 +4657,7 @@ function AccountsSettings({
 }) {
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmEverywhereEmail, setConfirmEverywhereEmail] = useState<string | null>(null);
 
   const act = (busyKey: string, operation: () => Promise<void>) => {
     setBusyEmail(busyKey);
@@ -4698,18 +4798,34 @@ function AccountsSettings({
                   </button>
                   <button
                     type="button"
-                    className="account-action-button danger-action"
+                    className="account-action-button"
                     disabled={busyEmail !== null}
-                    onClick={() => {
-                      if (window.confirm(`Remove ${account.email} from the synchronized account list on every device?`)) {
-                        act(account.email, () => onRemoveEverywhere(account.email));
-                      }
-                    }}
+                    aria-expanded={confirmEverywhereEmail === account.email}
+                    onClick={() => setConfirmEverywhereEmail(account.email)}
                   >
-                    Remove Everywhere
+                    More…
                   </button>
                 </span>
               </div>
+              {confirmEverywhereEmail === account.email ? (
+                <div className="settings-inline-confirm" role="group" aria-label="Remove mail account from all devices confirmation">
+                  <p><strong>Remove from every device?</strong><br />This disconnects {account.email} everywhere. Gmail itself is not changed.</p>
+                  <span className="settings-inline-confirm-actions">
+                    <button type="button" disabled={busyEmail !== null} onClick={() => setConfirmEverywhereEmail(null)}>Cancel</button>
+                    <button
+                      type="button"
+                      className="danger-action"
+                      disabled={busyEmail !== null}
+                      onClick={() => {
+                        act(account.email, () => onRemoveEverywhere(account.email));
+                        setConfirmEverywhereEmail(null);
+                      }}
+                    >
+                      Remove on all devices
+                    </button>
+                  </span>
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -4730,6 +4846,30 @@ function AvailabilitySettings({
   onChange(value: AvailabilityPreferences): void;
 }) {
   const weekdayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const [timeZoneDraft, setTimeZoneDraft] = useState(preferences.timeZone);
+  const [timeZoneError, setTimeZoneError] = useState<string | null>(null);
+  const systemTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const timeZones = useMemo(() => {
+    try {
+      return Intl.supportedValuesOf("timeZone");
+    } catch {
+      return ["UTC"];
+    }
+  }, []);
+
+  useEffect(() => setTimeZoneDraft(preferences.timeZone), [preferences.timeZone]);
+
+  const commitTimeZone = (value: string) => {
+    const normalized = value.trim();
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: normalized }).format();
+      setTimeZoneDraft(normalized);
+      setTimeZoneError(null);
+      if (normalized !== preferences.timeZone) onChange({ ...preferences, timeZone: normalized });
+    } catch {
+      setTimeZoneError("Choose a valid timezone, such as America/New_York.");
+    }
+  };
   const updateWindow = (weekday: number, patch: Partial<{ start: string; end: string }>) => {
     const current = preferences.workingWindows.find((window) => window.weekday === weekday);
     const next = current
@@ -4741,15 +4881,56 @@ function AvailabilitySettings({
     <section className="settings-section" aria-label="Availability">
       <h3>Timezone</h3>
       <label className="settings-field">
-        <span>IANA Timezone</span>
+        <span>Timezone</span>
         <input
-          value={preferences.timeZone}
+          list="availability-timezones"
+          value={timeZoneDraft}
           aria-label="Availability Timezone"
-          onChange={(event) => onChange({ ...preferences, timeZone: event.target.value })}
+          aria-invalid={timeZoneError ? "true" : undefined}
+          onChange={(event) => {
+            setTimeZoneDraft(event.target.value);
+            setTimeZoneError(null);
+          }}
+          onBlur={(event) => commitTimeZone(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commitTimeZone(event.currentTarget.value);
+            }
+          }}
         />
+        <datalist id="availability-timezones">
+          {timeZones.map((timeZone) => <option key={timeZone} value={timeZone} />)}
+        </datalist>
       </label>
-      <p className="settings-hint">Times are interpreted in this timezone, including daylight-saving transitions.</p>
-      <h3>Working Hours</h3>
+      <div className="settings-row">
+        <button type="button" onClick={() => commitTimeZone(systemTimeZone)}>Use system timezone</button>
+        <span className="settings-hint">Times include daylight-saving transitions.</span>
+      </div>
+      {timeZoneError ? <p className="form-error" role="alert">{timeZoneError}</p> : null}
+      <div className="settings-section-heading-row">
+        <h3>Working Hours</h3>
+        <span className="settings-section-heading-actions">
+          <button
+            type="button"
+            onClick={() => {
+              const monday = preferences.workingWindows.find((window) => window.weekday === 1)
+                ?? { weekday: 1, start: "09:00", end: "17:00" };
+              const weekends = preferences.workingWindows.filter((window) => window.weekday === 0 || window.weekday === 6);
+              onChange({
+                ...preferences,
+                workingWindows: [
+                  ...weekends,
+                  ...[1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: monday.start, end: monday.end })),
+                ].sort((a, b) => a.weekday - b.weekday),
+              });
+            }}
+          >
+            Copy Monday to weekdays
+          </button>
+          <button type="button" onClick={() => onChange({ ...preferences, workingWindows: [] })}>Clear</button>
+        </span>
+      </div>
       <div className="availability-windows">
         {weekdayLabels.map((label, weekday) => {
           const window = preferences.workingWindows.find((candidate) => candidate.weekday === weekday);
@@ -4798,6 +4979,7 @@ function CalendarAccountsSettings({
 }) {
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmEverywhereEmail, setConfirmEverywhereEmail] = useState<string | null>(null);
   const act = (busyKey: string, operation: () => Promise<void>) => {
     setBusyEmail(busyKey);
     setError(null);
@@ -4880,18 +5062,34 @@ function CalendarAccountsSettings({
                   </button>
                   <button
                     type="button"
-                    className="account-action-button danger-action"
+                    className="account-action-button"
                     disabled={busyEmail !== null}
-                    onClick={() => {
-                      if (window.confirm(`Remove ${account.email} from the synchronized calendar list on every device?`)) {
-                        act(account.email, () => onRemoveEverywhere(account.email));
-                      }
-                    }}
+                    aria-expanded={confirmEverywhereEmail === account.email}
+                    onClick={() => setConfirmEverywhereEmail(account.email)}
                   >
-                    Remove Everywhere
+                    More…
                   </button>
                 </span>
               </div>
+              {confirmEverywhereEmail === account.email ? (
+                <div className="settings-inline-confirm" role="group" aria-label="Remove calendar account from all devices confirmation">
+                  <p><strong>Remove from every device?</strong><br />This disconnects {account.email} everywhere. Google Calendar itself is not changed.</p>
+                  <span className="settings-inline-confirm-actions">
+                    <button type="button" disabled={busyEmail !== null} onClick={() => setConfirmEverywhereEmail(null)}>Cancel</button>
+                    <button
+                      type="button"
+                      className="danger-action"
+                      disabled={busyEmail !== null}
+                      onClick={() => {
+                        act(account.email, () => onRemoveEverywhere(account.email));
+                        setConfirmEverywhereEmail(null);
+                      }}
+                    >
+                      Remove on all devices
+                    </button>
+                  </span>
+                </div>
+              ) : null}
               {account.status === "connected" ? (
                 <fieldset className="calendar-picker">
                   <legend>Calendars shown in the sidebar</legend>
@@ -5369,6 +5567,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const [keyConfigured, setKeyConfigured] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [configurationError, setConfigurationError] = useState<string | null>(null);
 
   useEffect(() => {
     void isAiApiKeyConfigured().then(setKeyConfigured);
@@ -5444,11 +5643,16 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               onChange={(event) => setKeyInput(event.target.value)}
             />
           </label>
+          <span className={`settings-connection-status${keyConfigured ? " configured" : ""}`} role="status">
+            {keyConfigured ? <CheckCircle2 size={13} aria-hidden="true" /> : <AlertCircle size={13} aria-hidden="true" />}
+            {keyConfigured ? "API key configured" : "API key required"}
+          </span>
           <div className="settings-row">
             <button
               disabled={busy || !keyInput.trim()}
               onClick={() => {
                 setBusy(true);
+                setConfigurationError(null);
                 void setAiApiKey(keyInput)
                   .then(() => {
                     setKeyInput("");
@@ -5456,6 +5660,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                   })
                   .then(setKeyConfigured)
                   .then(() => onChange?.())
+                  .catch((reason: unknown) => setConfigurationError(reason instanceof Error ? reason.message : String(reason)))
                   .finally(() => setBusy(false));
               }}
             >
@@ -5465,10 +5670,12 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               disabled={busy || !keyConfigured}
               onClick={() => {
                 setBusy(true);
+                setConfigurationError(null);
                 void clearAiApiKey()
                   .then(() => isAiApiKeyConfigured())
                   .then(setKeyConfigured)
                   .then(() => onChange?.())
+                  .catch((reason: unknown) => setConfigurationError(reason instanceof Error ? reason.message : String(reason)))
                   .finally(() => setBusy(false));
               }}
             >
@@ -5478,31 +5685,32 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           <span className="settings-hint">
             Stored in your OS keychain, never in the mail database.
           </span>
+          {configurationError ? <p className="form-error" role="alert">{configurationError}</p> : null}
 
           <h3>Features</h3>
-          <label className="settings-checkbox">
+          <label className="settings-switch">
+            <span>Draft Assist</span>
             <input
               type="checkbox"
               checked={features.draftAssist}
               onChange={(event) => updateFeature("draftAssist", event.target.checked)}
             />
-            Draft Assist
           </label>
-          <label className="settings-checkbox">
+          <label className="settings-switch">
+            <span>Thread Summaries</span>
             <input
               type="checkbox"
               checked={features.summarize}
               onChange={(event) => updateFeature("summarize", event.target.checked)}
             />
-            Thread Summaries
           </label>
-          <label className="settings-checkbox">
+          <label className="settings-switch">
+            <span>Thread Actions</span>
             <input
               type="checkbox"
               checked={features.actionExtraction}
               onChange={(event) => updateFeature("actionExtraction", event.target.checked)}
             />
-            Thread Actions
           </label>
         </>
       ) : null}
@@ -5549,13 +5757,13 @@ function PrivacySettings({
       </span>
 
       <h3>Message Images</h3>
-      <label className="settings-checkbox">
+      <label className="settings-switch">
+        <span>Load Remote Images Automatically</span>
         <input
           type="checkbox"
           checked={loadRemoteImages}
           onChange={(event) => onLoadRemoteImagesChange(event.target.checked)}
         />
-        Load Remote Images Automatically
       </label>
       <span className="settings-hint">
         When disabled, images stay blocked until you choose Load images in a message.
@@ -5640,10 +5848,11 @@ function DataTransferSettings({
         appear as “Connect on this device” and require Google authorization.
       </p>
       <label className="settings-field">
-        <span>Export Password</span>
+        <span>Backup File Password</span>
         <input
           type="password"
           autoComplete="current-password"
+          aria-label="Backup File Password"
           value={importPassword}
           onChange={(event) => setImportPassword(event.target.value)}
           disabled={!isDesktop || busy !== null}
