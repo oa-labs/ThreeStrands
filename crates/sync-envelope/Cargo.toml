@@ -8,13 +8,13 @@ description = "Pure, provider-neutral encrypted envelope format for ThreeStrands
 bip39 = "2"
 chacha20poly1305 = "0.10"
 cid = { version = "0.11", default-features = false, features = ["std"] }
-ciborium = "0.2"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 hkdf = "0.12"
 multihash-codetable = { version = "0.2", features = ["sha2"] }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
+serde_ipld_dagcbor = { version = "0.7", default-features = false, features = ["std"] }
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"

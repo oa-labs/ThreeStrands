@@ -563,6 +563,31 @@ async fn call_provider(
     }
 }
 
+/// Sends a bounded, content-free prompt so the settings screen can verify the
+/// provider, endpoint, model, and key without exposing any mail data.
+pub async fn test_connection(
+    provider: AiProvider,
+    model: &str,
+    endpoint: Option<&str>,
+    api_key: &str,
+) -> Result<(), String> {
+    if model.trim().is_empty() {
+        return Err("Set a model name in AI settings".to_string());
+    }
+    call_provider(
+        provider,
+        model.trim(),
+        endpoint,
+        "You are a connection test. Reply with exactly OK.",
+        "Reply with exactly OK.",
+        1,
+        0.0,
+        api_key,
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn call_openai_compatible(
     base_url: &str,
     model: &str,
@@ -719,6 +744,14 @@ mod tests {
         );
         assert!(AiProvider::Custom.base_url(None).is_err());
         assert!(AiProvider::Custom.base_url(Some("")).is_err());
+    }
+
+    #[tokio::test]
+    async fn connection_test_rejects_a_blank_model_before_network_use() {
+        let error = test_connection(AiProvider::OpenAi, "  ", None, "test-key")
+            .await
+            .unwrap_err();
+        assert_eq!(error, "Set a model name in AI settings");
     }
 
     #[test]

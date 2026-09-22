@@ -1574,6 +1574,11 @@ form.split-inbox-add select {
 .settings-panel > .accounts-manager { padding: 0; }
 .settings-connection-status { display: inline-flex; align-items: center; gap: 5px; color: var(--error); font-size: calc(12px * var(--font-scale)); }
 .settings-connection-status.configured { color: var(--secondary); }
+.model-suggestions { display: flex; width: 100%; flex-direction: column; gap: 6px; }
+.model-suggestions > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.model-suggestions button { max-width: 100%; overflow: hidden; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--secondary); background: var(--input); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(11px * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
+.model-suggestions button:hover, .model-suggestions button.selected { border-color: var(--accent); color: var(--text); background: var(--selected); }
+.ai-connection-actions { flex-wrap: wrap; }
 .font-search {
   display: flex;
   align-items: center;
@@ -1587,7 +1592,12 @@ form.split-inbox-add select {
 }
 .font-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--focus-glow); }
 .font-search input { width: 100%; padding: 8px 0; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; }
-.font-picker { display: flex; flex-direction: column; gap: 5px; width: 100%; max-height: 290px; overflow-y: auto; padding: 2px; }
+.font-picker-control { position: relative; width: 100%; }
+.font-picker-trigger { display: flex; width: 100%; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--input) !important; text-align: left; }
+.font-picker-trigger > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.font-picker-trigger:hover { background: var(--hover) !important; }
+.font-picker-popover { position: absolute; z-index: 5; top: calc(100% + 7px); left: 0; width: min(440px, calc(100vw - 80px)); padding: 10px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--raised); box-shadow: 0 16px 40px var(--shadow); }
+.font-picker { display: flex; flex-direction: column; gap: 5px; width: 100%; padding: 2px; }
 .font-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

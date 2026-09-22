@@ -79,14 +79,6 @@ impl SyncFolderTransport {
         })
     }
 
-    /// The exact corpus root this instance is configured against —
-    /// `Database::materialize_entity`-adjacent Settings UI code displays
-    /// this so "delete synchronized data" can show the user precisely what
-    /// it is about to remove.
-    pub fn corpus_root(&self) -> &Path {
-        &self.root
-    }
-
     fn object_path(&self, cid: &Cid) -> Result<PathBuf, TransportError> {
         let name = sanitize_cid(&cid.0)?;
         let shard = &name[..2];

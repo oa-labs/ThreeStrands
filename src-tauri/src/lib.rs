@@ -1989,6 +1989,16 @@ fn set_ai_api_key(key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn ai_test_connection(
+    provider: ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+) -> Result<(), String> {
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
+    ai::test_connection(provider, &model, endpoint.as_deref(), &api_key).await
+}
+
+#[tauri::command]
 async fn ai_summarize_thread(
     thread_id: String,
     provider: ai::AiProvider,
@@ -2533,6 +2543,7 @@ pub fn run() {
             set_retention_days,
             ai_api_key_configured,
             set_ai_api_key,
+            ai_test_connection,
             ai_summarize_thread,
             ai_analyze_thread,
             ai_reply_assist_context,

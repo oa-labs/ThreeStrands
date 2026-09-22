@@ -133,6 +133,7 @@ import {
 import { listSystemFontFamilies } from "./systemFonts";
 import {
   AI_MODEL_PLACEHOLDERS,
+  AI_MODEL_SUGGESTIONS,
   AI_PROVIDER_OPTIONS,
   clearAiApiKey,
   isAiApiKeyConfigured,
@@ -146,6 +147,7 @@ import {
   saveAiModel,
   saveAiProvider,
   setAiApiKey,
+  testAiConnection,
   type AiFeatureFlags,
   type AiProvider,
 } from "./aiSettings";
@@ -3660,20 +3662,14 @@ function Settings({
   onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
   onDeleteSnippet(id: string): Promise<void>;
 }) {
-  // Replicated Sync is a development/beta feature (see replicatedSync.ts):
-  // its settings tab only exists in a build where the engine is actually
-  // enabled, so a normal build's Settings menu is byte-for-byte what it was
-  // before this feature existed.
-  const [replicatedSyncAvailable, setReplicatedSyncAvailable] = useState(false);
   const [settingsQuery, setSettingsQuery] = useState("");
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const selectedSectionButtonRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    void replicatedSyncEnabled().then(setReplicatedSyncAvailable);
-  }, []);
-  const availableSections = SETTINGS_SECTIONS.filter(
-    (item) => item.id !== "replicatedSync" || replicatedSyncAvailable,
-  );
+  // Replicated Sync's own section handles its "not enabled yet" state
+  // itself (it shows the "enable beta features" toggle there) — the nav
+  // entry must stay visible even before that toggle is on, or there would
+  // be no way to reach the toggle at all.
+  const availableSections = SETTINGS_SECTIONS;
   const normalizedSettingsQuery = settingsQuery.trim().toLocaleLowerCase();
   const visibleSections = availableSections.filter((item) =>
     !normalizedSettingsQuery
@@ -4467,6 +4463,9 @@ function AppearanceSettings({
   const [fontQuery, setFontQuery] = useState("");
   const [fontsLoading, setFontsLoading] = useState(true);
   const [fontLoadFailed, setFontLoadFailed] = useState(false);
+  const [fontPickerOpen, setFontPickerOpen] = useState(false);
+  const fontPickerRef = useRef<HTMLDivElement>(null);
+  const fontTriggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     let cancelled = false;
     setFontsLoading(true);
@@ -4485,6 +4484,24 @@ function AppearanceSettings({
       cancelled = true;
     };
   }, []);
+  useEffect(() => {
+    if (!fontPickerOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !fontPickerRef.current?.contains(event.target)) setFontPickerOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setFontPickerOpen(false);
+        window.setTimeout(() => fontTriggerRef.current?.focus(), 0);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [fontPickerOpen]);
   const normalizedFontQuery = fontQuery.trim().toLocaleLowerCase();
   const visibleFontFamilies = fontFamilies.filter((family) =>
     family.toLocaleLowerCase().includes(normalizedFontQuery)
@@ -4493,6 +4510,14 @@ function AppearanceSettings({
     || "system default".includes(normalizedFontQuery);
   const selectedFontIsInstalled = fontFamily === DEFAULT_FONT_FAMILY
     || fontFamilies.includes(fontFamily);
+  const displayedFontFamilies = visibleFontFamilies.slice(0, 8);
+  const hiddenFontCount = Math.max(0, visibleFontFamilies.length - displayedFontFamilies.length);
+  const chooseFont = (next: FontFamily) => {
+    onFontFamilyChange(next);
+    setFontPickerOpen(false);
+    setFontQuery("");
+    window.setTimeout(() => fontTriggerRef.current?.focus(), 0);
+  };
   const themeOptions: { value: Theme; label: string }[] = [
     { value: "system", label: "Match System" },
     { value: "light", label: "Light" },
@@ -4531,67 +4556,62 @@ function AppearanceSettings({
 
       <h3>Default Font</h3>
       <p className="settings-hint">Used throughout the app and for unformatted message text.</p>
-      <label className="font-search">
-        <Search size={15} aria-hidden="true" />
-        <input
-          type="search"
-          value={fontQuery}
-          placeholder="Search installed fonts"
-          aria-label="Search Installed Fonts"
-          onChange={(event) => setFontQuery(event.target.value)}
-        />
-      </label>
-      <div className="font-picker" role="radiogroup" aria-label="Default font">
-        {showSystemFont ? (
-          <label
-            className={`font-option${fontFamily === DEFAULT_FONT_FAMILY ? " selected" : ""}`}
-            style={{ fontFamily: fontFamilyStack(DEFAULT_FONT_FAMILY) }}
-          >
-            <input
-              type="radio"
-              name="default-font"
-              value={DEFAULT_FONT_FAMILY}
-              checked={fontFamily === DEFAULT_FONT_FAMILY}
-              onChange={() => onFontFamilyChange(DEFAULT_FONT_FAMILY)}
-            />
-            <span>System Default</span>
-            <span className="font-option-preview" aria-hidden="true">Aa</span>
-          </label>
-        ) : null}
-        {!fontsLoading && !selectedFontIsInstalled && fontFamily !== DEFAULT_FONT_FAMILY ? (
-          <label
-            className="font-option selected"
-            style={{ fontFamily: fontFamilyStack(fontFamily) }}
-          >
-            <input type="radio" name="default-font" value={fontFamily} checked readOnly />
-            <span>{fontFamily} <small>Unavailable</small></span>
-            <span className="font-option-preview" aria-hidden="true">Aa</span>
-          </label>
-        ) : null}
-        {visibleFontFamilies.map((family) => (
-          <label
-            key={family}
-            className={`font-option${fontFamily === family ? " selected" : ""}`}
-            style={{ fontFamily: fontFamilyStack(family) }}
-          >
-            <input
-              type="radio"
-              name="default-font"
-              value={family}
-              checked={fontFamily === family}
-              onChange={() => onFontFamilyChange(family)}
-            />
-            <span>{family}</span>
-            <span className="font-option-preview" aria-hidden="true">Aa</span>
-          </label>
-        ))}
-        {fontsLoading ? <p className="font-picker-status">Loading installed fonts…</p> : null}
-        {fontLoadFailed ? (
-          <p className="font-picker-status">Installed fonts couldn’t be loaded. System default remains available.</p>
-        ) : null}
-        {!fontsLoading && !fontLoadFailed && !showSystemFont
-          && visibleFontFamilies.length === 0 && normalizedFontQuery ? (
-          <p className="font-picker-status">No installed fonts match “{fontQuery.trim()}”.</p>
+      <div className="font-picker-control" ref={fontPickerRef}>
+        <button
+          type="button"
+          ref={fontTriggerRef}
+          className="font-picker-trigger"
+          aria-label={`Default font: ${fontFamily === DEFAULT_FONT_FAMILY ? "System Default" : fontFamily}`}
+          aria-haspopup="dialog"
+          aria-expanded={fontPickerOpen}
+          onClick={() => setFontPickerOpen((open) => !open)}
+          style={{ fontFamily: fontFamilyStack(fontFamily) }}
+        >
+          <span>{fontFamily === DEFAULT_FONT_FAMILY ? "System Default" : fontFamily}</span>
+          <span className="font-option-preview" aria-hidden="true">Aa</span>
+          <ChevronDown size={15} aria-hidden="true" />
+        </button>
+        {fontPickerOpen ? (
+          <div className="font-picker-popover" role="dialog" aria-label="Choose default font">
+            <label className="font-search">
+              <Search size={15} aria-hidden="true" />
+              <input
+                type="search"
+                autoFocus
+                value={fontQuery}
+                placeholder="Search installed fonts"
+                aria-label="Search Installed Fonts"
+                onChange={(event) => setFontQuery(event.target.value)}
+              />
+            </label>
+            <div className="font-picker" role="radiogroup" aria-label="Default font">
+              {showSystemFont ? (
+                <label className={`font-option${fontFamily === DEFAULT_FONT_FAMILY ? " selected" : ""}`} style={{ fontFamily: fontFamilyStack(DEFAULT_FONT_FAMILY) }}>
+                  <input type="radio" name="default-font" value={DEFAULT_FONT_FAMILY} checked={fontFamily === DEFAULT_FONT_FAMILY} onChange={() => chooseFont(DEFAULT_FONT_FAMILY)} />
+                  <span>System Default</span>
+                  <span className="font-option-preview" aria-hidden="true">Aa</span>
+                </label>
+              ) : null}
+              {!fontsLoading && !selectedFontIsInstalled && fontFamily !== DEFAULT_FONT_FAMILY ? (
+                <label className="font-option selected" style={{ fontFamily: fontFamilyStack(fontFamily) }}>
+                  <input type="radio" name="default-font" value={fontFamily} checked readOnly />
+                  <span>{fontFamily} <small>Unavailable</small></span>
+                  <span className="font-option-preview" aria-hidden="true">Aa</span>
+                </label>
+              ) : null}
+              {displayedFontFamilies.map((family) => (
+                <label key={family} className={`font-option${fontFamily === family ? " selected" : ""}`} style={{ fontFamily: fontFamilyStack(family) }}>
+                  <input type="radio" name="default-font" value={family} checked={fontFamily === family} onChange={() => chooseFont(family)} />
+                  <span>{family}</span>
+                  <span className="font-option-preview" aria-hidden="true">Aa</span>
+                </label>
+              ))}
+              {fontsLoading ? <p className="font-picker-status">Loading installed fonts…</p> : null}
+              {fontLoadFailed ? <p className="font-picker-status">Installed fonts couldn’t be loaded. System default remains available.</p> : null}
+              {!fontsLoading && !fontLoadFailed && !showSystemFont && visibleFontFamilies.length === 0 && normalizedFontQuery ? <p className="font-picker-status">No installed fonts match “{fontQuery.trim()}”.</p> : null}
+              {!fontsLoading && hiddenFontCount > 0 ? <p className="font-picker-status">Showing 8 of {visibleFontFamilies.length}. Search to narrow the list.</p> : null}
+            </div>
+          </div>
         ) : null}
       </div>
     </section>
@@ -5568,6 +5588,8 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const [keyInput, setKeyInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionTested, setConnectionTested] = useState(false);
 
   useEffect(() => {
     void isAiApiKeyConfigured().then(setKeyConfigured);
@@ -5596,6 +5618,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           onChange={(event) => {
             const next = event.target.value as AiProvider;
             setProvider(next);
+            setConnectionTested(false);
             saveAiProvider(next);
             onChange?.();
           }}
@@ -5615,10 +5638,33 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               placeholder={AI_MODEL_PLACEHOLDERS[provider]}
               onChange={(event) => {
                 setModel(event.target.value);
+                setConnectionTested(false);
                 saveAiModel(event.target.value);
               }}
             />
           </label>
+
+          {AI_MODEL_SUGGESTIONS[provider].length > 0 ? (
+            <div className="model-suggestions" aria-label="Suggested models">
+              <span className="settings-hint">Suggestions</span>
+              <div>
+                {AI_MODEL_SUGGESTIONS[provider].map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    className={model.trim() === suggestion ? "selected" : undefined}
+                    onClick={() => {
+                      setModel(suggestion);
+                      setConnectionTested(false);
+                      saveAiModel(suggestion);
+                    }}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {provider === "custom" ? (
             <label className="settings-field">
@@ -5628,6 +5674,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                 placeholder="https://api.example.com/v1"
                 onChange={(event) => {
                   setEndpoint(event.target.value);
+                  setConnectionTested(false);
                   saveAiEndpoint(event.target.value);
                 }}
               />
@@ -5681,6 +5728,25 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             >
               Remove Key
             </button>
+          </div>
+          <div className="settings-row ai-connection-actions">
+            <button
+              type="button"
+              disabled={busy || testingConnection || !keyConfigured || !resolveAiModel(provider, model) || (provider === "custom" && !endpoint.trim())}
+              onClick={() => {
+                setTestingConnection(true);
+                setConfigurationError(null);
+                setConnectionTested(false);
+                void testAiConnection(provider, resolveAiModel(provider, model), endpoint)
+                  .then(() => setConnectionTested(true))
+                  .catch((reason: unknown) => setConfigurationError(reason instanceof Error ? reason.message : String(reason)))
+                  .finally(() => setTestingConnection(false));
+              }}
+            >
+              <RefreshCw size={14} aria-hidden="true" />
+              {testingConnection ? "Testing connection…" : "Test Connection"}
+            </button>
+            {connectionTested ? <span className="settings-connection-status configured" role="status"><CheckCircle2 size={13} aria-hidden="true" /> Connection successful</span> : null}
           </div>
           <span className="settings-hint">
             Stored in your OS keychain, never in the mail database.

@@ -931,8 +931,6 @@ mod tests {
         let k_epoch = epoch_keys.get(active_epoch).expect("epoch key must already be stored for this test");
         LocalKeys {
             signing_key: identity.signing_key.clone(),
-            verifying_key: identity.verifying_key,
-            x25519_secret: identity.x25519_secret,
             k_epoch,
             key_epoch: active_epoch,
             device_id: identity.device_id,

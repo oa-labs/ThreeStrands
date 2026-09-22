@@ -82,8 +82,8 @@ pub fn aead_decrypt(
 }
 
 /// Signs `message_id || canonical_unsigned_body` under the fixed signature
-/// domain. `canonical_unsigned_body` is the canonical CBOR encoding of every
-/// event field except the signature itself.
+/// domain. `canonical_unsigned_body` is the canonical DAG-CBOR encoding of
+/// every event field except the signature itself.
 pub fn sign_event(
     signing_key: &SigningKey,
     message_id: &[u8; 8],
@@ -109,7 +109,7 @@ pub fn verify_event(
 /// Signs arbitrary canonical bytes under a caller-chosen fixed domain,
 /// separate from the event-signature domain. Used for protocol objects that
 /// are not [`crate::SyncEvent`]s but still need a device signature over
-/// their canonical CBOR encoding, such as a signed device head.
+/// their canonical DAG-CBOR encoding, such as a signed device head.
 pub fn sign_bytes(signing_key: &SigningKey, domain: &[u8], canonical_body: &[u8]) -> [u8; 64] {
     let mut preimage = Vec::with_capacity(domain.len() + canonical_body.len());
     preimage.extend_from_slice(domain);

@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   clearAiApiKey,
   DEFAULT_AI_FEATURES,
+  AI_MODEL_SUGGESTIONS,
   isAiApiKeyConfigured,
   readAiFeatures,
   readAiProvider,
   saveAiFeatures,
   saveAiProvider,
   setAiApiKey,
+  testAiConnection,
 } from "./aiSettings";
 
 describe("AI provider preferences", () => {
@@ -26,6 +28,12 @@ describe("AI provider preferences", () => {
     expect(readAiProvider()).toBe("openrouter");
     saveAiProvider("fireworks");
     expect(readAiProvider()).toBe("fireworks");
+  });
+
+  it("offers provider-specific model suggestions", () => {
+    expect(AI_MODEL_SUGGESTIONS.openai).toContain("gpt-4o-mini");
+    expect(AI_MODEL_SUGGESTIONS.anthropic.length).toBeGreaterThan(0);
+    expect(AI_MODEL_SUGGESTIONS.custom).toEqual([]);
   });
 
   it("ignores an invalid stored provider", () => {
@@ -53,5 +61,9 @@ describe("AI API key storage (non-Tauri fallback)", () => {
     await setAiApiKey("sk-demo-key");
     await setAiApiKey("   ");
     expect(await isAiApiKeyConfigured()).toBe(false);
+  });
+
+  it("keeps connection testing a no-op in the browser preview", async () => {
+    await expect(testAiConnection("openai", "gpt-4o", "")).resolves.toBeUndefined();
   });
 });

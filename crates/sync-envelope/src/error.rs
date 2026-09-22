@@ -38,4 +38,6 @@ pub enum EnvelopeError {
     EncodingFailed,
     #[error("failed to decode the canonical body")]
     DecodingFailed,
+    #[error("a CID-referencing field is not a valid CIDv1 string")]
+    InvalidCidReference,
 }

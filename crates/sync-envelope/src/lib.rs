@@ -85,7 +85,7 @@ pub struct UnsignedSyncEvent {
 }
 
 /// One logical, signed sync event. This is exactly what gets canonically
-/// CBOR-encoded to build the compressed, chunked, encrypted envelope.
+/// DAG-CBOR-encoded to build the compressed, chunked, encrypted envelope.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SyncEvent {
     pub event_id: EventId,
@@ -237,9 +237,10 @@ where
     F: FnMut() -> [u8; NONCE_LEN],
 {
     validate_event_operations(&unsigned.operations)?;
+    validate_event_cid_references(&unsigned)?;
 
     let message_id = message_id_for_event(&unsigned.event_id);
-    let unsigned_body = canonical_cbor(&unsigned)?;
+    let unsigned_body = canonical_dag_cbor(&unsigned)?;
     let signature = Signature(crypto::sign_event(
         params.signing_key,
         &message_id,
@@ -259,7 +260,7 @@ where
         device_signature: signature,
     };
 
-    let canonical_body = canonical_cbor(&event)?;
+    let canonical_body = canonical_dag_cbor(&event)?;
     let full_plaintext = chunk::build_full_plaintext(&canonical_body)?;
     let chunk_plaintexts = chunk::split_into_chunks(&full_plaintext)?;
     let chunk_count = chunk_plaintexts.len();
@@ -368,12 +369,13 @@ pub fn open_message(chunks: &[Vec<u8>], params: &OpenParams) -> Result<SyncEvent
 
     let full_plaintext = chunk::reassemble_chunks(&ordered)?;
     let canonical_body = chunk::parse_full_plaintext(&full_plaintext)?;
-    let event: SyncEvent = decode_canonical_cbor(&canonical_body)?;
+    let event: SyncEvent = decode_canonical_dag_cbor(&canonical_body)?;
 
     validate_event_operations(&event.operations)?;
+    validate_event_cid_references(&event.unsigned())?;
 
     let message_id = seen_message_id.expect("set for every non-empty chunk list");
-    let unsigned_body = canonical_cbor(&event.unsigned())?;
+    let unsigned_body = canonical_dag_cbor(&event.unsigned())?;
     crypto::verify_event(
         params.verifying_key,
         &message_id,
@@ -384,12 +386,147 @@ pub fn open_message(chunks: &[Vec<u8>], params: &OpenParams) -> Result<SyncEvent
     Ok(event)
 }
 
-fn canonical_cbor<T: Serialize>(value: &T) -> Result<Vec<u8>, EnvelopeError> {
-    let mut buf = Vec::new();
-    ciborium::into_writer(value, &mut buf).map_err(|_| EnvelopeError::EncodingFailed)?;
-    Ok(buf)
+fn canonical_dag_cbor<T: Serialize>(value: &T) -> Result<Vec<u8>, EnvelopeError> {
+    // DAG-CBOR is IPLD's canonical CBOR profile: RFC 8949 core
+    // deterministic encoding plus a specified map-key sort order, enforced
+    // by both the encoder and the strict decoder. It is the basis for every
+    // signature and golden vector in this crate, so canonicality is a
+    // property of the codec rather than of input construction order.
+    serde_ipld_dagcbor::to_vec(value).map_err(|_| EnvelopeError::EncodingFailed)
 }
 
-fn decode_canonical_cbor<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, EnvelopeError> {
-    ciborium::from_reader(bytes).map_err(|_| EnvelopeError::DecodingFailed)
+fn decode_canonical_dag_cbor<T: for<'de> Deserialize<'de>>(
+    bytes: &[u8],
+) -> Result<T, EnvelopeError> {
+    serde_ipld_dagcbor::from_slice(bytes).map_err(|_| EnvelopeError::DecodingFailed)
+}
+
+/// Fails closed unless `cid` is a parseable CIDv1 string. CID-referencing
+/// wire fields stay `String` in the Rust API because callers and storage
+/// address objects by their textual CID, but the format itself never
+/// accepts arbitrary text in a link position.
+fn validate_cid_reference(cid: &str) -> Result<(), EnvelopeError> {
+    // `::cid` is the external cid crate; a plain `cid::` path would resolve
+    // to this crate's own `cid` module.
+    let parsed = ::cid::Cid::try_from(cid).map_err(|_| EnvelopeError::InvalidCidReference)?;
+    if parsed.version() != ::cid::Version::V1 {
+        return Err(EnvelopeError::InvalidCidReference);
+    }
+    Ok(())
+}
+
+/// Validates every CID-referencing field of an event, at both seal and
+/// open time, so a malformed link can never be signed or accepted.
+fn validate_event_cid_references(event: &UnsignedSyncEvent) -> Result<(), EnvelopeError> {
+    if let Some(previous) = &event.previous_device_event {
+        validate_cid_reference(previous)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod canonicality_tests {
+    //! Proofs that canonicality is a property of the DAG-CBOR codec itself,
+    //! not of how inputs happen to be constructed. These guard the
+    //! signature-stability contract: if the codec ever stops sorting map
+    //! keys, or starts accepting unsorted input bytes, one of these fails
+    //! before any golden vector or signed structure can drift silently.
+
+    use super::*;
+
+    use serde::ser::{Serialize, SerializeMap, Serializer};
+
+    /// Serializes as a map emitting keys deliberately out of DAG-CBOR
+    /// order (and out of lexicographic order).
+    struct UnsortedEmit {
+        keys: Vec<(&'static str, u64)>,
+    }
+
+    impl Serialize for UnsortedEmit {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let mut map = serializer.serialize_map(Some(self.keys.len()))?;
+            for (key, value) in &self.keys {
+                map.serialize_entry(key, value)?;
+            }
+            map.end()
+        }
+    }
+
+    /// A Deserialize that records the order keys actually appear in on the
+    /// wire, by consuming the map entry by entry.
+    struct KeyOrder(Vec<String>);
+
+    impl<'de> serde::Deserialize<'de> for KeyOrder {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = KeyOrder;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    write!(f, "a map")
+                }
+
+                fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+                where
+                    A: serde::de::MapAccess<'de>,
+                {
+                    let mut keys = Vec::new();
+                    while let Some((key, _value)) = access
+                        .next_entry::<String, serde_json::Value>()?
+                    {
+                        keys.push(key);
+                    }
+                    Ok(KeyOrder(keys))
+                }
+            }
+            deserializer.deserialize_map(Visitor)
+        }
+    }
+
+    #[test]
+    fn the_encoder_sorts_map_keys_regardless_of_emit_order() {
+        // Emission order: zebra (5 bytes), a (1 byte), mmmm (4 bytes).
+        // DAG-CBOR order is length-first then bytewise: a, mmmm, zebra.
+        // Plain lexicographic order would instead be a, mmmm, zebra here,
+        // so pick a pair where the two rules disagree to prove which one
+        // the codec implements: b (1) sorts before aa (2) by length, but
+        // after it lexicographically.
+        let emitted = UnsortedEmit {
+            keys: vec![("zebra", 1), ("b", 2), ("aa", 3), ("mmmm", 4)],
+        };
+        let bytes = canonical_dag_cbor(&emitted).unwrap();
+        let order = decode_canonical_dag_cbor::<KeyOrder>(&bytes).unwrap();
+        assert_eq!(order.0, vec!["b", "aa", "mmmm", "zebra"]);
+
+        // Re-encoding the decoded value must be byte-identical: the
+        // canonical form is a fixed point.
+        let value: serde_json::Value = decode_canonical_dag_cbor(&bytes).unwrap();
+        assert_eq!(canonical_dag_cbor(&value).unwrap(), bytes);
+    }
+
+    #[test]
+    fn the_decoder_rejects_unsorted_map_bytes() {
+        // Hand-built CBOR: map(2) { "zz": 1, "a": 2 }. Valid CBOR, but not
+        // canonical DAG-CBOR because "a" must precede "zz". Bytes produced
+        // by a non-canonical encoder (such as an older ciborium build of
+        // this crate) fail closed instead of decoding.
+        let unsorted = [0xa2, 0x62, b'z', b'z', 0x01, 0x61, b'a', 0x02];
+        let result: Result<serde_json::Value, _> = decode_canonical_dag_cbor(&unsorted);
+        assert!(matches!(result, Err(EnvelopeError::DecodingFailed)));
+    }
+
+    #[test]
+    fn cid_reference_validation_rejects_non_cid_strings() {
+        assert!(validate_cid_reference("bafkreihyp2mdkcvn2et4tbcjqsirtmpevqgemx5ab2ac5oioyzmfkwlhlu").is_ok());
+        assert!(matches!(
+            validate_cid_reference("not-a-cid"),
+            Err(EnvelopeError::InvalidCidReference)
+        ));
+    }
 }

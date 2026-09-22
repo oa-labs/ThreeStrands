@@ -1,9 +1,9 @@
 //! Fixed-size byte-string identifiers used across the envelope wire format.
 //!
 //! Each type serializes as a CBOR byte string (major type 2), not as an
-//! array of integers, so the on-wire encoding stays compact and canonical:
-//! field order is fixed by struct declaration order and there is no map to
-//! reorder.
+//! array of integers, so the on-wire encoding stays compact. Canonicality
+//! of the containing structures comes from the DAG-CBOR codec's specified
+//! map-key ordering, not from struct declaration order.
 
 use std::fmt;
 
@@ -101,19 +101,17 @@ mod tests {
     #[test]
     fn round_trips_through_cbor_as_a_byte_string() {
         let id = OperationId([9u8; 16]);
-        let mut buf = Vec::new();
-        ciborium::into_writer(&id, &mut buf).unwrap();
+        let buf = crate::canonical_dag_cbor(&id).unwrap();
         // CBOR byte string major type (0x40..0x5b) with length 16 -> 0x50.
         assert_eq!(buf[0], 0x50);
-        let back: OperationId = ciborium::from_reader(&buf[..]).unwrap();
+        let back: OperationId = crate::decode_canonical_dag_cbor(&buf).unwrap();
         assert_eq!(back, id);
     }
 
     #[test]
     fn rejects_the_wrong_length() {
-        let mut buf = Vec::new();
-        ciborium::into_writer(&serde_bytes::ByteBuf::from(vec![1u8; 8]), &mut buf).unwrap();
-        let result: Result<OperationId, _> = ciborium::from_reader(&buf[..]);
+        let buf = crate::canonical_dag_cbor(&serde_bytes::ByteBuf::from(vec![1u8; 8])).unwrap();
+        let result: Result<OperationId, _> = crate::decode_canonical_dag_cbor(&buf);
         assert!(result.is_err());
     }
 }

@@ -5,7 +5,7 @@
 //! ```text
 //! compressed_length u32be
 //! uncompressed_length u32be
-//! zstd(canonical_cbor_body)
+//! zstd(canonical_dag_cbor_body)
 //! ```
 //!
 //! That "full plaintext" is hashed, then split into one or more chunk

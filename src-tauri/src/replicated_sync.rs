@@ -664,13 +664,12 @@ fn epoch_key_entry(key_epoch: u32) -> String {
 }
 
 /// The minimal single-device key material push/pull need to seal and open
-/// messages for real: an Ed25519 device signing key, an X25519 device key
-/// (an enrollment/rotation sealed-box recipient), and the active epoch's
-/// symmetric key, all generated once and kept in the OS keychain.
+/// messages for real: an Ed25519 device signing key and the active epoch's
+/// symmetric key, all generated once and kept in the OS keychain. The X25519
+/// device key stays on [`DeviceIdentity`] — only enrollment/rotation
+/// sealed-box handling needs it, not ordinary push/pull.
 pub struct LocalKeys {
     pub signing_key: SigningKey,
-    pub verifying_key: VerifyingKey,
-    pub x25519_secret: [u8; 32],
     pub k_epoch: [u8; 32],
     pub key_epoch: u32,
     pub device_id: EnvelopeDeviceId,
@@ -731,9 +730,7 @@ impl Database {
         let k_epoch = load_epoch_key(active_epoch)?
             .ok_or_else(|| "This device has not completed replicated-sync enrollment yet".to_string())?;
         Ok(LocalKeys {
-            verifying_key: identity.verifying_key,
             signing_key: identity.signing_key,
-            x25519_secret: identity.x25519_secret,
             k_epoch,
             key_epoch: active_epoch,
             device_id: identity.device_id,
@@ -746,6 +743,7 @@ impl Database {
     /// device, [`Self::local_device_identity`] calls
     /// [`Self::trust_device_keys`] instead. Tests call this directly to
     /// simulate an already-trusted peer that only needs Ed25519 material.
+    #[cfg(test)]
     pub fn trust_device_public_key(&self, device_id: &[u8; 16], verifying_key: &VerifyingKey) -> Result<(), String> {
         let connection = self.connection()?;
         connection
@@ -1727,7 +1725,6 @@ pub struct ConfiguredTransport {
     pub instance_id: String,
     pub kind: String,
     pub config_json: String,
-    pub required: bool,
     pub enabled: bool,
     pub last_success_at: Option<String>,
     pub last_error: Option<String>,
@@ -1737,7 +1734,7 @@ impl Database {
     pub fn configured_transports(&self) -> Result<Vec<ConfiguredTransport>, String> {
         let connection = self.connection()?;
         let mut statement = connection
-            .prepare("SELECT instance_id, kind, config_json, required, enabled, last_success_at, last_error FROM sync_transports")
+            .prepare("SELECT instance_id, kind, config_json, enabled, last_success_at, last_error FROM sync_transports")
             .map_err(display)?;
         let rows = statement
             .query_map([], |row| {
@@ -1745,10 +1742,9 @@ impl Database {
                     instance_id: row.get(0)?,
                     kind: row.get(1)?,
                     config_json: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                    required: row.get(3)?,
-                    enabled: row.get(4)?,
-                    last_success_at: row.get(5)?,
-                    last_error: row.get(6)?,
+                    enabled: row.get(3)?,
+                    last_success_at: row.get(4)?,
+                    last_error: row.get(5)?,
                 })
             })
             .map_err(display)?
@@ -2376,14 +2372,9 @@ mod replicator_tests {
             device_id
         };
         let signing_key = SigningKey::generate(&mut OsRng);
-        let verifying_key = signing_key.verifying_key();
-        database.trust_device_public_key(&device_id, &verifying_key).unwrap();
-        let mut x25519_secret = [0u8; 32];
-        OsRng.fill_bytes(&mut x25519_secret);
+        database.trust_device_public_key(&device_id, &signing_key.verifying_key()).unwrap();
         LocalKeys {
-            verifying_key,
             signing_key,
-            x25519_secret,
             k_epoch: [7u8; 32],
             key_epoch: 0,
             device_id: EnvelopeDeviceId::from_bytes(device_id),
@@ -2476,7 +2467,7 @@ mod replicator_tests {
         // Device A trusts device B's key (simulating completed enrollment,
         // a later phase's job) and pulls.
         let keys_a = test_keys(&database_a);
-        database_a.trust_device_public_key(keys_b.device_id.as_bytes(), &keys_b.verifying_key).unwrap();
+        database_a.trust_device_public_key(keys_b.device_id.as_bytes(), &keys_b.signing_key.verifying_key()).unwrap();
 
         let outcome = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
         assert_eq!(outcome.failed_transports, 0);
@@ -2538,7 +2529,7 @@ mod replicator_tests {
         push_pending_events(&database_b, &keys_b, std::slice::from_ref(&transport_x)).await.unwrap();
 
         let keys_a = test_keys(&database_a);
-        database_a.trust_device_public_key(keys_b.device_id.as_bytes(), &keys_b.verifying_key).unwrap();
+        database_a.trust_device_public_key(keys_b.device_id.as_bytes(), &keys_b.signing_key.verifying_key()).unwrap();
 
         // A knows about both transports and pulls from X.
         let outcome = pull_from_transports(&database_a, &keys_a, &[transport_x.clone(), transport_y.clone()]).await.unwrap();
@@ -2573,7 +2564,7 @@ mod replicator_tests {
         push_pending_events(&database_b, &keys_b, std::slice::from_ref(&healthy)).await.unwrap();
 
         let keys_a = test_keys(&database_a);
-        database_a.trust_device_public_key(keys_b.device_id.as_bytes(), &keys_b.verifying_key).unwrap();
+        database_a.trust_device_public_key(keys_b.device_id.as_bytes(), &keys_b.signing_key.verifying_key()).unwrap();
 
         let outcome = pull_from_transports(&database_a, &keys_a, &[failing, healthy]).await.unwrap();
         assert_eq!(outcome.failed_transports, 1);

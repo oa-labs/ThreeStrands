@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::crypto;
 use crate::error::EnvelopeError;
 use crate::ids::{DeviceId, Signature};
-use crate::{canonical_cbor, decode_canonical_cbor, SigningKey, VerifyingKey};
+use crate::{canonical_dag_cbor, decode_canonical_dag_cbor, validate_cid_reference, SigningKey, VerifyingKey};
 
 const HEAD_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/device-head-signature/v1";
 
@@ -39,7 +39,10 @@ pub fn sign_device_head(
     signing_key: &SigningKey,
     head: DeviceHead,
 ) -> Result<SignedDeviceHead, EnvelopeError> {
-    let canonical = canonical_cbor(&head)?;
+    if let Some(latest) = &head.latest_event_cid {
+        validate_cid_reference(latest)?;
+    }
+    let canonical = canonical_dag_cbor(&head)?;
     let signature = Signature(crypto::sign_bytes(signing_key, HEAD_SIGNATURE_DOMAIN, &canonical));
     Ok(SignedDeviceHead { head, signature })
 }
@@ -52,7 +55,10 @@ pub fn verify_device_head(
     verifying_key: &VerifyingKey,
     signed: &SignedDeviceHead,
 ) -> Result<(), EnvelopeError> {
-    let canonical = canonical_cbor(&signed.head)?;
+    if let Some(latest) = &signed.head.latest_event_cid {
+        validate_cid_reference(latest)?;
+    }
+    let canonical = canonical_dag_cbor(&signed.head)?;
     crypto::verify_bytes(
         verifying_key,
         HEAD_SIGNATURE_DOMAIN,
@@ -65,14 +71,18 @@ pub fn verify_device_head(
 /// (published to, and resolved from, a [`crate`]-external store). Not
 /// encrypted — a head is signed but otherwise public, matching the
 /// envelope's own "provider account IDs excluded, everything else
-/// content-addressed or signed" posture. Canonical CBOR, the same
+/// content-addressed or signed" posture. Canonical DAG-CBOR, the same
 /// encoding used for every other on-wire structure in this crate.
 pub fn encode_signed_head(signed: &SignedDeviceHead) -> Result<Vec<u8>, EnvelopeError> {
-    canonical_cbor(signed)
+    canonical_dag_cbor(signed)
 }
 
 pub fn decode_signed_head(bytes: &[u8]) -> Result<SignedDeviceHead, EnvelopeError> {
-    decode_canonical_cbor(bytes)
+    let signed: SignedDeviceHead = decode_canonical_dag_cbor(bytes)?;
+    if let Some(latest) = &signed.head.latest_event_cid {
+        validate_cid_reference(latest)?;
+    }
+    Ok(signed)
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 //! Device-to-device enrollment and key rotation objects. Like a
 //! [`crate::device_head::SignedDeviceHead`], these are signed but otherwise
-//! public — canonical CBOR, content-addressed, published and fetched
+//! public — canonical DAG-CBOR, content-addressed, published and fetched
 //! through the same [`crate`]-external object store as everything else. No
 //! sync secret rides in cleartext: an epoch key only ever crosses this
 //! layer as an anonymous [`crate::crypto::seal_to_x25519`] stanza that only
@@ -12,7 +12,7 @@ use serde_bytes::ByteBuf;
 use crate::crypto;
 use crate::error::EnvelopeError;
 use crate::ids::{DeviceId, RequestId, Signature};
-use crate::{canonical_cbor, decode_canonical_cbor, SigningKey, VerifyingKey};
+use crate::{canonical_dag_cbor, decode_canonical_dag_cbor, SigningKey, VerifyingKey};
 
 const REQUEST_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-request-signature/v1";
 const GRANT_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-grant-signature/v1";
@@ -54,7 +54,7 @@ pub fn sign_enrollment_request(
     signing_key: &SigningKey,
     request: EnrollmentRequest,
 ) -> Result<SignedEnrollmentRequest, EnvelopeError> {
-    let canonical = canonical_cbor(&request)?;
+    let canonical = canonical_dag_cbor(&request)?;
     let signature = Signature(crypto::sign_bytes(signing_key, REQUEST_SIGNATURE_DOMAIN, &canonical));
     Ok(SignedEnrollmentRequest { request, signature })
 }
@@ -65,16 +65,16 @@ pub fn sign_enrollment_request(
 /// function does not and cannot establish that the embedded key is
 /// trustworthy.
 pub fn verify_enrollment_request(verifying_key: &VerifyingKey, signed: &SignedEnrollmentRequest) -> Result<(), EnvelopeError> {
-    let canonical = canonical_cbor(&signed.request)?;
+    let canonical = canonical_dag_cbor(&signed.request)?;
     crypto::verify_bytes(verifying_key, REQUEST_SIGNATURE_DOMAIN, &canonical, signed.signature.as_bytes())
 }
 
 pub fn encode_signed_enrollment_request(signed: &SignedEnrollmentRequest) -> Result<Vec<u8>, EnvelopeError> {
-    canonical_cbor(signed)
+    canonical_dag_cbor(signed)
 }
 
 pub fn decode_signed_enrollment_request(bytes: &[u8]) -> Result<SignedEnrollmentRequest, EnvelopeError> {
-    decode_canonical_cbor(bytes)
+    decode_canonical_dag_cbor(bytes)
 }
 
 /// An existing device's (or the recovery authority's) response to a
@@ -105,7 +105,7 @@ pub struct SignedEnrollmentGrant {
 }
 
 pub fn sign_enrollment_grant(signing_key: &SigningKey, grant: EnrollmentGrant) -> Result<SignedEnrollmentGrant, EnvelopeError> {
-    let canonical = canonical_cbor(&grant)?;
+    let canonical = canonical_dag_cbor(&grant)?;
     let signature = Signature(crypto::sign_bytes(signing_key, GRANT_SIGNATURE_DOMAIN, &canonical));
     Ok(SignedEnrollmentGrant { grant, signature })
 }
@@ -117,16 +117,16 @@ pub fn sign_enrollment_grant(signing_key: &SigningKey, grant: EnrollmentGrant) -
 /// device with no roster of its own yet, a human fingerprint confirmation
 /// before trusting that embedded entry at all.
 pub fn verify_enrollment_grant(verifying_key: &VerifyingKey, signed: &SignedEnrollmentGrant) -> Result<(), EnvelopeError> {
-    let canonical = canonical_cbor(&signed.grant)?;
+    let canonical = canonical_dag_cbor(&signed.grant)?;
     crypto::verify_bytes(verifying_key, GRANT_SIGNATURE_DOMAIN, &canonical, signed.signature.as_bytes())
 }
 
 pub fn encode_signed_enrollment_grant(signed: &SignedEnrollmentGrant) -> Result<Vec<u8>, EnvelopeError> {
-    canonical_cbor(signed)
+    canonical_dag_cbor(signed)
 }
 
 pub fn decode_signed_enrollment_grant(bytes: &[u8]) -> Result<SignedEnrollmentGrant, EnvelopeError> {
-    decode_canonical_cbor(bytes)
+    decode_canonical_dag_cbor(bytes)
 }
 
 /// A new epoch: the fresh `K_epoch` sealed independently to every active
@@ -153,7 +153,7 @@ pub struct SignedKeyRotation {
 }
 
 pub fn sign_key_rotation(signing_key: &SigningKey, rotation: KeyRotation) -> Result<SignedKeyRotation, EnvelopeError> {
-    let canonical = canonical_cbor(&rotation)?;
+    let canonical = canonical_dag_cbor(&rotation)?;
     let signature = Signature(crypto::sign_bytes(signing_key, ROTATION_SIGNATURE_DOMAIN, &canonical));
     Ok(SignedKeyRotation { rotation, signature })
 }
@@ -162,16 +162,16 @@ pub fn sign_key_rotation(signing_key: &SigningKey, rotation: KeyRotation) -> Res
 /// Callers resolve it from their own current (pre-rotation) roster by
 /// `signed.rotation.initiator_device_id` before calling this.
 pub fn verify_key_rotation(verifying_key: &VerifyingKey, signed: &SignedKeyRotation) -> Result<(), EnvelopeError> {
-    let canonical = canonical_cbor(&signed.rotation)?;
+    let canonical = canonical_dag_cbor(&signed.rotation)?;
     crypto::verify_bytes(verifying_key, ROTATION_SIGNATURE_DOMAIN, &canonical, signed.signature.as_bytes())
 }
 
 pub fn encode_signed_key_rotation(signed: &SignedKeyRotation) -> Result<Vec<u8>, EnvelopeError> {
-    canonical_cbor(signed)
+    canonical_dag_cbor(signed)
 }
 
 pub fn decode_signed_key_rotation(bytes: &[u8]) -> Result<SignedKeyRotation, EnvelopeError> {
-    decode_canonical_cbor(bytes)
+    decode_canonical_dag_cbor(bytes)
 }
 
 /// A short, human-comparable fingerprint of a device's public key pair —

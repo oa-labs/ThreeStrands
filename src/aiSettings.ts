@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export const AI_PROVIDERS = [
-  { id: "none", label: "None", modelPlaceholder: "" },
-  { id: "openai", label: "OpenAI", modelPlaceholder: "gpt-4o" },
-  { id: "anthropic", label: "Anthropic", modelPlaceholder: "claude-sonnet-5" },
-  { id: "openrouter", label: "OpenRouter", modelPlaceholder: "openai/gpt-4o" },
-  { id: "fireworks", label: "Fireworks", modelPlaceholder: "accounts/fireworks/models/llama-v3p1-70b-instruct" },
-  { id: "custom", label: "Custom endpoint", modelPlaceholder: "model name" },
+  { id: "none", label: "None", modelPlaceholder: "", modelSuggestions: [] },
+  { id: "openai", label: "OpenAI", modelPlaceholder: "gpt-4o", modelSuggestions: ["gpt-4o", "gpt-4o-mini", "gpt-4.1-mini", "o3-mini"] },
+  { id: "anthropic", label: "Anthropic", modelPlaceholder: "claude-sonnet-5", modelSuggestions: ["claude-sonnet-5", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"] },
+  { id: "openrouter", label: "OpenRouter", modelPlaceholder: "openai/gpt-4o", modelSuggestions: ["openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-2.0-flash-001"] },
+  { id: "fireworks", label: "Fireworks", modelPlaceholder: "accounts/fireworks/models/llama-v3p1-70b-instruct", modelSuggestions: ["accounts/fireworks/models/llama-v3p1-70b-instruct", "accounts/fireworks/models/mixtral-8x22b-instruct-v0.1"] },
+  { id: "custom", label: "Custom endpoint", modelPlaceholder: "model name", modelSuggestions: [] },
 ] as const;
 
 export type AiProvider = (typeof AI_PROVIDERS)[number]["id"];
@@ -29,6 +29,10 @@ export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
 export const AI_MODEL_PLACEHOLDERS = Object.fromEntries(
   AI_PROVIDERS.map(({ id, modelPlaceholder }) => [id, modelPlaceholder]),
 ) as Record<AiProvider, string>;
+
+export const AI_MODEL_SUGGESTIONS = Object.fromEntries(
+  AI_PROVIDERS.map(({ id, modelSuggestions }) => [id, modelSuggestions]),
+) as unknown as Record<AiProvider, readonly string[]>;
 
 function isAiProvider(value: string | null): value is AiProvider {
   return AI_PROVIDERS.some(({ id }) => id === value);
@@ -149,4 +153,17 @@ export async function setAiApiKey(key: string): Promise<void> {
 
 export async function clearAiApiKey(): Promise<void> {
   return setAiApiKey("");
+}
+
+export async function testAiConnection(
+  provider: AiProvider,
+  model: string,
+  endpoint: string,
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("ai_test_connection", {
+    provider,
+    model,
+    endpoint: endpoint.trim() || null,
+  });
 }
