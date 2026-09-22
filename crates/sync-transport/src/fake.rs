@@ -156,6 +156,7 @@ impl SyncTransport for FakeTransport {
         TransportCapabilities {
             enumeration: true,
             incremental_cursor: true,
+            head_discovery: true,
         }
     }
 

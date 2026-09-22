@@ -1643,9 +1643,30 @@ impl Database {
         Ok(())
     }
 
-    /// Forgets a configured transport instance and its delivery ledger
-    /// rows. Does not touch the remote corpus itself — the caller deletes
-    /// that first (through the live transport) if the user asked for that.
+    /// Persists (or reconfigures) an IPFS RPC transport instance. Only the
+    /// base URL — versioned, non-secret adapter config — is stored in
+    /// `sync_transports`; the access token (if any) goes to the OS keychain
+    /// under this instance's id, never into SQLite.
+    pub fn add_ipfs_rpc_transport(&self, instance_id: &str, base_url: &str, token: Option<&str>) -> Result<(), String> {
+        let config = serde_json::json!({ "baseUrl": base_url }).to_string();
+        self.connection()?
+            .execute(
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'ipfs_rpc',?2,1,1)
+                 ON CONFLICT(instance_id) DO UPDATE SET config_json=excluded.config_json, enabled=1",
+                params![instance_id, config],
+            )
+            .map_err(display)?;
+        match token {
+            Some(token) => store_ipfs_rpc_token(instance_id, token)?,
+            None => delete_ipfs_rpc_token(instance_id)?,
+        }
+        Ok(())
+    }
+
+    /// Forgets a configured transport instance, its delivery ledger rows,
+    /// and (if it was an IPFS RPC instance) its keychain token. Does not
+    /// touch the remote corpus itself — the caller deletes that first
+    /// (through the live transport) if the user asked for that.
     pub fn remove_transport(&self, instance_id: &str) -> Result<(), String> {
         let connection = self.connection()?;
         connection
@@ -1654,7 +1675,8 @@ impl Database {
         connection
             .execute("DELETE FROM sync_deliveries WHERE transport_instance_id=?1", params![instance_id])
             .map_err(display)?;
-        Ok(())
+        drop(connection);
+        delete_ipfs_rpc_token(instance_id)
     }
 
     fn set_transport_success(&self, instance_id: &str) -> Result<(), String> {
@@ -1681,22 +1703,71 @@ pub(crate) fn folder_config_path(config_json: &str) -> Option<std::path::PathBuf
     value.get("path")?.as_str().map(std::path::PathBuf::from)
 }
 
+/// Extracts the RPC base URL from a `kind='ipfs_rpc'` row's `config_json`.
+pub(crate) fn ipfs_config_base_url(config_json: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(config_json).ok()?;
+    value.get("baseUrl")?.as_str().map(str::to_string)
+}
+
+const IPFS_TOKEN_KEYCHAIN_SERVICE: &str = "app.threestrands.replicated-sync.ipfs-rpc";
+
+fn store_ipfs_rpc_token(instance_id: &str, token: &str) -> Result<(), String> {
+    Entry::new(IPFS_TOKEN_KEYCHAIN_SERVICE, instance_id)
+        .map_err(display)?
+        .set_password(token)
+        .map_err(display)
+}
+
+fn load_ipfs_rpc_token(instance_id: &str) -> Result<Option<String>, String> {
+    match Entry::new(IPFS_TOKEN_KEYCHAIN_SERVICE, instance_id).map_err(display)?.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(display(error)),
+    }
+}
+
+fn delete_ipfs_rpc_token(instance_id: &str) -> Result<(), String> {
+    match Entry::new(IPFS_TOKEN_KEYCHAIN_SERVICE, instance_id).map_err(display)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(display(error)),
+    }
+}
+
+/// Builds the live transport for one configured row, or `None` if it's
+/// disabled, misconfigured, or of an unknown kind.
+async fn build_transport_from_row(row: &ConfiguredTransport) -> Option<Arc<dyn SyncTransport>> {
+    if !row.enabled {
+        return None;
+    }
+    match row.kind.as_str() {
+        "folder" => {
+            let path = folder_config_path(&row.config_json)?;
+            let transport = crate::sync_folder::SyncFolderTransport::open(&row.instance_id, &path).await.ok()?;
+            Some(Arc::new(transport))
+        }
+        "ipfs_rpc" => {
+            let base_url = ipfs_config_base_url(&row.config_json)?;
+            let token = load_ipfs_rpc_token(&row.instance_id).ok().flatten();
+            let transport =
+                crate::ipfs_transport::IpfsRpcTransport::new(&row.instance_id, &base_url, token, SPACE_ID.as_bytes()).ok()?;
+            Some(Arc::new(transport))
+        }
+        _ => None,
+    }
+}
+
 /// Builds the live transport for every enabled configured row. A row whose
-/// transport fails to open (folder missing, permission denied, ...) is
-/// skipped rather than failing the whole set — its own health will report
-/// `Unavailable` on the next status check.
+/// transport fails to open (folder missing, permission denied, endpoint
+/// URL no longer valid, ...) is skipped rather than failing the whole set
+/// — its own health will report `Unavailable` on the next status check.
 pub async fn build_configured_transports(database: &Database) -> Vec<Arc<dyn SyncTransport>> {
     let mut transports: Vec<Arc<dyn SyncTransport>> = Vec::new();
     let Ok(rows) = database.configured_transports() else {
         return transports;
     };
     for row in rows {
-        if !row.enabled || row.kind != "folder" {
-            continue;
-        }
-        let Some(path) = folder_config_path(&row.config_json) else { continue };
-        if let Ok(transport) = crate::sync_folder::SyncFolderTransport::open(&row.instance_id, &path).await {
-            transports.push(Arc::new(transport));
+        if let Some(transport) = build_transport_from_row(&row).await {
+            transports.push(transport);
         }
     }
     transports
@@ -1712,8 +1783,17 @@ const SYNC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 #[serde(rename_all = "camelCase")]
 pub struct ReplicatedSyncTransportStatus {
     pub instance_id: String,
-    pub path: String,
+    /// `"folder"` or `"ipfs_rpc"`.
+    pub kind: String,
+    /// A folder's path, or an RPC endpoint's base URL — never a credential.
+    pub location: String,
     pub health: String,
+    /// Whether this instance can currently discover other devices'
+    /// signed heads on its own (a folder's `heads/` directory; an RPC
+    /// endpoint's MFS index) — `false` means "storage-only": still a
+    /// valid write/read replica, but it cannot bootstrap a new device by
+    /// itself.
+    pub head_discovery: bool,
     pub pending: i64,
     pub delivered: i64,
     pub failed: i64,
@@ -1744,28 +1824,40 @@ impl ReplicatedSync {
         let rows = self.database.configured_transports()?;
         let mut statuses = Vec::with_capacity(rows.len());
         for row in rows {
-            let path = folder_config_path(&row.config_json);
             let (pending, delivered, failed) = self.database.delivery_counts(&row.instance_id).unwrap_or((0, 0, 0));
+            let location = match row.kind.as_str() {
+                "folder" => folder_config_path(&row.config_json).map(|path| path.display().to_string()),
+                "ipfs_rpc" => ipfs_config_base_url(&row.config_json),
+                _ => None,
+            }
+            .unwrap_or_default();
+
             let mut health = "unavailable: not configured".to_string();
+            let mut head_discovery = false;
             let mut storage_bytes = None;
-            if let Some(path) = &path {
-                match crate::sync_folder::SyncFolderTransport::open(&row.instance_id, path).await {
-                    Ok(transport) => {
-                        health = match transport.health().await {
-                            Ok(TransportHealth::Healthy) => "healthy".to_string(),
-                            Ok(TransportHealth::Degraded(message)) => format!("degraded: {message}"),
-                            Ok(TransportHealth::Unavailable(message)) => format!("unavailable: {message}"),
-                            Err(error) => format!("unavailable: {error}"),
-                        };
-                        storage_bytes = transport.corpus_size_bytes().await.ok();
+            if let Some(transport) = build_transport_from_row(&row).await {
+                health = match transport.health().await {
+                    Ok(TransportHealth::Healthy) => "healthy".to_string(),
+                    Ok(TransportHealth::Degraded(message)) => format!("degraded: {message}"),
+                    Ok(TransportHealth::Unavailable(message)) => format!("unavailable: {message}"),
+                    Err(error) => format!("unavailable: {error}"),
+                };
+                head_discovery = transport.capabilities().head_discovery;
+                if row.kind == "folder" {
+                    if let Some(path) = folder_config_path(&row.config_json) {
+                        if let Ok(folder) = crate::sync_folder::SyncFolderTransport::open(&row.instance_id, &path).await {
+                            storage_bytes = folder.corpus_size_bytes().await.ok();
+                        }
                     }
-                    Err(error) => health = format!("unavailable: {error}"),
                 }
             }
+
             statuses.push(ReplicatedSyncTransportStatus {
                 instance_id: row.instance_id,
-                path: path.map(|path| path.display().to_string()).unwrap_or_default(),
+                kind: row.kind,
+                location,
                 health,
+                head_discovery,
                 pending,
                 delivered,
                 failed,
@@ -1775,6 +1867,25 @@ impl ReplicatedSync {
             });
         }
         Ok(statuses)
+    }
+
+    /// Validates a candidate IPFS RPC endpoint without persisting anything
+    /// — the "test connection" step Settings runs before letting the user
+    /// enable a replica, per the plan's "explain a missing required
+    /// capability before the user enables the replica."
+    pub async fn probe_ipfs_rpc_endpoint(
+        &self,
+        base_url: &str,
+        token: Option<&str>,
+    ) -> Result<crate::ipfs_transport::ProbeReport, String> {
+        let transport = crate::ipfs_transport::IpfsRpcTransport::new(
+            "probe",
+            base_url,
+            token.map(str::to_string),
+            SPACE_ID.as_bytes(),
+        )
+        .map_err(|error| error.to_string())?;
+        transport.probe_capabilities().await.map_err(|error| error.to_string())
     }
 
     /// Runs one push-then-pull cycle against every configured transport.
@@ -2379,6 +2490,39 @@ mod config_tests {
         let transports = build_configured_transports(&database).await;
         assert_eq!(transports.len(), 1);
         assert_eq!(transports[0].instance_id().0, "folder-1");
+    }
+
+    #[test]
+    fn add_ipfs_rpc_transport_persists_only_non_secret_config() {
+        let database = Database::open_memory();
+        // `token: None` deliberately avoids the keychain-write path here —
+        // see the module doc's testing note on `local_replicated_keys`;
+        // the same reasoning applies to any OS-keychain write.
+        database.add_ipfs_rpc_transport("ipfs-1", "https://rpc.filebase.io", None).unwrap();
+
+        let rows = database.configured_transports().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "ipfs_rpc");
+        assert_eq!(ipfs_config_base_url(&rows[0].config_json).as_deref(), Some("https://rpc.filebase.io"));
+        // No credential ever appears in the stored config.
+        assert!(!rows[0].config_json.to_ascii_lowercase().contains("token"));
+    }
+
+    #[tokio::test]
+    async fn build_configured_transports_includes_an_ipfs_rpc_row() {
+        let database = Database::open_memory();
+        database.add_ipfs_rpc_transport("ipfs-1", "https://rpc.filebase.io", None).unwrap();
+        let transports = build_configured_transports(&database).await;
+        assert_eq!(transports.len(), 1);
+        assert_eq!(transports[0].instance_id().0, "ipfs-1");
+    }
+
+    #[test]
+    fn removing_an_ipfs_rpc_transport_clears_its_config_row() {
+        let database = Database::open_memory();
+        database.add_ipfs_rpc_transport("ipfs-1", "https://rpc.filebase.io", None).unwrap();
+        database.remove_transport("ipfs-1").unwrap();
+        assert!(database.configured_transports().unwrap().is_empty());
     }
 
     #[tokio::test]

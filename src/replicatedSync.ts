@@ -5,14 +5,21 @@ export type { FrontierCandidate, FrontierConflict } from "./FrontierConflictEdit
 
 export type ReplicatedSyncTransportStatus = {
   instanceId: string;
-  path: string;
+  kind: string;
+  location: string;
   health: string;
+  headDiscovery: boolean;
   pending: number;
   delivered: number;
   failed: number;
   lastSuccessAt?: string | null;
   lastError?: string | null;
   storageBytes?: number | null;
+};
+
+export type IpfsRpcProbeReport = {
+  versionOk: boolean;
+  mfsAvailable: boolean;
 };
 
 function isDesktop(): boolean {
@@ -35,6 +42,25 @@ export async function replicatedSyncStatus(): Promise<ReplicatedSyncTransportSta
  * transport. Resolves to `null` if the user cancels the picker. */
 export async function replicatedSyncAddFolder(): Promise<ReplicatedSyncTransportStatus | null> {
   return invoke("replicated_sync_add_folder");
+}
+
+/** Configures a user-supplied Kubo-compatible IPFS RPC endpoint (e.g.
+ * Filebase) as a transport. The token, if given, never touches SQLite — it
+ * goes straight to the OS keychain on the Rust side. */
+export async function replicatedSyncAddIpfsRpc(
+  baseUrl: string,
+  token: string | null,
+): Promise<ReplicatedSyncTransportStatus | null> {
+  return invoke("replicated_sync_add_ipfs_rpc", { baseUrl, token });
+}
+
+/** Validates a candidate endpoint without persisting anything — the "test
+ * connection" step Settings runs before letting the user enable a replica. */
+export async function replicatedSyncProbeIpfsRpc(
+  baseUrl: string,
+  token: string | null,
+): Promise<IpfsRpcProbeReport> {
+  return invoke("replicated_sync_probe_ipfs_rpc", { baseUrl, token });
 }
 
 export async function replicatedSyncRemoveTransport(instanceId: string, deleteData: boolean): Promise<void> {

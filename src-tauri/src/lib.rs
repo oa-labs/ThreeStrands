@@ -10,6 +10,7 @@ mod credentials;
 mod db;
 mod image_format;
 mod image_proxy;
+mod ipfs_transport;
 mod mime;
 mod models;
 mod net_safety;
@@ -1106,6 +1107,31 @@ async fn replicated_sync_add_folder(
     kick_replicated_sync(&state);
     let statuses = state.replicated_sync.status().await?;
     Ok(statuses.into_iter().find(|status| status.instance_id == instance_id))
+}
+
+#[tauri::command]
+async fn replicated_sync_add_ipfs_rpc(
+    base_url: String,
+    token: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Option<replicated_sync::ReplicatedSyncTransportStatus>, String> {
+    if !replicated_sync::enabled() {
+        return Err("Replicated sync is not enabled in this build".to_string());
+    }
+    let instance_id = format!("ipfs-rpc-{}", uuid::Uuid::new_v4());
+    state.database.add_ipfs_rpc_transport(&instance_id, &base_url, token.as_deref())?;
+    kick_replicated_sync(&state);
+    let statuses = state.replicated_sync.status().await?;
+    Ok(statuses.into_iter().find(|status| status.instance_id == instance_id))
+}
+
+#[tauri::command]
+async fn replicated_sync_probe_ipfs_rpc(
+    base_url: String,
+    token: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<ipfs_transport::ProbeReport, String> {
+    state.replicated_sync.probe_ipfs_rpc_endpoint(&base_url, token.as_deref()).await
 }
 
 #[tauri::command]
@@ -2349,6 +2375,8 @@ pub fn run() {
             replicated_sync_enabled,
             replicated_sync_status,
             replicated_sync_add_folder,
+            replicated_sync_add_ipfs_rpc,
+            replicated_sync_probe_ipfs_rpc,
             replicated_sync_remove_transport,
             replicated_sync_now,
             replicated_sync_conflicts,

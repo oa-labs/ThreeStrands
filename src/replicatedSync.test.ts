@@ -5,9 +5,11 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { invoke } from "@tauri-apps/api/core";
 import {
   replicatedSyncAddFolder,
+  replicatedSyncAddIpfsRpc,
   replicatedSyncConflicts,
   replicatedSyncEnabled,
   replicatedSyncNow,
+  replicatedSyncProbeIpfsRpc,
   replicatedSyncRemoveTransport,
   replicatedSyncResolveConflict,
   replicatedSyncStatus,
@@ -42,6 +44,34 @@ describe("replicated sync invoke wrappers", () => {
     vi.mocked(invoke).mockResolvedValue(null);
     expect(await replicatedSyncAddFolder()).toBeNull();
     expect(invoke).toHaveBeenCalledWith("replicated_sync_add_folder");
+  });
+
+  it("adds an IPFS RPC endpoint with the base URL and token", async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
+    await replicatedSyncAddIpfsRpc("https://rpc.filebase.io", "secret-token");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_add_ipfs_rpc", {
+      baseUrl: "https://rpc.filebase.io",
+      token: "secret-token",
+    });
+  });
+
+  it("adds an IPFS RPC endpoint with a null token when none is given", async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
+    await replicatedSyncAddIpfsRpc("https://rpc.filebase.io", null);
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_add_ipfs_rpc", {
+      baseUrl: "https://rpc.filebase.io",
+      token: null,
+    });
+  });
+
+  it("probes an IPFS RPC endpoint without persisting anything", async () => {
+    vi.mocked(invoke).mockResolvedValue({ versionOk: true, mfsAvailable: false });
+    const report = await replicatedSyncProbeIpfsRpc("https://rpc.filebase.io", "secret-token");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_probe_ipfs_rpc", {
+      baseUrl: "https://rpc.filebase.io",
+      token: "secret-token",
+    });
+    expect(report).toEqual({ versionOk: true, mfsAvailable: false });
   });
 
   it("passes instanceId and deleteData when removing a transport", async () => {

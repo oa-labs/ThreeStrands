@@ -20,8 +20,10 @@ calcard = { version = "0.3.13", default-features = false }
 chacha20poly1305 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
+cid = { version = "0.11", default-features = false, features = ["std"] }
 fontdb = "0.24"
 imagesize = "0.13"
+iroh-car = "0.5"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 log = "0.4"
 mail-builder = "0.5"
@@ -29,7 +31,7 @@ mail-parser = "0.11"
 open = "5"
 percent-encoding = "2.3.2"
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 rfd = "0.15"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -54,3 +56,10 @@ threestrands-sync-transport = { path = "../crates/sync-transport" }
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"
+
+[dev-dependencies]
+# Test-only: backs the fake Kubo-compatible RPC server the IPFS RPC
+# transport's conformance and security tests run against, so the real
+# `reqwest`-based client code is exercised over real HTTP rather than
+# mocked at the function-call level.
+axum = { version = "0.8", features = ["multipart"] }

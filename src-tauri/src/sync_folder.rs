@@ -160,6 +160,7 @@ impl SyncTransport for SyncFolderTransport {
         TransportCapabilities {
             enumeration: true,
             incremental_cursor: true,
+            head_discovery: true,
         }
     }
 

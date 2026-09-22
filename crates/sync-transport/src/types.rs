@@ -43,9 +43,10 @@ impl fmt::Display for TransportInstanceId {
     }
 }
 
-/// Optional capabilities a transport instance may or may not have. Neither
-/// capability is required: a transport with both `false` is still fully
-/// usable through signed heads alone, just not accelerable by scanning.
+/// Optional capabilities a transport instance may or may not have. None of
+/// these are required: a transport with all `false` is still fully usable
+/// through `put_object`/`get_object` alone, just not accelerable by
+/// scanning and not independently bootstrappable for a new device.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TransportCapabilities {
     /// Whether [`crate::SyncTransport::scan`] can enumerate this
@@ -54,6 +55,14 @@ pub struct TransportCapabilities {
     /// Whether a `scan` cursor can be resumed incrementally rather than
     /// always restarting from the beginning.
     pub incremental_cursor: bool,
+    /// Whether `publish_head`/`resolve_heads` are backed by a real,
+    /// independently enumerable discovery index on this instance (a local
+    /// folder's `heads/` directory; an RPC endpoint's MFS namespace).
+    /// `false` distinguishes a `storage-only` endpoint — still a valid
+    /// write/read replica — from `storage-and-discovery`: a storage-only
+    /// endpoint cannot, by itself, bootstrap a new device, and the UI must
+    /// say so.
+    pub head_discovery: bool,
 }
 
 /// Where one object landed after a successful `put_object`, or where it can

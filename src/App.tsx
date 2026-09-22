@@ -171,13 +171,16 @@ import {
 } from "./cloudAccount";
 import {
   replicatedSyncAddFolder,
+  replicatedSyncAddIpfsRpc,
   replicatedSyncConflicts,
   replicatedSyncEnabled,
   replicatedSyncNow,
+  replicatedSyncProbeIpfsRpc,
   replicatedSyncRemoveTransport,
   replicatedSyncResolveConflict,
   replicatedSyncStatus,
   type FrontierConflict,
+  type IpfsRpcProbeReport,
   type ReplicatedSyncTransportStatus,
 } from "./replicatedSync";
 import { FrontierConflictEditor } from "./FrontierConflictEditor";
@@ -3868,12 +3871,17 @@ function formatStorageEstimate(bytes: number): string {
   return `${value.toFixed(1)} ${units[index]}`;
 }
 
+const FILEBASE_RPC_URL = "https://rpc.filebase.io";
+
 function ReplicatedSyncSettings() {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [transports, setTransports] = useState<ReplicatedSyncTransportStatus[]>([]);
   const [conflicts, setConflicts] = useState<FrontierConflict[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [ipfsBaseUrl, setIpfsBaseUrl] = useState("");
+  const [ipfsToken, setIpfsToken] = useState("");
+  const [ipfsProbe, setIpfsProbe] = useState<IpfsRpcProbeReport | null>(null);
 
   const refresh = useCallback(async () => {
     const enabled = await replicatedSyncEnabled();
@@ -3912,6 +3920,34 @@ function ReplicatedSyncSettings() {
     void replicatedSyncAddFolder()
       .then((status) => {
         if (!status) setMessage("No folder selected.");
+        return refresh();
+      })
+      .catch((error: unknown) => setMessage(String(error)))
+      .finally(() => setBusy(false));
+  };
+
+  const probeIpfsRpc = () => {
+    setBusy(true);
+    setMessage(null);
+    setIpfsProbe(null);
+    void replicatedSyncProbeIpfsRpc(ipfsBaseUrl, ipfsToken.trim() ? ipfsToken : null)
+      .then((report) => {
+        setIpfsProbe(report);
+        if (!report.versionOk) setMessage("Could not reach an IPFS RPC endpoint at that URL.");
+      })
+      .catch((error: unknown) => setMessage(String(error)))
+      .finally(() => setBusy(false));
+  };
+
+  const addIpfsRpc = () => {
+    setBusy(true);
+    setMessage(null);
+    void replicatedSyncAddIpfsRpc(ipfsBaseUrl, ipfsToken.trim() ? ipfsToken : null)
+      .then((status) => {
+        if (!status) setMessage("Could not add that endpoint.");
+        setIpfsBaseUrl("");
+        setIpfsToken("");
+        setIpfsProbe(null);
         return refresh();
       })
       .catch((error: unknown) => setMessage(String(error)))
@@ -3973,9 +4009,10 @@ function ReplicatedSyncSettings() {
             <li className="account-card" key={transport.instanceId}>
               <div className="account-card-row">
                 <div className="account-card-identity">
-                  <strong>{transport.path}</strong>
+                  <strong>{transport.location}</strong>
                   <span className="account-card-email">
-                    {transport.health} · {transport.pending} pending
+                    {transport.kind === "ipfs_rpc" ? "IPFS RPC" : "Folder"}
+                    {!transport.headDiscovery ? " · storage-only" : ""} · {transport.health} · {transport.pending} pending
                     {transport.failed ? `, ${transport.failed} failed` : ""}
                     {transport.storageBytes != null ? ` · ${formatStorageEstimate(transport.storageBytes)}` : ""}
                   </span>
@@ -3989,8 +4026,15 @@ function ReplicatedSyncSettings() {
                   className="account-action-button danger-action"
                   disabled={busy}
                   onClick={() => {
+                    if (transport.kind === "ipfs_rpc") {
+                      const disconnect = window.confirm(
+                        `Stop syncing to "${transport.location}"? This only forgets the endpoint on this device — objects already pinned there stay pinned. Remove them yourself through your provider if you want them erased.`,
+                      );
+                      if (disconnect) act(() => replicatedSyncRemoveTransport(transport.instanceId, false));
+                      return;
+                    }
                     const deleteData = window.confirm(
-                      `Delete the synchronized data in "${transport.path}"? This removes this device's copy from that folder; it does not erase copies on other devices or elsewhere. Choose Cancel to just stop syncing to it and keep the files there.`,
+                      `Delete the synchronized data in "${transport.location}"? This removes this device's copy from that folder; it does not erase copies on other devices or elsewhere. Choose Cancel to just stop syncing to it and keep the files there.`,
                     );
                     act(() => replicatedSyncRemoveTransport(transport.instanceId, deleteData));
                   }}
@@ -4014,6 +4058,68 @@ function ReplicatedSyncSettings() {
       >
         Sync now
       </button>
+
+      <h3>Add an IPFS RPC endpoint</h3>
+      <p className="settings-hint">
+        Advanced: point at a Kubo-compatible RPC endpoint (for example a Filebase bucket, or a local Kubo daemon) to
+        replicate through it instead of, or alongside, a folder. The access token, if any, is stored only in this
+        device&apos;s OS keychain, never in a settings export.
+      </p>
+      <label className="settings-field">
+        <span>RPC base URL</span>
+        <input
+          type="text"
+          placeholder="https://rpc.filebase.io"
+          value={ipfsBaseUrl}
+          disabled={busy}
+          onChange={(event) => {
+            setIpfsBaseUrl(event.target.value);
+            setIpfsProbe(null);
+          }}
+        />
+      </label>
+      <label className="settings-field">
+        <span>Access token (optional)</span>
+        <input
+          type="password"
+          value={ipfsToken}
+          disabled={busy}
+          onChange={(event) => {
+            setIpfsToken(event.target.value);
+            setIpfsProbe(null);
+          }}
+        />
+      </label>
+      <button
+        type="button"
+        className="account-action-button"
+        disabled={busy}
+        onClick={() => {
+          setIpfsBaseUrl(FILEBASE_RPC_URL);
+          setIpfsProbe(null);
+        }}
+      >
+        Use Filebase preset
+      </button>
+      <button type="button" className="account-action-button" disabled={busy || !ipfsBaseUrl} onClick={probeIpfsRpc}>
+        Test connection
+      </button>
+      {ipfsProbe ? (
+        <p className="settings-hint">
+          {ipfsProbe.versionOk
+            ? `Reachable · ${ipfsProbe.mfsAvailable ? "supports discovery (MFS)" : "storage-only, no MFS discovery"}`
+            : "Not reachable at that URL."}
+        </p>
+      ) : null}
+      <button
+        type="button"
+        className="primary-action"
+        disabled={busy || !ipfsBaseUrl}
+        onClick={addIpfsRpc}
+      >
+        Add IPFS RPC endpoint
+      </button>
+
       {message ? <p role="status" className="settings-hint">{message}</p> : null}
     </section>
   );
