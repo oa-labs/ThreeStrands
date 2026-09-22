@@ -3,7 +3,7 @@
 use super::*;
 
 impl Database {
-    pub fn list_snippets(&self) -> Result<Vec<Snippet>, String> {
+    pub fn list_snippets(&self) -> DbResult<Vec<Snippet>> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare("SELECT id, name, body, created_at FROM snippets ORDER BY name COLLATE NOCASE")

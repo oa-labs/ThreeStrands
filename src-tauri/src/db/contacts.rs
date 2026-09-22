@@ -8,7 +8,7 @@ impl Database {
         account_id: &str,
         email: &str,
         display_name: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> DbResult<()> {
         let email = email.trim().to_ascii_lowercase();
         if email.is_empty() {
             return Err("Enter an email address".into());
@@ -24,7 +24,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn unpin_contact(&self, account_id: &str, email: &str) -> Result<(), String> {
+    pub fn unpin_contact(&self, account_id: &str, email: &str) -> DbResult<()> {
         self.connection()?
             .execute(
                 "DELETE FROM pinned_contacts WHERE account_id = ?1 AND email = ?2",

@@ -4,7 +4,7 @@
 use super::*;
 
 impl Database {
-    pub fn list_calendar_accounts(&self) -> Result<Vec<CalendarAccount>, String> {
+    pub fn list_calendar_accounts(&self) -> DbResult<Vec<CalendarAccount>> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare("SELECT email, connected_at, status FROM calendar_accounts ORDER BY connected_at, email")
@@ -21,7 +21,7 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
     }
 
-    pub fn adopt_calendar_account(&self, email: &str) -> Result<(), String> {
+    pub fn adopt_calendar_account(&self, email: &str) -> DbResult<()> {
         self.connection()?
             .execute(
                 "INSERT INTO calendar_accounts(email, connected_at, status) VALUES (?1, ?2, 'connected')
@@ -32,26 +32,26 @@ impl Database {
         Ok(())
     }
 
-    pub fn remove_calendar_account(&self, email: &str) -> Result<(), String> {
+    pub fn remove_calendar_account(&self, email: &str) -> DbResult<()> {
         self.connection()?
             .execute("DELETE FROM calendar_accounts WHERE email = ?1", [email])
             .map_err(display_error)?;
         Ok(())
     }
 
-    pub fn disconnect_calendar_account_locally(&self, email: &str) -> Result<(), String> {
+    pub fn disconnect_calendar_account_locally(&self, email: &str) -> DbResult<()> {
         let changed = self.connection()?.execute(
             "UPDATE calendar_accounts SET status='needs_reauth' WHERE email=?1",
             [email],
         ).map_err(display_error)?;
-        if changed == 0 { return Err("Calendar account not found".to_string()); }
+        if changed == 0 { return Err("Calendar account not found".into()); }
         Ok(())
     }
 
     /// `None` means the account has never chosen calendars, so callers should
     /// initialize the common default (primary only). `Some(vec![])` is an
     /// intentional empty selection and must remain an empty schedule.
-    pub fn calendar_selection(&self, email: &str) -> Result<Option<Vec<String>>, String> {
+    pub fn calendar_selection(&self, email: &str) -> DbResult<Option<Vec<String>>> {
         let connection = self.connection()?;
         let initialized = connection
             .query_row(
@@ -61,7 +61,7 @@ impl Database {
             )
             .optional()
             .map_err(display_error)?
-            .ok_or_else(|| "Calendar account not found".to_string())?;
+            .ok_or_else(|| DatabaseError::Message("Calendar account not found".into()))?;
         if !initialized {
             return Ok(None);
         }
@@ -83,7 +83,7 @@ impl Database {
         &self,
         email: &str,
         calendar_ids: &[String],
-    ) -> Result<(), String> {
+    ) -> DbResult<()> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         let changed = transaction
@@ -93,7 +93,7 @@ impl Database {
             )
             .map_err(display_error)?;
         if changed == 0 {
-            return Err("Calendar account not found".to_string());
+            return Err("Calendar account not found".into());
         }
         transaction
             .execute(

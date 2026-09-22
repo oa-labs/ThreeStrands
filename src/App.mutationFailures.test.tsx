@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DiagnosticsSettings } from "./App";
+import { DiagnosticsSettings } from "./SettingsPanel";
 import type { SyncStatus } from "./domain";
 
 afterEach(cleanup);

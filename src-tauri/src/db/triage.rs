@@ -4,7 +4,7 @@ use super::*;
 
 impl Database {
     /// Resolves sender identity from cached mail rather than trusting input.
-    pub fn record_triage_event(&self, event: &TriageEvent) -> Result<(), String> {
+    pub fn record_triage_event(&self, event: &TriageEvent) -> DbResult<()> {
         match (&event.kind, &event.action) {
             (
                 TriageEventKind::Open | TriageEventKind::Close | TriageEventKind::Response,

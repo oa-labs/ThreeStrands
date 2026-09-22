@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use crate::{
     auth::AccountAuth,
     backoff::retry_at,
-    db::{Database, PendingMutation},
+    db::{Database, DatabaseError, PendingMutation},
     mime::{
         normalize, normalized_size, NormalizedMessage, MAX_NORMALIZED_THREAD_BYTES,
         MAX_THREAD_MESSAGES,
@@ -35,6 +35,10 @@ const RECOVERY_BATCH_SIZE: usize = 50;
 // while keeping a broad query from blocking the UI on hundreds of sequential
 // `threads.get` calls (each one is deliberately paced for Gmail quota).
 const REMOTE_SEARCH_SCAN_LIMIT: usize = 50;
+
+fn database_provider_error(error: DatabaseError) -> ProviderError {
+    ProviderError::Other(error.to_string())
+}
 
 #[derive(Clone)]
 pub struct SyncService {
@@ -97,12 +101,12 @@ impl SyncService {
             let message = error.to_string();
             self.database
                 .fail_sync(&account_id, &message)
-                .map_err(ProviderError::Other)?;
+                .map_err(database_provider_error)?;
             return Err(error);
         }
         self.database
             .sync_status(&account_id)
-            .map_err(ProviderError::Other)
+            .map_err(database_provider_error)
     }
 
     /// Incremental catch-up for OS resume / window focus. Skips if polling
@@ -110,7 +114,7 @@ impl SyncService {
     pub async fn sync_if_stale(&self) -> Result<SyncStatus, String> {
         let last_attempt = self.last_attempt.lock().ok().and_then(|guard| *guard);
         if should_skip_stale_sync(last_attempt, Instant::now(), MIN_POLL_INTERVAL) {
-            return self.database.sync_status(&self.account_id());
+            return Ok(self.database.sync_status(&self.account_id())?);
         }
         self.sync().await
     }
@@ -118,10 +122,10 @@ impl SyncService {
     pub async fn flush_pending(&self) -> Result<SyncStatus, String> {
         let account_id = self.account_id();
         if self.database.sync_status(&account_id)?.pending_mutations == 0 {
-            return self.database.sync_status(&account_id);
+            return Ok(self.database.sync_status(&account_id)?);
         }
         if !self.auth.available() {
-            return self.database.sync_status(&account_id);
+            return Ok(self.database.sync_status(&account_id)?);
         }
         let _guard = self.gate.lock().await;
         let provider = self.auth.provider();
@@ -132,7 +136,7 @@ impl SyncService {
             self.database.fail_sync(&account_id, &message)?;
             return Err(message);
         }
-        self.database.sync_status(&account_id)
+        Ok(self.database.sync_status(&account_id)?)
     }
 
     /// Imports server-side search hits absent from the local cache. Existing
@@ -271,13 +275,13 @@ pub async fn flush_pending_with(
 ) -> ProviderResult<()> {
     if database
         .account_needs_reauth(account_id)
-        .map_err(ProviderError::Other)?
+        .map_err(database_provider_error)?
     {
         return Ok(());
     }
     if database
         .sync_status(account_id)
-        .map_err(ProviderError::Other)?
+        .map_err(database_provider_error)?
         .pending_mutations
         == 0
     {
@@ -294,7 +298,7 @@ pub async fn sync_with(
 ) -> ProviderResult<()> {
     if database
         .account_needs_reauth(account_id)
-        .map_err(ProviderError::Other)?
+        .map_err(database_provider_error)?
     {
         return Ok(());
     }
@@ -308,7 +312,7 @@ async fn sync_active_with(
     provider: &(impl MailSync + MailMutate + ?Sized),
 ) -> ProviderResult<()> {
     deliver_mutations(database, account_id, provider).await?;
-    match database.cursor(account_id).map_err(ProviderError::Other)? {
+    match database.cursor(account_id).map_err(database_provider_error)? {
         Some(cursor) => match incremental_sync(database, account_id, provider, &SyncCursor::new(cursor))
             .await
         {
@@ -328,7 +332,7 @@ fn pause_for_permanent_auth_failure(
         if error.requires_reauthentication() {
             database
                 .mark_account_needs_reauth(account_id, &error.to_string())
-                .map_err(ProviderError::Other)?;
+                .map_err(database_provider_error)?;
         }
     }
     result
@@ -343,7 +347,7 @@ async fn full_sync(
         Err(ProviderError::InvalidCursor) => {
             database
                 .discard_sync_recovery(account_id)
-                .map_err(ProviderError::Other)?;
+                .map_err(database_provider_error)?;
             full_sync_attempt(database, account_id, provider).await
         }
         result => result,
@@ -360,10 +364,10 @@ async fn full_sync_attempt(
     // durable generation lets the expensive thread refresh resume safely.
     database
         .clear_cursor(account_id)
-        .map_err(ProviderError::Other)?;
+        .map_err(database_provider_error)?;
     let starting_cursor = match database
         .recovery_cursor(account_id)
-        .map_err(ProviderError::Other)?
+        .map_err(database_provider_error)?
     {
         Some(cursor) => SyncCursor::new(cursor),
         None => {
@@ -379,21 +383,21 @@ async fn full_sync_attempt(
                 .collect::<Vec<_>>();
             database
                 .begin_sync_recovery(account_id, cursor.as_str(), &recovery_ids)
-                .map_err(ProviderError::Other)?;
+                .map_err(database_provider_error)?;
             cursor
         }
     };
     loop {
         let batch = database
             .pending_sync_recovery_threads(account_id, RECOVERY_BATCH_SIZE)
-            .map_err(ProviderError::Other)?;
+            .map_err(database_provider_error)?;
         if batch.is_empty() {
             break;
         }
         ingest_threads(database, account_id, provider, batch.clone()).await?;
         database
             .complete_sync_recovery_threads(account_id, &batch)
-            .map_err(ProviderError::Other)?;
+            .map_err(database_provider_error)?;
     }
     incremental_sync(database, account_id, provider, &starting_cursor).await
 }
@@ -426,7 +430,7 @@ async fn incremental_sync(
     .await?;
     database
         .finish_sync(account_id, final_cursor.as_str())
-        .map_err(ProviderError::Other)
+        .map_err(database_provider_error)
 }
 
 async fn list_inbox_thread_ids(
@@ -451,7 +455,7 @@ fn local_inbox_thread_ids(
 ) -> ProviderResult<HashSet<String>> {
     Ok(database
         .local_inbox_provider_thread_ids(account_id)
-        .map_err(ProviderError::Other)?
+        .map_err(database_provider_error)?
         .into_iter()
         .collect())
 }
@@ -485,7 +489,7 @@ async fn reconcile_and_mark(
     reconcile_inbox(database, account_id, provider).await?;
     database
         .mark_reconciled(account_id)
-        .map_err(ProviderError::Other)
+        .map_err(database_provider_error)
 }
 
 async fn search_and_ingest_missing(
@@ -501,7 +505,7 @@ async fn search_and_ingest_missing(
 
     let cached: HashSet<String> = database
         .local_provider_thread_ids(account_id)
-        .map_err(ProviderError::Other)?
+        .map_err(database_provider_error)?
         .into_iter()
         .collect();
     let mut seen = HashSet::new();
@@ -573,19 +577,19 @@ async fn ingest_threads(
         if ingested_threads.len() >= INGEST_FLUSH_BATCH_SIZE {
             database
                 .apply_ingested_threads(account_id, &ingested_threads)
-                .map_err(ProviderError::Other)?;
+                .map_err(database_provider_error)?;
             ingested_threads.clear();
         }
     }
     if !ingested_threads.is_empty() {
         database
             .apply_ingested_threads(account_id, &ingested_threads)
-            .map_err(ProviderError::Other)?;
+                .map_err(database_provider_error)?;
     }
     for id in deleted {
         database
             .delete_thread(account_id, &id)
-            .map_err(ProviderError::Other)?;
+                .map_err(database_provider_error)?;
     }
     if let Some(error) = pending_error {
         return Err(error);
@@ -650,7 +654,7 @@ async fn deliver_mutations(
     loop {
         let mutations = database
             .claim_mutations(account_id, 50)
-            .map_err(ProviderError::Other)?;
+                .map_err(database_provider_error)?;
         if mutations.is_empty() {
             return Ok(());
         }
@@ -673,7 +677,7 @@ async fn deliver_mutations(
                         .iter()
                         .map(|item| database.message_ids_for_thread(item.mutation.thread_id()))
                         .collect::<Result<Vec<_>, _>>()
-                        .map_err(ProviderError::Other)?
+                        .map_err(database_provider_error)?
                         .into_iter()
                         .flatten()
                         .collect::<Vec<_>>();
@@ -704,13 +708,13 @@ async fn deliver_mutations(
                     for item in &mutations[index..batch_end] {
                         database
                             .complete_mutation(&item.id)
-                            .map_err(ProviderError::Other)?;
+                            .map_err(database_provider_error)?;
                     }
                 }
                 Err(error) if error.requires_reauthentication() => {
                     database
                         .mark_account_needs_reauth(account_id, &error.to_string())
-                        .map_err(ProviderError::Other)?;
+                        .map_err(database_provider_error)?;
                     return Err(error);
                 }
                 Err(error) if error.retry_mutation() => {
@@ -724,7 +728,7 @@ async fn deliver_mutations(
                         let next_attempt_at = mutation_next_attempt_at(item.attempts);
                         database
                             .reject_mutation(&item.id, &error.to_string(), Some(&next_attempt_at))
-                            .map_err(ProviderError::Other)?;
+                            .map_err(database_provider_error)?;
                     }
                     return Err(error);
                 }
@@ -732,7 +736,7 @@ async fn deliver_mutations(
                     for item in &mutations[index..batch_end] {
                         database
                             .reject_mutation(&item.id, &error.to_string(), None)
-                            .map_err(ProviderError::Other)?;
+                            .map_err(database_provider_error)?;
                     }
                 }
             }

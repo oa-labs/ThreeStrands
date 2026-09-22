@@ -180,6 +180,40 @@ struct AppState {
     proposal_cache: Arc<std::sync::Mutex<HashMap<String, Vec<ActionProposal>>>>,
 }
 
+/// SQLite and the mutex guarding its connection are synchronous. Run database
+/// work reached from async code on Tokio's blocking pool so contention or a
+/// slow query cannot stall an async worker.
+async fn run_database_task<T, E, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    E: Into<String> + Send + 'static,
+    F: FnOnce() -> Result<T, E> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| format!("Database task stopped unexpectedly: {error}"))?
+        .map_err(Into::into)
+}
+
+fn database_result<T>(result: db::DbResult<T>) -> Result<T, String> {
+    result.map_err(String::from)
+}
+
+#[cfg(test)]
+mod database_task_tests {
+    use super::run_database_task;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn database_work_runs_off_the_async_worker() {
+        let async_thread = std::thread::current().id();
+        let database_thread = run_database_task(|| Ok::<_, String>(std::thread::current().id()))
+            .await
+            .unwrap();
+
+        assert_ne!(database_thread, async_thread);
+    }
+}
+
 #[derive(Clone, Default)]
 struct AuthorizeSlot(Arc<tokio::sync::Mutex<Option<CancellationToken>>>);
 
@@ -424,15 +458,15 @@ mod combined_sync_status_tests {
 /// Diagnostics and refresh state represent every configured account. Once an
 /// account catalog exists, never fall back to the pre-connect `default` row:
 /// after an in-process settings import that row is not a real mailbox.
-fn combined_sync_status(state: &AppState) -> Result<SyncStatus, String> {
-    let accounts = state.database.list_accounts()?;
+fn combined_sync_status(database: &Database) -> Result<SyncStatus, String> {
+    let accounts = database.list_accounts()?;
     if accounts.is_empty() {
-        return state.database.sync_status(auth::LEGACY_KEY);
+        return database_result(database.sync_status(auth::LEGACY_KEY));
     }
     let mut statuses = Vec::new();
     let mut errors = Vec::new();
     for account in accounts {
-        match state.database.sync_status(&account.email) {
+        match database.sync_status(&account.email) {
             Ok(status) => statuses.push((account.email, status)),
             Err(error) if account.status == "connected" => {
                 errors.push(format!("{}: {error}", account.email));
@@ -500,7 +534,7 @@ fn list_threads(
     account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Thread>, String> {
-    state.database.list_threads(account_id.as_deref())
+    database_result(state.database.list_threads(account_id.as_deref()))
 }
 
 #[tauri::command]
@@ -508,7 +542,7 @@ fn list_all_mail(
     account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Thread>, String> {
-    state.database.list_all_mail(account_id.as_deref())
+    database_result(state.database.list_all_mail(account_id.as_deref()))
 }
 
 #[tauri::command]
@@ -516,7 +550,7 @@ fn list_trash(
     account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Thread>, String> {
-    state.database.list_trash(account_id.as_deref())
+    database_result(state.database.list_trash(account_id.as_deref()))
 }
 
 #[tauri::command]
@@ -526,14 +560,12 @@ fn list_threads_page(
     limit: usize,
     state: State<'_, AppState>,
 ) -> Result<ThreadPage, String> {
-    state
-        .database
-        .list_threads_page(account_id.as_deref(), offset, limit)
+    database_result(state.database.list_threads_page(account_id.as_deref(), offset, limit))
 }
 
 #[tauri::command]
 fn list_unread_counts(state: State<'_, AppState>) -> Result<HashMap<String, i64>, String> {
-    state.database.list_unread_counts()
+    database_result(state.database.list_unread_counts())
 }
 
 #[tauri::command]
@@ -541,7 +573,7 @@ fn mailbox_unread_counts(
     account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<MailboxUnreadCounts, String> {
-    state.database.mailbox_unread_counts(account_id.as_deref())
+    database_result(state.database.mailbox_unread_counts(account_id.as_deref()))
 }
 
 #[tauri::command]
@@ -551,9 +583,7 @@ fn list_all_mail_page(
     limit: usize,
     state: State<'_, AppState>,
 ) -> Result<ThreadPage, String> {
-    state
-        .database
-        .list_all_mail_page(account_id.as_deref(), offset, limit)
+    database_result(state.database.list_all_mail_page(account_id.as_deref(), offset, limit))
 }
 
 #[tauri::command]
@@ -563,14 +593,12 @@ fn list_trash_page(
     limit: usize,
     state: State<'_, AppState>,
 ) -> Result<ThreadPage, String> {
-    state
-        .database
-        .list_trash_page(account_id.as_deref(), offset, limit)
+    database_result(state.database.list_trash_page(account_id.as_deref(), offset, limit))
 }
 
 #[tauri::command]
 fn get_thread(id: String, state: State<'_, AppState>) -> Result<ThreadDetail, String> {
-    state.database.get_thread(&id)
+    database_result(state.database.get_thread(&id))
 }
 
 /// Fetches a remote image referenced by message HTML and returns it as a
@@ -586,13 +614,21 @@ async fn load_attachment(
     attachment_id: &str,
     state: &AppState,
 ) -> Result<(String, String, Vec<u8>), String> {
-    let (account_id, message) = state.database.attachment_message(message_id)?;
-    let attachment = mime::normalize(&message)?
-        .attachments
-        .into_iter()
-        .find(|attachment| attachment.id == attachment_id)
-        .ok_or("Attachment not found")?;
-    let bytes = match mime::attachment_bytes_from_payload(&message, attachment_id)? {
+    let database = state.database.clone();
+    let stored_message_id = message_id.to_string();
+    let stored_attachment_id = attachment_id.to_string();
+    let (account_id, attachment, payload_bytes) = run_database_task(move || {
+        let (account_id, message) = database.attachment_message(&stored_message_id)?;
+        let attachment = mime::normalize(&message)?
+            .attachments
+            .into_iter()
+            .find(|attachment| attachment.id == stored_attachment_id)
+            .ok_or("Attachment not found")?;
+        let bytes = mime::attachment_bytes_from_payload(&message, &stored_attachment_id)?;
+        Ok::<_, String>((account_id, attachment, bytes))
+    })
+    .await?;
+    let bytes = match payload_bytes {
         Some(bytes) => bytes,
         None => {
             let provider = state.correspondence.provider_for(&account_id).await?;
@@ -723,9 +759,7 @@ fn search_threads(
     account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Thread>, String> {
-    state
-        .database
-        .search_threads(&request, account_id.as_deref())
+    database_result(state.database.search_threads(&request, account_id.as_deref()))
 }
 
 #[tauri::command]
@@ -755,7 +789,7 @@ async fn backfill_search_threads(
 
 #[tauri::command]
 fn mutate_thread(mutation: ThreadMutation, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.mutate_thread(&mutation)
+    database_result(state.database.mutate_thread(&mutation))
 }
 
 #[tauri::command]
@@ -763,12 +797,12 @@ fn mutate_threads(
     mutations: Vec<ThreadMutation>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    state.database.mutate_threads(&mutations)
+    database_result(state.database.mutate_threads(&mutations))
 }
 
 #[tauri::command]
 fn record_triage_event(event: TriageEvent, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.record_triage_event(&event)
+    database_result(state.database.record_triage_event(&event))
 }
 
 #[tauri::command]
@@ -777,9 +811,7 @@ fn list_triage_sender_stats(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<TriageSenderStats>, String> {
-    state
-        .database
-        .list_triage_sender_stats(&account_id, limit.unwrap_or(100))
+    database_result(state.database.list_triage_sender_stats(&account_id, limit.unwrap_or(100)))
 }
 
 #[tauri::command]
@@ -789,9 +821,7 @@ fn list_contact_suggestions(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ContactSuggestion>, String> {
-    state
-        .database
-        .list_contact_suggestions(&account_id, &query, limit.unwrap_or(8))
+    database_result(state.database.list_contact_suggestions(&account_id, &query, limit.unwrap_or(8)))
 }
 
 #[tauri::command]
@@ -801,9 +831,7 @@ fn pin_contact(
     display_name: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    state
-        .database
-        .pin_contact(&account_id, &email, display_name.as_deref())
+    database_result(state.database.pin_contact(&account_id, &email, display_name.as_deref()))
 }
 
 #[tauri::command]
@@ -812,7 +840,7 @@ fn unpin_contact(
     email: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    state.database.unpin_contact(&account_id, &email)
+    database_result(state.database.unpin_contact(&account_id, &email))
 }
 
 #[tauri::command]
@@ -846,7 +874,7 @@ async fn unsubscribe(
 
 #[tauri::command]
 fn sync_status(state: State<'_, AppState>) -> Result<SyncStatus, String> {
-    combined_sync_status(&state)
+    combined_sync_status(state.database.as_ref())
 }
 
 /// `Some` only when this launch had to recover the local database (restored
@@ -893,7 +921,8 @@ async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatus, String> 
         }
     }
 
-    let mut status = combined_sync_status(&state)?;
+    let database = state.database.clone();
+    let mut status = run_database_task(move || combined_sync_status(database.as_ref())).await?;
     if !task_errors.is_empty() {
         let mut errors = status.error.take().into_iter().collect::<Vec<_>>();
         errors.extend(task_errors);
@@ -910,7 +939,7 @@ async fn flush_pending_mutations(state: State<'_, AppState>) -> Result<SyncStatu
     let primary = state.database.primary_account_id();
     match resolve_account(&state, Some(&primary), |account| account.sync.clone()).await {
         Ok(service) => service.flush_pending().await,
-        Err(_) => state.database.sync_status(&primary),
+        Err(_) => database_result(state.database.sync_status(&primary)),
     }
 }
 
@@ -1286,7 +1315,7 @@ async fn disconnect_google(state: State<'_, AppState>, app: tauri::AppHandle) ->
 
 #[tauri::command]
 fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, String> {
-    state.database.list_accounts()
+    database_result(state.database.list_accounts())
 }
 
 #[tauri::command]
@@ -1623,9 +1652,9 @@ fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<
     config.calendar_account(&email).disconnect()?;
     let cloud = state.cloud_sync.status()?;
     if cloud.signed_in && cloud.sync_entitled && cloud.enrollment_confirmed {
-        state.database.disconnect_calendar_account_locally(&email)
+        database_result(state.database.disconnect_calendar_account_locally(&email))
     } else {
-        state.database.remove_calendar_account(&email)
+        database_result(state.database.remove_calendar_account(&email))
     }
 }
 
@@ -1639,7 +1668,7 @@ async fn remove_synced_calendar_account(email: String, state: State<'_, AppState
     state.cloud_sync.sync_once().await?;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     config.calendar_account(&email).disconnect()?;
-    state.database.remove_calendar_account(&email)
+    database_result(state.database.remove_calendar_account(&email))
 }
 
 #[tauri::command]
@@ -1828,7 +1857,7 @@ fn import_settings(
 
 #[tauri::command]
 fn list_split_inboxes(state: State<'_, AppState>) -> Result<Vec<SplitInbox>, String> {
-    state.database.list_split_inboxes()
+    database_result(state.database.list_split_inboxes())
 }
 
 #[tauri::command]
@@ -1882,12 +1911,12 @@ fn list_split_inbox_page(
     limit: usize,
     state: State<'_, AppState>,
 ) -> Result<ThreadPage, String> {
-    state.database.list_split_inbox_page(&split_inbox_id, offset, limit)
+    database_result(state.database.list_split_inbox_page(&split_inbox_id, offset, limit))
 }
 
 #[tauri::command]
 fn list_snippets(state: State<'_, AppState>) -> Result<Vec<Snippet>, String> {
-    state.database.list_snippets()
+    database_result(state.database.list_snippets())
 }
 
 #[tauri::command]
@@ -2051,7 +2080,9 @@ async fn ai_analyze_thread(
     if user_time_zone.chars().count() > 100 {
         return Err("Timezone value is too long".to_string());
     }
-    let detail = state.database.get_thread(&thread_id)?;
+    let database = state.database.clone();
+    let database_thread_id = thread_id.clone();
+    let detail = run_database_task(move || database.get_thread(&database_thread_id)).await?;
     let cache_key = format!("{thread_id}\0{}", detail.thread.last_message_at);
     {
         let mut cache = state
@@ -2175,7 +2206,7 @@ fn list_tasks(
     status: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ThreadTask>, String> {
-    state.database.list_tasks(account_id.as_deref(), status.as_deref())
+    database_result(state.database.list_tasks(account_id.as_deref(), status.as_deref()))
 }
 
 #[tauri::command]
@@ -2308,7 +2339,10 @@ pub fn run() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     loop {
-                        if let Ok(count) = database.count_unread_inbox() {
+                        let badge_database = database.clone();
+                        if let Ok(count) =
+                            run_database_task(move || badge_database.count_unread_inbox()).await
+                        {
                             if let Some(window) = handle.get_webview_window("main") {
                                 let _ = window.set_badge_count((count > 0).then_some(count));
                             }

@@ -3,7 +3,7 @@
 use super::*;
 
 impl Database {
-    pub fn list_split_inboxes(&self) -> Result<Vec<SplitInbox>, String> {
+    pub fn list_split_inboxes(&self) -> DbResult<Vec<SplitInbox>> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(

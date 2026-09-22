@@ -3,15 +3,15 @@ use chrono_tz::Tz;
 use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
-use super::Database;
+use super::{Database, DatabaseError, DbResult};
 use crate::models::{CreateTaskRequest, ThreadTask, UpdateTaskRequest};
 
 const MAX_TITLE: usize = 240;
 const MAX_NOTES: usize = 8_000;
 const MAX_EVIDENCE: usize = 4_000;
 
-fn error(value: impl std::fmt::Display) -> String {
-    value.to_string()
+fn error(value: impl std::fmt::Display) -> DatabaseError {
+    DatabaseError::Message(value.to_string())
 }
 
 fn validate_task_fields(
@@ -20,25 +20,25 @@ fn validate_task_fields(
     due_kind: &str,
     due_value: Option<&str>,
     repeat_interval_days: Option<i64>,
-) -> Result<(), String> {
+) -> DbResult<()> {
     let title = title.trim();
     if title.is_empty() || title.chars().count() > MAX_TITLE {
-        return Err(format!("Task title must be between 1 and {MAX_TITLE} characters"));
+        return Err(format!("Task title must be between 1 and {MAX_TITLE} characters").into());
     }
     if !matches!(kind, "action" | "follow_up" | "waiting_for") {
-        return Err("Unknown task kind".to_string());
+        return Err("Unknown task kind".into());
     }
     if !matches!(due_kind, "none" | "date" | "datetime") {
-        return Err("Unknown task due kind".to_string());
+        return Err("Unknown task due kind".into());
     }
     if due_kind == "none" && due_value.is_some_and(|value| !value.trim().is_empty()) {
-        return Err("A task without a due date cannot have a due value".to_string());
+        return Err("A task without a due date cannot have a due value".into());
     }
     if due_kind != "none" && due_value.is_none_or(|value| value.trim().is_empty()) {
-        return Err("A dated task must have a due value".to_string());
+        return Err("A dated task must have a due value".into());
     }
     if repeat_interval_days.is_some_and(|value| !(1..=365).contains(&value)) {
-        return Err("Repeat interval must be between 1 and 365 days".to_string());
+        return Err("Repeat interval must be between 1 and 365 days".into());
     }
     Ok(())
 }
@@ -75,12 +75,23 @@ fn select_sql() -> &'static str {
      FROM tasks"
 }
 
+fn task_by_id(connection: &rusqlite::Connection, id: &str) -> DbResult<Option<ThreadTask>> {
+    connection
+        .query_row(
+            &format!("{} WHERE id = ?1", select_sql()),
+            [id],
+            task_from_row,
+        )
+        .optional()
+        .map_err(error)
+}
+
 impl Database {
     pub fn list_tasks(
         &self,
         account_id: Option<&str>,
         status: Option<&str>,
-    ) -> Result<Vec<ThreadTask>, String> {
+    ) -> DbResult<Vec<ThreadTask>> {
         let connection = self.connection()?;
         let mut sql = format!("{} WHERE 1=1", select_sql());
         if account_id.is_some() {
@@ -103,7 +114,7 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(error)
     }
 
-    pub fn create_task(&self, request: &CreateTaskRequest) -> Result<ThreadTask, String> {
+    pub fn create_task(&self, request: &CreateTaskRequest) -> DbResult<ThreadTask> {
         validate_task_fields(
             &request.title,
             &request.kind,
@@ -113,22 +124,22 @@ impl Database {
         )?;
         match (&request.thread_id, &request.subject_snapshot) {
             (Some(_), Some(subject)) if !subject.trim().is_empty() => {}
-            (Some(_), _) => return Err("Task subject snapshot cannot be empty".to_string()),
+            (Some(_), _) => return Err("Task subject snapshot cannot be empty".into()),
             (None, None) => {}
             (None, Some(_)) => {
-                return Err("A standalone task cannot have a subject snapshot".to_string())
+                return Err("A standalone task cannot have a subject snapshot".into())
             }
         }
         if request.thread_id.is_none()
             && (request.source_message_id.is_some() || request.evidence_text.is_some())
         {
-            return Err("A standalone task cannot have conversation context".to_string());
+            return Err("A standalone task cannot have conversation context".into());
         }
         if request.notes.as_deref().is_some_and(|value| value.chars().count() > MAX_NOTES) {
-            return Err(format!("Task notes exceed {MAX_NOTES} characters"));
+            return Err(format!("Task notes exceed {MAX_NOTES} characters").into());
         }
         if request.evidence_text.as_deref().is_some_and(|value| value.chars().count() > MAX_EVIDENCE) {
-            return Err(format!("Task evidence exceeds {MAX_EVIDENCE} characters"));
+            return Err(format!("Task evidence exceeds {MAX_EVIDENCE} characters").into());
         }
         let connection = self.connection()?;
         let wait_after: Option<String> = match request.thread_id.as_deref() {
@@ -178,11 +189,9 @@ impl Database {
             .map_err(error)
     }
 
-    pub fn update_task(&self, request: &UpdateTaskRequest) -> Result<ThreadTask, String> {
-        let current = self
-            .list_tasks(None, None)?
-            .into_iter()
-            .find(|task| task.id == request.id)
+    pub fn update_task(&self, request: &UpdateTaskRequest) -> DbResult<ThreadTask> {
+        let connection = self.connection()?;
+        let current = task_by_id(&connection, &request.id)?
             .ok_or_else(|| "Task not found".to_string())?;
         let title = request.title.as_deref().unwrap_or(&current.title);
         let kind = request.kind.as_deref().unwrap_or(&current.kind);
@@ -204,10 +213,9 @@ impl Database {
             .as_ref()
             .map_or(current.time_zone.as_deref(), |value| value.as_deref());
         if notes.is_some_and(|value| value.chars().count() > MAX_NOTES) {
-            return Err(format!("Task notes exceed {MAX_NOTES} characters"));
+            return Err(format!("Task notes exceed {MAX_NOTES} characters").into());
         }
         let now = Utc::now().to_rfc3339();
-        let connection = self.connection()?;
         connection
             .execute(
                 "UPDATE tasks SET title=?1, notes=?2, kind=?3, due_kind=?4, due_value=?5,
@@ -223,12 +231,12 @@ impl Database {
             .map_err(error)
     }
 
-    pub fn set_task_status(&self, id: &str, status: &str, source: &str) -> Result<ThreadTask, String> {
+    pub fn set_task_status(&self, id: &str, status: &str, source: &str) -> DbResult<ThreadTask> {
         if !matches!(status, "open" | "completed" | "cancelled") {
-            return Err("Unknown task status".to_string());
+            return Err("Unknown task status".into());
         }
         if !matches!(source, "user" | "reply" | "external") {
-            return Err("Unknown task completion source".to_string());
+            return Err("Unknown task completion source".into());
         }
         let now = Utc::now().to_rfc3339();
         let completed_at = (status == "completed").then_some(now.as_str());
@@ -245,17 +253,15 @@ impl Database {
             .map_err(error)
     }
 
-    pub fn record_follow_up(&self, id: &str) -> Result<ThreadTask, String> {
-        let current = self
-            .list_tasks(None, None)?
-            .into_iter()
-            .find(|task| task.id == id)
-            .ok_or_else(|| "Task not found".to_string())?;
+    pub fn record_follow_up(&self, id: &str) -> DbResult<ThreadTask> {
+        let connection = self.connection()?;
+        let current =
+            task_by_id(&connection, id)?.ok_or_else(|| "Task not found".to_string())?;
         if current.status != "open"
             || current.kind != "follow_up"
             || current.repeat_interval_days.is_none()
         {
-            return Err("Only open repeating follow-up tasks can be recorded".to_string());
+            return Err("Only open repeating follow-up tasks can be recorded".into());
         }
         let interval = current.repeat_interval_days.unwrap_or_default() as i64;
         let due_value = current
@@ -290,10 +296,9 @@ impl Database {
                     .ok_or_else(|| "Follow-up due date is invalid in its timezone".to_string())?
                     .to_rfc3339()
             }
-            _ => return Err("Repeating follow-up must have a date or datetime due value".to_string()),
+            _ => return Err("Repeating follow-up must have a date or datetime due value".into()),
         };
         let now = Utc::now().to_rfc3339();
-        let connection = self.connection()?;
         connection
             .execute(
                 "UPDATE tasks SET due_value=?1, wait_after=(SELECT last_received_at FROM threads WHERE threads.id=tasks.thread_id), completion_source=NULL, completed_at=NULL, updated_at=?2 WHERE id=?3 AND status='open'",
@@ -305,7 +310,7 @@ impl Database {
             .map_err(error)
     }
 
-    pub fn reconcile_waiting_tasks(&self) -> Result<usize, String> {
+    pub fn reconcile_waiting_tasks(&self) -> DbResult<usize> {
         let now = Utc::now().to_rfc3339();
         let connection = self.connection()?;
         let changed = connection
@@ -498,5 +503,62 @@ mod tests {
         assert_eq!(updated.due_value, None);
         assert_eq!(updated.time_zone, None);
         assert_eq!(updated.repeat_interval_days, None);
+    }
+
+    #[test]
+    fn task_mutations_do_not_decode_unrelated_rows() {
+        let database = database_with_thread();
+        let target = database
+            .create_task(&CreateTaskRequest {
+                account_id: "account@example.com".into(),
+                thread_id: Some("account:thread".into()),
+                source_message_id: None,
+                subject_snapshot: Some("Planning".into()),
+                title: "Check in with the client".into(),
+                notes: None,
+                kind: "follow_up".into(),
+                due_kind: "date".into(),
+                due_value: Some("2026-09-25".into()),
+                time_zone: Some("America/New_York".into()),
+                repeat_interval_days: Some(7),
+                evidence_text: None,
+            })
+            .unwrap();
+        let unrelated = database
+            .create_task(&CreateTaskRequest {
+                account_id: "account@example.com".into(),
+                thread_id: None,
+                source_message_id: None,
+                subject_snapshot: None,
+                title: "Unrelated task".into(),
+                notes: None,
+                kind: "action".into(),
+                due_kind: "none".into(),
+                due_value: None,
+                time_zone: None,
+                repeat_interval_days: None,
+                evidence_text: None,
+            })
+            .unwrap();
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE tasks SET title = X'80' WHERE id = ?1",
+                [&unrelated.id],
+            )
+            .unwrap();
+        assert!(database.list_tasks(None, None).is_err());
+
+        let update: UpdateTaskRequest = serde_json::from_value(serde_json::json!({
+            "id": target.id,
+            "notes": "Reached out by phone"
+        }))
+        .unwrap();
+        let updated = database.update_task(&update).unwrap();
+        assert_eq!(updated.notes.as_deref(), Some("Reached out by phone"));
+
+        let next = database.record_follow_up(&updated.id).unwrap();
+        assert_eq!(next.due_value.as_deref(), Some("2026-10-02"));
     }
 }

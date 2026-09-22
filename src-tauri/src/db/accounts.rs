@@ -19,7 +19,7 @@ impl Database {
             .unwrap_or_else(|| crate::auth::LEGACY_KEY.to_string())
     }
 
-    pub fn list_accounts(&self) -> Result<Vec<Account>, String> {
+    pub fn list_accounts(&self) -> DbResult<Vec<Account>> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
@@ -34,7 +34,7 @@ impl Database {
     }
 
     /// Ensures an account exists and folds pre-multi-account state onto it.
-    pub fn adopt_account(&self, email: &str) -> Result<Account, String> {
+    pub fn adopt_account(&self, email: &str) -> DbResult<Account> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         let exists: bool = transaction
@@ -87,10 +87,10 @@ impl Database {
         transaction.commit().map_err(display_error)?;
         drop(connection);
         self.get_account(email)?
-            .ok_or_else(|| "Account not found".to_string())
+            .ok_or_else(|| "Account not found".into())
     }
 
-    pub fn get_account(&self, email: &str) -> Result<Option<Account>, String> {
+    pub fn get_account(&self, email: &str) -> DbResult<Option<Account>> {
         self.connection()?
             .query_row(
                 "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
@@ -106,7 +106,7 @@ impl Database {
     /// releases any in-flight mutations back to the durable queue. Claiming
     /// is status-gated, so those mutations remain paused until reconnecting
     /// changes the account back to `connected`.
-    pub fn mark_account_needs_reauth(&self, email: &str, error: &str) -> Result<(), String> {
+    pub fn mark_account_needs_reauth(&self, email: &str, error: &str) -> DbResult<()> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         transaction
@@ -132,7 +132,7 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
-    pub fn account_needs_reauth(&self, email: &str) -> Result<bool, String> {
+    pub fn account_needs_reauth(&self, email: &str) -> DbResult<bool> {
         self.connection()?
             .query_row(
                 "SELECT status = 'needs_reauth' FROM accounts WHERE email = ?1",
@@ -147,7 +147,7 @@ impl Database {
     /// Wipes every trace of an account: credentials are revoked by the
     /// caller only after this commits, so a failure here leaves the account
     /// fully intact rather than stripped of credentials but still listed.
-    pub fn remove_account(&self, email: &str) -> Result<(), String> {
+    pub fn remove_account(&self, email: &str) -> DbResult<()> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         // thread_search is an FTS5 virtual table with no FK to threads, so
@@ -203,7 +203,7 @@ impl Database {
 
     /// Removes provider-owned/cache state on this installation while keeping
     /// Three Strands-owned workflow records and the synchronized catalog row.
-    pub fn disconnect_account_locally(&self, email: &str) -> Result<(), String> {
+    pub fn disconnect_account_locally(&self, email: &str) -> DbResult<()> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         transaction.execute(
@@ -221,7 +221,7 @@ impl Database {
         transaction.commit().map_err(display_error)
     }
 
-    pub fn set_account_color(&self, email: &str, color: &str) -> Result<(), String> {
+    pub fn set_account_color(&self, email: &str, color: &str) -> DbResult<()> {
         let changed = self
             .connection()?
             .execute(
@@ -230,7 +230,7 @@ impl Database {
             )
             .map_err(display_error)?;
         if changed == 0 {
-            return Err("Account not found".to_string());
+            return Err("Account not found".into());
         }
         Ok(())
     }
@@ -239,7 +239,7 @@ impl Database {
         &self,
         email: &str,
         display_name: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> DbResult<()> {
         let normalized = display_name.map(str::trim).filter(|name| !name.is_empty());
         if normalized
             .is_some_and(|name| name.chars().count() > 200 || name.chars().any(char::is_control))
@@ -257,12 +257,12 @@ impl Database {
             )
             .map_err(display_error)?;
         if changed == 0 {
-            return Err("Account not found".to_string());
+            return Err("Account not found".into());
         }
         Ok(())
     }
 
-    pub fn reorder_accounts(&self, ordered_emails: &[String]) -> Result<(), String> {
+    pub fn reorder_accounts(&self, ordered_emails: &[String]) -> DbResult<()> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(display_error)?;
         for (index, email) in ordered_emails.iter().enumerate() {
