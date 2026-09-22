@@ -17,6 +17,7 @@
 mod chunk;
 mod cid;
 mod crypto;
+mod device_head;
 mod error;
 pub mod header;
 mod ids;
@@ -28,6 +29,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use cid::compute_cid;
+pub use device_head::{
+    decode_signed_head, encode_signed_head, sign_device_head, verify_device_head, DeviceHead,
+    SignedDeviceHead,
+};
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
 pub use error::EnvelopeError;
 pub use header::{CipherSuite, ObjectKind};

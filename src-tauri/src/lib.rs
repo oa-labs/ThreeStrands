@@ -17,6 +17,7 @@ mod provider;
 mod replicated_sync;
 mod schema;
 mod sync;
+mod sync_folder;
 mod system_fonts;
 mod transfer;
 #[path = "unsubscribe.rs"]

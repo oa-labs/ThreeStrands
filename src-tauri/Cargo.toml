@@ -40,7 +40,7 @@ tauri-plugin-log = "2.9.2"
 tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 thiserror = "2"
-tokio = { version = "1", features = ["net", "sync", "time", "io-util", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["fs", "net", "sync", "time", "io-util", "macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", default-features = false }
 unicode-general-category = "1"
 unicode-normalization = "0.1"
@@ -48,7 +48,9 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 zstd = "0.13"
 threestrands-sync-core = { path = "../crates/sync-core" }
+threestrands-sync-envelope = { path = "../crates/sync-envelope" }
 threestrands-sync-protocol = { path = "../crates/sync-protocol" }
+threestrands-sync-transport = { path = "../crates/sync-transport" }
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"

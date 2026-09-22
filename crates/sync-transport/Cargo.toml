@@ -1,0 +1,14 @@
+[package]
+name = "threestrands-sync-transport"
+version = "0.1.0"
+edition = "2021"
+description = "Provider-neutral async transport abstraction, deterministic fake, and conformance suite for ThreeStrands replicated sync"
+
+[dependencies]
+async-trait = "0.1"
+rand = "0.8"
+thiserror = "2"
+threestrands-sync-envelope = { path = "../sync-envelope" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

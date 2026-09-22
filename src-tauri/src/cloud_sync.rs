@@ -406,17 +406,36 @@ impl Database {
     }
 
     fn apply_cloud_record(&self, record: &SyncRecord) -> Result<(), String> {
-        if record.deleted {
-            match record.entity_type {
-                EntityType::Task => { self.connection()?.execute("DELETE FROM tasks WHERE id=?1", [&record.entity_id]).map_err(display)?; }
-                EntityType::Snippet => { self.connection()?.execute("DELETE FROM snippets WHERE id=?1", [&record.entity_id]).map_err(display)?; }
-                EntityType::SplitInbox => { self.connection()?.execute("DELETE FROM split_inboxes WHERE id=?1", [&record.entity_id]).map_err(display)?; }
-                EntityType::MailAccount => { clear_provider_credential("app.threestrands.mail", &record.entity_id)?; if self.get_account(&record.entity_id)?.is_some() { self.remove_account(&record.entity_id)?; } }
-                EntityType::CalendarAccount => { clear_provider_credential("app.threestrands.calendar", &record.entity_id)?; let _ = self.remove_calendar_account(&record.entity_id); }
+        self.materialize_entity(record.entity_type, &record.entity_id, record.payload.as_ref(), record.deleted)?;
+        self.connection()?.execute("INSERT INTO cloud_sync_metadata(entity_type,entity_id,server_version) VALUES(?1,?2,?3) ON CONFLICT(entity_type,entity_id) DO UPDATE SET server_version=excluded.server_version", params![record.entity_type.as_str(),record.entity_id,record.version]).map_err(display)?;
+        Ok(())
+    }
+
+    /// The materialization boundary from the operation graph (or the legacy
+    /// server response) to application tables: a one-way function from a
+    /// resolved, complete entity value to a table write. Shared by the
+    /// legacy `apply_cloud_record` and the replicated-sync projection path
+    /// in `replicated_sync.rs`, so there is exactly one place that knows
+    /// how to turn a `(entity_type, entity_id, payload, deleted)` triple
+    /// into local state.
+    pub(crate) fn materialize_entity(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+        payload: Option<&Value>,
+        deleted: bool,
+    ) -> Result<(), String> {
+        if deleted {
+            match entity_type {
+                EntityType::Task => { self.connection()?.execute("DELETE FROM tasks WHERE id=?1", [entity_id]).map_err(display)?; }
+                EntityType::Snippet => { self.connection()?.execute("DELETE FROM snippets WHERE id=?1", [entity_id]).map_err(display)?; }
+                EntityType::SplitInbox => { self.connection()?.execute("DELETE FROM split_inboxes WHERE id=?1", [entity_id]).map_err(display)?; }
+                EntityType::MailAccount => { clear_provider_credential("app.threestrands.mail", entity_id)?; if self.get_account(entity_id)?.is_some() { self.remove_account(entity_id)?; } }
+                EntityType::CalendarAccount => { clear_provider_credential("app.threestrands.calendar", entity_id)?; let _ = self.remove_calendar_account(entity_id); }
                 _ => {}
             }
-        } else if let Some(payload) = &record.payload {
-            match record.entity_type {
+        } else if let Some(payload) = payload {
+            match entity_type {
                 EntityType::Task => self.upsert_cloud_task(serde_json::from_value(payload.clone()).map_err(display)?)?,
                 EntityType::Snippet => self.upsert_cloud_snippet(serde_json::from_value(payload.clone()).map_err(display)?)?,
                 EntityType::SplitInbox => self.upsert_cloud_split(serde_json::from_value(payload.clone()).map_err(display)?)?,
@@ -427,7 +446,6 @@ impl Database {
                 EntityType::Retention => self.set_retention_days(payload.get("days").and_then(Value::as_i64))?,
             }
         }
-        self.connection()?.execute("INSERT INTO cloud_sync_metadata(entity_type,entity_id,server_version) VALUES(?1,?2,?3) ON CONFLICT(entity_type,entity_id) DO UPDATE SET server_version=excluded.server_version", params![record.entity_type.as_str(),record.entity_id,record.version]).map_err(display)?;
         Ok(())
     }
 

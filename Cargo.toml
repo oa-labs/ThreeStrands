@@ -4,6 +4,7 @@ members = [
     "crates/sync-protocol",
     "crates/sync-envelope",
     "crates/sync-core",
+    "crates/sync-transport",
 ]
 
 # `src-tauri` and `services/sync-server` are deliberately kept OUT of this

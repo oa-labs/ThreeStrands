@@ -103,6 +103,32 @@ pub fn verify_event(
         .map_err(|_| EnvelopeError::SignatureInvalid)
 }
 
+/// Signs arbitrary canonical bytes under a caller-chosen fixed domain,
+/// separate from the event-signature domain. Used for protocol objects that
+/// are not [`crate::SyncEvent`]s but still need a device signature over
+/// their canonical CBOR encoding, such as a signed device head.
+pub fn sign_bytes(signing_key: &SigningKey, domain: &[u8], canonical_body: &[u8]) -> [u8; 64] {
+    let mut preimage = Vec::with_capacity(domain.len() + canonical_body.len());
+    preimage.extend_from_slice(domain);
+    preimage.extend_from_slice(canonical_body);
+    signing_key.sign(&preimage).to_bytes()
+}
+
+pub fn verify_bytes(
+    verifying_key: &VerifyingKey,
+    domain: &[u8],
+    canonical_body: &[u8],
+    signature: &[u8; 64],
+) -> Result<(), EnvelopeError> {
+    let mut preimage = Vec::with_capacity(domain.len() + canonical_body.len());
+    preimage.extend_from_slice(domain);
+    preimage.extend_from_slice(canonical_body);
+    let signature = EdSignature::from_bytes(signature);
+    verifying_key
+        .verify(&preimage, &signature)
+        .map_err(|_| EnvelopeError::SignatureInvalid)
+}
+
 fn signing_preimage(message_id: &[u8; 8], canonical_unsigned_body: &[u8]) -> Vec<u8> {
     let mut preimage =
         Vec::with_capacity(SIGNATURE_DOMAIN.len() + 8 + canonical_unsigned_body.len());
