@@ -138,6 +138,10 @@ pub(crate) async fn rekey_placeholder_account(accounts: &AccountRegistry, identi
 struct AppState {
     database: Arc<Database>,
     cloud_sync: cloud_sync::CloudSync,
+    /// The pluggable replicated-sync engine (see `replicated_sync.rs`).
+    /// Entirely inert unless `THREESTRANDS_REPLICATED_SYNC` is set — see
+    /// `replicated_sync::enabled`.
+    replicated_sync: replicated_sync::ReplicatedSync,
     /// Shared OAuth app credentials, used to authorize any account.
     auth_config: Option<GoogleAuthConfig>,
     /// Every connected account, keyed by account id — each with its own sync
@@ -962,6 +966,14 @@ fn kick_cloud_sync(state: &State<'_, AppState>) {
     tauri::async_runtime::spawn(async move { let _ = cloud.sync_once().await; });
 }
 
+fn kick_replicated_sync(state: &State<'_, AppState>) {
+    if !replicated_sync::enabled() {
+        return;
+    }
+    let engine = state.replicated_sync.clone();
+    tauri::async_runtime::spawn(async move { let _ = engine.sync_once().await; });
+}
+
 fn queue_cloud_value<T: serde::Serialize>(
     state: &State<'_, AppState>,
     entity_type: threestrands_sync_protocol::EntityType,
@@ -976,6 +988,7 @@ fn queue_cloud_value<T: serde::Serialize>(
         fields,
     )?;
     kick_cloud_sync(state);
+    kick_replicated_sync(state);
     Ok(())
 }
 
@@ -1060,6 +1073,67 @@ fn cloud_update_preferences(preferences: serde_json::Value, state: State<'_, App
     )?;
     kick_cloud_sync(&state);
     Ok(())
+}
+
+#[tauri::command]
+fn replicated_sync_enabled() -> bool {
+    replicated_sync::enabled()
+}
+
+#[tauri::command]
+async fn replicated_sync_status(
+    state: State<'_, AppState>,
+) -> Result<Vec<replicated_sync::ReplicatedSyncTransportStatus>, String> {
+    state.replicated_sync.status().await
+}
+
+#[tauri::command]
+async fn replicated_sync_add_folder(
+    state: State<'_, AppState>,
+) -> Result<Option<replicated_sync::ReplicatedSyncTransportStatus>, String> {
+    if !replicated_sync::enabled() {
+        return Err("Replicated sync is not enabled in this build".to_string());
+    }
+    let Some(folder) = rfd::AsyncFileDialog::new()
+        .set_title("Select a folder to sync through")
+        .pick_folder()
+        .await
+    else {
+        return Ok(None);
+    };
+    let instance_id = format!("folder-{}", uuid::Uuid::new_v4());
+    state.database.add_folder_transport(&instance_id, folder.path())?;
+    kick_replicated_sync(&state);
+    let statuses = state.replicated_sync.status().await?;
+    Ok(statuses.into_iter().find(|status| status.instance_id == instance_id))
+}
+
+#[tauri::command]
+async fn replicated_sync_remove_transport(
+    instance_id: String,
+    delete_data: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if delete_data {
+        if let Some(row) = state
+            .database
+            .configured_transports()?
+            .into_iter()
+            .find(|row| row.instance_id == instance_id)
+        {
+            if let Some(path) = replicated_sync::folder_config_path(&row.config_json) {
+                if let Ok(transport) = sync_folder::SyncFolderTransport::open(&instance_id, &path).await {
+                    transport.delete_all_corpus_data().await.map_err(|error| error.to_string())?;
+                }
+            }
+        }
+    }
+    state.database.remove_transport(&instance_id)
+}
+
+#[tauri::command]
+async fn replicated_sync_now(state: State<'_, AppState>) -> Result<(), String> {
+    state.replicated_sync.sync_once().await
 }
 
 #[tauri::command]
@@ -2221,9 +2295,12 @@ pub fn run() {
                 worker.run().await;
             });
             cloud_sync.clone().spawn(app.handle().clone(), reconcile_cloud_account_registry);
+            let replicated_sync = replicated_sync::ReplicatedSync::new(database.clone());
+            replicated_sync.clone().spawn(app.handle().clone());
             app.manage(AppState {
                 database,
                 cloud_sync,
+                replicated_sync,
                 auth_config,
                 accounts,
                 correspondence,
@@ -2249,6 +2326,11 @@ pub fn run() {
             cloud_resolve_conflict,
             cloud_synced_preferences,
             cloud_update_preferences,
+            replicated_sync_enabled,
+            replicated_sync_status,
+            replicated_sync_add_folder,
+            replicated_sync_remove_transport,
+            replicated_sync_now,
             correspondence_request,
             finish_exit,
             list_threads,

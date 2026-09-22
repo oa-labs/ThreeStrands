@@ -120,6 +120,34 @@ impl SyncFolderTransport {
             )))
         }
     }
+
+    /// Total bytes currently stored in this instance's corpus, for the
+    /// Settings UI's storage estimate. Best-effort: an unreadable entry is
+    /// skipped rather than failing the whole estimate.
+    pub async fn corpus_size_bytes(&self) -> Result<u64, TransportError> {
+        directory_size(&self.root).await
+    }
+}
+
+async fn directory_size(dir: &Path) -> Result<u64, TransportError> {
+    let mut total = 0u64;
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(io_error(error)),
+    };
+    while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
+        let Ok(file_type) = entry.file_type().await else { continue };
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            total += Box::pin(directory_size(&entry.path())).await?;
+        } else if let Ok(metadata) = entry.metadata().await {
+            total += metadata.len();
+        }
+    }
+    Ok(total)
 }
 
 #[async_trait]
@@ -562,5 +590,18 @@ mod tests {
         assert!(page.next_cursor.is_none());
 
         assert_eq!(transport.scan(Some("not-a-number")).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn corpus_size_reflects_stored_objects() {
+        let folder = TempFolder::new();
+        let transport = open_transport(&folder, "a").await;
+        // A freshly opened corpus already has its one-byte `format-v1`
+        // marker; assert growth relative to that rather than assuming zero.
+        let before = transport.corpus_size_bytes().await.unwrap();
+        let bytes = vec![7u8; 1024];
+        let cid = Cid::for_bytes(&bytes);
+        transport.put_object(&cid, &bytes).await.unwrap();
+        assert!(transport.corpus_size_bytes().await.unwrap() >= before + 1024);
     }
 }

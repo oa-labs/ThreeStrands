@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 27;
+pub(crate) const LATEST_VERSION: i64 = 28;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -697,6 +697,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 28 {
+        // Versioned, non-secret adapter config (a folder path, an RPC base
+        // URL) for each configured replicated-sync transport instance. Any
+        // credential lives in the OS keychain instead, never here.
+        if !has_column(&tx, "sync_transports", "config_json")? {
+            tx.execute("ALTER TABLE sync_transports ADD COLUMN config_json TEXT", [])
+                .map_err(error)?;
+        }
+        tx.pragma_update(None, "user_version", 28).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -782,6 +792,22 @@ mod tests {
                 .execute(&format!("SELECT * FROM {table}"), [])
                 .unwrap_or_else(|error| panic!("table {table} should exist and be queryable: {error}"));
         }
+    }
+
+    #[test]
+    fn v28_adds_transport_config_storage() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES ('a','folder','{\"path\":\"/tmp/x\"}',1,1)",
+                [],
+            )
+            .unwrap();
+        let config: String = connection
+            .query_row("SELECT config_json FROM sync_transports WHERE instance_id='a'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(config, "{\"path\":\"/tmp/x\"}");
     }
 
     #[test]

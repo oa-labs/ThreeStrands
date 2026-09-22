@@ -1380,6 +1380,243 @@ pub async fn transport_health(transports: &[Arc<dyn SyncTransport>]) -> Vec<(Tra
     results
 }
 
+// ============================ Transport config ==============================
+
+/// One configured transport instance's persisted row — a durable record of
+/// "the user selected this folder," independent of whatever live
+/// `Arc<dyn SyncTransport>` gets constructed from it at startup or on
+/// demand.
+pub struct ConfiguredTransport {
+    pub instance_id: String,
+    pub kind: String,
+    pub config_json: String,
+    pub required: bool,
+    pub enabled: bool,
+    pub last_success_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+impl Database {
+    pub fn configured_transports(&self) -> Result<Vec<ConfiguredTransport>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT instance_id, kind, config_json, required, enabled, last_success_at, last_error FROM sync_transports")
+            .map_err(display)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(ConfiguredTransport {
+                    instance_id: row.get(0)?,
+                    kind: row.get(1)?,
+                    config_json: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    required: row.get(3)?,
+                    enabled: row.get(4)?,
+                    last_success_at: row.get(5)?,
+                    last_error: row.get(6)?,
+                })
+            })
+            .map_err(display)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(display)?;
+        Ok(rows)
+    }
+
+    /// Persists (or reconfigures, if `instance_id` already exists) a folder
+    /// transport instance. Only the path is stored here — no credential, no
+    /// content.
+    pub fn add_folder_transport(&self, instance_id: &str, path: &std::path::Path) -> Result<(), String> {
+        let config = serde_json::json!({ "path": path.to_string_lossy() }).to_string();
+        self.connection()?
+            .execute(
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'folder',?2,1,1)
+                 ON CONFLICT(instance_id) DO UPDATE SET config_json=excluded.config_json, enabled=1",
+                params![instance_id, config],
+            )
+            .map_err(display)?;
+        Ok(())
+    }
+
+    /// Forgets a configured transport instance and its delivery ledger
+    /// rows. Does not touch the remote corpus itself — the caller deletes
+    /// that first (through the live transport) if the user asked for that.
+    pub fn remove_transport(&self, instance_id: &str) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute("DELETE FROM sync_transports WHERE instance_id=?1", params![instance_id])
+            .map_err(display)?;
+        connection
+            .execute("DELETE FROM sync_deliveries WHERE transport_instance_id=?1", params![instance_id])
+            .map_err(display)?;
+        Ok(())
+    }
+
+    fn set_transport_success(&self, instance_id: &str) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "UPDATE sync_transports SET last_success_at=?2, last_error=NULL WHERE instance_id=?1",
+                params![instance_id, Utc::now().to_rfc3339()],
+            )
+            .map_err(display)?;
+        Ok(())
+    }
+
+    fn set_transport_error(&self, instance_id: &str, error: &str) -> Result<(), String> {
+        self.connection()?
+            .execute("UPDATE sync_transports SET last_error=?2 WHERE instance_id=?1", params![instance_id, error])
+            .map_err(display)?;
+        Ok(())
+    }
+}
+
+/// Extracts the folder path from a `kind='folder'` row's `config_json`.
+pub(crate) fn folder_config_path(config_json: &str) -> Option<std::path::PathBuf> {
+    let value: Value = serde_json::from_str(config_json).ok()?;
+    value.get("path")?.as_str().map(std::path::PathBuf::from)
+}
+
+/// Builds the live transport for every enabled configured row. A row whose
+/// transport fails to open (folder missing, permission denied, ...) is
+/// skipped rather than failing the whole set — its own health will report
+/// `Unavailable` on the next status check.
+pub async fn build_configured_transports(database: &Database) -> Vec<Arc<dyn SyncTransport>> {
+    let mut transports: Vec<Arc<dyn SyncTransport>> = Vec::new();
+    let Ok(rows) = database.configured_transports() else {
+        return transports;
+    };
+    for row in rows {
+        if !row.enabled || row.kind != "folder" {
+            continue;
+        }
+        let Some(path) = folder_config_path(&row.config_json) else { continue };
+        if let Ok(transport) = crate::sync_folder::SyncFolderTransport::open(&row.instance_id, &path).await {
+            transports.push(Arc::new(transport));
+        }
+    }
+    transports
+}
+
+// ============================== Engine ======================================
+
+const SYNC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// One transport instance's status for the Settings UI: identity, live
+/// health, delivery ledger counts, and a best-effort storage estimate.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplicatedSyncTransportStatus {
+    pub instance_id: String,
+    pub path: String,
+    pub health: String,
+    pub pending: i64,
+    pub delivered: i64,
+    pub failed: i64,
+    pub last_success_at: Option<String>,
+    pub last_error: Option<String>,
+    pub storage_bytes: Option<u64>,
+}
+
+/// Owns the replicated-sync background cycle: mirrors `CloudSync`'s shape
+/// (a cheaply `Clone`-able handle held directly in `AppState`, constructed
+/// once, cloned into commands and the background task).
+#[derive(Clone)]
+pub struct ReplicatedSync {
+    database: Arc<Database>,
+    gate: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl ReplicatedSync {
+    pub fn new(database: Arc<Database>) -> Self {
+        Self {
+            database,
+            gate: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
+
+    /// Every configured transport's current status, for the Settings UI.
+    pub async fn status(&self) -> Result<Vec<ReplicatedSyncTransportStatus>, String> {
+        let rows = self.database.configured_transports()?;
+        let mut statuses = Vec::with_capacity(rows.len());
+        for row in rows {
+            let path = folder_config_path(&row.config_json);
+            let (pending, delivered, failed) = self.database.delivery_counts(&row.instance_id).unwrap_or((0, 0, 0));
+            let mut health = "unavailable: not configured".to_string();
+            let mut storage_bytes = None;
+            if let Some(path) = &path {
+                match crate::sync_folder::SyncFolderTransport::open(&row.instance_id, path).await {
+                    Ok(transport) => {
+                        health = match transport.health().await {
+                            Ok(TransportHealth::Healthy) => "healthy".to_string(),
+                            Ok(TransportHealth::Degraded(message)) => format!("degraded: {message}"),
+                            Ok(TransportHealth::Unavailable(message)) => format!("unavailable: {message}"),
+                            Err(error) => format!("unavailable: {error}"),
+                        };
+                        storage_bytes = transport.corpus_size_bytes().await.ok();
+                    }
+                    Err(error) => health = format!("unavailable: {error}"),
+                }
+            }
+            statuses.push(ReplicatedSyncTransportStatus {
+                instance_id: row.instance_id,
+                path: path.map(|path| path.display().to_string()).unwrap_or_default(),
+                health,
+                pending,
+                delivered,
+                failed,
+                last_success_at: row.last_success_at,
+                last_error: row.last_error,
+                storage_bytes,
+            });
+        }
+        Ok(statuses)
+    }
+
+    /// Runs one push-then-pull cycle against every configured transport.
+    /// A no-op if the feature is disabled or nothing is configured yet.
+    /// Serialized against concurrent calls (the periodic loop and a
+    /// manual "sync now" click) by `gate`.
+    pub async fn sync_once(&self) -> Result<(), String> {
+        if !enabled() {
+            return Ok(());
+        }
+        let _guard = self.gate.lock().await;
+        let transports = build_configured_transports(&self.database).await;
+        if transports.is_empty() {
+            return Ok(());
+        }
+        let keys = self.database.local_replicated_keys()?;
+
+        let push_result = push_pending_events(&self.database, &keys, &transports).await;
+        let pull_result = pull_from_transports(&self.database, &keys, &transports).await;
+
+        for (instance_id, health) in transport_health(&transports).await {
+            let _ = match health {
+                TransportHealth::Healthy => self.database.set_transport_success(&instance_id.0),
+                TransportHealth::Degraded(message) | TransportHealth::Unavailable(message) => {
+                    self.database.set_transport_error(&instance_id.0, &message)
+                }
+            };
+        }
+
+        push_result?;
+        pull_result?;
+        Ok(())
+    }
+
+    /// Spawns the periodic push/pull loop. Only ever does real work when
+    /// [`enabled`] is true and at least one transport is configured;
+    /// otherwise `sync_once` returns immediately, so this is cheap to
+    /// spawn unconditionally at startup.
+    pub fn spawn(self, handle: tauri::AppHandle) {
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(SYNC_INTERVAL).await;
+                let _ = self.sync_once().await;
+                use tauri::Emitter;
+                let _ = handle.emit("replicated-sync-status", ());
+            }
+        });
+    }
+}
+
 fn display(value: impl std::fmt::Display) -> String {
     value.to_string()
 }
@@ -1840,5 +2077,121 @@ mod replicator_tests {
         let later = backoff_retry_at(6);
         assert!(first.as_str() > now.as_str());
         assert!(later.as_str() > first.as_str());
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    struct TempFolder {
+        path: std::path::PathBuf,
+    }
+
+    impl TempFolder {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("threestrands-replicated-sync-config-test-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+    }
+
+    impl Drop for TempFolder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn add_folder_transport_persists_and_lists_it() {
+        let database = Database::open_memory();
+        let folder = TempFolder::new();
+        database.add_folder_transport("folder-1", &folder.path).unwrap();
+
+        let rows = database.configured_transports().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].instance_id, "folder-1");
+        assert_eq!(rows[0].kind, "folder");
+        assert!(rows[0].enabled);
+        assert_eq!(folder_config_path(&rows[0].config_json).as_deref(), Some(folder.path.as_path()));
+    }
+
+    #[test]
+    fn remove_transport_clears_config_and_deliveries() {
+        let database = Database::open_memory();
+        let folder = TempFolder::new();
+        database.add_folder_transport("folder-1", &folder.path).unwrap();
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sync_deliveries(cid,transport_instance_id,state,attempts) VALUES ('c1','folder-1','pending',0)",
+                [],
+            )
+            .unwrap();
+
+        database.remove_transport("folder-1").unwrap();
+
+        assert!(database.configured_transports().unwrap().is_empty());
+        let remaining: i64 = database
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sync_deliveries WHERE transport_instance_id='folder-1'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[tokio::test]
+    async fn build_configured_transports_skips_a_disabled_or_unopenable_row() {
+        let database = Database::open_memory();
+        let folder = TempFolder::new();
+        database.add_folder_transport("folder-1", &folder.path).unwrap();
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES ('folder-2','folder','{\"path\":\"/nonexistent/definitely-not-real\"}',1,1)",
+                [],
+            )
+            .unwrap();
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES ('folder-3','folder',?1,1,0)",
+                params![serde_json::json!({"path": folder.path.to_string_lossy()}).to_string()],
+            )
+            .unwrap();
+
+        let transports = build_configured_transports(&database).await;
+        assert_eq!(transports.len(), 1);
+        assert_eq!(transports[0].instance_id().0, "folder-1");
+    }
+
+    #[tokio::test]
+    async fn status_reports_health_and_a_storage_estimate_for_a_real_folder() {
+        let database = Database::open_memory();
+        let folder = TempFolder::new();
+        database.add_folder_transport("folder-1", &folder.path).unwrap();
+
+        let engine = ReplicatedSync::new(Arc::new(database));
+        let statuses = engine.status().await.unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].instance_id, "folder-1");
+        assert_eq!(statuses[0].health, "healthy");
+        assert_eq!(statuses[0].pending, 0);
+        assert!(statuses[0].storage_bytes.is_some());
+    }
+
+    #[tokio::test]
+    async fn sync_once_is_a_no_op_when_the_feature_is_disabled() {
+        // `enabled()` reads THREESTRANDS_REPLICATED_SYNC, which is unset in
+        // the test environment, so this never touches the OS keychain
+        // (`local_replicated_keys` is only reached past that gate).
+        assert!(!enabled());
+        let database = Database::open_memory();
+        let engine = ReplicatedSync::new(Arc::new(database));
+        engine.sync_once().await.unwrap();
     }
 }

@@ -169,6 +169,14 @@ import {
   type CloudConflict,
   type CloudDevice,
 } from "./cloudAccount";
+import {
+  replicatedSyncAddFolder,
+  replicatedSyncEnabled,
+  replicatedSyncNow,
+  replicatedSyncRemoveTransport,
+  replicatedSyncStatus,
+  type ReplicatedSyncTransportStatus,
+} from "./replicatedSync";
 import { useAccounts } from "./useAccounts";
 import { useAppPreferences } from "./useAppPreferences";
 import { useEscapeDismiss } from "./useEscapeDismiss";
@@ -206,7 +214,7 @@ type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
 export { formatMailTimestamp } from "./threadPresentation";
 
-type SettingsSection = "cloudAccount" | "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
+type SettingsSection = "cloudAccount" | "replicatedSync" | "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
 type Notice = { message: string; undo?: () => void };
 
@@ -3509,6 +3517,7 @@ const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "reading", label: "Reading" },
   { id: "cloudAccount", label: "Three Strands Account" },
+  { id: "replicatedSync", label: "Replicated Sync (Beta)" },
   { id: "accounts", label: "Mail Accounts" },
   { id: "calendarAccounts", label: "Calendar Accounts" },
   { id: "availability", label: "Availability" },
@@ -3617,6 +3626,18 @@ function Settings({
   onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
   onDeleteSnippet(id: string): Promise<void>;
 }) {
+  // Replicated Sync is a development/beta feature (see replicatedSync.ts):
+  // its settings tab only exists in a build where the engine is actually
+  // enabled, so a normal build's Settings menu is byte-for-byte what it was
+  // before this feature existed.
+  const [replicatedSyncAvailable, setReplicatedSyncAvailable] = useState(false);
+  useEffect(() => {
+    void replicatedSyncEnabled().then(setReplicatedSyncAvailable);
+  }, []);
+  const visibleSections = SETTINGS_SECTIONS.filter(
+    (item) => item.id !== "replicatedSync" || replicatedSyncAvailable,
+  );
+
   return (
     <Modal title="Settings" className="settings-modal" onClose={onClose}>
       <div className="settings-body">
@@ -3626,14 +3647,14 @@ function Settings({
           onKeyDown={(event) => {
             if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
             event.preventDefault();
-            const currentIndex = SETTINGS_SECTIONS.findIndex((item) => item.id === section);
+            const currentIndex = visibleSections.findIndex((item) => item.id === section);
             const delta = event.key === "ArrowDown" ? 1 : -1;
-            const next = SETTINGS_SECTIONS[(currentIndex + delta + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length]!;
+            const next = visibleSections[(currentIndex + delta + visibleSections.length) % visibleSections.length]!;
             onSectionChange(next.id);
             event.currentTarget.querySelector<HTMLButtonElement>(`[data-section-id="${next.id}"]`)?.focus();
           }}
         >
-          {SETTINGS_SECTIONS.map((item) => (
+          {visibleSections.map((item) => (
             <button
               key={item.id}
               data-section-id={item.id}
@@ -3647,6 +3668,7 @@ function Settings({
         </nav>
         <div className="settings-panel">
           {section === "cloudAccount" ? <CloudAccountSettings /> : null}
+          {section === "replicatedSync" ? <ReplicatedSyncSettings /> : null}
           {section === "appearance" ? (
             <AppearanceSettings
               theme={theme}
@@ -3825,6 +3847,147 @@ function CloudAccountSettings() {
       <h3>Delete Cloud Account</h3>
       <p className="settings-hint">Deletes synchronized cloud data and sessions. Local data remains on this computer; encrypted backups expire according to the service retention policy.</p>
       <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => { if (window.confirm("Delete your Three Strands cloud account? Local data will remain on this computer.")) act(cloudDeleteAccount); }}>Delete cloud account</button>
+      {message ? <p role="status" className="settings-hint">{message}</p> : null}
+    </section>
+  );
+}
+
+function formatStorageEstimate(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(1)} ${units[index]}`;
+}
+
+function ReplicatedSyncSettings() {
+  const [available, setAvailable] = useState<boolean | null>(null);
+  const [transports, setTransports] = useState<ReplicatedSyncTransportStatus[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const enabled = await replicatedSyncEnabled();
+    setAvailable(enabled);
+    setTransports(enabled ? await replicatedSyncStatus() : []);
+  }, []);
+
+  useEffect(() => {
+    void refresh().catch((error: unknown) => setMessage(String(error)));
+    let unlisten: (() => void) | undefined;
+    if ("__TAURI_INTERNALS__" in window) {
+      void listen("replicated-sync-status", () => void refresh()).then((stop) => { unlisten = stop; });
+    }
+    return () => unlisten?.();
+  }, [refresh]);
+
+  const act = (operation: () => Promise<unknown>) => {
+    setBusy(true);
+    setMessage(null);
+    void operation()
+      .then(refresh)
+      .catch((error: unknown) => setMessage(String(error)))
+      .finally(() => setBusy(false));
+  };
+
+  const addFolder = () => {
+    setBusy(true);
+    setMessage(null);
+    void replicatedSyncAddFolder()
+      .then((status) => {
+        if (!status) setMessage("No folder selected.");
+        return refresh();
+      })
+      .catch((error: unknown) => setMessage(String(error)))
+      .finally(() => setBusy(false));
+  };
+
+  if (available === null) {
+    return (
+      <section className="settings-section" aria-label="Replicated Sync">
+        <p className="settings-hint">Loading replicated sync status…</p>
+      </section>
+    );
+  }
+
+  if (!available) {
+    return (
+      <section className="settings-section" aria-label="Replicated Sync">
+        <h3>Replicated Sync (Beta)</h3>
+        <p className="settings-hint">
+          This build does not have the replicated-sync engine enabled. This is an in-development, end-to-end
+          encrypted alternative to the Three Strands Account sync above, with no Three Strands-operated server: it
+          replicates directly through folders you choose (for example inside Google Drive, Dropbox, or iCloud Drive).
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="settings-section" aria-label="Replicated Sync">
+      <h3>Replicated Sync (Beta)</h3>
+      <p className="settings-hint">
+        Replicates tasks, snippets, Split Inboxes, and account metadata as end-to-end encrypted files through folders
+        you choose. There is no Three Strands-operated sync server: ThreeStrands never sees the plaintext, but
+        anyone with access to a selected folder can see the encrypted files themselves (their size and timing, not
+        their contents). Deleting a folder here removes this device's copy of the synchronized data from that
+        folder; it does not erase copies elsewhere (other devices, cloud provider version history, or other
+        configured folders).
+      </p>
+
+      {transports.length === 0 ? (
+        <p className="settings-hint">No folders configured yet.</p>
+      ) : (
+        <ul className="accounts-list">
+          {transports.map((transport) => (
+            <li className="account-card" key={transport.instanceId}>
+              <div className="account-card-row">
+                <div className="account-card-identity">
+                  <strong>{transport.path}</strong>
+                  <span className="account-card-email">
+                    {transport.health} · {transport.pending} pending
+                    {transport.failed ? `, ${transport.failed} failed` : ""}
+                    {transport.storageBytes != null ? ` · ${formatStorageEstimate(transport.storageBytes)}` : ""}
+                  </span>
+                  {transport.lastSuccessAt ? (
+                    <span className="account-card-email">Last synced {new Date(transport.lastSuccessAt).toLocaleString()}</span>
+                  ) : null}
+                  {transport.lastError ? <span className="account-card-email">{transport.lastError}</span> : null}
+                </div>
+                <button
+                  type="button"
+                  className="account-action-button danger-action"
+                  disabled={busy}
+                  onClick={() => {
+                    const deleteData = window.confirm(
+                      `Delete the synchronized data in "${transport.path}"? This removes this device's copy from that folder; it does not erase copies on other devices or elsewhere. Choose Cancel to just stop syncing to it and keep the files there.`,
+                    );
+                    act(() => replicatedSyncRemoveTransport(transport.instanceId, deleteData));
+                  }}
+                >
+                  Disconnect
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <button type="button" className="primary-action" disabled={busy} onClick={addFolder}>
+        Add a sync folder
+      </button>
+      <button
+        type="button"
+        className="account-action-button"
+        disabled={busy || transports.length === 0}
+        onClick={() => act(replicatedSyncNow)}
+      >
+        Sync now
+      </button>
       {message ? <p role="status" className="settings-hint">{message}</p> : null}
     </section>
   );
