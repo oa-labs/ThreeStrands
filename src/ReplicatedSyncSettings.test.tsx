@@ -187,6 +187,22 @@ describe("replicated sync setup steps", () => {
     expect(screen.getAllByRole("checkbox", { name: "Enable beta features" })).toHaveLength(1);
   });
 
+  it("lays out disclosure content in a spaced body and keeps the beta checkbox beside its label", async () => {
+    setUp({ transports: [] });
+    render(<ReplicatedSyncSettings />);
+
+    const explanation = (await screen.findByText("How replicated sync works")).closest("details")!;
+    const body = explanation.querySelector(":scope > .settings-disclosure-body");
+    expect(body).not.toBeNull();
+    expect(body).toContainElement(screen.getByText(/never sees the plaintext/));
+    for (const details of document.querySelectorAll("details.settings-disclosure")) {
+      expect(Array.from(details.children).map((child) => child.tagName)).toEqual(["SUMMARY", "DIV"]);
+    }
+    const betaLabel = screen.getByRole("checkbox", { name: "Enable beta features" }).closest("label")!;
+    expect(betaLabel).toHaveClass("settings-checkbox");
+    expect(betaLabel).not.toHaveClass("settings-field-inline");
+  });
+
   it("shows only the beta toggle until replicated sync is turned on", async () => {
     vi.mocked(sync.replicatedSyncEnabled).mockResolvedValue(false);
     vi.mocked(sync.replicatedSyncBetaEnabled).mockResolvedValue(false);

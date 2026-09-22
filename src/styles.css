@@ -1573,9 +1573,9 @@ form.split-inbox-add select {
 .settings-inline-confirm p { color: var(--text); }
 .settings-inline-confirm-actions { display: flex; flex-shrink: 0; gap: 6px; }
 .settings-section h4 { margin: 6px 0 0; font-size: calc(13px * var(--font-scale)); color: var(--text); }
-.settings-disclosure { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+.settings-disclosure { width: 100%; }
+.settings-disclosure-body { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; margin-top: 8px; }
 .settings-disclosure > summary { cursor: pointer; color: var(--text); font-size: calc(13px * var(--font-scale)); font-weight: 600; }
-.settings-disclosure[open] > summary { margin-bottom: 2px; }
 .sync-setup-steps { display: flex; flex-direction: column; gap: 10px; width: 100%; margin: 0; padding: 0; list-style: none; }
 .sync-setup-step { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; }
 .sync-setup-step-current { border-color: var(--primary-border); }

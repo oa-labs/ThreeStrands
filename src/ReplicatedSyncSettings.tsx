@@ -55,6 +55,27 @@ function formatStorageEstimate(bytes: number): string {
   return `${value.toFixed(1)} ${units[index]}`;
 }
 
+/** A collapsible settings group. Content sits in its own flex body because
+ * WebKit does not lay out `<details>` children as flex items. */
+function Disclosure({
+  summary,
+  open,
+  className,
+  children,
+}: {
+  summary: ReactNode;
+  open?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className={className ? `settings-disclosure ${className}` : "settings-disclosure"} open={open}>
+      <summary>{summary}</summary>
+      <div className="settings-disclosure-body">{children}</div>
+    </details>
+  );
+}
+
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -239,7 +260,7 @@ export function ReplicatedSyncSettings() {
 
   const betaToggle = (
     <>
-      <label className="settings-field settings-field-inline">
+      <label className="settings-checkbox">
         <input type="checkbox" checked={betaEnabled} disabled={busy} onChange={(event) => actFor("beta", () => replicatedSyncSetBetaEnabled(event.target.checked))} />
         <span>Enable beta features</span>
       </label>
@@ -280,8 +301,7 @@ export function ReplicatedSyncSettings() {
   return (
     <section className="settings-section" aria-label="Replicated Sync">
       <h3>Replicated Sync (Beta)</h3>
-      <details className="settings-disclosure">
-        <summary>How replicated sync works</summary>
+      <Disclosure summary="How replicated sync works">
         <p className="settings-hint">
           Replicates tasks, snippets, Split Inboxes, and account metadata as end-to-end encrypted files through
           folders you choose. There is no Three Strands-operated sync server: ThreeStrands never sees the plaintext,
@@ -290,7 +310,7 @@ export function ReplicatedSyncSettings() {
           that folder; it does not erase copies elsewhere (other devices, cloud provider version history, or other
           configured folders).
         </p>
-      </details>
+      </Disclosure>
 
       {conflicts.length > 0 ? (
         <div>
@@ -396,20 +416,18 @@ function SetupSteps({
               </div>
               {state === "current" ? <div className="sync-setup-step-body">{bodies[candidate.id]}</div> : null}
               {state === "done" && candidate.id === "location" ? (
-                <details className="settings-disclosure sync-setup-step-body">
-                  <summary>{transports.length === 1 ? transports[0]!.location : plural(transports.length, "sync location")}</summary>
+                <Disclosure className="sync-setup-step-body" summary={transports.length === 1 ? transports[0]!.location : plural(transports.length, "sync location")}>
                   {locations}
-                </details>
+                </Disclosure>
               ) : null}
               {state === "upcoming" && candidate.upcoming ? <p className="settings-hint sync-setup-step-body">{candidate.upcoming}</p> : null}
             </li>
           );
         })}
       </ol>
-      <details className="settings-disclosure">
-        <summary>Advanced</summary>
+      <Disclosure summary="Advanced">
         {betaToggle}
-      </details>
+      </Disclosure>
     </>
   );
 }
@@ -791,20 +809,17 @@ function EnrolledOverview({
         </>
       ) : null}
 
-      <details className="settings-disclosure" open>
-        <summary>Devices ({deviceRoster.length})</summary>
+      <Disclosure summary={`Devices (${deviceRoster.length})`} open>
         <ul className="accounts-list" aria-label="Devices">
           {deviceRoster.map((device) => <DeviceCard key={device.deviceId} device={device} operation={operation} />)}
         </ul>
-      </details>
+      </Disclosure>
 
-      <details className="settings-disclosure" open={overview.tone === "attention"}>
-        <summary>Sync locations ({transports.length})</summary>
+      <Disclosure summary={`Sync locations (${transports.length})`} open={overview.tone === "attention"}>
         {locations}
-      </details>
+      </Disclosure>
 
-      <details className="settings-disclosure">
-        <summary>Advanced</summary>
+      <Disclosure summary="Advanced">
         {betaToggle}
         <LeaveControl
           operation={operation}
@@ -813,7 +828,7 @@ function EnrolledOverview({
           body="This device stops syncing and forgets its keys for this space. Tasks, snippets, and other data stay on this device, and your sync locations stay configured so you can rejoin later. Changes that haven’t synced yet won’t reach your other devices, and they will keep listing this device until you revoke it from one of them."
           confirm="Leave sync space"
         />
-      </details>
+      </Disclosure>
     </>
   );
 }
@@ -926,8 +941,7 @@ function LocationManager({
       </button>
       <InlineStatus operation={operation} for="add-folder" />
 
-      <details className="settings-disclosure">
-        <summary>Use an IPFS RPC endpoint instead</summary>
+      <Disclosure summary="Use an IPFS RPC endpoint instead">
         <p className="settings-hint">
           Advanced: point at a Kubo-compatible RPC endpoint or a dedicated Filebase bucket. For Filebase, create one
           bucket for this sync space, generate its bucket-specific RPC token, and enter that same token on every
@@ -959,20 +973,22 @@ function LocationManager({
             }}
           />
         </label>
-        <button
-          type="button"
-          className="account-action-button"
-          disabled={busy}
-          onClick={() => {
-            setIpfsBaseUrl(FILEBASE_RPC_URL);
-            setIpfsProbe(null);
-          }}
-        >
-          Use Filebase preset
-        </button>
-        <button type="button" className="account-action-button" disabled={busy || !ipfsBaseUrl} onClick={probeIpfsRpc}>
-          Test connection
-        </button>
+        <div className="settings-row">
+          <button
+            type="button"
+            className="account-action-button"
+            disabled={busy}
+            onClick={() => {
+              setIpfsBaseUrl(FILEBASE_RPC_URL);
+              setIpfsProbe(null);
+            }}
+          >
+            Use Filebase preset
+          </button>
+          <button type="button" className="account-action-button" disabled={busy || !ipfsBaseUrl} onClick={probeIpfsRpc}>
+            Test connection
+          </button>
+        </div>
         {ipfsProbe?.versionOk ? (
           <p className="settings-hint">
             {`Reachable · ${ipfsProbe.mfsAvailable ? "supports discovery (MFS)" : "storage-only, no MFS discovery"}`}
@@ -982,7 +998,7 @@ function LocationManager({
           Add IPFS RPC endpoint
         </button>
         <InlineStatus operation={operation} for="ipfs" />
-      </details>
+      </Disclosure>
     </>
   );
 }
