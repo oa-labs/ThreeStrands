@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sync-protocol",
+    "crates/sync-envelope",
+    "crates/sync-core",
+]
+
+# `src-tauri` and `services/sync-server` are deliberately kept OUT of this
+# workspace (see the pluggable-replicated-sync plan, Phase 1):
+#
+# - `src-tauri` ships its own `Cargo.lock`, and AGENTS.md pins the shipped
+#   "threestrands" package version to that exact file. Folding it into this
+#   workspace would move that lock entry to a root `Cargo.lock` instead.
+#   Application/projection integration happens in a later phase, not here.
+# - `services/sync-server` depends on a divergent stack (axum/sqlx/postgres)
+#   that has no reason to share a resolver graph with the new protocol
+#   crates, and it is deleted outright in Phase 7 of the same plan.
+#
+# Both remain ordinary standalone packages with their own `Cargo.lock`,
+# resolved independently of this workspace.
+exclude = ["src-tauri", "services/sync-server"]

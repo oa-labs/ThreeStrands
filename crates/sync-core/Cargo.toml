@@ -1,0 +1,13 @@
+[package]
+name = "threestrands-sync-core"
+version = "0.1.0"
+edition = "2021"
+description = "Pure operation graph / multi-value register for ThreeStrands replicated sync"
+
+[dependencies]
+serde_json = "1"
+threestrands-sync-protocol = { path = "../sync-protocol" }
+
+[dev-dependencies]
+proptest = "1"
+rand = "0.8"
