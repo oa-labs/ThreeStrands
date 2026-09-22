@@ -15,16 +15,16 @@ impl Database {
             }
             _ => {}
         }
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        let Some((account_id, sender_email, sender_domain)) =
-            sender_identity_for_thread(&transaction, &event.thread_id)?
-        else {
-            return Ok(());
-        };
-        let dwell_ms = event.dwell_ms.map(|value| value.clamp(0, 86_400_000));
-        transaction
-            .execute(
+        self.with_transaction(|transaction| {
+            let Some((account_id, sender_email, sender_domain)) =
+                sender_identity_for_thread(transaction, &event.thread_id)?
+            else {
+                // Nothing was written; committing the read-only transaction
+                // is equivalent to the rollback-on-drop this replaced.
+                return Ok(());
+            };
+            let dwell_ms = event.dwell_ms.map(|value| value.clamp(0, 86_400_000));
+            transaction.execute(
                 "INSERT INTO triage_events(
                     id, account_id, thread_id, sender_email, sender_domain,
                     event_kind, context, action, opened, dwell_ms, scrolled,
@@ -45,8 +45,8 @@ impl Database {
                     event.batch,
                     Utc::now().to_rfc3339(),
                 ],
-            )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)
+            )?;
+            Ok(())
+        })
     }
 }

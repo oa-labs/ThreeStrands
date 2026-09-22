@@ -3,16 +3,12 @@ use chrono_tz::Tz;
 use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
-use super::{Database, DatabaseError, DbResult};
+use super::{display_error, Database, DbResult};
 use crate::models::{CreateTaskRequest, ThreadTask, UpdateTaskRequest};
 
 const MAX_TITLE: usize = 240;
 const MAX_NOTES: usize = 8_000;
 const MAX_EVIDENCE: usize = 4_000;
-
-fn error(value: impl std::fmt::Display) -> DatabaseError {
-    DatabaseError::Message(value.to_string())
-}
 
 fn validate_task_fields(
     title: &str,
@@ -76,14 +72,13 @@ fn select_sql() -> &'static str {
 }
 
 fn task_by_id(connection: &rusqlite::Connection, id: &str) -> DbResult<Option<ThreadTask>> {
-    connection
+    Ok(connection
         .query_row(
             &format!("{} WHERE id = ?1", select_sql()),
             [id],
             task_from_row,
         )
-        .optional()
-        .map_err(error)
+        .optional()?)
 }
 
 impl Database {
@@ -92,26 +87,26 @@ impl Database {
         account_id: Option<&str>,
         status: Option<&str>,
     ) -> DbResult<Vec<ThreadTask>> {
-        let connection = self.connection()?;
-        let mut sql = format!("{} WHERE 1=1", select_sql());
-        if account_id.is_some() {
-            sql.push_str(" AND account_id = ?1");
-        }
-        if status.is_some() {
-            sql.push_str(if account_id.is_some() { " AND status = ?2" } else { " AND status = ?1" });
-        }
-        sql.push_str(" ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END,
-                      CASE WHEN due_value IS NULL THEN 1 ELSE 0 END,
-                      due_value ASC, updated_at DESC");
-        let mut statement = connection.prepare(&sql).map_err(error)?;
-        let rows = match (account_id, status) {
-            (Some(account), Some(status)) => statement.query_map(params![account, status], task_from_row),
-            (Some(account), None) => statement.query_map(params![account], task_from_row),
-            (None, Some(status)) => statement.query_map(params![status], task_from_row),
-            (None, None) => statement.query_map([], task_from_row),
-        }
-        .map_err(error)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(error)
+        self.with_connection(|connection| {
+            let mut sql = format!("{} WHERE 1=1", select_sql());
+            if account_id.is_some() {
+                sql.push_str(" AND account_id = ?1");
+            }
+            if status.is_some() {
+                sql.push_str(if account_id.is_some() { " AND status = ?2" } else { " AND status = ?1" });
+            }
+            sql.push_str(" ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END,
+                          CASE WHEN due_value IS NULL THEN 1 ELSE 0 END,
+                          due_value ASC, updated_at DESC");
+            let mut statement = connection.prepare(&sql)?;
+            let rows = match (account_id, status) {
+                (Some(account), Some(status)) => statement.query_map(params![account, status], task_from_row),
+                (Some(account), None) => statement.query_map(params![account], task_from_row),
+                (None, Some(status)) => statement.query_map(params![status], task_from_row),
+                (None, None) => statement.query_map([], task_from_row),
+            }?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
     }
 
     pub fn create_task(&self, request: &CreateTaskRequest) -> DbResult<ThreadTask> {
@@ -141,94 +136,89 @@ impl Database {
         if request.evidence_text.as_deref().is_some_and(|value| value.chars().count() > MAX_EVIDENCE) {
             return Err(format!("Task evidence exceeds {MAX_EVIDENCE} characters").into());
         }
-        let connection = self.connection()?;
-        let wait_after: Option<String> = match request.thread_id.as_deref() {
-            Some(thread_id) => connection
-                .query_row(
-                    "SELECT last_received_at FROM threads WHERE id = ?1 AND account_id = ?2",
-                    params![thread_id, request.account_id],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(error)?
-                .ok_or_else(|| "Source thread not found".to_string())?,
-            None => None,
-        };
-        let now = Utc::now().to_rfc3339();
-        let id = Uuid::new_v4().to_string();
-        connection
-            .execute(
-                "INSERT INTO tasks(
-                    id, account_id, thread_id, source_message_id, subject_snapshot,
-                    title, notes, kind, due_kind, due_value, time_zone,
-                    repeat_interval_days, status, evidence_text, wait_after,
-                    created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                           'open', ?13, ?14, ?15, ?15)",
-                params![
-                    id,
-                    request.account_id,
-                    request.thread_id,
-                    request.source_message_id,
-                    request.subject_snapshot.as_deref().map(str::trim),
-                    request.title.trim(),
-                    request.notes.as_deref().map(str::trim),
-                    request.kind,
-                    request.due_kind,
-                    request.due_value,
-                    request.time_zone,
-                    request.repeat_interval_days,
-                    request.evidence_text.as_deref().map(str::trim),
-                    wait_after,
-                    now,
-                ],
-            )
-            .map_err(error)?;
-        connection
-            .query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)
-            .map_err(error)
+        self.with_connection(|connection| {
+            let wait_after: Option<String> = match request.thread_id.as_deref() {
+                Some(thread_id) => connection
+                    .query_row(
+                        "SELECT last_received_at FROM threads WHERE id = ?1 AND account_id = ?2",
+                        params![thread_id, request.account_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .ok_or_else(|| "Source thread not found".to_string())?,
+                None => None,
+            };
+            let now = Utc::now().to_rfc3339();
+            let id = Uuid::new_v4().to_string();
+            connection
+                .execute(
+                    "INSERT INTO tasks(
+                        id, account_id, thread_id, source_message_id, subject_snapshot,
+                        title, notes, kind, due_kind, due_value, time_zone,
+                        repeat_interval_days, status, evidence_text, wait_after,
+                        created_at, updated_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                               'open', ?13, ?14, ?15, ?15)",
+                    params![
+                        id,
+                        request.account_id,
+                        request.thread_id,
+                        request.source_message_id,
+                        request.subject_snapshot.as_deref().map(str::trim),
+                        request.title.trim(),
+                        request.notes.as_deref().map(str::trim),
+                        request.kind,
+                        request.due_kind,
+                        request.due_value,
+                        request.time_zone,
+                        request.repeat_interval_days,
+                        request.evidence_text.as_deref().map(str::trim),
+                        wait_after,
+                        now,
+                    ],
+                )?;
+            Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?)
+        })
     }
 
     pub fn update_task(&self, request: &UpdateTaskRequest) -> DbResult<ThreadTask> {
-        let connection = self.connection()?;
-        let current = task_by_id(&connection, &request.id)?
-            .ok_or_else(|| "Task not found".to_string())?;
-        let title = request.title.as_deref().unwrap_or(&current.title);
-        let kind = request.kind.as_deref().unwrap_or(&current.kind);
-        let due_kind = request.due_kind.as_deref().unwrap_or(&current.due_kind);
-        let due_value = request
-            .due_value
-            .as_ref()
-            .map_or(current.due_value.as_deref(), |value| value.as_deref());
-        let repeat_interval_days = request
-            .repeat_interval_days
-            .unwrap_or(current.repeat_interval_days);
-        validate_task_fields(title, kind, due_kind, due_value, repeat_interval_days)?;
-        let notes = request
-            .notes
-            .as_ref()
-            .map_or(current.notes.as_deref(), |value| value.as_deref());
-        let time_zone = request
-            .time_zone
-            .as_ref()
-            .map_or(current.time_zone.as_deref(), |value| value.as_deref());
-        if notes.is_some_and(|value| value.chars().count() > MAX_NOTES) {
-            return Err(format!("Task notes exceed {MAX_NOTES} characters").into());
-        }
-        let now = Utc::now().to_rfc3339();
-        connection
-            .execute(
-                "UPDATE tasks SET title=?1, notes=?2, kind=?3, due_kind=?4, due_value=?5,
-                    time_zone=?6, repeat_interval_days=?7, updated_at=?8 WHERE id=?9",
-                params![
-                    title.trim(), notes.map(str::trim), kind, due_kind, due_value,
-                    time_zone, repeat_interval_days, now, request.id
-                ],
-            )
-            .map_err(error)?;
-        connection
-            .query_row(&format!("{} WHERE id = ?1", select_sql()), [&request.id], task_from_row)
-            .map_err(error)
+        self.with_connection(|connection| {
+            let current = task_by_id(connection, &request.id)?
+                .ok_or_else(|| "Task not found".to_string())?;
+            let title = request.title.as_deref().unwrap_or(&current.title);
+            let kind = request.kind.as_deref().unwrap_or(&current.kind);
+            let due_kind = request.due_kind.as_deref().unwrap_or(&current.due_kind);
+            let due_value = request
+                .due_value
+                .as_ref()
+                .map_or(current.due_value.as_deref(), |value| value.as_deref());
+            let repeat_interval_days = request
+                .repeat_interval_days
+                .unwrap_or(current.repeat_interval_days);
+            validate_task_fields(title, kind, due_kind, due_value, repeat_interval_days)?;
+            let notes = request
+                .notes
+                .as_ref()
+                .map_or(current.notes.as_deref(), |value| value.as_deref());
+            let time_zone = request
+                .time_zone
+                .as_ref()
+                .map_or(current.time_zone.as_deref(), |value| value.as_deref());
+            if notes.is_some_and(|value| value.chars().count() > MAX_NOTES) {
+                return Err(format!("Task notes exceed {MAX_NOTES} characters").into());
+            }
+            let now = Utc::now().to_rfc3339();
+            connection
+                .execute(
+                    "UPDATE tasks SET title=?1, notes=?2, kind=?3, due_kind=?4, due_value=?5,
+                        time_zone=?6, repeat_interval_days=?7, updated_at=?8 WHERE id=?9",
+                    params![
+                        title.trim(), notes.map(str::trim), kind, due_kind, due_value,
+                        time_zone, repeat_interval_days, now, request.id
+                    ],
+                )?;
+            Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [&request.id], task_from_row)?)
+        })
     }
 
     pub fn set_task_status(&self, id: &str, status: &str, source: &str) -> DbResult<ThreadTask> {
@@ -241,92 +231,87 @@ impl Database {
         let now = Utc::now().to_rfc3339();
         let completed_at = (status == "completed").then_some(now.as_str());
         let completion_source = if status == "open" { None } else { Some(source) };
-        let connection = self.connection()?;
-        connection
-            .execute(
-                "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4 WHERE id=?5",
-                params![status, completion_source, completed_at, now, id],
-            )
-            .map_err(error)?;
-        connection
-            .query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)
-            .map_err(error)
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "UPDATE tasks SET status=?1, completion_source=?2, completed_at=?3, updated_at=?4 WHERE id=?5",
+                    params![status, completion_source, completed_at, now, id],
+                )?;
+            Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?)
+        })
     }
 
     pub fn record_follow_up(&self, id: &str) -> DbResult<ThreadTask> {
-        let connection = self.connection()?;
-        let current =
-            task_by_id(&connection, id)?.ok_or_else(|| "Task not found".to_string())?;
-        if current.status != "open"
-            || current.kind != "follow_up"
-            || current.repeat_interval_days.is_none()
-        {
-            return Err("Only open repeating follow-up tasks can be recorded".into());
-        }
-        let interval = current.repeat_interval_days.unwrap_or_default() as i64;
-        let due_value = current
-            .due_value
-            .as_deref()
-            .ok_or_else(|| "Repeating follow-up has no due date".to_string())?;
-        let next_due = match current.due_kind.as_str() {
-            "date" => NaiveDate::parse_from_str(due_value, "%Y-%m-%d")
-                .map_err(error)?
-                .checked_add_days(Days::new(interval as u64))
-                .ok_or_else(|| "Follow-up due date is out of range".to_string())?
-                .format("%Y-%m-%d")
-                .to_string(),
-            "datetime" => {
-                let parsed = DateTime::parse_from_rfc3339(due_value).map_err(error)?;
-                let time_zone = current
-                    .time_zone
-                    .as_deref()
-                    .unwrap_or("UTC")
-                    .parse::<Tz>()
-                    .map_err(error)?;
-                let local = parsed.with_timezone(&time_zone);
-                let next_local = local
-                    .naive_local()
-                    .checked_add_days(Days::new(interval as u64))
-                    .ok_or_else(|| "Follow-up due date is out of range".to_string())?;
-                time_zone
-                    .from_local_datetime(&next_local)
-                    .single()
-                    .or_else(|| time_zone.from_local_datetime(&next_local).earliest())
-                    .or_else(|| time_zone.from_local_datetime(&next_local).latest())
-                    .ok_or_else(|| "Follow-up due date is invalid in its timezone".to_string())?
-                    .to_rfc3339()
+        self.with_connection(|connection| {
+            let current =
+                task_by_id(connection, id)?.ok_or_else(|| "Task not found".to_string())?;
+            if current.status != "open"
+                || current.kind != "follow_up"
+                || current.repeat_interval_days.is_none()
+            {
+                return Err("Only open repeating follow-up tasks can be recorded".into());
             }
-            _ => return Err("Repeating follow-up must have a date or datetime due value".into()),
-        };
-        let now = Utc::now().to_rfc3339();
-        connection
-            .execute(
-                "UPDATE tasks SET due_value=?1, wait_after=(SELECT last_received_at FROM threads WHERE threads.id=tasks.thread_id), completion_source=NULL, completed_at=NULL, updated_at=?2 WHERE id=?3 AND status='open'",
-                params![next_due, now, id],
-            )
-            .map_err(error)?;
-        connection
-            .query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)
-            .map_err(error)
+            let interval = current.repeat_interval_days.unwrap_or_default() as i64;
+            let due_value = current
+                .due_value
+                .as_deref()
+                .ok_or_else(|| "Repeating follow-up has no due date".to_string())?;
+            let next_due = match current.due_kind.as_str() {
+                "date" => NaiveDate::parse_from_str(due_value, "%Y-%m-%d").map_err(display_error)?
+                    .checked_add_days(Days::new(interval as u64))
+                    .ok_or_else(|| "Follow-up due date is out of range".to_string())?
+                    .format("%Y-%m-%d")
+                    .to_string(),
+                "datetime" => {
+                    let parsed = DateTime::parse_from_rfc3339(due_value).map_err(display_error)?;
+                    let time_zone = current
+                        .time_zone
+                        .as_deref()
+                        .unwrap_or("UTC")
+                        .parse::<Tz>()
+                        .map_err(display_error)?;
+                    let local = parsed.with_timezone(&time_zone);
+                    let next_local = local
+                        .naive_local()
+                        .checked_add_days(Days::new(interval as u64))
+                        .ok_or_else(|| "Follow-up due date is out of range".to_string())?;
+                    time_zone
+                        .from_local_datetime(&next_local)
+                        .single()
+                        .or_else(|| time_zone.from_local_datetime(&next_local).earliest())
+                        .or_else(|| time_zone.from_local_datetime(&next_local).latest())
+                        .ok_or_else(|| "Follow-up due date is invalid in its timezone".to_string())?
+                        .to_rfc3339()
+                }
+                _ => return Err("Repeating follow-up must have a date or datetime due value".into()),
+            };
+            let now = Utc::now().to_rfc3339();
+            connection
+                .execute(
+                    "UPDATE tasks SET due_value=?1, wait_after=(SELECT last_received_at FROM threads WHERE threads.id=tasks.thread_id), completion_source=NULL, completed_at=NULL, updated_at=?2 WHERE id=?3 AND status='open'",
+                    params![next_due, now, id],
+                )?;
+            Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?)
+        })
     }
 
     pub fn reconcile_waiting_tasks(&self) -> DbResult<usize> {
         let now = Utc::now().to_rfc3339();
-        let connection = self.connection()?;
-        let changed = connection
-            .execute(
-                "UPDATE tasks SET status='completed', completion_source='reply', completed_at=?1, updated_at=?1
-                 WHERE status='open' AND kind IN ('waiting_for', 'follow_up')
-                   AND wait_after IS NOT NULL
-                   AND EXISTS (
-                     SELECT 1 FROM threads
-                     WHERE threads.id = tasks.thread_id
-                       AND threads.last_received_at > tasks.wait_after
-                   )",
-                [&now],
-            )
-            .map_err(error)?;
-        Ok(changed)
+        self.with_connection(|connection| {
+            let changed = connection
+                .execute(
+                    "UPDATE tasks SET status='completed', completion_source='reply', completed_at=?1, updated_at=?1
+                     WHERE status='open' AND kind IN ('waiting_for', 'follow_up')
+                       AND wait_after IS NOT NULL
+                       AND EXISTS (
+                         SELECT 1 FROM threads
+                         WHERE threads.id = tasks.thread_id
+                           AND threads.last_received_at > tasks.wait_after
+                       )",
+                    [&now],
+                )?;
+            Ok(changed)
+        })
     }
 }
 

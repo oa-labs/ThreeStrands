@@ -2,6 +2,7 @@ use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::error_text::display;
 use crate::models::{ActionProposal, ReplyAssistContext, ReplyAssistMessage};
 
 const SERVICE: &str = "app.threestrands.mail";
@@ -117,10 +118,6 @@ fn clear() -> Result<(), String> {
 
 fn entry() -> Result<Entry, String> {
     Entry::new(SERVICE, KEY).map_err(display)
-}
-
-fn display(error: impl std::fmt::Display) -> String {
-    error.to_string()
 }
 
 /// One thread message reduced to what the summarizer needs, oldest first.

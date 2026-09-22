@@ -10,6 +10,7 @@ mod correspondence;
 mod credentials;
 mod db;
 mod enrollment;
+mod error_text;
 mod image_format;
 mod image_proxy;
 mod ipfs_transport;
@@ -45,6 +46,20 @@ use tauri::{async_runtime::JoinHandle, Manager, State};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+/// Records a background operation's failure instead of silently discarding
+/// it. Used where there is no caller to hand the error back to (spawned
+/// loops, best-effort startup and maintenance steps), so failures still land
+/// in the app log.
+fn log_failure<T, E: std::fmt::Display>(operation: &str, result: Result<T, E>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            log::warn!(target: "threestrands", "{operation} failed: {error}");
+            None
+        }
+    }
+}
+
 /// Keep remote pages out of ThreeStrands even if a platform webview activates an
 /// email link before the iframe's DOM click handler can cancel it. This is a
 /// final native boundary: app documents may navigate in the webview, ordinary
@@ -71,7 +86,7 @@ fn external_navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<
                 return true;
             }
             if matches!(url.scheme(), "http" | "https" | "mailto" | "tel") {
-                let _ = open::that(url.as_str());
+                log_failure("opening external link", open::that(url.as_str()));
             }
             false
         })
@@ -214,6 +229,31 @@ mod database_task_tests {
     }
 }
 
+#[cfg(test)]
+mod background_failure_tests {
+    use super::{force_full_resync, log_failure, run_storage_maintenance};
+    use crate::db::Database;
+
+    #[test]
+    fn log_failure_passes_through_success_and_absorbs_errors() {
+        assert_eq!(log_failure("test step", Ok::<_, String>(7)), Some(7));
+        assert_eq!(log_failure("test step", Err::<u8, _>("boom".to_string())), None);
+    }
+
+    #[test]
+    fn storage_maintenance_runs_every_step_cleanly_on_a_healthy_database() {
+        let database = Database::open_memory();
+        assert!(run_storage_maintenance(&database).is_empty());
+    }
+
+    #[test]
+    fn full_resync_after_recovery_tolerates_a_database_without_cursors() {
+        let database = Database::open_memory();
+        force_full_resync(&database);
+        assert!(database.list_accounts().is_ok());
+    }
+}
+
 #[derive(Clone, Default)]
 struct AuthorizeSlot(Arc<tokio::sync::Mutex<Option<CancellationToken>>>);
 
@@ -303,7 +343,10 @@ mod authorize_slot_tests {
 #[cfg(unix)]
 fn restrict_dir_to_owner(path: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+    log_failure(
+        "restricting data directory permissions",
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)),
+    );
 }
 
 #[cfg(not(unix))]
@@ -490,7 +533,7 @@ fn spawn_synced_account(
     let polling_service = service.clone();
     let poll_task = tauri::async_runtime::spawn(async move {
         if sync_immediately && polling_service.is_connected() {
-            let _ = polling_service.sync().await;
+            log_failure("initial account sync", polling_service.sync().await);
         }
         polling_service
             .polling_loop(move |account_id: &str| {
@@ -888,7 +931,10 @@ fn recovery_status(state: State<'_, AppState>) -> Option<db::RecoveryOutcome> {
 
 #[tauri::command]
 async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatus, String> {
-    let _ = state.correspondence.refresh_identity().await;
+    log_failure(
+        "refreshing account identity",
+        state.correspondence.refresh_identity().await,
+    );
     let services = {
         let accounts = state.accounts.lock().await;
         accounts
@@ -963,7 +1009,7 @@ fn spawn_pending_flush(handle: &tauri::AppHandle) {
         };
         // Wait for an in-flight mutate_thread IPC to land in SQLite.
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        let _ = service.flush_pending().await;
+        log_failure("flushing pending mutations", service.flush_pending().await);
     });
 }
 
@@ -972,11 +1018,11 @@ fn spawn_foreground_sync(handle: &tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         if let Some(state) = handle.try_state::<AppState>() {
             let cloud = state.cloud_sync.clone();
-            let _ = cloud.sync_once().await;
+            log_failure("foreground cloud sync", cloud.sync_once().await);
             reconcile_cloud_account_registry(&handle);
         }
         if let Some(service) = primary_service(&handle).await {
-            let _ = service.sync_if_stale().await;
+            log_failure("foreground mail sync", service.sync_if_stale().await);
         }
     });
 }
@@ -996,7 +1042,9 @@ fn reconcile_cloud_account_registry(handle: &tauri::AppHandle) {
 
 fn kick_cloud_sync(state: &State<'_, AppState>) {
     let cloud = state.cloud_sync.clone();
-    tauri::async_runtime::spawn(async move { let _ = cloud.sync_once().await; });
+    tauri::async_runtime::spawn(async move {
+        log_failure("cloud sync", cloud.sync_once().await);
+    });
 }
 
 fn kick_replicated_sync(state: &State<'_, AppState>) {
@@ -1004,7 +1052,9 @@ fn kick_replicated_sync(state: &State<'_, AppState>) {
         return;
     }
     let engine = state.replicated_sync.clone();
-    tauri::async_runtime::spawn(async move { let _ = engine.sync_once().await; });
+    tauri::async_runtime::spawn(async move {
+        log_failure("replicated sync", engine.sync_once().await);
+    });
 }
 
 fn queue_cloud_value<T: serde::Serialize>(
@@ -1303,7 +1353,10 @@ async fn connect_google(state: State<'_, AppState>) -> Result<SyncStatus, String
     authorize_interactively(&state, &auth).await?;
     // Rekeys the placeholder registry entry onto the real address as a side
     // effect, so the account is addressable by email from here on.
-    let _ = state.correspondence.refresh_identity().await;
+    log_failure(
+        "refreshing account identity",
+        state.correspondence.refresh_identity().await,
+    );
     service.sync().await
 }
 
@@ -2305,329 +2358,385 @@ pub fn run() {
                 )
                 .build(),
         )
-        .setup(|app| {
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|error| format!("Unable to find app data directory: {error}"))?;
-            std::fs::create_dir_all(&data_dir)?;
-            restrict_dir_to_owner(&data_dir);
-            let (opened_database, recovery) =
-                db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
-            let database = Arc::new(opened_database);
-            let cloud_sync = cloud_sync::CloudSync::new(database.clone())?;
-            let recovery = match recovery {
-                db::RecoveryOutcome::Clean => None,
-                other => Some(other),
-            };
-            if recovery.is_some() {
-                // A restored-from-backup database's cursors reflect
-                // whatever history state that snapshot was taken at, which
-                // may since have diverged from Gmail; a fresh database has
-                // no cursor at all. Either way, force each known account's
-                // next sync to be a full reconciliation rather than trusting
-                // a possibly-stale incremental cursor.
-                if let Ok(accounts) = database.list_accounts() {
-                    for account in &accounts {
-                        let _ = database.clear_cursor(&account.email);
-                    }
-                }
-            }
-            let auth_config = GoogleAuthConfig::from_environment().ok();
-            {
-                let database = database.clone();
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    loop {
-                        let badge_database = database.clone();
-                        if let Ok(count) =
-                            run_database_task(move || badge_database.count_unread_inbox()).await
-                        {
-                            if let Some(window) = handle.get_webview_window("main") {
-                                let _ = window.set_badge_count((count > 0).then_some(count));
-                            }
-                        }
-                        tokio::time::sleep(sync::MIN_POLL_INTERVAL).await;
-                    }
-                });
-            }
-            {
-                // One-time, potentially slow (full file rewrite) conversion
-                // to incremental auto-vacuum, then a recurring prune of mail
-                // past the user's retention window with cheap incremental
-                // reclamation after. All off the blocking pool so a large
-                // existing mailbox doesn't stall startup or the UI thread.
-                let database = database.clone();
-                tauri::async_runtime::spawn(async move {
-                    let upgrade_db = database.clone();
-                    let needs_upgrade =
-                        tokio::task::spawn_blocking(move || upgrade_db.needs_vacuum_upgrade())
-                            .await
-                            .ok()
-                            .and_then(|result| result.ok())
-                            .unwrap_or(false);
-                    if needs_upgrade {
-                        let upgrade_db = database.clone();
-                        let _ =
-                            tokio::task::spawn_blocking(move || upgrade_db.vacuum_to_incremental())
-                                .await;
-                    }
-                    // One-time backfill: compress any message bodies left
-                    // over from before body compression shipped, a batch at
-                    // a time with a short pause between batches so this
-                    // doesn't starve the database mutex normal sync/read
-                    // operations also need. Becomes a no-op once everything
-                    // has been converted.
-                    loop {
-                        let backfill_db = database.clone();
-                        let converted = tokio::task::spawn_blocking(move || {
-                            backfill_db.compress_next_body_batch(500)
-                        })
-                        .await
-                        .ok()
-                        .and_then(|result| result.ok())
-                        .unwrap_or(0);
-                        if converted == 0 {
-                            break;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    }
-                    loop {
-                        let prune_db = database.clone();
-                        let _ = tokio::task::spawn_blocking(move || {
-                            let _ = prune_db.prune_expired_threads();
-                            let _ = prune_db.reclaim_space();
-                            // Bound WAL growth, then snapshot: checkpointing
-                            // first means the backup reflects the latest
-                            // writes without carrying an ever-growing WAL of
-                            // its own.
-                            let _ = prune_db.checkpoint_wal();
-                            let _ = prune_db.create_periodic_backup();
-                        })
-                        .await;
-                        tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
-                    }
-                });
-            }
-            let root = data_dir.join("attachments");
-            std::fs::create_dir_all(&root)?;
-            restrict_dir_to_owner(&root);
-            let attachment_reader = attachment_reader::ReaderCache::new(root.join("reader"))?;
-            // Bring up every account in the catalog, each with its own
-            // credentials and polling loop. Before the very first connect the
-            // catalog is empty and the placeholder key stands in for the
-            // account about to be added, so `connect_google` has something to
-            // authorize; it rekeys onto the real address once the identity is
-            // known. Built before `manage` so the registry is never observed
-            // empty by a command racing startup.
-            let mut registry = HashMap::new();
-            if let Some(config) = &auth_config {
-                let catalog = database.list_accounts().unwrap_or_default();
-                let keys = if catalog.is_empty() {
-                    vec![auth::LEGACY_KEY.to_string()]
-                } else {
-                    catalog.into_iter().map(|account| account.email).collect()
-                };
-                for key in keys {
-                    let auth = AccountAuth::Google(if key == auth::LEGACY_KEY {
-                        config.legacy_account()
-                    } else {
-                        config.account(&key)
-                    });
-                    registry.insert(
-                        key,
-                        spawn_synced_account(database.clone(), auth, true, app.handle().clone()),
-                    );
-                }
-            }
-            let accounts: AccountRegistry = Arc::new(tokio::sync::Mutex::new(registry));
-            let correspondence = correspondence::Correspondence {
-                database: database.clone(),
-                accounts: accounts.clone(),
-                root,
-                gate: Arc::new(tokio::sync::Mutex::new(())),
-                edits: Arc::new(tokio::sync::Mutex::new(())),
-            };
-            let worker = correspondence.clone();
-            tauri::async_runtime::spawn(async move {
-                if worker.is_connected().await {
-                    let _ = worker.refresh_identity().await;
-                }
-                worker.run().await;
-            });
-            cloud_sync.clone().spawn(app.handle().clone(), reconcile_cloud_account_registry);
-            let replicated_sync = replicated_sync::ReplicatedSync::new(database.clone());
-            replicated_sync.clone().spawn(app.handle().clone());
-            app.manage(AppState {
-                database,
-                cloud_sync,
-                replicated_sync,
-                auth_config,
-                accounts,
-                correspondence,
-                authorize_slot: AuthorizeSlot::default(),
-                exiting: std::sync::atomic::AtomicBool::new(false),
-                image_cache: image_proxy::ImageCache::new().map_err(std::io::Error::other)?,
-                attachment_reader,
-                recovery,
-                proposal_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            });
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            cloud_account_status,
-            cloud_sign_in,
-            cloud_sign_out,
-            cloud_delete_account,
-            cloud_devices,
-            cloud_revoke_device,
-            cloud_confirm_enrollment,
-            cloud_retry_sync,
-            cloud_conflicts,
-            cloud_resolve_conflict,
-            cloud_synced_preferences,
-            cloud_update_preferences,
-            replicated_sync_enabled,
-            replicated_sync_status,
-            replicated_sync_beta_enabled,
-            replicated_sync_set_beta_enabled,
-            replicated_sync_enrollment_status,
-            replicated_sync_pending_requests,
-            replicated_sync_device_roster,
-            replicated_sync_begin_genesis,
-            replicated_sync_request_enrollment,
-            replicated_sync_approve_request,
-            replicated_sync_reject_request,
-            replicated_sync_confirm_enrollment,
-            replicated_sync_rotate_epoch,
-            replicated_sync_join_with_recovery_phrase,
-            replicated_sync_add_folder,
-            replicated_sync_add_ipfs_rpc,
-            replicated_sync_probe_ipfs_rpc,
-            replicated_sync_remove_transport,
-            replicated_sync_now,
-            replicated_sync_conflicts,
-            replicated_sync_resolve_conflict,
-            correspondence_request,
-            finish_exit,
-            list_threads,
-            list_all_mail,
-            list_trash,
-            list_threads_page,
-            list_unread_counts,
-            mailbox_unread_counts,
-            list_all_mail_page,
-            list_trash_page,
-            get_thread,
-            fetch_remote_image,
-            fetch_attachment_image,
-            preview_calendar_attachment,
-            open_attachment,
-            save_attachment,
-            search_threads,
-            backfill_search_threads,
-            mutate_thread,
-            mutate_threads,
-            record_triage_event,
-            list_triage_sender_stats,
-            list_contact_suggestions,
-            pin_contact,
-            unpin_contact,
-            unsubscribe,
-            sync_status,
-            sync_account,
-            flush_pending_mutations,
-            recovery_status,
-            google_auth_status,
-            connect_google,
-            disconnect_google,
-            list_accounts,
-            add_account,
-            remove_account,
-            remove_synced_mail_account,
-            reconnect_account,
-            list_calendar_accounts,
-            add_calendar_account,
-            reconnect_calendar_account,
-            list_calendar_options,
-            set_calendar_selection,
-            remove_calendar_account,
-            remove_synced_calendar_account,
-            list_schedule_events,
-            find_availability,
-            check_proposed_time,
-            set_account_display_name,
-            set_account_color,
-            reorder_accounts,
-            export_settings,
-            import_settings,
-            list_split_inboxes,
-            create_split_inbox,
-            update_split_inbox,
-            delete_split_inbox,
-            reorder_split_inboxes,
-            list_split_inbox_page,
-            list_snippets,
-            create_snippet,
-            update_snippet,
-            delete_snippet,
-            list_labels,
-            create_label,
-            update_label,
-            delete_label,
-            get_retention_days,
-            set_retention_days,
-            ai_api_key_configured,
-            set_ai_api_key,
-            ai_test_connection,
-            ai_summarize_thread,
-            ai_analyze_thread,
-            ai_reply_assist_context,
-            ai_generate_reply,
-            list_tasks,
-            create_task,
-            update_task,
-            set_task_status,
-            record_follow_up,
-            reconcile_tasks,
-            system_fonts::list_system_font_families,
-        ])
+        .setup(setup_app)
+        .invoke_handler(invoke_handler())
         .build(tauri::generate_context!())
         .expect("error while building ThreeStrands")
-        .run(|handle, event| {
-            use tauri::Emitter;
-            match &event {
-                tauri::RunEvent::WindowEvent {
-                    event: tauri::WindowEvent::CloseRequested { api, .. },
-                    ..
-                } => {
-                    if let Some(state) = handle.try_state::<AppState>() {
-                        if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
-                            api.prevent_close();
-                            let _ = handle.emit("compose-before-exit", ());
-                        }
-                    }
+        .run(handle_run_event);
+}
+
+/// Opens (or recovers) the local database, starts every background loop, and
+/// registers `AppState` before the first command can run.
+fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Unable to find app data directory: {error}"))?;
+    std::fs::create_dir_all(&data_dir)?;
+    restrict_dir_to_owner(&data_dir);
+    let (opened_database, recovery) =
+        db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
+    let database = Arc::new(opened_database);
+    let cloud_sync = cloud_sync::CloudSync::new(database.clone())?;
+    let recovery = match recovery {
+        db::RecoveryOutcome::Clean => None,
+        other => Some(other),
+    };
+    if recovery.is_some() {
+        force_full_resync(&database);
+    }
+    let auth_config = GoogleAuthConfig::from_environment().ok();
+    spawn_badge_loop(database.clone(), app.handle().clone());
+    spawn_storage_maintenance(database.clone());
+    let root = data_dir.join("attachments");
+    std::fs::create_dir_all(&root)?;
+    restrict_dir_to_owner(&root);
+    let attachment_reader = attachment_reader::ReaderCache::new(root.join("reader"))?;
+    // Built before `manage` so the registry is never observed empty by a
+    // command racing startup.
+    let registry = startup_account_registry(&database, auth_config.as_ref(), app.handle());
+    let accounts: AccountRegistry = Arc::new(tokio::sync::Mutex::new(registry));
+    let correspondence = correspondence::Correspondence {
+        database: database.clone(),
+        accounts: accounts.clone(),
+        root,
+        gate: Arc::new(tokio::sync::Mutex::new(())),
+        edits: Arc::new(tokio::sync::Mutex::new(())),
+    };
+    let worker = correspondence.clone();
+    tauri::async_runtime::spawn(async move {
+        if worker.is_connected().await {
+            log_failure("refreshing account identity", worker.refresh_identity().await);
+        }
+        worker.run().await;
+    });
+    cloud_sync.clone().spawn(app.handle().clone(), reconcile_cloud_account_registry);
+    let replicated_sync = replicated_sync::ReplicatedSync::new(database.clone());
+    replicated_sync.clone().spawn(app.handle().clone());
+    app.manage(AppState {
+        database,
+        cloud_sync,
+        replicated_sync,
+        auth_config,
+        accounts,
+        correspondence,
+        authorize_slot: AuthorizeSlot::default(),
+        exiting: std::sync::atomic::AtomicBool::new(false),
+        image_cache: image_proxy::ImageCache::new().map_err(std::io::Error::other)?,
+        attachment_reader,
+        recovery,
+        proposal_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+    });
+    Ok(())
+}
+
+/// A restored-from-backup database's cursors reflect whatever history state
+/// that snapshot was taken at, which may since have diverged from Gmail; a
+/// fresh database has no cursor at all. Either way, force each known
+/// account's next sync to be a full reconciliation rather than trusting a
+/// possibly-stale incremental cursor.
+fn force_full_resync(database: &Database) {
+    let Some(accounts) = log_failure("listing accounts after recovery", database.list_accounts())
+    else {
+        return;
+    };
+    for account in &accounts {
+        log_failure(
+            "clearing sync cursor after recovery",
+            database.clear_cursor(&account.email),
+        );
+    }
+}
+
+/// Keeps the dock/taskbar badge in step with the Inbox unread count.
+fn spawn_badge_loop(database: Arc<Database>, handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let badge_database = database.clone();
+            if let Ok(count) =
+                run_database_task(move || badge_database.count_unread_inbox()).await
+            {
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.set_badge_count((count > 0).then_some(count));
                 }
-                tauri::RunEvent::WindowEvent {
-                    event: tauri::WindowEvent::Focused(focused),
-                    ..
-                } => {
-                    if *focused {
-                        spawn_foreground_sync(handle);
-                    } else {
-                        spawn_pending_flush(handle);
-                    }
-                }
-                tauri::RunEvent::ExitRequested { api, .. } => {
-                    if let Some(state) = handle.try_state::<AppState>() {
-                        if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
-                            api.prevent_exit();
-                            let _ = handle.emit("compose-before-exit", ());
-                        }
-                    }
-                }
-                tauri::RunEvent::Resumed => spawn_foreground_sync(handle),
-                _ => {}
             }
+            tokio::time::sleep(sync::MIN_POLL_INTERVAL).await;
+        }
+    });
+}
+
+/// One-time, potentially slow (full file rewrite) conversion to incremental
+/// auto-vacuum, then a recurring prune of mail past the user's retention
+/// window with cheap incremental reclamation after. All off the blocking
+/// pool so a large existing mailbox doesn't stall startup or the UI thread.
+fn spawn_storage_maintenance(database: Arc<Database>) {
+    tauri::async_runtime::spawn(async move {
+        let upgrade_db = database.clone();
+        let needs_upgrade =
+            tokio::task::spawn_blocking(move || upgrade_db.needs_vacuum_upgrade())
+                .await
+                .ok()
+                .and_then(|result| log_failure("checking auto-vacuum mode", result))
+                .unwrap_or(false);
+        if needs_upgrade {
+            let upgrade_db = database.clone();
+            if let Ok(result) =
+                tokio::task::spawn_blocking(move || upgrade_db.vacuum_to_incremental()).await
+            {
+                log_failure("converting to incremental auto-vacuum", result);
+            }
+        }
+        // One-time backfill: compress any message bodies left over from
+        // before body compression shipped, a batch at a time with a short
+        // pause between batches so this doesn't starve the database mutex
+        // normal sync/read operations also need. Becomes a no-op once
+        // everything has been converted.
+        loop {
+            let backfill_db = database.clone();
+            let converted =
+                tokio::task::spawn_blocking(move || backfill_db.compress_next_body_batch(500))
+                    .await
+                    .ok()
+                    .and_then(|result| log_failure("compressing message bodies", result))
+                    .unwrap_or(0);
+            if converted == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        loop {
+            let prune_db = database.clone();
+            let _ = tokio::task::spawn_blocking(move || run_storage_maintenance(&prune_db)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
+        }
+    });
+}
+
+/// One pass of the periodic maintenance loop. Every step runs even if an
+/// earlier one fails; each failure is logged and its step name returned.
+fn run_storage_maintenance(database: &Database) -> Vec<&'static str> {
+    let mut failed = Vec::new();
+    let mut step = |name: &'static str, result: db::DbResult<()>| {
+        if log_failure(name, result).is_none() {
+            failed.push(name);
+        }
+    };
+    step("pruning expired threads", database.prune_expired_threads().map(|_| ()));
+    step("reclaiming free pages", database.reclaim_space());
+    // Bound WAL growth, then snapshot: checkpointing first means the backup
+    // reflects the latest writes without carrying an ever-growing WAL of its
+    // own.
+    step("checkpointing the WAL", database.checkpoint_wal());
+    step("creating the periodic backup", database.create_periodic_backup());
+    failed
+}
+
+/// Brings up every account in the catalog, each with its own credentials and
+/// polling loop. Before the very first connect the catalog is empty and the
+/// placeholder key stands in for the account about to be added, so
+/// `connect_google` has something to authorize; it rekeys onto the real
+/// address once the identity is known.
+fn startup_account_registry(
+    database: &Arc<Database>,
+    auth_config: Option<&GoogleAuthConfig>,
+    handle: &tauri::AppHandle,
+) -> HashMap<String, ConnectedAccount> {
+    let mut registry = HashMap::new();
+    let Some(config) = auth_config else {
+        return registry;
+    };
+    let catalog = log_failure("listing accounts at startup", database.list_accounts())
+        .unwrap_or_default();
+    let keys = if catalog.is_empty() {
+        vec![auth::LEGACY_KEY.to_string()]
+    } else {
+        catalog.into_iter().map(|account| account.email).collect()
+    };
+    for key in keys {
+        let auth = AccountAuth::Google(if key == auth::LEGACY_KEY {
+            config.legacy_account()
+        } else {
+            config.account(&key)
         });
+        registry.insert(
+            key,
+            spawn_synced_account(database.clone(), auth, true, handle.clone()),
+        );
+    }
+    registry
+}
+
+/// Every IPC command the frontend may invoke, grouped by feature area.
+fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        // Cloud account and cloud sync
+        cloud_account_status,
+        cloud_sign_in,
+        cloud_sign_out,
+        cloud_delete_account,
+        cloud_devices,
+        cloud_revoke_device,
+        cloud_confirm_enrollment,
+        cloud_retry_sync,
+        cloud_conflicts,
+        cloud_resolve_conflict,
+        cloud_synced_preferences,
+        cloud_update_preferences,
+        // Replicated (peer) sync
+        replicated_sync_enabled,
+        replicated_sync_status,
+        replicated_sync_beta_enabled,
+        replicated_sync_set_beta_enabled,
+        replicated_sync_enrollment_status,
+        replicated_sync_pending_requests,
+        replicated_sync_device_roster,
+        replicated_sync_begin_genesis,
+        replicated_sync_request_enrollment,
+        replicated_sync_approve_request,
+        replicated_sync_reject_request,
+        replicated_sync_confirm_enrollment,
+        replicated_sync_rotate_epoch,
+        replicated_sync_join_with_recovery_phrase,
+        replicated_sync_add_folder,
+        replicated_sync_add_ipfs_rpc,
+        replicated_sync_probe_ipfs_rpc,
+        replicated_sync_remove_transport,
+        replicated_sync_now,
+        replicated_sync_conflicts,
+        replicated_sync_resolve_conflict,
+        // App lifecycle
+        correspondence_request,
+        finish_exit,
+        recovery_status,
+        // Mailbox reading
+        list_threads,
+        list_all_mail,
+        list_trash,
+        list_threads_page,
+        list_unread_counts,
+        mailbox_unread_counts,
+        list_all_mail_page,
+        list_trash_page,
+        get_thread,
+        search_threads,
+        backfill_search_threads,
+        // Images and attachments
+        fetch_remote_image,
+        fetch_attachment_image,
+        preview_calendar_attachment,
+        open_attachment,
+        save_attachment,
+        // Triage, contacts, and unsubscribe
+        mutate_thread,
+        mutate_threads,
+        record_triage_event,
+        list_triage_sender_stats,
+        list_contact_suggestions,
+        pin_contact,
+        unpin_contact,
+        unsubscribe,
+        // Mail sync
+        sync_status,
+        sync_account,
+        flush_pending_mutations,
+        // Mail accounts
+        google_auth_status,
+        connect_google,
+        disconnect_google,
+        list_accounts,
+        add_account,
+        remove_account,
+        remove_synced_mail_account,
+        reconnect_account,
+        set_account_display_name,
+        set_account_color,
+        reorder_accounts,
+        // Calendar and scheduling
+        list_calendar_accounts,
+        add_calendar_account,
+        reconnect_calendar_account,
+        list_calendar_options,
+        set_calendar_selection,
+        remove_calendar_account,
+        remove_synced_calendar_account,
+        list_schedule_events,
+        find_availability,
+        check_proposed_time,
+        // Settings transfer and retention
+        export_settings,
+        import_settings,
+        get_retention_days,
+        set_retention_days,
+        // Split inboxes, snippets, and labels
+        list_split_inboxes,
+        create_split_inbox,
+        update_split_inbox,
+        delete_split_inbox,
+        reorder_split_inboxes,
+        list_split_inbox_page,
+        list_snippets,
+        create_snippet,
+        update_snippet,
+        delete_snippet,
+        list_labels,
+        create_label,
+        update_label,
+        delete_label,
+        // AI assistance
+        ai_api_key_configured,
+        set_ai_api_key,
+        ai_test_connection,
+        ai_summarize_thread,
+        ai_analyze_thread,
+        ai_reply_assist_context,
+        ai_generate_reply,
+        // Tasks and follow-ups
+        list_tasks,
+        create_task,
+        update_task,
+        set_task_status,
+        record_follow_up,
+        reconcile_tasks,
+        // System
+        system_fonts::list_system_font_families,
+    ]
+}
+
+/// Holds window close and app exit until the frontend has had a chance to
+/// save open compose drafts, and syncs or flushes on focus changes.
+fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
+    use tauri::Emitter;
+    match &event {
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } => {
+            if let Some(state) = handle.try_state::<AppState>() {
+                if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = handle.emit("compose-before-exit", ());
+                }
+            }
+        }
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::Focused(focused),
+            ..
+        } => {
+            if *focused {
+                spawn_foreground_sync(handle);
+            } else {
+                spawn_pending_flush(handle);
+            }
+        }
+        tauri::RunEvent::ExitRequested { api, .. } => {
+            if let Some(state) = handle.try_state::<AppState>() {
+                if !state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
+                    api.prevent_exit();
+                    let _ = handle.emit("compose-before-exit", ());
+                }
+            }
+        }
+        tauri::RunEvent::Resumed => spawn_foreground_sync(handle),
+        _ => {}
+    }
 }

@@ -14,6 +14,7 @@ use crate::{
     ai::AiProvider,
     correspondence::validate_retention_days,
     db::Database,
+    error_text::display,
     models::{is_known_account_provider, Account, AvailabilityPreferences, Snippet, SplitInbox},
 };
 
@@ -473,10 +474,6 @@ fn validate_required_text(label: &str, value: &str, max_length: usize) -> Result
         return Err(format!("The transfer contains an invalid {label}"));
     }
     Ok(())
-}
-
-fn display(error: impl std::fmt::Display) -> String {
-    error.to_string()
 }
 
 #[cfg(test)]

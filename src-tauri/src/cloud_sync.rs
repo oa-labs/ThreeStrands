@@ -20,7 +20,11 @@ use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::Mutex};
 use url::Url;
 use uuid::Uuid;
 
-use crate::{db::Database, models::{Account, Snippet, SplitInbox, ThreadTask}};
+use crate::{
+    db::{Database, DbResult},
+    error_text::display,
+    models::{Account, Snippet, SplitInbox, ThreadTask},
+};
 
 const SERVICE: &str = "app.threestrands.account";
 const SESSION_KEY: &str = "refresh-token";
@@ -60,7 +64,9 @@ struct TokenResponse {
     expires_in: i64,
 }
 
-fn default_access_lifetime() -> i64 { 15 * 60 }
+fn default_access_lifetime() -> i64 {
+    15 * 60
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,7 +79,9 @@ struct StartRequest<'a> {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct StartResponse { authorization_url: String }
+struct StartResponse {
+    authorization_url: String,
+}
 
 #[derive(Clone)]
 pub struct CloudSync {
@@ -106,7 +114,9 @@ impl CloudSync {
     }
 
     pub fn status(&self) -> Result<CloudAccountStatus, String> {
-        self.database.cloud_account_status(self.base_url.is_some())
+        self.database
+            .cloud_account_status(self.base_url.is_some())
+            .map_err(String::from)
     }
 
     pub async fn sign_in(&self) -> Result<CloudAccountStatus, String> {
@@ -139,7 +149,10 @@ impl CloudSync {
     pub async fn sign_out(&self) -> Result<(), String> {
         if let Ok(token) = self.access_token().await {
             if let Some(base) = &self.base_url {
-                let _ = self.http.post(format!("{base}/v1/auth/revoke")).bearer_auth(token).send().await;
+                let revoke = self.http.post(format!("{base}/v1/auth/revoke")).bearer_auth(token).send().await;
+                if let Err(error) = revoke {
+                    log::warn!(target: "cloud_sync", "session revoke during sign-out failed: {error}");
+                }
             }
         }
         *self.access_token.lock().await = None;
@@ -148,7 +161,7 @@ impl CloudSync {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(error) => return Err(display(error)),
         }
-        self.database.clear_cloud_account()
+        self.database.clear_cloud_account().map_err(String::from)
     }
 
     pub async fn delete_account(&self) -> Result<(), String> {
@@ -271,8 +284,14 @@ impl CloudSync {
             loop {
                 tokio::time::sleep(backoff).await;
                 match self.sync_once().await {
-                    Ok(()) => { backoff = ACTIVE_POLL; on_synced(&handle); },
-                    Err(_) => backoff = std::cmp::min(backoff.saturating_mul(2), MAX_BACKOFF),
+                    Ok(()) => {
+                        backoff = ACTIVE_POLL;
+                        on_synced(&handle);
+                    }
+                    Err(error) => {
+                        log::warn!(target: "cloud_sync", "periodic sync failed: {error}");
+                        backoff = std::cmp::min(backoff.saturating_mul(2), MAX_BACKOFF);
+                    }
                 }
                 let _ = handle.emit("cloud-sync-status", ());
             }
@@ -280,85 +299,203 @@ impl CloudSync {
     }
 }
 
+const ACTIVE_ENROLLMENT_SQL: &str = "SELECT user_id IS NOT NULL AND enrollment_confirmed AND sync_entitled
+     FROM cloud_account_state WHERE singleton=1";
+
 impl Database {
-    fn cloud_account_status(&self, configured: bool) -> Result<CloudAccountStatus, String> {
-        let connection = self.connection()?;
-        let row = connection.query_row(
-            "SELECT user_id,email,display_name,avatar_url,sync_entitled,enrollment_confirmed,last_successful_sync,last_error
-             FROM cloud_account_state WHERE singleton=1", [], |row| Ok((
-                row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<String>>(3)?,
-                row.get::<_, bool>(4)?, row.get::<_, bool>(5)?, row.get(6)?, row.get(7)?
-             )),
-        ).map_err(display)?;
-        let pending_operations = connection.query_row("SELECT COUNT(*) FROM cloud_sync_outbox", [], |row| row.get(0)).map_err(display)?;
-        let conflict_count = connection.query_row("SELECT COUNT(*) FROM cloud_sync_conflicts", [], |row| row.get(0)).map_err(display)?;
-        let signed_in = row.0.is_some();
-        let profile = match (row.0, row.1) {
-            (Some(id), Some(email)) => Some(AccountProfile { id, email, display_name: row.2, avatar_url: row.3, entitlements: vec![] }),
-            _ => None,
-        };
-        Ok(CloudAccountStatus { configured, signed_in, profile, sync_entitled: row.4, enrollment_confirmed: row.5,
-            last_successful_sync: row.6, error: row.7, pending_operations, conflict_count })
+    fn cloud_account_status(&self, configured: bool) -> DbResult<CloudAccountStatus> {
+        self.with_connection(|connection| {
+            let row = connection.query_row(
+                "SELECT user_id,email,display_name,avatar_url,sync_entitled,enrollment_confirmed,last_successful_sync,last_error
+                 FROM cloud_account_state WHERE singleton=1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, bool>(4)?,
+                        row.get::<_, bool>(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )?;
+            let pending_operations =
+                connection.query_row("SELECT COUNT(*) FROM cloud_sync_outbox", [], |row| row.get(0))?;
+            let conflict_count =
+                connection.query_row("SELECT COUNT(*) FROM cloud_sync_conflicts", [], |row| row.get(0))?;
+            let signed_in = row.0.is_some();
+            let profile = match (row.0, row.1) {
+                (Some(id), Some(email)) => Some(AccountProfile {
+                    id,
+                    email,
+                    display_name: row.2,
+                    avatar_url: row.3,
+                    entitlements: vec![],
+                }),
+                _ => None,
+            };
+            Ok(CloudAccountStatus {
+                configured,
+                signed_in,
+                profile,
+                sync_entitled: row.4,
+                enrollment_confirmed: row.5,
+                last_successful_sync: row.6,
+                error: row.7,
+                pending_operations,
+                conflict_count,
+            })
+        })
     }
 
-    fn cloud_device_id(&self) -> Result<String, String> {
-        self.connection()?.query_row("SELECT device_id FROM cloud_account_state WHERE singleton=1", [], |row| row.get(0)).map_err(display)
+    fn cloud_device_id(&self) -> DbResult<String> {
+        self.with_connection(|connection| {
+            Ok(connection.query_row(
+                "SELECT device_id FROM cloud_account_state WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )?)
+        })
     }
 
-    fn set_cloud_profile(&self, profile: &AccountProfile) -> Result<(), String> {
+    fn set_cloud_profile(&self, profile: &AccountProfile) -> DbResult<()> {
         let entitled = profile.entitlements.iter().any(|value| value.feature == "sync");
-        self.connection()?.execute(
-            "UPDATE cloud_account_state SET user_id=?1,email=?2,display_name=?3,avatar_url=?4,sync_entitled=?5,last_error=NULL WHERE singleton=1",
-            params![profile.id, profile.email, profile.display_name, profile.avatar_url, entitled],
-        ).map_err(display)?;
-        Ok(())
+        self.with_connection(|connection| {
+            connection.execute(
+                "UPDATE cloud_account_state SET user_id=?1,email=?2,display_name=?3,avatar_url=?4,sync_entitled=?5,last_error=NULL WHERE singleton=1",
+                params![profile.id, profile.email, profile.display_name, profile.avatar_url, entitled],
+            )?;
+            Ok(())
+        })
     }
 
-    fn clear_cloud_account(&self) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let tx = connection.transaction().map_err(display)?;
-        tx.execute("UPDATE cloud_account_state SET user_id=NULL,email=NULL,display_name=NULL,avatar_url=NULL,cursor=0,enrollment_confirmed=0,sync_entitled=0,last_successful_sync=NULL,last_error=NULL WHERE singleton=1", []).map_err(display)?;
-        for table in ["cloud_sync_metadata", "cloud_sync_outbox", "cloud_sync_conflicts"] {
-            tx.execute(&format!("DELETE FROM {table}"), []).map_err(display)?;
+    fn clear_cloud_account(&self) -> DbResult<()> {
+        self.with_transaction(|tx| {
+            tx.execute(
+                "UPDATE cloud_account_state SET user_id=NULL,email=NULL,display_name=NULL,avatar_url=NULL,cursor=0,enrollment_confirmed=0,sync_entitled=0,last_successful_sync=NULL,last_error=NULL WHERE singleton=1",
+                [],
+            )?;
+            for table in ["cloud_sync_metadata", "cloud_sync_outbox", "cloud_sync_conflicts"] {
+                tx.execute(&format!("DELETE FROM {table}"), [])?;
+            }
+            Ok(())
+        })
+    }
+
+    fn confirm_cloud_enrollment(&self) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "UPDATE cloud_account_state SET enrollment_confirmed=1 WHERE singleton=1",
+                [],
+            )?;
+            Ok(())
+        })?;
+        for task in self.list_tasks(None, None)? {
+            let payload = serde_json::to_value(&task).map_err(display)?;
+            self.enqueue_cloud_entity(EntityType::Task, &task.id, payload, None)?;
         }
-        tx.commit().map_err(display)
-    }
-
-    fn confirm_cloud_enrollment(&self) -> Result<(), String> {
-        self.connection()?.execute("UPDATE cloud_account_state SET enrollment_confirmed=1 WHERE singleton=1", []).map_err(display)?;
-        for task in self.list_tasks(None, None)? { self.enqueue_cloud_entity(EntityType::Task, &task.id, serde_json::to_value(&task).map_err(display)?, None)?; }
-        for snippet in self.list_snippets()? { self.enqueue_cloud_entity(EntityType::Snippet, &snippet.id, serde_json::to_value(&snippet).map_err(display)?, None)?; }
-        for split in self.list_split_inboxes()? { self.enqueue_cloud_entity(EntityType::SplitInbox, &split.id, serde_json::to_value(&split).map_err(display)?, None)?; }
+        for snippet in self.list_snippets()? {
+            let payload = serde_json::to_value(&snippet).map_err(display)?;
+            self.enqueue_cloud_entity(EntityType::Snippet, &snippet.id, payload, None)?;
+        }
+        for split in self.list_split_inboxes()? {
+            let payload = serde_json::to_value(&split).map_err(display)?;
+            self.enqueue_cloud_entity(EntityType::SplitInbox, &split.id, payload, None)?;
+        }
         for account in self.list_accounts()? {
-            let payload = json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order});
+            let payload = json!({
+                "email": account.email,
+                "displayName": account.display_name,
+                "color": account.color,
+                "provider": account.provider,
+                "sortOrder": account.sort_order,
+            });
             self.enqueue_cloud_entity(EntityType::MailAccount, &account.email.to_ascii_lowercase(), payload, None)?;
         }
         for account in self.list_calendar_accounts()? {
-            self.enqueue_cloud_entity(EntityType::CalendarAccount, &account.email.to_ascii_lowercase(), json!({"email":account.email}), None)?;
+            self.enqueue_cloud_entity(
+                EntityType::CalendarAccount,
+                &account.email.to_ascii_lowercase(),
+                json!({ "email": account.email }),
+                None,
+            )?;
             if let Some(ids) = self.calendar_selection(&account.email)? {
-                self.enqueue_cloud_entity(EntityType::CalendarSelection, &account.email.to_ascii_lowercase(), json!({"accountId":account.email,"calendarIds":ids}), None)?;
+                self.enqueue_cloud_entity(
+                    EntityType::CalendarSelection,
+                    &account.email.to_ascii_lowercase(),
+                    json!({ "accountId": account.email, "calendarIds": ids }),
+                    None,
+                )?;
             }
         }
-        self.enqueue_cloud_entity(EntityType::Retention, "mail", json!({"days":self.retention_days()?}), None)
+        let retention = json!({ "days": self.retention_days()? });
+        self.enqueue_cloud_entity(EntityType::Retention, "mail", retention, None)?;
+        Ok(())
     }
 
-    pub fn enqueue_cloud_entity(&self, entity_type: EntityType, entity_id: &str, payload: Value, fields: Option<BTreeSet<String>>) -> Result<(), String> {
-        let connection = self.connection()?;
-        let active: bool = connection.query_row("SELECT user_id IS NOT NULL AND enrollment_confirmed AND sync_entitled FROM cloud_account_state WHERE singleton=1", [], |row| row.get(0)).map_err(display)?;
-        if !active { return Ok(()); }
-        let base: i64 = connection.query_row("SELECT server_version FROM cloud_sync_metadata WHERE entity_type=?1 AND entity_id=?2", params![entity_type.as_str(), entity_id], |row| row.get(0)).optional().map_err(display)?.unwrap_or(0);
-        let sequence: i64 = connection.query_row("SELECT COALESCE(MAX(local_sequence),0)+1 FROM cloud_sync_outbox", [], |row| row.get(0)).map_err(display)?;
-        let fields = fields.unwrap_or_else(|| payload.as_object().map(|value| value.keys().cloned().collect()).unwrap_or_else(|| BTreeSet::from(["*".into()])));
-        let complete_payload = payload.clone();
-        let patch = match payload.as_object() {
-            Some(object) if !fields.contains("*") => Value::Object(
-                object.iter().filter(|(key, _)| fields.contains(*key)).map(|(key, value)| (key.clone(), value.clone())).collect()
-            ),
-            _ => payload,
+    pub fn enqueue_cloud_entity(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+        payload: Value,
+        fields: Option<BTreeSet<String>>,
+    ) -> Result<(), String> {
+        let queued = self.with_connection(|connection| {
+            let active: bool = connection.query_row(ACTIVE_ENROLLMENT_SQL, [], |row| row.get(0))?;
+            if !active {
+                return Ok(None);
+            }
+            let base: i64 = connection
+                .query_row(
+                    "SELECT server_version FROM cloud_sync_metadata WHERE entity_type=?1 AND entity_id=?2",
+                    params![entity_type.as_str(), entity_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or(0);
+            let sequence: i64 = connection.query_row(
+                "SELECT COALESCE(MAX(local_sequence),0)+1 FROM cloud_sync_outbox",
+                [],
+                |row| row.get(0),
+            )?;
+            let fields = fields.unwrap_or_else(|| {
+                payload
+                    .as_object()
+                    .map(|value| value.keys().cloned().collect())
+                    .unwrap_or_else(|| BTreeSet::from(["*".into()]))
+            });
+            let complete_payload = payload.clone();
+            let patch = match payload.as_object() {
+                Some(object) if !fields.contains("*") => Value::Object(
+                    object
+                        .iter()
+                        .filter(|(key, _)| fields.contains(*key))
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect(),
+                ),
+                _ => payload,
+            };
+            connection.execute(
+                "INSERT INTO cloud_sync_outbox(operation_id,entity_type,entity_id,base_version,changed_fields,patch,deleted,local_sequence,created_at) VALUES(?1,?2,?3,?4,?5,?6,0,?7,?8)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    entity_type.as_str(),
+                    entity_id,
+                    base,
+                    serde_json::to_string(&fields).map_err(display)?,
+                    patch.to_string(),
+                    sequence,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+            Ok(Some((fields, complete_payload)))
+        })?;
+        let Some((fields, complete_payload)) = queued else {
+            return Ok(());
         };
-        connection.execute("INSERT INTO cloud_sync_outbox(operation_id,entity_type,entity_id,base_version,changed_fields,patch,deleted,local_sequence,created_at) VALUES(?1,?2,?3,?4,?5,?6,0,?7,?8)",
-            params![Uuid::new_v4().to_string(),entity_type.as_str(),entity_id,base,serde_json::to_string(&fields).map_err(display)?,patch.to_string(),sequence,Utc::now().to_rfc3339()]).map_err(display)?;
-        drop(connection);
         if self.replicated_sync_active()? {
             self.record_replicated_write(entity_type, entity_id, &fields, &complete_payload)?;
         }
@@ -366,50 +503,126 @@ impl Database {
     }
 
     pub fn enqueue_cloud_deletion(&self, entity_type: EntityType, entity_id: &str) -> Result<(), String> {
-        let connection = self.connection()?;
-        let active: bool = connection.query_row("SELECT user_id IS NOT NULL AND enrollment_confirmed AND sync_entitled FROM cloud_account_state WHERE singleton=1", [], |row| row.get(0)).map_err(display)?;
-        if !active { return Ok(()); }
-        let base: i64 = connection.query_row("SELECT server_version FROM cloud_sync_metadata WHERE entity_type=?1 AND entity_id=?2", params![entity_type.as_str(),entity_id], |row| row.get(0)).optional().map_err(display)?.unwrap_or(0);
-        let sequence: i64 = connection.query_row("SELECT COALESCE(MAX(local_sequence),0)+1 FROM cloud_sync_outbox", [], |row| row.get(0)).map_err(display)?;
-        connection.execute("INSERT INTO cloud_sync_outbox(operation_id,entity_type,entity_id,base_version,changed_fields,deleted,local_sequence,created_at) VALUES(?1,?2,?3,?4,'[\"*\"]',1,?5,?6)",
-            params![Uuid::new_v4().to_string(),entity_type.as_str(),entity_id,base,sequence,Utc::now().to_rfc3339()]).map_err(display)?;
-        drop(connection);
-        if self.replicated_sync_active()? {
+        let queued = self.with_connection(|connection| {
+            let active: bool = connection.query_row(ACTIVE_ENROLLMENT_SQL, [], |row| row.get(0))?;
+            if !active {
+                return Ok(false);
+            }
+            let base: i64 = connection
+                .query_row(
+                    "SELECT server_version FROM cloud_sync_metadata WHERE entity_type=?1 AND entity_id=?2",
+                    params![entity_type.as_str(), entity_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or(0);
+            let sequence: i64 = connection.query_row(
+                "SELECT COALESCE(MAX(local_sequence),0)+1 FROM cloud_sync_outbox",
+                [],
+                |row| row.get(0),
+            )?;
+            connection.execute(
+                "INSERT INTO cloud_sync_outbox(operation_id,entity_type,entity_id,base_version,changed_fields,deleted,local_sequence,created_at) VALUES(?1,?2,?3,?4,'[\"*\"]',1,?5,?6)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    entity_type.as_str(),
+                    entity_id,
+                    base,
+                    sequence,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+            Ok(true)
+        })?;
+        if queued && self.replicated_sync_active()? {
             self.record_replicated_deletion(entity_type, entity_id)?;
         }
         Ok(())
     }
 
-    fn cloud_sync_batch(&self) -> Result<(i64, Vec<SyncOperation>), String> {
-        let connection = self.connection()?;
-        let cursor = connection.query_row("SELECT cursor FROM cloud_account_state WHERE singleton=1", [], |row| row.get(0)).map_err(display)?;
+    fn cloud_sync_batch(&self) -> DbResult<(i64, Vec<SyncOperation>)> {
+        // Read the device id before taking the connection below:
+        // `cloud_device_id` locks the same (non-reentrant) connection mutex.
         let device_id = self.cloud_device_id()?;
-        let mut statement = connection.prepare("SELECT operation_id,entity_type,entity_id,base_version,changed_fields,patch,deleted,local_sequence FROM cloud_sync_outbox ORDER BY local_sequence LIMIT 500").map_err(display)?;
-        let rows = statement.query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,i64>(3)?,row.get::<_,String>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,bool>(6)?,row.get::<_,i64>(7)?))).map_err(display)?;
-        let mut operations = Vec::new();
-        for row in rows { let row = row.map_err(display)?; operations.push(SyncOperation { operation_id:row.0,device_id:device_id.clone(),entity_type:EntityType::from_str(&row.1)?,entity_id:row.2,base_version:row.3,changed_fields:serde_json::from_str(&row.4).map_err(display)?,patch:row.5.map(|v|serde_json::from_str(&v)).transpose().map_err(display)?,deleted:row.6,local_sequence:row.7 }); }
-        Ok((cursor, operations))
+        self.with_connection(|connection| {
+            let cursor = connection.query_row(
+                "SELECT cursor FROM cloud_account_state WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )?;
+            let mut statement = connection.prepare(
+                "SELECT operation_id,entity_type,entity_id,base_version,changed_fields,patch,deleted,local_sequence
+                 FROM cloud_sync_outbox ORDER BY local_sequence LIMIT 500",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, bool>(6)?,
+                    row.get::<_, i64>(7)?,
+                ))
+            })?;
+            let mut operations = Vec::new();
+            for row in rows {
+                let row = row?;
+                operations.push(SyncOperation {
+                    operation_id: row.0,
+                    device_id: device_id.clone(),
+                    entity_type: EntityType::from_str(&row.1)?,
+                    entity_id: row.2,
+                    base_version: row.3,
+                    changed_fields: serde_json::from_str(&row.4).map_err(display)?,
+                    patch: row.5.map(|v| serde_json::from_str(&v)).transpose().map_err(display)?,
+                    deleted: row.6,
+                    local_sequence: row.7,
+                });
+            }
+            Ok((cursor, operations))
+        })
     }
 
-    fn apply_cloud_response(&self, response: &SyncResponse) -> Result<(), String> {
-        for change in &response.changes { self.apply_cloud_record(change)?; }
-        let mut connection = self.connection()?;
-        let tx = connection.transaction().map_err(display)?;
-        for ack in &response.acknowledgements {
-            tx.execute("DELETE FROM cloud_sync_outbox WHERE operation_id=?1", [&ack.operation_id]).map_err(display)?;
+    fn apply_cloud_response(&self, response: &SyncResponse) -> DbResult<()> {
+        for change in &response.changes {
+            self.apply_cloud_record(change)?;
         }
-        tx.execute("UPDATE cloud_account_state SET cursor=?1 WHERE singleton=1", [response.next_cursor]).map_err(display)?;
-        for conflict in &response.conflicts {
-            tx.execute("INSERT INTO cloud_sync_conflicts(id,entity_type,entity_id,current_version,overlapping_fields,cloud_payload,device_patch,device_deleted,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version,cloud_payload=excluded.cloud_payload,device_patch=excluded.device_patch",
-                params![conflict.id,conflict.entity_type.as_str(),conflict.entity_id,conflict.current_version,serde_json::to_string(&conflict.overlapping_fields).map_err(display)?,conflict.cloud_payload.as_ref().map(Value::to_string),conflict.device_patch.as_ref().map(Value::to_string),conflict.device_deleted,conflict.created_at]).map_err(display)?;
-        }
-        tx.commit().map_err(display)
+        self.with_transaction(|tx| {
+            for ack in &response.acknowledgements {
+                tx.execute("DELETE FROM cloud_sync_outbox WHERE operation_id=?1", [&ack.operation_id])?;
+            }
+            tx.execute("UPDATE cloud_account_state SET cursor=?1 WHERE singleton=1", [response.next_cursor])?;
+            for conflict in &response.conflicts {
+                tx.execute(
+                    "INSERT INTO cloud_sync_conflicts(id,entity_type,entity_id,current_version,overlapping_fields,cloud_payload,device_patch,device_deleted,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version,cloud_payload=excluded.cloud_payload,device_patch=excluded.device_patch",
+                    params![
+                        conflict.id,
+                        conflict.entity_type.as_str(),
+                        conflict.entity_id,
+                        conflict.current_version,
+                        serde_json::to_string(&conflict.overlapping_fields).map_err(display)?,
+                        conflict.cloud_payload.as_ref().map(Value::to_string),
+                        conflict.device_patch.as_ref().map(Value::to_string),
+                        conflict.device_deleted,
+                        conflict.created_at
+                    ],
+                )?;
+            }
+            Ok(())
+        })
     }
 
-    fn apply_cloud_record(&self, record: &SyncRecord) -> Result<(), String> {
+    fn apply_cloud_record(&self, record: &SyncRecord) -> DbResult<()> {
         self.materialize_entity(record.entity_type, &record.entity_id, record.payload.as_ref(), record.deleted)?;
-        self.connection()?.execute("INSERT INTO cloud_sync_metadata(entity_type,entity_id,server_version) VALUES(?1,?2,?3) ON CONFLICT(entity_type,entity_id) DO UPDATE SET server_version=excluded.server_version", params![record.entity_type.as_str(),record.entity_id,record.version]).map_err(display)?;
-        Ok(())
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO cloud_sync_metadata(entity_type,entity_id,server_version) VALUES(?1,?2,?3) ON CONFLICT(entity_type,entity_id) DO UPDATE SET server_version=excluded.server_version",
+                params![record.entity_type.as_str(), record.entity_id, record.version],
+            )?;
+            Ok(())
+        })
     }
 
     /// The materialization boundary from the operation graph (or the legacy
@@ -425,72 +638,289 @@ impl Database {
         entity_id: &str,
         payload: Option<&Value>,
         deleted: bool,
-    ) -> Result<(), String> {
+    ) -> DbResult<()> {
         if deleted {
             match entity_type {
-                EntityType::Task => { self.connection()?.execute("DELETE FROM tasks WHERE id=?1", [entity_id]).map_err(display)?; }
-                EntityType::Snippet => { self.connection()?.execute("DELETE FROM snippets WHERE id=?1", [entity_id]).map_err(display)?; }
-                EntityType::SplitInbox => { self.connection()?.execute("DELETE FROM split_inboxes WHERE id=?1", [entity_id]).map_err(display)?; }
-                EntityType::MailAccount => { clear_provider_credential("app.threestrands.mail", entity_id)?; if self.get_account(entity_id)?.is_some() { self.remove_account(entity_id)?; } }
-                EntityType::CalendarAccount => { clear_provider_credential("app.threestrands.calendar", entity_id)?; let _ = self.remove_calendar_account(entity_id); }
+                EntityType::Task => self.delete_cloud_row("DELETE FROM tasks WHERE id=?1", entity_id)?,
+                EntityType::Snippet => self.delete_cloud_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
+                EntityType::SplitInbox => self.delete_cloud_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
+                EntityType::MailAccount => {
+                    clear_provider_credential("app.threestrands.mail", entity_id)?;
+                    if self.get_account(entity_id)?.is_some() {
+                        self.remove_account(entity_id)?;
+                    }
+                }
+                EntityType::CalendarAccount => {
+                    clear_provider_credential("app.threestrands.calendar", entity_id)?;
+                    if let Err(error) = self.remove_calendar_account(entity_id) {
+                        log::warn!(target: "cloud_sync", "removing a synced calendar account failed: {error}");
+                    }
+                }
                 _ => {}
             }
         } else if let Some(payload) = payload {
             match entity_type {
-                EntityType::Task => self.upsert_cloud_task(serde_json::from_value(payload.clone()).map_err(display)?)?,
-                EntityType::Snippet => self.upsert_cloud_snippet(serde_json::from_value(payload.clone()).map_err(display)?)?,
-                EntityType::SplitInbox => self.upsert_cloud_split(serde_json::from_value(payload.clone()).map_err(display)?)?,
+                EntityType::Task => {
+                    self.upsert_cloud_task(serde_json::from_value(payload.clone()).map_err(display)?)?
+                }
+                EntityType::Snippet => {
+                    self.upsert_cloud_snippet(serde_json::from_value(payload.clone()).map_err(display)?)?
+                }
+                EntityType::SplitInbox => {
+                    self.upsert_cloud_split(serde_json::from_value(payload.clone()).map_err(display)?)?
+                }
                 EntityType::MailAccount => self.upsert_cloud_account(payload)?,
                 EntityType::CalendarAccount => self.upsert_cloud_calendar(payload)?,
                 EntityType::CalendarSelection => self.upsert_cloud_calendar_selection(payload)?,
-                EntityType::Preferences => { self.connection()?.execute("INSERT INTO cloud_preferences(key,value,updated_at) VALUES('portable',?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", params![payload.to_string(),Utc::now().to_rfc3339()]).map_err(display)?; }
+                EntityType::Preferences => self.with_connection(|connection| {
+                    connection.execute(
+                        "INSERT INTO cloud_preferences(key,value,updated_at) VALUES('portable',?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                        params![payload.to_string(), Utc::now().to_rfc3339()],
+                    )?;
+                    Ok(())
+                })?,
                 EntityType::Retention => self.set_retention_days(payload.get("days").and_then(Value::as_i64))?,
             }
         }
         Ok(())
     }
 
-    fn upsert_cloud_task(&self, task: ThreadTask) -> Result<(), String> {
-        self.connection()?.execute("INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
-            params![task.id,task.account_id,task.thread_id,task.source_message_id,task.subject_snapshot,task.title,task.notes,task.kind,task.due_kind,task.due_value,task.time_zone,task.repeat_interval_days,task.status,task.completion_source,task.evidence_text,task.wait_after,task.created_at,task.updated_at,task.completed_at]).map_err(display)?;
+    /// Runs one single-id `DELETE` for a synced deletion.
+    fn delete_cloud_row(&self, sql: &str, entity_id: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(sql, [entity_id])?;
+            Ok(())
+        })
+    }
+
+    fn upsert_cloud_task(&self, task: ThreadTask) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
+                params![
+                    task.id,
+                    task.account_id,
+                    task.thread_id,
+                    task.source_message_id,
+                    task.subject_snapshot,
+                    task.title,
+                    task.notes,
+                    task.kind,
+                    task.due_kind,
+                    task.due_value,
+                    task.time_zone,
+                    task.repeat_interval_days,
+                    task.status,
+                    task.completion_source,
+                    task.evidence_text,
+                    task.wait_after,
+                    task.created_at,
+                    task.updated_at,
+                    task.completed_at
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_cloud_snippet(&self, item: Snippet) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO snippets(id,name,body,created_at,updated_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET name=excluded.name,body=excluded.body,updated_at=excluded.updated_at",
+                params![item.id, item.name, item.body, item.created_at, Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_cloud_split(&self, item: SplitInbox) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO split_inboxes(id,name,match_kind,match_value,sort_order,created_at,account_id,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET name=excluded.name,match_kind=excluded.match_kind,match_value=excluded.match_value,sort_order=excluded.sort_order,account_id=excluded.account_id,updated_at=excluded.updated_at",
+                params![
+                    item.id,
+                    item.name,
+                    item.match_kind,
+                    item.match_value,
+                    item.sort_order,
+                    item.created_at,
+                    item.account_id,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_cloud_account(&self, value: &Value) -> DbResult<()> {
+        let item: Account = serde_json::from_value(json!({
+            "email": value["email"],
+            "displayName": value.get("displayName").cloned().unwrap_or(Value::Null),
+            "color": value["color"],
+            "status": "needs_reauth",
+            "provider": value["provider"],
+            "sortOrder": value["sortOrder"],
+            "connectedAt": Utc::now().to_rfc3339(),
+            "lastSyncedAt": null,
+        }))
+        .map_err(display)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at) VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6) ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,color=excluded.color,provider=excluded.provider,sort_order=excluded.sort_order",
+                params![item.email, item.display_name, item.color, item.provider, item.sort_order, item.connected_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_cloud_calendar(&self, value: &Value) -> DbResult<()> {
+        let email = value.get("email").and_then(Value::as_str).ok_or("Invalid calendar account")?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO calendar_accounts(email,connected_at,status) VALUES(?1,?2,'needs_reauth') ON CONFLICT(email) DO NOTHING",
+                params![email, Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_cloud_calendar_selection(&self, value: &Value) -> DbResult<()> {
+        let email = value.get("accountId").and_then(Value::as_str).ok_or("Invalid calendar selection")?;
+        let ids = value
+            .get("calendarIds")
+            .and_then(Value::as_array)
+            .ok_or("Invalid calendar selection")?
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if self.list_calendar_accounts()?.iter().any(|a| a.email == email) {
+            self.set_calendar_selection(email, &ids)?;
+        }
         Ok(())
     }
-    fn upsert_cloud_snippet(&self, item: Snippet) -> Result<(), String> { self.connection()?.execute("INSERT INTO snippets(id,name,body,created_at,updated_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET name=excluded.name,body=excluded.body,updated_at=excluded.updated_at",params![item.id,item.name,item.body,item.created_at,Utc::now().to_rfc3339()]).map_err(display)?; Ok(()) }
-    fn upsert_cloud_split(&self, item: SplitInbox) -> Result<(), String> { self.connection()?.execute("INSERT INTO split_inboxes(id,name,match_kind,match_value,sort_order,created_at,account_id,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET name=excluded.name,match_kind=excluded.match_kind,match_value=excluded.match_value,sort_order=excluded.sort_order,account_id=excluded.account_id,updated_at=excluded.updated_at",params![item.id,item.name,item.match_kind,item.match_value,item.sort_order,item.created_at,item.account_id,Utc::now().to_rfc3339()]).map_err(display)?; Ok(()) }
-    fn upsert_cloud_account(&self, value: &Value) -> Result<(), String> { let item: Account = serde_json::from_value(json!({"email":value["email"],"displayName":value.get("displayName").cloned().unwrap_or(Value::Null),"color":value["color"],"status":"needs_reauth","provider":value["provider"],"sortOrder":value["sortOrder"],"connectedAt":Utc::now().to_rfc3339(),"lastSyncedAt":null})).map_err(display)?; self.connection()?.execute("INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at) VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6) ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,color=excluded.color,provider=excluded.provider,sort_order=excluded.sort_order",params![item.email,item.display_name,item.color,item.provider,item.sort_order,item.connected_at]).map_err(display)?; Ok(()) }
-    fn upsert_cloud_calendar(&self, value:&Value)->Result<(),String>{let email=value.get("email").and_then(Value::as_str).ok_or("Invalid calendar account")?;self.connection()?.execute("INSERT INTO calendar_accounts(email,connected_at,status) VALUES(?1,?2,'needs_reauth') ON CONFLICT(email) DO NOTHING",params![email,Utc::now().to_rfc3339()]).map_err(display)?;Ok(())}
-    fn upsert_cloud_calendar_selection(&self,value:&Value)->Result<(),String>{let email=value.get("accountId").and_then(Value::as_str).ok_or("Invalid calendar selection")?;let ids=value.get("calendarIds").and_then(Value::as_array).ok_or("Invalid calendar selection")?.iter().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();if self.list_calendar_accounts()?.iter().any(|a|a.email==email){self.set_calendar_selection(email,&ids)?;}Ok(())}
-    fn remove_cloud_conflict(&self,id:&str)->Result<(),String>{self.connection()?.execute("DELETE FROM cloud_sync_conflicts WHERE id=?1",[id]).map_err(display)?;Ok(())}
-    fn record_cloud_success(&self)->Result<(),String>{self.connection()?.execute("UPDATE cloud_account_state SET last_successful_sync=?1,last_error=NULL WHERE singleton=1",[Utc::now().to_rfc3339()]).map_err(display)?;Ok(())}
-    fn record_cloud_error(&self,error:&str)->Result<(),String>{self.connection()?.execute("UPDATE cloud_account_state SET last_error=?1 WHERE singleton=1",[error]).map_err(display)?;Ok(())}
-    fn disable_cloud_entitlement(&self)->Result<(),String>{self.connection()?.execute("UPDATE cloud_account_state SET sync_entitled=0 WHERE singleton=1",[]).map_err(display)?;Ok(())}
-    pub fn synced_preferences(&self)->Result<Option<Value>,String>{self.connection()?.query_row("SELECT value FROM cloud_preferences WHERE key='portable'",[],|row|row.get::<_,String>(0)).optional().map_err(display)?.map(|value|serde_json::from_str(&value).map_err(display)).transpose()}
+
+    fn remove_cloud_conflict(&self, id: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM cloud_sync_conflicts WHERE id=?1", [id])?;
+            Ok(())
+        })
+    }
+
+    fn record_cloud_success(&self) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "UPDATE cloud_account_state SET last_successful_sync=?1,last_error=NULL WHERE singleton=1",
+                [Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn record_cloud_error(&self, error: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute("UPDATE cloud_account_state SET last_error=?1 WHERE singleton=1", [error])?;
+            Ok(())
+        })
+    }
+
+    fn disable_cloud_entitlement(&self) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute("UPDATE cloud_account_state SET sync_entitled=0 WHERE singleton=1", [])?;
+            Ok(())
+        })
+    }
+
+    pub fn synced_preferences(&self) -> Result<Option<Value>, String> {
+        let value = self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT value FROM cloud_preferences WHERE key='portable'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?)
+        })?;
+        value.map(|value| serde_json::from_str(&value).map_err(display)).transpose()
+    }
 }
 
 async fn accept_callback(listener: &TcpListener, expected_state: &str) -> Result<String, String> {
-    let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5 * 60), listener.accept()).await.map_err(|_| "Account sign-in timed out".to_string())?.map_err(display)?;
+    let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5 * 60), listener.accept())
+        .await
+        .map_err(|_| "Account sign-in timed out".to_string())?
+        .map_err(display)?;
     let mut buffer = vec![0; 16 * 1024];
     let count = stream.read(&mut buffer).await.map_err(display)?;
     let request = String::from_utf8_lossy(&buffer[..count]);
-    let target = request.lines().next().and_then(|line| line.split_whitespace().nth(1)).ok_or("Invalid account callback")?;
+    let target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .ok_or("Invalid account callback")?;
     let callback = Url::parse(&format!("http://localhost{target}")).map_err(display)?;
-    let query: std::collections::HashMap<_,_> = callback.query_pairs().collect();
-    let result = if query.get("state").map(|v|v.as_ref()) != Some(expected_state) { Err("Account sign-in state did not match".into()) }
-        else if let Some(error)=query.get("error"){Err(format!("Account sign-in failed: {error}"))}
-        else {query.get("code").map(|v|v.to_string()).ok_or("Account sign-in returned no code".into())};
-    let body = if result.is_ok() { "Three Strands sign-in complete. You can close this window." } else { "Three Strands could not complete sign-in. Return to the app." };
-    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body);
-    let _=stream.write_all(response.as_bytes()).await;
+    let query: std::collections::HashMap<_, _> = callback.query_pairs().collect();
+    let result = if query.get("state").map(|v| v.as_ref()) != Some(expected_state) {
+        Err("Account sign-in state did not match".into())
+    } else if let Some(error) = query.get("error") {
+        Err(format!("Account sign-in failed: {error}"))
+    } else {
+        query
+            .get("code")
+            .map(|v| v.to_string())
+            .ok_or("Account sign-in returned no code".into())
+    };
+    let body = if result.is_ok() {
+        "Three Strands sign-in complete. You can close this window."
+    } else {
+        "Three Strands could not complete sign-in. Return to the app."
+    };
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
     result
 }
 
-fn session_entry()->Result<Entry,String>{Entry::new(SERVICE,SESSION_KEY).map_err(display)}
-fn clear_provider_credential(service:&str,key:&str)->Result<(),String>{match Entry::new(service,key).map_err(display)?.delete_credential(){Ok(())|Err(keyring::Error::NoEntry)=>Ok(()),Err(error)=>Err(display(error))}}
-fn random_token(bytes:usize)->String{let mut value=vec![0;bytes];OsRng.fill_bytes(&mut value);URL_SAFE_NO_PAD.encode(value)}
-fn device_name()->String{std::env::var("HOSTNAME").ok().filter(|v|!v.trim().is_empty()).unwrap_or_else(||format!("Three Strands on {}",std::env::consts::OS))}
-fn validated_cloud_device_id(value:&str)->Result<String,String>{Uuid::parse_str(value).map(|id|id.hyphenated().to_string()).map_err(|_|"Invalid cloud device ID".to_string())}
-fn http_error(error:reqwest::Error)->String{if let Some(status)=error.status(){format!("Three Strands service returned {status}")}else{display(error)}}
-fn display(value:impl std::fmt::Display)->String{value.to_string()}
+fn session_entry() -> Result<Entry, String> {
+    Entry::new(SERVICE, SESSION_KEY).map_err(display)
+}
+
+fn clear_provider_credential(service: &str, key: &str) -> Result<(), String> {
+    match Entry::new(service, key).map_err(display)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(display(error)),
+    }
+}
+
+fn random_token(bytes: usize) -> String {
+    let mut value = vec![0; bytes];
+    OsRng.fill_bytes(&mut value);
+    URL_SAFE_NO_PAD.encode(value)
+}
+
+fn device_name() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| format!("Three Strands on {}", std::env::consts::OS))
+}
+
+fn validated_cloud_device_id(value: &str) -> Result<String, String> {
+    Uuid::parse_str(value)
+        .map(|id| id.hyphenated().to_string())
+        .map_err(|_| "Invalid cloud device ID".to_string())
+}
+
+fn http_error(error: reqwest::Error) -> String {
+    if let Some(status) = error.status() {
+        format!("Three Strands service returned {status}")
+    } else {
+        display(error)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -509,6 +939,67 @@ mod tests {
         db.create_snippet("Saved","Still here").unwrap();
         db.clear_cloud_account().unwrap();
         assert_eq!(db.list_snippets().unwrap().len(),1);
+    }
+
+    fn enroll(db: &Database) {
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE cloud_account_state SET user_id='user',email='user@example.com',enrollment_confirmed=1,sync_entitled=1 WHERE singleton=1",
+                [],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn sync_batch_reads_the_outbox_with_this_devices_id() {
+        let db = Database::open_memory();
+        enroll(&db);
+        db.enqueue_cloud_entity(EntityType::Snippet, "one", json!({"name": "n", "body": "b"}), None)
+            .unwrap();
+        db.enqueue_cloud_deletion(EntityType::Snippet, "two").unwrap();
+
+        let (cursor, operations) = db.cloud_sync_batch().unwrap();
+        let device_id = db.cloud_device_id().unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(operations.len(), 2);
+        assert!(operations.iter().all(|operation| operation.device_id == device_id));
+        assert_eq!(operations[0].entity_id, "one");
+        assert!(!operations[0].deleted);
+        assert_eq!(operations[1].entity_id, "two");
+        assert!(operations[1].deleted);
+        assert_eq!(db.cloud_account_status(true).unwrap().pending_operations, 2);
+    }
+
+    #[test]
+    fn cloud_status_round_trips_errors_and_success() {
+        let db = Database::open_memory();
+        db.record_cloud_error("offline").unwrap();
+        assert_eq!(db.cloud_account_status(false).unwrap().error.as_deref(), Some("offline"));
+        db.record_cloud_success().unwrap();
+        let status = db.cloud_account_status(false).unwrap();
+        assert_eq!(status.error, None);
+        assert!(status.last_successful_sync.is_some());
+    }
+
+    #[test]
+    fn clearing_the_account_empties_the_outbox_in_one_transaction() {
+        let db = Database::open_memory();
+        enroll(&db);
+        db.enqueue_cloud_entity(EntityType::Snippet, "one", json!({"name": "n"}), None).unwrap();
+        db.clear_cloud_account().unwrap();
+        let status = db.cloud_account_status(true).unwrap();
+        assert!(!status.signed_in);
+        assert_eq!(status.pending_operations, 0);
+    }
+
+    #[test]
+    fn synced_preferences_round_trip_through_materialization() {
+        let db = Database::open_memory();
+        assert_eq!(db.synced_preferences().unwrap(), None);
+        db.materialize_entity(EntityType::Preferences, "portable", Some(&json!({"theme": "dark"})), false)
+            .unwrap();
+        assert_eq!(db.synced_preferences().unwrap(), Some(json!({"theme": "dark"})));
     }
 
     #[test]

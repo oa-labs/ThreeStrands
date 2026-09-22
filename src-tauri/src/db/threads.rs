@@ -17,31 +17,27 @@ impl Database {
     }
 
     pub fn count_unread_inbox(&self) -> DbResult<i64> {
-        self.connection()?
-            .query_row(
+        self.with_connection(|connection| {
+            Ok(connection.query_row(
                 "SELECT COUNT(*) FROM threads WHERE archived = 0 AND trashed = 0 AND unread = 1",
                 [],
                 |row| row.get(0),
-            )
-            .map_err(display_error)
+            )?)
+        })
     }
 
     pub fn list_unread_counts(&self) -> DbResult<HashMap<String, i64>> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
                 "SELECT account_id, COUNT(*)
                  FROM threads
                  WHERE archived = 0 AND trashed = 0 AND unread = 1
                  GROUP BY account_id",
-            )
-            .map_err(display_error)?;
-        let rows = statement
-            .query_map([], |row| {
+            )?;
+            let rows = statement.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .map_err(display_error)?;
-        rows.collect::<Result<HashMap<_, _>, _>>()
-            .map_err(display_error)
+            })?;
+            Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
+        })
     }
 }

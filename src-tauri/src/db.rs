@@ -160,8 +160,7 @@ fn run_quick_check(connection: &Connection) -> Result<(), OpenError> {
 
 fn vacuum_into(connection: &Connection, dest: &Path) -> DbResult<()> {
     connection
-        .execute("VACUUM INTO ?1", params![path_string(dest)])
-        .map_err(display_error)?;
+        .execute("VACUUM INTO ?1", params![path_string(dest)])?;
     Ok(())
 }
 
@@ -483,9 +482,10 @@ impl Database {
     /// ever-growing `-wal` file between the automatic checkpoints SQLite
     /// already performs on its own.
     pub fn checkpoint_wal(&self) -> DbResult<()> {
-        self.connection()?
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            Ok(connection
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?)
+        })
     }
 
     /// Snapshots the database to a rotating sibling file via `VACUUM INTO`,
@@ -495,9 +495,10 @@ impl Database {
         let Some(path) = self.path.clone() else {
             return Ok(());
         };
-        let connection = self.connection()?;
-        periodic_backup(&connection, &path)?;
-        Ok(())
+        self.with_connection(|connection| {
+            periodic_backup(connection, &path)?;
+            Ok(())
+        })
     }
 
     /// The Inbox is unarchived/untrashed threads *minus* anything claimed by
@@ -566,16 +567,14 @@ impl Database {
                     ""
                 }
             );
-            let mut statement = connection.prepare(&sql).map_err(display_error)?;
+            let mut statement = connection.prepare(&sql)?;
             let rows = match account_id {
                 Some(id) => statement
-                    .query_map([id], thread_from_row)
-                    .map_err(display_error)?,
+                    .query_map([id], thread_from_row)?,
                 None => statement
-                    .query_map([], thread_from_row)
-                    .map_err(display_error)?,
+                    .query_map([], thread_from_row)?,
             };
-            rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
     }
 
@@ -603,16 +602,14 @@ impl Database {
                 if account_id.is_some() { 2 } else { 1 },
                 if account_id.is_some() { 3 } else { 2 },
             );
-            let mut statement = connection.prepare(&sql).map_err(display_error)?;
+            let mut statement = connection.prepare(&sql)?;
             let rows = match account_id {
                 Some(id) => statement
-                    .query_map(params![id, fetch_limit, offset as i64], thread_from_row)
-                    .map_err(display_error)?,
+                    .query_map(params![id, fetch_limit, offset as i64], thread_from_row)?,
                 None => statement
-                    .query_map(params![fetch_limit, offset as i64], thread_from_row)
-                    .map_err(display_error)?,
+                    .query_map(params![fetch_limit, offset as i64], thread_from_row)?,
             };
-            let mut threads = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
+            let mut threads = rows.collect::<Result<Vec<_>, _>>()?;
             let has_more = threads.len() > page_limit;
             threads.truncate(page_limit);
             Ok(ThreadPage { threads, has_more })
@@ -620,100 +617,100 @@ impl Database {
     }
 
     pub fn get_thread(&self, id: &str) -> DbResult<ThreadDetail> {
-        let connection = self.connection()?;
-        let thread = connection
-            .query_row(
-                &format!("SELECT {THREAD_COLUMNS} FROM threads AS t WHERE t.id = ?1"),
-                [id],
-                thread_from_row,
-            )
-            .optional()
-            .map_err(display_error)?
-            .ok_or_else(|| "Thread not found".to_string())?;
+        self.with_connection(|connection| {
+            let thread = connection
+                .query_row(
+                    &format!("SELECT {THREAD_COLUMNS} FROM threads AS t WHERE t.id = ?1"),
+                    [id],
+                    thread_from_row,
+                )
+                .optional()?
+                .ok_or_else(|| "Thread not found".to_string())?;
 
-        let mut statement = connection
-            .prepare(
-                "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
-                        body_html_z, body_text_z, unsubscribe_json, unread, attachments_json
-                 FROM messages WHERE thread_id = ?1 ORDER BY sent_at",
-            )
-            .map_err(display_error)?;
-        let rows = statement
-            .query_map([id], |row| {
-                Ok(Message {
-                    id: row.get(0)?,
-                    thread_id: row.get(1)?,
-                    sender: row.get(2)?,
-                    recipients: decode_json(row.get::<_, String>(3)?)?,
-                    sent_at: row.get(4)?,
-                    body_html: resolve_body(7, row.get(5)?, row.get(7)?)?,
-                    body_text: resolve_body(8, row.get(6)?, row.get(8)?)?,
-                    unsubscribe: row
-                        .get::<_, Option<String>>(9)?
-                        .and_then(|value| serde_json::from_str::<UnsubscribeMetadata>(&value).ok())
-                        .map(|value| value.info()),
-                    unread: row.get::<_, i64>(10)? != 0,
-                    attachments: serde_json::from_str(&row.get::<_, String>(11)?).map_err(
-                        |error| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                11,
-                                rusqlite::types::Type::Text,
-                                Box::new(error),
-                            )
-                        },
-                    )?,
-                })
-            })
-            .map_err(display_error)?;
-        let mut messages = rows.collect::<Result<Vec<_>, _>>().map_err(display_error)?;
-        for message in &mut messages {
-            for attachment in &mut message.attachments {
-                attachment.filename =
-                    crate::attachment_security::normalize_filename(&attachment.filename);
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
+                            body_html_z, body_text_z, unsubscribe_json, unread, attachments_json
+                     FROM messages WHERE thread_id = ?1 ORDER BY sent_at",
+                )?;
+            let rows = statement
+                .query_map([id], |row| {
+                    Ok(Message {
+                        id: row.get(0)?,
+                        thread_id: row.get(1)?,
+                        sender: row.get(2)?,
+                        recipients: decode_json(row.get::<_, String>(3)?)?,
+                        sent_at: row.get(4)?,
+                        body_html: resolve_body(7, row.get(5)?, row.get(7)?)?,
+                        body_text: resolve_body(8, row.get(6)?, row.get(8)?)?,
+                        unsubscribe: row
+                            .get::<_, Option<String>>(9)?
+                            .and_then(|value| serde_json::from_str::<UnsubscribeMetadata>(&value).ok())
+                            .map(|value| value.info()),
+                        unread: row.get::<_, i64>(10)? != 0,
+                        attachments: serde_json::from_str(&row.get::<_, String>(11)?).map_err(
+                            |error| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    11,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(error),
+                                )
+                            },
+                        )?,
+                    })
+                })?;
+            let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
+            for message in &mut messages {
+                for attachment in &mut message.attachments {
+                    attachment.filename =
+                        crate::attachment_security::normalize_filename(&attachment.filename);
+                }
             }
-        }
-        Ok(ThreadDetail { thread, messages })
+            Ok(ThreadDetail { thread, messages })
+        })
     }
 
     pub fn get_thread_for_message(&self, message_id: &str) -> DbResult<ThreadDetail> {
         let thread_id = self
-            .connection()?
-            .query_row(
-                "SELECT thread_id FROM messages WHERE id = ?1",
-                [message_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(display_error)?
+            .with_connection(|connection| {
+                Ok(connection
+                    .query_row(
+                        "SELECT thread_id FROM messages WHERE id = ?1",
+                        [message_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?)
+            })?
             .ok_or_else(|| "Reply source message not found".to_string())?;
         self.get_thread(&thread_id)
     }
 
     pub fn attachment_message(&self, message_id: &str) -> DbResult<(String, RawMessage)> {
-        self.connection()?
-            .query_row(
-                "SELECT t.account_id, mm.payload
-                 FROM messages m
-                 JOIN threads t ON t.id = m.thread_id
-                 JOIN message_metadata mm ON mm.id = m.id
-                 WHERE m.id = ?1",
-                [message_id],
-                |row| {
-                    let account_id: String = row.get(0)?;
-                    let payload: String = row.get(1)?;
-                    let message: RawMessage = serde_json::from_str(&payload).map_err(|error| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            payload.len(),
-                            rusqlite::types::Type::Text,
-                            Box::new(error),
-                        )
-                    })?;
-                    Ok((account_id, message))
-                },
-            )
-            .optional()
-            .map_err(display_error)?
-            .ok_or_else(|| DatabaseError::Message("Attachment source not found".into()))
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT t.account_id, mm.payload
+                     FROM messages m
+                     JOIN threads t ON t.id = m.thread_id
+                     JOIN message_metadata mm ON mm.id = m.id
+                     WHERE m.id = ?1",
+                    [message_id],
+                    |row| {
+                        let account_id: String = row.get(0)?;
+                        let payload: String = row.get(1)?;
+                        let message: RawMessage = serde_json::from_str(&payload).map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                payload.len(),
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })?;
+                        Ok((account_id, message))
+                    },
+                )
+                .optional()?
+                .ok_or_else(|| DatabaseError::Message("Attachment source not found".into()))
+        })
     }
 
     /// Returns the current top sender candidates for one account. This is a
@@ -724,88 +721,87 @@ impl Database {
         account_id: &str,
         limit: usize,
     ) -> DbResult<Vec<TriageSenderStats>> {
-        let connection = self.connection()?;
-        let limit = limit.clamp(1, 100) as i64;
-        let mut statement = connection
-            .prepare(
-                "WITH stats AS (
-                    SELECT
-                        account_id,
-                        sender_email,
-                        sender_domain,
-                        SUM(CASE WHEN event_kind = 'open' AND context = 'inbox'
-                                 THEN 1 ELSE 0 END) AS exposure_count,
-                        SUM(CASE WHEN event_kind = 'close' AND context = 'inbox'
-                                      AND (scrolled = 1 OR COALESCE(dwell_ms, 0) > 1000)
-                                 THEN 1 ELSE 0 END) AS engaged_view_count,
-                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
-                                 THEN 1 ELSE 0 END) AS disposition_count,
-                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
-                                      AND action = 'archive'
-                                 THEN 1 ELSE 0 END) AS archive_count,
-                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
-                                      AND action = 'trash'
-                                 THEN 1 ELSE 0 END) AS trash_count,
-                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
-                                      AND action IN ('archive', 'trash')
-                                      AND opened = 1 AND batch = 0 AND scrolled = 0
-                                      AND dwell_ms BETWEEN 0 AND 1000
-                                 THEN 1 ELSE 0 END) AS quick_disposition_count,
-                        SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
-                                      AND batch = 1
-                                 THEN 1 ELSE 0 END) AS batch_disposition_count,
-                        SUM(CASE WHEN event_kind = 'restore' AND context = 'inbox'
-                                 THEN 1 ELSE 0 END) AS restore_count,
-                        SUM(CASE WHEN event_kind = 'response' AND context = 'inbox'
-                                 THEN 1 ELSE 0 END) AS response_count,
-                        MAX(created_at) AS last_seen_at
-                    FROM triage_events
-                    WHERE account_id = ?1
-                    GROUP BY account_id, sender_email, sender_domain
-                )
-                SELECT account_id, sender_email, sender_domain,
-                       exposure_count, engaged_view_count, disposition_count,
-                       archive_count, trash_count, quick_disposition_count,
-                       batch_disposition_count, restore_count, response_count, last_seen_at
-                FROM stats
-                WHERE exposure_count > 0 OR disposition_count > 0
-                ORDER BY quick_disposition_count DESC,
-                         CASE WHEN disposition_count > 0
-                              THEN CAST(quick_disposition_count AS REAL) / disposition_count
-                              ELSE 0 END DESC,
-                         disposition_count DESC,
-                         last_seen_at DESC
-                LIMIT ?2",
-            )
-            .map_err(display_error)?;
-        let rows = statement
-            .query_map(params![account_id, limit], |row| {
-                let exposure_count: i64 = row.get(3)?;
-                let disposition_count: i64 = row.get(5)?;
-                let quick_disposition_count: i64 = row.get(8)?;
-                Ok(TriageSenderStats {
-                    account_id: row.get(0)?,
-                    sender_email: row.get(1)?,
-                    sender_domain: row.get(2)?,
-                    exposure_count,
-                    engaged_view_count: row.get(4)?,
-                    disposition_count,
-                    archive_count: row.get(6)?,
-                    trash_count: row.get(7)?,
-                    quick_disposition_count,
-                    batch_disposition_count: row.get(9)?,
-                    restore_count: row.get(10)?,
-                    response_count: row.get(11)?,
-                    quick_disposition_rate: if disposition_count > 0 {
-                        quick_disposition_count as f64 / disposition_count as f64
-                    } else {
-                        0.0
-                    },
-                    last_seen_at: row.get(12)?,
-                })
-            })
-            .map_err(display_error)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
+        self.with_connection(|connection| {
+            let limit = limit.clamp(1, 100) as i64;
+            let mut statement = connection
+                .prepare(
+                    "WITH stats AS (
+                        SELECT
+                            account_id,
+                            sender_email,
+                            sender_domain,
+                            SUM(CASE WHEN event_kind = 'open' AND context = 'inbox'
+                                     THEN 1 ELSE 0 END) AS exposure_count,
+                            SUM(CASE WHEN event_kind = 'close' AND context = 'inbox'
+                                          AND (scrolled = 1 OR COALESCE(dwell_ms, 0) > 1000)
+                                     THEN 1 ELSE 0 END) AS engaged_view_count,
+                            SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                     THEN 1 ELSE 0 END) AS disposition_count,
+                            SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                          AND action = 'archive'
+                                     THEN 1 ELSE 0 END) AS archive_count,
+                            SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                          AND action = 'trash'
+                                     THEN 1 ELSE 0 END) AS trash_count,
+                            SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                          AND action IN ('archive', 'trash')
+                                          AND opened = 1 AND batch = 0 AND scrolled = 0
+                                          AND dwell_ms BETWEEN 0 AND 1000
+                                     THEN 1 ELSE 0 END) AS quick_disposition_count,
+                            SUM(CASE WHEN event_kind = 'disposition' AND context = 'inbox'
+                                          AND batch = 1
+                                     THEN 1 ELSE 0 END) AS batch_disposition_count,
+                            SUM(CASE WHEN event_kind = 'restore' AND context = 'inbox'
+                                     THEN 1 ELSE 0 END) AS restore_count,
+                            SUM(CASE WHEN event_kind = 'response' AND context = 'inbox'
+                                     THEN 1 ELSE 0 END) AS response_count,
+                            MAX(created_at) AS last_seen_at
+                        FROM triage_events
+                        WHERE account_id = ?1
+                        GROUP BY account_id, sender_email, sender_domain
+                    )
+                    SELECT account_id, sender_email, sender_domain,
+                           exposure_count, engaged_view_count, disposition_count,
+                           archive_count, trash_count, quick_disposition_count,
+                           batch_disposition_count, restore_count, response_count, last_seen_at
+                    FROM stats
+                    WHERE exposure_count > 0 OR disposition_count > 0
+                    ORDER BY quick_disposition_count DESC,
+                             CASE WHEN disposition_count > 0
+                                  THEN CAST(quick_disposition_count AS REAL) / disposition_count
+                                  ELSE 0 END DESC,
+                             disposition_count DESC,
+                             last_seen_at DESC
+                    LIMIT ?2",
+                )?;
+            let rows = statement
+                .query_map(params![account_id, limit], |row| {
+                    let exposure_count: i64 = row.get(3)?;
+                    let disposition_count: i64 = row.get(5)?;
+                    let quick_disposition_count: i64 = row.get(8)?;
+                    Ok(TriageSenderStats {
+                        account_id: row.get(0)?,
+                        sender_email: row.get(1)?,
+                        sender_domain: row.get(2)?,
+                        exposure_count,
+                        engaged_view_count: row.get(4)?,
+                        disposition_count,
+                        archive_count: row.get(6)?,
+                        trash_count: row.get(7)?,
+                        quick_disposition_count,
+                        batch_disposition_count: row.get(9)?,
+                        restore_count: row.get(10)?,
+                        response_count: row.get(11)?,
+                        quick_disposition_rate: if disposition_count > 0 {
+                            quick_disposition_count as f64 / disposition_count as f64
+                        } else {
+                            0.0
+                        },
+                        last_seen_at: row.get(12)?,
+                    })
+                })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
     }
 
     /// Ranks past correspondents for compose autocomplete. Deliberately
@@ -826,166 +822,163 @@ impl Database {
         limit: usize,
     ) -> DbResult<Vec<ContactSuggestion>> {
         let limit = limit.clamp(1, 50);
-        let connection = self.connection()?;
-        let account_email = account_id.to_ascii_lowercase();
+        self.with_connection(|connection| {
+            let account_email = account_id.to_ascii_lowercase();
 
-        struct Agg {
-            display_name: Option<String>,
-            sent_count: i64,
-            received_count: i64,
-            last_interacted_at: String,
-            pinned: bool,
-        }
-        let mut by_email: HashMap<String, Agg> = HashMap::new();
+            struct Agg {
+                display_name: Option<String>,
+                sent_count: i64,
+                received_count: i64,
+                last_interacted_at: String,
+                pinned: bool,
+            }
+            let mut by_email: HashMap<String, Agg> = HashMap::new();
 
-        let mut statement = connection
-            .prepare(
-                "SELECT m.sender, m.recipients_json, m.sent_at, m.unsubscribe_json
-                 FROM messages m JOIN threads t ON t.id = m.thread_id
-                 WHERE t.account_id = ?1
-                 ORDER BY m.sent_at DESC
-                 LIMIT 20000",
-            )
-            .map_err(display_error)?;
-        let rows = statement
-            .query_map(params![account_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                ))
-            })
-            .map_err(display_error)?;
+            let mut statement = connection
+                .prepare(
+                    "SELECT m.sender, m.recipients_json, m.sent_at, m.unsubscribe_json
+                     FROM messages m JOIN threads t ON t.id = m.thread_id
+                     WHERE t.account_id = ?1
+                     ORDER BY m.sent_at DESC
+                     LIMIT 20000",
+                )?;
+            let rows = statement
+                .query_map(params![account_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                })?;
 
-        for row in rows {
-            let (sender, recipients_json, sent_at, unsubscribe_json) =
-                row.map_err(display_error)?;
-            // Best-effort: a message with an address this parser rejects
-            // just contributes nothing to suggestions rather than failing
-            // the whole ranking.
-            let Some((sender_name, sender_email)) = crate::correspondence::addresses(&sender)
-                .ok()
-                .and_then(|parsed| parsed.into_iter().next())
-            else {
-                continue;
-            };
-            let sender_email = sender_email.to_ascii_lowercase();
-            if sender_email == account_email {
-                let Ok(recipients) = serde_json::from_str::<Vec<String>>(&recipients_json) else {
+            for row in rows {
+                let (sender, recipients_json, sent_at, unsubscribe_json) =
+                    row?;
+                // Best-effort: a message with an address this parser rejects
+                // just contributes nothing to suggestions rather than failing
+                // the whole ranking.
+                let Some((sender_name, sender_email)) = crate::correspondence::addresses(&sender)
+                    .ok()
+                    .and_then(|parsed| parsed.into_iter().next())
+                else {
                     continue;
                 };
-                for raw in recipients {
-                    let Some((name, email)) = crate::correspondence::addresses(&raw)
-                        .ok()
-                        .and_then(|parsed| parsed.into_iter().next())
-                    else {
+                let sender_email = sender_email.to_ascii_lowercase();
+                if sender_email == account_email {
+                    let Ok(recipients) = serde_json::from_str::<Vec<String>>(&recipients_json) else {
                         continue;
                     };
-                    let email = email.to_ascii_lowercase();
-                    if email.is_empty() || email == account_email {
-                        continue;
+                    for raw in recipients {
+                        let Some((name, email)) = crate::correspondence::addresses(&raw)
+                            .ok()
+                            .and_then(|parsed| parsed.into_iter().next())
+                        else {
+                            continue;
+                        };
+                        let email = email.to_ascii_lowercase();
+                        if email.is_empty() || email == account_email {
+                            continue;
+                        }
+                        let entry = by_email.entry(email).or_insert_with(|| Agg {
+                            display_name: None,
+                            sent_count: 0,
+                            received_count: 0,
+                            last_interacted_at: sent_at.clone(),
+                            pinned: false,
+                        });
+                        entry.sent_count += 1;
+                        if entry.display_name.is_none() && !name.is_empty() {
+                            entry.display_name = Some(name);
+                        }
+                        if sent_at > entry.last_interacted_at {
+                            entry.last_interacted_at = sent_at.clone();
+                        }
                     }
-                    let entry = by_email.entry(email).or_insert_with(|| Agg {
+                } else if !sender_email.is_empty() && unsubscribe_json.is_none() {
+                    // A List-Unsubscribe/one-click header marks bulk/automated
+                    // mail (newsletters, notifications) — never a real
+                    // correspondent, so it must not seed or bump a suggestion.
+                    // Doesn't affect an entry already earned by being sent to,
+                    // or a manually pinned contact.
+                    let entry = by_email.entry(sender_email).or_insert_with(|| Agg {
                         display_name: None,
                         sent_count: 0,
                         received_count: 0,
                         last_interacted_at: sent_at.clone(),
                         pinned: false,
                     });
-                    entry.sent_count += 1;
-                    if entry.display_name.is_none() && !name.is_empty() {
-                        entry.display_name = Some(name);
+                    entry.received_count += 1;
+                    if entry.display_name.is_none() && !sender_name.is_empty() {
+                        entry.display_name = Some(sender_name);
                     }
                     if sent_at > entry.last_interacted_at {
                         entry.last_interacted_at = sent_at.clone();
                     }
                 }
-            } else if !sender_email.is_empty() && unsubscribe_json.is_none() {
-                // A List-Unsubscribe/one-click header marks bulk/automated
-                // mail (newsletters, notifications) — never a real
-                // correspondent, so it must not seed or bump a suggestion.
-                // Doesn't affect an entry already earned by being sent to,
-                // or a manually pinned contact.
-                let entry = by_email.entry(sender_email).or_insert_with(|| Agg {
-                    display_name: None,
+            }
+
+            let mut pinned_statement = connection
+                .prepare(
+                    "SELECT email, display_name, pinned_at FROM pinned_contacts WHERE account_id = ?1",
+                )?;
+            let pinned_rows = pinned_statement
+                .query_map(params![account_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?;
+            for row in pinned_rows {
+                let (email, display_name, pinned_at) = row?;
+                let entry = by_email.entry(email).or_insert_with(|| Agg {
+                    display_name: display_name.clone(),
                     sent_count: 0,
                     received_count: 0,
-                    last_interacted_at: sent_at.clone(),
+                    last_interacted_at: pinned_at,
                     pinned: false,
                 });
-                entry.received_count += 1;
-                if entry.display_name.is_none() && !sender_name.is_empty() {
-                    entry.display_name = Some(sender_name);
-                }
-                if sent_at > entry.last_interacted_at {
-                    entry.last_interacted_at = sent_at.clone();
+                entry.pinned = true;
+                if entry.display_name.is_none() {
+                    entry.display_name = display_name;
                 }
             }
-        }
 
-        let mut pinned_statement = connection
-            .prepare(
-                "SELECT email, display_name, pinned_at FROM pinned_contacts WHERE account_id = ?1",
-            )
-            .map_err(display_error)?;
-        let pinned_rows = pinned_statement
-            .query_map(params![account_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })
-            .map_err(display_error)?;
-        for row in pinned_rows {
-            let (email, display_name, pinned_at) = row.map_err(display_error)?;
-            let entry = by_email.entry(email).or_insert_with(|| Agg {
-                display_name: display_name.clone(),
-                sent_count: 0,
-                received_count: 0,
-                last_interacted_at: pinned_at,
-                pinned: false,
+            let needle = query.trim().to_ascii_lowercase();
+            let mut suggestions: Vec<ContactSuggestion> = by_email
+                .into_iter()
+                .filter(|(email, agg)| {
+                    let domain_matches = email
+                        .split_once('@')
+                        .is_some_and(|(_, domain)| domain.contains(&needle));
+                    needle.is_empty()
+                        || email.starts_with(&needle)
+                        || domain_matches
+                        || agg
+                            .display_name
+                            .as_deref()
+                            .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
+                })
+                .map(|(email, agg)| ContactSuggestion {
+                    email,
+                    display_name: agg.display_name,
+                    sent_count: agg.sent_count,
+                    received_count: agg.received_count,
+                    last_interacted_at: agg.last_interacted_at,
+                    pinned: agg.pinned,
+                })
+                .collect();
+            suggestions.sort_by(|a, b| {
+                b.pinned
+                    .cmp(&a.pinned)
+                    .then(b.sent_count.cmp(&a.sent_count))
+                    .then(b.received_count.cmp(&a.received_count))
+                    .then(b.last_interacted_at.cmp(&a.last_interacted_at))
             });
-            entry.pinned = true;
-            if entry.display_name.is_none() {
-                entry.display_name = display_name;
-            }
-        }
-
-        let needle = query.trim().to_ascii_lowercase();
-        let mut suggestions: Vec<ContactSuggestion> = by_email
-            .into_iter()
-            .filter(|(email, agg)| {
-                let domain_matches = email
-                    .split_once('@')
-                    .is_some_and(|(_, domain)| domain.contains(&needle));
-                needle.is_empty()
-                    || email.starts_with(&needle)
-                    || domain_matches
-                    || agg
-                        .display_name
-                        .as_deref()
-                        .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
-            })
-            .map(|(email, agg)| ContactSuggestion {
-                email,
-                display_name: agg.display_name,
-                sent_count: agg.sent_count,
-                received_count: agg.received_count,
-                last_interacted_at: agg.last_interacted_at,
-                pinned: agg.pinned,
-            })
-            .collect();
-        suggestions.sort_by(|a, b| {
-            b.pinned
-                .cmp(&a.pinned)
-                .then(b.sent_count.cmp(&a.sent_count))
-                .then(b.received_count.cmp(&a.received_count))
-                .then(b.last_interacted_at.cmp(&a.last_interacted_at))
-        });
-        suggestions.truncate(limit);
-        Ok(suggestions)
+            suggestions.truncate(limit);
+            Ok(suggestions)
+        })
     }
 
     pub fn set_thread_summary(
@@ -994,64 +987,61 @@ impl Database {
         summary: &str,
         generated_at: &str,
     ) -> DbResult<()> {
-        self.connection()?
-            .execute(
+        self.with_connection(|connection| {
+            connection.execute(
                 "UPDATE threads SET summary = ?1, summary_generated_at = ?2 WHERE id = ?3",
                 params![summary, generated_at, thread_id],
-            )
-            .map_err(display_error)?;
-        Ok(())
+            )?;
+            Ok(())
+        })
     }
 
     /// Resolves the unsubscribe URL from locally cached message metadata and
     /// records the attempt before any external side effect occurs. The
     /// webview supplies only the stable message ID, never an arbitrary URL.
     pub fn begin_unsubscribe(&self, message_id: &str) -> DbResult<UnsubscribeTarget> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        let (thread_id, metadata_json): (String, Option<String>) = transaction
-            .query_row(
-                "SELECT thread_id, unsubscribe_json FROM messages WHERE id = ?1",
-                [message_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(display_error)?
-            .ok_or_else(|| "Message not found".to_string())?;
-        let metadata = metadata_json
-            .ok_or_else(|| DatabaseError::Message("This message has no unsubscribe option".into()))
-            .and_then(|value| {
-                serde_json::from_str::<UnsubscribeMetadata>(&value).map_err(display_error)
-            })?;
-        let (method, url) = if let Some(url) = metadata.one_click_url {
-            (UnsubscribeMethod::OneClick, url)
-        } else if let Some(url) = metadata.mailto_url {
-            (UnsubscribeMethod::Mailto, url)
-        } else if let Some(url) = metadata.web_url {
-            (UnsubscribeMethod::Web, url)
-        } else {
-            return Err("This message has no usable unsubscribe option".into());
-        };
-        let request_id = Uuid::new_v4().to_string();
-        transaction
-            .execute(
-                "INSERT INTO unsubscribe_requests(
-                    id, message_id, thread_id, method, state, created_at
-                 ) VALUES (?1, ?2, ?3, ?4, 'pending', ?5)",
-                params![
-                    request_id,
-                    message_id,
-                    thread_id,
-                    unsubscribe_method_name(&method),
-                    Utc::now().to_rfc3339(),
-                ],
-            )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)?;
-        Ok(UnsubscribeTarget {
-            request_id,
-            method,
-            url,
+        self.with_transaction(|transaction| {
+            let (thread_id, metadata_json): (String, Option<String>) = transaction
+                .query_row(
+                    "SELECT thread_id, unsubscribe_json FROM messages WHERE id = ?1",
+                    [message_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?
+                .ok_or_else(|| "Message not found".to_string())?;
+            let metadata = metadata_json
+                .ok_or_else(|| DatabaseError::Message("This message has no unsubscribe option".into()))
+                .and_then(|value| {
+                    serde_json::from_str::<UnsubscribeMetadata>(&value).map_err(serialization_error)
+                })?;
+            let (method, url) = if let Some(url) = metadata.one_click_url {
+                (UnsubscribeMethod::OneClick, url)
+            } else if let Some(url) = metadata.mailto_url {
+                (UnsubscribeMethod::Mailto, url)
+            } else if let Some(url) = metadata.web_url {
+                (UnsubscribeMethod::Web, url)
+            } else {
+                return Err("This message has no usable unsubscribe option".into());
+            };
+            let request_id = Uuid::new_v4().to_string();
+            transaction
+                .execute(
+                    "INSERT INTO unsubscribe_requests(
+                        id, message_id, thread_id, method, state, created_at
+                     ) VALUES (?1, ?2, ?3, ?4, 'pending', ?5)",
+                    params![
+                        request_id,
+                        message_id,
+                        thread_id,
+                        unsubscribe_method_name(&method),
+                        Utc::now().to_rfc3339(),
+                    ],
+                )?;
+            Ok(UnsubscribeTarget {
+                request_id,
+                method,
+                url,
+            })
         })
     }
 
@@ -1065,9 +1055,8 @@ impl Database {
         if !matches!(state, "succeeded" | "opened" | "failed") {
             return Err("Invalid unsubscribe request state".into());
         }
-        let changed = self
-            .connection()?
-            .execute(
+        let changed = self.with_connection(|connection| {
+            Ok(connection.execute(
                 "UPDATE unsubscribe_requests
                  SET state = ?1, http_status = ?2, completed_at = ?3, last_error = ?4
                  WHERE id = ?5 AND state = 'pending'",
@@ -1078,8 +1067,8 @@ impl Database {
                     error,
                     request_id
                 ],
-            )
-            .map_err(display_error)?;
+            )?)
+        })?;
         if changed == 0 {
             return Err("Unsubscribe request was not pending".into());
         }
@@ -1087,16 +1076,14 @@ impl Database {
     }
 
     pub fn message_ids_for_thread(&self, thread_id: &str) -> DbResult<Vec<String>> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare("SELECT id FROM messages WHERE thread_id = ?1 ORDER BY sent_at")
-            .map_err(display_error)?;
-        let ids = statement
-            .query_map([thread_id], |row| row.get(0))
-            .map_err(display_error)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(display_error)?;
-        Ok(ids)
+        self.with_connection(|connection| {
+            let mut statement = connection
+                .prepare("SELECT id FROM messages WHERE thread_id = ?1 ORDER BY sent_at")?;
+            let ids = statement
+                .query_map([thread_id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })
     }
 
     /// `account_id` merges every account when `None` — the unified inbox —
@@ -1109,70 +1096,69 @@ impl Database {
         if request.query.trim().is_empty() {
             return self.list_threads(account_id);
         }
-        let connection = self.connection()?;
-        let limit = request.limit.unwrap_or(50).min(200) as i64;
-        let offset = request.offset.unwrap_or(0) as i64;
-        let query = fts_query(&request.query);
-        if query.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-        // Trashed threads are hidden alongside archived ones by default; the
-        // same "include archived" search toggle reveals both, since neither
-        // belongs in the everyday inbox view.
-        let archived_filter = if request.include_archived.unwrap_or(false) {
-            ""
-        } else {
-            "AND t.archived = 0 AND t.trashed = 0"
-        };
-        let account_filter = if account_id.is_some() {
-            "AND t.account_id = ?4"
-        } else {
-            ""
-        };
-        // -1 asks FTS5 to excerpt whichever column has the most matches, so a
-        // hit on the body or a recipient still produces a relevant snippet.
-        // The match itself is wrapped in \u{1}/\u{2} rather than HTML markup
-        // so the frontend can highlight it without ever parsing untrusted HTML.
-        let sql = format!(
-            "SELECT {THREAD_COLUMNS},
-                    snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet
-             FROM thread_search s
-             JOIN threads t ON t.id = s.thread_id
-             WHERE thread_search MATCH ?1 {archived_filter} {account_filter}
-             ORDER BY t.last_received_at DESC, rank
-             LIMIT ?2 OFFSET ?3"
-        );
-        let mut statement = connection.prepare(&sql).map_err(display_error)?;
-        let map_row = |row: &rusqlite::Row<'_>| {
-            Ok(Thread {
-                id: row.get(0)?,
-                provider_thread_id: row.get(1)?,
-                subject: row.get(2)?,
-                snippet: row.get(3)?,
-                participants: decode_json(row.get::<_, String>(4)?)?,
-                last_message_at: row.get(5)?,
-                unread: row.get(6)?,
-                starred: row.get(7)?,
-                archived: row.get(8)?,
-                labels: decode_json(row.get::<_, String>(9)?)?,
-                trashed: row.get(10)?,
-                account_id: row.get(11)?,
-                summary: row.get(12)?,
-                summary_generated_at: row.get(13)?,
-                has_attachments: row.get(14)?,
-                last_received_at: row.get(15)?,
-                match_snippet: row.get(16)?,
-            })
-        };
-        let rows = match account_id {
-            Some(id) => statement
-                .query_map(params![query, limit, offset, id], map_row)
-                .map_err(display_error)?,
-            None => statement
-                .query_map(params![query, limit, offset], map_row)
-                .map_err(display_error)?,
-        };
-        rows.collect::<Result<Vec<_>, _>>().map_err(display_error)
+        self.with_connection(|connection| {
+            let limit = request.limit.unwrap_or(50).min(200) as i64;
+            let offset = request.offset.unwrap_or(0) as i64;
+            let query = fts_query(&request.query);
+            if query.trim().is_empty() {
+                return Ok(Vec::new());
+            }
+            // Trashed threads are hidden alongside archived ones by default; the
+            // same "include archived" search toggle reveals both, since neither
+            // belongs in the everyday inbox view.
+            let archived_filter = if request.include_archived.unwrap_or(false) {
+                ""
+            } else {
+                "AND t.archived = 0 AND t.trashed = 0"
+            };
+            let account_filter = if account_id.is_some() {
+                "AND t.account_id = ?4"
+            } else {
+                ""
+            };
+            // -1 asks FTS5 to excerpt whichever column has the most matches, so a
+            // hit on the body or a recipient still produces a relevant snippet.
+            // The match itself is wrapped in \u{1}/\u{2} rather than HTML markup
+            // so the frontend can highlight it without ever parsing untrusted HTML.
+            let sql = format!(
+                "SELECT {THREAD_COLUMNS},
+                        snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet
+                 FROM thread_search s
+                 JOIN threads t ON t.id = s.thread_id
+                 WHERE thread_search MATCH ?1 {archived_filter} {account_filter}
+                 ORDER BY t.last_received_at DESC, rank
+                 LIMIT ?2 OFFSET ?3"
+            );
+            let mut statement = connection.prepare(&sql)?;
+            let map_row = |row: &rusqlite::Row<'_>| {
+                Ok(Thread {
+                    id: row.get(0)?,
+                    provider_thread_id: row.get(1)?,
+                    subject: row.get(2)?,
+                    snippet: row.get(3)?,
+                    participants: decode_json(row.get::<_, String>(4)?)?,
+                    last_message_at: row.get(5)?,
+                    unread: row.get(6)?,
+                    starred: row.get(7)?,
+                    archived: row.get(8)?,
+                    labels: decode_json(row.get::<_, String>(9)?)?,
+                    trashed: row.get(10)?,
+                    account_id: row.get(11)?,
+                    summary: row.get(12)?,
+                    summary_generated_at: row.get(13)?,
+                    has_attachments: row.get(14)?,
+                    last_received_at: row.get(15)?,
+                    match_snippet: row.get(16)?,
+                })
+            };
+            let rows = match account_id {
+                Some(id) => statement
+                    .query_map(params![query, limit, offset, id], map_row)?,
+                None => statement
+                    .query_map(params![query, limit, offset], map_row)?,
+            };
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
     }
 
     fn apply_mutation(
@@ -1195,11 +1181,10 @@ impl Database {
                         [thread_id],
                         |row| row.get(0),
                     )
-                    .optional()
-                    .map_err(display_error)?
+                    .optional()?
                     .ok_or_else(|| "Thread not found".to_string())?;
                 let mut labels: Vec<String> =
-                    serde_json::from_str(&labels).map_err(display_error)?;
+                    serde_json::from_str(&labels).map_err(serialization_error)?;
                 labels.retain(|item| item != "SPAM" && item != "INBOX");
                 labels.push(if *value { "SPAM" } else { "INBOX" }.to_string());
                 labels.sort();
@@ -1208,12 +1193,11 @@ impl Database {
                     .execute(
                         "UPDATE threads SET labels_json = ?1, archived = ?2 WHERE id = ?3",
                         params![
-                            serde_json::to_string(&labels).map_err(display_error)?,
+                            serde_json::to_string(&labels).map_err(serialization_error)?,
                             value,
                             thread_id,
                         ],
-                    )
-                    .map_err(display_error)?
+                    )?
             }
             ThreadMutation::Label {
                 thread_id,
@@ -1226,11 +1210,10 @@ impl Database {
                         [thread_id],
                         |row| row.get(0),
                     )
-                    .optional()
-                    .map_err(display_error)?
+                    .optional()?
                     .ok_or_else(|| "Thread not found".to_string())?;
                 let mut labels: Vec<String> =
-                    serde_json::from_str(&labels).map_err(display_error)?;
+                    serde_json::from_str(&labels).map_err(serialization_error)?;
                 labels.retain(|item| item != label_id);
                 if *value {
                     labels.push(label_id.clone());
@@ -1246,22 +1229,20 @@ impl Database {
                          SET labels_json = ?1, unread = ?2, starred = ?3, archived = ?4
                          WHERE id = ?5",
                         params![
-                            serde_json::to_string(&labels).map_err(display_error)?,
+                            serde_json::to_string(&labels).map_err(serialization_error)?,
                             unread,
                             starred,
                             archived,
                             thread_id
                         ],
-                    )
-                    .map_err(display_error)?
+                    )?
             }
             ThreadMutation::Read { thread_id, value } => {
                 let changed = transaction
                     .execute(
                         "UPDATE threads SET unread = ?1 WHERE id = ?2",
                         params![!value, thread_id],
-                    )
-                    .map_err(display_error)?;
+                    )?;
                 // Mirrors Gmail: marking read clears every message in the
                 // thread, but marking unread only brings back the most
                 // recent message as unread, not the whole history.
@@ -1269,8 +1250,7 @@ impl Database {
                     .execute(
                         "UPDATE messages SET unread = 0 WHERE thread_id = ?1",
                         [thread_id],
-                    )
-                    .map_err(display_error)?;
+                    )?;
                 if !value {
                     transaction
                         .execute(
@@ -1280,8 +1260,7 @@ impl Database {
                                  ORDER BY sent_at DESC, id DESC LIMIT 1
                              )",
                             [thread_id],
-                        )
-                        .map_err(display_error)?;
+                        )?;
                 }
                 changed
             }
@@ -1301,8 +1280,7 @@ impl Database {
                 };
                 let sql = format!("UPDATE threads SET {column} = ?1 WHERE id = ?2");
                 transaction
-                    .execute(&sql, params![stored_value, mutation.thread_id()])
-                    .map_err(display_error)?
+                    .execute(&sql, params![stored_value, mutation.thread_id()])?
             }
         };
         if changed == 0 {
@@ -1313,8 +1291,7 @@ impl Database {
                 "SELECT account_id FROM threads WHERE id = ?1",
                 [mutation.thread_id()],
                 |row| row.get(0),
-            )
-            .map_err(display_error)?;
+            )?;
         // Metadata actions use one stable representative message rather than
         // rewriting the state of every message in a Gmail conversation.
         // Capture the target now so an offline mutation cannot drift if a new
@@ -1327,8 +1304,7 @@ impl Database {
                     [mutation.thread_id()],
                     |row| row.get(0),
                 )
-                .optional()
-                .map_err(display_error)?,
+                .optional()?,
             ThreadMutation::Read { value: false, .. } => transaction
                 .query_row(
                     "SELECT id FROM messages WHERE thread_id = ?1
@@ -1336,11 +1312,10 @@ impl Database {
                     [mutation.thread_id()],
                     |row| row.get(0),
                 )
-                .optional()
-                .map_err(display_error)?,
+                .optional()?,
             _ => None,
         };
-        let payload = serde_json::to_string(mutation).map_err(display_error)?;
+        let payload = serde_json::to_string(mutation).map_err(serialization_error)?;
         let duplicate: bool = transaction
             .query_row(
                 "SELECT EXISTS(
@@ -1350,8 +1325,7 @@ impl Database {
                  )",
                 params![mutation.thread_id(), kind, payload],
                 |row| row.get(0),
-            )
-            .map_err(display_error)?;
+            )?;
         if !duplicate {
             transaction
                 .execute(
@@ -1367,175 +1341,164 @@ impl Database {
                         payload,
                         Utc::now().to_rfc3339(),
                     ],
-                )
-                .map_err(display_error)?;
+                )?;
         }
         Ok(())
     }
 
     pub fn mutate_thread(&self, mutation: &ThreadMutation) -> DbResult<()> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        Self::apply_mutation(&transaction, mutation)?;
-        transaction.commit().map_err(display_error)
+        self.with_transaction(|transaction| {
+            Self::apply_mutation(transaction, mutation)?;
+            Ok(())
+        })
     }
 
     pub fn mutate_threads(&self, mutations: &[ThreadMutation]) -> DbResult<()> {
         if mutations.is_empty() {
             return Ok(());
         }
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        for mutation in mutations {
-            Self::apply_mutation(&transaction, mutation)?;
-        }
-        transaction.commit().map_err(display_error)
+        self.with_transaction(|transaction| {
+            for mutation in mutations {
+                Self::apply_mutation(transaction, mutation)?;
+            }
+            Ok(())
+        })
     }
 
     pub fn sync_status(&self, account_id: &str) -> DbResult<SyncStatus> {
-        let connection = self.connection()?;
-        let (cursor, last_successful_sync, mut error): (
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ) = connection
-            .query_row(
-                "SELECT cursor, last_successful_sync, last_error
-                 FROM sync_state WHERE account_id = ?1",
-                [account_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(display_error)?;
-        if error.is_none() {
-            error = connection
+        self.with_connection(|connection| {
+            let (cursor, last_successful_sync, mut error): (
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ) = connection
                 .query_row(
-                    "SELECT last_error FROM mutations
-                     WHERE state = 'failed' AND account_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                    "SELECT cursor, last_successful_sync, last_error
+                     FROM sync_state WHERE account_id = ?1",
+                    [account_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+            if error.is_none() {
+                error = connection
+                    .query_row(
+                        "SELECT last_error FROM mutations
+                         WHERE state = 'failed' AND account_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                        [account_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+            }
+            let pending_mutations = connection
+                .query_row(
+                    "SELECT count(*) FROM mutations WHERE state IN ('pending', 'running') AND account_id = ?1",
                     [account_id],
                     |row| row.get(0),
-                )
-                .optional()
-                .map_err(display_error)?
-                .flatten();
-        }
-        let pending_mutations = connection
-            .query_row(
-                "SELECT count(*) FROM mutations WHERE state IN ('pending', 'running') AND account_id = ?1",
-                [account_id],
-                |row| row.get(0),
-            )
-            .map_err(display_error)?;
-        let failed_mutations = {
-            let mut statement = connection
-                .prepare(
-                    "SELECT id, kind, thread_id, attempts,
-                            COALESCE(last_error, 'Unknown failure'), created_at
-                     FROM mutations
-                     WHERE state = 'failed' AND account_id = ?1
-                     ORDER BY created_at DESC",
-                )
-                .map_err(display_error)?;
-            let failed = statement
-                .query_map([account_id], |row| {
-                    Ok(FailedMutation {
-                        id: row.get(0)?,
-                        kind: row.get(1)?,
-                        thread_id: row.get(2)?,
-                        attempts: row.get(3)?,
-                        error: row.get(4)?,
-                        created_at: row.get(5)?,
-                    })
-                })
-                .map_err(display_error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(display_error)?;
-            failed
-        };
-        let quarantined_messages = {
-            let mut statement = connection
-                .prepare(
-                    "SELECT message_id, provider_thread_id, error, created_at
-                     FROM quarantined_messages
-                     WHERE account_id = ?1
-                     ORDER BY created_at DESC, message_id
-                     LIMIT 100",
-                )
-                .map_err(display_error)?;
-            let quarantined = statement
-                .query_map([account_id], |row| {
-                    Ok(QuarantinedMessage {
-                        message_id: row.get(0)?,
-                        thread_id: row.get(1)?,
-                        error: row.get(2)?,
-                        created_at: row.get(3)?,
-                    })
-                })
-                .map_err(display_error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(display_error)?;
-            quarantined
-        };
-        Ok(SyncStatus {
-            state: if error.is_some() { "error" } else { "idle" },
-            last_successful_sync,
-            cursor,
-            pending_mutations,
-            failed_mutations,
-            quarantined_messages,
-            error,
+                )?;
+            let failed_mutations = {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT id, kind, thread_id, attempts,
+                                COALESCE(last_error, 'Unknown failure'), created_at
+                         FROM mutations
+                         WHERE state = 'failed' AND account_id = ?1
+                         ORDER BY created_at DESC",
+                    )?;
+                let failed = statement
+                    .query_map([account_id], |row| {
+                        Ok(FailedMutation {
+                            id: row.get(0)?,
+                            kind: row.get(1)?,
+                            thread_id: row.get(2)?,
+                            attempts: row.get(3)?,
+                            error: row.get(4)?,
+                            created_at: row.get(5)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                failed
+            };
+            let quarantined_messages = {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT message_id, provider_thread_id, error, created_at
+                         FROM quarantined_messages
+                         WHERE account_id = ?1
+                         ORDER BY created_at DESC, message_id
+                         LIMIT 100",
+                    )?;
+                let quarantined = statement
+                    .query_map([account_id], |row| {
+                        Ok(QuarantinedMessage {
+                            message_id: row.get(0)?,
+                            thread_id: row.get(1)?,
+                            error: row.get(2)?,
+                            created_at: row.get(3)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                quarantined
+            };
+            Ok(SyncStatus {
+                state: if error.is_some() { "error" } else { "idle" },
+                last_successful_sync,
+                cursor,
+                pending_mutations,
+                failed_mutations,
+                quarantined_messages,
+                error,
+            })
         })
     }
 
     pub fn cursor(&self, account_id: &str) -> DbResult<Option<String>> {
-        self.connection()?
-            .query_row(
-                "SELECT cursor FROM sync_state WHERE account_id = ?1",
-                [account_id],
-                |row| row.get(0),
-            )
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT cursor FROM sync_state WHERE account_id = ?1",
+                    [account_id],
+                    |row| row.get(0),
+                )?)
+        })
     }
 
     pub fn finish_sync(&self, account_id: &str, cursor: &str) -> DbResult<()> {
         let now = Utc::now().to_rfc3339();
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        transaction
-            .execute(
-                "UPDATE sync_state SET cursor = ?1, last_successful_sync = ?2, last_error = NULL
-                 WHERE account_id = ?3",
-                params![cursor, now, account_id],
-            )
-            .map_err(display_error)?;
-        transaction
-            .execute(
-                "UPDATE accounts SET last_synced_at = ?1 WHERE email = ?2",
-                params![now, account_id],
-            )
-            .map_err(display_error)?;
-        transaction
-            .execute(
-                "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
-                [account_id],
-            )
-            .map_err(display_error)?;
-        transaction
-            .execute(
-                "DELETE FROM sync_recovery WHERE account_id = ?1",
-                [account_id],
-            )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)
+        self.with_transaction(|transaction| {
+            transaction
+                .execute(
+                    "UPDATE sync_state SET cursor = ?1, last_successful_sync = ?2, last_error = NULL
+                     WHERE account_id = ?3",
+                    params![cursor, now, account_id],
+                )?;
+            transaction
+                .execute(
+                    "UPDATE accounts SET last_synced_at = ?1 WHERE email = ?2",
+                    params![now, account_id],
+                )?;
+            transaction
+                .execute(
+                    "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
+                    [account_id],
+                )?;
+            transaction
+                .execute(
+                    "DELETE FROM sync_recovery WHERE account_id = ?1",
+                    [account_id],
+                )?;
+            Ok(())
+        })
     }
 
     pub fn fail_sync(&self, account_id: &str, error: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE sync_state SET last_error = ?1 WHERE account_id = ?2",
-                params![error, account_id],
-            )
-            .map(|_| ())
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "UPDATE sync_state SET last_error = ?1 WHERE account_id = ?2",
+                    params![error, account_id],
+                )?;
+            Ok(())
+        })
     }
 
     /// Drops `account_id`'s history cursor ahead of a full inbox resync.
@@ -1549,24 +1512,26 @@ impl Database {
     /// cursor here would make the next startup perform an incremental sync
     /// against a snapshot that never finished.
     pub fn clear_cursor(&self, account_id: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE sync_state SET cursor = NULL WHERE account_id = ?1",
-                [account_id],
-            )
-            .map(|_| ())
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "UPDATE sync_state SET cursor = NULL WHERE account_id = ?1",
+                    [account_id],
+                )?;
+            Ok(())
+        })
     }
 
     pub fn recovery_cursor(&self, account_id: &str) -> DbResult<Option<String>> {
-        self.connection()?
-            .query_row(
-                "SELECT history_id FROM sync_recovery WHERE account_id = ?1",
-                [account_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT history_id FROM sync_recovery WHERE account_id = ?1",
+                    [account_id],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
     }
 
     pub fn begin_sync_recovery(
@@ -1575,35 +1540,31 @@ impl Database {
         history_id: &str,
         thread_ids: &[String],
     ) -> DbResult<()> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        transaction
-            .execute(
-                "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
-                [account_id],
-            )
-            .map_err(display_error)?;
-        transaction
-            .execute(
-                "INSERT INTO sync_recovery(account_id, history_id) VALUES (?1, ?2)
-                 ON CONFLICT(account_id) DO UPDATE SET history_id = excluded.history_id",
-                params![account_id, history_id],
-            )
-            .map_err(display_error)?;
-        {
-            let mut statement = transaction
-                .prepare(
-                    "INSERT INTO sync_recovery_threads(account_id, provider_thread_id)
-                     VALUES (?1, ?2)",
-                )
-                .map_err(display_error)?;
-            for thread_id in thread_ids {
-                statement
-                    .execute(params![account_id, thread_id])
-                    .map_err(display_error)?;
+        self.with_transaction(|transaction| {
+            transaction
+                .execute(
+                    "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
+                    [account_id],
+                )?;
+            transaction
+                .execute(
+                    "INSERT INTO sync_recovery(account_id, history_id) VALUES (?1, ?2)
+                     ON CONFLICT(account_id) DO UPDATE SET history_id = excluded.history_id",
+                    params![account_id, history_id],
+                )?;
+            {
+                let mut statement = transaction
+                    .prepare(
+                        "INSERT INTO sync_recovery_threads(account_id, provider_thread_id)
+                         VALUES (?1, ?2)",
+                    )?;
+                for thread_id in thread_ids {
+                    statement
+                        .execute(params![account_id, thread_id])?;
+                }
             }
-        }
-        transaction.commit().map_err(display_error)
+            Ok(())
+        })
     }
 
     pub fn pending_sync_recovery_threads(
@@ -1611,19 +1572,17 @@ impl Database {
         account_id: &str,
         limit: usize,
     ) -> DbResult<Vec<String>> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT provider_thread_id FROM sync_recovery_threads
-                 WHERE account_id = ?1 ORDER BY provider_thread_id LIMIT ?2",
-            )
-            .map_err(display_error)?;
-        let ids = statement
-            .query_map(params![account_id, limit as i64], |row| row.get(0))
-            .map_err(display_error)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(display_error)?;
-        Ok(ids)
+        self.with_connection(|connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT provider_thread_id FROM sync_recovery_threads
+                     WHERE account_id = ?1 ORDER BY provider_thread_id LIMIT ?2",
+                )?;
+            let ids = statement
+                .query_map(params![account_id, limit as i64], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })
     }
 
     pub fn complete_sync_recovery_threads(
@@ -1631,97 +1590,91 @@ impl Database {
         account_id: &str,
         thread_ids: &[String],
     ) -> DbResult<()> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        {
-            let mut statement = transaction
-                .prepare(
-                    "DELETE FROM sync_recovery_threads
-                     WHERE account_id = ?1 AND provider_thread_id = ?2",
-                )
-                .map_err(display_error)?;
-            for thread_id in thread_ids {
-                statement
-                    .execute(params![account_id, thread_id])
-                    .map_err(display_error)?;
+        self.with_transaction(|transaction| {
+            {
+                let mut statement = transaction
+                    .prepare(
+                        "DELETE FROM sync_recovery_threads
+                         WHERE account_id = ?1 AND provider_thread_id = ?2",
+                    )?;
+                for thread_id in thread_ids {
+                    statement
+                        .execute(params![account_id, thread_id])?;
+                }
             }
-        }
-        transaction.commit().map_err(display_error)
+            Ok(())
+        })
     }
 
     pub fn discard_sync_recovery(&self, account_id: &str) -> DbResult<()> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        transaction
-            .execute(
-                "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
-                [account_id],
-            )
-            .map_err(display_error)?;
-        transaction
-            .execute(
-                "DELETE FROM sync_recovery WHERE account_id = ?1",
-                [account_id],
-            )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)
+        self.with_transaction(|transaction| {
+            transaction
+                .execute(
+                    "DELETE FROM sync_recovery_threads WHERE account_id = ?1",
+                    [account_id],
+                )?;
+            transaction
+                .execute(
+                    "DELETE FROM sync_recovery WHERE account_id = ?1",
+                    [account_id],
+                )?;
+            Ok(())
+        })
     }
 
     /// Whether it's been at least `interval_secs` since this account's last
     /// inbox reconciliation pass (or one has never run).
     pub fn reconciliation_due(&self, account_id: &str, interval_secs: i64) -> DbResult<bool> {
-        self.connection()?
-            .query_row(
-                "SELECT last_reconciled_at IS NULL
-                    OR (strftime('%s', 'now') - strftime('%s', last_reconciled_at)) >= ?2
-                 FROM sync_state WHERE account_id = ?1",
-                params![account_id, interval_secs],
-                |row| row.get(0),
-            )
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT last_reconciled_at IS NULL
+                        OR (strftime('%s', 'now') - strftime('%s', last_reconciled_at)) >= ?2
+                     FROM sync_state WHERE account_id = ?1",
+                    params![account_id, interval_secs],
+                    |row| row.get(0),
+                )?)
+        })
     }
 
     pub fn mark_reconciled(&self, account_id: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE sync_state SET last_reconciled_at = ?1 WHERE account_id = ?2",
-                params![Utc::now().to_rfc3339(), account_id],
-            )
-            .map(|_| ())
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "UPDATE sync_state SET last_reconciled_at = ?1 WHERE account_id = ?2",
+                    params![Utc::now().to_rfc3339(), account_id],
+                )?;
+            Ok(())
+        })
     }
 
     /// Gmail thread ids this account currently caches as inbox mail (not
     /// archived), for diffing against Gmail's live INBOX listing.
     pub fn local_inbox_provider_thread_ids(&self, account_id: &str) -> DbResult<Vec<String>> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT provider_thread_id FROM threads WHERE account_id = ?1 AND archived = 0",
-            )
-            .map_err(display_error)?;
-        let ids = statement
-            .query_map([account_id], |row| row.get(0))
-            .map_err(display_error)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(display_error)?;
-        Ok(ids)
+        self.with_connection(|connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT provider_thread_id FROM threads WHERE account_id = ?1 AND archived = 0",
+                )?;
+            let ids = statement
+                .query_map([account_id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })
     }
 
     /// Gmail thread ids already present in the local cache for one account.
     /// Remote search uses this to fetch only historical matches that the
     /// inbox-oriented synchronizer has never seen.
     pub fn local_provider_thread_ids(&self, account_id: &str) -> DbResult<Vec<String>> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare("SELECT provider_thread_id FROM threads WHERE account_id = ?1")
-            .map_err(display_error)?;
-        let ids = statement
-            .query_map([account_id], |row| row.get(0))
-            .map_err(display_error)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(display_error)?;
-        Ok(ids)
+        self.with_connection(|connection| {
+            let mut statement = connection
+                .prepare("SELECT provider_thread_id FROM threads WHERE account_id = ?1")?;
+            let ids = statement
+                .query_map([account_id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })
     }
 
     pub fn delete_thread(
@@ -1729,35 +1682,31 @@ impl Database {
         account_id: &str,
         provider_thread_id: &str,
     ) -> DbResult<()> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        let thread_id: Option<String> = transaction
-            .query_row(
-                "SELECT id FROM threads WHERE account_id = ?1 AND provider_thread_id = ?2",
-                params![account_id, provider_thread_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(display_error)?;
-        if let Some(thread_id) = thread_id {
+        self.with_transaction(|transaction| {
+            let thread_id: Option<String> = transaction
+                .query_row(
+                    "SELECT id FROM threads WHERE account_id = ?1 AND provider_thread_id = ?2",
+                    params![account_id, provider_thread_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(thread_id) = thread_id {
+                transaction
+                    .execute(
+                        "DELETE FROM thread_search WHERE thread_id = ?1",
+                        [&thread_id],
+                    )?;
+                transaction
+                    .execute("DELETE FROM threads WHERE id = ?1", [&thread_id])?;
+            }
             transaction
                 .execute(
-                    "DELETE FROM thread_search WHERE thread_id = ?1",
-                    [&thread_id],
-                )
-                .map_err(display_error)?;
-            transaction
-                .execute("DELETE FROM threads WHERE id = ?1", [&thread_id])
-                .map_err(display_error)?;
-        }
-        transaction
-            .execute(
-                "DELETE FROM quarantined_messages
-                 WHERE account_id = ?1 AND provider_thread_id = ?2",
-                params![account_id, provider_thread_id],
-            )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)
+                    "DELETE FROM quarantined_messages
+                     WHERE account_id = ?1 AND provider_thread_id = ?2",
+                    params![account_id, provider_thread_id],
+                )?;
+            Ok(())
+        })
     }
 
     /// Deletes threads (and their messages, via `ON DELETE CASCADE`) whose
@@ -1770,41 +1719,38 @@ impl Database {
             return Ok(0);
         };
         let cutoff = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        transaction
-            .execute(
-                "DELETE FROM thread_search WHERE thread_id IN
-                    (SELECT id FROM threads WHERE last_message_at < ?1 AND starred = 0 AND trashed = 0)",
-                [&cutoff],
-            )
-            .map_err(display_error)?;
-        let removed = transaction
-            .execute(
-                "DELETE FROM threads WHERE last_message_at < ?1 AND starred = 0 AND trashed = 0",
-                [&cutoff],
-            )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)?;
-        Ok(removed)
+        self.with_transaction(|transaction| {
+            transaction
+                .execute(
+                    "DELETE FROM thread_search WHERE thread_id IN
+                        (SELECT id FROM threads WHERE last_message_at < ?1 AND starred = 0 AND trashed = 0)",
+                    [&cutoff],
+                )?;
+            let removed = transaction
+                .execute(
+                    "DELETE FROM threads WHERE last_message_at < ?1 AND starred = 0 AND trashed = 0",
+                    [&cutoff],
+                )?;
+            Ok(removed)
+        })
     }
 
     /// Returns freed pages to the OS. Cheap as long as `auto_vacuum` is
     /// already `INCREMENTAL` (see `vacuum_to_incremental`); otherwise a
     /// harmless no-op.
     pub fn reclaim_space(&self) -> DbResult<()> {
-        self.connection()?
-            .execute_batch("PRAGMA incremental_vacuum;")
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            Ok(connection
+                .execute_batch("PRAGMA incremental_vacuum;")?)
+        })
     }
 
     /// Whether the database still needs the one-time conversion to
     /// incremental auto-vacuum mode.
     pub fn needs_vacuum_upgrade(&self) -> DbResult<bool> {
-        let mode: i64 = self
-            .connection()?
-            .query_row("PRAGMA auto_vacuum", [], |r| r.get(0))
-            .map_err(display_error)?;
+        let mode: i64 = self.with_connection(|connection| {
+            Ok(connection.query_row("PRAGMA auto_vacuum", [], |r| r.get(0))?)
+        })?;
         Ok(mode != 2)
     }
 
@@ -1813,9 +1759,10 @@ impl Database {
     /// — call this off the async runtime's blocking pool, not inline at
     /// startup. Must not run inside a transaction.
     pub fn vacuum_to_incremental(&self) -> DbResult<()> {
-        self.connection()?
-            .execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            Ok(connection
+                .execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?)
+        })
     }
 
     /// Compresses a bounded batch of message bodies still on the legacy
@@ -1825,37 +1772,32 @@ impl Database {
     /// converted; call repeatedly (e.g. from a background loop) until it
     /// returns 0.
     pub fn compress_next_body_batch(&self, batch_size: usize) -> DbResult<usize> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        let rows: Vec<(String, String, String)> = {
-            let mut statement = transaction
-                .prepare(
-                    "SELECT id, body_html, body_text FROM messages
-                     WHERE body_html_z IS NULL LIMIT ?1",
-                )
-                .map_err(display_error)?;
-            let collected = statement
-                .query_map(params![batch_size as i64], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })
-                .map_err(display_error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(display_error)?;
-            collected
-        };
-        let count = rows.len();
-        for (id, body_html, body_text) in rows {
-            transaction
-                .execute(
-                    "UPDATE messages SET body_html = '', body_text = '',
-                        body_html_z = ?1, body_text_z = ?2
-                     WHERE id = ?3",
-                    params![compress_body(&body_html), compress_body(&body_text), id],
-                )
-                .map_err(display_error)?;
-        }
-        transaction.commit().map_err(display_error)?;
-        Ok(count)
+        self.with_transaction(|transaction| {
+            let rows: Vec<(String, String, String)> = {
+                let mut statement = transaction
+                    .prepare(
+                        "SELECT id, body_html, body_text FROM messages
+                         WHERE body_html_z IS NULL LIMIT ?1",
+                    )?;
+                let collected = statement
+                    .query_map(params![batch_size as i64], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                collected
+            };
+            let count = rows.len();
+            for (id, body_html, body_text) in rows {
+                transaction
+                    .execute(
+                        "UPDATE messages SET body_html = '', body_text = '',
+                            body_html_z = ?1, body_text_z = ?2
+                         WHERE id = ?3",
+                        params![compress_body(&body_html), compress_body(&body_text), id],
+                    )?;
+            }
+            Ok(count)
+        })
     }
 
     fn apply_thread(
@@ -1957,30 +1899,27 @@ impl Database {
                     provider_thread_id,
                     latest.subject,
                     latest.snippet,
-                    serde_json::to_string(&participants).map_err(display_error)?,
+                    serde_json::to_string(&participants).map_err(serialization_error)?,
                     latest.date,
                     unread,
                     starred,
                     archived,
-                    serde_json::to_string(&labels).map_err(display_error)?,
+                    serde_json::to_string(&labels).map_err(serialization_error)?,
                     trashed,
                     has_attachments,
                     last_received_at,
                 ],
-            )
-            .map_err(display_error)?;
+            )?;
         transaction
-            .execute("DELETE FROM messages WHERE thread_id = ?1", [&thread_id])
-            .map_err(display_error)?;
+            .execute("DELETE FROM messages WHERE thread_id = ?1", [&thread_id])?;
         transaction
             .execute(
                 "DELETE FROM thread_search WHERE thread_id = ?1",
                 [&thread_id],
-            )
-            .map_err(display_error)?;
+            )?;
         let mut body = String::new();
         for message in messages {
-            transaction.execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", params![message.id, message.metadata_json]).map_err(display_error)?;
+            transaction.execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", params![message.id, message.metadata_json])?;
             body.push_str(&message.body_text);
             body.push(' ');
             let message_unread = message.labels.iter().any(|label| label == "UNREAD");
@@ -1994,7 +1933,7 @@ impl Database {
                         message.id,
                         thread_id,
                         message.from,
-                        serde_json::to_string(&message.to).map_err(display_error)?,
+                        serde_json::to_string(&message.to).map_err(serialization_error)?,
                         message.date,
                         "",
                         "",
@@ -2003,13 +1942,12 @@ impl Database {
                         message
                             .unsubscribe
                             .as_ref()
-                            .map(|value| serde_json::to_string(value).map_err(display_error))
+                            .map(|value| serde_json::to_string(value).map_err(serialization_error))
                             .transpose()?,
                         message_unread,
-                        serde_json::to_string(&message.attachments).map_err(display_error)?,
+                        serde_json::to_string(&message.attachments).map_err(serialization_error)?,
                     ],
-                )
-                .map_err(display_error)?;
+                )?;
         }
         transaction
             .execute(
@@ -2022,8 +1960,7 @@ impl Database {
                     search_participants.join(" "),
                     body
                 ],
-            )
-            .map_err(display_error)?;
+            )?;
         Ok(())
     }
 
@@ -2043,12 +1980,12 @@ impl Database {
         if message_groups.is_empty() {
             return Ok(());
         }
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        for messages in message_groups {
-            Self::apply_thread(&transaction, account_id, messages)?;
-        }
-        transaction.commit().map_err(display_error)
+        self.with_transaction(|transaction| {
+            for messages in message_groups {
+                Self::apply_thread(transaction, account_id, messages)?;
+            }
+            Ok(())
+        })
     }
 
     pub fn apply_ingested_threads(
@@ -2059,41 +1996,39 @@ impl Database {
         if threads.is_empty() {
             return Ok(());
         }
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        for (provider_thread_id, messages, quarantined) in threads {
-            transaction
-                .execute(
-                    "DELETE FROM quarantined_messages
-                     WHERE account_id = ?1 AND provider_thread_id = ?2",
-                    params![account_id, provider_thread_id],
-                )
-                .map_err(display_error)?;
-            if !messages.is_empty() {
-                Self::apply_thread(&transaction, account_id, messages)?;
-            }
-            for (message_id, error) in quarantined {
+        self.with_transaction(|transaction| {
+            for (provider_thread_id, messages, quarantined) in threads {
                 transaction
                     .execute(
-                        "INSERT INTO quarantined_messages(
-                            account_id, provider_thread_id, message_id, error, created_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?5)
-                         ON CONFLICT(account_id, message_id) DO UPDATE SET
-                            provider_thread_id=excluded.provider_thread_id,
-                            error=excluded.error,
-                            created_at=excluded.created_at",
-                        params![
-                            account_id,
-                            provider_thread_id,
-                            message_id,
-                            error,
-                            Utc::now().to_rfc3339()
-                        ],
-                    )
-                    .map_err(display_error)?;
+                        "DELETE FROM quarantined_messages
+                         WHERE account_id = ?1 AND provider_thread_id = ?2",
+                        params![account_id, provider_thread_id],
+                    )?;
+                if !messages.is_empty() {
+                    Self::apply_thread(transaction, account_id, messages)?;
+                }
+                for (message_id, error) in quarantined {
+                    transaction
+                        .execute(
+                            "INSERT INTO quarantined_messages(
+                                account_id, provider_thread_id, message_id, error, created_at
+                             ) VALUES (?1, ?2, ?3, ?4, ?5)
+                             ON CONFLICT(account_id, message_id) DO UPDATE SET
+                                provider_thread_id=excluded.provider_thread_id,
+                                error=excluded.error,
+                                created_at=excluded.created_at",
+                            params![
+                                account_id,
+                                provider_thread_id,
+                                message_id,
+                                error,
+                                Utc::now().to_rfc3339()
+                            ],
+                        )?;
+                }
             }
-        }
-        transaction.commit().map_err(display_error)
+            Ok(())
+        })
     }
 
     /// Claims only `account_id`'s pending mutations, so one account's poller
@@ -2111,95 +2046,90 @@ impl Database {
         account_id: &str,
         limit: usize,
     ) -> DbResult<Vec<PendingMutation>> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        let (claimable, orphaned) = {
-            let mut statement = transaction
-                .prepare(
-                    "SELECT m.id, t.provider_thread_id, m.target_message_id, m.payload_json,
-                            m.attempts
-                     FROM mutations m LEFT JOIN threads t ON t.id = m.thread_id
-                     WHERE m.state = 'pending' AND m.account_id = ?1
-                       AND NOT EXISTS (
-                           SELECT 1 FROM accounts a
-                           WHERE a.email = m.account_id AND a.status = 'needs_reauth'
-                       )
-                       AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= ?2)
-                     ORDER BY m.created_at LIMIT ?3",
-                )
-                .map_err(display_error)?;
-            let rows = statement
-                .query_map(
-                    params![account_id, Utc::now().to_rfc3339(), limit as i64],
-                    |row| {
-                        let id: String = row.get(0)?;
-                        let provider_thread_id: Option<String> = row.get(1)?;
-                        let target_message_id: Option<String> = row.get(2)?;
-                        let payload: String = row.get(3)?;
-                        let attempts: u32 = row.get(4)?;
-                        Ok((id, provider_thread_id, target_message_id, payload, attempts))
-                    },
-                )
-                .map_err(display_error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(display_error)?;
-            let mut claimable = Vec::new();
-            let mut orphaned = Vec::new();
-            for (id, provider_thread_id, target_message_id, payload, attempts) in rows {
-                match provider_thread_id {
-                    Some(provider_thread_id) => {
-                        let mutation = serde_json::from_str(&payload).map_err(|error| {
-                            display_error(rusqlite::Error::FromSqlConversionFailure(
-                                payload.len(),
-                                rusqlite::types::Type::Text,
-                                Box::new(error),
-                            ))
-                        })?;
-                        claimable.push(PendingMutation {
-                            id,
-                            provider_thread_id,
-                            target_message_id,
-                            mutation,
-                            attempts: attempts + 1,
-                        });
+        self.with_transaction(|transaction| {
+            let (claimable, orphaned) = {
+                let mut statement = transaction
+                    .prepare(
+                        "SELECT m.id, t.provider_thread_id, m.target_message_id, m.payload_json,
+                                m.attempts
+                         FROM mutations m LEFT JOIN threads t ON t.id = m.thread_id
+                         WHERE m.state = 'pending' AND m.account_id = ?1
+                           AND NOT EXISTS (
+                               SELECT 1 FROM accounts a
+                               WHERE a.email = m.account_id AND a.status = 'needs_reauth'
+                           )
+                           AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= ?2)
+                         ORDER BY m.created_at LIMIT ?3",
+                    )?;
+                let rows = statement
+                    .query_map(
+                        params![account_id, Utc::now().to_rfc3339(), limit as i64],
+                        |row| {
+                            let id: String = row.get(0)?;
+                            let provider_thread_id: Option<String> = row.get(1)?;
+                            let target_message_id: Option<String> = row.get(2)?;
+                            let payload: String = row.get(3)?;
+                            let attempts: u32 = row.get(4)?;
+                            Ok((id, provider_thread_id, target_message_id, payload, attempts))
+                        },
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut claimable = Vec::new();
+                let mut orphaned = Vec::new();
+                for (id, provider_thread_id, target_message_id, payload, attempts) in rows {
+                    match provider_thread_id {
+                        Some(provider_thread_id) => {
+                            let mutation = serde_json::from_str(&payload).map_err(|error| {
+                                DatabaseError::from(rusqlite::Error::FromSqlConversionFailure(
+                                    payload.len(),
+                                    rusqlite::types::Type::Text,
+                                    Box::new(error),
+                                ))
+                            })?;
+                            claimable.push(PendingMutation {
+                                id,
+                                provider_thread_id,
+                                target_message_id,
+                                mutation,
+                                attempts: attempts + 1,
+                            });
+                        }
+                        None => orphaned.push(id),
                     }
-                    None => orphaned.push(id),
                 }
+                (claimable, orphaned)
+            };
+            for id in &orphaned {
+                transaction
+                    .execute(
+                        "UPDATE mutations SET state = 'failed',
+                            last_error = 'Target thread no longer exists locally'
+                         WHERE id = ?1",
+                        [id],
+                    )?;
             }
-            (claimable, orphaned)
-        };
-        for id in &orphaned {
-            transaction
-                .execute(
-                    "UPDATE mutations SET state = 'failed',
-                        last_error = 'Target thread no longer exists locally'
-                     WHERE id = ?1",
-                    [id],
-                )
-                .map_err(display_error)?;
-        }
-        for mutation in &claimable {
-            transaction
-                .execute(
-                    "UPDATE mutations SET state = 'running', attempts = attempts + 1
-                     WHERE id = ?1 AND state = 'pending'",
-                    [&mutation.id],
-                )
-                .map_err(display_error)?;
-        }
-        transaction.commit().map_err(display_error)?;
-        Ok(claimable)
+            for mutation in &claimable {
+                transaction
+                    .execute(
+                        "UPDATE mutations SET state = 'running', attempts = attempts + 1
+                         WHERE id = ?1 AND state = 'pending'",
+                        [&mutation.id],
+                    )?;
+            }
+            Ok(claimable)
+        })
     }
 
     pub fn complete_mutation(&self, id: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE mutations SET state = 'done', last_error = NULL,
-                    next_attempt_at = NULL WHERE id = ?1",
-                [id],
-            )
-            .map(|_| ())
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "UPDATE mutations SET state = 'done', last_error = NULL,
+                        next_attempt_at = NULL WHERE id = ?1",
+                    [id],
+                )?;
+            Ok(())
+        })
     }
 
     pub fn reject_mutation(
@@ -2208,23 +2138,24 @@ impl Database {
         error: &str,
         next_attempt_at: Option<&str>,
     ) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE mutations SET state = ?1, last_error = ?2, next_attempt_at = ?3
-                 WHERE id = ?4",
-                params![
-                    if next_attempt_at.is_some() {
-                        "pending"
-                    } else {
-                        "failed"
-                    },
-                    error,
-                    next_attempt_at,
-                    id
-                ],
-            )
-            .map(|_| ())
-            .map_err(display_error)
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "UPDATE mutations SET state = ?1, last_error = ?2, next_attempt_at = ?3
+                     WHERE id = ?4",
+                    params![
+                        if next_attempt_at.is_some() {
+                            "pending"
+                        } else {
+                            "failed"
+                        },
+                        error,
+                        next_attempt_at,
+                        id
+                    ],
+                )?;
+            Ok(())
+        })
     }
 
     /// Applies the native portion of a settings transfer atomically. Existing
@@ -2238,87 +2169,79 @@ impl Database {
         snippets: &[TransferSnippet],
         retention_days: Option<i64>,
     ) -> DbResult<()> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        transaction
-            .execute(
-                "UPDATE accounts SET sort_order = sort_order + ?1",
-                [accounts.len() as i64],
-            )
-            .map_err(display_error)?;
-        let connected_at = Utc::now().to_rfc3339();
-        for account in accounts {
+        self.with_transaction(|transaction| {
             transaction
                 .execute(
-                    "INSERT INTO accounts(
-                         email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
-                     ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, ?6, NULL)
-                     ON CONFLICT(email) DO UPDATE SET
-                         display_name = excluded.display_name,
-                         color = excluded.color,
-                         sort_order = excluded.sort_order",
-                    params![
-                        account.email,
-                        account.display_name,
-                        account.color,
-                        account.provider,
-                        account.sort_order,
-                        connected_at,
-                    ],
-                )
-                .map_err(display_error)?;
-        }
+                    "UPDATE accounts SET sort_order = sort_order + ?1",
+                    [accounts.len() as i64],
+                )?;
+            let connected_at = Utc::now().to_rfc3339();
+            for account in accounts {
+                transaction
+                    .execute(
+                        "INSERT INTO accounts(
+                             email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
+                         ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, ?6, NULL)
+                         ON CONFLICT(email) DO UPDATE SET
+                             display_name = excluded.display_name,
+                             color = excluded.color,
+                             sort_order = excluded.sort_order",
+                        params![
+                            account.email,
+                            account.display_name,
+                            account.color,
+                            account.provider,
+                            account.sort_order,
+                            connected_at,
+                        ],
+                    )?;
+            }
 
-        transaction
-            .execute("DELETE FROM split_inboxes", [])
-            .map_err(display_error)?;
-        for split in split_inboxes {
             transaction
-                .execute(
-                    "INSERT INTO split_inboxes(
-                         id, name, match_kind, match_value, sort_order, created_at, account_id
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![
-                        split.id,
-                        split.name,
-                        split.match_kind,
-                        split.match_value,
-                        split.sort_order,
-                        split.created_at,
-                        split.account_id,
-                    ],
-                )
-                .map_err(display_error)?;
-        }
+                .execute("DELETE FROM split_inboxes", [])?;
+            for split in split_inboxes {
+                transaction
+                    .execute(
+                        "INSERT INTO split_inboxes(
+                             id, name, match_kind, match_value, sort_order, created_at, account_id
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        params![
+                            split.id,
+                            split.name,
+                            split.match_kind,
+                            split.match_value,
+                            split.sort_order,
+                            split.created_at,
+                            split.account_id,
+                        ],
+                    )?;
+            }
 
-        transaction
-            .execute("DELETE FROM snippets", [])
-            .map_err(display_error)?;
-        for snippet in snippets {
             transaction
-                .execute(
-                    "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, ?3, ?4)",
-                    params![snippet.id, snippet.name, snippet.body, snippet.created_at],
-                )
-                .map_err(display_error)?;
-        }
+                .execute("DELETE FROM snippets", [])?;
+            for snippet in snippets {
+                transaction
+                    .execute(
+                        "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, ?3, ?4)",
+                        params![snippet.id, snippet.name, snippet.body, snippet.created_at],
+                    )?;
+            }
 
-        match retention_days {
-            Some(days) => transaction
-                .execute(
-                    "INSERT INTO compose_settings(key, value) VALUES ('retention_days', ?1)
-                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    [days.to_string()],
-                )
-                .map_err(display_error)?,
-            None => transaction
-                .execute(
-                    "DELETE FROM compose_settings WHERE key = 'retention_days'",
-                    [],
-                )
-                .map_err(display_error)?,
-        };
-        transaction.commit().map_err(display_error)
+            match retention_days {
+                Some(days) => transaction
+                    .execute(
+                        "INSERT INTO compose_settings(key, value) VALUES ('retention_days', ?1)
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        [days.to_string()],
+                    )?,
+                None => transaction
+                    .execute(
+                        "DELETE FROM compose_settings WHERE key = 'retention_days'",
+                        [],
+                    )?,
+            };
+            Ok(())
+        })
     }
 
     pub fn create_split_inbox(
@@ -2348,33 +2271,30 @@ impl Database {
         } else {
             match_value.to_ascii_lowercase()
         };
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(display_error)?;
-        let sort_order: i64 = transaction
-            .query_row(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM split_inboxes",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(display_error)?;
-        let id = Uuid::new_v4().to_string();
-        let created_at = Utc::now().to_rfc3339();
-        transaction
-            .execute(
-                "INSERT INTO split_inboxes(id, name, match_kind, match_value, sort_order, created_at, account_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![id, name, match_kind, match_value, sort_order, created_at, account_id],
-            )
-            .map_err(display_error)?;
-        transaction.commit().map_err(display_error)?;
-        Ok(SplitInbox {
-            id,
-            name: name.to_string(),
-            match_kind: match_kind.to_string(),
-            match_value,
-            sort_order,
-            created_at,
-            account_id: account_id.to_string(),
+        self.with_transaction(|transaction| {
+            let sort_order: i64 = transaction
+                .query_row(
+                    "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM split_inboxes",
+                    [],
+                    |row| row.get(0),
+                )?;
+            let id = Uuid::new_v4().to_string();
+            let created_at = Utc::now().to_rfc3339();
+            transaction
+                .execute(
+                    "INSERT INTO split_inboxes(id, name, match_kind, match_value, sort_order, created_at, account_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![id, name, match_kind, match_value, sort_order, created_at, account_id],
+                )?;
+            Ok(SplitInbox {
+                id,
+                name: name.to_string(),
+                match_kind: match_kind.to_string(),
+                match_value,
+                sort_order,
+                created_at,
+                account_id: account_id.to_string(),
+            })
         })
     }
 
@@ -2383,32 +2303,28 @@ impl Database {
         if name.is_empty() {
             return Err("Split inbox name cannot be empty".into());
         }
-        let changed = self
-            .connection()?
-            .execute(
+        self.with_connection(|connection| {
+            let changed = connection.execute(
                 "UPDATE split_inboxes SET name = ?1 WHERE id = ?2",
                 params![name, id],
-            )
-            .map_err(display_error)?;
-        if changed == 0 {
-            return Err("Split inbox not found".into());
-        }
-        let connection = self.connection()?;
-        connection
-            .query_row(
+            )?;
+            if changed == 0 {
+                return Err("Split inbox not found".into());
+            }
+            Ok(connection.query_row(
                 "SELECT id, name, match_kind, match_value, sort_order, created_at, account_id
                  FROM split_inboxes WHERE id = ?1",
                 [id],
                 split_inbox_from_row,
-            )
-            .map_err(display_error)
+            )?)
+        })
     }
 
     pub fn delete_split_inbox(&self, id: &str) -> DbResult<()> {
-        self.connection()?
-            .execute("DELETE FROM split_inboxes WHERE id = ?1", [id])
-            .map_err(display_error)?;
-        Ok(())
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM split_inboxes WHERE id = ?1", [id])?;
+            Ok(())
+        })
     }
 
     pub fn reorder_split_inboxes(&self, ordered_ids: &[String]) -> DbResult<()> {
@@ -2418,8 +2334,7 @@ impl Database {
                     .execute(
                         "UPDATE split_inboxes SET sort_order = ?1 WHERE id = ?2",
                         params![index as i64, id],
-                    )
-                    .map_err(display_error)?;
+                    )?;
             }
             Ok(())
         })
@@ -2436,12 +2351,13 @@ impl Database {
         }
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
-        self.connection()?
-            .execute(
+        self.with_connection(|connection| {
+            connection.execute(
                 "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, ?3, ?4)",
                 params![id, name, body, created_at],
-            )
-            .map_err(display_error)?;
+            )?;
+            Ok(())
+        })?;
         Ok(Snippet {
             id,
             name: name.to_string(),
@@ -2459,31 +2375,27 @@ impl Database {
         if body.is_empty() {
             return Err("Snippet body cannot be empty".into());
         }
-        let changed = self
-            .connection()?
-            .execute(
+        self.with_connection(|connection| {
+            let changed = connection.execute(
                 "UPDATE snippets SET name = ?1, body = ?2 WHERE id = ?3",
                 params![name, body, id],
-            )
-            .map_err(display_error)?;
-        if changed == 0 {
-            return Err("Snippet not found".into());
-        }
-        let connection = self.connection()?;
-        connection
-            .query_row(
+            )?;
+            if changed == 0 {
+                return Err("Snippet not found".into());
+            }
+            Ok(connection.query_row(
                 "SELECT id, name, body, created_at FROM snippets WHERE id = ?1",
                 [id],
                 snippet_from_row,
-            )
-            .map_err(display_error)
+            )?)
+        })
     }
 
     pub fn delete_snippet(&self, id: &str) -> DbResult<()> {
-        self.connection()?
-            .execute("DELETE FROM snippets WHERE id = ?1", [id])
-            .map_err(display_error)?;
-        Ok(())
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM snippets WHERE id = ?1", [id])?;
+            Ok(())
+        })
     }
 
     /// Filters the same unarchived/untrashed base set `list_threads` uses
@@ -2500,17 +2412,15 @@ impl Database {
         limit: usize,
     ) -> DbResult<ThreadPage> {
         let rule = self
-            .connection()
-            .and_then(|connection| {
-                connection
+            .with_connection(|connection| {
+                Ok(connection
                     .query_row(
                         "SELECT id, name, match_kind, match_value, sort_order, created_at, account_id
                          FROM split_inboxes WHERE id = ?1",
                         [split_inbox_id],
                         split_inbox_from_row,
                     )
-                    .optional()
-                    .map_err(display_error)
+                    .optional()?)
             })?
             .ok_or_else(|| "Split inbox not found".to_string())?;
         let matched: Vec<Thread> = self
@@ -2578,8 +2488,7 @@ fn sender_identity_for_thread(
             [thread_id],
             |row| row.get(0),
         )
-        .optional()
-        .map_err(display_error)?;
+        .optional()?;
     let Some(account_id) = account_id else {
         return Ok(None);
     };
@@ -2589,15 +2498,13 @@ fn sender_identity_for_thread(
             "SELECT sender FROM messages
              WHERE thread_id = ?1
              ORDER BY sent_at DESC, id DESC",
-        )
-        .map_err(display_error)?;
+        )?;
     let rows = statement
-        .query_map([thread_id], |row| row.get::<_, String>(0))
-        .map_err(display_error)?;
+        .query_map([thread_id], |row| row.get::<_, String>(0))?;
     let account_email = normalize_sender(&account_id).0;
     let mut fallback = None;
     for row in rows {
-        let sender = row.map_err(display_error)?;
+        let sender = row?;
         let (email, domain) = normalize_sender(&sender);
         if email.is_empty() {
             continue;
@@ -2876,8 +2783,12 @@ fn insert_demo(
     Ok(())
 }
 
-fn display_error(error: impl std::fmt::Display) -> DatabaseError {
+pub(super) fn display_error(error: impl std::fmt::Display) -> DatabaseError {
     DatabaseError::Message(error.to_string())
+}
+
+fn serialization_error(error: serde_json::Error) -> DatabaseError {
+    DatabaseError::Serialization(error.to_string())
 }
 
 #[cfg(test)]

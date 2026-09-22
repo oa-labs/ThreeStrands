@@ -146,10 +146,15 @@ fn map_status_error(status: reqwest::StatusCode, body: &str) -> TransportError {
     }
 }
 
+/// Every reqwest failure that reaches here is a network-level fault: a
+/// timeout, a refused or reset connection, a body cut off mid-read, or an
+/// unparseable body (e.g. from a captive portal or proxy). URL and header
+/// construction are validated before `send()`, redirects are disabled and
+/// rejected by status, and HTTP statuses go through `map_status_error` — so
+/// nothing here is known to be permanent. Misclassifying a blip as
+/// Permanent would fail a delivery with no retry, while a misclassified
+/// Transient only costs bounded backoff retries.
 fn map_reqwest_error(error: reqwest::Error) -> TransportError {
-    if error.is_timeout() || error.is_connect() {
-        return TransportError::Transient(error.to_string());
-    }
     TransportError::Transient(error.to_string())
 }
 
@@ -1238,7 +1243,7 @@ mod transport_tests {
         let bytes = b"data".to_vec();
         let cid = TransportCid::for_bytes(&bytes);
         healthy.put_object(&cid, &bytes).await.unwrap();
-        assert!(unreachable.put_object(&cid, &bytes).await.is_err());
+        assert!(matches!(unreachable.put_object(&cid, &bytes).await, Err(TransportError::Transient(_))));
         // The healthy one is completely unaffected by the other's failure.
         assert_eq!(healthy.get_object(&cid).await.unwrap(), bytes);
     }

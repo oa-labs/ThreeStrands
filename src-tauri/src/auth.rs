@@ -15,6 +15,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+use crate::error_text::display;
+
 const MAIL_SERVICE: &str = "app.threestrands.mail";
 const CALENDAR_SERVICE: &str = "app.threestrands.calendar";
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -556,10 +558,6 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-fn display(error: impl std::fmt::Display) -> String {
-    error.to_string()
 }
 
 #[cfg(test)]

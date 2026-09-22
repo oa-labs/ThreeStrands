@@ -43,7 +43,8 @@ use threestrands_sync_envelope::{
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport};
 
 use crate::db::Database;
-use crate::replicated_sync::{decode_id, display, encode_id, random_id, x25519_public_bytes, DeviceIdentity, LocalKeys, SPACE_ID};
+use crate::error_text::display;
+use crate::replicated_sync::{decode_id, encode_id, random_id, x25519_public_bytes, DeviceIdentity, LocalKeys, SPACE_ID};
 
 fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
