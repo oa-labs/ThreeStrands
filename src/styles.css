@@ -1572,6 +1572,23 @@ form.split-inbox-add select {
 .settings-inline-confirm { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 11px; border: 1px solid color-mix(in srgb, var(--error) 40%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--error) 7%, transparent); }
 .settings-inline-confirm p { color: var(--text); }
 .settings-inline-confirm-actions { display: flex; flex-shrink: 0; gap: 6px; }
+.settings-section h4 { margin: 6px 0 0; font-size: calc(13px * var(--font-scale)); color: var(--text); }
+.settings-disclosure { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+.settings-disclosure > summary { cursor: pointer; color: var(--text); font-size: calc(13px * var(--font-scale)); font-weight: 600; }
+.settings-disclosure[open] > summary { margin-bottom: 2px; }
+.sync-setup-steps { display: flex; flex-direction: column; gap: 10px; width: 100%; margin: 0; padding: 0; list-style: none; }
+.sync-setup-step { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; }
+.sync-setup-step-current { border-color: var(--primary-border); }
+.sync-setup-step-header { display: flex; align-items: center; gap: 10px; }
+.sync-setup-step-header h4 { flex: 1; margin: 0; }
+.sync-setup-step-marker { display: grid; place-items: center; flex-shrink: 0; width: 22px; height: 22px; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--muted); font-size: calc(11px * var(--font-scale)); font-weight: 700; }
+.sync-setup-step-current .sync-setup-step-marker { border-color: var(--primary-border); background: var(--primary); color: var(--text); }
+.sync-setup-step-done .sync-setup-step-marker { color: var(--success, #2d8a56); }
+.sync-setup-step-state { color: var(--muted); font-size: calc(11px * var(--font-scale)); }
+.sync-setup-step-upcoming h4 { color: var(--muted); }
+.sync-setup-step-body { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding-left: 32px; }
+.sync-overview { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: calc(13px * var(--font-scale)); }
+.sync-overview-attention { border-color: color-mix(in srgb, var(--warning, #a16c18) 50%, var(--border)); background: color-mix(in srgb, var(--warning, #a16c18) 8%, transparent); }
 .settings-inline-confirm .danger-action { color: var(--error); border-color: color-mix(in srgb, var(--error) 40%, var(--border-strong)); }
 .settings-panel > .accounts-manager { padding: 0; }
 .settings-connection-status { display: inline-flex; align-items: center; gap: 5px; color: var(--error); font-size: calc(12px * var(--font-scale)); }
