@@ -1,6 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { AlignLeft, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, RefreshCw, Video, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
@@ -32,6 +32,67 @@ function saveCalendarScrollTop(scrollTop: number): void {
   } catch {
     // The scroll position still applies for this session when storage is unavailable.
   }
+}
+
+const WHEEL_SWIPE_THRESHOLD = 60;
+const WHEEL_SWIPE_IDLE_MS = 250;
+const WHEEL_LINE_HEIGHT = 16;
+const TOUCH_SWIPE_THRESHOLD = 50;
+
+// Trackpad swipes arrive as horizontal wheel events, touch screens as touch pointers.
+// Swiping content left advances a day, swiping right goes back. A trackpad gesture
+// (including its momentum tail) moves at most one day until the wheel goes idle.
+function useDaySwipe(targetRef: RefObject<HTMLElement | null>, moveDay: (offset: number) => void) {
+  useEffect(() => {
+    const target = targetRef.current;
+    if (!target) return;
+    let wheelDistance = 0;
+    let wheelLocked = false;
+    let idleTimer: number | undefined;
+    let touchStart: { id: number; x: number; y: number } | null = null;
+
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => {
+        wheelDistance = 0;
+        wheelLocked = false;
+      }, WHEEL_SWIPE_IDLE_MS);
+      if (wheelLocked) return;
+      wheelDistance += event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaX * WHEEL_LINE_HEIGHT : event.deltaX;
+      if (Math.abs(wheelDistance) < WHEEL_SWIPE_THRESHOLD) return;
+      moveDay(wheelDistance > 0 ? 1 : -1);
+      wheelDistance = 0;
+      wheelLocked = true;
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.pointerType !== "touch" || !event.isPrimary) return;
+      touchStart = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      if (!touchStart || event.pointerId !== touchStart.id) return;
+      const dx = event.clientX - touchStart.x;
+      const dy = event.clientY - touchStart.y;
+      touchStart = null;
+      if (Math.abs(dx) < TOUCH_SWIPE_THRESHOLD || Math.abs(dx) <= Math.abs(dy) * 2) return;
+      moveDay(dx < 0 ? 1 : -1);
+    };
+    const onPointerCancel = () => {
+      touchStart = null;
+    };
+
+    target.addEventListener("wheel", onWheel, { passive: true });
+    target.addEventListener("pointerdown", onPointerDown);
+    target.addEventListener("pointerup", onPointerUp);
+    target.addEventListener("pointercancel", onPointerCancel);
+    return () => {
+      window.clearTimeout(idleTimer);
+      target.removeEventListener("wheel", onWheel);
+      target.removeEventListener("pointerdown", onPointerDown);
+      target.removeEventListener("pointerup", onPointerUp);
+      target.removeEventListener("pointercancel", onPointerCancel);
+    };
+  }, [targetRef, moveDay]);
 }
 
 function startOfLocalDay(date: Date): Date {
@@ -228,6 +289,7 @@ export function CalendarSidebar({
   const [durationMinutes, setDurationMinutes] = useState(availabilityPreferences.defaultDurationMinutes);
   const [availabilityDialogOpen, setAvailabilityDialogOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
   useEscapeDismiss(onClose, !embedded);
   const hasWorkingHours = hasWorkingHoursOnDate(date, availabilityPreferences);
   const canCheckAvailability = hasWorkingHours && date >= startOfLocalDay(new Date());
@@ -329,8 +391,10 @@ export function CalendarSidebar({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [moveDay]);
 
+  useDaySwipe(sidebarRef, moveDay);
+
   return (
-    <aside className="calendar-sidebar" aria-label="Calendar schedule">
+    <aside className="calendar-sidebar" aria-label="Calendar schedule" ref={sidebarRef}>
       <header className="calendar-sidebar-header">
         <h2>{new Intl.DateTimeFormat(undefined, {
           weekday: "short",

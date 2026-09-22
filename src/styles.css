@@ -961,6 +961,7 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
   flex-direction: column;
   border-left: 1px solid var(--border);
   background: var(--surface);
+  touch-action: pan-y;
 }
 .calendar-sidebar-header {
   min-height: 90px;

@@ -118,6 +118,76 @@ describe("calendar sidebar", () => {
     expect(listEvents.mock.calls[2][0]).toBe(initialTimeMin);
   });
 
+  function renderSwipeSidebar() {
+    const listEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    render(
+      <CalendarSidebar
+        onClose={vi.fn()}
+        onOpenSettings={vi.fn()}
+        availabilityPreferences={{
+          timeZone: "America/New_York",
+          workingWindows: [],
+          defaultDurationMinutes: 30,
+          slotIncrementMinutes: 15,
+        }}
+      />,
+    );
+    const sidebar = screen.getByRole("complementary", { name: "Calendar schedule" });
+    const dayOf = (call: number) => new Date(listEvents.mock.calls[call][0]).getTime();
+    return { listEvents, sidebar, dayOf };
+  }
+
+  it("moves one day per horizontal trackpad swipe", async () => {
+    const { listEvents, sidebar, dayOf } = renderSwipeSidebar();
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(1));
+
+    // One gesture, including its momentum tail, advances exactly one day.
+    for (let step = 0; step < 6; step += 1) fireEvent.wheel(sidebar, { deltaX: 30, deltaY: 2 });
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(2));
+    expect(dayOf(1)).toBeGreaterThan(dayOf(0));
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    fireEvent.wheel(sidebar, { deltaX: -40 });
+    fireEvent.wheel(sidebar, { deltaX: -40 });
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(3));
+    expect(dayOf(2)).toBe(dayOf(0));
+  });
+
+  it("ignores vertical scrolling, short horizontal nudges, and pinch zoom", async () => {
+    const { listEvents, sidebar } = renderSwipeSidebar();
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(1));
+
+    fireEvent.wheel(sidebar, { deltaX: 80, deltaY: 120 });
+    fireEvent.wheel(sidebar, { deltaX: 200, ctrlKey: true });
+    fireEvent.wheel(sidebar, { deltaX: 20 });
+    fireEvent.wheel(sidebar, { deltaX: 20 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves the day with horizontal touch swipes but not taps or vertical drags", async () => {
+    const { listEvents, sidebar, dayOf } = renderSwipeSidebar();
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(1));
+    const swipe = (fromX: number, toX: number, fromY = 200, toY = 200, pointerType = "touch") => {
+      fireEvent.pointerDown(sidebar, { pointerId: 1, pointerType, isPrimary: true, clientX: fromX, clientY: fromY });
+      fireEvent.pointerUp(sidebar, { pointerId: 1, pointerType, isPrimary: true, clientX: toX, clientY: toY });
+    };
+
+    swipe(200, 195);
+    swipe(200, 150, 100, 300);
+    swipe(300, 100, 200, 200, "mouse");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listEvents).toHaveBeenCalledTimes(1);
+
+    swipe(300, 150);
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(2));
+    expect(dayOf(1)).toBeGreaterThan(dayOf(0));
+
+    swipe(150, 300);
+    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(3));
+    expect(dayOf(2)).toBe(dayOf(0));
+  });
+
   it("renders short meetings compactly with title and time on one line", async () => {
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
       {

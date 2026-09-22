@@ -83,7 +83,7 @@ fn roster_entry_x25519(entry: &RosterEntry) -> Result<[u8; 32], String> {
 // ============================ Status and listing ============================
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase", tag = "state")]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "state")]
 pub enum EnrollmentStatus {
     NotStarted,
     AwaitingGrant { request_id: String, fingerprint: String, created_at: String },
@@ -1095,6 +1095,44 @@ mod tests {
     fn fake_transports(name: &str) -> Vec<Arc<dyn SyncTransport>> {
         let transport: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new(name));
         vec![transport]
+    }
+
+    #[test]
+    fn enrollment_status_serializes_all_variant_fields_in_camel_case() {
+        let cases = [
+            (EnrollmentStatus::NotStarted, serde_json::json!({ "state": "notStarted" })),
+            (
+                EnrollmentStatus::AwaitingGrant {
+                    request_id: "request-1".to_string(),
+                    fingerprint: "AAAA-BBBB".to_string(),
+                    created_at: "2026-09-22T19:40:01Z".to_string(),
+                },
+                serde_json::json!({
+                    "state": "awaitingGrant",
+                    "requestId": "request-1",
+                    "fingerprint": "AAAA-BBBB",
+                    "createdAt": "2026-09-22T19:40:01Z",
+                }),
+            ),
+            (
+                EnrollmentStatus::AwaitingConfirmation {
+                    request_id: "request-2".to_string(),
+                    fingerprint: "CCCC-DDDD".to_string(),
+                    approver_fingerprint: "EEEE-FFFF".to_string(),
+                },
+                serde_json::json!({
+                    "state": "awaitingConfirmation",
+                    "requestId": "request-2",
+                    "fingerprint": "CCCC-DDDD",
+                    "approverFingerprint": "EEEE-FFFF",
+                }),
+            ),
+            (EnrollmentStatus::Enrolled { device_count: 2 }, serde_json::json!({ "state": "enrolled", "deviceCount": 2 })),
+        ];
+
+        for (status, expected) in cases {
+            assert_eq!(serde_json::to_value(status).unwrap(), expected);
+        }
     }
 
     #[test]
