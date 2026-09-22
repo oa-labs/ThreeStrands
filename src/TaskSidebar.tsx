@@ -3,6 +3,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask } from "./domain";
 import { mailClient } from "./data/client";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+import { errorMessage } from "./errors";
 
 function taskGroup(task: ThreadTask): string {
   if (task.status === "completed") return "Completed";
@@ -56,6 +57,23 @@ export type TaskWorkspaceHandle = {
   reopenSelected(): void;
 };
 
+/**
+ * AI thread-action analysis for the current conversation. Supplying it adds
+ * the analyze control and the proposal review list to the panel.
+ */
+export type ThreadActionAnalysis = {
+  enabled: boolean;
+  ready: boolean;
+  loading: boolean;
+  error: string | null;
+  preview: string | null;
+  proposals: ActionProposal[];
+  onAnalyze(): void;
+  onDiscardProposal?(index: number): void;
+  onReviewProposal?(index: number, proposal: ActionProposal, intent: "edit" | "accept"): void;
+  onFindTimesProposal?(proposal: MeetingProposal): void;
+};
+
 export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   variant?: "sidebar" | "workspace";
   onClose(): void;
@@ -64,16 +82,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onOpenThread(threadId: string): void;
   onTasksChanged?(): void;
   onCheckSchedule?(): void;
-  onAnalyzeThread?(): void;
-  analysisEnabled?: boolean;
-  analysisReady?: boolean;
-  analysisLoading?: boolean;
-  analysisError?: string | null;
-  analysisPreview?: string | null;
-  proposals?: ActionProposal[];
-  onDiscardProposal?(index: number): void;
-  onReviewProposal?(index: number, proposal: ActionProposal, intent: "edit" | "accept"): void;
-  onFindTimesProposal?(proposal: MeetingProposal): void;
+  analysis?: ThreadActionAnalysis;
   onDraftFollowUp?(task: ThreadTask): void;
   onNewTask?(): void;
   onEditTask?(task: ThreadTask): void;
@@ -88,16 +97,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onOpenThread,
   onTasksChanged,
   onCheckSchedule,
-  onAnalyzeThread,
-  analysisEnabled = false,
-  analysisReady = false,
-  analysisLoading = false,
-  analysisError = null,
-  analysisPreview = null,
-  proposals = [],
-  onDiscardProposal,
-  onReviewProposal,
-  onFindTimesProposal,
+  analysis,
   onDraftFollowUp,
   onNewTask,
   onEditTask,
@@ -118,7 +118,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     try {
       setTasks(await mailClient.listTasks(accountId ?? undefined));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(errorMessage(reason));
     } finally {
       setLoading(false);
     }
@@ -160,7 +160,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       setTasks((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
       onTasksChanged?.();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(errorMessage(reason));
     }
   }, [onTasksChanged]);
 
@@ -224,31 +224,31 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
-          {title === "Actions" && onAnalyzeThread ? <button type="button" aria-label="Analyze Thread" title={!analysisEnabled ? "Enable thread actions in AI settings" : !analysisReady ? "Configure an AI provider and API key" : "Analyze thread"} onClick={onAnalyzeThread} disabled={!analysisReady || analysisLoading}><Sparkles size={17} /></button> : null}
+          {analysis ? <button type="button" aria-label="Analyze Thread" title={!analysis.enabled ? "Enable thread actions in AI settings" : !analysis.ready ? "Configure an AI provider and API key" : "Analyze thread"} onClick={analysis.onAnalyze} disabled={!analysis.ready || analysis.loading}><Sparkles size={17} /></button> : null}
           {onCheckSchedule ? <button type="button" aria-label="Check Schedule" title="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button> : null}
           {onNewTask && (variant === "workspace" || currentThread) ? <button type="button" aria-label="Add Task" title="Add task" onClick={onNewTask}><Plus size={17} /></button> : null}
           <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>
         </div>
       </header>
       {error ? <p className="tasks-error" role="alert">{error}</p> : null}
-      {title === "Actions" && onAnalyzeThread ? (
+      {analysis ? (
         <section className="action-analysis" aria-label="Thread actions">
-          <div className="action-analysis-heading"><strong>Thread actions</strong>{analysisLoading ? <span role="status">Analyzing…</span> : null}</div>
-          {!analysisEnabled ? <p className="tasks-status">Enable Thread actions in AI settings to analyze this conversation.</p> : !analysisReady ? <p className="tasks-status">Configure an AI provider and API key in AI settings to analyze this conversation.</p> : null}
-          {analysisError ? (() => {
-            const { summary, retryable } = describeAnalysisError(analysisError);
+          <div className="action-analysis-heading"><strong>Thread actions</strong>{analysis.loading ? <span role="status">Analyzing…</span> : null}</div>
+          {!analysis.enabled ? <p className="tasks-status">Enable Thread actions in AI settings to analyze this conversation.</p> : !analysis.ready ? <p className="tasks-status">Configure an AI provider and API key in AI settings to analyze this conversation.</p> : null}
+          {analysis.error ? (() => {
+            const { summary, retryable } = describeAnalysisError(analysis.error);
             return <div className="action-analysis-error" role="alert">
               <p>{summary}</p>
               <div className="action-analysis-error-actions">
-                {retryable && onAnalyzeThread ? <button type="button" onClick={onAnalyzeThread}><RotateCcw size={13} /> Try Again</button> : null}
-                {retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{analysisError}</p></details> : null}
+                {retryable ? <button type="button" onClick={analysis.onAnalyze}><RotateCcw size={13} /> Try Again</button> : null}
+                {retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{analysis.error}</p></details> : null}
               </div>
             </div>;
           })() : null}
-          {analysisPreview ? <details className="action-analysis-preview"><summary>Exact bounded content sent</summary><pre>{analysisPreview}</pre></details> : null}
-          {!analysisLoading && analysisEnabled && proposals.length === 0 && analysisPreview ? <p className="tasks-status">No meeting or task proposals found.</p> : null}
+          {analysis.preview ? <details className="action-analysis-preview"><summary>Exact bounded content sent</summary><pre>{analysis.preview}</pre></details> : null}
+          {!analysis.loading && analysis.enabled && analysis.proposals.length === 0 && analysis.preview ? <p className="tasks-status">No meeting or task proposals found.</p> : null}
           <div className="action-proposals">
-            {proposals.map((proposal, index) => {
+            {analysis.proposals.map((proposal, index) => {
               const evidence = <details className="proposal-evidence"><summary>Evidence</summary><blockquote>{proposal.evidence.excerpt}</blockquote><small>Message {proposal.evidence.sourceMessageId}</small></details>;
               const needsReview = (proposal.type === "meeting" && (!proposal.timeZone || (!proposal.normalizedStart && !proposal.searchRangeStart)))
                 || (proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone);
@@ -259,10 +259,10 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
                 {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
                 {evidence}
                 <div className="proposal-actions">
-                  {onReviewProposal ? <button type="button" onClick={() => onReviewProposal(index, proposal, "edit")}><Pencil size={13} /> Edit</button> : null}
-                  {proposal.type === "task" && onReviewProposal ? <button type="button" onClick={() => onReviewProposal(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
-                  {proposal.type === "meeting" && onFindTimesProposal ? <button type="button" disabled={needsReview} title={needsReview ? "Edit this proposal before finding times" : undefined} onClick={() => onFindTimesProposal(proposal)}>Find Times</button> : null}
-                  {onDiscardProposal ? <button type="button" onClick={() => onDiscardProposal(index)}>Discard</button> : null}
+                  {analysis.onReviewProposal ? <button type="button" onClick={() => analysis.onReviewProposal?.(index, proposal, "edit")}><Pencil size={13} /> Edit</button> : null}
+                  {proposal.type === "task" && analysis.onReviewProposal ? <button type="button" onClick={() => analysis.onReviewProposal?.(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
+                  {proposal.type === "meeting" && analysis.onFindTimesProposal ? <button type="button" disabled={needsReview} title={needsReview ? "Edit this proposal before finding times" : undefined} onClick={() => analysis.onFindTimesProposal?.(proposal)}>Find Times</button> : null}
+                  {analysis.onDiscardProposal ? <button type="button" onClick={() => analysis.onDiscardProposal?.(index)}>Discard</button> : null}
                 </div>
               </article>;
             })}

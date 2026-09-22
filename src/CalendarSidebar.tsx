@@ -6,6 +6,7 @@ import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+import { errorMessage } from "./errors";
 
 const HOUR_HEIGHT = 64;
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
@@ -305,7 +306,7 @@ export function CalendarSidebar({
       setAvailabilityDialogOpen(false);
     } catch (reason) {
       setAvailability(null);
-      setAvailabilityError(reason instanceof Error ? reason.message : String(reason));
+      setAvailabilityError(errorMessage(reason));
     } finally {
       setAvailabilityLoading(false);
     }

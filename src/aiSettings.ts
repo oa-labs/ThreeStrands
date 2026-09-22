@@ -49,6 +49,27 @@ export function resolveAiModel(provider: AiProvider, model: string): string {
   return provider === "custom" ? "" : AI_MODEL_PLACEHOLDERS[provider];
 }
 
+export type AiRequestConfig = {
+  provider: Exclude<AiProvider, "none">;
+  model: string;
+  /** Only set for the `custom` provider, where it is required. */
+  endpoint: string | null;
+};
+
+/**
+ * Reads the saved provider settings for an AI request, throwing a message
+ * that names `action` (e.g. "summarizing") when they are incomplete.
+ */
+export function readAiRequestConfig(action: string): AiRequestConfig {
+  const provider = readAiProvider();
+  if (provider === "none") throw new Error(`Choose an AI provider in AI settings before ${action}.`);
+  const model = resolveAiModel(provider, readAiModel());
+  if (!model) throw new Error(`Set a model in AI settings before ${action}.`);
+  const endpoint = provider === "custom" ? readAiEndpoint().trim() : null;
+  if (provider === "custom" && !endpoint) throw new Error(`Set an endpoint URL in AI settings before ${action}.`);
+  return { provider, model, endpoint };
+}
+
 const PROVIDER_KEY = "threestrands.settings.ai.provider";
 const MODEL_KEY = "threestrands.settings.ai.model";
 const ENDPOINT_KEY = "threestrands.settings.ai.endpoint";

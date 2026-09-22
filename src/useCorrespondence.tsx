@@ -6,6 +6,7 @@ import { Composer, type ComposerHandle } from "./Composer";
 import { mailClient } from "./data/client";
 import type { ComposeMode, Draft, OutboxItem } from "./correspondence";
 import type { Account, Snippet } from "./domain";
+import { logBackgroundFailure } from "./errors";
 
 type ComposeOptions = {
   availabilityText?: string;
@@ -125,7 +126,7 @@ export function useCorrespondence(
     if (!hasActiveDelivery) return;
     const timer = window.setInterval(() => {
       setClock(Date.now());
-      void refresh().catch(() => {});
+      void refresh().catch(logBackgroundFailure("Outbox refresh"));
     }, 1000);
     return () => window.clearInterval(timer);
   }, [hasActiveDelivery, refresh]);

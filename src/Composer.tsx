@@ -5,11 +5,9 @@ import type { Draft, OutboxItem } from "./correspondence";
 import type { Account, ReplyAssistContext, Snippet } from "./domain";
 import {
   isAiApiKeyConfigured,
-  readAiEndpoint,
   readAiFeatures,
-  readAiModel,
   readAiProvider,
-  resolveAiModel,
+  readAiRequestConfig,
 } from "./aiSettings";
 import { RecipientField } from "./RecipientField";
 import {
@@ -26,6 +24,7 @@ import { SnippetPicker } from "./SnippetPicker";
 import { firstNameFromRecipient, renderSnippetBody } from "./snippets";
 import { recordSnippetUsed } from "./settings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+import { errorMessage, logBackgroundFailure } from "./errors";
 
 export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; draftReplyWithAI(): void };
 
@@ -91,7 +90,7 @@ export const Composer = forwardRef<ComposerHandle, {
     latest.current = { ...latest.current, [field]: value }; generation.current++;
     setDraft(latest.current); setStatus("Unsaved changes");
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void flush().catch(() => {}); }, 300);
+    timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, 300);
   }
   const editBody = useCallback((editor: HTMLElement) => {
     const html = serializeComposeHtml(editor);
@@ -105,7 +104,7 @@ export const Composer = forwardRef<ComposerHandle, {
     generation.current++;
     setDraft(latest.current); setStatus("Unsaved changes");
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void flush().catch(() => {}); }, 300);
+    timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, 300);
   }, [flush]);
   async function run(action: () => Promise<void>) {
     if (busyRef.current) return;
@@ -149,7 +148,7 @@ export const Composer = forwardRef<ComposerHandle, {
     try {
       setReplyAssistContext(await mailClient.replyAssistContext(latest.current.id));
     } catch (reason) {
-      setReplyAssistError(reason instanceof Error ? reason.message : String(reason));
+      setReplyAssistError(errorMessage(reason));
     } finally {
       if (mounted.current) setReplyAssistBusy(false);
     }
@@ -164,11 +163,7 @@ export const Composer = forwardRef<ComposerHandle, {
     setReplyAssistBusy(true);
     setReplyAssistError("");
     try {
-      const provider = readAiProvider();
-      const model = resolveAiModel(provider, readAiModel());
-      if (provider === "none" || !model) throw new Error("Configure a model in AI settings first.");
-      const endpoint = provider === "custom" ? readAiEndpoint().trim() : null;
-      if (provider === "custom" && !endpoint) throw new Error("Set an endpoint URL in AI settings first.");
+      const { provider, model, endpoint } = readAiRequestConfig("drafting a reply");
       const result = await mailClient.generateReply(
         replyAssistContext,
         replyInstruction,
@@ -186,7 +181,7 @@ export const Composer = forwardRef<ComposerHandle, {
       setReplyAssistOpen(false);
       setReplyInstruction("");
     } catch (reason) {
-      setReplyAssistError(reason instanceof Error ? reason.message : String(reason));
+      setReplyAssistError(errorMessage(reason));
     } finally {
       if (mounted.current) setReplyAssistBusy(false);
     }
@@ -293,7 +288,7 @@ export const Composer = forwardRef<ComposerHandle, {
     // continuous typing/dictation keeps resetting that debounce, so bound
     // the worst-case unsaved window regardless of how long editing continues.
     // `flush()` already no-ops if nothing changed since the last save.
-    const autosave = window.setInterval(() => { void flush().catch(() => {}); }, 3_000);
+    const autosave = window.setInterval(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, 3_000);
     if (initial.mode === "forward" && initial.attachments.some((attachment) => !attachment.ready)) {
       void run(async () => {
         let next = await flush();

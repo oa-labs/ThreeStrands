@@ -174,6 +174,33 @@ it("reloads the inbox after reconnecting an imported account", async () => {
   expect(within(dialog).getByText("Connected")).toBeInTheDocument();
 });
 
+it("reloads the inbox and reports the error when reconnecting an account fails", async () => {
+  const originalAccounts = mailClient.listAccounts.bind(mailClient);
+  const originalList = mailClient.listThreadsPage.bind(mailClient);
+  let listCalls = 0;
+
+  vi.spyOn(mailClient, "listAccounts").mockImplementation(async () =>
+    (await originalAccounts()).map((account) => ({ ...account, status: "needs_reauth" as const })),
+  );
+  vi.spyOn(mailClient, "reconnectAccount").mockRejectedValue(new Error("Google sign-in was cancelled"));
+  vi.spyOn(mailClient, "listThreadsPage").mockImplementation(async (...args) => {
+    listCalls += 1;
+    return originalList(...args);
+  });
+
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+  const dialog = screen.getByRole("dialog", { name: "Settings" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
+  const callsBeforeReconnect = listCalls;
+
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Reconnect" }));
+
+  expect(await within(dialog).findByText("Google sign-in was cancelled")).toBeInTheDocument();
+  await waitFor(() => expect(listCalls).toBeGreaterThan(callsBeforeReconnect));
+});
+
 it("shows a queued reply immediately and replaces it with the provider copy", async () => {
   const detail = await mailClient.getThread("welcome");
   const source = detail.messages.at(-1)!;

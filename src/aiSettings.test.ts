@@ -6,7 +6,10 @@ import {
   isAiApiKeyConfigured,
   readAiFeatures,
   readAiProvider,
+  readAiRequestConfig,
+  saveAiEndpoint,
   saveAiFeatures,
+  saveAiModel,
   saveAiProvider,
   setAiApiKey,
   testAiConnection,
@@ -39,6 +42,35 @@ describe("AI provider preferences", () => {
   it("ignores an invalid stored provider", () => {
     localStorage.setItem("threestrands.settings.ai.provider", "not-a-provider");
     expect(readAiProvider()).toBe("none");
+  });
+
+  it("requires a provider before building an AI request", () => {
+    expect(() => readAiRequestConfig("summarizing")).toThrow("Choose an AI provider in AI settings before summarizing.");
+  });
+
+  it("falls back to the provider's default model and omits the endpoint for hosted providers", () => {
+    saveAiProvider("openai");
+    saveAiEndpoint("https://ignored.example.com");
+    expect(readAiRequestConfig("summarizing")).toEqual({ provider: "openai", model: "gpt-4o", endpoint: null });
+
+    saveAiModel("  gpt-4o-mini  ");
+    expect(readAiRequestConfig("summarizing").model).toBe("gpt-4o-mini");
+  });
+
+  it("requires both a model and an endpoint for a custom provider", () => {
+    saveAiProvider("custom");
+    expect(() => readAiRequestConfig("drafting a reply")).toThrow("Set a model in AI settings before drafting a reply.");
+
+    saveAiModel("local-llama");
+    saveAiEndpoint("   ");
+    expect(() => readAiRequestConfig("drafting a reply")).toThrow("Set an endpoint URL in AI settings before drafting a reply.");
+
+    saveAiEndpoint(" http://localhost:8080/v1 ");
+    expect(readAiRequestConfig("drafting a reply")).toEqual({
+      provider: "custom",
+      model: "local-llama",
+      endpoint: "http://localhost:8080/v1",
+    });
   });
 
   it("defaults every feature flag to off and merges a partial saved value", () => {

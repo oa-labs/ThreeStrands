@@ -2,6 +2,7 @@ import { CalendarDays, Download, ExternalLink, MapPin, Repeat2, Users } from "lu
 import { useEffect, useState } from "react";
 import { mailClient } from "./data/client";
 import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from "./domain";
+import { errorMessage } from "./errors";
 
 export function isCalendarAttachment(attachment: MessageAttachment): boolean {
   return attachment.mimeType.split(";", 1)[0]?.trim().toLocaleLowerCase() === "text/calendar"
@@ -125,12 +126,12 @@ export function CalendarAttachment({ messageId, attachment, onError, loadedPrevi
 
   const open = () => {
     void mailClient.openAttachment(messageId, attachment.id).catch((reason: unknown) => {
-      onError(`Could not open attachment: ${reason instanceof Error ? reason.message : String(reason)}`);
+      onError(`Could not open attachment: ${errorMessage(reason)}`);
     });
   };
   const download = () => {
     void mailClient.saveAttachment(messageId, attachment.id).catch((reason: unknown) => {
-      onError(`Could not download attachment: ${reason instanceof Error ? reason.message : String(reason)}`);
+      onError(`Could not download attachment: ${errorMessage(reason)}`);
     });
   };
 

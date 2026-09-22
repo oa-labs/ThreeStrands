@@ -99,6 +99,52 @@ describe("split inbox search shortcuts", () => {
     expect(screen.queryByRole("textbox", { name: "Search Mail" })).not.toBeInTheDocument();
   });
 
+  it("starts every folder outside the tab bar with a closed, empty search", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    render(<App />);
+    await screen.findByRole("tab", { name: /^Inbox/ });
+
+    for (const folder of ["All Mail (g then a)", "Trash (g then t)", /^Drafts \(\d+\) \(g then d\)$/, /^Outbox \(\d+\)$/]) {
+      fireEvent.keyDown(window, { key: "/" });
+      fireEvent.change(await screen.findByRole("textbox", { name: "Search Mail" }), { target: { value: "roadmap" } });
+
+      const button = screen.getByRole("button", { name: folder });
+      fireEvent.click(button);
+      await waitFor(() => expect(button).toHaveClass("active"));
+      expect(screen.queryByRole("textbox", { name: "Search Mail" })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Inbox (g then i)" }));
+      await screen.findByRole("tab", { name: /^Inbox/ });
+    }
+  });
+
+  it("remembers the chosen Inbox or split tab for the account", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([
+      {
+        id: "work-split",
+        name: "Work",
+        matchKind: "label",
+        matchValue: "work",
+        sortOrder: 0,
+        createdAt: "2026-03-01T00:00:00Z",
+        accountId: "demo@example.com",
+      },
+    ]);
+    const rememberedTab = () =>
+      JSON.parse(localStorage.getItem("threestrands.settings.selectedTabByAccount") ?? "{}")["demo@example.com"];
+
+    render(<App />);
+    const splitTab = await screen.findByRole("tab", { name: "Work" });
+    fireEvent.click(splitTab);
+    await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
+    expect(rememberedTab()).toBe("work-split");
+
+    fireEvent.click(screen.getByRole("tab", { name: /^Inbox/ }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));
+    expect(rememberedTab()).toBeNull();
+  });
+
   it("shows when the Gmail backfill is still running", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     let finishBackfill!: () => void;

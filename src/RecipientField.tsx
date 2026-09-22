@@ -3,6 +3,7 @@ import { Pin, PinOff, UserPlus, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactSuggestion } from "./domain";
 import { parseAddress } from "./emailAddress";
+import { logBackgroundFailure } from "./errors";
 
 type Props = {
   id: "to" | "cc" | "bcc";
@@ -135,7 +136,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
         if (thisRequest !== requestId.current) return;
         setSuggestions(results);
       })
-      .catch(() => {});
+      .catch(logBackgroundFailure("Contact suggestion lookup"));
   }
 
   function query(nextDraftText: string) {

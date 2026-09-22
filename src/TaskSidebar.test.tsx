@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TaskSidebar } from "./TaskSidebar";
+import { TaskSidebar, type ThreadActionAnalysis } from "./TaskSidebar";
 import { mailClient } from "./data/client";
 import type { ActionProposal, ThreadDetail, ThreadTask } from "./domain";
 
@@ -36,6 +36,19 @@ const detail: ThreadDetail = {
     attachments: [],
   }],
 };
+
+function threadAnalysis(overrides: Partial<ThreadActionAnalysis> = {}): ThreadActionAnalysis {
+  return {
+    enabled: true,
+    ready: true,
+    loading: false,
+    error: null,
+    preview: null,
+    proposals: [],
+    onAnalyze: vi.fn(),
+    ...overrides,
+  };
+}
 
 describe("TaskSidebar", () => {
   afterEach(() => {
@@ -137,13 +150,12 @@ describe("TaskSidebar", () => {
         currentThread={detail}
         onOpenThread={vi.fn()}
         title="Actions"
-        analysisEnabled
-        analysisReady
-        analysisPreview={'{"emailContext":{"messages":[]}}'}
-        proposals={[proposal]}
-        onAnalyzeThread={vi.fn()}
-        onDiscardProposal={discard}
-        onReviewProposal={reviewProposal}
+        analysis={threadAnalysis({
+          preview: '{"emailContext":{"messages":[]}}',
+          proposals: [proposal],
+          onDiscardProposal: discard,
+          onReviewProposal: reviewProposal,
+        })}
       />,
     );
 
@@ -239,12 +251,26 @@ describe("TaskSidebar", () => {
         currentThread={detail}
         onOpenThread={vi.fn()}
         title="Actions"
-        analysisEnabled
-        analysisReady={false}
-        onAnalyzeThread={vi.fn()}
+        analysis={threadAnalysis({ ready: false })}
       />,
     );
     expect(screen.getByText("Configure an AI provider and API key in AI settings to analyze this conversation.")).toBeInTheDocument();
     expect(screen.queryByText("Enable Thread actions in AI settings to analyze this conversation.")).not.toBeInTheDocument();
+  });
+
+  it("shows thread analysis controls only when analysis is supplied", () => {
+    const { rerender } = render(
+      <TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" />,
+    );
+    expect(screen.queryByRole("button", { name: "Analyze Thread" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Thread actions" })).not.toBeInTheDocument();
+
+    const onAnalyze = vi.fn();
+    rerender(
+      <TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ onAnalyze })} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Analyze Thread" }));
+    expect(onAnalyze).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("region", { name: "Thread actions" })).toBeInTheDocument();
   });
 });

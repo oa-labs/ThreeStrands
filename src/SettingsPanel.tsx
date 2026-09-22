@@ -19,7 +19,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
 import {
   clearLocalCrashReports,
   crashReportingEnabled,
@@ -126,6 +125,8 @@ import {
   type ReplicatedSyncTransportStatus,
 } from "./replicatedSync";
 import { FrontierConflictEditor } from "./FrontierConflictEditor";
+import { moveItem, useLiveStatus, useSettingsOperation } from "./settingsOperations";
+import { errorMessage, logBackgroundFailure } from "./errors";
 
 export type SettingsSection = "cloudAccount" | "replicatedSync" | "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
@@ -289,102 +290,94 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "data", label: "Data Transfer", group: "System", description: "Move encrypted settings and account metadata between devices.", keywords: "import export backup password" },
 ];
 
+/**
+ * Settings takes one object per domain rather than one prop per field. Each
+ * object is structurally satisfied by the hook that owns that domain's state
+ * (`useAppPreferences`, `useAccounts`, `useCalendarAccounts`,
+ * `useSplitInboxes`, `useSnippets`), so App can hand them through unchanged.
+ */
+export type SettingsPreferences = {
+  theme: Theme;
+  setTheme(theme: Theme): void;
+  fontScale: number;
+  setFontScale(value: number): void;
+  fontFamily: FontFamily;
+  setFontFamily(value: FontFamily): void;
+  autoReadDelaySeconds: number;
+  setAutoReadDelaySeconds(value: number): void;
+  loadRemoteImages: boolean;
+  setLoadRemoteImages(value: boolean): void;
+  availabilityPreferences: AvailabilityPreferences;
+  setAvailabilityPreferences(value: AvailabilityPreferences): void;
+};
+
+export type MailAccountSettings = {
+  authStatus: AuthStatus | null;
+  accounts: Account[];
+  activeAccountId: string | null;
+  add(): Promise<void>;
+  remove(email: string): Promise<void>;
+  removeEverywhere(email: string): Promise<void>;
+  reconnect(email: string): Promise<void>;
+  setDisplayName(email: string, displayName: string | null): Promise<void>;
+  setColor(email: string, color: string): Promise<void>;
+  reorder(emails: string[]): Promise<void>;
+};
+
+export type CalendarAccountSettingsState = {
+  accounts: CalendarAccount[];
+  calendars: CalendarOption[];
+  calendarsError: string | null;
+  add(): Promise<void>;
+  reconnect(email: string): Promise<void>;
+  remove(email: string): Promise<void>;
+  removeEverywhere(email: string): Promise<void>;
+  setSelection(accountId: string, calendarIds: string[]): Promise<void>;
+};
+
+export type SplitInboxSettingsState = {
+  splitInboxes: SplitInbox[];
+  create(name: string, matchKind: SplitInboxMatchKind, matchValue: string, accountId: string): Promise<void>;
+  rename(id: string, name: string): Promise<void>;
+  remove(id: string): Promise<void>;
+  reorder(ids: string[]): Promise<void>;
+};
+
+export type SnippetSettingsState = {
+  snippets: Snippet[];
+  create(name: string, body: string): Promise<Snippet>;
+  update(id: string, name: string, body: string): Promise<Snippet>;
+  remove(id: string): Promise<void>;
+};
+
 export function Settings({
   section,
   onSectionChange,
   onClose,
-  theme,
-  onThemeChange,
-  fontScale,
-  onFontScaleChange,
-  fontFamily,
-  onFontFamilyChange,
-  autoReadDelaySeconds,
-  onAutoReadDelayChange,
-  loadRemoteImages,
-  onLoadRemoteImagesChange,
-  availabilityPreferences,
-  onAvailabilityPreferencesChange,
+  preferences,
+  mailAccounts,
+  calendarAccounts,
+  splitInboxes,
+  labelsByAccount,
+  snippets,
   syncStatus,
   recoveryStatus,
   onAiConfigChange,
-  authStatus,
-  accounts,
-  calendarAccounts,
-  calendarOptions,
-  calendarOptionsError,
-  activeAccountId,
-  onAddAccount,
-  onRemoveAccount,
-  onRemoveAccountEverywhere,
-  onReconnectAccount,
-  onSetAccountDisplayName,
-  onSetAccountColor,
-  onReorderAccounts,
-  onAddCalendarAccount,
-  onReconnectCalendarAccount,
-  onRemoveCalendarAccount,
-  onRemoveCalendarAccountEverywhere,
-  onSetCalendarSelection,
   onSettingsImported,
-  splitInboxes,
-  labelsByAccount,
-  onCreateSplitInbox,
-  onRenameSplitInbox,
-  onDeleteSplitInbox,
-  onReorderSplitInboxes,
-  snippets,
-  onCreateSnippet,
-  onUpdateSnippet,
-  onDeleteSnippet,
 }: {
   section: SettingsSection;
   onSectionChange(section: SettingsSection): void;
   onClose(): void;
-  theme: Theme;
-  onThemeChange(theme: Theme): void;
-  fontScale: number;
-  onFontScaleChange(value: number): void;
-  fontFamily: FontFamily;
-  onFontFamilyChange(value: FontFamily): void;
-  autoReadDelaySeconds: number;
-  onAutoReadDelayChange(value: number): void;
-  loadRemoteImages: boolean;
-  onLoadRemoteImagesChange(value: boolean): void;
-  availabilityPreferences: AvailabilityPreferences;
-  onAvailabilityPreferencesChange(value: AvailabilityPreferences): void;
+  preferences: SettingsPreferences;
+  mailAccounts: MailAccountSettings;
+  calendarAccounts: CalendarAccountSettingsState;
+  splitInboxes: SplitInboxSettingsState;
+  labelsByAccount: Record<string, Label[]>;
+  snippets: SnippetSettingsState;
   syncStatus: SyncStatus | null;
   recoveryStatus: RecoveryStatus | null;
   onAiConfigChange(): void;
-  authStatus: AuthStatus | null;
-  accounts: Account[];
-  calendarAccounts: CalendarAccount[];
-  calendarOptions: CalendarOption[];
-  calendarOptionsError: string | null;
-  activeAccountId: string | null;
-  onAddAccount(): Promise<void>;
-  onRemoveAccount(email: string): Promise<void>;
-  onRemoveAccountEverywhere(email: string): Promise<void>;
-  onReconnectAccount(email: string): Promise<void>;
-  onSetAccountDisplayName(email: string, displayName: string | null): Promise<void>;
-  onSetAccountColor(email: string, color: string): Promise<void>;
-  onReorderAccounts(emails: string[]): Promise<void>;
-  onAddCalendarAccount(): Promise<void>;
-  onReconnectCalendarAccount(email: string): Promise<void>;
-  onRemoveCalendarAccount(email: string): Promise<void>;
-  onRemoveCalendarAccountEverywhere(email: string): Promise<void>;
-  onSetCalendarSelection(accountId: string, calendarIds: string[]): Promise<void>;
   onSettingsImported(result: SettingsImportResult): Promise<void>;
-  splitInboxes: SplitInbox[];
-  labelsByAccount: Record<string, Label[]>;
-  onCreateSplitInbox(name: string, matchKind: SplitInboxMatchKind, matchValue: string, accountId: string): Promise<void>;
-  onRenameSplitInbox(id: string, name: string): Promise<void>;
-  onDeleteSplitInbox(id: string): Promise<void>;
-  onReorderSplitInboxes(ids: string[]): Promise<void>;
-  snippets: Snippet[];
-  onCreateSnippet(name: string, body: string): Promise<Snippet>;
-  onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
-  onDeleteSnippet(id: string): Promise<void>;
 }) {
   const [settingsQuery, setSettingsQuery] = useState("");
   const settingsPanelRef = useRef<HTMLDivElement>(null);
@@ -491,81 +484,81 @@ export function Settings({
           {section === "replicatedSync" ? <ReplicatedSyncSettings /> : null}
           {section === "appearance" ? (
             <AppearanceSettings
-              theme={theme}
-              onThemeChange={onThemeChange}
-              fontScale={fontScale}
-              onFontScaleChange={onFontScaleChange}
-              fontFamily={fontFamily}
-              onFontFamilyChange={onFontFamilyChange}
+              theme={preferences.theme}
+              onThemeChange={preferences.setTheme}
+              fontScale={preferences.fontScale}
+              onFontScaleChange={preferences.setFontScale}
+              fontFamily={preferences.fontFamily}
+              onFontFamilyChange={preferences.setFontFamily}
             />
           ) : null}
           {section === "reading" ? (
             <ReadingSettings
-              autoReadDelaySeconds={autoReadDelaySeconds}
-              onAutoReadDelayChange={onAutoReadDelayChange}
+              autoReadDelaySeconds={preferences.autoReadDelaySeconds}
+              onAutoReadDelayChange={preferences.setAutoReadDelaySeconds}
             />
           ) : null}
           {section === "accounts" ? (
             <AccountsSettings
-              authStatus={authStatus}
-              accounts={accounts}
-              onAdd={onAddAccount}
-              onRemove={onRemoveAccount}
-              onRemoveEverywhere={onRemoveAccountEverywhere}
-              onReconnect={onReconnectAccount}
-              onSetDisplayName={onSetAccountDisplayName}
-              onSetColor={onSetAccountColor}
-              onReorder={onReorderAccounts}
+              authStatus={mailAccounts.authStatus}
+              accounts={mailAccounts.accounts}
+              onAdd={mailAccounts.add}
+              onRemove={mailAccounts.remove}
+              onRemoveEverywhere={mailAccounts.removeEverywhere}
+              onReconnect={mailAccounts.reconnect}
+              onSetDisplayName={mailAccounts.setDisplayName}
+              onSetColor={mailAccounts.setColor}
+              onReorder={mailAccounts.reorder}
             />
           ) : null}
           {section === "calendarAccounts" ? (
             <CalendarAccountsSettings
-              authStatus={authStatus}
-              accounts={calendarAccounts}
-              calendars={calendarOptions}
-              calendarsError={calendarOptionsError}
-              onAdd={onAddCalendarAccount}
-              onReconnect={onReconnectCalendarAccount}
-              onRemove={onRemoveCalendarAccount}
-              onRemoveEverywhere={onRemoveCalendarAccountEverywhere}
-              onSetSelection={onSetCalendarSelection}
+              authStatus={mailAccounts.authStatus}
+              accounts={calendarAccounts.accounts}
+              calendars={calendarAccounts.calendars}
+              calendarsError={calendarAccounts.calendarsError}
+              onAdd={calendarAccounts.add}
+              onReconnect={calendarAccounts.reconnect}
+              onRemove={calendarAccounts.remove}
+              onRemoveEverywhere={calendarAccounts.removeEverywhere}
+              onSetSelection={calendarAccounts.setSelection}
             />
           ) : null}
           {section === "availability" ? (
             <AvailabilitySettings
-              preferences={availabilityPreferences}
-              onChange={onAvailabilityPreferencesChange}
+              preferences={preferences.availabilityPreferences}
+              onChange={preferences.setAvailabilityPreferences}
             />
           ) : null}
           {section === "splitInboxes" ? (
             <SplitInboxesSettings
-              splitInboxes={splitInboxes}
-              accounts={accounts}
-              activeAccountId={activeAccountId}
+              splitInboxes={splitInboxes.splitInboxes}
+              accounts={mailAccounts.accounts}
+              activeAccountId={mailAccounts.activeAccountId}
               labelsByAccount={labelsByAccount}
-              onCreate={onCreateSplitInbox}
-              onRename={onRenameSplitInbox}
-              onDelete={onDeleteSplitInbox}
-              onReorder={onReorderSplitInboxes}
+              onCreate={splitInboxes.create}
+              onRename={splitInboxes.rename}
+              onDelete={splitInboxes.remove}
+              onReorder={splitInboxes.reorder}
             />
           ) : null}
           {section === "snippets" ? (
             <SnippetsSettings
-              snippets={snippets}
-              onCreate={onCreateSnippet}
-              onUpdate={onUpdateSnippet}
-              onDelete={onDeleteSnippet}
+              snippets={snippets.snippets}
+              onCreate={snippets.create}
+              onUpdate={snippets.update}
+              onDelete={snippets.remove}
             />
           ) : null}
           {section === "ai" ? <AiProviderSettings onChange={() => { onAiConfigChange(); queuePortablePreferences(); }} /> : null}
           {section === "privacy" ? (
             <PrivacySettings
-              loadRemoteImages={loadRemoteImages}
-              onLoadRemoteImagesChange={onLoadRemoteImagesChange}
+              loadRemoteImages={preferences.loadRemoteImages}
+              onLoadRemoteImagesChange={preferences.setLoadRemoteImages}
             />
           ) : null}
           {section === "diagnostics" ? (
-            <DiagnosticsSettings status={syncStatus} recovery={recoveryStatus} accountCount={accounts.length} />
+            <DiagnosticsSettings status={syncStatus} recovery={recoveryStatus} accountCount={mailAccounts.accounts.length} />
           ) : null}
           {section === "data" ? <DataTransferSettings onImported={onSettingsImported} /> : null}
             </>
@@ -580,8 +573,6 @@ function CloudAccountSettings() {
   const [status, setStatus] = useState<CloudAccountStatus | null>(null);
   const [devices, setDevices] = useState<CloudDevice[]>([]);
   const [conflicts, setConflicts] = useState<CloudConflict[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -600,23 +591,9 @@ function CloudAccountSettings() {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh().catch((error: unknown) => setMessage(String(error)));
-    let unlisten: (() => void) | undefined;
-    if ("__TAURI_INTERNALS__" in window) {
-      void listen("cloud-sync-status", () => void refresh()).then((stop) => { unlisten = stop; });
-    }
-    return () => unlisten?.();
-  }, [refresh]);
-
-  const act = (operation: () => Promise<unknown>) => {
-    setBusy(true);
-    setMessage(null);
-    void operation()
-      .then(refresh)
-      .catch((error: unknown) => setMessage(String(error)))
-      .finally(() => setBusy(false));
-  };
+  const { busy, error: message, setError: setMessage, act } = useSettingsOperation(refresh);
+  const reportError = useCallback((reason: unknown) => setMessage(errorMessage(reason)), [setMessage]);
+  useLiveStatus("cloud-sync-status", refresh, reportError);
 
   if (!status) return <section className="settings-section" aria-label="Three Strands Account"><p className="settings-hint">Loading account status…</p></section>;
   if (!status.configured) {
@@ -706,8 +683,6 @@ function ReplicatedSyncSettings() {
   const [enrollmentStatus, setEnrollmentStatus] = useState<EnrollmentStatus | null>(null);
   const [pendingRequests, setPendingRequests] = useState<IncomingEnrollmentRequest[]>([]);
   const [deviceRoster, setDeviceRoster] = useState<DeviceRosterEntry[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [ipfsBaseUrl, setIpfsBaseUrl] = useState("");
   const [ipfsToken, setIpfsToken] = useState("");
   const [ipfsProbe, setIpfsProbe] = useState<IpfsRpcProbeReport | null>(null);
@@ -742,96 +717,46 @@ function ReplicatedSyncSettings() {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh().catch((error: unknown) => setMessage(String(error)));
-    let unlisten: (() => void) | undefined;
-    if ("__TAURI_INTERNALS__" in window) {
-      void listen("replicated-sync-status", () => void refresh()).then((stop) => { unlisten = stop; });
-    }
-    return () => unlisten?.();
-  }, [refresh]);
+  const { busy, error: message, setError: setMessage, run, act } = useSettingsOperation(refresh);
+  const reportError = useCallback((reason: unknown) => setMessage(errorMessage(reason)), [setMessage]);
+  useLiveStatus("replicated-sync-status", refresh, reportError);
 
-  const act = (operation: () => Promise<unknown>) => {
-    setBusy(true);
-    setMessage(null);
-    void operation()
-      .then(refresh)
-      .catch((error: unknown) => setMessage(String(error)))
-      .finally(() => setBusy(false));
-  };
-
-  const addFolder = () => {
-    setBusy(true);
-    setMessage(null);
-    void replicatedSyncAddFolder()
-      .then((status) => {
-        if (!status) setMessage("No folder selected.");
-        return refresh();
-      })
-      .catch((error: unknown) => setMessage(String(error)))
-      .finally(() => setBusy(false));
-  };
+  const addFolder = () => run(async () => {
+    const status = await replicatedSyncAddFolder();
+    if (!status) setMessage("No folder selected.");
+    await refresh();
+  });
 
   const probeIpfsRpc = () => {
-    setBusy(true);
-    setMessage(null);
     setIpfsProbe(null);
-    void replicatedSyncProbeIpfsRpc(ipfsBaseUrl, ipfsToken.trim() ? ipfsToken : null)
-      .then((report) => {
-        setIpfsProbe(report);
-        if (!report.versionOk) setMessage("Could not reach an IPFS RPC endpoint at that URL.");
-      })
-      .catch((error: unknown) => setMessage(String(error)))
-      .finally(() => setBusy(false));
+    run(async () => {
+      const report = await replicatedSyncProbeIpfsRpc(ipfsBaseUrl, ipfsToken.trim() ? ipfsToken : null);
+      setIpfsProbe(report);
+      if (!report.versionOk) setMessage("Could not reach an IPFS RPC endpoint at that URL.");
+    });
   };
 
-  const addIpfsRpc = () => {
-    setBusy(true);
-    setMessage(null);
-    void replicatedSyncAddIpfsRpc(ipfsBaseUrl, ipfsToken.trim() ? ipfsToken : null)
-      .then((status) => {
-        if (!status) setMessage("Could not add that endpoint.");
-        setIpfsBaseUrl("");
-        setIpfsToken("");
-        setIpfsProbe(null);
-        return refresh();
-      })
-      .catch((error: unknown) => setMessage(String(error)))
-      .finally(() => setBusy(false));
-  };
+  const addIpfsRpc = () => run(async () => {
+    const status = await replicatedSyncAddIpfsRpc(ipfsBaseUrl, ipfsToken.trim() ? ipfsToken : null);
+    if (!status) setMessage("Could not add that endpoint.");
+    setIpfsBaseUrl("");
+    setIpfsToken("");
+    setIpfsProbe(null);
+    await refresh();
+  });
 
-  const toggleBeta = (on: boolean) => {
-    setBusy(true);
-    setMessage(null);
-    void replicatedSyncSetBetaEnabled(on)
-      .then(refresh)
-      .catch((error: unknown) => setMessage(String(error)))
-      .finally(() => setBusy(false));
-  };
+  const toggleBeta = (on: boolean) => act(() => replicatedSyncSetBetaEnabled(on));
 
-  const beginGenesis = () => {
-    setBusy(true);
-    setMessage(null);
-    void replicatedSyncBeginGenesis()
-      .then((phrase) => {
-        setRecoveryPhrase(phrase);
-        return refresh();
-      })
-      .catch((error: unknown) => setMessage(String(error)))
-      .finally(() => setBusy(false));
-  };
+  const beginGenesis = () => run(async () => {
+    setRecoveryPhrase(await replicatedSyncBeginGenesis());
+    await refresh();
+  });
 
-  const joinWithPhrase = () => {
-    setBusy(true);
-    setMessage(null);
-    void replicatedSyncJoinWithRecoveryPhrase(recoveryPhraseInput.trim())
-      .then(() => {
-        setRecoveryPhraseInput("");
-        return refresh();
-      })
-      .catch((error: unknown) => setMessage(String(error)))
-      .finally(() => setBusy(false));
-  };
+  const joinWithPhrase = () => run(async () => {
+    await replicatedSyncJoinWithRecoveryPhrase(recoveryPhraseInput.trim());
+    setRecoveryPhraseInput("");
+    await refresh();
+  });
 
   if (available === null) {
     return (
@@ -1399,24 +1324,12 @@ function AccountsSettings({
   onSetColor(email: string, color: string): Promise<void>;
   onReorder(emails: string[]): Promise<void>;
 }) {
-  const [busyEmail, setBusyEmail] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { pending: busyEmail, error, setError, runFor } = useSettingsOperation();
   const [confirmEverywhereEmail, setConfirmEverywhereEmail] = useState<string | null>(null);
 
-  const act = (busyKey: string, operation: () => Promise<void>) => {
-    setBusyEmail(busyKey);
-    setError(null);
-    void operation()
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
-      .finally(() => setBusyEmail(null));
-  };
-
   const move = (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= accounts.length) return;
-    const next = [...accounts];
-    [next[index], next[target]] = [next[target]!, next[index]!];
-    act(accounts[index]!.email, () => onReorder(next.map((account) => account.email)));
+    const next = moveItem(accounts, index, direction);
+    if (next) runFor(accounts[index]!.email, () => onReorder(next.map((account) => account.email)));
   };
 
   return (
@@ -1433,7 +1346,7 @@ function AccountsSettings({
           type="button"
           className="primary-action settings-add-account"
           disabled={busyEmail !== null}
-          onClick={() => act("__add__", onAdd)}
+          onClick={() => runFor("__add__", onAdd)}
         >
           <Plus size={15} />
           {busyEmail === "__add__" ? "Waiting for Google…" : "Add Account"}
@@ -1486,7 +1399,7 @@ function AccountsSettings({
                   name={account.displayName}
                   onCommit={(name) =>
                     onSetDisplayName(account.email, name).catch((reason: unknown) => {
-                      setError(reason instanceof Error ? reason.message : String(reason));
+                      setError(errorMessage(reason));
                       throw reason;
                     })
                   }
@@ -1516,7 +1429,7 @@ function AccountsSettings({
                       color={account.color}
                       onCommit={(color) =>
                         onSetColor(account.email, color).catch((reason: unknown) => {
-                          setError(reason instanceof Error ? reason.message : String(reason));
+                          setError(errorMessage(reason));
                           throw reason;
                         })
                       }
@@ -1527,7 +1440,7 @@ function AccountsSettings({
                       type="button"
                       className="account-action-button"
                       disabled={busyEmail !== null}
-                      onClick={() => act(account.email, () => onReconnect(account.email))}
+                      onClick={() => runFor(account.email, () => onReconnect(account.email))}
                     >
                       Reconnect
                     </button>
@@ -1536,7 +1449,7 @@ function AccountsSettings({
                     type="button"
                     className="account-action-button danger-action"
                     disabled={busyEmail !== null}
-                    onClick={() => act(account.email, () => onRemove(account.email))}
+                    onClick={() => runFor(account.email, () => onRemove(account.email))}
                   >
                     Disconnect
                   </button>
@@ -1561,7 +1474,7 @@ function AccountsSettings({
                       className="danger-action"
                       disabled={busyEmail !== null}
                       onClick={() => {
-                        act(account.email, () => onRemoveEverywhere(account.email));
+                        runFor(account.email, () => onRemoveEverywhere(account.email));
                         setConfirmEverywhereEmail(null);
                       }}
                     >
@@ -1721,16 +1634,8 @@ function CalendarAccountsSettings({
   onRemoveEverywhere(email: string): Promise<void>;
   onSetSelection(accountId: string, calendarIds: string[]): Promise<void>;
 }) {
-  const [busyEmail, setBusyEmail] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { pending: busyEmail, error, runFor } = useSettingsOperation();
   const [confirmEverywhereEmail, setConfirmEverywhereEmail] = useState<string | null>(null);
-  const act = (busyKey: string, operation: () => Promise<void>) => {
-    setBusyEmail(busyKey);
-    setError(null);
-    void operation()
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
-      .finally(() => setBusyEmail(null));
-  };
 
   return (
     <section className="settings-section accounts-manager" aria-label="Calendar Accounts">
@@ -1746,7 +1651,7 @@ function CalendarAccountsSettings({
           type="button"
           className="primary-action settings-add-account"
           disabled={busyEmail !== null}
-          onClick={() => act("__add__", onAdd)}
+          onClick={() => runFor("__add__", onAdd)}
         >
           <Plus size={15} />
           {busyEmail === "__add__" ? "Waiting for Google…" : "Connect Calendar"}
@@ -1791,7 +1696,7 @@ function CalendarAccountsSettings({
                       type="button"
                       className="account-action-button"
                       disabled={busyEmail !== null}
-                      onClick={() => act(account.email, () => onReconnect(account.email))}
+                      onClick={() => runFor(account.email, () => onReconnect(account.email))}
                     >
                       Reconnect
                     </button>
@@ -1800,7 +1705,7 @@ function CalendarAccountsSettings({
                     type="button"
                     className="account-action-button danger-action"
                     disabled={busyEmail !== null}
-                    onClick={() => act(account.email, () => onRemove(account.email))}
+                    onClick={() => runFor(account.email, () => onRemove(account.email))}
                   >
                     Disconnect
                   </button>
@@ -1825,7 +1730,7 @@ function CalendarAccountsSettings({
                       className="danger-action"
                       disabled={busyEmail !== null}
                       onClick={() => {
-                        act(account.email, () => onRemoveEverywhere(account.email));
+                        runFor(account.email, () => onRemoveEverywhere(account.email));
                         setConfirmEverywhereEmail(null);
                       }}
                     >
@@ -1856,7 +1761,7 @@ function CalendarAccountsSettings({
                               )
                               .map((candidate) => candidate.id);
                             if (event.target.checked) selected.push(calendar.id);
-                            act(account.email, () => onSetSelection(account.email, selected));
+                            runFor(account.email, () => onSetSelection(account.email, selected));
                           }}
                         />
                         <span>{calendar.name}{calendar.primary ? " (Primary)" : ""}</span>
@@ -1952,8 +1857,7 @@ function SplitInboxesSettings({
   const [matchValue, setMatchValue] = useState("");
   const [accountId, setAccountId] = useState(() => activeAccountId ?? accounts[0]?.email ?? "");
   const [creating, setCreating] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { pending: busyId, error, setError, runFor } = useSettingsOperation();
 
   // A split inbox belongs to one account, so only that account's labels are
   // valid matches for it.
@@ -1961,20 +1865,10 @@ function SplitInboxesSettings({
     .filter((label) => label.kind === "user")
     .sort((a, b) => formatLabelName(a).localeCompare(formatLabelName(b), undefined, { sensitivity: "base" }));
 
-  const act = (busyKey: string, operation: () => Promise<void>) => {
-    setBusyId(busyKey);
-    setError(null);
-    void operation()
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
-      .finally(() => setBusyId(null));
-  };
 
   const move = (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= splitInboxes.length) return;
-    const next = [...splitInboxes];
-    [next[index], next[target]] = [next[target]!, next[index]!];
-    act(splitInboxes[index]!.id, () => onReorder(next.map((splitInbox) => splitInbox.id)));
+    const next = moveItem(splitInboxes, index, direction);
+    if (next) runFor(splitInboxes[index]!.id, () => onReorder(next.map((splitInbox) => splitInbox.id)));
   };
 
   return (
@@ -2002,7 +1896,7 @@ function SplitInboxesSettings({
               setName("");
               setMatchValue("");
             })
-            .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+            .catch((reason: unknown) => setError(errorMessage(reason)))
             .finally(() => setCreating(false));
         }}
       >
@@ -2072,7 +1966,7 @@ function SplitInboxesSettings({
                 <div className="account-card-identity">
                   <SplitInboxNameInput
                     splitInbox={splitInbox}
-                    onCommit={(nextName) => act(splitInbox.id, () => onRename(splitInbox.id, nextName))}
+                    onCommit={(nextName) => runFor(splitInbox.id, () => onRename(splitInbox.id, nextName))}
                   />
                   <span className="account-card-email">
                     {describeSplitInboxRule(splitInbox, labelsByAccount)} — {splitInbox.accountId}
@@ -2103,7 +1997,7 @@ function SplitInboxesSettings({
                     type="button"
                     className="account-action-button danger-action"
                     disabled={busyId !== null}
-                    onClick={() => act(splitInbox.id, () => onDelete(splitInbox.id))}
+                    onClick={() => runFor(splitInbox.id, () => onDelete(splitInbox.id))}
                   >
                     Delete
                   </button>
@@ -2130,8 +2024,7 @@ function SnippetsSettings({
   onDelete(id: string): Promise<void>;
 }) {
   const [editorTarget, setEditorTarget] = useState<Snippet | "new" | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { pending: busyId, error, runFor } = useSettingsOperation();
 
   const orderedSnippets = [...snippets].sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
@@ -2178,13 +2071,7 @@ function SnippetsSettings({
                     type="button"
                     className="account-action-button danger-action"
                     disabled={busyId !== null}
-                    onClick={() => {
-                      setBusyId(snippet.id);
-                      setError(null);
-                      void onDelete(snippet.id)
-                        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
-                        .finally(() => setBusyId(null));
-                    }}
+                    onClick={() => runFor(snippet.id, () => onDelete(snippet.id))}
                   >
                     Delete
                   </button>
@@ -2295,7 +2182,7 @@ function AccountColorInput({
         timer.current = setTimeout(() => {
           pendingCount.current++;
           onCommit(next)
-            .catch(() => {})
+            .catch(logBackgroundFailure("Account color save"))
             .finally(() => { pendingCount.current--; });
         }, 200);
       }}
@@ -2431,7 +2318,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                   })
                   .then(setKeyConfigured)
                   .then(() => onChange?.())
-                  .catch((reason: unknown) => setConfigurationError(reason instanceof Error ? reason.message : String(reason)))
+                  .catch((reason: unknown) => setConfigurationError(errorMessage(reason)))
                   .finally(() => setBusy(false));
               }}
             >
@@ -2446,7 +2333,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                   .then(() => isAiApiKeyConfigured())
                   .then(setKeyConfigured)
                   .then(() => onChange?.())
-                  .catch((reason: unknown) => setConfigurationError(reason instanceof Error ? reason.message : String(reason)))
+                  .catch((reason: unknown) => setConfigurationError(errorMessage(reason)))
                   .finally(() => setBusy(false));
               }}
             >
@@ -2463,7 +2350,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                 setConnectionTested(false);
                 void testAiConnection(provider, resolveAiModel(provider, model), endpoint)
                   .then(() => setConnectionTested(true))
-                  .catch((reason: unknown) => setConfigurationError(reason instanceof Error ? reason.message : String(reason)))
+                  .catch((reason: unknown) => setConfigurationError(errorMessage(reason)))
                   .finally(() => setTestingConnection(false));
               }}
             >
@@ -2577,7 +2464,7 @@ function DataTransferSettings({
   const passwordsMatch = exportPassword.length >= 8 && exportPassword === exportConfirmation;
 
   const showError = (error: unknown) => {
-    setMessage(error instanceof Error ? error.message : String(error));
+    setMessage(errorMessage(error));
   };
 
   return (

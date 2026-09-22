@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Modal } from "./AppChrome";
 import type { TaskDueKind, TaskKind } from "./domain";
+import { errorMessage } from "./errors";
 
 export type TaskEditorValues = {
   title: string;
@@ -73,7 +74,7 @@ export function TaskEditorDialog({
         repeatIntervalDays: repeatIntervalDays ? Number(repeatIntervalDays) : null,
       });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(errorMessage(reason));
       setBusy(false);
     }
   };
