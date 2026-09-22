@@ -1137,6 +1137,26 @@ async fn replicated_sync_now(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn replicated_sync_conflicts(state: State<'_, AppState>) -> Result<Vec<replicated_sync::FrontierConflict>, String> {
+    state.database.list_frontier_conflicts()
+}
+
+#[tauri::command]
+fn replicated_sync_resolve_conflict(
+    entity_type: String,
+    entity_id: String,
+    field: String,
+    operation_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let entity_type: threestrands_sync_protocol::EntityType =
+        entity_type.parse().map_err(|error: String| error)?;
+    state.database.resolve_frontier_conflict(entity_type, &entity_id, &field, &operation_id)?;
+    kick_replicated_sync(&state);
+    Ok(())
+}
+
+#[tauri::command]
 async fn google_auth_status(state: State<'_, AppState>) -> Result<AuthStatus, String> {
     let primary = state.database.primary_account_id();
     let auth = resolve_account(&state, Some(&primary), |account| account.auth.clone()).await;
@@ -2331,6 +2351,8 @@ pub fn run() {
             replicated_sync_add_folder,
             replicated_sync_remove_transport,
             replicated_sync_now,
+            replicated_sync_conflicts,
+            replicated_sync_resolve_conflict,
             correspondence_request,
             finish_exit,
             list_threads,

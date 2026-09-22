@@ -5,10 +5,13 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { invoke } from "@tauri-apps/api/core";
 import {
   replicatedSyncAddFolder,
+  replicatedSyncConflicts,
   replicatedSyncEnabled,
   replicatedSyncNow,
   replicatedSyncRemoveTransport,
+  replicatedSyncResolveConflict,
   replicatedSyncStatus,
+  type FrontierConflict,
 } from "./replicatedSync";
 
 describe("replicated sync invoke wrappers", () => {
@@ -54,5 +57,37 @@ describe("replicated sync invoke wrappers", () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     await replicatedSyncNow();
     expect(invoke).toHaveBeenCalledWith("replicated_sync_now");
+  });
+
+  it("reports no conflicts outside a desktop build without invoking anything", async () => {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    expect(await replicatedSyncConflicts()).toEqual([]);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("fetches frontier conflicts", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    await replicatedSyncConflicts();
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_conflicts");
+  });
+
+  it("resolves a conflict with the entity/field identity and the chosen operation id", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    const conflict: FrontierConflict = {
+      entityType: "snippet",
+      entityId: "s1",
+      field: "name",
+      candidates: [
+        { operationId: "op-a", deviceId: "device-a", value: "From A" },
+        { operationId: "op-b", deviceId: "device-b", value: "From B" },
+      ],
+    };
+    await replicatedSyncResolveConflict(conflict, conflict.candidates[1]);
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_resolve_conflict", {
+      entityType: "snippet",
+      entityId: "s1",
+      field: "name",
+      operationId: "op-b",
+    });
   });
 });

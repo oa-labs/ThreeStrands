@@ -39,7 +39,7 @@ use keyring::Entry;
 use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use threestrands_sync_core::{EntityType, WinnerStamp, ENTITY_EXISTENCE_FIELD};
 use threestrands_sync_envelope::{
     compute_cid, open_message, seal_event, sign_device_head, verify_device_head, DeviceHead,
@@ -78,15 +78,36 @@ fn parse_flag(value: Option<&str>) -> bool {
 /// calendar selection that arrives before its calendar account remains
 /// pending and is retried after the account materializes." Reuses the exact
 /// same dependency check `cloud_sync::upsert_cloud_calendar_selection`
-/// already performs for the legacy system.
-// No production caller until a transport actually delivers remote
-// operations to project (a later phase); exercised directly by this
-// module's tests in the meantime.
-#[allow(dead_code)]
+/// already performs for the legacy system. Used by `materialize_one_entity`
+/// while projecting a pulled remote event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectionReadiness {
     Ready,
     Pending { reason: String },
+}
+
+/// One candidate value still in a field's frontier — a write from some
+/// device that has not (yet) been superseded.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontierConflictCandidate {
+    pub operation_id: String,
+    pub device_id: String,
+    pub value: Option<Value>,
+}
+
+/// One field whose frontier currently has more than one member: a genuine
+/// concurrent write, not arrival-order noise. The existing (legacy)
+/// conflict editor's replacement is a review/resolution UI over exactly
+/// these — see [`Database::list_frontier_conflicts`] and
+/// [`Database::resolve_frontier_conflict`].
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontierConflict {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub field: String,
+    pub candidates: Vec<FrontierConflictCandidate>,
 }
 
 impl Database {
@@ -150,6 +171,105 @@ impl Database {
         tx.commit().map_err(display)
     }
 
+    /// True once at least one operation has been recorded for this entity
+    /// anywhere in the graph (locally or via a pulled remote event).
+    fn entity_recorded_in_graph(&self, entity_type: EntityType, entity_id: &str) -> Result<bool, String> {
+        self.connection()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_operations WHERE entity_type=?1 AND entity_id=?2)",
+                params![entity_type.as_str(), entity_id],
+                |row| row.get(0),
+            )
+            .map_err(display)
+    }
+
+    /// Enqueues `entity_id` as a creation if the graph has no operation for
+    /// it yet; a no-op otherwise. `record_replicated_write` already treats
+    /// "no prior operation" as creation and writes `_entity=true` plus
+    /// every field in `payload`, so this is just that call guarded by the
+    /// existence check.
+    fn reconcile_one_entity(&self, entity_type: EntityType, entity_id: &str, payload: Value) -> Result<bool, String> {
+        if self.entity_recorded_in_graph(entity_type, entity_id)? {
+            return Ok(false);
+        }
+        let fields: BTreeSet<String> = payload
+            .as_object()
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default();
+        self.record_replicated_write(entity_type, entity_id, &fields, &payload)?;
+        Ok(true)
+    }
+
+    /// Repairs the one durability gap `record_replicated_write` leaves open:
+    /// a mutation command's app-table write (`create_task`, `create_snippet`,
+    /// ...) and its enqueue call remain two separate statements — so every
+    /// existing mutation call site can keep calling them exactly as before —
+    /// which means a crash in the narrow window between them would silently
+    /// leave that one entity permanently un-enqueued, since nothing else
+    /// ever retries a "local row exists, graph never heard about it" gap.
+    ///
+    /// This sweep closes it the same way `confirm_cloud_enrollment` already
+    /// backfills the legacy outbox: enumerate every local entity and enqueue
+    /// any one the graph has never seen. A no-op for anything already
+    /// recorded, so it is safe and cheap to run on every sync cycle, not
+    /// just at startup — `ReplicatedSync::sync_once` does exactly that.
+    /// Portable preferences are intentionally not covered here: unlike
+    /// every other entity type, their only local write *is* the enqueue
+    /// call itself (see `cloud_update_preferences`), so there is no
+    /// separate app-table mutation for a crash to land between.
+    ///
+    /// Does not check [`enabled`] itself — like `record_replicated_write`,
+    /// that is the caller's job (`ReplicatedSync::sync_once` already gates
+    /// on it), so this stays directly callable from a test without an
+    /// environment variable to fiddle with.
+    pub fn reconcile_replicated_sync_backlog(&self) -> Result<usize, String> {
+        let mut repaired = 0usize;
+        for task in self.list_tasks(None, None)? {
+            if self.reconcile_one_entity(EntityType::Task, &task.id, serde_json::to_value(&task).map_err(display)?)? {
+                repaired += 1;
+            }
+        }
+        for snippet in self.list_snippets()? {
+            if self.reconcile_one_entity(EntityType::Snippet, &snippet.id, serde_json::to_value(&snippet).map_err(display)?)? {
+                repaired += 1;
+            }
+        }
+        for split in self.list_split_inboxes()? {
+            if self.reconcile_one_entity(EntityType::SplitInbox, &split.id, serde_json::to_value(&split).map_err(display)?)? {
+                repaired += 1;
+            }
+        }
+        for account in self.list_accounts()? {
+            let payload = json!({
+                "email": account.email,
+                "displayName": account.display_name,
+                "color": account.color,
+                "provider": account.provider,
+                "sortOrder": account.sort_order,
+            });
+            if self.reconcile_one_entity(EntityType::MailAccount, &account.email.to_ascii_lowercase(), payload)? {
+                repaired += 1;
+            }
+        }
+        for account in self.list_calendar_accounts()? {
+            let email = account.email.to_ascii_lowercase();
+            if self.reconcile_one_entity(EntityType::CalendarAccount, &email, json!({ "email": account.email }))? {
+                repaired += 1;
+            }
+            if let Some(ids) = self.calendar_selection(&account.email)? {
+                let payload = json!({ "accountId": account.email, "calendarIds": ids });
+                if self.reconcile_one_entity(EntityType::CalendarSelection, &email, payload)? {
+                    repaired += 1;
+                }
+            }
+        }
+        let retention_payload = json!({ "days": self.retention_days()? });
+        if self.reconcile_one_entity(EntityType::Retention, "mail", retention_payload)? {
+            repaired += 1;
+        }
+        Ok(repaired)
+    }
+
     /// Records a local deletion: an ordinary write of `_entity = false`, the
     /// reserved existence field. See the module doc for why deletion never
     /// touches any other field's frontier.
@@ -175,22 +295,113 @@ impl Database {
         tx.commit().map_err(display)
     }
 
+    /// Every field currently in conflict: a frontier with more than one
+    /// member. This is the multi-value register the plan's conflict UI
+    /// reviews and resolves — see [`Self::resolve_frontier_conflict`].
+    pub fn list_frontier_conflicts(&self) -> Result<Vec<FrontierConflict>, String> {
+        let connection = self.connection()?;
+        let keys: Vec<(String, String, String)> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT entity_type, entity_id, field FROM sync_field_frontier
+                     GROUP BY entity_type, entity_id, field HAVING COUNT(*) > 1",
+                )
+                .map_err(display)?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .map_err(display)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(display)?;
+            rows
+        };
+
+        let mut conflicts = Vec::with_capacity(keys.len());
+        for (entity_type, entity_id, field) in keys {
+            let candidates: Vec<(String, Option<String>, Vec<u8>)> = {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT so.operation_id, so.value, so.winner_stamp FROM sync_field_frontier sf
+                         JOIN sync_operations so ON so.operation_id = sf.operation_id
+                         WHERE sf.entity_type=?1 AND sf.entity_id=?2 AND sf.field=?3",
+                    )
+                    .map_err(display)?;
+                let rows = statement
+                    .query_map(params![entity_type, entity_id, field], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })
+                    .map_err(display)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(display)?;
+                rows
+            };
+            let mut resolved_candidates = Vec::with_capacity(candidates.len());
+            for (operation_id, value_json, stamp_bytes) in candidates {
+                // encode_winner_stamp lays out lamport(8) || device_id(16) ||
+                // event_id(16) || operation_id(16); device_id is the middle
+                // 16 bytes.
+                let device_id = stamp_bytes.get(8..24).map(hex_encode).unwrap_or_default();
+                let value: Option<Value> = value_json.map(|json| serde_json::from_str(&json)).transpose().map_err(display)?;
+                resolved_candidates.push(FrontierConflictCandidate {
+                    operation_id,
+                    device_id,
+                    value,
+                });
+            }
+            conflicts.push(FrontierConflict {
+                entity_type,
+                entity_id,
+                field,
+                candidates: resolved_candidates,
+            });
+        }
+        Ok(conflicts)
+    }
+
+    /// Resolves a field conflict: an ordinary local write carrying the
+    /// chosen candidate's value. `apply_field_operation` already names
+    /// whatever is *currently* in the field's frontier as this write's
+    /// parents, which — because every candidate in the conflict is, by
+    /// definition, still in that frontier — is exactly "names the entire
+    /// current frontier as parents," the plan's conflict-resolution
+    /// contract, with no special-cased logic needed beyond picking the
+    /// value.
+    pub fn resolve_frontier_conflict(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+        field: &str,
+        chosen_operation_id: &str,
+    ) -> Result<(), String> {
+        let stored_value: Option<String> = self
+            .connection()?
+            .query_row(
+                "SELECT value FROM sync_operations WHERE operation_id=?1",
+                params![chosen_operation_id],
+                |row| row.get(0),
+            )
+            .map_err(display)?;
+        let value: Option<Value> = stored_value.map(|json| serde_json::from_str(&json)).transpose().map_err(display)?;
+
+        let mut connection = self.connection()?;
+        let tx = connection.transaction().map_err(display)?;
+        let device_id = ensure_space_and_device(&tx)?;
+        let (event_id_hex, event_id, lamport) = begin_event(&tx, device_id)?;
+        apply_field_operation(&tx, entity_type, entity_id, field, value, &event_id_hex, device_id, event_id, lamport)?;
+        tx.commit().map_err(display)
+    }
+
     /// True while an already-authenticated remote (or conflict-resolution)
     /// operation is being applied. A shared materializer checks this before
     /// calling [`Self::record_replicated_write`] / [`Self::record_replicated_deletion`]
     /// so projecting a remote write never re-enqueues it as a new local
-    /// event — the echo-prevention the plan calls for. Nothing sets this yet
-    /// outside tests; a future transport-aware phase wraps its projection
-    /// application in [`Self::with_remote_projection`].
+    /// event — the echo-prevention the plan calls for.
     pub(crate) fn is_projecting_remote_operation(&self) -> bool {
         self.replicated_sync_projecting.load(Ordering::SeqCst)
     }
 
     /// Runs `work` with remote-projection suppression engaged. Always
     /// restores the flag afterward, including when `work` returns an error.
-    /// No production caller until a transport actually delivers remote
-    /// operations to project; exercised directly by this module's tests.
-    #[allow(dead_code)]
+    /// Wraps `materialize_touched_entities`'s projection of a pulled event.
     pub(crate) fn with_remote_projection<R>(&self, work: impl FnOnce() -> Result<R, String>) -> Result<R, String> {
         self.replicated_sync_projecting.store(true, Ordering::SeqCst);
         let result = work();
@@ -199,13 +410,10 @@ impl Database {
     }
 
     /// Validates a fully resolved entity payload and checks any known
-    /// materialization dependency, without writing anything. A future
-    /// projection path calls this before invoking the real per-entity
-    /// upsert, and retries later on [`ProjectionReadiness::Pending`] rather
-    /// than treating a not-yet-materialized dependency as an error. No
-    /// production caller until a transport exists; exercised directly by
-    /// this module's tests.
-    #[allow(dead_code)]
+    /// materialization dependency, without writing anything. Called before
+    /// invoking the real per-entity upsert, and retried later on
+    /// [`ProjectionReadiness::Pending`] rather than treating a
+    /// not-yet-materialized dependency as an error.
     pub(crate) fn check_projection_readiness(
         &self,
         entity_type: EntityType,
@@ -1578,6 +1786,10 @@ impl ReplicatedSync {
             return Ok(());
         }
         let _guard = self.gate.lock().await;
+        // Best-effort: catch up any entity a crash left un-enqueued before
+        // doing anything else, so it is never more than one cycle behind
+        // even with no transport configured yet.
+        let _ = self.database.reconcile_replicated_sync_backlog();
         let transports = build_configured_transports(&self.database).await;
         if transports.is_empty() {
             return Ok(());
@@ -2193,5 +2405,261 @@ mod config_tests {
         let database = Database::open_memory();
         let engine = ReplicatedSync::new(Arc::new(database));
         engine.sync_once().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+
+    #[test]
+    fn catches_up_an_entity_created_without_being_enqueued() {
+        let database = Database::open_memory();
+        // Simulates the crash window: the app-table write happened, but the
+        // enqueue call that should follow it never ran.
+        let snippet = database.create_snippet("Signature", "Best, Alex").unwrap();
+        let connection = database.connection().unwrap();
+        let before: i64 = connection
+            .query_row("SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
+            .unwrap();
+        assert_eq!(before, 0);
+        drop(connection);
+
+        // The sweep also backfills the always-present retention setting on
+        // a fresh database, so at least one repair (the snippet) rather
+        // than exactly one.
+        let repaired = database.reconcile_replicated_sync_backlog().unwrap();
+        assert!(repaired >= 1);
+
+        let connection = database.connection().unwrap();
+        let existence: String = connection
+            .query_row(
+                "SELECT value FROM sync_operations WHERE entity_id=?1 AND field='_entity'",
+                [&snippet.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(existence, "true");
+        let name: String = connection
+            .query_row(
+                "SELECT value FROM sync_operations WHERE entity_id=?1 AND field='name'",
+                [&snippet.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "\"Signature\"");
+    }
+
+    #[test]
+    fn is_a_no_op_for_an_entity_already_recorded() {
+        let database = Database::open_memory();
+        let snippet = database.create_snippet("Signature", "Best, Alex").unwrap();
+        let payload = serde_json::to_value(&snippet).unwrap();
+        let fields: std::collections::BTreeSet<String> =
+            payload.as_object().unwrap().keys().cloned().collect();
+        database
+            .record_replicated_write(EntityType::Snippet, &snippet.id, &fields, &payload)
+            .unwrap();
+
+        let connection = database.connection().unwrap();
+        let before: i64 = connection
+            .query_row("SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
+            .unwrap();
+        drop(connection);
+
+        // The sweep still repairs the always-present retention setting on a
+        // fresh database, so this only asserts the *snippet* is untouched —
+        // not that the whole sweep found nothing to do.
+        database.reconcile_replicated_sync_backlog().unwrap();
+
+        let connection = database.connection().unwrap();
+        let after: i64 = connection
+            .query_row("SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
+            .unwrap();
+        assert_eq!(before, after, "reconciling an already-recorded entity must not create duplicate operations");
+    }
+
+    #[test]
+    fn covers_every_locally_enumerable_entity_type_in_one_sweep() {
+        let database = Database::open_memory();
+        database.create_snippet("Signature", "Best, Alex").unwrap();
+        database
+            .create_split_inbox("Newsletters", "domain", "news.example.com", "you@example.com")
+            .unwrap();
+
+        let repaired = database.reconcile_replicated_sync_backlog().unwrap();
+        // Snippet, split inbox, and the always-present retention setting.
+        assert!(repaired >= 3, "expected at least snippet + split inbox + retention, got {repaired}");
+
+        let second_pass = database.reconcile_replicated_sync_backlog().unwrap();
+        assert_eq!(second_pass, 0, "a second sweep over the same state must repair nothing");
+    }
+}
+
+#[cfg(test)]
+mod frontier_conflict_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn fields(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    /// Forces a genuine two-way conflict on `field`: both operations name
+    /// the same current frontier as their parent, exactly as two devices
+    /// that each branched before seeing the other's write would. This must
+    /// go through the general `apply_remote_operation` (explicit parents),
+    /// not `apply_field_operation` (which always reads the frontier at
+    /// call time, so two sequential calls can never actually collide).
+    fn force_conflict(database: &Database, entity_id: &str, field: &str, value_a: Value, value_b: Value) {
+        let parent: String = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT operation_id FROM sync_field_frontier WHERE entity_type=?1 AND entity_id=?2 AND field=?3",
+                params![EntityType::Snippet.as_str(), entity_id, field],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let mut connection = database.connection().unwrap();
+        let tx = connection.transaction().unwrap();
+        for (sequence, value) in [(1i64, value_a), (2i64, value_b)] {
+            let device_id = random_id();
+            let event_id = random_id();
+            let operation_id = random_id();
+            let event_id_hex = encode_id(&event_id);
+            // sync_operations.event_id has a foreign key into sync_events,
+            // so a fake remote event needs a (fake but present) row there
+            // too, exactly as a real pulled event would have inserted one.
+            tx.execute(
+                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at)
+                 VALUES (?1,0,?2,?3,10,'sealed',?4)",
+                params![event_id_hex, encode_id(&device_id), sequence, Utc::now().to_rfc3339()],
+            )
+            .unwrap();
+            let stamp = WinnerStamp {
+                lamport: 10,
+                device_id,
+                event_id,
+                operation_id,
+            };
+            Database::apply_remote_operation(
+                &tx,
+                EntityType::Snippet,
+                entity_id,
+                field,
+                Some(&value),
+                &event_id_hex,
+                &encode_id(&operation_id),
+                std::slice::from_ref(&parent),
+                &stamp,
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
+    #[test]
+    fn lists_a_genuine_concurrent_write_as_a_conflict() {
+        let database = Database::open_memory();
+        database
+            .record_replicated_write(
+                EntityType::Snippet,
+                "s1",
+                &fields(&["id", "name", "body", "createdAt"]),
+                &json!({"id": "s1", "name": "original", "body": "b", "createdAt": "2026-01-01T00:00:00Z"}),
+            )
+            .unwrap();
+
+        force_conflict(&database, "s1", "name", json!("From A"), json!("From B"));
+
+        let conflicts = database.list_frontier_conflicts().unwrap();
+        let conflict = conflicts
+            .iter()
+            .find(|conflict| conflict.entity_id == "s1" && conflict.field == "name")
+            .expect("the forced conflict should be listed");
+        assert_eq!(conflict.entity_type, "snippet");
+        assert_eq!(conflict.candidates.len(), 2);
+        let values: std::collections::HashSet<_> = conflict.candidates.iter().map(|c| c.value.clone()).collect();
+        assert!(values.contains(&Some(json!("From A"))));
+        assert!(values.contains(&Some(json!("From B"))));
+
+        // Every other field (untouched by the forced conflict) must not be
+        // reported.
+        assert!(!conflicts.iter().any(|c| c.field == "body"));
+    }
+
+    #[test]
+    fn resolving_names_the_whole_frontier_as_parents_and_collapses_it() {
+        let database = Database::open_memory();
+        database
+            .record_replicated_write(
+                EntityType::Snippet,
+                "s1",
+                &fields(&["id", "name", "body", "createdAt"]),
+                &json!({"id": "s1", "name": "original", "body": "b", "createdAt": "2026-01-01T00:00:00Z"}),
+            )
+            .unwrap();
+        force_conflict(&database, "s1", "name", json!("From A"), json!("From B"));
+
+        let conflict = database
+            .list_frontier_conflicts()
+            .unwrap()
+            .into_iter()
+            .find(|conflict| conflict.entity_id == "s1" && conflict.field == "name")
+            .unwrap();
+        let chosen = conflict
+            .candidates
+            .iter()
+            .find(|candidate| candidate.value == Some(json!("From B")))
+            .unwrap();
+        let losing_operation_id = conflict
+            .candidates
+            .iter()
+            .find(|candidate| candidate.value == Some(json!("From A")))
+            .unwrap()
+            .operation_id
+            .clone();
+
+        database
+            .resolve_frontier_conflict(EntityType::Snippet, "s1", "name", &chosen.operation_id)
+            .unwrap();
+
+        // The conflict is gone: exactly one frontier member remains.
+        let remaining = database.list_frontier_conflicts().unwrap();
+        assert!(!remaining.iter().any(|c| c.entity_id == "s1" && c.field == "name"));
+
+        let resolution_operation_id: String = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT operation_id FROM sync_field_frontier WHERE entity_type='snippet' AND entity_id='s1' AND field='name'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        // The new operation's parents are the entire prior frontier — both
+        // the chosen and the losing candidate — not just the chosen one.
+        let parent_count: i64 = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM sync_operation_parents WHERE operation_id=?1",
+                params![resolution_operation_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(parent_count, 2);
+        let has_losing_parent: bool = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_operation_parents WHERE operation_id=?1 AND parent_operation_id=?2)",
+                params![resolution_operation_id, losing_operation_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(has_losing_parent);
     }
 }

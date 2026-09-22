@@ -171,12 +171,16 @@ import {
 } from "./cloudAccount";
 import {
   replicatedSyncAddFolder,
+  replicatedSyncConflicts,
   replicatedSyncEnabled,
   replicatedSyncNow,
   replicatedSyncRemoveTransport,
+  replicatedSyncResolveConflict,
   replicatedSyncStatus,
+  type FrontierConflict,
   type ReplicatedSyncTransportStatus,
 } from "./replicatedSync";
+import { FrontierConflictEditor } from "./FrontierConflictEditor";
 import { useAccounts } from "./useAccounts";
 import { useAppPreferences } from "./useAppPreferences";
 import { useEscapeDismiss } from "./useEscapeDismiss";
@@ -3867,13 +3871,21 @@ function formatStorageEstimate(bytes: number): string {
 function ReplicatedSyncSettings() {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [transports, setTransports] = useState<ReplicatedSyncTransportStatus[]>([]);
+  const [conflicts, setConflicts] = useState<FrontierConflict[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const enabled = await replicatedSyncEnabled();
     setAvailable(enabled);
-    setTransports(enabled ? await replicatedSyncStatus() : []);
+    if (enabled) {
+      const [nextTransports, nextConflicts] = await Promise.all([replicatedSyncStatus(), replicatedSyncConflicts()]);
+      setTransports(nextTransports);
+      setConflicts(nextConflicts);
+    } else {
+      setTransports([]);
+      setConflicts([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -3938,6 +3950,20 @@ function ReplicatedSyncSettings() {
         folder; it does not erase copies elsewhere (other devices, cloud provider version history, or other
         configured folders).
       </p>
+
+      {conflicts.length > 0 ? (
+        <div>
+          <h3>Resolve Conflicts</h3>
+          {conflicts.map((conflict) => (
+            <FrontierConflictEditor
+              key={`${conflict.entityType}-${conflict.entityId}-${conflict.field}`}
+              conflict={conflict}
+              disabled={busy}
+              onResolve={(chosen) => act(() => replicatedSyncResolveConflict(conflict, chosen))}
+            />
+          ))}
+        </div>
+      ) : null}
 
       {transports.length === 0 ? (
         <p className="settings-hint">No folders configured yet.</p>
