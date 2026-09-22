@@ -30,6 +30,7 @@ export type EnrollmentStatus =
 
 export type IncomingEnrollmentRequest = {
   requestId: string;
+  deviceId?: string | null;
   fingerprint: string;
   createdAt: string;
 };
@@ -38,6 +39,20 @@ export type DeviceRosterEntry = {
   deviceId: string;
   status: string;
   isSelf: boolean;
+  /** A name given on this device only; never synchronized. */
+  label?: string | null;
+  /** When this device last recorded (itself) or received (a peer) a change
+   * from that device — not a liveness signal. */
+  lastChangeAt?: string | null;
+};
+
+/** Mirrors `MAX_DEVICE_LABEL_CHARS` in `enrollment.rs`, which enforces it. */
+export const MAX_DEVICE_LABEL_CHARS = 60;
+
+export type RecoveryPhraseCheck = {
+  wordCount: number;
+  unknownWordPositions: number[];
+  valid: boolean;
 };
 
 function isDesktop(): boolean {
@@ -124,6 +139,22 @@ export async function replicatedSyncRotateEpoch(revokeDeviceId: string | null): 
  * device needs to be online. */
 export async function replicatedSyncJoinWithRecoveryPhrase(phrase: string): Promise<void> {
   return invoke("replicated_sync_join_with_recovery_phrase", { phrase });
+}
+
+/** Names a device on this device only; a blank label removes the name. */
+export async function replicatedSyncSetDeviceLabel(deviceId: string, label: string): Promise<void> {
+  return invoke("replicated_sync_set_device_label", { deviceId, label });
+}
+
+/** Leaves the sync space on this device only: forgets its keys and
+ * replication history, keeps local data and sync locations. */
+export async function replicatedSyncLeave(): Promise<void> {
+  return invoke("replicated_sync_leave");
+}
+
+/** Word-by-word validity of a (possibly partial) recovery phrase. */
+export async function replicatedSyncCheckRecoveryPhrase(phrase: string): Promise<RecoveryPhraseCheck> {
+  return invoke("replicated_sync_check_recovery_phrase", { phrase });
 }
 
 export async function replicatedSyncStatus(): Promise<ReplicatedSyncTransportStatus[]> {

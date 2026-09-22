@@ -843,6 +843,30 @@ pub(crate) fn load_epoch_key(key_epoch: u32) -> Result<Option<[u8; 32]>, String>
     }
 }
 
+fn delete_keychain_entry(name: &str) -> Result<(), String> {
+    match Entry::new(KEYCHAIN_SERVICE, name).map_err(display)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(display(error)),
+    }
+}
+
+/// Removes every epoch key up to `highest_epoch` and this device's own
+/// signing and X25519 keys, so the next identity load provisions a fresh
+/// device. Keeps going past a failure so one stuck entry does not leave
+/// the rest behind, then reports the first failure.
+pub(crate) fn forget_sync_space_keys(highest_epoch: u32) -> Result<(), String> {
+    let mut first_error = None;
+    let entries = (0..=highest_epoch)
+        .map(epoch_key_entry)
+        .chain([SIGNING_KEY_ENTRY.to_string(), X25519_KEY_ENTRY.to_string()]);
+    for name in entries {
+        if let Err(error) = delete_keychain_entry(&name) {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
 /// Persists an epoch key this device just generated (genesis) or received
 /// and opened (enrollment grant, rotation).
 pub(crate) fn store_epoch_key(key_epoch: u32, key: &[u8; 32]) -> Result<(), String> {
@@ -2071,6 +2095,16 @@ impl ReplicatedSync {
         let keys = self.database.local_replicated_keys()?;
         let transports = build_configured_transports(&self.database).await;
         crate::enrollment::rotate_epoch(&self.database, &identity, &keys, &crate::enrollment::KeychainEpochKeyStore, &transports, revoke_device_id_hex).await
+    }
+
+    /// Leaves the sync space on this device only; see
+    /// [`Database::leave_sync_space`]. Holds the sync gate so a cycle in
+    /// flight finishes before the log it is using disappears.
+    pub async fn leave_sync_space(&self) -> Result<(), String> {
+        let _guard = self.gate.lock().await;
+        let highest_epoch = self.database.leave_sync_space()?;
+        forget_sync_space_keys(highest_epoch)
+            .map_err(|error| format!("Left the sync space, but some keys could not be removed from the keychain: {error}"))
     }
 
     /// Joins an existing sync space using only a recovery phrase.

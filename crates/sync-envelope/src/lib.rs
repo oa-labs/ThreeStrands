@@ -49,8 +49,8 @@ pub use error::EnvelopeError;
 pub use header::{CipherSuite, ObjectKind};
 pub use ids::{DeviceId, EventId, OperationId, RequestId, Signature};
 pub use recovery::{
-    generate_recovery_seed, recovery_ed25519_signing_key, recovery_phrase_from_seed,
-    recovery_seed_from_phrase, recovery_x25519_secret, RECOVERY_SEED_LEN,
+    check_recovery_phrase, generate_recovery_seed, recovery_ed25519_signing_key, recovery_phrase_from_seed,
+    recovery_seed_from_phrase, recovery_x25519_secret, RecoveryPhraseCheck, RECOVERY_PHRASE_WORDS, RECOVERY_SEED_LEN,
 };
 pub use threestrands_sync_protocol::EntityType;
 pub use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};

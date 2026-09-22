@@ -1228,6 +1228,21 @@ async fn replicated_sync_rotate_epoch(revoke_device_id: Option<String>, state: S
 }
 
 #[tauri::command]
+fn replicated_sync_set_device_label(device_id: String, label: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.set_device_label(&device_id, &label)
+}
+
+#[tauri::command]
+async fn replicated_sync_leave(state: State<'_, AppState>) -> Result<(), String> {
+    state.replicated_sync.leave_sync_space().await
+}
+
+#[tauri::command]
+fn replicated_sync_check_recovery_phrase(phrase: String) -> threestrands_sync_envelope::RecoveryPhraseCheck {
+    threestrands_sync_envelope::check_recovery_phrase(&phrase)
+}
+
+#[tauri::command]
 async fn replicated_sync_join_with_recovery_phrase(phrase: String, state: State<'_, AppState>) -> Result<(), String> {
     state.replicated_sync.join_with_recovery_phrase(&phrase).await
 }
@@ -2531,6 +2546,9 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         replicated_sync_confirm_enrollment,
         replicated_sync_rotate_epoch,
         replicated_sync_join_with_recovery_phrase,
+        replicated_sync_set_device_label,
+        replicated_sync_leave,
+        replicated_sync_check_recovery_phrase,
         replicated_sync_add_folder,
         replicated_sync_add_ipfs_rpc,
         replicated_sync_probe_ipfs_rpc,

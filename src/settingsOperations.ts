@@ -9,28 +9,44 @@ export const ANY_OPERATION = "*";
  * Tracks one in-flight settings operation at a time. `pending` holds the key
  * of the item being worked on (an account email, a split inbox id, or
  * `ANY_OPERATION` when the section only needs a busy flag), and a failure's
- * message lands in `error`. Operations may also set `error` themselves to
- * report a non-exceptional problem such as a cancelled picker.
+ * message lands in `error`, with `errorKey` naming the operation that
+ * produced it so a section can show the message next to its control.
+ * Operations may also set `error` themselves to report a non-exceptional
+ * problem such as a cancelled picker, optionally under a key.
  *
- * Sections backed by a status snapshot pass `refresh`; `act` then reloads
- * that snapshot after each successful operation.
+ * Sections backed by a status snapshot pass `refresh`; `act`/`actFor` then
+ * reload that snapshot after each successful operation.
  */
 export function useSettingsOperation(refresh?: () => Promise<unknown>) {
   const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ message: string; key: string } | null>(null);
+  const setError = useCallback((message: string | null, key: string = ANY_OPERATION) => {
+    setFailure(message === null ? null : { message, key });
+  }, []);
   const runFor = useCallback((key: string, operation: () => Promise<unknown>) => {
     setPending(key);
-    setError(null);
+    setFailure(null);
     void operation()
-      .catch((reason: unknown) => setError(errorMessage(reason)))
+      .catch((reason: unknown) => setFailure({ message: errorMessage(reason), key }))
       .finally(() => setPending(null));
   }, []);
   const run = useCallback((operation: () => Promise<unknown>) => runFor(ANY_OPERATION, operation), [runFor]);
-  const act = useCallback((operation: () => Promise<unknown>) => run(async () => {
+  const actFor = useCallback((key: string, operation: () => Promise<unknown>) => runFor(key, async () => {
     await operation();
     await refresh?.();
-  }), [refresh, run]);
-  return { pending, busy: pending !== null, error, setError, run, runFor, act };
+  }), [refresh, runFor]);
+  const act = useCallback((operation: () => Promise<unknown>) => actFor(ANY_OPERATION, operation), [actFor]);
+  return {
+    pending,
+    busy: pending !== null,
+    error: failure?.message ?? null,
+    errorKey: failure?.key ?? null,
+    setError,
+    run,
+    runFor,
+    act,
+    actFor,
+  };
 }
 
 /**

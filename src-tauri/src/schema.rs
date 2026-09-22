@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 31;
+pub(crate) const LATEST_VERSION: i64 = 32;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -805,6 +805,20 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
         tx.pragma_update(None, "user_version", 31).map_err(error)?;
     }
+    if version < 32 {
+        // Device names are local labels, never replicated: control-plane
+        // objects are public and signed over their exact fields (a new
+        // field would fail verification on older clients), and an unknown
+        // synchronized entity type would stall older clients' pulls.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sync_device_labels (
+                device_id TEXT PRIMARY KEY,
+                label TEXT NOT NULL
+            );",
+        )
+        .map_err(error)?;
+        tx.pragma_update(None, "user_version", 32).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -992,6 +1006,21 @@ mod tests {
         connection.pragma_update(None, "user_version", 30).unwrap();
         super::migrate(&mut connection).unwrap();
         assert!(table_exists(&connection, "synced_preferences"));
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
+    }
+
+    #[test]
+    fn v32_adds_local_device_labels_and_reruns_cleanly() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        assert!(table_exists(&connection, "sync_device_labels"));
+        connection.execute("INSERT INTO sync_device_labels(device_id,label) VALUES ('d1','Laptop')", []).unwrap();
+
+        connection.pragma_update(None, "user_version", 31).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let label: String = connection.query_row("SELECT label FROM sync_device_labels WHERE device_id='d1'", [], |row| row.get(0)).unwrap();
+        assert_eq!(label, "Laptop");
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
         assert_eq!(version, super::LATEST_VERSION);
     }

@@ -68,6 +68,42 @@ describe("useSettingsOperation", () => {
   });
 });
 
+describe("useSettingsOperation error keys", () => {
+  it("attributes a failure to the operation that raised it", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() => useSettingsOperation(refresh));
+
+    await act(async () => { result.current.actFor("add-folder", () => Promise.reject(new Error("denied"))); });
+    await waitFor(() => expect(result.current.error).toBe("denied"));
+    expect(result.current.errorKey).toBe("add-folder");
+    expect(refresh).not.toHaveBeenCalled();
+
+    await act(async () => { result.current.run(() => Promise.reject(new Error("offline"))); });
+    await waitFor(() => expect(result.current.error).toBe("offline"));
+    expect(result.current.errorKey).toBe(ANY_OPERATION);
+  });
+
+  it("records a self-reported problem under its key, or the section by default", () => {
+    const { result } = renderHook(() => useSettingsOperation());
+
+    act(() => result.current.setError("No folder selected.", "add-folder"));
+    expect(result.current.errorKey).toBe("add-folder");
+    act(() => result.current.setError("Something else"));
+    expect(result.current.errorKey).toBe(ANY_OPERATION);
+    act(() => result.current.setError(null));
+    expect(result.current.error).toBeNull();
+    expect(result.current.errorKey).toBeNull();
+  });
+
+  it("refreshes after a successful keyed act", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() => useSettingsOperation(refresh));
+    await act(async () => { result.current.actFor("sync-now", () => Promise.resolve()); });
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(result.current.pending).toBeNull();
+  });
+});
+
 describe("useLiveStatus", () => {
   beforeEach(() => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });

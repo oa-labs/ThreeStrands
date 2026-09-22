@@ -5,7 +5,7 @@ vi.mock("./replicatedSync");
 
 import * as sync from "./replicatedSync";
 import { pendingRecoveryPhrase } from "./RecoveryPhraseDialog";
-import { currentSetupStep, ReplicatedSyncSettings, syncOverview } from "./ReplicatedSyncSettings";
+import { currentSetupStep, describeTransportHealth, recoveryPhraseFeedback, ReplicatedSyncSettings, syncOverview } from "./ReplicatedSyncSettings";
 
 const folder: sync.ReplicatedSyncTransportStatus = {
   instanceId: "folder-1",
@@ -133,11 +133,12 @@ describe("replicated sync setup steps", () => {
     expect(stepState("Choose where to sync")).toBe("current");
     expect(stepState("Join or create a sync space")).toBe("Up next");
     expect(stepState("Verify this device")).toBe("Up next");
-    expect(screen.getByText(/Every device you sync must use the same location/)).toBeInTheDocument();
+    expect(screen.getByText(/one dedicated Filebase bucket for the sync space/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add a sync folder" })).toHaveClass("primary-action");
     const ipfs = screen.getByText("Use an IPFS RPC endpoint instead").closest("details")!;
     expect(ipfs).not.toHaveAttribute("open");
     expect(within(ipfs).getByRole("button", { name: "Add IPFS RPC endpoint" })).toBeInTheDocument();
+    expect(within(ipfs).getByText(/bucket-specific RPC token/)).toBeInTheDocument();
   });
 
   it("marks the location done and summarizes it once one is configured", async () => {
@@ -223,8 +224,11 @@ describe("enrolled overview", () => {
     expect(screen.queryByRole("list", { name: "Replicated sync setup" })).not.toBeInTheDocument();
     expect(screen.getByText("Devices (2)").closest("details")).toHaveAttribute("open");
     expect(screen.getByText("Sync locations (1)").closest("details")).not.toHaveAttribute("open");
-    expect(screen.getByText("device-other")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Revoke…" })).toBeInTheDocument();
+    const devices = within(screen.getByRole("list", { name: "Devices" })).getAllByRole("listitem");
+    expect(devices[0]).toHaveTextContent("This device");
+    expect(devices[1]).toHaveTextContent("Unnamed device");
+    expect(devices[1]).toHaveTextContent("ID device-o");
+    expect(within(devices[1]!).getByRole("button", { name: "Revoke…" })).toBeInTheDocument();
   });
 
   it("opens sync locations when one needs attention", async () => {
@@ -243,7 +247,8 @@ describe("enrolled overview", () => {
 
     const waiting = await screen.findByRole("list", { name: "Devices waiting to join" });
     expect(waiting.closest("details")).toBeNull();
-    fireEvent.click(within(waiting).getByRole("button", { name: "Approve" }));
+    fireEvent.click(within(waiting).getByRole("button", { name: "Review…" }));
+    fireEvent.click(within(waiting).getByRole("button", { name: "Codes match — approve" }));
     await waitFor(() => expect(sync.replicatedSyncApproveRequest).toHaveBeenCalledWith("req-9"));
   });
 });
@@ -264,5 +269,206 @@ describe("syncOverview", () => {
     const newer = { ...folder, instanceId: "b", lastSuccessAt: "2026-09-22T10:00:00Z" };
     expect(syncOverview([older, newer], 2).text).toBe(`Syncing · 2 devices · last synced ${new Date("2026-09-22T10:00:00Z").toLocaleString()}`);
     expect(syncOverview([folder], 2).text).toBe("Syncing · 2 devices · not synced yet");
+  });
+});
+
+describe("approving a device from an existing device", () => {
+  const enrolled: sync.EnrollmentStatus = { state: "enrolled", deviceCount: 1 };
+  const request: sync.IncomingEnrollmentRequest = { requestId: "req-9", deviceId: "device-new", fingerprint: "9999-8888-7777-6666", createdAt: "2026-09-22T10:00:00Z" };
+
+  it("shows the code to compare before approval is possible", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([request]);
+    render(<ReplicatedSyncSettings />);
+
+    const waiting = await screen.findByRole("list", { name: "Devices waiting to join" });
+    expect(within(waiting).queryByText(request.fingerprint)).not.toBeInTheDocument();
+    expect(within(waiting).queryByRole("button", { name: "Codes match — approve" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(waiting).getByRole("button", { name: "Review…" }));
+    const panel = within(waiting).getByRole("group", { name: "Approve device confirmation" });
+    expect(within(panel).getByText(request.fingerprint)).toBeInTheDocument();
+    expect(within(panel).getByText(/If the codes don’t match, reject the request/)).toBeInTheDocument();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Cancel" }));
+    expect(within(waiting).queryByRole("group", { name: "Approve device confirmation" })).not.toBeInTheDocument();
+    expect(sync.replicatedSyncApproveRequest).not.toHaveBeenCalled();
+  });
+
+  it("names the approved device locally when a name is given", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([request]);
+    vi.mocked(sync.replicatedSyncApproveRequest).mockResolvedValue(undefined);
+    vi.mocked(sync.replicatedSyncSetDeviceLabel).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review…" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /Name this device/ }), { target: { value: "Work laptop" } });
+    fireEvent.click(screen.getByRole("button", { name: "Codes match — approve" }));
+
+    await waitFor(() => expect(sync.replicatedSyncSetDeviceLabel).toHaveBeenCalledWith("device-new", "Work laptop"));
+    expect(sync.replicatedSyncApproveRequest).toHaveBeenCalledWith("req-9");
+  });
+
+  it("shows an approval failure on that request, not at the top of the section", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([request]);
+    vi.mocked(sync.replicatedSyncApproveRequest).mockRejectedValue("The request expired.");
+    render(<ReplicatedSyncSettings />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Codes match — approve" }));
+
+    const card = screen.getByRole("list", { name: "Devices waiting to join" });
+    expect(await within(card).findByText("The request expired.")).toBeInTheDocument();
+    expect(screen.getAllByText("The request expired.")).toHaveLength(1);
+    expect(sync.replicatedSyncSetDeviceLabel).not.toHaveBeenCalled();
+  });
+});
+
+describe("device names and activity", () => {
+  const enrolled: sync.EnrollmentStatus = { state: "enrolled", deviceCount: 2 };
+
+  it("shows local names and the last change from each device", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncDeviceRoster).mockResolvedValue([
+      { deviceId: "device-self", status: "active", isSelf: true, label: "Desk", lastChangeAt: "2026-09-22T10:00:00Z" },
+      { deviceId: "device-other", status: "active", isSelf: false, label: null, lastChangeAt: null },
+    ]);
+    render(<ReplicatedSyncSettings />);
+
+    const devices = within(await screen.findByRole("list", { name: "Devices" })).getAllByRole("listitem");
+    expect(devices[0]).toHaveTextContent("Desk");
+    expect(devices[0]).toHaveTextContent("This device");
+    expect(devices[0]).toHaveTextContent(`Last change ${new Date("2026-09-22T10:00:00Z").toLocaleString()}`);
+    expect(devices[1]).toHaveTextContent("No changes yet");
+  });
+
+  it("renames a device, limited to the shared length", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncDeviceRoster).mockResolvedValue([{ deviceId: "device-self", status: "active", isSelf: true }]);
+    vi.mocked(sync.replicatedSyncSetDeviceLabel).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Name" }));
+    const input = screen.getByRole("textbox", { name: /Name \(only shown on this device\)/ });
+    expect(input).toHaveAttribute("maxLength", String(sync.MAX_DEVICE_LABEL_CHARS));
+    fireEvent.change(input, { target: { value: "Desk" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(sync.replicatedSyncSetDeviceLabel).toHaveBeenCalledWith("device-self", "Desk"));
+  });
+});
+
+describe("describeTransportHealth", () => {
+  it("translates native health into plain language", () => {
+    expect(describeTransportHealth(folder)).toEqual({ tone: "ok", label: "Up to date", detail: null });
+    expect(describeTransportHealth({ ...folder, pending: 3 }).label).toBe("Uploading 3 changes");
+    expect(describeTransportHealth({ ...folder, failed: 1, lastError: "disk full" })).toEqual({ tone: "attention", label: "1 change couldn’t be uploaded", detail: "disk full" });
+    expect(describeTransportHealth({ ...folder, health: "degraded: recent transient failures" })).toEqual({ tone: "attention", label: "Having trouble, retrying automatically", detail: "recent transient failures" });
+    expect(describeTransportHealth({ ...folder, health: "unavailable: folder missing: /x" })).toEqual({ tone: "attention", label: "Can’t reach this location", detail: "folder missing: /x" });
+    expect(describeTransportHealth({ ...folder, health: "unavailable: not configured" }).label).toMatch(/Not set up correctly/);
+    expect(describeTransportHealth({ ...folder, health: "mystery" })).toEqual({ tone: "attention", label: "Status unknown", detail: "mystery" });
+  });
+
+  it("shows the plain label on the location card instead of the raw status", async () => {
+    setUp({ status: { state: "enrolled", deviceCount: 1 }, transports: [{ ...folder, health: "unavailable: folder missing" }] });
+    render(<ReplicatedSyncSettings />);
+
+    const locations = await screen.findByRole("list", { name: "Sync locations" });
+    expect(within(locations).getByText("Can’t reach this location")).toBeInTheDocument();
+    expect(within(locations).getByText("folder missing")).toBeInTheDocument();
+    expect(within(locations).queryByText(/unavailable:/)).not.toBeInTheDocument();
+  });
+});
+
+describe("recovery phrase entry", () => {
+  const check = (overrides: Partial<sync.RecoveryPhraseCheck>): sync.RecoveryPhraseCheck => ({ wordCount: 0, unknownWordPositions: [], valid: false, ...overrides });
+
+  it("does not flag the word still being typed", () => {
+    expect(recoveryPhraseFeedback("abandon abil", check({ wordCount: 2, unknownWordPositions: [1] }))).toEqual({ tone: "ok", text: "2 of 24 words" });
+    expect(recoveryPhraseFeedback("abandon abil ", check({ wordCount: 2, unknownWordPositions: [1] }))?.text).toBe("Word 2 isn’t a recovery phrase word. Check its spelling.");
+  });
+
+  it("names every misspelled word, too many words, and a bad checksum", () => {
+    expect(recoveryPhraseFeedback("a b c ", check({ wordCount: 3, unknownWordPositions: [0, 2] }))?.text).toBe("Words 1 and 3 aren’t recovery phrase words. Check their spelling.");
+    expect(recoveryPhraseFeedback("x", check({ wordCount: 25 }))?.text).toBe("That’s 25 words. A recovery phrase has 24.");
+    expect(recoveryPhraseFeedback("x", check({ wordCount: 24 }))?.text).toMatch(/don’t form a valid phrase/);
+    expect(recoveryPhraseFeedback("x", check({ wordCount: 24, valid: true }))).toEqual({ tone: "ok", text: "Recovery phrase looks right." });
+    expect(recoveryPhraseFeedback("", null)).toBeNull();
+  });
+
+  it("enables joining only once the phrase checks out, and normalizes spacing", async () => {
+    vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("existing");
+    vi.mocked(sync.replicatedSyncCheckRecoveryPhrase).mockImplementation(async (phrase) =>
+      phrase.includes("typo") ? check({ wordCount: 2, unknownWordPositions: [1] }) : check({ wordCount: 24, valid: true }));
+    vi.mocked(sync.replicatedSyncJoinWithRecoveryPhrase).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    const input = await screen.findByRole("textbox", { name: "Or join with a recovery phrase" });
+    const join = screen.getByRole("button", { name: "Join with recovery phrase" });
+    fireEvent.change(input, { target: { value: "abandon typo " } });
+    expect(await screen.findByText(/Word 2 isn’t a recovery phrase word/)).toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(join).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "  good   words  " } });
+    expect(await screen.findByText("Recovery phrase looks right.")).toBeInTheDocument();
+    expect(join).toBeEnabled();
+    fireEvent.click(join);
+    await waitFor(() => expect(sync.replicatedSyncJoinWithRecoveryPhrase).toHaveBeenCalledWith("good words"));
+  });
+});
+
+describe("inline status messages", () => {
+  it("shows a cancelled folder picker next to the add-folder button", async () => {
+    setUp({ transports: [] });
+    vi.mocked(sync.replicatedSyncAddFolder).mockResolvedValue(null);
+    render(<ReplicatedSyncSettings />);
+
+    const add = await screen.findByRole("button", { name: "Add a sync folder" });
+    fireEvent.click(add);
+    const message = await screen.findByText("No folder selected.");
+    expect(add.nextElementSibling).toBe(message);
+  });
+
+  it("shows a join-request failure beside that button", async () => {
+    vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("existing");
+    vi.mocked(sync.replicatedSyncRequestEnrollment).mockRejectedValue("No location accepted the request.");
+    render(<ReplicatedSyncSettings />);
+
+    const request = await screen.findByRole("button", { name: "Request to join from an existing device" });
+    fireEvent.click(request);
+    const message = await screen.findByText("No location accepted the request.");
+    expect(request.nextElementSibling).toBe(message);
+  });
+});
+
+describe("leaving the sync space", () => {
+  it("leaves from Advanced only after confirmation", async () => {
+    setUp({ status: { state: "enrolled", deviceCount: 2 } });
+    vi.mocked(sync.replicatedSyncLeave).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Leave this sync space…" }));
+    const confirm = screen.getByRole("group", { name: "Leave this sync space?" });
+    expect(confirm).toHaveTextContent(/data stay on this device/);
+    expect(confirm).toHaveTextContent(/until you revoke it from one of them/);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Keep" }));
+    expect(sync.replicatedSyncLeave).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Leave this sync space…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Leave sync space" }));
+    await waitFor(() => expect(sync.replicatedSyncLeave).toHaveBeenCalledTimes(1));
+  });
+
+  it("lets a device waiting for approval cancel and start over", async () => {
+    setUp({ status: { state: "awaitingGrant", requestId: "req-1", fingerprint: "AB12-CD34-EF56-0789", createdAt: "2026-09-22T10:00:00Z" } });
+    vi.mocked(sync.replicatedSyncLeave).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel and start over…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel request" }));
+    await waitFor(() => expect(sync.replicatedSyncLeave).toHaveBeenCalledTimes(1));
   });
 });

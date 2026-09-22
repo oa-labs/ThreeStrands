@@ -46,6 +46,37 @@ pub fn recovery_seed_from_phrase(phrase: &str) -> Result<[u8; RECOVERY_SEED_LEN]
         .map_err(|_| "Recovery phrase did not encode a 32-byte seed".to_string())
 }
 
+/// Number of words in a recovery phrase.
+pub const RECOVERY_PHRASE_WORDS: usize = 24;
+
+/// Progress report for a partially typed recovery phrase, so a joining
+/// device can point at a mistyped word before trying to join.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryPhraseCheck {
+    pub word_count: usize,
+    /// Zero-based positions of words not in the recovery word list. The
+    /// word still being typed is included; callers decide when to flag it.
+    pub unknown_word_positions: Vec<usize>,
+    /// True only for exactly [`RECOVERY_PHRASE_WORDS`] known words whose
+    /// checksum is valid — the phrase [`recovery_seed_from_phrase`] accepts.
+    pub valid: bool,
+}
+
+pub fn check_recovery_phrase(phrase: &str) -> RecoveryPhraseCheck {
+    let words: Vec<String> = phrase.split_whitespace().map(str::to_lowercase).collect();
+    let unknown_word_positions: Vec<usize> = words
+        .iter()
+        .enumerate()
+        .filter(|(_, word)| bip39::Language::English.find_word(word).is_none())
+        .map(|(index, _)| index)
+        .collect();
+    let valid = words.len() == RECOVERY_PHRASE_WORDS
+        && unknown_word_positions.is_empty()
+        && recovery_seed_from_phrase(&words.join(" ")).is_ok();
+    RecoveryPhraseCheck { word_count: words.len(), unknown_word_positions, valid }
+}
+
 fn hkdf_derive(seed: &[u8; RECOVERY_SEED_LEN], domain: &[u8]) -> [u8; 32] {
     let hkdf = Hkdf::<Sha256>::new(None, seed);
     let mut out = [0u8; 32];
@@ -99,6 +130,33 @@ mod tests {
         words.swap(0, last);
         let tampered = words.join(" ");
         assert!(recovery_seed_from_phrase(&tampered).is_err());
+    }
+
+    #[test]
+    fn checks_a_partial_phrase_word_by_word() {
+        let check = check_recovery_phrase("  abandon ABILITY  notaword able ");
+        assert_eq!(check.word_count, 4);
+        assert_eq!(check.unknown_word_positions, vec![2]);
+        assert!(!check.valid);
+        assert_eq!(check_recovery_phrase("").word_count, 0);
+    }
+
+    #[test]
+    fn only_a_complete_checksummed_phrase_is_valid() {
+        let phrase = recovery_phrase_from_seed(&generate_recovery_seed());
+        let check = check_recovery_phrase(&phrase.to_uppercase());
+        assert_eq!(check, RecoveryPhraseCheck { word_count: 24, unknown_word_positions: vec![], valid: true });
+
+        let mut words: Vec<&str> = phrase.split_whitespace().collect();
+        let last = words.len() - 1;
+        words.swap(0, last);
+        let swapped = check_recovery_phrase(&words.join(" "));
+        assert!(swapped.unknown_word_positions.is_empty());
+        assert!(!swapped.valid);
+
+        let extra = check_recovery_phrase(&format!("{phrase} abandon"));
+        assert_eq!(extra.word_count, 25);
+        assert!(!extra.valid);
     }
 
     #[test]

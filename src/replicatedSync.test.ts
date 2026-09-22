@@ -15,6 +15,9 @@ import {
   replicatedSyncEnabled,
   replicatedSyncEnrollmentStatus,
   replicatedSyncInspectSpace,
+  replicatedSyncCheckRecoveryPhrase,
+  replicatedSyncLeave,
+  replicatedSyncSetDeviceLabel,
   replicatedSyncJoinWithRecoveryPhrase,
   replicatedSyncNow,
   replicatedSyncPendingRequests,
@@ -167,6 +170,19 @@ describe("replicated sync invoke wrappers", () => {
     vi.mocked(invoke).mockResolvedValue([]);
     await replicatedSyncDeviceRoster();
     expect(invoke).toHaveBeenCalledWith("replicated_sync_device_roster");
+  });
+
+  it("labels devices, leaves the space, and checks recovery phrases", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await replicatedSyncSetDeviceLabel("device-b", "Work laptop");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_set_device_label", { deviceId: "device-b", label: "Work laptop" });
+
+    await replicatedSyncLeave();
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_leave");
+
+    vi.mocked(invoke).mockResolvedValue({ wordCount: 2, unknownWordPositions: [1], valid: false });
+    expect(await replicatedSyncCheckRecoveryPhrase("abandon nope")).toEqual({ wordCount: 2, unknownWordPositions: [1], valid: false });
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_check_recovery_phrase", { phrase: "abandon nope" });
   });
 
   it("inspects the configured transports for an existing sync space", async () => {

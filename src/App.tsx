@@ -135,6 +135,7 @@ import {
   type TriageSession,
 } from "./triage";
 import { Settings, type MailAccountSettings, type SettingsSection } from "./SettingsPanel";
+import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
 type RightWorkspace = "actions" | "calendar" | "tasks" | null;
@@ -2713,6 +2714,10 @@ export function App() {
           onSettingsImported={applyImportedSettings}
         />
       ) : null}
+      <EnrollmentRequestNotice
+        suppressed={settingsOpen && settingsSection === "replicatedSync"}
+        onReview={() => openSettingsAt("replicatedSync")}
+      />
       {notice ? (
         <div className="toast" role="status">
           {notice.message}

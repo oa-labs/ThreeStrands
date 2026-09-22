@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { errorMessage } from "./errors";
 import { FrontierConflictEditor } from "./FrontierConflictEditor";
 import { holdRecoveryPhrase } from "./RecoveryPhraseDialog";
 import {
+  MAX_DEVICE_LABEL_CHARS,
   replicatedSyncAddFolder,
   replicatedSyncAddIpfsRpc,
   replicatedSyncApproveRequest,
   replicatedSyncBeginGenesis,
   replicatedSyncBetaEnabled,
+  replicatedSyncCheckRecoveryPhrase,
   replicatedSyncConfirmEnrollment,
   replicatedSyncConflicts,
   replicatedSyncDeviceRoster,
@@ -15,6 +17,7 @@ import {
   replicatedSyncEnrollmentStatus,
   replicatedSyncInspectSpace,
   replicatedSyncJoinWithRecoveryPhrase,
+  replicatedSyncLeave,
   replicatedSyncNow,
   replicatedSyncPendingRequests,
   replicatedSyncProbeIpfsRpc,
@@ -24,18 +27,21 @@ import {
   replicatedSyncRequestEnrollment,
   replicatedSyncRotateEpoch,
   replicatedSyncSetBetaEnabled,
+  replicatedSyncSetDeviceLabel,
   replicatedSyncStatus,
   type DeviceRosterEntry,
   type EnrollmentStatus,
   type FrontierConflict,
   type IncomingEnrollmentRequest,
   type IpfsRpcProbeReport,
+  type RecoveryPhraseCheck,
   type ReplicatedSyncTransportStatus,
   type SyncSpacePresence,
 } from "./replicatedSync";
-import { useLiveStatus, useSettingsOperation } from "./settingsOperations";
+import { ANY_OPERATION, useLiveStatus, useSettingsOperation } from "./settingsOperations";
 
 const FILEBASE_RPC_URL = "https://rpc.filebase.io";
+const RECOVERY_PHRASE_WORDS = 24;
 
 function formatStorageEstimate(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -51,6 +57,12 @@ function formatStorageEstimate(bytes: number): string {
 
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function listPositions(positions: number[]): string {
+  const numbers = positions.map((position) => String(position + 1));
+  if (numbers.length <= 1) return numbers.join("");
+  return `${numbers.slice(0, -1).join(", ")} and ${numbers.at(-1)}`;
 }
 
 export type SetupStep = "location" | "choose" | "verify";
@@ -77,17 +89,38 @@ export function currentSetupStep(status: EnrollmentStatus | null, transportCount
   return transportCount === 0 ? "location" : "choose";
 }
 
-export type SyncOverview = { tone: "ok" | "attention"; text: string };
+export type Tone = "ok" | "attention";
+export type TransportHealthSummary = { tone: Tone; label: string; detail: string | null };
 
-/** One-line health summary for an enrolled device. A location needs
- * attention when its native health is anything but healthy or it has
- * undeliverable objects. */
+/** Plain-language state for one location. The native side reports
+ * `healthy`, `degraded: <reason>`, or `unavailable: <reason>`. */
+export function describeTransportHealth(transport: ReplicatedSyncTransportStatus): TransportHealthSummary {
+  const separator = transport.health.indexOf(": ");
+  const state = separator === -1 ? transport.health : transport.health.slice(0, separator);
+  const reason = separator === -1 ? null : transport.health.slice(separator + 2);
+  if (state === "unavailable") {
+    return reason === "not configured"
+      ? { tone: "attention", label: "Not set up correctly. Disconnect it and add it again.", detail: null }
+      : { tone: "attention", label: "Can’t reach this location", detail: reason };
+  }
+  if (state === "degraded") return { tone: "attention", label: "Having trouble, retrying automatically", detail: reason };
+  if (state !== "healthy") return { tone: "attention", label: "Status unknown", detail: transport.health };
+  if (transport.failed > 0) {
+    return { tone: "attention", label: `${plural(transport.failed, "change")} couldn’t be uploaded`, detail: transport.lastError ?? null };
+  }
+  if (transport.pending > 0) return { tone: "ok", label: `Uploading ${plural(transport.pending, "change")}`, detail: null };
+  return { tone: "ok", label: "Up to date", detail: null };
+}
+
+export type SyncOverview = { tone: Tone; text: string };
+
+/** One-line health summary for an enrolled device. */
 export function syncOverview(transports: readonly ReplicatedSyncTransportStatus[], deviceCount: number): SyncOverview {
   const devices = plural(deviceCount, "device");
   if (transports.length === 0) {
     return { tone: "attention", text: `Not syncing · ${devices} · this device has no sync locations. Add one under Sync locations.` };
   }
-  const troubled = transports.filter((transport) => transport.health !== "healthy" || transport.failed > 0).length;
+  const troubled = transports.filter((transport) => describeTransportHealth(transport).tone === "attention").length;
   if (troubled > 0) {
     return { tone: "attention", text: `${devices} · ${plural(troubled, "sync location")} ${troubled === 1 ? "needs" : "need"} attention` };
   }
@@ -100,6 +133,36 @@ export function syncOverview(transports: readonly ReplicatedSyncTransportStatus[
     tone: "ok",
     text: `Syncing · ${devices} · ${lastSuccess ? `last synced ${new Date(lastSuccess).toLocaleString()}` : "not synced yet"}`,
   };
+}
+
+export function deviceDisplayName(device: DeviceRosterEntry): string {
+  return device.label || (device.isSelf ? "This device" : "Unnamed device");
+}
+
+/** What to tell someone typing a recovery phrase. The word still being
+ * typed is only flagged once it is followed by a space or the phrase is
+ * complete, so a half-typed word never shows as a mistake. */
+export function recoveryPhraseFeedback(input: string, check: RecoveryPhraseCheck | null): { tone: Tone; text: string } | null {
+  if (!check || check.wordCount === 0) return null;
+  const finishedWords = /\s$/.test(input) || check.wordCount >= RECOVERY_PHRASE_WORDS ? check.wordCount : check.wordCount - 1;
+  const flagged = check.unknownWordPositions.filter((position) => position < finishedWords);
+  if (flagged.length === 1) return { tone: "attention", text: `Word ${listPositions(flagged)} isn’t a recovery phrase word. Check its spelling.` };
+  if (flagged.length > 1) return { tone: "attention", text: `Words ${listPositions(flagged)} aren’t recovery phrase words. Check their spelling.` };
+  if (check.wordCount > RECOVERY_PHRASE_WORDS) return { tone: "attention", text: `That’s ${check.wordCount} words. A recovery phrase has ${RECOVERY_PHRASE_WORDS}.` };
+  if (check.valid) return { tone: "ok", text: "Recovery phrase looks right." };
+  if (check.wordCount === RECOVERY_PHRASE_WORDS && check.unknownWordPositions.length === 0) {
+    return { tone: "attention", text: "All 24 words are recognized, but they don’t form a valid phrase. Check their order and spelling." };
+  }
+  return { tone: "ok", text: `${check.wordCount} of ${RECOVERY_PHRASE_WORDS} words` };
+}
+
+type Operation = ReturnType<typeof useSettingsOperation>;
+
+/** The failure from one keyed operation, shown next to its control. */
+function InlineStatus({ operation, for: key }: { operation: Operation; for: string }) {
+  return operation.error && operation.errorKey === key
+    ? <p role="status" className="settings-hint settings-inline-status">{operation.error}</p>
+    : null;
 }
 
 export function ReplicatedSyncSettings() {
@@ -140,8 +203,8 @@ export function ReplicatedSyncSettings() {
   }, []);
 
   const operation = useSettingsOperation(refresh);
-  const { busy, error: message, setError: setMessage, run, act } = operation;
-  const reportError = useCallback((reason: unknown) => setMessage(errorMessage(reason)), [setMessage]);
+  const { busy, setError, runFor, actFor } = operation;
+  const reportError = useCallback((reason: unknown) => setError(errorMessage(reason)), [setError]);
   useLiveStatus("replicated-sync-status", refresh, reportError);
 
   // Before this device joins or starts a space, look for one that another
@@ -163,7 +226,7 @@ export function ReplicatedSyncSettings() {
     return () => { cancelled = true; };
   }, [needsSetupChoice, transportKey, presenceCheck]);
 
-  const beginGenesis = (allowExistingSpace: boolean) => run(async () => {
+  const beginGenesis = (allowExistingSpace: boolean) => runFor("genesis", async () => {
     try {
       holdRecoveryPhrase(await replicatedSyncBeginGenesis(allowExistingSpace));
     } finally {
@@ -174,19 +237,24 @@ export function ReplicatedSyncSettings() {
     await refresh();
   });
 
-  const toggleBeta = (on: boolean) => act(() => replicatedSyncSetBetaEnabled(on));
   const betaToggle = (
-    <label className="settings-field settings-field-inline">
-      <input type="checkbox" checked={betaEnabled} disabled={busy} onChange={(event) => toggleBeta(event.target.checked)} />
-      <span>Enable beta features</span>
-    </label>
+    <>
+      <label className="settings-field settings-field-inline">
+        <input type="checkbox" checked={betaEnabled} disabled={busy} onChange={(event) => actFor("beta", () => replicatedSyncSetBetaEnabled(event.target.checked))} />
+        <span>Enable beta features</span>
+      </label>
+      <InlineStatus operation={operation} for="beta" />
+    </>
   );
-  const status = message ? <p role="status" className="settings-hint">{message}</p> : null;
+  const sectionStatus = operation.error && operation.errorKey === ANY_OPERATION
+    ? <p role="status" className="settings-hint">{operation.error}</p>
+    : null;
 
   if (available === null) {
     return (
       <section className="settings-section" aria-label="Replicated Sync">
         <p className="settings-hint">Loading replicated sync status…</p>
+        {sectionStatus}
       </section>
     );
   }
@@ -201,14 +269,12 @@ export function ReplicatedSyncSettings() {
           to set it up on this device.
         </p>
         {betaToggle}
-        {status}
+        {sectionStatus}
       </section>
     );
   }
 
-  const locations = (
-    <LocationManager transports={transports} operation={operation} refresh={refresh} />
-  );
+  const locations = <LocationManager transports={transports} operation={operation} refresh={refresh} />;
   const enrolled = enrollmentStatus?.state === "enrolled" ? enrollmentStatus : null;
 
   return (
@@ -229,18 +295,23 @@ export function ReplicatedSyncSettings() {
       {conflicts.length > 0 ? (
         <div>
           <h3>Resolve Conflicts</h3>
-          {conflicts.map((conflict) => (
-            <FrontierConflictEditor
-              key={`${conflict.entityType}-${conflict.entityId}-${conflict.field}`}
-              conflict={conflict}
-              disabled={busy}
-              onResolve={(chosen) => act(() => replicatedSyncResolveConflict(conflict, chosen))}
-            />
-          ))}
+          {conflicts.map((conflict) => {
+            const key = `conflict:${conflict.entityType}-${conflict.entityId}-${conflict.field}`;
+            return (
+              <div key={key}>
+                <FrontierConflictEditor
+                  conflict={conflict}
+                  disabled={busy}
+                  onResolve={(chosen) => actFor(key, () => replicatedSyncResolveConflict(conflict, chosen))}
+                />
+                <InlineStatus operation={operation} for={key} />
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
-      {status}
+      {sectionStatus}
 
       {enrolled ? (
         <EnrolledOverview
@@ -248,8 +319,7 @@ export function ReplicatedSyncSettings() {
           transports={transports}
           pendingRequests={pendingRequests}
           deviceRoster={deviceRoster}
-          busy={busy}
-          act={act}
+          operation={operation}
           locations={locations}
           betaToggle={betaToggle}
         />
@@ -259,9 +329,7 @@ export function ReplicatedSyncSettings() {
           enrollmentStatus={enrollmentStatus}
           transports={transports}
           spacePresence={spacePresence}
-          busy={busy}
-          run={run}
-          act={act}
+          operation={operation}
           refresh={refresh}
           beginGenesis={beginGenesis}
           locations={locations}
@@ -272,17 +340,12 @@ export function ReplicatedSyncSettings() {
   );
 }
 
-type Operation = ReturnType<typeof useSettingsOperation>;
-type Run = Operation["run"];
-
 function SetupSteps({
   step,
   enrollmentStatus,
   transports,
   spacePresence,
-  busy,
-  run,
-  act,
+  operation,
   refresh,
   beginGenesis,
   locations,
@@ -292,9 +355,7 @@ function SetupSteps({
   enrollmentStatus: EnrollmentStatus | null;
   transports: ReplicatedSyncTransportStatus[];
   spacePresence: SyncSpacePresence | "checking" | null;
-  busy: boolean;
-  run: Run;
-  act: Run;
+  operation: Operation;
   refresh(): Promise<void>;
   beginGenesis(allowExistingSpace: boolean): void;
   locations: ReactNode;
@@ -307,14 +368,12 @@ function SetupSteps({
       <SetupChoice
         transportCount={transports.length}
         spacePresence={spacePresence}
-        busy={busy}
-        run={run}
-        act={act}
+        operation={operation}
         refresh={refresh}
         beginGenesis={beginGenesis}
       />
     ),
-    verify: <VerifyStep enrollmentStatus={enrollmentStatus} busy={busy} act={act} />,
+    verify: <VerifyStep enrollmentStatus={enrollmentStatus} operation={operation} />,
   };
 
   return (
@@ -358,26 +417,39 @@ function SetupSteps({
 function SetupChoice({
   transportCount,
   spacePresence,
-  busy,
-  run,
-  act,
+  operation,
   refresh,
   beginGenesis,
 }: {
   transportCount: number;
   spacePresence: SyncSpacePresence | "checking" | null;
-  busy: boolean;
-  run: Run;
-  act: Run;
+  operation: Operation;
   refresh(): Promise<void>;
   beginGenesis(allowExistingSpace: boolean): void;
 }) {
+  const { busy, runFor, actFor } = operation;
   const [recoveryPhraseInput, setRecoveryPhraseInput] = useState("");
+  const [phraseCheck, setPhraseCheck] = useState<RecoveryPhraseCheck | null>(null);
   const [confirmingSeparateSpace, setConfirmingSeparateSpace] = useState(false);
+  const feedbackId = useId();
   const noLocation = transportCount === 0;
 
-  const joinWithPhrase = () => run(async () => {
-    await replicatedSyncJoinWithRecoveryPhrase(recoveryPhraseInput.trim());
+  useEffect(() => {
+    if (!recoveryPhraseInput.trim()) {
+      setPhraseCheck(null);
+      return;
+    }
+    let cancelled = false;
+    replicatedSyncCheckRecoveryPhrase(recoveryPhraseInput).then(
+      (check) => { if (!cancelled) setPhraseCheck(check); },
+      () => { if (!cancelled) setPhraseCheck(null); },
+    );
+    return () => { cancelled = true; };
+  }, [recoveryPhraseInput]);
+  const feedback = recoveryPhraseFeedback(recoveryPhraseInput, phraseCheck);
+
+  const joinWithPhrase = () => runFor("join-phrase", async () => {
+    await replicatedSyncJoinWithRecoveryPhrase(recoveryPhraseInput.trim().split(/\s+/).join(" "));
     setRecoveryPhraseInput("");
     await refresh();
   });
@@ -396,36 +468,56 @@ function SetupChoice({
                 : "Set this device up as the first device in a new encrypted sync space, or join a space that already exists on another device."}
       </p>
       {spacePresence === "existing" ? null : (
-        <button
-          type="button"
-          className="primary-action"
-          disabled={busy || noLocation || spacePresence === "checking"}
-          onClick={() => beginGenesis(false)}
-        >
-          Create a new sync space
-        </button>
+        <>
+          <button
+            type="button"
+            className="primary-action"
+            disabled={busy || noLocation || spacePresence === "checking"}
+            onClick={() => beginGenesis(false)}
+          >
+            Create a new sync space
+          </button>
+          <InlineStatus operation={operation} for="genesis" />
+        </>
       )}
       <button
         type="button"
         className={spacePresence === "existing" ? "primary-action" : "account-action-button"}
         disabled={busy || noLocation}
-        onClick={() => act(replicatedSyncRequestEnrollment)}
+        onClick={() => actFor("join-request", replicatedSyncRequestEnrollment)}
       >
         Request to join from an existing device
       </button>
+      <InlineStatus operation={operation} for="join-request" />
       <label className="settings-field">
         <span>Or join with a recovery phrase</span>
-        <input
-          type="text"
+        <textarea
+          rows={3}
           placeholder="24 words separated by spaces"
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
           value={recoveryPhraseInput}
           disabled={busy}
+          aria-describedby={feedback ? feedbackId : undefined}
+          aria-invalid={feedback?.tone === "attention" ? true : undefined}
           onChange={(event) => setRecoveryPhraseInput(event.target.value)}
         />
       </label>
-      <button type="button" className="account-action-button" disabled={busy || !recoveryPhraseInput.trim() || noLocation} onClick={joinWithPhrase}>
+      {feedback ? (
+        <p id={feedbackId} className={`settings-hint recovery-phrase-feedback recovery-phrase-feedback-${feedback.tone}`} aria-live="polite">
+          {feedback.text}
+        </p>
+      ) : null}
+      <button
+        type="button"
+        className="account-action-button"
+        disabled={busy || !phraseCheck?.valid || noLocation}
+        onClick={joinWithPhrase}
+      >
         Join with recovery phrase
       </button>
+      <InlineStatus operation={operation} for="join-phrase" />
       {spacePresence === "existing" ? (
         confirmingSeparateSpace ? (
           <div className="settings-inline-confirm" role="group" aria-label="Create a separate sync space confirmation">
@@ -447,47 +539,217 @@ function SetupChoice({
             </span>
           </div>
         ) : (
-          <button type="button" className="account-action-button" disabled={busy} onClick={() => setConfirmingSeparateSpace(true)}>
-            Create a separate sync space instead…
-          </button>
+          <>
+            <button type="button" className="account-action-button" disabled={busy} onClick={() => setConfirmingSeparateSpace(true)}>
+              Create a separate sync space instead…
+            </button>
+            <InlineStatus operation={operation} for="genesis" />
+          </>
         )
       ) : null}
     </>
   );
 }
 
-function VerifyStep({ enrollmentStatus, busy, act }: { enrollmentStatus: EnrollmentStatus | null; busy: boolean; act: Run }) {
+function VerifyStep({ enrollmentStatus, operation }: { enrollmentStatus: EnrollmentStatus | null; operation: Operation }) {
+  const { busy, actFor } = operation;
+  const cancel = (
+    <LeaveControl
+      operation={operation}
+      trigger="Cancel and start over…"
+      title="Cancel this request?"
+      body="This device forgets its pending request and returns to the start of setup. Nothing has synced yet, and your sync locations stay configured."
+      confirm="Cancel request"
+    />
+  );
   if (enrollmentStatus?.state === "awaitingGrant") {
     return (
       <>
         <p className="settings-hint">
-          Open Replicated Sync on one of your existing devices and approve this device there. When it does, compare
-          fingerprints on both screens before confirming. This device&apos;s fingerprint:{" "}
-          <strong style={{ fontFamily: "monospace" }}>{enrollmentStatus.fingerprint}</strong>
+          Open Replicated Sync on one of your existing devices and approve this device there. It will show you a code
+          to compare with this one:
         </p>
-        <button type="button" className="account-action-button" disabled={busy} onClick={() => act(replicatedSyncNow)}>
+        <p className="sync-fingerprint">{enrollmentStatus.fingerprint}</p>
+        <button type="button" className="account-action-button" disabled={busy} onClick={() => actFor("check-approval", replicatedSyncNow)}>
           Check for approval
         </button>
+        <InlineStatus operation={operation} for="check-approval" />
+        {cancel}
       </>
     );
   }
   if (enrollmentStatus?.state === "awaitingConfirmation") {
     const requestId = enrollmentStatus.requestId;
     return (
-      <div className="settings-field">
+      <>
         <p className="settings-hint">
-          An approval arrived. Compare these fingerprints with what the approving device shows — they must match
-          exactly before you confirm.
+          An approval arrived. Compare these codes with what the approving device shows. They must match exactly
+          before you confirm.
         </p>
-        <p style={{ fontFamily: "monospace" }}>This device: {enrollmentStatus.fingerprint}</p>
-        <p style={{ fontFamily: "monospace" }}>Approver: {enrollmentStatus.approverFingerprint}</p>
-        <button type="button" className="primary-action" disabled={busy} onClick={() => act(() => replicatedSyncConfirmEnrollment(requestId))}>
+        <p className="sync-fingerprint">This device: {enrollmentStatus.fingerprint}</p>
+        <p className="sync-fingerprint">Approver: {enrollmentStatus.approverFingerprint}</p>
+        <button type="button" className="primary-action" disabled={busy} onClick={() => actFor("confirm", () => replicatedSyncConfirmEnrollment(requestId))}>
           Confirm — fingerprints match
         </button>
-      </div>
+        <InlineStatus operation={operation} for="confirm" />
+        {cancel}
+      </>
     );
   }
   return null;
+}
+
+/** Leaves the sync space (or abandons a pending join) on this device only. */
+function LeaveControl({
+  operation,
+  trigger,
+  title,
+  body,
+  confirm,
+}: {
+  operation: Operation;
+  trigger: string;
+  title: string;
+  body: string;
+  confirm: string;
+}) {
+  const { busy, actFor } = operation;
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <>
+      {confirming ? (
+        <div className="settings-inline-confirm" role="group" aria-label={title}>
+          <p><strong>{title}</strong><br />{body}</p>
+          <span className="settings-inline-confirm-actions">
+            <button type="button" disabled={busy} onClick={() => setConfirming(false)}>Keep</button>
+            <button type="button" className="danger-action" disabled={busy} onClick={() => { setConfirming(false); actFor("leave", replicatedSyncLeave); }}>
+              {confirm}
+            </button>
+          </span>
+        </div>
+      ) : (
+        <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => setConfirming(true)}>
+          {trigger}
+        </button>
+      )}
+      <InlineStatus operation={operation} for="leave" />
+    </>
+  );
+}
+
+function PendingRequestCard({ request, operation }: { request: IncomingEnrollmentRequest; operation: Operation }) {
+  const { busy, actFor } = operation;
+  const [reviewing, setReviewing] = useState(false);
+  const [name, setName] = useState("");
+  const key = `request:${request.requestId}`;
+  const deviceId = request.deviceId;
+
+  const approve = () => actFor(key, async () => {
+    await replicatedSyncApproveRequest(request.requestId);
+    if (deviceId && name.trim()) await replicatedSyncSetDeviceLabel(deviceId, name);
+  });
+
+  return (
+    <li className="account-card">
+      <div className="account-card-row">
+        <div className="account-card-identity">
+          <strong>New device asking to join</strong>
+          <span className="account-card-email">Requested {new Date(request.createdAt).toLocaleString()}</span>
+        </div>
+        {reviewing ? null : (
+          <button type="button" className="primary-action" disabled={busy} aria-expanded={false} onClick={() => setReviewing(true)}>
+            Review…
+          </button>
+        )}
+        <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => actFor(key, () => replicatedSyncRejectRequest(request.requestId))}>
+          Reject
+        </button>
+      </div>
+      {reviewing ? (
+        <div className="settings-inline-panel" role="group" aria-label="Approve device confirmation">
+          <p>On the new device, check that Replicated Sync shows exactly this code:</p>
+          <p className="sync-fingerprint">{request.fingerprint}</p>
+          <p className="settings-hint">If the codes don’t match, reject the request. Someone else may be trying to join.</p>
+          {deviceId ? (
+            <label className="settings-field">
+              <span>Name this device (optional, only shown on this device)</span>
+              <input type="text" maxLength={MAX_DEVICE_LABEL_CHARS} value={name} disabled={busy} onChange={(event) => setName(event.target.value)} />
+            </label>
+          ) : null}
+          <span className="settings-inline-confirm-actions">
+            <button type="button" disabled={busy} onClick={() => setReviewing(false)}>Cancel</button>
+            <button type="button" className="primary-action" disabled={busy} onClick={approve}>Codes match — approve</button>
+          </span>
+        </div>
+      ) : null}
+      <InlineStatus operation={operation} for={key} />
+    </li>
+  );
+}
+
+function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operation: Operation }) {
+  const { busy, actFor } = operation;
+  const [revoking, setRevoking] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(device.label ?? "");
+  const key = `device:${device.deviceId}`;
+  const details = [
+    device.isSelf && device.label ? "This device" : null,
+    device.status === "revoked" ? "Revoked" : "Active",
+    device.lastChangeAt ? `Last change ${new Date(device.lastChangeAt).toLocaleString()}` : "No changes yet",
+    `ID ${device.deviceId.slice(0, 8)}`,
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <li className="account-card">
+      <div className="account-card-row">
+        <div className="account-card-identity">
+          <strong>{deviceDisplayName(device)}</strong>
+          <span className="account-card-email">{details}</span>
+        </div>
+        {renaming ? null : (
+          <button type="button" className="account-action-button" disabled={busy} onClick={() => { setName(device.label ?? ""); setRenaming(true); }}>
+            {device.label ? "Rename" : "Name"}
+          </button>
+        )}
+        {!device.isSelf && device.status === "active" ? (
+          <button type="button" className="account-action-button danger-action" disabled={busy} aria-expanded={revoking} onClick={() => setRevoking(true)}>
+            Revoke…
+          </button>
+        ) : null}
+      </div>
+      {renaming ? (
+        <form
+          className="settings-inline-panel"
+          aria-label="Device name"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setRenaming(false);
+            actFor(key, () => replicatedSyncSetDeviceLabel(device.deviceId, name));
+          }}
+        >
+          <label className="settings-field">
+            <span>Name (only shown on this device)</span>
+            <input type="text" maxLength={MAX_DEVICE_LABEL_CHARS} value={name} disabled={busy} autoFocus onChange={(event) => setName(event.target.value)} />
+          </label>
+          <span className="settings-inline-confirm-actions">
+            <button type="button" disabled={busy} onClick={() => setRenaming(false)}>Cancel</button>
+            <button type="submit" className="primary-action" disabled={busy}>Save</button>
+          </span>
+        </form>
+      ) : null}
+      {revoking ? (
+        <div className="settings-inline-confirm" role="group" aria-label="Revoke device confirmation">
+          <p><strong>Revoke this device?</strong><br />It keeps existing data, but future writes from it will no longer be trusted.</p>
+          <span className="settings-inline-confirm-actions">
+            <button type="button" disabled={busy} onClick={() => setRevoking(false)}>Cancel</button>
+            <button type="button" className="danger-action" disabled={busy} onClick={() => { setRevoking(false); actFor(key, () => replicatedSyncRotateEpoch(device.deviceId)); }}>Revoke device</button>
+          </span>
+        </div>
+      ) : null}
+      <InlineStatus operation={operation} for={key} />
+    </li>
+  );
 }
 
 function EnrolledOverview({
@@ -495,8 +757,7 @@ function EnrolledOverview({
   transports,
   pendingRequests,
   deviceRoster,
-  busy,
-  act,
+  operation,
   locations,
   betaToggle,
 }: {
@@ -504,77 +765,36 @@ function EnrolledOverview({
   transports: ReplicatedSyncTransportStatus[];
   pendingRequests: IncomingEnrollmentRequest[];
   deviceRoster: DeviceRosterEntry[];
-  busy: boolean;
-  act: Run;
+  operation: Operation;
   locations: ReactNode;
   betaToggle: ReactNode;
 }) {
-  const [revokingDevice, setRevokingDevice] = useState<string | null>(null);
+  const { busy, actFor } = operation;
   const overview = syncOverview(transports, deviceCount);
 
   return (
     <>
       <div className={`sync-overview sync-overview-${overview.tone}`} role="status" aria-label="Sync status">
         <span>{overview.text}</span>
-        <button type="button" className="account-action-button" disabled={busy || transports.length === 0} onClick={() => act(replicatedSyncNow)}>
+        <button type="button" className="account-action-button" disabled={busy || transports.length === 0} onClick={() => actFor("sync-now", replicatedSyncNow)}>
           Sync now
         </button>
       </div>
+      <InlineStatus operation={operation} for="sync-now" />
 
       {pendingRequests.length > 0 ? (
         <>
           <h4>Devices waiting to join</h4>
           <ul className="accounts-list" aria-label="Devices waiting to join">
-            {pendingRequests.map((request) => (
-              <li className="account-card" key={request.requestId}>
-                <div className="account-card-row">
-                  <div className="account-card-identity">
-                    <strong style={{ fontFamily: "monospace" }}>{request.fingerprint}</strong>
-                    <span className="account-card-email">Requested {new Date(request.createdAt).toLocaleString()}</span>
-                  </div>
-                  <button type="button" className="primary-action" disabled={busy} onClick={() => act(() => replicatedSyncApproveRequest(request.requestId))}>
-                    Approve
-                  </button>
-                  <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => act(() => replicatedSyncRejectRequest(request.requestId))}>
-                    Reject
-                  </button>
-                </div>
-              </li>
-            ))}
+            {pendingRequests.map((request) => <PendingRequestCard key={request.requestId} request={request} operation={operation} />)}
           </ul>
         </>
       ) : null}
 
       <details className="settings-disclosure" open>
         <summary>Devices ({deviceRoster.length})</summary>
-        <ul className="accounts-list">
-          {deviceRoster.map((device) => (
-            <li className="account-card" key={device.deviceId}>
-              <div className="account-card-row">
-                <div className="account-card-identity">
-                  <strong style={{ fontFamily: "monospace" }}>{device.deviceId}</strong>
-                  <span className="account-card-email">
-                    {device.status}
-                    {device.isSelf ? " · this device" : ""}
-                  </span>
-                </div>
-                {!device.isSelf && device.status === "active" ? (
-                  <button type="button" className="account-action-button danger-action" disabled={busy} aria-expanded={revokingDevice === device.deviceId} onClick={() => setRevokingDevice(device.deviceId)}>
-                    Revoke…
-                  </button>
-                ) : null}
-              </div>
-              {revokingDevice === device.deviceId ? (
-                <div className="settings-inline-confirm" role="group" aria-label="Revoke device confirmation">
-                  <p><strong>Revoke this device?</strong><br />It keeps existing data, but future writes from it will no longer be trusted.</p>
-                  <span className="settings-inline-confirm-actions">
-                    <button type="button" disabled={busy} onClick={() => setRevokingDevice(null)}>Cancel</button>
-                    <button type="button" className="danger-action" disabled={busy} onClick={() => { setRevokingDevice(null); act(() => replicatedSyncRotateEpoch(device.deviceId)); }}>Revoke device</button>
-                  </span>
-                </div>
-              ) : null}
-            </li>
-          ))}
+        <ul className="accounts-list" aria-label="Devices">
+          {deviceRoster.map((device) => <DeviceCard key={device.deviceId} device={device} operation={operation} />)}
         </ul>
       </details>
 
@@ -586,6 +806,13 @@ function EnrolledOverview({
       <details className="settings-disclosure">
         <summary>Advanced</summary>
         {betaToggle}
+        <LeaveControl
+          operation={operation}
+          trigger="Leave this sync space…"
+          title="Leave this sync space?"
+          body="This device stops syncing and forgets its keys for this space. Tasks, snippets, and other data stay on this device, and your sync locations stay configured so you can rejoin later. Changes that haven’t synced yet won’t reach your other devices, and they will keep listing this device until you revoke it from one of them."
+          confirm="Leave sync space"
+        />
       </details>
     </>
   );
@@ -602,30 +829,30 @@ function LocationManager({
   operation: Operation;
   refresh(): Promise<void>;
 }) {
-  const { busy, setError: setMessage, run, act } = operation;
+  const { busy, setError, runFor, actFor } = operation;
   const [ipfsBaseUrl, setIpfsBaseUrl] = useState("");
   const [ipfsToken, setIpfsToken] = useState("");
   const [ipfsProbe, setIpfsProbe] = useState<IpfsRpcProbeReport | null>(null);
   const [disconnectingTransport, setDisconnectingTransport] = useState<string | null>(null);
 
-  const addFolder = () => run(async () => {
+  const addFolder = () => runFor("add-folder", async () => {
     const status = await replicatedSyncAddFolder();
-    if (!status) setMessage("No folder selected.");
+    if (!status) setError("No folder selected.", "add-folder");
     await refresh();
   });
 
   const probeIpfsRpc = () => {
     setIpfsProbe(null);
-    run(async () => {
+    runFor("ipfs", async () => {
       const report = await replicatedSyncProbeIpfsRpc(ipfsBaseUrl, ipfsToken.trim() ? ipfsToken : null);
       setIpfsProbe(report);
-      if (!report.versionOk) setMessage("Could not reach an IPFS RPC endpoint at that URL.");
+      if (!report.versionOk) setError("Could not reach an IPFS RPC endpoint at that URL.", "ipfs");
     });
   };
 
-  const addIpfsRpc = () => run(async () => {
+  const addIpfsRpc = () => runFor("ipfs", async () => {
     const status = await replicatedSyncAddIpfsRpc(ipfsBaseUrl, ipfsToken.trim() ? ipfsToken : null);
-    if (!status) setMessage("Could not add that endpoint.");
+    if (!status) setError("Could not add that endpoint.", "ipfs");
     setIpfsBaseUrl("");
     setIpfsToken("");
     setIpfsProbe(null);
@@ -635,69 +862,77 @@ function LocationManager({
   return (
     <>
       <p className="settings-hint">
-        Every device you sync must use the same location. Choose a folder your devices already share, such as one in
-        a cloud drive or on a network share, and pick that same folder on each device.
+        Every device in a sync space must use the same location. Choose a folder your devices already share, or use
+        one dedicated Filebase bucket for the sync space. Do not reuse that bucket for a separate sync space.
       </p>
       {transports.length > 0 ? (
         <ul className="accounts-list" aria-label="Sync locations">
-          {transports.map((transport) => (
-            <li className="account-card" key={transport.instanceId}>
-              <div className="account-card-row">
-                <div className="account-card-identity">
-                  <strong>{transport.location}</strong>
-                  <span className="account-card-email">
-                    {transport.kind === "ipfs_rpc" ? "IPFS RPC" : "Folder"}
-                    {!transport.headDiscovery ? " · storage-only" : ""} · {transport.health} · {transport.pending} pending
-                    {transport.failed ? `, ${transport.failed} failed` : ""}
-                    {transport.storageBytes != null ? ` · ${formatStorageEstimate(transport.storageBytes)}` : ""}
-                  </span>
-                  {transport.lastSuccessAt ? (
-                    <span className="account-card-email">Last synced {new Date(transport.lastSuccessAt).toLocaleString()}</span>
-                  ) : null}
-                  {transport.lastError ? <span className="account-card-email">{transport.lastError}</span> : null}
-                </div>
-                <button
-                  type="button"
-                  className="account-action-button danger-action"
-                  disabled={busy}
-                  aria-expanded={disconnectingTransport === transport.instanceId}
-                  onClick={() => setDisconnectingTransport(transport.instanceId)}
-                >
-                  Disconnect…
-                </button>
-              </div>
-              {disconnectingTransport === transport.instanceId ? (
-                <div className="settings-inline-confirm" role="group" aria-label="Disconnect sync transport confirmation">
-                  <p>
-                    <strong>Stop syncing to this {transport.kind === "ipfs_rpc" ? "endpoint" : "folder"}?</strong><br />
-                    {transport.kind === "ipfs_rpc"
-                      ? "Pinned objects remain with the provider until you remove them there."
-                      : "You can keep the encrypted files for another device or delete this device’s copy."}
-                  </p>
-                  <span className="settings-inline-confirm-actions">
-                    <button type="button" disabled={busy} onClick={() => setDisconnectingTransport(null)}>Cancel</button>
-                    <button type="button" disabled={busy} onClick={() => { setDisconnectingTransport(null); act(() => replicatedSyncRemoveTransport(transport.instanceId, false)); }}>Disconnect and keep data</button>
-                    {transport.kind !== "ipfs_rpc" ? (
-                      <button type="button" className="danger-action" disabled={busy} onClick={() => { setDisconnectingTransport(null); act(() => replicatedSyncRemoveTransport(transport.instanceId, true)); }}>Delete files and disconnect</button>
+          {transports.map((transport) => {
+            const health = describeTransportHealth(transport);
+            const key = `transport:${transport.instanceId}`;
+            return (
+              <li className={`account-card sync-location-${health.tone}`} key={transport.instanceId}>
+                <div className="account-card-row">
+                  <div className="account-card-identity">
+                    <strong>{transport.location}</strong>
+                    <span className="account-card-email">
+                      {transport.kind === "ipfs_rpc" ? "IPFS RPC" : "Folder"} · <span className="sync-location-health">{health.label}</span>
+                      {transport.storageBytes != null ? ` · ${formatStorageEstimate(transport.storageBytes)}` : ""}
+                    </span>
+                    {health.detail ? <span className="account-card-email">{health.detail}</span> : null}
+                    {!transport.headDiscovery ? (
+                      <span className="account-card-email">Storage only: other devices can’t discover new changes through this location on its own.</span>
                     ) : null}
-                  </span>
+                    {transport.lastSuccessAt ? (
+                      <span className="account-card-email">Last synced {new Date(transport.lastSuccessAt).toLocaleString()}</span>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="account-action-button danger-action"
+                    disabled={busy}
+                    aria-expanded={disconnectingTransport === transport.instanceId}
+                    onClick={() => setDisconnectingTransport(transport.instanceId)}
+                  >
+                    Disconnect…
+                  </button>
                 </div>
-              ) : null}
-            </li>
-          ))}
+                {disconnectingTransport === transport.instanceId ? (
+                  <div className="settings-inline-confirm" role="group" aria-label="Disconnect sync transport confirmation">
+                    <p>
+                      <strong>Stop syncing to this {transport.kind === "ipfs_rpc" ? "endpoint" : "folder"}?</strong><br />
+                      {transport.kind === "ipfs_rpc"
+                        ? "Pinned objects remain with the provider until you remove them there."
+                        : "You can keep the encrypted files for another device or delete this device’s copy."}
+                    </p>
+                    <span className="settings-inline-confirm-actions">
+                      <button type="button" disabled={busy} onClick={() => setDisconnectingTransport(null)}>Cancel</button>
+                      <button type="button" disabled={busy} onClick={() => { setDisconnectingTransport(null); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, false)); }}>Disconnect and keep data</button>
+                      {transport.kind !== "ipfs_rpc" ? (
+                        <button type="button" className="danger-action" disabled={busy} onClick={() => { setDisconnectingTransport(null); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, true)); }}>Delete files and disconnect</button>
+                      ) : null}
+                    </span>
+                  </div>
+                ) : null}
+                <InlineStatus operation={operation} for={key} />
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 
       <button type="button" className={transports.length === 0 ? "primary-action" : "account-action-button"} disabled={busy} onClick={addFolder}>
         {transports.length === 0 ? "Add a sync folder" : "Add another sync folder"}
       </button>
+      <InlineStatus operation={operation} for="add-folder" />
 
       <details className="settings-disclosure">
         <summary>Use an IPFS RPC endpoint instead</summary>
         <p className="settings-hint">
-          Advanced: point at a Kubo-compatible RPC endpoint (for example a Filebase bucket, or a local Kubo daemon) to
-          replicate through it instead of, or alongside, a folder. The access token, if any, is stored only in this
-          device&apos;s OS keychain, never in a settings export.
+          Advanced: point at a Kubo-compatible RPC endpoint or a dedicated Filebase bucket. For Filebase, create one
+          bucket for this sync space, generate its bucket-specific RPC token, and enter that same token on every
+          device joining the space. The token is stored only in this device&apos;s OS keychain, never in a settings
+          export.
         </p>
         <label className="settings-field">
           <span>RPC base URL</span>
@@ -738,16 +973,15 @@ function LocationManager({
         <button type="button" className="account-action-button" disabled={busy || !ipfsBaseUrl} onClick={probeIpfsRpc}>
           Test connection
         </button>
-        {ipfsProbe ? (
+        {ipfsProbe?.versionOk ? (
           <p className="settings-hint">
-            {ipfsProbe.versionOk
-              ? `Reachable · ${ipfsProbe.mfsAvailable ? "supports discovery (MFS)" : "storage-only, no MFS discovery"}`
-              : "Not reachable at that URL."}
+            {`Reachable · ${ipfsProbe.mfsAvailable ? "supports discovery (MFS)" : "storage-only, no MFS discovery"}`}
           </p>
         ) : null}
         <button type="button" className="primary-action" disabled={busy || !ipfsBaseUrl} onClick={addIpfsRpc}>
           Add IPFS RPC endpoint
         </button>
+        <InlineStatus operation={operation} for="ipfs" />
       </details>
     </>
   );

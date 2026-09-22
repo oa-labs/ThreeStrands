@@ -95,6 +95,7 @@ pub enum EnrollmentStatus {
 #[serde(rename_all = "camelCase")]
 pub struct IncomingEnrollmentRequest {
     pub request_id: String,
+    pub device_id: Option<String>,
     pub fingerprint: String,
     pub created_at: String,
 }
@@ -105,7 +106,16 @@ pub struct DeviceRosterEntry {
     pub device_id: String,
     pub status: String,
     pub is_self: bool,
+    /// A name given on this device only; see `sync_device_labels`.
+    pub label: Option<String>,
+    /// When this device last recorded (for itself) or received (for a
+    /// peer) a change from that device. Not a liveness signal: an idle but
+    /// online device keeps its last value.
+    pub last_change_at: Option<String>,
 }
+
+/// Longest local device label accepted, in characters.
+pub const MAX_DEVICE_LABEL_CHARS: usize = 60;
 
 impl Database {
     /// A pure-SQL status read (no keychain I/O) for the Settings panel:
@@ -171,13 +181,18 @@ impl Database {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT request_id, fingerprint, created_at FROM replicated_sync_enrollment_requests
+                "SELECT request_id, device_id, fingerprint, created_at FROM replicated_sync_enrollment_requests
                  WHERE direction='incoming' AND status='pending' ORDER BY created_at ASC",
             )
             .map_err(display)?;
         let rows = statement
             .query_map([], |row| {
-                Ok(IncomingEnrollmentRequest { request_id: row.get(0)?, fingerprint: row.get(1)?, created_at: row.get(2)? })
+                Ok(IncomingEnrollmentRequest {
+                    request_id: row.get(0)?,
+                    device_id: row.get(1)?,
+                    fingerprint: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
             })
             .map_err(display)?
             .collect::<Result<Vec<_>, _>>()
@@ -195,33 +210,96 @@ impl Database {
         Ok(())
     }
 
+    /// This device first, then active peers, then revoked ones.
     pub fn device_roster(&self) -> Result<Vec<DeviceRosterEntry>, String> {
-        let self_device_id = self.local_self_device_id_hex()?;
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT device_id, status FROM sync_devices ORDER BY device_id").map_err(display)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT d.device_id, d.status, d.is_self, l.label,
+                        (SELECT MAX(e.created_at) FROM sync_events e WHERE e.device_id = d.device_id)
+                 FROM sync_devices d LEFT JOIN sync_device_labels l ON l.device_id = d.device_id
+                 ORDER BY d.is_self DESC, d.status = 'revoked', d.device_id",
+            )
+            .map_err(display)?;
         let rows = statement
             .query_map([], |row| {
-                let device_id: String = row.get(0)?;
-                let status: String = row.get(1)?;
-                Ok((device_id, status))
+                Ok(DeviceRosterEntry {
+                    device_id: row.get(0)?,
+                    status: row.get(1)?,
+                    is_self: row.get(2)?,
+                    label: row.get(3)?,
+                    last_change_at: row.get(4)?,
+                })
             })
             .map_err(display)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(display)?;
-        Ok(rows
-            .into_iter()
-            .map(|(device_id, status)| {
-                let is_self = self_device_id.as_deref() == Some(device_id.as_str());
-                DeviceRosterEntry { device_id, status, is_self }
-            })
-            .collect())
+        Ok(rows)
     }
 
-    fn local_self_device_id_hex(&self) -> Result<Option<String>, String> {
-        self.connection()?
-            .query_row("SELECT device_id FROM sync_devices LIMIT 1", [], |row| row.get(0))
-            .optional()
-            .map_err(display)
+    /// Names a device on this device only. A blank label removes it.
+    pub fn set_device_label(&self, device_id_hex: &str, label: &str) -> Result<(), String> {
+        let label = label.trim();
+        if label.chars().count() > MAX_DEVICE_LABEL_CHARS {
+            return Err(format!("Device names can be at most {MAX_DEVICE_LABEL_CHARS} characters."));
+        }
+        let connection = self.connection()?;
+        if label.is_empty() {
+            connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex]).map_err(display)?;
+        } else {
+            connection
+                .execute(
+                    "INSERT INTO sync_device_labels(device_id,label) VALUES (?1,?2)
+                     ON CONFLICT(device_id) DO UPDATE SET label=excluded.label",
+                    params![device_id_hex, label],
+                )
+                .map_err(display)?;
+        }
+        Ok(())
+    }
+
+    /// Forgets this device's membership in the sync space, locally only:
+    /// the replication log, roster, enrollment state, and labels go, while
+    /// materialized data (tasks, snippets, accounts, preferences), the
+    /// configured transports, and the beta toggle stay. The self row goes
+    /// too, so the next identity load provisions a fresh device id.
+    ///
+    /// Returns the highest epoch this device may hold a key for, so the
+    /// caller can remove `0..=` that range from the keychain afterwards —
+    /// after, so a keychain failure never leaves the database claiming an
+    /// enrollment whose keys are already gone.
+    pub fn leave_sync_space(&self) -> Result<u32, String> {
+        let mut connection = self.connection()?;
+        let tx = connection.transaction().map_err(display)?;
+        let highest_epoch: u32 = tx
+            .query_row(
+                "SELECT MAX(COALESCE((SELECT MAX(key_epoch) FROM sync_epoch_history), 0),
+                            COALESCE((SELECT active_epoch FROM sync_spaces WHERE id=?1), 0))",
+                params![SPACE_ID],
+                |row| row.get(0),
+            )
+            .map_err(display)?;
+        tx.execute_batch(
+            "DELETE FROM sync_deliveries;
+             DELETE FROM sync_field_frontier;
+             DELETE FROM sync_operation_parents;
+             DELETE FROM sync_operations;
+             DELETE FROM sync_objects;
+             DELETE FROM sync_events;
+             DELETE FROM sync_epoch_history;
+             DELETE FROM replicated_sync_enrollment_requests;
+             DELETE FROM sync_control_objects_seen;
+             DELETE FROM sync_device_labels;
+             DELETE FROM sync_devices;",
+        )
+        .map_err(display)?;
+        tx.execute(
+            "UPDATE sync_spaces SET active_epoch=0, lamport=0, recovery_public_key=NULL, recovery_x25519_public=NULL, last_error=NULL WHERE id=?1",
+            params![SPACE_ID],
+        )
+        .map_err(display)?;
+        tx.commit().map_err(display)?;
+        Ok(highest_epoch)
     }
 
     fn seen_control_object(&self, cid: &str) -> Result<bool, String> {
@@ -1284,6 +1362,127 @@ mod tests {
         let phrase = begin_genesis(&database_b, &identity_b, &epoch_keys_b, &transports, true).await.unwrap();
         assert_eq!(phrase.split_whitespace().count(), 24);
         assert!(matches!(database_b.enrollment_status().unwrap(), EnrollmentStatus::Enrolled { device_count: 1 }));
+    }
+
+    /// A and B enrolled into one space through peer approval.
+    async fn two_enrolled_devices() -> (Database, Database, DeviceIdentity, DeviceIdentity, Vec<Arc<dyn SyncTransport>>, String) {
+        let database_a = Database::open_memory();
+        let database_b = Database::open_memory();
+        let identity_a = test_identity(&database_a);
+        let identity_b = test_identity(&database_b);
+        let epoch_keys_a = FakeEpochKeyStore::default();
+        let epoch_keys_b = FakeEpochKeyStore::default();
+        let transports = fake_transports("shared");
+        let phrase = begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports, false).await.unwrap();
+        publish_enrollment_request(&database_b, &identity_b, &transports).await.unwrap();
+        run_enrollment_sweep(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+        let pending = database_a.pending_incoming_enrollment_requests().unwrap();
+        assert_eq!(pending[0].device_id.as_deref(), Some(encode_id(identity_b.device_id.as_bytes()).as_str()));
+        let keys_a = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
+        approve_enrollment_request(&database_a, &identity_a, &keys_a, &pending[0].request_id, &transports).await.unwrap();
+        run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
+        let outgoing: String = database_b
+            .connection()
+            .unwrap()
+            .query_row("SELECT request_id FROM replicated_sync_enrollment_requests WHERE direction='outgoing'", [], |row| row.get(0))
+            .unwrap();
+        confirm_and_import_grant(&database_b, &identity_b, &epoch_keys_b, &outgoing).await.unwrap();
+        (database_a, database_b, identity_a, identity_b, transports, phrase)
+    }
+
+    #[tokio::test]
+    async fn the_roster_marks_this_device_by_its_flag_and_lists_it_first() {
+        let (database_a, database_b, identity_a, identity_b, _, _) = two_enrolled_devices().await;
+        for (database, identity) in [(&database_a, &identity_a), (&database_b, &identity_b)] {
+            let roster = database.device_roster().unwrap();
+            assert_eq!(roster.len(), 2);
+            assert!(roster[0].is_self);
+            assert_eq!(roster[0].device_id, encode_id(identity.device_id.as_bytes()));
+            assert!(!roster[1].is_self);
+        }
+    }
+
+    #[tokio::test]
+    async fn the_roster_reports_local_labels_and_each_devices_latest_change() {
+        let (database_a, _, identity_a, identity_b, _, _) = two_enrolled_devices().await;
+        let peer = encode_id(identity_b.device_id.as_bytes());
+        let own = encode_id(identity_a.device_id.as_bytes());
+        database_a.set_device_label(&peer, "  Work laptop  ").unwrap();
+        database_a
+            .connection()
+            .unwrap()
+            .execute_batch(&format!(
+                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at) VALUES
+                   ('e1',0,'{peer}',1,1,'sealed','2026-09-20T10:00:00+00:00'),
+                   ('e2',0,'{peer}',2,2,'sealed','2026-09-21T10:00:00+00:00');"
+            ))
+            .unwrap();
+
+        let roster = database_a.device_roster().unwrap();
+        let peer_entry = roster.iter().find(|entry| entry.device_id == peer).unwrap();
+        assert_eq!(peer_entry.label.as_deref(), Some("Work laptop"));
+        assert_eq!(peer_entry.last_change_at.as_deref(), Some("2026-09-21T10:00:00+00:00"));
+        let own_entry = roster.iter().find(|entry| entry.device_id == own).unwrap();
+        assert_eq!(own_entry.label, None);
+        assert_eq!(own_entry.last_change_at, None);
+
+        database_a.set_device_label(&peer, "   ").unwrap();
+        assert_eq!(database_a.device_roster().unwrap().iter().find(|entry| entry.device_id == peer).unwrap().label, None);
+    }
+
+    #[test]
+    fn device_labels_accept_up_to_the_limit_and_reject_beyond_it() {
+        let database = Database::open_memory();
+        let at_limit = "x".repeat(MAX_DEVICE_LABEL_CHARS);
+        database.set_device_label("d1", &"x".repeat(MAX_DEVICE_LABEL_CHARS - 1)).unwrap();
+        database.set_device_label("d1", &at_limit).unwrap();
+        assert!(database.set_device_label("d1", &"x".repeat(MAX_DEVICE_LABEL_CHARS + 1)).is_err());
+        let stored: String = database.connection().unwrap().query_row("SELECT label FROM sync_device_labels", [], |row| row.get(0)).unwrap();
+        assert_eq!(stored, at_limit);
+    }
+
+    #[tokio::test]
+    async fn leaving_resets_membership_but_keeps_local_data_locations_and_the_beta() {
+        let (_, database_b, _, identity_b, transports, phrase) = two_enrolled_devices().await;
+        database_b
+            .connection()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO snippets(id,name,body,created_at) VALUES ('s1','Kept','body','2026-09-22T00:00:00Z');
+                 INSERT INTO sync_transports(instance_id,kind,enabled) VALUES ('folder-1','folder',1);",
+            )
+            .unwrap();
+        database_b.set_device_label(&encode_id(identity_b.device_id.as_bytes()), "Old name").unwrap();
+
+        assert_eq!(database_b.leave_sync_space().unwrap(), 0);
+
+        assert!(matches!(database_b.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
+        assert!(database_b.device_roster().unwrap().is_empty());
+        assert!(database_b.recovery_public_keys().unwrap().is_none());
+        assert!(database_b.beta_features_enabled().unwrap());
+        let count = |sql: &str| -> i64 { database_b.connection().unwrap().query_row(sql, [], |row| row.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM sync_events"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM sync_epoch_history"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM replicated_sync_enrollment_requests"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM sync_device_labels"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM snippets WHERE id='s1'"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM sync_transports WHERE instance_id='folder-1'"), 1);
+
+        // A fresh identity rejoins the same space cleanly.
+        let rejoined = test_identity(&database_b);
+        assert_ne!(rejoined.device_id, identity_b.device_id);
+        let epoch_keys = FakeEpochKeyStore::default();
+        join_with_recovery_phrase(&database_b, &rejoined, &epoch_keys, &phrase, &transports).await.unwrap();
+        assert!(matches!(database_b.enrollment_status().unwrap(), EnrollmentStatus::Enrolled { .. }));
+    }
+
+    #[tokio::test]
+    async fn leaving_reports_the_highest_epoch_to_forget() {
+        let (database_a, ..) = two_enrolled_devices().await;
+        database_a.record_epoch_activation(1, "cid-1").unwrap();
+        database_a.record_epoch_activation(2, "cid-2").unwrap();
+        database_a.set_active_epoch(1).unwrap();
+        assert_eq!(database_a.leave_sync_space().unwrap(), 2);
     }
 
     #[test]

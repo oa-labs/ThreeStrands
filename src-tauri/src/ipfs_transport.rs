@@ -19,6 +19,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use rand::{rngs::OsRng, RngCore};
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use serde::Serialize;
 use serde_json::Value;
@@ -128,6 +129,12 @@ fn is_not_found_error(status: reqwest::StatusCode, body: &str) -> bool {
         || kubo_error_message(body)
             .map(|message| message.to_ascii_lowercase().contains("not found"))
             .unwrap_or(false)
+}
+
+fn is_already_exists_error(body: &str) -> bool {
+    kubo_error_message(body)
+        .map(|message| message.to_ascii_lowercase().contains("already exists"))
+        .unwrap_or(false)
 }
 
 /// Maps an unexpected (not already handled by a call-site-specific check
@@ -308,16 +315,36 @@ impl IpfsRpcTransport {
         if self.mfs_mkdir_p(&probe_dir).await.is_err() {
             return false;
         }
-        if self.mfs_ls(&probe_dir).await.is_err() {
-            return false;
+
+        // Exercise the exact path device-head publication needs. Filebase
+        // accepts a CID already imported into this bucket as a files/cp
+        // source; probing only mkdir/ls would miss an endpoint or account
+        // tier that cannot perform that in-bucket link.
+        let mut probe_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut probe_bytes);
+        let cid = TransportCid::for_bytes(&probe_bytes);
+        let probe_file = format!("{probe_dir}/{}", cid.0);
+        let result = async {
+            self.put_object(&cid, &probe_bytes).await?;
+            self.mfs_cp(&format!("/ipfs/{}", cid.0), &probe_file).await?;
+            self.mfs_stat(&probe_file).await
         }
+        .await;
+
+        // Cleanup is deliberately best-effort: capability reporting must
+        // reflect whether the required operation worked, while a transient
+        // cleanup failure must not hide that result. Random probe content
+        // prevents unpinning a caller-owned object with the same CID.
+        let _ = self.mfs_rm(&probe_file).await;
+        let _ = self.delete_object(&cid).await;
         let _ = self.mfs_rm(&probe_dir).await;
-        true
+        result.is_ok()
     }
 
-    /// Probes `version` and MFS capability-check calls (`files/mkdir`,
-    /// `files/ls`, `files/rm`) against a private probe path, caching the
-    /// result for [`SyncTransport::capabilities`] and [`SyncTransport::health`].
+    /// Probes `version` and the complete MFS publication path (`dag/import`,
+    /// `files/mkdir`, `files/cp`, `files/stat`, and cleanup) against a
+    /// private probe path, caching the result for
+    /// [`SyncTransport::capabilities`] and [`SyncTransport::health`].
     /// Call this explicitly (Settings' "test connection") before enabling a
     /// replica; it also runs lazily the first time `health()` is called.
     pub async fn probe_capabilities(&self) -> Result<ProbeReport, TransportError> {
@@ -344,10 +371,29 @@ impl IpfsRpcTransport {
     }
 
     async fn mfs_mkdir_p(&self, path: &str) -> Result<(), TransportError> {
-        let response = self.post("files/mkdir", &[("arg", path), ("parents", "true")]).await?;
-        if !response.status().is_success() {
+        if !path.starts_with('/') {
+            return Err(TransportError::Permanent("MFS paths must start with /".to_string()));
+        }
+        // Filebase exposes MFS over a bucket but rejects Kubo's
+        // `parents=true` convenience flag. Build the hierarchy one
+        // component at a time instead. This remains valid against Kubo and
+        // idempotent when another device creates a parent first.
+        let mut current = String::new();
+        for component in path.split('/').filter(|component| !component.is_empty()) {
+            if component == "." || component == ".." {
+                return Err(TransportError::Permanent("MFS paths must not contain . or ..".to_string()));
+            }
+            current.push('/');
+            current.push_str(component);
+            let response = self.post("files/mkdir", &[("arg", &current)]).await?;
+            if response.status().is_success() {
+                continue;
+            }
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            if is_already_exists_error(&body) {
+                continue;
+            }
             return Err(map_status_error(status, &body));
         }
         Ok(())
@@ -394,10 +440,23 @@ impl IpfsRpcTransport {
         Ok(names)
     }
 
+    async fn mfs_stat(&self, path: &str) -> Result<(), TransportError> {
+        let response = self.post("files/stat", &[("arg", path)]).await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            if is_not_found_error(status, &body) {
+                return Err(TransportError::NotFound);
+            }
+            return Err(map_status_error(status, &body));
+        }
+        Ok(())
+    }
+
     async fn mfs_rm(&self, path: &str) -> Result<(), TransportError> {
-        let response = self
-            .post("files/rm", &[("arg", path), ("recursive", "true"), ("force", "true")])
-            .await?;
+        // Probe cleanup only removes one file and then its empty directory.
+        // Filebase supports files/rm but rejects recursive and force.
+        let response = self.post("files/rm", &[("arg", path)]).await?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
@@ -828,6 +887,7 @@ mod fake_server {
                 .route("/api/v0/files/mkdir", post(files_mkdir))
                 .route("/api/v0/files/cp", post(files_cp))
                 .route("/api/v0/files/ls", post(files_ls))
+                .route("/api/v0/files/stat", post(files_stat))
                 .route("/api/v0/files/rm", post(files_rm))
                 .with_state(state.clone());
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1039,9 +1099,22 @@ mod fake_server {
             return response;
         }
         let pairs = query_pairs(&uri);
+        if query_one(&pairs, "parents").is_some() {
+            return (StatusCode::BAD_REQUEST, kubo_error("parents is not supported")).into_response();
+        }
         let Some(path) = query_one(&pairs, "arg") else {
             return (StatusCode::BAD_REQUEST, kubo_error("missing arg")).into_response();
         };
+        if guard.dirs.contains(path) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("file already exists")).into_response();
+        }
+        let parent = path
+            .rsplit_once('/')
+            .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
+            .unwrap_or("/");
+        if parent != "/" && !guard.dirs.contains(parent) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("parent does not exist")).into_response();
+        }
         guard.dirs.insert(path.to_string());
         (StatusCode::OK, String::new()).into_response()
     }
@@ -1062,6 +1135,9 @@ mod fake_server {
         let Some(cid) = source.strip_prefix("/ipfs/") else {
             return (StatusCode::BAD_REQUEST, kubo_error("source must be /ipfs/<cid>")).into_response();
         };
+        if !guard.pins.contains_key(cid) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("source does not exist in this bucket")).into_response();
+        }
         if guard.files.contains_key(*destination) {
             return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("already exists")).into_response();
         }
@@ -1098,18 +1174,41 @@ mod fake_server {
         axum::Json(serde_json::json!({"Entries": entries})).into_response()
     }
 
-    async fn files_rm(State(state): State<SharedState>, headers: HeaderMap, uri: Uri) -> Response {
-        let mut guard = state.lock().unwrap();
+    async fn files_stat(State(state): State<SharedState>, headers: HeaderMap, uri: Uri) -> Response {
+        let guard = state.lock().unwrap();
         if let Err(response) = check_auth(&guard, &headers) {
+            return response;
+        }
+        if let Err(response) = check_mfs(&guard) {
             return response;
         }
         let pairs = query_pairs(&uri);
         let Some(path) = query_one(&pairs, "arg") else {
             return (StatusCode::BAD_REQUEST, kubo_error("missing arg")).into_response();
         };
+        if let Some(cid) = guard.files.get(path) {
+            return axum::Json(serde_json::json!({"Hash": cid, "Type": "file"})).into_response();
+        }
+        if guard.dirs.contains(path) {
+            return axum::Json(serde_json::json!({"Hash": "directory", "Type": "directory"})).into_response();
+        }
+        (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("file does not exist")).into_response()
+    }
+
+    async fn files_rm(State(state): State<SharedState>, headers: HeaderMap, uri: Uri) -> Response {
+        let mut guard = state.lock().unwrap();
+        if let Err(response) = check_auth(&guard, &headers) {
+            return response;
+        }
+        let pairs = query_pairs(&uri);
+        if query_one(&pairs, "recursive").is_some() || query_one(&pairs, "force").is_some() {
+            return (StatusCode::BAD_REQUEST, kubo_error("recursive and force are not supported")).into_response();
+        }
+        let Some(path) = query_one(&pairs, "arg") else {
+            return (StatusCode::BAD_REQUEST, kubo_error("missing arg")).into_response();
+        };
         guard.dirs.remove(path);
-        let prefix = format!("{path}/");
-        guard.files.retain(|file_path, _| !file_path.starts_with(prefix.as_str()) && file_path != path);
+        guard.files.remove(path);
         (StatusCode::OK, String::new()).into_response()
     }
 }
@@ -1143,6 +1242,22 @@ mod transport_tests {
         assert!(report.mfs_available);
         assert_eq!(transport.health().await.unwrap(), TransportHealth::Healthy);
         assert!(transport.capabilities().head_discovery);
+    }
+
+    #[tokio::test]
+    async fn mfs_probe_uses_filebase_compatible_calls_and_cleans_up_its_object() {
+        let server = FakeKuboServer::spawn().await;
+        let transport = open(&server, "a");
+
+        let report = transport.probe_capabilities().await.unwrap();
+
+        assert!(report.mfs_available);
+        let state = server.faults();
+        assert!(state.pins.is_empty(), "the random probe block must be unpinned");
+        assert!(state.files.is_empty(), "the temporary MFS link must be removed");
+        assert!(state.dirs.contains("/threestrands"));
+        assert!(state.dirs.contains(&format!("/threestrands/{}", transport.space_tag)));
+        assert!(!state.dirs.contains(&format!("/threestrands/{}/.probe", transport.space_tag)));
     }
 
     #[tokio::test]
