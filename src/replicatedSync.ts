@@ -47,8 +47,7 @@ function isDesktop(): boolean {
 /** Whether replicated sync is active right now for this device: either the
  * `THREESTRANDS_REPLICATED_SYNC` dev/CI env-var override, or the user's own
  * "enable beta features" Settings toggle. The Settings section stays
- * visible either way, matching the existing Three Strands Account section's
- * "not configured" pattern, but only offers actions when this is true. */
+ * visible either way, but only offers actions when this is true. */
 export async function replicatedSyncEnabled(): Promise<boolean> {
   return isDesktop() ? invoke("replicated_sync_enabled") : false;
 }
@@ -170,4 +169,14 @@ export async function replicatedSyncResolveConflict(
     field: conflict.field,
     operationId: chosen.operationId,
   });
+}
+
+/** Removes a mail account on every enrolled device, not just this one. */
+export async function removeSyncedMailAccount(email: string): Promise<void> {
+  return invoke("remove_synced_mail_account", { email });
+}
+
+/** Removes a calendar account on every enrolled device, not just this one. */
+export async function removeSyncedCalendarAccount(email: string): Promise<void> {
+  return invoke("remove_synced_calendar_account", { email });
 }

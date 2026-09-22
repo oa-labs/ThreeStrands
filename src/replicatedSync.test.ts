@@ -25,6 +25,8 @@ import {
   replicatedSyncRequestEnrollment,
   replicatedSyncSetBetaEnabled,
   replicatedSyncStatus,
+  removeSyncedCalendarAccount,
+  removeSyncedMailAccount,
   type FrontierConflict,
 } from "./replicatedSync";
 
@@ -203,5 +205,13 @@ describe("replicated sync invoke wrappers", () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     await replicatedSyncJoinWithRecoveryPhrase("abandon ability able...");
     expect(invoke).toHaveBeenCalledWith("replicated_sync_join_with_recovery_phrase", { phrase: "abandon ability able..." });
+  });
+
+  it("removes mail and calendar accounts on every enrolled device", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await removeSyncedMailAccount("you@example.com");
+    await removeSyncedCalendarAccount("cal@example.com");
+    expect(invoke).toHaveBeenCalledWith("remove_synced_mail_account", { email: "you@example.com" });
+    expect(invoke).toHaveBeenCalledWith("remove_synced_calendar_account", { email: "cal@example.com" });
   });
 });

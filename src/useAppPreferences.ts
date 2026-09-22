@@ -25,7 +25,7 @@ import {
   saveTheme,
   type Theme,
 } from "./theme";
-import { pullCloudPreferences, queuePortablePreferences } from "./cloudAccount";
+import { pullSyncedPreferences, queuePortablePreferences } from "./syncedPreferences";
 
 /**
  * Owns the persisted preferences that affect the whole application.
@@ -44,8 +44,8 @@ export function useAppPreferences() {
 
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
-    const applyCloud = () => {
-      void pullCloudPreferences().then((changed) => {
+    const applySynced = () => {
+      void pullSyncedPreferences().then((changed) => {
         if (!changed) return;
         setThemeState(readTheme());
         setFontScaleState(readFontScale());
@@ -55,9 +55,9 @@ export function useAppPreferences() {
         setAvailabilityPreferencesState(readAvailabilityPreferences());
       });
     };
-    applyCloud();
+    applySynced();
     let stop: (() => void) | undefined;
-    void listen("cloud-sync-status", applyCloud).then((unlisten) => { stop = unlisten; });
+    void listen("replicated-sync-status", applySynced).then((unlisten) => { stop = unlisten; });
     return () => stop?.();
   }, []);
 

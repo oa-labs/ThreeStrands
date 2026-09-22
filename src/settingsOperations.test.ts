@@ -86,10 +86,10 @@ describe("useLiveStatus", () => {
     });
     const refresh = vi.fn().mockResolvedValue(undefined);
 
-    renderHook(() => useLiveStatus("cloud-sync-status", refresh, vi.fn()));
+    renderHook(() => useLiveStatus("replicated-sync-status", refresh, vi.fn()));
 
     expect(refresh).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(listenMock).toHaveBeenCalledWith("cloud-sync-status", expect.any(Function)));
+    await waitFor(() => expect(listenMock).toHaveBeenCalledWith("replicated-sync-status", expect.any(Function)));
     handler!();
     expect(refresh).toHaveBeenCalledTimes(2);
   });
@@ -117,7 +117,7 @@ describe("useLiveStatus", () => {
     listenMock.mockReturnValue(subscription.promise);
     const unlisten = vi.fn();
 
-    const { unmount } = renderHook(() => useLiveStatus("cloud-sync-status", vi.fn().mockResolvedValue(undefined), vi.fn()));
+    const { unmount } = renderHook(() => useLiveStatus("replicated-sync-status", vi.fn().mockResolvedValue(undefined), vi.fn()));
     unmount();
     await act(async () => { subscription.resolve(unlisten); await subscription.promise; });
 
@@ -128,7 +128,7 @@ describe("useLiveStatus", () => {
     delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     const refresh = vi.fn().mockResolvedValue(undefined);
 
-    renderHook(() => useLiveStatus("cloud-sync-status", refresh, vi.fn()));
+    renderHook(() => useLiveStatus("replicated-sync-status", refresh, vi.fn()));
 
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(listenMock).not.toHaveBeenCalled();

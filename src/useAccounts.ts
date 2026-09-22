@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { removeSyncedMailAccount } from "./cloudAccount";
+import { removeSyncedMailAccount } from "./replicatedSync";
 import { mailClient } from "./data/client";
 import type {
   Account,

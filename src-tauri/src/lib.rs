@@ -5,7 +5,6 @@ mod attachment_security;
 mod auth;
 mod backoff;
 mod calendar;
-mod cloud_sync;
 mod correspondence;
 mod credentials;
 mod db;
@@ -23,6 +22,7 @@ mod replicated_sync;
 mod schema;
 mod sync;
 mod sync_folder;
+mod sync_projection;
 mod system_fonts;
 mod transfer;
 #[path = "unsubscribe.rs"]
@@ -156,10 +156,9 @@ pub(crate) async fn rekey_placeholder_account(accounts: &AccountRegistry, identi
 
 struct AppState {
     database: Arc<Database>,
-    cloud_sync: cloud_sync::CloudSync,
     /// The pluggable replicated-sync engine (see `replicated_sync.rs`).
-    /// Entirely inert unless `THREESTRANDS_REPLICATED_SYNC` is set — see
-    /// `replicated_sync::enabled`.
+    /// Inert unless the beta toggle or `THREESTRANDS_REPLICATED_SYNC` turns
+    /// it on — see `Database::replicated_sync_active`.
     replicated_sync: replicated_sync::ReplicatedSync,
     /// Shared OAuth app credentials, used to authorize any account.
     auth_config: Option<GoogleAuthConfig>,
@@ -1017,9 +1016,9 @@ fn spawn_foreground_sync(handle: &tauri::AppHandle) {
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
         if let Some(state) = handle.try_state::<AppState>() {
-            let cloud = state.cloud_sync.clone();
-            log_failure("foreground cloud sync", cloud.sync_once().await);
-            reconcile_cloud_account_registry(&handle);
+            let engine = state.replicated_sync.clone();
+            log_failure("foreground replicated sync", engine.sync_once().await);
+            reconcile_account_registry(&handle);
         }
         if let Some(service) = primary_service(&handle).await {
             log_failure("foreground mail sync", service.sync_if_stale().await);
@@ -1027,7 +1026,9 @@ fn spawn_foreground_sync(handle: &tauri::AppHandle) {
     });
 }
 
-fn reconcile_cloud_account_registry(handle: &tauri::AppHandle) {
+/// Stops the polling loop of every connected account that a synchronized
+/// deletion from another device removed from the local catalog.
+fn reconcile_account_registry(handle: &tauri::AppHandle) {
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
         let Some(state) = handle.try_state::<AppState>() else { return; };
@@ -1037,13 +1038,6 @@ fn reconcile_cloud_account_registry(handle: &tauri::AppHandle) {
         for email in removed {
             if let Some(account) = accounts.remove(&email) { account.poll_task.abort(); }
         }
-    });
-}
-
-fn kick_cloud_sync(state: &State<'_, AppState>) {
-    let cloud = state.cloud_sync.clone();
-    tauri::async_runtime::spawn(async move {
-        log_failure("cloud sync", cloud.sync_once().await);
     });
 }
 
@@ -1057,26 +1051,25 @@ fn kick_replicated_sync(state: &State<'_, AppState>) {
     });
 }
 
-fn queue_cloud_value<T: serde::Serialize>(
+fn record_synced_value<T: serde::Serialize>(
     state: &State<'_, AppState>,
     entity_type: threestrands_sync_protocol::EntityType,
     entity_id: &str,
     value: &T,
     fields: Option<std::collections::BTreeSet<String>>,
 ) -> Result<(), String> {
-    state.database.enqueue_cloud_entity(
+    state.database.record_local_entity_write(
         entity_type,
         entity_id,
         serde_json::to_value(value).map_err(|error| error.to_string())?,
         fields,
     )?;
-    kick_cloud_sync(state);
     kick_replicated_sync(state);
     Ok(())
 }
 
-fn queue_mail_account(state: &State<'_, AppState>, account: &Account) -> Result<(), String> {
-    queue_cloud_value(
+fn record_mail_account(state: &State<'_, AppState>, account: &Account) -> Result<(), String> {
+    record_synced_value(
         state,
         threestrands_sync_protocol::EntityType::MailAccount,
         &account.email.to_ascii_lowercase(),
@@ -1092,69 +1085,19 @@ fn queue_mail_account(state: &State<'_, AppState>, account: &Account) -> Result<
 }
 
 #[tauri::command]
-fn cloud_account_status(state: State<'_, AppState>) -> Result<cloud_sync::CloudAccountStatus, String> {
-    state.cloud_sync.status()
-}
-
-#[tauri::command]
-async fn cloud_sign_in(state: State<'_, AppState>) -> Result<cloud_sync::CloudAccountStatus, String> {
-    state.cloud_sync.sign_in().await
-}
-
-#[tauri::command]
-async fn cloud_sign_out(state: State<'_, AppState>) -> Result<(), String> {
-    state.cloud_sync.sign_out().await
-}
-
-#[tauri::command]
-async fn cloud_delete_account(state: State<'_, AppState>) -> Result<(), String> {
-    state.cloud_sync.delete_account().await
-}
-
-#[tauri::command]
-async fn cloud_devices(state: State<'_, AppState>) -> Result<Vec<cloud_sync::CloudDevice>, String> {
-    state.cloud_sync.devices().await
-}
-
-#[tauri::command]
-async fn cloud_revoke_device(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.cloud_sync.revoke_device(&id).await
-}
-
-#[tauri::command]
-async fn cloud_confirm_enrollment(preferences: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
-    state.cloud_sync.confirm_enrollment(preferences).await
-}
-
-#[tauri::command]
-async fn cloud_retry_sync(state: State<'_, AppState>) -> Result<(), String> {
-    state.cloud_sync.sync_once().await
-}
-
-#[tauri::command]
-async fn cloud_conflicts(state: State<'_, AppState>) -> Result<Vec<threestrands_sync_protocol::SyncConflict>, String> {
-    state.cloud_sync.conflicts().await
-}
-
-#[tauri::command]
-async fn cloud_resolve_conflict(id: String, request: threestrands_sync_protocol::ResolveConflictRequest, state: State<'_, AppState>) -> Result<(), String> {
-    state.cloud_sync.resolve_conflict(&id, request).await
-}
-
-#[tauri::command]
-fn cloud_synced_preferences(state: State<'_, AppState>) -> Result<Option<serde_json::Value>, String> {
+fn synced_preferences(state: State<'_, AppState>) -> Result<Option<serde_json::Value>, String> {
     state.database.synced_preferences()
 }
 
 #[tauri::command]
-fn cloud_update_preferences(preferences: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.enqueue_cloud_entity(
+fn update_synced_preferences(preferences: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.record_local_entity_write(
         threestrands_sync_protocol::EntityType::Preferences,
         "portable",
         preferences,
         None,
     )?;
-    kick_cloud_sync(&state);
+    kick_replicated_sync(&state);
     Ok(())
 }
 
@@ -1379,7 +1322,7 @@ async fn add_account(state: State<'_, AppState>, app: tauri::AppHandle) -> Resul
     let account = state.database.adopt_account(&email)?;
     let connected = spawn_synced_account(state.database.clone(), auth, true, app);
     state.accounts.lock().await.insert(email, connected);
-    queue_mail_account(&state, &account)?;
+    record_mail_account(&state, &account)?;
     Ok(account)
 }
 
@@ -1405,8 +1348,7 @@ async fn remove_account_internal(
     // its credentials are still live, so the caller can safely retry rather
     // than being left with a still-listed account whose credentials are
     // already gone.
-    let cloud = state.cloud_sync.status()?;
-    if !remove_catalog && cloud.signed_in && cloud.sync_entitled && cloud.enrollment_confirmed {
+    if !remove_catalog && state.database.cross_device_sync_enrolled()? {
         state.database.disconnect_account_locally(&email)?;
     } else {
         state.database.remove_account(&email)?;
@@ -1427,24 +1369,26 @@ async fn remove_account_internal(
     result
 }
 
+/// Why "remove everywhere" is refused on a device that does not replicate.
+const NOT_SYNC_ENROLLED: &str = "Turn on cross-device sync and finish enrolling this device before removing an account everywhere";
+
 #[tauri::command]
 async fn remove_synced_mail_account(
     email: String,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let cloud = state.cloud_sync.status()?;
-    if !cloud.signed_in || !cloud.sync_entitled || !cloud.enrollment_confirmed {
-        return Err("Sign in and enable cross-device sync before removing an account everywhere".into());
+    if !state.database.cross_device_sync_enrolled()? {
+        return Err(NOT_SYNC_ENROLLED.into());
     }
-    state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase())?;
+    state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase())?;
     for task in state.database.list_tasks(Some(&email), None)? {
-        state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::Task, &task.id)?;
+        state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::Task, &task.id)?;
     }
     for split in state.database.list_split_inboxes()?.into_iter().filter(|split| split.account_id == email) {
-        state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::SplitInbox, &split.id)?;
+        state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::SplitInbox, &split.id)?;
     }
-    state.cloud_sync.sync_once().await?;
+    state.replicated_sync.sync_once().await?;
     remove_account_internal(email, state, app, true).await
 }
 
@@ -1505,7 +1449,7 @@ async fn reconnect_account(
     // A completed reconnect means credentials were accepted *and* the first
     // mailbox synchronization finished (or returned a useful error).
     service.sync().await?;
-    queue_mail_account(&state, &account)?;
+    record_mail_account(&state, &account)?;
     Ok(account)
 }
 
@@ -1533,7 +1477,7 @@ async fn add_calendar_account(state: State<'_, AppState>) -> Result<CalendarAcco
         .into_iter()
         .find(|account| account.email == email)
         .ok_or_else(|| "Calendar account was not saved".to_string())?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email}), None)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email}), None)?;
     Ok(account)
 }
 
@@ -1552,7 +1496,7 @@ async fn reconnect_calendar_account(
         .into_iter()
         .find(|account| account.email == email)
         .ok_or_else(|| "Calendar account was not saved".to_string())?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email}), None)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email}), None)?;
     Ok(account)
 }
 
@@ -1686,7 +1630,7 @@ async fn set_calendar_selection(
     state
         .database
         .set_calendar_selection(&account_id, &calendar_ids)?;
-    queue_cloud_value(
+    record_synced_value(
         &state,
         threestrands_sync_protocol::EntityType::CalendarSelection,
         &account_id.to_ascii_lowercase(),
@@ -1703,8 +1647,7 @@ async fn set_calendar_selection(
 fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     config.calendar_account(&email).disconnect()?;
-    let cloud = state.cloud_sync.status()?;
-    if cloud.signed_in && cloud.sync_entitled && cloud.enrollment_confirmed {
+    if state.database.cross_device_sync_enrolled()? {
         database_result(state.database.disconnect_calendar_account_locally(&email))
     } else {
         database_result(state.database.remove_calendar_account(&email))
@@ -1713,12 +1656,11 @@ fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<
 
 #[tauri::command]
 async fn remove_synced_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
-    let cloud = state.cloud_sync.status()?;
-    if !cloud.signed_in || !cloud.sync_entitled || !cloud.enrollment_confirmed {
-        return Err("Sign in and enable cross-device sync before removing an account everywhere".into());
+    if !state.database.cross_device_sync_enrolled()? {
+        return Err(NOT_SYNC_ENROLLED.into());
     }
-    state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase())?;
-    state.cloud_sync.sync_once().await?;
+    state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase())?;
+    state.replicated_sync.sync_once().await?;
     let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
     config.calendar_account(&email).disconnect()?;
     database_result(state.database.remove_calendar_account(&email))
@@ -1860,7 +1802,7 @@ fn set_account_color(
 ) -> Result<(), String> {
     state.database.set_account_color(&email, &color)?;
     let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
         &serde_json::json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
         Some(std::collections::BTreeSet::from(["color".to_string()])))
 }
@@ -1875,7 +1817,7 @@ fn set_account_display_name(
         .database
         .set_account_display_name(&email, display_name.as_deref())?;
     let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
         &serde_json::json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
         Some(std::collections::BTreeSet::from(["displayName".to_string()])))
 }
@@ -1884,7 +1826,7 @@ fn set_account_display_name(
 fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
     state.database.reorder_accounts(&emails)?;
     for account in state.database.list_accounts()? {
-        queue_cloud_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &account.email.to_ascii_lowercase(),
+        record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &account.email.to_ascii_lowercase(),
             &serde_json::json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
             Some(std::collections::BTreeSet::from(["sortOrder".to_string()])))?;
     }
@@ -1924,7 +1866,7 @@ fn create_split_inbox(
         &request.match_value,
         &request.account_id,
     )?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item, None)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item, None)?;
     Ok(item)
 }
 
@@ -1934,7 +1876,7 @@ fn update_split_inbox(
     state: State<'_, AppState>,
 ) -> Result<SplitInbox, String> {
     let item = state.database.update_split_inbox(&request.id, &request.name)?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item,
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item,
         Some(std::collections::BTreeSet::from(["name".to_string()])))?;
     Ok(item)
 }
@@ -1942,8 +1884,8 @@ fn update_split_inbox(
 #[tauri::command]
 fn delete_split_inbox(id: String, state: State<'_, AppState>) -> Result<(), String> {
     state.database.delete_split_inbox(&id)?;
-    state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::SplitInbox, &id)?;
-    kick_cloud_sync(&state);
+    state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::SplitInbox, &id)?;
+    kick_replicated_sync(&state);
     Ok(())
 }
 
@@ -1951,7 +1893,7 @@ fn delete_split_inbox(id: String, state: State<'_, AppState>) -> Result<(), Stri
 fn reorder_split_inboxes(ids: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
     state.database.reorder_split_inboxes(&ids)?;
     for item in state.database.list_split_inboxes()? {
-        queue_cloud_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item,
+        record_synced_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item,
             Some(std::collections::BTreeSet::from(["sortOrder".to_string()])))?;
     }
     Ok(())
@@ -1978,7 +1920,7 @@ fn create_snippet(
     state: State<'_, AppState>,
 ) -> Result<Snippet, String> {
     let item = state.database.create_snippet(&request.name, &request.body)?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Snippet, &item.id, &item, None)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::Snippet, &item.id, &item, None)?;
     Ok(item)
 }
 
@@ -1990,7 +1932,7 @@ fn update_snippet(
     let item = state
         .database
         .update_snippet(&request.id, &request.name, &request.body)?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Snippet, &item.id, &item,
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::Snippet, &item.id, &item,
         Some(std::collections::BTreeSet::from(["name".to_string(), "body".to_string()])))?;
     Ok(item)
 }
@@ -1998,8 +1940,8 @@ fn update_snippet(
 #[tauri::command]
 fn delete_snippet(id: String, state: State<'_, AppState>) -> Result<(), String> {
     state.database.delete_snippet(&id)?;
-    state.database.enqueue_cloud_deletion(threestrands_sync_protocol::EntityType::Snippet, &id)?;
-    kick_cloud_sync(&state);
+    state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::Snippet, &id)?;
+    kick_replicated_sync(&state);
     Ok(())
 }
 
@@ -2058,7 +2000,7 @@ fn get_retention_days(state: State<'_, AppState>) -> Result<Option<i64>, String>
 #[tauri::command]
 fn set_retention_days(days: Option<i64>, state: State<'_, AppState>) -> Result<(), String> {
     state.database.set_retention_days(days)?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Retention, "mail",
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::Retention, "mail",
         &serde_json::json!({"days":days}), None)
 }
 
@@ -2265,7 +2207,7 @@ fn list_tasks(
 #[tauri::command]
 fn create_task(request: CreateTaskRequest, state: State<'_, AppState>) -> Result<ThreadTask, String> {
     let task = state.database.create_task(&request)?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task, None)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task, None)?;
     Ok(task)
 }
 
@@ -2281,7 +2223,7 @@ fn update_task(request: UpdateTaskRequest, state: State<'_, AppState>) -> Result
     if request.repeat_interval_days.is_some() { fields.insert("repeatIntervalDays".to_string()); }
     fields.insert("updatedAt".to_string());
     let task = state.database.update_task(&request)?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task, Some(fields))?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task, Some(fields))?;
     Ok(task)
 }
 
@@ -2293,7 +2235,7 @@ fn set_task_status(
     state: State<'_, AppState>,
 ) -> Result<ThreadTask, String> {
     let task = state.database.set_task_status(&id, &status, &source)?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
         Some(std::collections::BTreeSet::from(["status".to_string(), "completionSource".to_string(), "completedAt".to_string(), "updatedAt".to_string()])))?;
     Ok(task)
 }
@@ -2301,7 +2243,7 @@ fn set_task_status(
 #[tauri::command]
 fn record_follow_up(id: String, state: State<'_, AppState>) -> Result<ThreadTask, String> {
     let task = state.database.record_follow_up(&id)?;
-    queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
         Some(std::collections::BTreeSet::from(["dueValue".to_string(), "waitAfter".to_string(), "completionSource".to_string(), "completedAt".to_string(), "updatedAt".to_string()])))?;
     Ok(task)
 }
@@ -2311,7 +2253,7 @@ fn reconcile_tasks(state: State<'_, AppState>) -> Result<usize, String> {
     let count = state.database.reconcile_waiting_tasks()?;
     if count > 0 {
         for task in state.database.list_tasks(None, None)? {
-            queue_cloud_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
+            record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
                 Some(std::collections::BTreeSet::from(["status".to_string(), "completionSource".to_string(), "completedAt".to_string(), "updatedAt".to_string()])))?;
         }
     }
@@ -2377,7 +2319,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let (opened_database, recovery) =
         db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
     let database = Arc::new(opened_database);
-    let cloud_sync = cloud_sync::CloudSync::new(database.clone())?;
     let recovery = match recovery {
         db::RecoveryOutcome::Clean => None,
         other => Some(other),
@@ -2410,12 +2351,10 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
         worker.run().await;
     });
-    cloud_sync.clone().spawn(app.handle().clone(), reconcile_cloud_account_registry);
     let replicated_sync = replicated_sync::ReplicatedSync::new(database.clone());
-    replicated_sync.clone().spawn(app.handle().clone());
+    replicated_sync.clone().spawn(app.handle().clone(), reconcile_account_registry);
     app.manage(AppState {
         database,
-        cloud_sync,
         replicated_sync,
         auth_config,
         accounts,
@@ -2569,20 +2508,9 @@ fn startup_account_registry(
 /// Every IPC command the frontend may invoke, grouped by feature area.
 fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
-        // Cloud account and cloud sync
-        cloud_account_status,
-        cloud_sign_in,
-        cloud_sign_out,
-        cloud_delete_account,
-        cloud_devices,
-        cloud_revoke_device,
-        cloud_confirm_enrollment,
-        cloud_retry_sync,
-        cloud_conflicts,
-        cloud_resolve_conflict,
-        cloud_synced_preferences,
-        cloud_update_preferences,
         // Replicated (peer) sync
+        synced_preferences,
+        update_synced_preferences,
         replicated_sync_enabled,
         replicated_sync_status,
         replicated_sync_beta_enabled,

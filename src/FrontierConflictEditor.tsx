@@ -16,9 +16,7 @@ export type FrontierConflict = {
 /**
  * Resolves a field-level conflict from the replicated-sync operation graph:
  * an N-way choice among every operation still in the field's frontier,
- * generalizing the legacy two-way cloud/device conflict editor (see
- * `CloudConflictEditor` in `App.tsx`) to however many concurrent writers
- * actually raced. Resolving picks one candidate's value; the caller emits
+ * one per concurrent writer that actually raced. Resolving picks one candidate's value; the caller emits
  * the resulting operation with `parents` set to the entire current
  * frontier, per the sync protocol's conflict-resolution contract.
  *

@@ -79,22 +79,7 @@ import {
 } from "./aiSettings";
 import { getRetentionDays, setRetentionDays, RETENTION_OPTIONS } from "./retentionSettings";
 import { exportSettings, importSettings, type SettingsImportResult } from "./userPreferences";
-import {
-  cloudAccountStatus,
-  cloudConflicts,
-  cloudDeleteAccount,
-  cloudDevices,
-  cloudRevokeDevice,
-  cloudSignIn,
-  cloudSignOut,
-  confirmCloudEnrollment,
-  queuePortablePreferences,
-  resolveCloudConflict,
-  retryCloudSync,
-  type CloudAccountStatus,
-  type CloudConflict,
-  type CloudDevice,
-} from "./cloudAccount";
+import { queuePortablePreferences } from "./syncedPreferences";
 import {
   replicatedSyncAddFolder,
   replicatedSyncAddIpfsRpc,
@@ -128,7 +113,7 @@ import { FrontierConflictEditor } from "./FrontierConflictEditor";
 import { moveItem, useLiveStatus, useSettingsOperation } from "./settingsOperations";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
-export type SettingsSection = "cloudAccount" | "replicatedSync" | "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
+export type SettingsSection = "replicatedSync" | "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
 function recoveryStatusMessage(recovery: RecoveryStatus): string {
   switch (recovery.kind) {
@@ -277,7 +262,6 @@ const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "In
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and reads.", keywords: "theme light dark font size family" },
   { id: "reading", label: "Reading", group: "General", description: "Control what happens when you open a conversation.", keywords: "mark read delay conversation" },
-  { id: "cloudAccount", label: "Three Strands Account", group: "Accounts", description: "Manage your profile, devices, and cross-device sync.", keywords: "cloud profile devices sign in sync" },
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail sender name color reconnect disconnect" },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection" },
   { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings" },
@@ -480,7 +464,6 @@ export function Settings({
             </div>
           ) : (
             <>
-          {section === "cloudAccount" ? <CloudAccountSettings /> : null}
           {section === "replicatedSync" ? <ReplicatedSyncSettings /> : null}
           {section === "appearance" ? (
             <AppearanceSettings
@@ -566,98 +549,6 @@ export function Settings({
         </div>
       </div>
     </Modal>
-  );
-}
-
-function CloudAccountSettings() {
-  const [status, setStatus] = useState<CloudAccountStatus | null>(null);
-  const [devices, setDevices] = useState<CloudDevice[]>([]);
-  const [conflicts, setConflicts] = useState<CloudConflict[]>([]);
-  const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
-
-  const refresh = useCallback(async () => {
-    const next = await cloudAccountStatus();
-    setStatus(next);
-    if (next.signedIn) {
-      const [nextDevices, nextConflicts] = await Promise.all([
-        cloudDevices().catch(() => []),
-        next.syncEntitled ? cloudConflicts().catch(() => []) : Promise.resolve([]),
-      ]);
-      setDevices(nextDevices);
-      setConflicts(nextConflicts);
-    } else {
-      setDevices([]);
-      setConflicts([]);
-    }
-  }, []);
-
-  const { busy, error: message, setError: setMessage, act } = useSettingsOperation(refresh);
-  const reportError = useCallback((reason: unknown) => setMessage(errorMessage(reason)), [setMessage]);
-  useLiveStatus("cloud-sync-status", refresh, reportError);
-
-  if (!status) return <section className="settings-section" aria-label="Three Strands Account"><p className="settings-hint">Loading account status…</p></section>;
-  if (!status.configured) {
-    return (
-      <section className="settings-section" aria-label="Three Strands Account">
-        <h3>Three Strands Account</h3>
-        <p className="settings-hint">This build has no Three Strands service configured. Everything continues to work locally without an account.</p>
-      </section>
-    );
-  }
-  if (!status.signedIn) {
-    return (
-      <section className="settings-section" aria-label="Three Strands Account">
-        <h3>Use Three Strands on Multiple Computers</h3>
-        <p className="settings-hint">Sign in separately from your mail accounts. Mail, drafts, attachments, OAuth tokens, and AI keys are never uploaded.</p>
-        <button type="button" className="primary-action" disabled={busy} onClick={() => act(cloudSignIn)}>{busy ? "Waiting for Google…" : "Sign in with Google"}</button>
-        {message ? <p role="status" className="settings-hint">{message}</p> : null}
-      </section>
-    );
-  }
-
-  return (
-    <section className="settings-section accounts-manager" aria-label="Three Strands Account">
-      <div className="accounts-manager-header">
-        <div><h3>{status.profile?.displayName ?? status.profile?.email}</h3><p className="settings-hint">{status.profile?.email}</p></div>
-        <button type="button" className="account-action-button" disabled={busy} onClick={() => act(cloudSignOut)}>Sign out</button>
-      </div>
-      {!status.syncEntitled ? (
-        <div className="accounts-config-notice"><strong>Sync is not enabled for this account</strong><p>Your account is ready, but it has not received a beta sync entitlement. Local features remain available.</p></div>
-      ) : !status.enrollmentConfirmed ? (
-        <div className="accounts-config-notice">
-          <strong>Review what will be synchronized</strong>
-          <p>Tasks (including subject snapshots and evidence), snippets, Split Inboxes, mail and calendar account metadata, calendar selections, retention, and portable preferences will be readable by the Three Strands service.</p>
-          <p>Mail bodies, drafts, attachments, provider tokens, AI keys, crash reports, and device layout stay on this computer. Existing local collections are merged without deletion; cloud portable preferences win on an already-enrolled account.</p>
-          <button type="button" className="primary-action" disabled={busy} onClick={() => act(confirmCloudEnrollment)}>Enable automatic sync</button>
-        </div>
-      ) : (
-        <>
-          <dl className="sync-details">
-            <dt>Status</dt><dd>{status.error ? "Needs attention" : status.pendingOperations ? "Synchronizing" : "Up to date"}</dd>
-            <dt>Last successful sync</dt><dd>{status.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Not yet"}</dd>
-            <dt>Pending changes</dt><dd>{status.pendingOperations}</dd>
-            <dt>Conflicts</dt><dd>{status.conflictCount}</dd>
-          </dl>
-          {status.error ? <div className="accounts-config-notice"><strong>Synchronization failed</strong><p>{status.error}</p><button type="button" className="account-action-button" disabled={busy} onClick={() => act(retryCloudSync)}>Retry now</button></div> : null}
-          {conflicts.length ? <div><h3>Resolve Conflicts</h3>{conflicts.map((conflict) => <CloudConflictEditor key={conflict.id} conflict={conflict} disabled={busy} onResolve={(payload, deleted) => act(() => resolveCloudConflict(conflict.id, conflict.currentVersion, payload, deleted))} />)}</div> : null}
-          <h3>Signed-In Devices</h3>
-          <ul className="accounts-list">{devices.map((device) => <li className="account-card" key={device.id}><div className="account-card-row"><div className="account-card-identity"><strong>{device.name}{device.current ? " · This device" : ""}</strong><span className="account-card-email">Last active {new Date(device.lastSeenAt).toLocaleString()}</span></div><button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => act(() => cloudRevokeDevice(device.id))}>{device.current ? "Sign out" : "Revoke"}</button></div></li>)}</ul>
-        </>
-      )}
-      <h3>Delete Cloud Account</h3>
-      <p className="settings-hint">Deletes synchronized cloud data and sessions. Local data remains on this computer; encrypted backups expire according to the service retention policy.</p>
-      <button type="button" className="account-action-button danger-action" disabled={busy} aria-expanded={confirmDeleteAccount} onClick={() => setConfirmDeleteAccount(true)}>Delete cloud account…</button>
-      {confirmDeleteAccount ? (
-        <div className="settings-inline-confirm" role="group" aria-label="Delete cloud account confirmation">
-          <p><strong>Delete synchronized cloud data and sessions?</strong><br />Local data on this computer remains. This cloud data cannot be recovered after backup retention expires.</p>
-          <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={() => setConfirmDeleteAccount(false)}>Cancel</button>
-            <button type="button" className="danger-action" disabled={busy} onClick={() => { setConfirmDeleteAccount(false); act(cloudDeleteAccount); }}>Delete cloud account</button>
-          </span>
-        </div>
-      ) : null}
-      {message ? <p role="status" className="settings-hint">{message}</p> : null}
-    </section>
   );
 }
 
@@ -1068,28 +959,6 @@ function ReplicatedSyncSettings() {
 
       {message ? <p role="status" className="settings-hint">{message}</p> : null}
     </section>
-  );
-}
-
-function CloudConflictEditor({ conflict, disabled, onResolve }: { conflict: CloudConflict; disabled: boolean; onResolve(payload: Record<string, unknown> | null, deleted: boolean): void }) {
-  const fields = conflict.overlappingFields.includes("*") ? ["*"] : conflict.overlappingFields;
-  const [choices, setChoices] = useState<Record<string, "cloud" | "device">>(() => Object.fromEntries(fields.map((field) => [field, "cloud"])));
-  const resolve = () => {
-    if (fields.includes("*")) {
-      const useDevice = choices["*"] === "device";
-      onResolve(useDevice ? conflict.devicePatch : conflict.cloudPayload, useDevice ? conflict.deviceDeleted : conflict.cloudDeleted);
-      return;
-    }
-    const merged = { ...(conflict.cloudPayload ?? {}) };
-    for (const field of fields) if (choices[field] === "device" && conflict.devicePatch && field in conflict.devicePatch) merged[field] = conflict.devicePatch[field];
-    onResolve(merged, false);
-  };
-  return (
-    <div className="accounts-config-notice">
-      <strong>{conflict.entityType.replaceAll("_", " ")} conflict</strong>
-      {fields.map((field) => <fieldset key={field} className="settings-field"><legend>{field === "*" ? "Deletion and edit overlap" : field}</legend><label><input type="radio" name={`${conflict.id}-${field}`} checked={choices[field] === "cloud"} onChange={() => setChoices((value) => ({ ...value, [field]: "cloud" }))} /> Cloud: {JSON.stringify(field === "*" ? conflict.cloudPayload : conflict.cloudPayload?.[field])}</label><label><input type="radio" name={`${conflict.id}-${field}`} checked={choices[field] === "device"} onChange={() => setChoices((value) => ({ ...value, [field]: "device" }))} /> This device: {conflict.deviceDeleted ? "Delete" : JSON.stringify(field === "*" ? conflict.devicePatch : conflict.devicePatch?.[field])}</label></fieldset>)}
-      <button type="button" className="primary-action" disabled={disabled} onClick={resolve}>Resolve conflict</button>
-    </div>
   );
 }
 

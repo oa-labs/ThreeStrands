@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 30;
+pub(crate) const LATEST_VERSION: i64 = 31;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -767,6 +767,44 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
         tx.pragma_update(None, "user_version", 30).map_err(error)?;
     }
+    if version < 31 {
+        // The retired Three Strands account service's session, outbox,
+        // server-version, and conflict tables have no reader left. Only
+        // materialized portable preferences are still in use; they move to
+        // a name that no longer implies a cloud service.
+        let has_legacy_preferences: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='cloud_preferences')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(error)?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS synced_preferences (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );",
+        )
+        .map_err(error)?;
+        if has_legacy_preferences {
+            tx.execute_batch(
+                "INSERT OR IGNORE INTO synced_preferences(key,value,updated_at)
+                   SELECT key,value,updated_at FROM cloud_preferences;
+                 DROP TABLE cloud_preferences;",
+            )
+            .map_err(error)?;
+        }
+        tx.execute_batch(
+            "DROP INDEX IF EXISTS cloud_sync_outbox_sequence;
+             DROP TABLE IF EXISTS cloud_sync_outbox;
+             DROP TABLE IF EXISTS cloud_sync_metadata;
+             DROP TABLE IF EXISTS cloud_sync_conflicts;
+             DROP TABLE IF EXISTS cloud_account_state;",
+        )
+        .map_err(error)?;
+        tx.pragma_update(None, "user_version", 31).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -896,6 +934,64 @@ mod tests {
         // still predates it.
         connection.pragma_update(None, "user_version", 28).unwrap();
         super::migrate(&mut connection).unwrap();
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
+    }
+
+    fn table_exists(connection: &Connection, table: &str) -> bool {
+        connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn v31_drops_the_retired_account_service_tables_and_keeps_synced_preferences() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        // Rebuild the v30 shape: the legacy tables, with a materialized
+        // preference row that must survive the upgrade.
+        connection
+            .execute_batch(
+                "DROP TABLE synced_preferences;
+                 CREATE TABLE cloud_account_state (singleton INTEGER PRIMARY KEY, device_id TEXT NOT NULL);
+                 CREATE TABLE cloud_sync_metadata (entity_type TEXT, entity_id TEXT);
+                 CREATE TABLE cloud_sync_outbox (operation_id TEXT PRIMARY KEY, local_sequence INTEGER);
+                 CREATE INDEX cloud_sync_outbox_sequence ON cloud_sync_outbox(local_sequence);
+                 CREATE TABLE cloud_sync_conflicts (id TEXT PRIMARY KEY);
+                 CREATE TABLE cloud_preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+                 INSERT INTO cloud_preferences VALUES ('portable', '{\"theme\":\"dark\"}', '2026-09-01T00:00:00Z');
+                 PRAGMA user_version=30;",
+            )
+            .unwrap();
+
+        super::migrate(&mut connection).unwrap();
+
+        for table in [
+            "cloud_account_state",
+            "cloud_sync_metadata",
+            "cloud_sync_outbox",
+            "cloud_sync_conflicts",
+            "cloud_preferences",
+        ] {
+            assert!(!table_exists(&connection, table), "{table} should be dropped");
+        }
+        let value: String = connection
+            .query_row("SELECT value FROM synced_preferences WHERE key='portable'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "{\"theme\":\"dark\"}");
+    }
+
+    #[test]
+    fn re_running_v31_after_it_already_applied_does_not_fail() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.pragma_update(None, "user_version", 30).unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert!(table_exists(&connection, "synced_preferences"));
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
         assert_eq!(version, super::LATEST_VERSION);
     }

@@ -972,6 +972,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cross_device_sync_counts_as_enrolled_only_while_the_beta_is_on() {
+        let database = Database::open_memory();
+        let identity = test_identity(&database);
+        let epoch_keys = FakeEpochKeyStore::default();
+        begin_genesis(&database, &identity, &epoch_keys, &fake_transports("genesis")).await.unwrap();
+
+        database.set_beta_features_enabled(true).unwrap();
+        assert!(database.cross_device_sync_enrolled().unwrap());
+        // Turning the beta off returns account removal to local-only
+        // semantics even though the enrollment itself is kept.
+        database.set_beta_features_enabled(false).unwrap();
+        assert!(!database.cross_device_sync_enrolled().unwrap());
+    }
+
+    #[tokio::test]
     async fn two_device_peer_enrollment_lets_the_new_device_push_and_the_first_pull_it() {
         let database_a = Database::open_memory();
         let database_b = Database::open_memory();

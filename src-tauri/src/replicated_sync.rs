@@ -13,13 +13,11 @@
 //! remote-apply path, which can reuse `threestrands_sync_core::OperationGraph`
 //! directly instead of this module's simpler SQL.
 //!
-//! Entirely inert unless [`enabled`] returns `true` (gated by the
-//! `THREESTRANDS_REPLICATED_SYNC` environment variable, unset by default):
-//! no shipped behavior changes, and no application version bump is owed for
-//! this phase. `Database::enqueue_cloud_entity` and
-//! `Database::enqueue_cloud_deletion` call into this module at the end of
-//! their existing bodies without changing their signatures, so no mutation
-//! call site in `lib.rs` changes.
+//! Entirely inert unless [`Database::replicated_sync_active`] is true (the
+//! Settings beta toggle, or the `THREESTRANDS_REPLICATED_SYNC` environment
+//! override). Mutation commands in `lib.rs` reach this module through
+//! `Database::record_local_entity_write` and
+//! `Database::record_local_entity_deletion` in `sync_projection.rs`.
 //!
 //! The rest of this module (from "Key material" on) is the Phase 3/4
 //! replicator: sealing local events, delivering them to configured
@@ -121,8 +119,8 @@ impl Database {
 /// contract: "Materialize parent entities before dependent entities... A
 /// calendar selection that arrives before its calendar account remains
 /// pending and is retried after the account materializes." Reuses the exact
-/// same dependency check `cloud_sync::upsert_cloud_calendar_selection`
-/// already performs for the legacy system. Used by `materialize_one_entity`
+/// same dependency check `sync_projection::upsert_synced_calendar_selection`
+/// performs. Used by `materialize_one_entity`
 /// while projecting a pulled remote event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectionReadiness {
@@ -141,9 +139,8 @@ pub struct FrontierConflictCandidate {
 }
 
 /// One field whose frontier currently has more than one member: a genuine
-/// concurrent write, not arrival-order noise. The existing (legacy)
-/// conflict editor's replacement is a review/resolution UI over exactly
-/// these — see [`Database::list_frontier_conflicts`] and
+/// concurrent write, not arrival-order noise. The conflict review UI works
+/// over exactly these — see [`Database::list_frontier_conflicts`] and
 /// [`Database::resolve_frontier_conflict`].
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -163,8 +160,8 @@ impl Database {
     /// already-authenticated remote write can reuse the same materializer
     /// path this module will grow without creating an echo.
     ///
-    /// `fields` and `payload` are exactly what `enqueue_cloud_entity`
-    /// already computes for the legacy outbox, reused as-is.
+    /// `fields` names the changed fields; each one's value is read from the
+    /// complete `payload` (see `Database::record_local_entity_write`).
     pub fn record_replicated_write(
         &self,
         entity_type: EntityType,
@@ -252,14 +249,13 @@ impl Database {
     /// leave that one entity permanently un-enqueued, since nothing else
     /// ever retries a "local row exists, graph never heard about it" gap.
     ///
-    /// This sweep closes it the same way `confirm_cloud_enrollment` already
-    /// backfills the legacy outbox: enumerate every local entity and enqueue
+    /// This sweep closes it: enumerate every local entity and enqueue
     /// any one the graph has never seen. A no-op for anything already
     /// recorded, so it is safe and cheap to run on every sync cycle, not
     /// just at startup — `ReplicatedSync::sync_once` does exactly that.
     /// Portable preferences are intentionally not covered here: unlike
     /// every other entity type, their only local write *is* the enqueue
-    /// call itself (see `cloud_update_preferences`), so there is no
+    /// call itself (see `update_synced_preferences`), so there is no
     /// separate app-table mutation for a crash to land between.
     ///
     /// Does not check [`enabled`] itself — like `record_replicated_write`,
@@ -1880,9 +1876,9 @@ pub struct ReplicatedSyncTransportStatus {
     pub storage_bytes: Option<u64>,
 }
 
-/// Owns the replicated-sync background cycle: mirrors `CloudSync`'s shape
-/// (a cheaply `Clone`-able handle held directly in `AppState`, constructed
-/// once, cloned into commands and the background task).
+/// Owns the replicated-sync background cycle: a cheaply `Clone`-able handle
+/// held directly in `AppState`, constructed once, cloned into commands and
+/// the background task.
 #[derive(Clone)]
 pub struct ReplicatedSync {
     database: Arc<Database>,
@@ -2078,13 +2074,18 @@ impl ReplicatedSync {
     /// Spawns the periodic push/pull loop. Only ever does real work when
     /// [`enabled`] is true and at least one transport is configured;
     /// otherwise `sync_once` returns immediately, so this is cheap to
-    /// spawn unconditionally at startup.
-    pub fn spawn(self, handle: tauri::AppHandle) {
+    /// spawn unconditionally at startup. `on_synced` runs after every
+    /// successful cycle, so the app can react to entities a pull removed.
+    pub fn spawn<F>(self, handle: tauri::AppHandle, on_synced: F)
+    where
+        F: Fn(&tauri::AppHandle) + Send + Sync + 'static,
+    {
         tauri::async_runtime::spawn(async move {
             loop {
                 tokio::time::sleep(SYNC_INTERVAL).await;
-                if let Err(error) = self.sync_once().await {
-                    log::warn!(target: "replicated_sync", "periodic sync failed: {error}");
+                match self.sync_once().await {
+                    Ok(()) => on_synced(&handle),
+                    Err(error) => log::warn!(target: "replicated_sync", "periodic sync failed: {error}"),
                 }
                 use tauri::Emitter;
                 let _ = handle.emit("replicated-sync-status", ());

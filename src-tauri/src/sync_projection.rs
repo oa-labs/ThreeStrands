@@ -1,0 +1,339 @@
+//! The boundary between application tables and the replicated-sync
+//! operation graph, in both directions:
+//!
+//! - Local mutations call [`Database::record_local_entity_write`] /
+//!   [`Database::record_local_entity_deletion`] after their app-table write.
+//!   Both are no-ops unless replicated sync is active on this device, so a
+//!   local-only installation records nothing that could leave it.
+//! - Pulled remote state reaches application tables only through
+//!   [`Database::materialize_entity`].
+
+use std::collections::BTreeSet;
+
+use chrono::Utc;
+use keyring::Entry;
+use rusqlite::{params, OptionalExtension};
+use serde_json::{json, Value};
+use threestrands_sync_protocol::EntityType;
+
+use crate::{
+    db::{Database, DbResult},
+    enrollment::EnrollmentStatus,
+    error_text::display,
+    models::{Account, Snippet, SplitInbox, ThreadTask},
+};
+
+impl Database {
+    /// Whether local changes on this device currently reach other devices:
+    /// replicated sync is active *and* this device holds the space's active
+    /// epoch. Account removal uses this to decide whether a local disconnect
+    /// must keep the synchronized account catalog entry, and whether "remove
+    /// everywhere" can be honored at all.
+    pub fn cross_device_sync_enrolled(&self) -> Result<bool, String> {
+        Ok(self.replicated_sync_active()?
+            && matches!(self.enrollment_status()?, EnrollmentStatus::Enrolled { .. }))
+    }
+
+    /// Records a local creation or update of a synchronized entity. `fields`
+    /// names the fields this write changed; `None` means every top-level
+    /// field of `payload` (a full write).
+    pub fn record_local_entity_write(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+        payload: Value,
+        fields: Option<BTreeSet<String>>,
+    ) -> Result<(), String> {
+        if !self.replicated_sync_active()? {
+            return Ok(());
+        }
+        let fields = fields.unwrap_or_else(|| {
+            payload
+                .as_object()
+                .map(|value| value.keys().cloned().collect())
+                .unwrap_or_default()
+        });
+        self.record_replicated_write(entity_type, entity_id, &fields, &payload)
+    }
+
+    /// Records a local deletion of a synchronized entity.
+    pub fn record_local_entity_deletion(&self, entity_type: EntityType, entity_id: &str) -> Result<(), String> {
+        if !self.replicated_sync_active()? {
+            return Ok(());
+        }
+        self.record_replicated_deletion(entity_type, entity_id)
+    }
+
+    /// The materialization boundary from the operation graph to application
+    /// tables: a one-way function from a resolved, complete entity value to
+    /// a table write. The only place that knows how to turn a
+    /// `(entity_type, entity_id, payload, deleted)` triple into local state.
+    pub(crate) fn materialize_entity(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+        payload: Option<&Value>,
+        deleted: bool,
+    ) -> DbResult<()> {
+        if deleted {
+            match entity_type {
+                EntityType::Task => self.delete_synced_row("DELETE FROM tasks WHERE id=?1", entity_id)?,
+                EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
+                EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
+                EntityType::MailAccount => {
+                    clear_provider_credential("app.threestrands.mail", entity_id)?;
+                    if self.get_account(entity_id)?.is_some() {
+                        self.remove_account(entity_id)?;
+                    }
+                }
+                EntityType::CalendarAccount => {
+                    clear_provider_credential("app.threestrands.calendar", entity_id)?;
+                    if let Err(error) = self.remove_calendar_account(entity_id) {
+                        log::warn!(target: "replicated_sync", "removing a synced calendar account failed: {error}");
+                    }
+                }
+                _ => {}
+            }
+        } else if let Some(payload) = payload {
+            match entity_type {
+                EntityType::Task => {
+                    self.upsert_synced_task(serde_json::from_value(payload.clone()).map_err(display)?)?
+                }
+                EntityType::Snippet => {
+                    self.upsert_synced_snippet(serde_json::from_value(payload.clone()).map_err(display)?)?
+                }
+                EntityType::SplitInbox => {
+                    self.upsert_synced_split(serde_json::from_value(payload.clone()).map_err(display)?)?
+                }
+                EntityType::MailAccount => self.upsert_synced_account(payload)?,
+                EntityType::CalendarAccount => self.upsert_synced_calendar(payload)?,
+                EntityType::CalendarSelection => self.upsert_synced_calendar_selection(payload)?,
+                EntityType::Preferences => self.with_connection(|connection| {
+                    connection.execute(
+                        "INSERT INTO synced_preferences(key,value,updated_at) VALUES('portable',?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                        params![payload.to_string(), Utc::now().to_rfc3339()],
+                    )?;
+                    Ok(())
+                })?,
+                EntityType::Retention => self.set_retention_days(payload.get("days").and_then(Value::as_i64))?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Runs one single-id `DELETE` for a synced deletion.
+    fn delete_synced_row(&self, sql: &str, entity_id: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(sql, [entity_id])?;
+            Ok(())
+        })
+    }
+
+    fn upsert_synced_task(&self, task: ThreadTask) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
+                params![
+                    task.id,
+                    task.account_id,
+                    task.thread_id,
+                    task.source_message_id,
+                    task.subject_snapshot,
+                    task.title,
+                    task.notes,
+                    task.kind,
+                    task.due_kind,
+                    task.due_value,
+                    task.time_zone,
+                    task.repeat_interval_days,
+                    task.status,
+                    task.completion_source,
+                    task.evidence_text,
+                    task.wait_after,
+                    task.created_at,
+                    task.updated_at,
+                    task.completed_at
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_synced_snippet(&self, item: Snippet) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO snippets(id,name,body,created_at,updated_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET name=excluded.name,body=excluded.body,updated_at=excluded.updated_at",
+                params![item.id, item.name, item.body, item.created_at, Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_synced_split(&self, item: SplitInbox) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO split_inboxes(id,name,match_kind,match_value,sort_order,created_at,account_id,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET name=excluded.name,match_kind=excluded.match_kind,match_value=excluded.match_value,sort_order=excluded.sort_order,account_id=excluded.account_id,updated_at=excluded.updated_at",
+                params![
+                    item.id,
+                    item.name,
+                    item.match_kind,
+                    item.match_value,
+                    item.sort_order,
+                    item.created_at,
+                    item.account_id,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_synced_account(&self, value: &Value) -> DbResult<()> {
+        let item: Account = serde_json::from_value(json!({
+            "email": value["email"],
+            "displayName": value.get("displayName").cloned().unwrap_or(Value::Null),
+            "color": value["color"],
+            "status": "needs_reauth",
+            "provider": value["provider"],
+            "sortOrder": value["sortOrder"],
+            "connectedAt": Utc::now().to_rfc3339(),
+            "lastSyncedAt": null,
+        }))
+        .map_err(display)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at) VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6) ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,color=excluded.color,provider=excluded.provider,sort_order=excluded.sort_order",
+                params![item.email, item.display_name, item.color, item.provider, item.sort_order, item.connected_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_synced_calendar(&self, value: &Value) -> DbResult<()> {
+        let email = value.get("email").and_then(Value::as_str).ok_or("Invalid calendar account")?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO calendar_accounts(email,connected_at,status) VALUES(?1,?2,'needs_reauth') ON CONFLICT(email) DO NOTHING",
+                params![email, Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn upsert_synced_calendar_selection(&self, value: &Value) -> DbResult<()> {
+        let email = value.get("accountId").and_then(Value::as_str).ok_or("Invalid calendar selection")?;
+        let ids = value
+            .get("calendarIds")
+            .and_then(Value::as_array)
+            .ok_or("Invalid calendar selection")?
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if self.list_calendar_accounts()?.iter().any(|a| a.email == email) {
+            self.set_calendar_selection(email, &ids)?;
+        }
+        Ok(())
+    }
+
+    /// The most recently materialized portable preferences, if any device
+    /// has synchronized them yet.
+    pub fn synced_preferences(&self) -> Result<Option<Value>, String> {
+        let value = self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT value FROM synced_preferences WHERE key='portable'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?)
+        })?;
+        value.map(|value| serde_json::from_str(&value).map_err(display)).transpose()
+    }
+}
+
+fn clear_provider_credential(service: &str, key: &str) -> Result<(), String> {
+    match Entry::new(service, key).map_err(display)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(display(error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn operation_count(db: &Database, entity_id: &str) -> i64 {
+        db.connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1",
+                [entity_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn inactive_replicated_sync_records_no_local_writes() {
+        let db = Database::open_memory();
+        db.record_local_entity_write(EntityType::Snippet, "one", json!({"name": "n", "body": "b"}), None)
+            .unwrap();
+        db.record_local_entity_deletion(EntityType::Snippet, "one").unwrap();
+        assert_eq!(operation_count(&db, "one"), 0);
+    }
+
+    #[test]
+    fn active_replicated_sync_records_creations_updates_and_deletions() {
+        let db = Database::open_memory();
+        db.set_beta_features_enabled(true).unwrap();
+
+        db.record_local_entity_write(EntityType::Snippet, "one", json!({"name": "n", "body": "b"}), None)
+            .unwrap();
+        // Existence marker plus one operation per field.
+        assert_eq!(operation_count(&db, "one"), 3);
+
+        // An update to an already-recorded entity replicates only its
+        // changed fields, independent of any account sign-in.
+        db.record_local_entity_write(
+            EntityType::Snippet,
+            "one",
+            json!({"name": "renamed", "body": "b"}),
+            Some(BTreeSet::from(["name".to_string()])),
+        )
+        .unwrap();
+        assert_eq!(operation_count(&db, "one"), 4);
+
+        db.record_local_entity_deletion(EntityType::Snippet, "one").unwrap();
+        assert_eq!(operation_count(&db, "one"), 5);
+    }
+
+    #[test]
+    fn turning_replicated_sync_off_preserves_local_workflow_data() {
+        let db = Database::open_memory();
+        db.set_beta_features_enabled(true).unwrap();
+        let snippet = db.create_snippet("Saved", "Still here").unwrap();
+        db.record_local_entity_write(EntityType::Snippet, &snippet.id, serde_json::to_value(&snippet).unwrap(), None)
+            .unwrap();
+        db.set_beta_features_enabled(false).unwrap();
+        assert_eq!(db.list_snippets().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cross_device_sync_requires_an_active_beta_and_completed_enrollment() {
+        let db = Database::open_memory();
+        assert!(!db.cross_device_sync_enrolled().unwrap());
+        db.set_beta_features_enabled(true).unwrap();
+        // Active but never enrolled: nothing can reach another device yet.
+        assert!(!db.cross_device_sync_enrolled().unwrap());
+    }
+
+    #[test]
+    fn synced_preferences_round_trip_through_materialization() {
+        let db = Database::open_memory();
+        assert_eq!(db.synced_preferences().unwrap(), None);
+        db.materialize_entity(EntityType::Preferences, "portable", Some(&json!({"theme": "dark"})), false)
+            .unwrap();
+        assert_eq!(db.synced_preferences().unwrap(), Some(json!({"theme": "dark"})));
+    }
+}

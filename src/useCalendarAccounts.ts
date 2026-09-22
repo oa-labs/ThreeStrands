@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { removeSyncedCalendarAccount } from "./cloudAccount";
+import { removeSyncedCalendarAccount } from "./replicatedSync";
 import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption } from "./domain";
 import { errorMessage, logBackgroundFailure } from "./errors";

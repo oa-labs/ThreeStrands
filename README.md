@@ -77,12 +77,13 @@ operating-system keychain. Never commit the credential value.
 3. Users can see and control what is synchronized or sent to optional services.
 4. Provider-specific behavior is isolated behind a tested capability contract.
 5. The desktop client connects directly to mail providers and requires no
-   project-operated backend for local-only use. An optional account service
-   synchronizes application-owned workflow data across devices.
+   project-operated backend. Optional, end-to-end encrypted cross-device sync
+   replicates application-owned workflow data through storage the user
+   chooses.
 
-The optional account/sync service is documented in
-[`docs/account-sync.md`](docs/account-sync.md). It never proxies ordinary mail
-access or receives provider credentials.
+Cross-device sync is documented in
+[`docs/cross-device-sync.md`](docs/cross-device-sync.md). It never carries
+mail, provider credentials, or AI keys.
 
 ## Independent implementation
 

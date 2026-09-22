@@ -1,10 +1,12 @@
-use std::collections::BTreeSet;
+//! The synchronized entity vocabulary shared by every replicated-sync crate:
+//! which application-owned entity types may cross a device boundary, and the
+//! payload contract each one must satisfy. Mail bodies, credentials, and
+//! other device-only data have no entity type here, so no sync path can
+//! carry them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const API_VERSION: &str = "v1";
-pub const MAX_OPERATIONS_PER_REQUEST: usize = 500;
 pub const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -109,155 +111,6 @@ impl std::str::FromStr for EntityType {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SyncOperation {
-    pub operation_id: String,
-    pub device_id: String,
-    pub entity_type: EntityType,
-    pub entity_id: String,
-    pub base_version: i64,
-    pub changed_fields: BTreeSet<String>,
-    pub patch: Option<Value>,
-    #[serde(default)]
-    pub deleted: bool,
-    pub local_sequence: i64,
-}
-
-impl SyncOperation {
-    pub fn validate(&self) -> Result<(), String> {
-        bounded_id("operation id", &self.operation_id)?;
-        bounded_id("device id", &self.device_id)?;
-        bounded_id("entity id", &self.entity_id)?;
-        if self.base_version < 0 || self.local_sequence < 0 {
-            return Err("Sync versions cannot be negative".to_string());
-        }
-        if self.changed_fields.is_empty() || self.changed_fields.len() > 100 {
-            return Err("A sync operation must name its changed fields".to_string());
-        }
-        if self.deleted {
-            if self.patch.is_some() || !self.changed_fields.contains("*") {
-                return Err("A deletion must use the wildcard field and no patch".to_string());
-            }
-        } else {
-            let patch = self
-                .patch
-                .as_ref()
-                .ok_or_else(|| "A sync update must include a patch".to_string())?;
-            let object = patch
-                .as_object()
-                .ok_or_else(|| "A sync patch must be an object".to_string())?;
-            if object.keys().any(|key| !self.changed_fields.contains(key)) {
-                return Err("The patch contains an undeclared changed field".to_string());
-            }
-            if self.base_version == 0 {
-                self.entity_type.validate_payload(patch)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SyncRequest {
-    pub cursor: i64,
-    #[serde(default)]
-    pub operations: Vec<SyncOperation>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncRecord {
-    pub entity_type: EntityType,
-    pub entity_id: String,
-    pub version: i64,
-    pub payload: Option<Value>,
-    pub deleted: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncConflict {
-    pub id: String,
-    pub entity_type: EntityType,
-    pub entity_id: String,
-    pub current_version: i64,
-    pub overlapping_fields: BTreeSet<String>,
-    pub cloud_payload: Option<Value>,
-    pub cloud_deleted: bool,
-    pub device_patch: Option<Value>,
-    pub device_deleted: bool,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OperationAck {
-    pub operation_id: String,
-    pub status: OperationStatus,
-    pub version: Option<i64>,
-    pub conflict_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationStatus {
-    Applied,
-    Conflict,
-    Duplicate,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncResponse {
-    pub acknowledgements: Vec<OperationAck>,
-    pub changes: Vec<SyncRecord>,
-    pub conflicts: Vec<SyncConflict>,
-    pub next_cursor: i64,
-    pub has_more: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResolveConflictRequest {
-    pub current_version: i64,
-    pub resolved_payload: Option<Value>,
-    #[serde(default)]
-    pub deleted: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Entitlement {
-    pub feature: String,
-    pub source: String,
-    pub expires_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AccountProfile {
-    pub id: String,
-    pub email: String,
-    pub display_name: Option<String>,
-    pub avatar_url: Option<String>,
-    pub entitlements: Vec<Entitlement>,
-}
-
-pub fn merge_patch(target: &mut Value, patch: &Value) -> Result<(), String> {
-    let target = target
-        .as_object_mut()
-        .ok_or_else(|| "Stored synchronized record is invalid".to_string())?;
-    let patch = patch
-        .as_object()
-        .ok_or_else(|| "A sync patch must be an object".to_string())?;
-    for (key, value) in patch {
-        target.insert(key.clone(), value.clone());
-    }
-    Ok(())
-}
-
 fn validate_preferences(object: &Map<String, Value>) -> Result<(), String> {
     if let Some(theme) = object.get("theme") {
         if !matches!(theme.as_str(), Some("light" | "dark" | "system")) {
@@ -272,13 +125,6 @@ fn validate_preferences(object: &Map<String, Value>) -> Result<(), String> {
     optional_string(object, "fontFamily", 200)?;
     optional_string(object, "aiModel", 2_048)?;
     optional_string(object, "aiEndpoint", 2_048)?;
-    Ok(())
-}
-
-fn bounded_id(label: &str, value: &str) -> Result<(), String> {
-    if value.is_empty() || value.len() > 200 || value.chars().any(char::is_control) {
-        return Err(format!("The {label} is invalid"));
-    }
     Ok(())
 }
 
@@ -331,12 +177,5 @@ mod tests {
         assert!(EntityType::Task.validate_payload(&valid).is_ok());
         let invalid = json!({ "title": "x", "kind": "action", "dueKind": "none", "status": "lost" });
         assert!(EntityType::Task.validate_payload(&invalid).is_err());
-    }
-
-    #[test]
-    fn merges_only_top_level_declared_fields() {
-        let mut target = json!({"title":"old", "notes":"keep"});
-        merge_patch(&mut target, &json!({"title":"new"})).unwrap();
-        assert_eq!(target, json!({"title":"new", "notes":"keep"}));
     }
 }
