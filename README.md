@@ -41,6 +41,7 @@ Prerequisites:
 ```sh
 pnpm install
 pnpm dev       # browser preview with fixture mail
+pnpm lint
 pnpm test
 pnpm test:e2e  # first run: pnpm exec playwright install chromium
 pnpm build

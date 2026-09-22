@@ -2,8 +2,9 @@
 use crate::{
     auth::AccountAuth,
     db::Database,
+    limits::MAX_ATTACHMENT_BYTES,
+    mime::{MimePart, RawMessage},
     provider::{DeliveryReceipt, MailProvider},
-    mime::{RawMessage, MimePart},
 };
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -22,7 +23,7 @@ use std::{
 };
 use uuid::Uuid;
 
-const MAX_BYTES: usize = 24 * 1024 * 1024; // Conservative encoded MIME limit.
+const MAX_ENCODED_MIME_BYTES: usize = 24 * 1024 * 1024;
 const UNDO_MS: i64 = 10_000;
 
 pub(crate) fn validate_retention_days(days: Option<i64>) -> Result<(), String> {
@@ -711,7 +712,7 @@ fn build_mime(
         let metadata = std::fs::metadata(&path)
             .map_err(|_| format!("Attachment missing: {}", attachment.name))?;
         size += metadata.len() as usize;
-        if size > MAX_BYTES * 3 / 4 {
+        if size > MAX_ATTACHMENT_BYTES {
             return Err("Attachments exceed the 18 MB local limit".into());
         }
         let bytes = std::fs::read(path).map_err(error)?;
@@ -726,7 +727,7 @@ fn build_mime(
         };
     }
     let raw = builder.write_to_vec().map_err(error)?;
-    if raw.len() > MAX_BYTES {
+    if raw.len() > MAX_ENCODED_MIME_BYTES {
         return Err("Encoded message exceeds the 24 MB local limit".into());
     }
     Ok(raw)
@@ -912,7 +913,7 @@ impl Correspondence {
                         }
                         let size = metadata.len();
                         if size + d.attachments.iter().map(|a| a.size).sum::<u64>()
-                            > 18 * 1024 * 1024
+                            > MAX_ATTACHMENT_BYTES as u64
                         {
                             return Err("Attachments exceed the 18 MB local limit".into());
                         }
@@ -934,7 +935,7 @@ impl Correspondence {
                         let mut bytes = Vec::new();
                         std::fs::File::open(file.path())
                             .map_err(error)?
-                            .take(18 * 1024 * 1024 + 1)
+                            .take((MAX_ATTACHMENT_BYTES + 1) as u64)
                             .read_to_end(&mut bytes)
                             .map_err(error)?;
                         if bytes.len() as u64 != size {
@@ -974,7 +975,7 @@ impl Correspondence {
                         .iter()
                         .map(|attachment| attachment.size)
                         .sum::<u64>()
-                    > 18 * 1024 * 1024
+                    > MAX_ATTACHMENT_BYTES as u64
                 {
                     return Err("Attachments exceed the 18 MB local limit".into());
                 }
@@ -1081,7 +1082,7 @@ impl Correspondence {
                         )
                         .map_err(error)?
                 };
-                if data.len() > 18 * 1024 * 1024 {
+                if data.len() > MAX_ATTACHMENT_BYTES {
                     return Err("Attachment exceeds the 18 MB local limit".into());
                 }
                 std::fs::write(self.root.join(&a.id), &data).map_err(error)?;

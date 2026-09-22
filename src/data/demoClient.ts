@@ -655,7 +655,7 @@ export const demoClient: MailClient = {
     }
     return { candidates, checkedCalendarCount: total, totalCalendarCount: total, errors: [] };
   },
-  async checkProposedTime(request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck> {
+  async checkProposedTime(_request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck> {
     const total = calendarOptions.filter((option) => option.selected).length;
     return {
       status: total > 0 ? "free" : "unverified",

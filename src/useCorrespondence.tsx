@@ -112,11 +112,11 @@ export function useCorrespondence(
     withOutboxActionGuard(id, () =>
       mailClient.recoverSend(id).then((d) => { setActiveFollowUpTaskId(d.followUpTaskId ?? null); setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
     );
-  }, [pendingOutboxActions, refresh, withOutboxActionGuard]);
+  }, [refresh, withOutboxActionGuard]);
   const reconcileSend = useCallback((id: string) => {
     if (pendingOutboxActionsRef.current.has(id)) return;
     withOutboxActionGuard(id, () => mailClient.reconcileSend(id).then(refresh).catch((e: unknown) => setError(String(e))));
-  }, [pendingOutboxActions, refresh, withOutboxActionGuard]);
+  }, [refresh, withOutboxActionGuard]);
   useEffect(() => { if (closing) document.querySelector<HTMLElement>(".exit-notice")?.focus(); }, [closing]);
   const pending = outbox.find((o) => ["undo_pending", "ready"].includes(o.state));
   const pendingId = pending?.id ?? null;

@@ -30,8 +30,6 @@ type GroupProps = {
 export function CalendarAttachmentGroup({ messageId, attachments, onError }: GroupProps) {
   const [visibleIds, setVisibleIds] = useState<Set<string> | null>(null);
   const [loadedPreviews, setLoadedPreviews] = useState<Map<string, CalendarPreview | null> | null>(null);
-  const attachmentIdsKey = attachments.map((attachment) => attachment.id).join(",");
-
   useEffect(() => {
     let active = true;
     setVisibleIds(null);
@@ -65,7 +63,7 @@ export function CalendarAttachmentGroup({ messageId, attachments, onError }: Gro
       setVisibleIds(kept);
     });
     return () => { active = false; };
-  }, [messageId, attachmentIdsKey]);
+  }, [attachments, messageId]);
 
   if (!visibleIds) {
     return (

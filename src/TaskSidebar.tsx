@@ -154,7 +154,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   useEffect(() => { onSelectedTaskChange?.(selectedTask); }, [onSelectedTaskChange, selectedTask]);
 
-  const setStatus = async (task: ThreadTask, status: "open" | "completed") => {
+  const setStatus = useCallback(async (task: ThreadTask, status: "open" | "completed") => {
     try {
       const updated = await mailClient.setTaskStatus(task.id, status);
       setTasks((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
@@ -162,7 +162,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  };
+  }, [onTasksChanged]);
 
   const moveSelection = useCallback((direction: -1 | 1) => {
     if (orderedTasks.length === 0) return;
@@ -180,7 +180,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     editSelected: () => { if (selectedTask) onEditTask?.(selectedTask); },
     completeSelected: () => { if (selectedTask?.status === "open") void setStatus(selectedTask, "completed"); },
     reopenSelected: () => { if (selectedTask?.status === "completed") void setStatus(selectedTask, "open"); },
-  }), [moveSelection, onEditTask, onOpenThread, selectedTask]);
+  }), [moveSelection, onEditTask, onOpenThread, selectedTask, setStatus]);
 
   const taskList = <div className="tasks-list">
     {grouped.map((group) => (

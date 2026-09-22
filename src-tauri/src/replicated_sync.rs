@@ -52,7 +52,7 @@ use threestrands_sync_transport::{
     TransportInstanceId,
 };
 
-use crate::db::Database;
+use crate::{backoff::retry_at, db::Database};
 
 /// The single local sync space Phase 2 supports. Multiple concurrent spaces
 /// are not a product concept yet; this is simply a stable primary key.
@@ -1185,8 +1185,13 @@ impl Database {
         error: &TransportError,
     ) -> Result<(), String> {
         let next_attempts = attempts + 1;
-        let (state, retry_at) = if error.is_retryable() && next_attempts < MAX_DELIVERY_ATTEMPTS {
-            ("pending", Some(backoff_retry_at(next_attempts)))
+        let (state, retry_timestamp) = if error.is_retryable() && next_attempts < MAX_DELIVERY_ATTEMPTS {
+            (
+                "pending",
+                Some(retry_at(
+                    next_attempts.max(0).try_into().unwrap_or(u32::MAX),
+                )),
+            )
         } else {
             ("failed", None)
         };
@@ -1194,7 +1199,7 @@ impl Database {
             .execute(
                 "UPDATE sync_deliveries SET state=?3, attempts=?4, retry_at=?5, last_error=?6
                  WHERE cid=?1 AND transport_instance_id=?2",
-                params![cid, transport_instance_id, state, next_attempts, retry_at, error.to_string()],
+                params![cid, transport_instance_id, state, next_attempts, retry_timestamp, error.to_string()],
             )
             .map_err(display)?;
         Ok(())
@@ -1245,16 +1250,6 @@ impl Database {
         };
         Ok((count("pending")?, count("delivered")?, count("failed")?))
     }
-}
-
-/// Exponential backoff with jitter, capped at one hour. `attempts` is the
-/// number of failed attempts so far (>= 1).
-fn backoff_retry_at(attempts: i64) -> String {
-    let base_secs = 5i64.saturating_mul(1i64 << attempts.clamp(0, 12));
-    let capped = base_secs.min(3600);
-    let jitter_ms = (rand::random::<u32>() % 1000) as i64;
-    let delay = chrono::Duration::seconds(capped) + chrono::Duration::milliseconds(jitter_ms);
-    (Utc::now() + delay).to_rfc3339()
 }
 
 /// The result of one push cycle.
@@ -2572,10 +2567,10 @@ mod replicator_tests {
     }
 
     #[test]
-    fn backoff_retry_at_is_in_the_future_and_grows_with_attempts() {
+    fn shared_retry_at_is_in_the_future_and_grows_with_attempts() {
         let now = Utc::now().to_rfc3339();
-        let first = backoff_retry_at(1);
-        let later = backoff_retry_at(6);
+        let first = retry_at(1);
+        let later = retry_at(6);
         assert!(first.as_str() > now.as_str());
         assert!(later.as_str() > first.as_str());
     }

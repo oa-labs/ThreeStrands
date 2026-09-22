@@ -439,27 +439,21 @@ impl MailMutate for GmailClient {
         add: &[String],
         remove: &[String],
     ) -> ProviderResult<()> {
-        let request = match ids {
-            [] => {
-                return Err(ProviderError::InvalidOperation(
-                    "No Gmail messages to modify".into(),
-                ))
-            }
-            [_] => self
-                .request(Method::POST, message_modify_url(ids).unwrap())
-                .await?
-                .json(&ModifyRequest {
-                    add_label_ids: add,
-                    remove_label_ids: remove,
-                }),
-            _ => self
-                .request(Method::POST, message_modify_url(ids).unwrap())
-                .await?
-                .json(&BatchModifyRequest {
-                    ids,
-                    add_label_ids: add,
-                    remove_label_ids: remove,
-                }),
+        let url = message_modify_url(ids).ok_or_else(|| {
+            ProviderError::InvalidOperation("No Gmail messages to modify".into())
+        })?;
+        let request = self.request(Method::POST, url).await?;
+        let request = if ids.len() == 1 {
+            request.json(&ModifyRequest {
+                add_label_ids: add,
+                remove_label_ids: remove,
+            })
+        } else {
+            request.json(&BatchModifyRequest {
+                ids,
+                add_label_ids: add,
+                remove_label_ids: remove,
+            })
         };
         self.send(request, false).await?;
         Ok(())
@@ -632,6 +626,11 @@ mod tests {
         assert!(message_modify_url(&ids[..1])
             .unwrap()
             .ends_with("/messages/message-1/modify"));
+    }
+
+    #[test]
+    fn empty_message_batch_has_no_modify_url() {
+        assert_eq!(message_modify_url(&[]), None);
     }
 }
 

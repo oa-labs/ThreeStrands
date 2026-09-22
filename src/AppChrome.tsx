@@ -203,6 +203,7 @@ export function Modal({
 
   useEffect(() => {
     const backdrop = backdropRef.current;
+    const previousFocus = previousFocusRef.current;
     const background = [...document.body.children].filter((element) => element !== backdrop);
     const previousBackgroundState = background.map((element) => ({
       element,
@@ -229,7 +230,7 @@ export function Modal({
         else element.setAttribute("aria-hidden", ariaHidden);
         (element as HTMLElement).inert = inert;
       }
-      previousFocusRef.current?.focus({ preventScroll: true });
+      previousFocus?.focus({ preventScroll: true });
     };
   }, [initialFocusRef]);
 

@@ -4,26 +4,24 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{Duration as ChronoDuration, Utc};
 use rand::Rng;
 use tokio::sync::Mutex;
 
 use crate::{
     auth::AccountAuth,
+    backoff::retry_at,
     db::{Database, PendingMutation},
-    provider::{MailMutate, MailSync, ProviderError, ProviderResult, SyncCursor},
     mime::{
         normalize, normalized_size, NormalizedMessage, MAX_NORMALIZED_THREAD_BYTES,
         MAX_THREAD_MESSAGES,
     },
     models::{Label, SyncStatus, ThreadMutation},
+    provider::{MailMutate, MailSync, ProviderError, ProviderResult, SyncCursor},
 };
 
 /// Floor used by adaptive polling and by resume/foreground catch-up.
 pub const MIN_POLL_INTERVAL: Duration = Duration::from_secs(15);
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(300);
-const MUTATION_RETRY_BASE_SECS: i64 = 30;
-const MUTATION_RETRY_MAX_SECS: i64 = 60 * 60;
 
 /// How often the background poll loop re-derives inbox membership from
 /// Gmail's live INBOX listing, independent of history-based incremental
@@ -744,15 +742,7 @@ async fn deliver_mutations(
 }
 
 fn mutation_next_attempt_at(attempts: u32) -> String {
-    let delay = mutation_retry_delay_secs(attempts);
-    (Utc::now() + ChronoDuration::seconds(delay)).to_rfc3339()
-}
-
-fn mutation_retry_delay_secs(attempts: u32) -> i64 {
-    let exponent = attempts.saturating_sub(1).min(16);
-    MUTATION_RETRY_BASE_SECS
-        .saturating_mul(1_i64 << exponent)
-        .min(MUTATION_RETRY_MAX_SECS)
+    retry_at(attempts)
 }
 
 fn mutation_labels(mutation: &PendingMutation) -> (Vec<String>, Vec<String>) {
@@ -1405,10 +1395,10 @@ mod tests {
 
     #[test]
     fn mutation_backoff_is_exponential_and_bounded() {
-        assert_eq!(mutation_retry_delay_secs(1), 30);
-        assert_eq!(mutation_retry_delay_secs(2), 60);
-        assert_eq!(mutation_retry_delay_secs(8), 3_600);
-        assert_eq!(mutation_retry_delay_secs(u32::MAX), 3_600);
+        assert_eq!(crate::backoff::retry_delay_secs(1), 30);
+        assert_eq!(crate::backoff::retry_delay_secs(2), 60);
+        assert_eq!(crate::backoff::retry_delay_secs(8), 3_600);
+        assert_eq!(crate::backoff::retry_delay_secs(u32::MAX), 3_600);
     }
 
     #[tokio::test]

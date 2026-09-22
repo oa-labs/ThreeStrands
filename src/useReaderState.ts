@@ -43,19 +43,19 @@ export function useReaderState({
       }
       return next;
     });
-  }, [detail?.thread.id, detail?.messages]);
+  }, [detail]);
 
   const latestDisplayedMessageId = displayedMessages.at(-1)?.id;
   useEffect(() => {
     if (!latestDisplayedMessageId) return;
     activeMessageIdRef.current = latestDisplayedMessageId;
     setActiveMessageId(latestDisplayedMessageId);
-  }, [detail?.thread.id, latestDisplayedMessageId]);
+  }, [detail, latestDisplayedMessageId]);
 
   useEffect(() => {
     if (!detail || composerOpen) return;
     latestMessageRef.current?.scrollIntoView?.({ block: "start" });
-  }, [detail?.thread.id, latestDisplayedMessageId]);
+  }, [composerOpen, detail, latestDisplayedMessageId]);
 
   useLayoutEffect(() => {
     // Collapsing tall cards can leave Chrome's scroll offset beyond the new

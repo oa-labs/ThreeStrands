@@ -163,6 +163,7 @@ impl CloudSync {
     }
 
     pub async fn revoke_device(&self, id: &str) -> Result<(), String> {
+        let id = validated_cloud_device_id(id)?;
         let response = self.authorized(reqwest::Method::DELETE, &format!("/v1/devices/{id}")).await?
             .send().await.map_err(display)?;
         response.error_for_status().map_err(http_error)?;
@@ -487,6 +488,7 @@ fn session_entry()->Result<Entry,String>{Entry::new(SERVICE,SESSION_KEY).map_err
 fn clear_provider_credential(service:&str,key:&str)->Result<(),String>{match Entry::new(service,key).map_err(display)?.delete_credential(){Ok(())|Err(keyring::Error::NoEntry)=>Ok(()),Err(error)=>Err(display(error))}}
 fn random_token(bytes:usize)->String{let mut value=vec![0;bytes];OsRng.fill_bytes(&mut value);URL_SAFE_NO_PAD.encode(value)}
 fn device_name()->String{std::env::var("HOSTNAME").ok().filter(|v|!v.trim().is_empty()).unwrap_or_else(||format!("Three Strands on {}",std::env::consts::OS))}
+fn validated_cloud_device_id(value:&str)->Result<String,String>{Uuid::parse_str(value).map(|id|id.hyphenated().to_string()).map_err(|_|"Invalid cloud device ID".to_string())}
 fn http_error(error:reqwest::Error)->String{if let Some(status)=error.status(){format!("Three Strands service returned {status}")}else{display(error)}}
 fn display(value:impl std::fmt::Display)->String{value.to_string()}
 
@@ -507,5 +509,26 @@ mod tests {
         db.create_snippet("Saved","Still here").unwrap();
         db.clear_cloud_account().unwrap();
         assert_eq!(db.list_snippets().unwrap().len(),1);
+    }
+
+    #[test]
+    fn cloud_device_ids_are_validated_before_path_construction() {
+        assert_eq!(
+            validated_cloud_device_id("550E8400-E29B-41D4-A716-446655440000").unwrap(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        for value in [
+            "",
+            "../me",
+            "550e8400-e29b-41d4-a716-446655440000/rotate",
+            "550e8400-e29b-41d4-a716-446655440000?admin=true",
+            "550e8400-e29b-41d4-a716-446655440000#fragment",
+            "%2e%2e%2fme",
+        ] {
+            assert_eq!(
+                validated_cloud_device_id(value),
+                Err("Invalid cloud device ID".to_string())
+            );
+        }
     }
 }

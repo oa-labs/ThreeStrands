@@ -507,7 +507,6 @@ export function App() {
     // Also covers the initial mount, since `settingsOpen` starts `false`.
     if (!settingsOpen) refreshAiAvailability();
   }, [settingsOpen, refreshAiAvailability]);
-  const [labels, setLabels] = useState<Label[]>([]);
   // Gmail user-label ids (for example `Label_18`) are only meaningful within
   // an account. Keep the catalogs separate so the same id in two accounts
   // cannot be displayed with the wrong account's label name.
@@ -788,11 +787,7 @@ export function App() {
 
   useEffect(() => {
     if (correspondence.sentCount > 0) void loadThreads(query);
-  }, [correspondence.sentCount, loadThreads]);
-
-  useEffect(() => {
-    void mailClient.listLabels().then(setLabels).catch(() => setLabels([]));
-  }, []);
+  }, [correspondence.sentCount, loadThreads, query]);
 
   useEffect(() => {
     // Warm every connected account's label catalog, not just ones whose
@@ -920,7 +915,7 @@ export function App() {
         triageSessionRef.current = null;
       }, 0);
     };
-  }, [includeArchived, mailbox, recordTriageEvent, visibleDetail?.thread.id]);
+  }, [includeArchived, mailbox, messageStackRef, recordTriageEvent, visibleDetail]);
 
   const refreshMail = useCallback(() => {
     setSyncStatus((current) => current ? { ...current, state: "syncing" } : current);
@@ -942,7 +937,7 @@ export function App() {
         void mailClient.reconcileTasks().catch(() => {});
         void refreshTaskIndicators();
       });
-  }, [query, refreshTaskIndicators]);
+  }, [query, refreshTaskIndicators, setSyncStatus]);
 
   const refreshMailRef = useRef(refreshMail);
   refreshMailRef.current = refreshMail;
@@ -984,7 +979,7 @@ export function App() {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("pageshow", onFocus);
     };
-  }, []);
+  }, [setSyncStatus]);
 
   useEffect(() => {
     // Invalidate an in-flight request as soon as the view inputs change. The
@@ -1189,7 +1184,7 @@ export function App() {
         await loadThreads(query);
       },
     };
-  }, [threads, detail, includeArchived, mailbox, selectedId, loadThreads, query, recordTriageEvent, setNotice]);
+  }, [threads, detail, includeArchived, mailbox, selectedId, loadThreads, query, recordTriageEvent, setNotice, setSyncStatus]);
 
   const visibleThreads = useMemo(
     () => filterThreadsByMessageFilters(threads, activeMessageFilters),
@@ -1568,7 +1563,7 @@ export function App() {
     const focusTarget = node.querySelector<HTMLElement>(".message-card-toggle, .message-expanded-toggle") ?? node;
     focusTarget.focus({ preventScroll: true });
     node.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-  }, [displayedMessages]);
+  }, [activeMessageIdRef, displayedMessages, messageRefs]);
 
   const goToInboxTab = useCallback(() => {
     setRightWorkspace(null);
@@ -1815,7 +1810,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, labelTargetIds, latestMessage, mailbox, mutateIds, newTask, openActions, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setActiveAccountId, setMessageExpansionOverrides, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -2864,7 +2859,7 @@ export function App() {
             await refreshAccounts();
           }}
           onReconnectAccount={async (email) => {
-            let reconnectError = await mailClient.reconnectAccount(email)
+            const reconnectError = await mailClient.reconnectAccount(email)
               .then(() => null)
               .catch((reason: unknown) => reason);
             await refreshAccounts();

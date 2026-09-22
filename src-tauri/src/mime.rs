@@ -4,6 +4,8 @@ use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::limits::MAX_ATTACHMENT_BYTES;
+
 pub(crate) const MAX_THREAD_MESSAGES: usize = 100;
 pub(crate) const MAX_MIME_DEPTH: usize = 32;
 pub(crate) const MAX_MIME_PARTS: usize = 1_000;
@@ -356,10 +358,6 @@ fn escape_html_attribute(value: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
-
-// This matches ThreeStrands's 18 MiB local attachment limit and keeps provider
-// base64 bodies from causing an unbounded decoded allocation.
-const MAX_ATTACHMENT_BYTES: usize = 18 * 1024 * 1024;
 
 fn decoded_base64_len(encoded_len: usize) -> Option<usize> {
     let trailing_bytes = match encoded_len % 4 {

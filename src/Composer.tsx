@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Paperclip, Send, Sparkles, Trash2, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem } from "./correspondence";
@@ -68,7 +68,7 @@ export const Composer = forwardRef<ComposerHandle, {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
 
-  function flush(): Promise<Draft> {
+  const flush = useCallback(function flush(): Promise<Draft> {
     if (timer.current) clearTimeout(timer.current);
     if (pending.current) return pending.current.then(() => generation.current === savedGeneration.current ? latest.current : flush());
     if (generation.current === savedGeneration.current) return Promise.resolve(latest.current);
@@ -86,14 +86,14 @@ export const Composer = forwardRef<ComposerHandle, {
     }).finally(() => { pending.current = null; });
     pending.current = saving;
     return saving.then(() => generation.current === savedGeneration.current ? latest.current : flush());
-  }
+  }, []);
   function edit(field: "to" | "cc" | "bcc" | "subject" | "body", value: string) {
     latest.current = { ...latest.current, [field]: value }; generation.current++;
     setDraft(latest.current); setStatus("Unsaved changes");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush().catch(() => {}); }, 300);
   }
-  function editBody(editor: HTMLElement) {
+  const editBody = useCallback((editor: HTMLElement) => {
     const html = serializeComposeHtml(editor);
     const textOnly = editor.cloneNode(true) as HTMLElement;
     textOnly.querySelectorAll("[data-compose-image-remove], [data-compose-image-resize]").forEach((control) => control.remove());
@@ -106,7 +106,7 @@ export const Composer = forwardRef<ComposerHandle, {
     setDraft(latest.current); setStatus("Unsaved changes");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush().catch(() => {}); }, 300);
-  }
+  }, [flush]);
   async function run(action: () => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true; setBusy(true); setError("");
@@ -305,7 +305,7 @@ export const Composer = forwardRef<ComposerHandle, {
       });
     }
     return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); window.clearInterval(autosave); window.removeEventListener("beforeunload", beforeUnload); previous?.focus(); };
-  }, [initial.mode]);
+  }, [flush, initial.attachments, initial.id, initial.mode]);
   useEffect(() => {
     if (!availabilityText || !bodyEditor.current || insertedAvailabilityText.current === availabilityText) return;
     insertedAvailabilityText.current = availabilityText;
@@ -314,7 +314,7 @@ export const Composer = forwardRef<ComposerHandle, {
       sanitizeComposeHtml(plainTextToHtml(`${availabilityText}\n\n`)),
     );
     editBody(bodyEditor.current);
-  }, [availabilityText]);
+  }, [availabilityText, editBody]);
   useEffect(() => {
     if (!["reply", "replyAll"].includes(initial.mode)) return;
     const enabled = readAiProvider() !== "none" && readAiFeatures().draftAssist;
