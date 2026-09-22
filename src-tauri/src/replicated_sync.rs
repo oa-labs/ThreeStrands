@@ -336,8 +336,13 @@ impl Database {
     }
 
     /// Every field currently in conflict: a frontier with more than one
-    /// member. This is the multi-value register the plan's conflict UI
-    /// reviews and resolves — see [`Self::resolve_frontier_conflict`].
+    /// member whose values differ. This is the multi-value register the
+    /// plan's conflict UI reviews and resolves — see
+    /// [`Self::resolve_frontier_conflict`]. Concurrent writes that agree on
+    /// the value (for example, two devices that already held the same data
+    /// before joining one space) leave nothing to choose between, so they
+    /// are not reported; the frontier still keeps both members and the next
+    /// write to the field collapses it as usual.
     pub fn list_frontier_conflicts(&self) -> Result<Vec<FrontierConflict>, String> {
         self.with_connection(|connection| {
             let keys: Vec<(String, String, String)> = {
@@ -379,6 +384,10 @@ impl Database {
                         device_id,
                         value,
                     });
+                }
+                let first_value = &resolved_candidates[0].value;
+                if resolved_candidates.iter().all(|candidate| &candidate.value == first_value) {
+                    continue;
                 }
                 conflicts.push(FrontierConflict {
                     entity_type,
@@ -2982,6 +2991,37 @@ mod frontier_conflict_tests {
         // Every other field (untouched by the forced conflict) must not be
         // reported.
         assert!(!conflicts.iter().any(|c| c.field == "body"));
+    }
+
+    #[test]
+    fn does_not_list_concurrent_writes_that_agree_on_the_value() {
+        let database = Database::open_memory();
+        database
+            .record_replicated_write(
+                EntityType::Snippet,
+                "s1",
+                &fields(&["id", "name", "body", "createdAt"]),
+                &json!({"id": "s1", "name": "original", "body": "b", "createdAt": "2026-01-01T00:00:00Z"}),
+            )
+            .unwrap();
+
+        force_conflict(&database, "s1", "name", json!("Same"), json!("Same"));
+
+        let frontier_size: i64 = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM sync_field_frontier WHERE entity_type='snippet' AND entity_id='s1' AND field='name'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(frontier_size, 2, "both concurrent writes stay in the frontier");
+        assert!(!database
+            .list_frontier_conflicts()
+            .unwrap()
+            .iter()
+            .any(|conflict| conflict.entity_id == "s1" && conflict.field == "name"));
     }
 
     #[test]
