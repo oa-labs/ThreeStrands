@@ -91,6 +91,7 @@ fn hex(bytes: &[u8]) -> String {
 fixed_bytes_id!(EventId, 16);
 fixed_bytes_id!(DeviceId, 16);
 fixed_bytes_id!(OperationId, 16);
+fixed_bytes_id!(RequestId, 16);
 fixed_bytes_id!(Signature, 64);
 
 #[cfg(test)]

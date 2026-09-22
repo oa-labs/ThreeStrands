@@ -18,10 +18,12 @@ mod chunk;
 mod cid;
 mod crypto;
 mod device_head;
+mod enrollment;
 mod error;
 pub mod header;
 mod ids;
 pub mod limits;
+mod recovery;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -29,15 +31,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use cid::compute_cid;
+pub use crypto::{seal_to_x25519, try_open_sealed_box};
 pub use device_head::{
     decode_signed_head, encode_signed_head, sign_device_head, verify_device_head, DeviceHead,
     SignedDeviceHead,
 };
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
+pub use enrollment::{
+    decode_signed_enrollment_grant, decode_signed_enrollment_request, decode_signed_key_rotation,
+    encode_signed_enrollment_grant, encode_signed_enrollment_request, encode_signed_key_rotation,
+    enrollment_fingerprint, sign_enrollment_grant, sign_enrollment_request, sign_key_rotation,
+    verify_enrollment_grant, verify_enrollment_request, verify_key_rotation, EnrollmentGrant,
+    EnrollmentRequest, KeyRotation, RosterEntry, SignedEnrollmentGrant, SignedEnrollmentRequest,
+    SignedKeyRotation,
+};
 pub use error::EnvelopeError;
 pub use header::{CipherSuite, ObjectKind};
-pub use ids::{DeviceId, EventId, OperationId, Signature};
+pub use ids::{DeviceId, EventId, OperationId, RequestId, Signature};
+pub use recovery::{
+    generate_recovery_seed, recovery_ed25519_signing_key, recovery_phrase_from_seed,
+    recovery_seed_from_phrase, recovery_x25519_secret, RECOVERY_SEED_LEN,
+};
 pub use threestrands_sync_protocol::EntityType;
+pub use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 
 use header::{build_aad, EnvelopeHeader, HEADER_LEN, MESSAGE_ID_LEN, NONCE_LEN, TAG_LEN};
 

@@ -56,7 +56,7 @@ use crate::db::Database;
 
 /// The single local sync space Phase 2 supports. Multiple concurrent spaces
 /// are not a product concept yet; this is simply a stable primary key.
-const SPACE_ID: &str = "default";
+pub(crate) const SPACE_ID: &str = "default";
 
 /// Whether the replicated-sync engine is active. Disabled by default so this
 /// entire phase ships inert; set `THREESTRANDS_REPLICATED_SYNC=1` (or any
@@ -69,6 +69,45 @@ fn parse_flag(value: Option<&str>) -> bool {
     match value.map(str::trim) {
         None | Some("") => false,
         Some(value) => !value.eq_ignore_ascii_case("0") && !value.eq_ignore_ascii_case("false"),
+    }
+}
+
+impl Database {
+    /// Whether replicated sync is active for this device: the hard
+    /// `THREESTRANDS_REPLICATED_SYNC` env-var override (dev/CI), or the
+    /// persisted "beta features" Settings toggle a user turned on
+    /// themselves. Reuses `sync_spaces.enabled`, which every earlier phase
+    /// reserved for exactly this without ever wiring it up.
+    pub fn replicated_sync_active(&self) -> Result<bool, String> {
+        Ok(enabled() || self.beta_features_enabled()?)
+    }
+
+    /// The persisted state of the Settings "enable beta features" toggle.
+    /// `false` (not an error) when no `sync_spaces` row exists yet — nothing
+    /// has ever been turned on.
+    pub fn beta_features_enabled(&self) -> Result<bool, String> {
+        let enabled: Option<bool> = self
+            .connection()?
+            .query_row("SELECT enabled FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
+            .optional()
+            .map_err(display)?;
+        Ok(enabled.unwrap_or(false))
+    }
+
+    /// Turns the Settings "enable beta features" toggle on or off. Turning
+    /// it off stops replication (the periodic loop and every push/pull
+    /// call check this) without deleting local keys, roster, or graph
+    /// state — matching "disabling the beta and returning to local-only
+    /// operation" rather than an irreversible reset.
+    pub fn set_beta_features_enabled(&self, on: bool) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "INSERT INTO sync_spaces(id, active_epoch, lamport, enabled) VALUES (?1, 0, 0, ?2)
+                 ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled",
+                params![SPACE_ID, on],
+            )
+            .map_err(display)?;
+        Ok(())
     }
 }
 
@@ -436,14 +475,16 @@ impl Database {
     }
 }
 
-fn ensure_space_and_device(tx: &Transaction) -> Result<[u8; 16], String> {
+pub(crate) fn ensure_space_and_device(tx: &Transaction) -> Result<[u8; 16], String> {
     tx.execute(
         "INSERT OR IGNORE INTO sync_spaces(id, active_epoch, lamport, enabled) VALUES (?1, 0, 0, 1)",
         params![SPACE_ID],
     )
     .map_err(display)?;
+    // `is_self` — not "the first row" — is what identifies this device's
+    // own entry once enrollment means `sync_devices` also holds peers.
     let existing: Option<String> = tx
-        .query_row("SELECT device_id FROM sync_devices LIMIT 1", [], |row| row.get(0))
+        .query_row("SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1", [], |row| row.get(0))
         .optional()
         .map_err(display)?;
     if let Some(hex) = existing {
@@ -451,7 +492,7 @@ fn ensure_space_and_device(tx: &Transaction) -> Result<[u8; 16], String> {
     }
     let device_id = random_id();
     tx.execute(
-        "INSERT INTO sync_devices(device_id, status) VALUES (?1, 'active')",
+        "INSERT INTO sync_devices(device_id, status, is_self) VALUES (?1, 'active', 1)",
         params![encode_id(&device_id)],
     )
     .map_err(display)?;
@@ -569,28 +610,28 @@ fn apply_field_operation(
     Ok(())
 }
 
-fn random_id() -> [u8; 16] {
+pub(crate) fn random_id() -> [u8; 16] {
     let mut bytes = [0u8; 16];
     OsRng.fill_bytes(&mut bytes);
     bytes
 }
 
-fn encode_id(bytes: &[u8; 16]) -> String {
+pub(crate) fn encode_id(bytes: &[u8; 16]) -> String {
     hex_encode(bytes)
 }
 
-fn decode_id(hex: &str) -> Result<[u8; 16], String> {
+pub(crate) fn decode_id(hex: &str) -> Result<[u8; 16], String> {
     let bytes = hex_decode(hex)?;
     bytes
         .try_into()
         .map_err(|_| "Invalid replicated-sync identifier".to_string())
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
     if !hex.len().is_multiple_of(2) {
         return Err("Invalid replicated-sync hex value".to_string());
     }
@@ -614,35 +655,46 @@ fn encode_winner_stamp(stamp: &WinnerStamp) -> Vec<u8> {
 
 // ============================== Key material ==============================
 
-const KEYCHAIN_SERVICE: &str = "app.threestrands.replicated-sync";
+pub(crate) const KEYCHAIN_SERVICE: &str = "app.threestrands.replicated-sync";
 const SIGNING_KEY_ENTRY: &str = "device-signing-key";
-const EPOCH_KEY_ENTRY: &str = "epoch-key-0";
+const X25519_KEY_ENTRY: &str = "device-x25519-key";
+
+fn epoch_key_entry(key_epoch: u32) -> String {
+    format!("epoch-key-{key_epoch}")
+}
 
 /// The minimal single-device key material push/pull need to seal and open
-/// messages for real: an Ed25519 device signing key and a symmetric epoch
-/// key, generated once and kept in the OS keychain.
-///
-/// This is deliberately **not** the real key hierarchy: there is no sealed
-/// distribution of the epoch key to other devices, no rotation, and no
-/// recovery phrase. That is a later phase's job (key recovery and
-/// enrollment). This is just enough for one device to exercise real
-/// encryption end to end, and for a second *test* device (with its own
-/// synthetic `LocalKeys`, trusted via [`Database::trust_device_public_key`])
-/// to prove the general multi-device path works.
+/// messages for real: an Ed25519 device signing key, an X25519 device key
+/// (an enrollment/rotation sealed-box recipient), and the active epoch's
+/// symmetric key, all generated once and kept in the OS keychain.
 pub struct LocalKeys {
     pub signing_key: SigningKey,
     pub verifying_key: VerifyingKey,
+    pub x25519_secret: [u8; 32],
     pub k_epoch: [u8; 32],
     pub key_epoch: u32,
     pub device_id: EnvelopeDeviceId,
     pub sync_space_id: Vec<u8>,
 }
 
+/// This device's identity — always available once replicated sync is turned
+/// on, regardless of enrollment state. Enough to sign and publish an
+/// enrollment request/grant/rotation object; not enough to seal or open an
+/// ordinary event, which additionally needs an active epoch key (see
+/// [`Database::local_replicated_keys`]).
+pub struct DeviceIdentity {
+    pub signing_key: SigningKey,
+    pub verifying_key: VerifyingKey,
+    pub x25519_secret: [u8; 32],
+    pub device_id: EnvelopeDeviceId,
+    pub sync_space_id: Vec<u8>,
+}
+
 impl Database {
-    /// Loads this device's replicated-sync key material, provisioning it on
-    /// first use. Touches the OS keychain — never call this from a test;
-    /// tests build a [`LocalKeys`] directly and pass it to push/pull.
-    pub fn local_replicated_keys(&self) -> Result<LocalKeys, String> {
+    /// Loads (provisioning on first use) this device's signing and X25519
+    /// keypairs and trusts them for itself. Touches the OS keychain — never
+    /// call this from a test.
+    pub fn local_device_identity(&self) -> Result<DeviceIdentity, String> {
         let device_id = {
             let mut connection = self.connection()?;
             let tx = connection.transaction().map_err(display)?;
@@ -651,24 +703,49 @@ impl Database {
             device_id
         };
         let signing_key = load_or_create_signing_key()?;
-        let k_epoch = load_or_create_epoch_key()?;
+        let x25519_secret = load_or_create_device_x25519_secret()?;
         let verifying_key = signing_key.verifying_key();
-        self.trust_device_public_key(&device_id, &verifying_key)?;
-        Ok(LocalKeys {
+        let x25519_public = x25519_public_bytes(&x25519_secret);
+        self.trust_device_keys(&device_id, &verifying_key, &x25519_public)?;
+        Ok(DeviceIdentity {
             verifying_key,
             signing_key,
-            k_epoch,
-            key_epoch: 0,
+            x25519_secret,
             device_id: EnvelopeDeviceId::from_bytes(device_id),
             sync_space_id: SPACE_ID.as_bytes().to_vec(),
         })
     }
 
-    /// Records a device's public key as trusted for signature verification.
-    /// For our own device, [`Self::local_replicated_keys`] calls this
-    /// automatically. Trusting another device's key is enrollment's job (a
-    /// later phase); tests call this directly to simulate an already
-    /// completed enrollment.
+    /// Loads this device's full replicated-sync key material, additionally
+    /// requiring that enrollment has already supplied an epoch key for the
+    /// sync space's current `active_epoch` — see `enrollment.rs`. Returns an
+    /// error (not a panic or a silently generated fresh epoch) if this
+    /// device has not completed enrollment yet; callers treat that as "skip
+    /// push/pull this cycle," not a hard failure.
+    pub fn local_replicated_keys(&self) -> Result<LocalKeys, String> {
+        let identity = self.local_device_identity()?;
+        let active_epoch: u32 = self
+            .connection()?
+            .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
+            .map_err(display)?;
+        let k_epoch = load_epoch_key(active_epoch)?
+            .ok_or_else(|| "This device has not completed replicated-sync enrollment yet".to_string())?;
+        Ok(LocalKeys {
+            verifying_key: identity.verifying_key,
+            signing_key: identity.signing_key,
+            x25519_secret: identity.x25519_secret,
+            k_epoch,
+            key_epoch: active_epoch,
+            device_id: identity.device_id,
+            sync_space_id: identity.sync_space_id,
+        })
+    }
+
+    /// Records a device's public key as trusted for signature verification,
+    /// leaving any existing X25519 public key untouched. For our own
+    /// device, [`Self::local_device_identity`] calls
+    /// [`Self::trust_device_keys`] instead. Tests call this directly to
+    /// simulate an already-trusted peer that only needs Ed25519 material.
     pub fn trust_device_public_key(&self, device_id: &[u8; 16], verifying_key: &VerifyingKey) -> Result<(), String> {
         let connection = self.connection()?;
         connection
@@ -681,12 +758,39 @@ impl Database {
         Ok(())
     }
 
-    /// Every device this local database currently trusts a public key for.
-    fn known_device_roster(&self) -> Result<Vec<(EnvelopeDeviceId, VerifyingKey)>, String> {
+    /// Records both of a device's public keys as trusted and active. Used
+    /// for self-trust and by enrollment/rotation import to adopt a roster
+    /// snapshot.
+    pub(crate) fn trust_device_keys(&self, device_id: &[u8; 16], verifying_key: &VerifyingKey, x25519_public: &[u8; 32]) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO sync_devices(device_id, public_key, x25519_public, status) VALUES (?1,?2,?3,'active')
+                 ON CONFLICT(device_id) DO UPDATE SET public_key=excluded.public_key, x25519_public=excluded.x25519_public, status='active'",
+                params![encode_id(device_id), verifying_key.to_bytes().to_vec(), x25519_public.to_vec()],
+            )
+            .map_err(display)?;
+        Ok(())
+    }
+
+    /// Marks a device revoked: it stops being trusted for future signature
+    /// verification (ordinary events, heads, and enrollment/rotation
+    /// objects alike), though it cannot un-decrypt ciphertext it already
+    /// received under a prior epoch.
+    pub(crate) fn revoke_device(&self, device_id: &[u8; 16]) -> Result<(), String> {
+        self.connection()?
+            .execute("UPDATE sync_devices SET status='revoked' WHERE device_id=?1", params![encode_id(device_id)])
+            .map_err(display)?;
+        Ok(())
+    }
+
+    /// Every device this local database currently trusts a public key for
+    /// and considers active (not revoked).
+    pub(crate) fn known_device_roster(&self) -> Result<Vec<(EnvelopeDeviceId, VerifyingKey)>, String> {
         let connection = self.connection()?;
         let rows: Vec<(String, Vec<u8>)> = {
             let mut statement = connection
-                .prepare("SELECT device_id, public_key FROM sync_devices WHERE public_key IS NOT NULL")
+                .prepare("SELECT device_id, public_key FROM sync_devices WHERE public_key IS NOT NULL AND status='active'")
                 .map_err(display)?;
             let rows = statement
                 .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -728,20 +832,45 @@ fn load_or_create_signing_key() -> Result<SigningKey, String> {
     }
 }
 
-fn load_or_create_epoch_key() -> Result<[u8; 32], String> {
-    let entry = Entry::new(KEYCHAIN_SERVICE, EPOCH_KEY_ENTRY).map_err(display)?;
+pub(crate) fn x25519_public_bytes(secret: &[u8; 32]) -> [u8; 32] {
+    threestrands_sync_envelope::X25519PublicKey::from(&threestrands_sync_envelope::X25519StaticSecret::from(*secret)).to_bytes()
+}
+
+fn load_or_create_device_x25519_secret() -> Result<[u8; 32], String> {
+    let entry = Entry::new(KEYCHAIN_SERVICE, X25519_KEY_ENTRY).map_err(display)?;
     match entry.get_password() {
         Ok(hex) => hex_decode(&hex)?
             .try_into()
-            .map_err(|_| "Stored epoch key is invalid".to_string()),
+            .map_err(|_| "Stored device X25519 key is invalid".to_string()),
         Err(keyring::Error::NoEntry) => {
-            let mut key = [0u8; 32];
-            OsRng.fill_bytes(&mut key);
-            entry.set_password(&hex_encode(&key)).map_err(display)?;
-            Ok(key)
+            let mut secret = [0u8; 32];
+            OsRng.fill_bytes(&mut secret);
+            entry.set_password(&hex_encode(&secret)).map_err(display)?;
+            Ok(secret)
         }
         Err(error) => Err(display(error)),
     }
+}
+
+/// Reads a previously stored epoch key from the keychain, or `None` if this
+/// device has never received (or generated, at genesis) that epoch.
+pub(crate) fn load_epoch_key(key_epoch: u32) -> Result<Option<[u8; 32]>, String> {
+    let entry = Entry::new(KEYCHAIN_SERVICE, &epoch_key_entry(key_epoch)).map_err(display)?;
+    match entry.get_password() {
+        Ok(hex) => hex_decode(&hex)?
+            .try_into()
+            .map(Some)
+            .map_err(|_| "Stored epoch key is invalid".to_string()),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(display(error)),
+    }
+}
+
+/// Persists an epoch key this device just generated (genesis) or received
+/// and opened (enrollment grant, rotation).
+pub(crate) fn store_epoch_key(key_epoch: u32, key: &[u8; 32]) -> Result<(), String> {
+    let entry = Entry::new(KEYCHAIN_SERVICE, &epoch_key_entry(key_epoch)).map_err(display)?;
+    entry.set_password(&hex_encode(key)).map_err(display)
 }
 
 // ================================ Sealing ==================================
@@ -1888,12 +2017,13 @@ impl ReplicatedSync {
         transport.probe_capabilities().await.map_err(|error| error.to_string())
     }
 
-    /// Runs one push-then-pull cycle against every configured transport.
-    /// A no-op if the feature is disabled or nothing is configured yet.
-    /// Serialized against concurrent calls (the periodic loop and a
-    /// manual "sync now" click) by `gate`.
+    /// Runs one push-then-pull cycle against every configured transport,
+    /// plus the enrollment/rotation control-object sweep. A no-op if the
+    /// feature is disabled or nothing is configured yet. Serialized against
+    /// concurrent calls (the periodic loop and a manual "sync now" click)
+    /// by `gate`.
     pub async fn sync_once(&self) -> Result<(), String> {
-        if !enabled() {
+        if !self.database.replicated_sync_active()? {
             return Ok(());
         }
         let _guard = self.gate.lock().await;
@@ -1905,7 +2035,16 @@ impl ReplicatedSync {
         if transports.is_empty() {
             return Ok(());
         }
-        let keys = self.database.local_replicated_keys()?;
+        let identity = self.database.local_device_identity()?;
+        let _ = crate::enrollment::run_enrollment_sweep(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports).await;
+
+        // A device that has not finished enrollment yet (no epoch key)
+        // still benefits from the sweep above; it just has nothing to
+        // push/pull until a grant or genesis supplies one.
+        let keys = match self.database.local_replicated_keys() {
+            Ok(keys) => keys,
+            Err(_) => return Ok(()),
+        };
 
         let push_result = push_pending_events(&self.database, &keys, &transports).await;
         let pull_result = pull_from_transports(&self.database, &keys, &transports).await;
@@ -1924,6 +2063,51 @@ impl ReplicatedSync {
         Ok(())
     }
 
+    /// Starts a brand-new sync space on this device and returns the
+    /// recovery phrase, shown to the user exactly once.
+    pub async fn begin_genesis(&self) -> Result<String, String> {
+        let identity = self.database.local_device_identity()?;
+        let transports = build_configured_transports(&self.database).await;
+        crate::enrollment::begin_genesis(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports).await
+    }
+
+    /// Publishes a signed enrollment request for this (new) device and
+    /// returns its fingerprint for display.
+    pub async fn request_enrollment(&self) -> Result<String, String> {
+        let identity = self.database.local_device_identity()?;
+        let transports = build_configured_transports(&self.database).await;
+        crate::enrollment::publish_enrollment_request(&self.database, &identity, &transports).await
+    }
+
+    /// Approves a pending incoming request, publishing a grant.
+    pub async fn approve_enrollment_request(&self, request_id_hex: &str) -> Result<(), String> {
+        let identity = self.database.local_device_identity()?;
+        let keys = self.database.local_replicated_keys()?;
+        let transports = build_configured_transports(&self.database).await;
+        crate::enrollment::approve_enrollment_request(&self.database, &identity, &keys, request_id_hex, &transports).await
+    }
+
+    /// Imports a staged grant after the user confirms its fingerprint.
+    pub async fn confirm_enrollment(&self, request_id_hex: &str) -> Result<(), String> {
+        let identity = self.database.local_device_identity()?;
+        crate::enrollment::confirm_and_import_grant(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, request_id_hex).await
+    }
+
+    /// Rotates the active epoch, optionally revoking a device.
+    pub async fn rotate_epoch(&self, revoke_device_id_hex: Option<&str>) -> Result<(), String> {
+        let identity = self.database.local_device_identity()?;
+        let keys = self.database.local_replicated_keys()?;
+        let transports = build_configured_transports(&self.database).await;
+        crate::enrollment::rotate_epoch(&self.database, &identity, &keys, &crate::enrollment::KeychainEpochKeyStore, &transports, revoke_device_id_hex).await
+    }
+
+    /// Joins an existing sync space using only a recovery phrase.
+    pub async fn join_with_recovery_phrase(&self, phrase: &str) -> Result<(), String> {
+        let identity = self.database.local_device_identity()?;
+        let transports = build_configured_transports(&self.database).await;
+        crate::enrollment::join_with_recovery_phrase(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, phrase, &transports).await
+    }
+
     /// Spawns the periodic push/pull loop. Only ever does real work when
     /// [`enabled`] is true and at least one transport is configured;
     /// otherwise `sync_once` returns immediately, so this is cheap to
@@ -1940,7 +2124,7 @@ impl ReplicatedSync {
     }
 }
 
-fn display(value: impl std::fmt::Display) -> String {
+pub(crate) fn display(value: impl std::fmt::Display) -> String {
     value.to_string()
 }
 
@@ -2194,9 +2378,12 @@ mod replicator_tests {
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
         database.trust_device_public_key(&device_id, &verifying_key).unwrap();
+        let mut x25519_secret = [0u8; 32];
+        OsRng.fill_bytes(&mut x25519_secret);
         LocalKeys {
             verifying_key,
             signing_key,
+            x25519_secret,
             k_epoch: [7u8; 32],
             key_epoch: 0,
             device_id: EnvelopeDeviceId::from_bytes(device_id),

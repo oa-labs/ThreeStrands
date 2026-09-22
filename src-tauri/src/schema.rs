@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 28;
+pub(crate) const LATEST_VERSION: i64 = 30;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -707,6 +707,66 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         }
         tx.pragma_update(None, "user_version", 28).map_err(error)?;
     }
+    if version < 29 {
+        // Phase 5's key hierarchy and device enrollment (see
+        // `enrollment.rs`). `sync_spaces.recovery_public_key` (added in v27)
+        // becomes the recovery Ed25519 authorization public key; this
+        // migration adds its X25519 counterpart plus every device's X25519
+        // public key, an epoch-activation history (secret epoch key bytes
+        // themselves live only in the OS keychain, never here), a table
+        // tracking this device's outgoing/incoming enrollment requests, and
+        // a dedup cache for the enrollment/rotation object scan sweep.
+        if !has_column(&tx, "sync_spaces", "recovery_x25519_public")? {
+            tx.execute("ALTER TABLE sync_spaces ADD COLUMN recovery_x25519_public BLOB", [])
+                .map_err(error)?;
+        }
+        if !has_column(&tx, "sync_devices", "x25519_public")? {
+            tx.execute("ALTER TABLE sync_devices ADD COLUMN x25519_public BLOB", [])
+                .map_err(error)?;
+        }
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sync_epoch_history (
+                key_epoch INTEGER PRIMARY KEY,
+                activated_at TEXT NOT NULL,
+                source_cid TEXT
+            );
+            CREATE TABLE IF NOT EXISTS replicated_sync_enrollment_requests (
+                request_id TEXT PRIMARY KEY,
+                direction TEXT NOT NULL CHECK(direction IN ('outgoing','incoming')),
+                device_id TEXT,
+                ed25519_public BLOB,
+                x25519_public BLOB,
+                fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','staged','completed')),
+                pending_grant_cbor BLOB,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sync_control_objects_seen (
+                cid TEXT PRIMARY KEY,
+                object_kind TEXT NOT NULL
+            );
+            PRAGMA user_version=29;",
+        )
+        .map_err(error)?;
+    }
+    if version < 30 {
+        // `sync_devices` previously had no way to distinguish this
+        // device's own row from a trusted peer's once enrollment added
+        // more than one — `ensure_space_and_device`'s "the device_id" was
+        // just "the first row," which is only correct with exactly one
+        // row. Mark the row explicitly. A pre-existing single-device
+        // database's lone row is unambiguously self.
+        if !has_column(&tx, "sync_devices", "is_self")? {
+            tx.execute("ALTER TABLE sync_devices ADD COLUMN is_self INTEGER NOT NULL DEFAULT 0", [])
+                .map_err(error)?;
+        }
+        tx.execute(
+            "UPDATE sync_devices SET is_self=1 WHERE is_self=0 AND (SELECT COUNT(*) FROM sync_devices) = 1",
+            [],
+        )
+        .map_err(error)?;
+        tx.pragma_update(None, "user_version", 30).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -808,6 +868,36 @@ mod tests {
             .query_row("SELECT config_json FROM sync_transports WHERE instance_id='a'", [], |row| row.get(0))
             .unwrap();
         assert_eq!(config, "{\"path\":\"/tmp/x\"}");
+    }
+
+    #[test]
+    fn v29_adds_the_key_hierarchy_and_enrollment_tables() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        for table in ["sync_epoch_history", "replicated_sync_enrollment_requests", "sync_control_objects_seen"] {
+            connection
+                .execute(&format!("SELECT * FROM {table}"), [])
+                .unwrap_or_else(|error| panic!("table {table} should exist and be queryable: {error}"));
+        }
+        connection
+            .execute("UPDATE sync_spaces SET recovery_x25519_public=X'01'", [])
+            .unwrap_or_else(|error| panic!("sync_spaces.recovery_x25519_public should exist: {error}"));
+        connection
+            .execute("UPDATE sync_devices SET x25519_public=X'02'", [])
+            .unwrap_or_else(|error| panic!("sync_devices.x25519_public should exist: {error}"));
+    }
+
+    #[test]
+    fn re_running_v29_after_a_partial_prior_run_does_not_fail_on_an_existing_column() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        // Simulate a database that already has the v29 columns/tables (for
+        // example from an interrupted upgrade) but whose recorded version
+        // still predates it.
+        connection.pragma_update(None, "user_version", 28).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
     }
 
     #[test]

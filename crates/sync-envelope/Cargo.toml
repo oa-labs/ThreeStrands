@@ -5,6 +5,7 @@ edition = "2021"
 description = "Pure, provider-neutral encrypted envelope format for ThreeStrands replicated sync"
 
 [dependencies]
+bip39 = "2"
 chacha20poly1305 = "0.10"
 cid = { version = "0.11", default-features = false, features = ["std"] }
 ciborium = "0.2"
@@ -18,6 +19,7 @@ serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
 threestrands-sync-protocol = { path = "../sync-protocol" }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 zstd = "0.13"
 
 [dev-dependencies]

@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.18.3"
+version = "0.19.0"
 description = "A local-first, keyboard-driven email client"
 authors = ["ThreeStrands contributors"]
 edition = "2021"
@@ -35,6 +35,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "mul
 rfd = "0.15"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
 serde_json = "1"
 sha2 = "0.10"
 tauri = { version = "2.11.5", features = [] }

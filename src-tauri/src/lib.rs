@@ -8,6 +8,7 @@ mod cloud_sync;
 mod correspondence;
 mod credentials;
 mod db;
+mod enrollment;
 mod image_format;
 mod image_proxy;
 mod ipfs_transport;
@@ -968,7 +969,7 @@ fn kick_cloud_sync(state: &State<'_, AppState>) {
 }
 
 fn kick_replicated_sync(state: &State<'_, AppState>) {
-    if !replicated_sync::enabled() {
+    if !state.database.replicated_sync_active().unwrap_or(false) {
         return;
     }
     let engine = state.replicated_sync.clone();
@@ -1077,8 +1078,20 @@ fn cloud_update_preferences(preferences: serde_json::Value, state: State<'_, App
 }
 
 #[tauri::command]
-fn replicated_sync_enabled() -> bool {
-    replicated_sync::enabled()
+fn replicated_sync_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+    state.database.replicated_sync_active()
+}
+
+#[tauri::command]
+fn replicated_sync_beta_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+    state.database.beta_features_enabled()
+}
+
+#[tauri::command]
+fn replicated_sync_set_beta_enabled(on: bool, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.set_beta_features_enabled(on)?;
+    kick_replicated_sync(&state);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1092,7 +1105,7 @@ async fn replicated_sync_status(
 async fn replicated_sync_add_folder(
     state: State<'_, AppState>,
 ) -> Result<Option<replicated_sync::ReplicatedSyncTransportStatus>, String> {
-    if !replicated_sync::enabled() {
+    if !state.database.replicated_sync_active()? {
         return Err("Replicated sync is not enabled in this build".to_string());
     }
     let Some(folder) = rfd::AsyncFileDialog::new()
@@ -1115,7 +1128,7 @@ async fn replicated_sync_add_ipfs_rpc(
     token: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Option<replicated_sync::ReplicatedSyncTransportStatus>, String> {
-    if !replicated_sync::enabled() {
+    if !state.database.replicated_sync_active()? {
         return Err("Replicated sync is not enabled in this build".to_string());
     }
     let instance_id = format!("ipfs-rpc-{}", uuid::Uuid::new_v4());
@@ -1132,6 +1145,62 @@ async fn replicated_sync_probe_ipfs_rpc(
     state: State<'_, AppState>,
 ) -> Result<ipfs_transport::ProbeReport, String> {
     state.replicated_sync.probe_ipfs_rpc_endpoint(&base_url, token.as_deref()).await
+}
+
+#[tauri::command]
+fn replicated_sync_enrollment_status(state: State<'_, AppState>) -> Result<enrollment::EnrollmentStatus, String> {
+    state.database.enrollment_status()
+}
+
+#[tauri::command]
+fn replicated_sync_pending_requests(state: State<'_, AppState>) -> Result<Vec<enrollment::IncomingEnrollmentRequest>, String> {
+    state.database.pending_incoming_enrollment_requests()
+}
+
+#[tauri::command]
+fn replicated_sync_device_roster(state: State<'_, AppState>) -> Result<Vec<enrollment::DeviceRosterEntry>, String> {
+    state.database.device_roster()
+}
+
+#[tauri::command]
+async fn replicated_sync_begin_genesis(state: State<'_, AppState>) -> Result<String, String> {
+    let phrase = state.replicated_sync.begin_genesis().await?;
+    kick_replicated_sync(&state);
+    Ok(phrase)
+}
+
+#[tauri::command]
+async fn replicated_sync_request_enrollment(state: State<'_, AppState>) -> Result<String, String> {
+    let fingerprint = state.replicated_sync.request_enrollment().await?;
+    kick_replicated_sync(&state);
+    Ok(fingerprint)
+}
+
+#[tauri::command]
+async fn replicated_sync_approve_request(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.replicated_sync.approve_enrollment_request(&request_id).await
+}
+
+#[tauri::command]
+fn replicated_sync_reject_request(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.reject_enrollment_request(&request_id)
+}
+
+#[tauri::command]
+async fn replicated_sync_confirm_enrollment(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.replicated_sync.confirm_enrollment(&request_id).await?;
+    kick_replicated_sync(&state);
+    Ok(())
+}
+
+#[tauri::command]
+async fn replicated_sync_rotate_epoch(revoke_device_id: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    state.replicated_sync.rotate_epoch(revoke_device_id.as_deref()).await
+}
+
+#[tauri::command]
+async fn replicated_sync_join_with_recovery_phrase(phrase: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.replicated_sync.join_with_recovery_phrase(&phrase).await
 }
 
 #[tauri::command]
@@ -2374,6 +2443,18 @@ pub fn run() {
             cloud_update_preferences,
             replicated_sync_enabled,
             replicated_sync_status,
+            replicated_sync_beta_enabled,
+            replicated_sync_set_beta_enabled,
+            replicated_sync_enrollment_status,
+            replicated_sync_pending_requests,
+            replicated_sync_device_roster,
+            replicated_sync_begin_genesis,
+            replicated_sync_request_enrollment,
+            replicated_sync_approve_request,
+            replicated_sync_reject_request,
+            replicated_sync_confirm_enrollment,
+            replicated_sync_rotate_epoch,
+            replicated_sync_join_with_recovery_phrase,
             replicated_sync_add_folder,
             replicated_sync_add_ipfs_rpc,
             replicated_sync_probe_ipfs_rpc,

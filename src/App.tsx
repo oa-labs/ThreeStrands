@@ -172,14 +172,29 @@ import {
 import {
   replicatedSyncAddFolder,
   replicatedSyncAddIpfsRpc,
+  replicatedSyncApproveRequest,
+  replicatedSyncBeginGenesis,
+  replicatedSyncBetaEnabled,
+  replicatedSyncConfirmEnrollment,
   replicatedSyncConflicts,
+  replicatedSyncDeviceRoster,
   replicatedSyncEnabled,
+  replicatedSyncEnrollmentStatus,
+  replicatedSyncJoinWithRecoveryPhrase,
   replicatedSyncNow,
+  replicatedSyncPendingRequests,
   replicatedSyncProbeIpfsRpc,
+  replicatedSyncRejectRequest,
   replicatedSyncRemoveTransport,
   replicatedSyncResolveConflict,
+  replicatedSyncRequestEnrollment,
+  replicatedSyncRotateEpoch,
+  replicatedSyncSetBetaEnabled,
   replicatedSyncStatus,
+  type DeviceRosterEntry,
+  type EnrollmentStatus,
   type FrontierConflict,
+  type IncomingEnrollmentRequest,
   type IpfsRpcProbeReport,
   type ReplicatedSyncTransportStatus,
 } from "./replicatedSync";
@@ -3875,24 +3890,43 @@ const FILEBASE_RPC_URL = "https://rpc.filebase.io";
 
 function ReplicatedSyncSettings() {
   const [available, setAvailable] = useState<boolean | null>(null);
+  const [betaEnabled, setBetaEnabledState] = useState(false);
   const [transports, setTransports] = useState<ReplicatedSyncTransportStatus[]>([]);
   const [conflicts, setConflicts] = useState<FrontierConflict[]>([]);
+  const [enrollmentStatus, setEnrollmentStatus] = useState<EnrollmentStatus | null>(null);
+  const [pendingRequests, setPendingRequests] = useState<IncomingEnrollmentRequest[]>([]);
+  const [deviceRoster, setDeviceRoster] = useState<DeviceRosterEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [ipfsBaseUrl, setIpfsBaseUrl] = useState("");
   const [ipfsToken, setIpfsToken] = useState("");
   const [ipfsProbe, setIpfsProbe] = useState<IpfsRpcProbeReport | null>(null);
+  const [recoveryPhrase, setRecoveryPhrase] = useState<string | null>(null);
+  const [recoveryPhraseInput, setRecoveryPhraseInput] = useState("");
 
   const refresh = useCallback(async () => {
-    const enabled = await replicatedSyncEnabled();
+    const [enabled, beta] = await Promise.all([replicatedSyncEnabled(), replicatedSyncBetaEnabled()]);
     setAvailable(enabled);
+    setBetaEnabledState(beta);
     if (enabled) {
-      const [nextTransports, nextConflicts] = await Promise.all([replicatedSyncStatus(), replicatedSyncConflicts()]);
+      const [nextTransports, nextConflicts, nextStatus, nextPending, nextRoster] = await Promise.all([
+        replicatedSyncStatus(),
+        replicatedSyncConflicts(),
+        replicatedSyncEnrollmentStatus(),
+        replicatedSyncPendingRequests(),
+        replicatedSyncDeviceRoster(),
+      ]);
       setTransports(nextTransports);
       setConflicts(nextConflicts);
+      setEnrollmentStatus(nextStatus);
+      setPendingRequests(nextPending);
+      setDeviceRoster(nextRoster);
     } else {
       setTransports([]);
       setConflicts([]);
+      setEnrollmentStatus(null);
+      setPendingRequests([]);
+      setDeviceRoster([]);
     }
   }, []);
 
@@ -3954,6 +3988,47 @@ function ReplicatedSyncSettings() {
       .finally(() => setBusy(false));
   };
 
+  const toggleBeta = (on: boolean) => {
+    setBusy(true);
+    setMessage(null);
+    void replicatedSyncSetBetaEnabled(on)
+      .then(refresh)
+      .catch((error: unknown) => setMessage(String(error)))
+      .finally(() => setBusy(false));
+  };
+
+  const beginGenesis = () => {
+    setBusy(true);
+    setMessage(null);
+    void replicatedSyncBeginGenesis()
+      .then((phrase) => {
+        setRecoveryPhrase(phrase);
+        return refresh();
+      })
+      .catch((error: unknown) => setMessage(String(error)))
+      .finally(() => setBusy(false));
+  };
+
+  const joinWithPhrase = () => {
+    setBusy(true);
+    setMessage(null);
+    void replicatedSyncJoinWithRecoveryPhrase(recoveryPhraseInput.trim())
+      .then(() => {
+        setRecoveryPhraseInput("");
+        return refresh();
+      })
+      .catch((error: unknown) => setMessage(String(error)))
+      .finally(() => setBusy(false));
+  };
+
+  const revokeDevice = (deviceId: string) => {
+    const confirmed = window.confirm(
+      "Revoke this device? It will stop receiving future encrypted data and this device's other replicas will treat its future writes as untrusted. It keeps whatever it already has.",
+    );
+    if (!confirmed) return;
+    act(() => replicatedSyncRotateEpoch(deviceId));
+  };
+
   if (available === null) {
     return (
       <section className="settings-section" aria-label="Replicated Sync">
@@ -3967,10 +4042,15 @@ function ReplicatedSyncSettings() {
       <section className="settings-section" aria-label="Replicated Sync">
         <h3>Replicated Sync (Beta)</h3>
         <p className="settings-hint">
-          This build does not have the replicated-sync engine enabled. This is an in-development, end-to-end
-          encrypted alternative to the Three Strands Account sync above, with no Three Strands-operated server: it
-          replicates directly through folders you choose (for example inside Google Drive, Dropbox, or iCloud Drive).
+          An in-development, end-to-end encrypted alternative to the Three Strands Account sync above, with no
+          Three Strands-operated server: it replicates directly through folders or an IPFS endpoint you choose.
+          Turn it on to set it up on this device.
         </p>
+        <label className="settings-field settings-field-inline">
+          <input type="checkbox" checked={betaEnabled} disabled={busy} onChange={(event) => toggleBeta(event.target.checked)} />
+          <span>Enable beta features</span>
+        </label>
+        {message ? <p role="status" className="settings-hint">{message}</p> : null}
       </section>
     );
   }
@@ -3986,6 +4066,10 @@ function ReplicatedSyncSettings() {
         folder; it does not erase copies elsewhere (other devices, cloud provider version history, or other
         configured folders).
       </p>
+      <label className="settings-field settings-field-inline">
+        <input type="checkbox" checked={betaEnabled} disabled={busy} onChange={(event) => toggleBeta(event.target.checked)} />
+        <span>Enable beta features</span>
+      </label>
 
       {conflicts.length > 0 ? (
         <div>
@@ -3999,6 +4083,124 @@ function ReplicatedSyncSettings() {
             />
           ))}
         </div>
+      ) : null}
+
+      <h3>Devices &amp; Enrollment</h3>
+      {transports.length === 0 ? (
+        <p className="settings-hint">Add a sync folder or IPFS RPC endpoint below first — enrollment needs somewhere to publish to.</p>
+      ) : null}
+      {recoveryPhrase ? (
+        <div className="settings-field">
+          <p className="settings-hint">
+            <strong>Save this recovery phrase now — it is shown only this once and is never stored anywhere.</strong>{" "}
+            It is the only way to recover this sync space if every other device is lost.
+          </p>
+          <p style={{ fontFamily: "monospace", userSelect: "text" }}>{recoveryPhrase}</p>
+          <button type="button" className="account-action-button" onClick={() => setRecoveryPhrase(null)}>
+            I&apos;ve saved it
+          </button>
+        </div>
+      ) : null}
+      {enrollmentStatus?.state === "notStarted" ? (
+        <>
+          <p className="settings-hint">Set this device up as the first device in a new encrypted sync space, or join a space that already exists on another device.</p>
+          <button type="button" className="primary-action" disabled={busy || transports.length === 0} onClick={beginGenesis}>
+            Create a new sync space
+          </button>
+          <button
+            type="button"
+            className="account-action-button"
+            disabled={busy || transports.length === 0}
+            onClick={() => act(replicatedSyncRequestEnrollment)}
+          >
+            Request to join from an existing device
+          </button>
+          <label className="settings-field">
+            <span>Or join with a recovery phrase</span>
+            <input
+              type="text"
+              placeholder="24 words separated by spaces"
+              value={recoveryPhraseInput}
+              disabled={busy}
+              onChange={(event) => setRecoveryPhraseInput(event.target.value)}
+            />
+          </label>
+          <button type="button" className="account-action-button" disabled={busy || !recoveryPhraseInput.trim() || transports.length === 0} onClick={joinWithPhrase}>
+            Join with recovery phrase
+          </button>
+        </>
+      ) : null}
+      {enrollmentStatus?.state === "awaitingGrant" ? (
+        <p className="settings-hint">
+          Waiting for an existing device to approve this device. When it does, compare fingerprints on both screens
+          before confirming. This device&apos;s fingerprint: <strong style={{ fontFamily: "monospace" }}>{enrollmentStatus.fingerprint}</strong>
+        </p>
+      ) : null}
+      {enrollmentStatus?.state === "awaitingConfirmation" ? (
+        <div className="settings-field">
+          <p className="settings-hint">
+            An approval arrived. Compare these fingerprints with what the approving device shows — they must match
+            exactly before you confirm.
+          </p>
+          <p style={{ fontFamily: "monospace" }}>This device: {enrollmentStatus.fingerprint}</p>
+          <p style={{ fontFamily: "monospace" }}>Approver: {enrollmentStatus.approverFingerprint}</p>
+          <button
+            type="button"
+            className="primary-action"
+            disabled={busy}
+            onClick={() => {
+              const requestId = enrollmentStatus.requestId;
+              void act(() => replicatedSyncConfirmEnrollment(requestId));
+            }}
+          >
+            Confirm — fingerprints match
+          </button>
+        </div>
+      ) : null}
+      {enrollmentStatus?.state === "enrolled" ? (
+        <>
+          <p className="settings-hint">Enrolled · {enrollmentStatus.deviceCount} active device{enrollmentStatus.deviceCount === 1 ? "" : "s"}.</p>
+          {pendingRequests.length > 0 ? (
+            <ul className="accounts-list">
+              {pendingRequests.map((request) => (
+                <li className="account-card" key={request.requestId}>
+                  <div className="account-card-row">
+                    <div className="account-card-identity">
+                      <strong style={{ fontFamily: "monospace" }}>{request.fingerprint}</strong>
+                      <span className="account-card-email">Requested {new Date(request.createdAt).toLocaleString()}</span>
+                    </div>
+                    <button type="button" className="primary-action" disabled={busy} onClick={() => act(() => replicatedSyncApproveRequest(request.requestId))}>
+                      Approve
+                    </button>
+                    <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => act(() => replicatedSyncRejectRequest(request.requestId))}>
+                      Reject
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <ul className="accounts-list">
+            {deviceRoster.map((device) => (
+              <li className="account-card" key={device.deviceId}>
+                <div className="account-card-row">
+                  <div className="account-card-identity">
+                    <strong style={{ fontFamily: "monospace" }}>{device.deviceId}</strong>
+                    <span className="account-card-email">
+                      {device.status}
+                      {device.isSelf ? " · this device" : ""}
+                    </span>
+                  </div>
+                  {!device.isSelf && device.status === "active" ? (
+                    <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => revokeDevice(device.deviceId)}>
+                      Revoke
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
       ) : null}
 
       {transports.length === 0 ? (

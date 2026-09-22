@@ -6,12 +6,24 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   replicatedSyncAddFolder,
   replicatedSyncAddIpfsRpc,
+  replicatedSyncApproveRequest,
+  replicatedSyncBeginGenesis,
+  replicatedSyncBetaEnabled,
+  replicatedSyncConfirmEnrollment,
   replicatedSyncConflicts,
+  replicatedSyncDeviceRoster,
   replicatedSyncEnabled,
+  replicatedSyncEnrollmentStatus,
+  replicatedSyncJoinWithRecoveryPhrase,
   replicatedSyncNow,
+  replicatedSyncPendingRequests,
   replicatedSyncProbeIpfsRpc,
+  replicatedSyncRejectRequest,
   replicatedSyncRemoveTransport,
   replicatedSyncResolveConflict,
+  replicatedSyncRotateEpoch,
+  replicatedSyncRequestEnrollment,
+  replicatedSyncSetBetaEnabled,
   replicatedSyncStatus,
   type FrontierConflict,
 } from "./replicatedSync";
@@ -119,5 +131,77 @@ describe("replicated sync invoke wrappers", () => {
       field: "name",
       operationId: "op-b",
     });
+  });
+
+  it("reports the beta toggle off outside a desktop build without invoking anything", async () => {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    expect(await replicatedSyncBetaEnabled()).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("reads and writes the beta features toggle", async () => {
+    vi.mocked(invoke).mockResolvedValue(true);
+    expect(await replicatedSyncBetaEnabled()).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_beta_enabled");
+
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await replicatedSyncSetBetaEnabled(true);
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_set_beta_enabled", { on: true });
+  });
+
+  it("fetches enrollment status", async () => {
+    vi.mocked(invoke).mockResolvedValue({ state: "notStarted" });
+    const status = await replicatedSyncEnrollmentStatus();
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_enrollment_status");
+    expect(status).toEqual({ state: "notStarted" });
+  });
+
+  it("fetches pending incoming requests and the device roster", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    await replicatedSyncPendingRequests();
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_pending_requests");
+
+    vi.mocked(invoke).mockResolvedValue([]);
+    await replicatedSyncDeviceRoster();
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_device_roster");
+  });
+
+  it("begins genesis and requests enrollment with no arguments beyond the command", async () => {
+    vi.mocked(invoke).mockResolvedValue("twenty four words...");
+    const phrase = await replicatedSyncBeginGenesis();
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_begin_genesis");
+    expect(phrase).toBe("twenty four words...");
+
+    vi.mocked(invoke).mockResolvedValue("AB12-CD34-EF56-0789");
+    const fingerprint = await replicatedSyncRequestEnrollment();
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_request_enrollment");
+    expect(fingerprint).toBe("AB12-CD34-EF56-0789");
+  });
+
+  it("approves, rejects, and confirms enrollment requests by id", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await replicatedSyncApproveRequest("req-1");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_approve_request", { requestId: "req-1" });
+
+    await replicatedSyncRejectRequest("req-2");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_reject_request", { requestId: "req-2" });
+
+    await replicatedSyncConfirmEnrollment("req-3");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_confirm_enrollment", { requestId: "req-3" });
+  });
+
+  it("rotates the epoch with an optional device id to revoke", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await replicatedSyncRotateEpoch("device-b");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_rotate_epoch", { revokeDeviceId: "device-b" });
+
+    await replicatedSyncRotateEpoch(null);
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_rotate_epoch", { revokeDeviceId: null });
+  });
+
+  it("joins with a recovery phrase", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await replicatedSyncJoinWithRecoveryPhrase("abandon ability able...");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_join_with_recovery_phrase", { phrase: "abandon ability able..." });
   });
 });

@@ -358,7 +358,7 @@ impl Database {
         connection.execute("INSERT INTO cloud_sync_outbox(operation_id,entity_type,entity_id,base_version,changed_fields,patch,deleted,local_sequence,created_at) VALUES(?1,?2,?3,?4,?5,?6,0,?7,?8)",
             params![Uuid::new_v4().to_string(),entity_type.as_str(),entity_id,base,serde_json::to_string(&fields).map_err(display)?,patch.to_string(),sequence,Utc::now().to_rfc3339()]).map_err(display)?;
         drop(connection);
-        if crate::replicated_sync::enabled() {
+        if self.replicated_sync_active()? {
             self.record_replicated_write(entity_type, entity_id, &fields, &complete_payload)?;
         }
         Ok(())
@@ -373,7 +373,7 @@ impl Database {
         connection.execute("INSERT INTO cloud_sync_outbox(operation_id,entity_type,entity_id,base_version,changed_fields,deleted,local_sequence,created_at) VALUES(?1,?2,?3,?4,'[\"*\"]',1,?5,?6)",
             params![Uuid::new_v4().to_string(),entity_type.as_str(),entity_id,base,sequence,Utc::now().to_rfc3339()]).map_err(display)?;
         drop(connection);
-        if crate::replicated_sync::enabled() {
+        if self.replicated_sync_active()? {
             self.record_replicated_deletion(entity_type, entity_id)?;
         }
         Ok(())
