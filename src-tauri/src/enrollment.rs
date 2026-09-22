@@ -347,7 +347,82 @@ impl Database {
 /// returns the recovery phrase. **The phrase is shown to the caller exactly
 /// once and is never persisted anywhere** — only its two derived public
 /// keys are kept, in `sync_spaces`.
-pub async fn begin_genesis(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, transports: &[Arc<dyn SyncTransport>]) -> Result<String, String> {
+/// Whether the configured transports already hold a sync space, as far as
+/// a device that has not enrolled yet can tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncSpacePresence {
+    /// A self-consistently signed key-rotation object exists on at least
+    /// one transport, so another device already started a space here.
+    Existing,
+    /// Every transport was scanned completely and none holds a rotation.
+    None,
+    /// No transport is configured, or at least one could not be scanned
+    /// completely, and no rotation was found on the ones that could.
+    Unknown,
+}
+
+pub const EXISTING_SPACE_REFUSAL: &str =
+    "A sync space already exists in this location. Join it from another device or with its recovery phrase, or confirm that you want a separate new space.";
+
+/// A rotation counts as evidence of a space only when it verifies against
+/// its own initiator's roster entry — the same self-consistency check a
+/// grant gets. This never establishes trust in the space; it only keeps
+/// arbitrary bytes that happen to decode from steering the setup choice.
+fn is_self_consistent_rotation(bytes: &[u8]) -> bool {
+    let Ok(signed) = decode_signed_key_rotation(bytes) else { return false };
+    let Some(initiator) = signed.rotation.roster.iter().find(|entry| entry.device_id == signed.rotation.initiator_device_id) else {
+        return false;
+    };
+    let Ok(verifying_key) = roster_entry_verifying_key(initiator) else { return false };
+    verify_key_rotation(&verifying_key, &signed).is_ok()
+}
+
+/// Read-only scan for an existing sync space, stopping at the first one
+/// found. Used to steer a not-yet-enrolled device toward joining instead
+/// of starting a second, disconnected space in the same location.
+pub async fn inspect_sync_space(transports: &[Arc<dyn SyncTransport>]) -> SyncSpacePresence {
+    let mut incomplete = transports.is_empty();
+    for transport in transports {
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = match transport.scan(cursor.as_deref()).await {
+                Ok(Some(page)) => page,
+                Ok(None) => break,
+                Err(_) => {
+                    incomplete = true;
+                    break;
+                }
+            };
+            for locator in &page.objects {
+                match transport.get_object(&locator.cid).await {
+                    Ok(bytes) if is_self_consistent_rotation(&bytes) => return SyncSpacePresence::Existing,
+                    Ok(_) => {}
+                    Err(_) => incomplete = true,
+                }
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+    }
+    if incomplete { SyncSpacePresence::Unknown } else { SyncSpacePresence::None }
+}
+
+/// Starts a new sync space. Refuses, before any side effect, when a space
+/// already exists on a configured transport unless `allow_existing_space`
+/// records the user's explicit choice to start a separate one anyway.
+pub async fn begin_genesis(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    transports: &[Arc<dyn SyncTransport>],
+    allow_existing_space: bool,
+) -> Result<String, String> {
+    if !allow_existing_space && inspect_sync_space(transports).await == SyncSpacePresence::Existing {
+        return Err(EXISTING_SPACE_REFUSAL.to_string());
+    }
     database.set_beta_features_enabled(true)?;
 
     let seed = generate_recovery_seed();
@@ -962,7 +1037,7 @@ mod tests {
         let identity = test_identity(&database);
         let epoch_keys = FakeEpochKeyStore::default();
         let transports = fake_transports("genesis");
-        let phrase = begin_genesis(&database, &identity, &epoch_keys, &transports).await.unwrap();
+        let phrase = begin_genesis(&database, &identity, &epoch_keys, &transports, false).await.unwrap();
         assert_eq!(phrase.split_whitespace().count(), 24);
 
         match database.enrollment_status().unwrap() {
@@ -976,7 +1051,7 @@ mod tests {
         let database = Database::open_memory();
         let identity = test_identity(&database);
         let epoch_keys = FakeEpochKeyStore::default();
-        begin_genesis(&database, &identity, &epoch_keys, &fake_transports("genesis")).await.unwrap();
+        begin_genesis(&database, &identity, &epoch_keys, &fake_transports("genesis"), false).await.unwrap();
 
         database.set_beta_features_enabled(true).unwrap();
         assert!(database.cross_device_sync_enrolled().unwrap());
@@ -997,7 +1072,7 @@ mod tests {
         let transports = fake_transports("shared");
 
         // A creates the space.
-        begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+        begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports, false).await.unwrap();
 
         // B requests to join.
         let fingerprint_b = publish_enrollment_request(&database_b, &identity_b, &transports).await.unwrap();
@@ -1061,7 +1136,7 @@ mod tests {
         let epoch_keys_b = FakeEpochKeyStore::default();
         let transports = fake_transports("shared");
 
-        begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+        begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports, false).await.unwrap();
         publish_enrollment_request(&database_b, &identity_b, &transports).await.unwrap();
         run_enrollment_sweep(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
         let pending = database_a.pending_incoming_enrollment_requests().unwrap();
@@ -1119,7 +1194,7 @@ mod tests {
         let epoch_keys_c = FakeEpochKeyStore::default();
         let transports = fake_transports("shared");
 
-        let phrase = begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+        let phrase = begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports, false).await.unwrap();
 
         join_with_recovery_phrase(&database_c, &identity_c, &epoch_keys_c, &phrase, &transports).await.unwrap();
         match database_c.enrollment_status().unwrap() {
@@ -1134,6 +1209,81 @@ mod tests {
         let roster = database_a.known_device_roster().unwrap();
         assert_eq!(roster.len(), 2);
         assert!(roster.iter().any(|(id, _)| *id == identity_c.device_id));
+    }
+
+    #[tokio::test]
+    async fn inspecting_reports_no_space_until_genesis_publishes_one() {
+        let database = Database::open_memory();
+        let identity = test_identity(&database);
+        let epoch_keys = FakeEpochKeyStore::default();
+        let transports = fake_transports("shared");
+
+        assert_eq!(inspect_sync_space(&[]).await, SyncSpacePresence::Unknown);
+        assert_eq!(inspect_sync_space(&transports).await, SyncSpacePresence::None);
+
+        begin_genesis(&database, &identity, &epoch_keys, &transports, false).await.unwrap();
+        assert_eq!(inspect_sync_space(&transports).await, SyncSpacePresence::Existing);
+    }
+
+    #[tokio::test]
+    async fn a_pending_join_request_or_unrelated_object_is_not_a_space() {
+        let database = Database::open_memory();
+        let identity = test_identity(&database);
+        let transports = fake_transports("shared");
+
+        publish_enrollment_request(&database, &identity, &transports).await.unwrap();
+        publish_to_all(&transports, b"not a control object").await;
+        assert_eq!(inspect_sync_space(&transports).await, SyncSpacePresence::None);
+    }
+
+    #[tokio::test]
+    async fn a_rotation_that_fails_its_initiator_signature_is_not_a_space() {
+        let database = Database::open_memory();
+        let identity = test_identity(&database);
+        let epoch_keys = FakeEpochKeyStore::default();
+        let genesis_transports = fake_transports("genesis");
+        begin_genesis(&database, &identity, &epoch_keys, &genesis_transports, false).await.unwrap();
+
+        let page = genesis_transports[0].scan(None).await.unwrap().unwrap();
+        let bytes = genesis_transports[0].get_object(&page.objects[0].cid).await.unwrap();
+        let mut tampered = decode_signed_key_rotation(&bytes).unwrap();
+        tampered.rotation.created_at_ms += 1;
+
+        let transports = fake_transports("tampered");
+        publish_to_all(&transports, &encode_signed_key_rotation(&tampered).unwrap()).await;
+        assert_eq!(inspect_sync_space(&transports).await, SyncSpacePresence::None);
+    }
+
+    #[tokio::test]
+    async fn an_incomplete_scan_is_unknown_rather_than_empty() {
+        let fake = Arc::new(FakeTransport::new("flaky"));
+        fake.inject_transient_outage(1);
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![fake];
+        assert_eq!(inspect_sync_space(&transports).await, SyncSpacePresence::Unknown);
+    }
+
+    #[tokio::test]
+    async fn genesis_refuses_an_existing_space_without_side_effects_unless_allowed() {
+        let database_a = Database::open_memory();
+        let database_b = Database::open_memory();
+        let identity_a = test_identity(&database_a);
+        let identity_b = test_identity(&database_b);
+        let epoch_keys_a = FakeEpochKeyStore::default();
+        let epoch_keys_b = FakeEpochKeyStore::default();
+        let transports = fake_transports("shared");
+
+        begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports, false).await.unwrap();
+
+        database_b.set_beta_features_enabled(false).unwrap();
+        let refused = begin_genesis(&database_b, &identity_b, &epoch_keys_b, &transports, false).await;
+        assert_eq!(refused, Err(EXISTING_SPACE_REFUSAL.to_string()));
+        assert!(matches!(database_b.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
+        assert!(!database_b.beta_features_enabled().unwrap());
+        assert_eq!(epoch_keys_b.get(0), None);
+
+        let phrase = begin_genesis(&database_b, &identity_b, &epoch_keys_b, &transports, true).await.unwrap();
+        assert_eq!(phrase.split_whitespace().count(), 24);
+        assert!(matches!(database_b.enrollment_status().unwrap(), EnrollmentStatus::Enrolled { device_count: 1 }));
     }
 
     #[test]

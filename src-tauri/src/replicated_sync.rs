@@ -2027,11 +2027,20 @@ impl ReplicatedSync {
     }
 
     /// Starts a brand-new sync space on this device and returns the
-    /// recovery phrase, shown to the user exactly once.
-    pub async fn begin_genesis(&self) -> Result<String, String> {
+    /// recovery phrase, shown to the user exactly once. Refused when a
+    /// configured transport already holds a space, unless the user
+    /// explicitly chose to start a separate one.
+    pub async fn begin_genesis(&self, allow_existing_space: bool) -> Result<String, String> {
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::begin_genesis(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports).await
+        crate::enrollment::begin_genesis(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports, allow_existing_space).await
+    }
+
+    /// Whether the configured transports already hold a sync space, so
+    /// Settings can steer a new device toward joining it.
+    pub async fn inspect_sync_space(&self) -> crate::enrollment::SyncSpacePresence {
+        let transports = build_configured_transports(&self.database).await;
+        crate::enrollment::inspect_sync_space(&transports).await
     }
 
     /// Publishes a signed enrollment request for this (new) device and

@@ -1347,6 +1347,8 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .task-editor-modal, .availability-request-modal { overflow-y: auto; }
 .task-editor-modal { width: min(640px, calc(100vw - 40px)); }
 .availability-request-modal { width: min(440px, calc(100vw - 40px)); }
+.recovery-phrase-modal { overflow-y: auto; }
+.recovery-phrase-words { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px 14px; margin: 0; padding: 10px 12px 10px 34px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--input); color: var(--text); font-family: monospace; font-size: calc(13px * var(--font-scale)); user-select: text; }
 .modal-form { --modal-form-control-height: 38px; display: grid; gap: 11px; padding: 8px 17px 17px; }
 .modal-form label { display: grid; gap: 5px; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
 .modal-form input, .modal-form select, .modal-form textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid var(--border-strong); border-radius: 7px; color: var(--text); background: var(--input); font: inherit; font-size: calc(13px * var(--font-scale)); }

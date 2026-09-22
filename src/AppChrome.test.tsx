@@ -87,4 +87,27 @@ describe("App chrome", () => {
     expect(trigger).toHaveFocus();
     expect(container).not.toHaveAttribute("aria-hidden");
   });
+
+  it("keeps a non-dismissible modal open and stops Escape reaching the modal underneath", () => {
+    const closeOuter = vi.fn();
+    const closeInner = vi.fn();
+    render(
+      <>
+        <Modal title="Outer" onClose={closeOuter}><button type="button">Outer action</button></Modal>
+        <Modal title="Inner" dismissible={false} onClose={closeInner}><button type="button">Only way out</button></Modal>
+      </>,
+    );
+    // Both mounted in one commit, as when Settings reopens with a
+    // recovery phrase still pending: the later modal stays reachable.
+    const inner = screen.getByRole("dialog", { name: "Inner" });
+    expect(inner.parentElement).not.toHaveAttribute("aria-hidden");
+    expect((inner.parentElement as HTMLElement).inert).toBeFalsy();
+
+    expect(inner.querySelector("header button")).toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.mouseDown(inner.parentElement!);
+    expect(closeInner).not.toHaveBeenCalled();
+    expect(closeOuter).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Inner" })).toBeInTheDocument();
+  });
 });

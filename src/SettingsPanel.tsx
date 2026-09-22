@@ -91,6 +91,7 @@ import {
   replicatedSyncDeviceRoster,
   replicatedSyncEnabled,
   replicatedSyncEnrollmentStatus,
+  replicatedSyncInspectSpace,
   replicatedSyncJoinWithRecoveryPhrase,
   replicatedSyncNow,
   replicatedSyncPendingRequests,
@@ -108,7 +109,9 @@ import {
   type IncomingEnrollmentRequest,
   type IpfsRpcProbeReport,
   type ReplicatedSyncTransportStatus,
+  type SyncSpacePresence,
 } from "./replicatedSync";
+import { holdRecoveryPhrase, PendingRecoveryPhraseDialog } from "./RecoveryPhraseDialog";
 import { FrontierConflictEditor } from "./FrontierConflictEditor";
 import { moveItem, useLiveStatus, useSettingsOperation } from "./settingsOperations";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -383,6 +386,7 @@ export function Settings({
   }, [section]);
 
   return (
+    <>
     <Modal title="Settings" className="settings-modal" initialFocusRef={selectedSectionButtonRef} onClose={onClose}>
       <div className="settings-body">
         <nav
@@ -549,6 +553,11 @@ export function Settings({
         </div>
       </div>
     </Modal>
+    {/* A sibling after Settings, not a child: effects run children-first, so
+        nesting it would let Settings mark it inert and take the Escape stack
+        above it whenever Settings reopens with a phrase still pending. */}
+    <PendingRecoveryPhraseDialog />
+    </>
   );
 }
 
@@ -566,7 +575,7 @@ function formatStorageEstimate(bytes: number): string {
 
 const FILEBASE_RPC_URL = "https://rpc.filebase.io";
 
-function ReplicatedSyncSettings() {
+export function ReplicatedSyncSettings() {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [betaEnabled, setBetaEnabledState] = useState(false);
   const [transports, setTransports] = useState<ReplicatedSyncTransportStatus[]>([]);
@@ -579,8 +588,10 @@ function ReplicatedSyncSettings() {
   const [ipfsProbe, setIpfsProbe] = useState<IpfsRpcProbeReport | null>(null);
   const [disconnectingTransport, setDisconnectingTransport] = useState<string | null>(null);
   const [revokingDevice, setRevokingDevice] = useState<string | null>(null);
-  const [recoveryPhrase, setRecoveryPhrase] = useState<string | null>(null);
   const [recoveryPhraseInput, setRecoveryPhraseInput] = useState("");
+  const [spacePresence, setSpacePresence] = useState<SyncSpacePresence | "checking" | null>(null);
+  const [presenceCheck, setPresenceCheck] = useState(0);
+  const [confirmingSeparateSpace, setConfirmingSeparateSpace] = useState(false);
 
   const refresh = useCallback(async () => {
     const [enabled, beta] = await Promise.all([replicatedSyncEnabled(), replicatedSyncBetaEnabled()]);
@@ -638,8 +649,34 @@ function ReplicatedSyncSettings() {
 
   const toggleBeta = (on: boolean) => act(() => replicatedSyncSetBetaEnabled(on));
 
-  const beginGenesis = () => run(async () => {
-    setRecoveryPhrase(await replicatedSyncBeginGenesis());
+  // Before this device joins or starts a space, look for one that another
+  // device already published to the configured locations, so the setup
+  // choice can steer toward joining it instead of forking a second space.
+  const needsSetupChoice = available === true && enrollmentStatus?.state === "notStarted" && transports.length > 0;
+  const transportKey = transports.map((transport) => transport.instanceId).join("\n");
+  useEffect(() => {
+    if (!needsSetupChoice) {
+      setSpacePresence(null);
+      return;
+    }
+    let cancelled = false;
+    setSpacePresence("checking");
+    replicatedSyncInspectSpace().then(
+      (presence) => { if (!cancelled) setSpacePresence(presence); },
+      () => { if (!cancelled) setSpacePresence("unknown"); },
+    );
+    return () => { cancelled = true; };
+  }, [needsSetupChoice, transportKey, presenceCheck]);
+
+  const beginGenesis = (allowExistingSpace: boolean) => run(async () => {
+    setConfirmingSeparateSpace(false);
+    try {
+      holdRecoveryPhrase(await replicatedSyncBeginGenesis(allowExistingSpace));
+    } finally {
+      // A refusal means another device published a space since the last
+      // check; re-inspect so the choice below reflects it.
+      setPresenceCheck((count) => count + 1);
+    }
     await refresh();
   });
 
@@ -709,27 +746,32 @@ function ReplicatedSyncSettings() {
       {transports.length === 0 ? (
         <p className="settings-hint">Add a sync folder or IPFS RPC endpoint below first — enrollment needs somewhere to publish to.</p>
       ) : null}
-      {recoveryPhrase ? (
-        <div className="settings-field">
-          <p className="settings-hint">
-            <strong>Save this recovery phrase now — it is shown only this once and is never stored anywhere.</strong>{" "}
-            It is the only way to recover this sync space if every other device is lost.
-          </p>
-          <p style={{ fontFamily: "monospace", userSelect: "text" }}>{recoveryPhrase}</p>
-          <button type="button" className="account-action-button" onClick={() => setRecoveryPhrase(null)}>
-            I&apos;ve saved it
-          </button>
-        </div>
-      ) : null}
       {enrollmentStatus?.state === "notStarted" ? (
         <>
-          <p className="settings-hint">Set this device up as the first device in a new encrypted sync space, or join a space that already exists on another device.</p>
-          <button type="button" className="primary-action" disabled={busy || transports.length === 0} onClick={beginGenesis}>
-            Create a new sync space
-          </button>
+          <p className="settings-hint" role="status">
+            {spacePresence === "checking"
+              ? "Checking your sync locations for an existing sync space…"
+              : spacePresence === "existing"
+                ? "Another device already set up a sync space in this location. Join it to share data with your other devices."
+                : spacePresence === "none"
+                  ? "No sync space found here yet. If this is your first device, create one. On your other devices, choose this same folder or endpoint, then join."
+                  : spacePresence === "unknown"
+                    ? "Couldn’t check every sync location for an existing space. If another device already syncs here, join it rather than creating a new one."
+                    : "Set this device up as the first device in a new encrypted sync space, or join a space that already exists on another device."}
+          </p>
+          {spacePresence === "existing" ? null : (
+            <button
+              type="button"
+              className="primary-action"
+              disabled={busy || transports.length === 0 || spacePresence === "checking"}
+              onClick={() => beginGenesis(false)}
+            >
+              Create a new sync space
+            </button>
+          )}
           <button
             type="button"
-            className="account-action-button"
+            className={spacePresence === "existing" ? "primary-action" : "account-action-button"}
             disabled={busy || transports.length === 0}
             onClick={() => act(replicatedSyncRequestEnrollment)}
           >
@@ -748,6 +790,25 @@ function ReplicatedSyncSettings() {
           <button type="button" className="account-action-button" disabled={busy || !recoveryPhraseInput.trim() || transports.length === 0} onClick={joinWithPhrase}>
             Join with recovery phrase
           </button>
+          {spacePresence === "existing" ? (
+            confirmingSeparateSpace ? (
+              <div className="settings-inline-confirm" role="group" aria-label="Create a separate sync space confirmation">
+                <p>
+                  <strong>Create a separate sync space?</strong><br />
+                  This device will not sync with the devices already using this location, and the new space gets its own
+                  recovery phrase.
+                </p>
+                <span className="settings-inline-confirm-actions">
+                  <button type="button" disabled={busy} onClick={() => setConfirmingSeparateSpace(false)}>Cancel</button>
+                  <button type="button" className="danger-action" disabled={busy} onClick={() => beginGenesis(true)}>Create separate space</button>
+                </span>
+              </div>
+            ) : (
+              <button type="button" className="account-action-button" disabled={busy} onClick={() => setConfirmingSeparateSpace(true)}>
+                Create a separate sync space instead…
+              </button>
+            )
+          ) : null}
         </>
       ) : null}
       {enrollmentStatus?.state === "awaitingGrant" ? (

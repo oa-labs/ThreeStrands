@@ -75,11 +75,22 @@ export async function replicatedSyncDeviceRoster(): Promise<DeviceRosterEntry[]>
   return invoke("replicated_sync_device_roster");
 }
 
+/** Whether the configured transports already hold a sync space: `unknown`
+ * when nothing is configured or a transport could not be scanned fully. */
+export type SyncSpacePresence = "existing" | "none" | "unknown";
+
+export async function replicatedSyncInspectSpace(): Promise<SyncSpacePresence> {
+  return invoke("replicated_sync_inspect_space");
+}
+
 /** Starts a brand-new sync space on this device and returns the recovery
  * phrase. Shown to the user exactly once — it is never persisted anywhere,
- * on this device or any other, so losing it here means losing it. */
-export async function replicatedSyncBeginGenesis(): Promise<string> {
-  return invoke("replicated_sync_begin_genesis");
+ * on this device or any other, so losing it here means losing it. The
+ * native side refuses when a configured transport already holds a space,
+ * unless `allowExistingSpace` records the user's explicit choice to start
+ * a separate one. */
+export async function replicatedSyncBeginGenesis(allowExistingSpace = false): Promise<string> {
+  return invoke("replicated_sync_begin_genesis", { allowExistingSpace });
 }
 
 /** Publishes a signed enrollment request for this (new) device and returns

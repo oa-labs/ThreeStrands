@@ -1187,10 +1187,15 @@ fn replicated_sync_device_roster(state: State<'_, AppState>) -> Result<Vec<enrol
 }
 
 #[tauri::command]
-async fn replicated_sync_begin_genesis(state: State<'_, AppState>) -> Result<String, String> {
-    let phrase = state.replicated_sync.begin_genesis().await?;
+async fn replicated_sync_begin_genesis(allow_existing_space: bool, state: State<'_, AppState>) -> Result<String, String> {
+    let phrase = state.replicated_sync.begin_genesis(allow_existing_space).await?;
     kick_replicated_sync(&state);
     Ok(phrase)
+}
+
+#[tauri::command]
+async fn replicated_sync_inspect_space(state: State<'_, AppState>) -> Result<enrollment::SyncSpacePresence, String> {
+    Ok(state.replicated_sync.inspect_sync_space().await)
 }
 
 #[tauri::command]
@@ -2519,6 +2524,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         replicated_sync_pending_requests,
         replicated_sync_device_roster,
         replicated_sync_begin_genesis,
+        replicated_sync_inspect_space,
         replicated_sync_request_enrollment,
         replicated_sync_approve_request,
         replicated_sync_reject_request,

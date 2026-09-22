@@ -14,6 +14,7 @@ import {
   replicatedSyncDeviceRoster,
   replicatedSyncEnabled,
   replicatedSyncEnrollmentStatus,
+  replicatedSyncInspectSpace,
   replicatedSyncJoinWithRecoveryPhrase,
   replicatedSyncNow,
   replicatedSyncPendingRequests,
@@ -168,11 +169,20 @@ describe("replicated sync invoke wrappers", () => {
     expect(invoke).toHaveBeenCalledWith("replicated_sync_device_roster");
   });
 
-  it("begins genesis and requests enrollment with no arguments beyond the command", async () => {
+  it("inspects the configured transports for an existing sync space", async () => {
+    vi.mocked(invoke).mockResolvedValue("existing");
+    expect(await replicatedSyncInspectSpace()).toBe("existing");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_inspect_space");
+  });
+
+  it("begins genesis without overriding the existing-space guard unless asked, and requests enrollment", async () => {
     vi.mocked(invoke).mockResolvedValue("twenty four words...");
     const phrase = await replicatedSyncBeginGenesis();
-    expect(invoke).toHaveBeenCalledWith("replicated_sync_begin_genesis");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_begin_genesis", { allowExistingSpace: false });
     expect(phrase).toBe("twenty four words...");
+
+    await replicatedSyncBeginGenesis(true);
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_begin_genesis", { allowExistingSpace: true });
 
     vi.mocked(invoke).mockResolvedValue("AB12-CD34-EF56-0789");
     const fingerprint = await replicatedSyncRequestEnrollment();

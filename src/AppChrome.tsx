@@ -184,6 +184,7 @@ function ShortcutKeys({ shortcut }: { shortcut: string }) {
 export function Modal({
   className,
   children,
+  dismissible = true,
   initialFocusRef,
   onClose,
   shortcutScope = "modal",
@@ -191,6 +192,10 @@ export function Modal({
 }: {
   className?: string;
   children: ReactNode;
+  /** When false, Escape, a backdrop click, and the header close button do
+   * nothing — the dialog's own content must offer the only way out. Escape
+   * is still claimed so it cannot fall through to a modal underneath. */
+  dismissible?: boolean;
   initialFocusRef?: RefObject<HTMLElement | null>;
   onClose(): void;
   shortcutScope?: "modal" | "palette";
@@ -199,12 +204,18 @@ export function Modal({
   const backdropRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
-  useEscapeDismiss(onClose);
+  const dismiss = dismissible ? onClose : () => {};
+  useEscapeDismiss(dismiss);
 
   useEffect(() => {
     const backdrop = backdropRef.current;
     const previousFocus = previousFocusRef.current;
-    const background = [...document.body.children].filter((element) => element !== backdrop);
+    // Never hide a modal stacked above this one: when two modals mount in
+    // the same commit, the later backdrop already exists when this runs.
+    const stackedAbove = (element: Element) =>
+      element.classList.contains("modal-backdrop")
+      && Boolean(backdrop && backdrop.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const background = [...document.body.children].filter((element) => element !== backdrop && !stackedAbove(element));
     const previousBackgroundState = background.map((element) => ({
       element,
       ariaHidden: element.getAttribute("aria-hidden"),
@@ -256,7 +267,7 @@ export function Modal({
   };
 
   return createPortal(
-    <div ref={backdropRef} className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div ref={backdropRef} className="modal-backdrop" role="presentation" onMouseDown={dismiss}>
       <div
         ref={dialogRef}
         className={`modal${className ? ` ${className}` : ""}`}
@@ -268,7 +279,7 @@ export function Modal({
         onKeyDown={trapFocus}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header><h2>{title}</h2><button aria-label="Close" onClick={onClose}><X size={18} /></button></header>
+        <header><h2>{title}</h2>{dismissible ? <button aria-label="Close" onClick={onClose}><X size={18} /></button> : null}</header>
         {children}
       </div>
     </div>,
