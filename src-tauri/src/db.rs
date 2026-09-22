@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Mutex, MutexGuard},
+    sync::{atomic::AtomicBool, Mutex, MutexGuard},
 };
 
 use chrono::Utc;
@@ -343,6 +343,13 @@ pub struct Database {
     /// `None` only for the in-memory test database, which has no file to
     /// snapshot or checkpoint alongside.
     path: Option<PathBuf>,
+    /// Set for the duration of applying an already-authenticated remote (or
+    /// conflict-resolution) operation into local tables, so the shared
+    /// materializer path used by both local commands and that projection
+    /// does not re-enqueue the projected write as a new local event. See
+    /// `replicated_sync.rs`. Unused while nothing calls
+    /// `with_remote_projection`.
+    pub(crate) replicated_sync_projecting: AtomicBool,
 }
 
 impl Database {
@@ -376,6 +383,7 @@ impl Database {
         Ok(Self {
             connection: Mutex::new(connection),
             path: Some(path.to_path_buf()),
+            replicated_sync_projecting: AtomicBool::new(false),
         })
     }
 
@@ -391,6 +399,7 @@ impl Database {
         Self {
             connection: Mutex::new(connection),
             path: None,
+            replicated_sync_projecting: AtomicBool::new(false),
         }
     }
 

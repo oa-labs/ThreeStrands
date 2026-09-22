@@ -14,6 +14,7 @@ mod mime;
 mod models;
 mod net_safety;
 mod provider;
+mod replicated_sync;
 mod schema;
 mod sync;
 mod system_fonts;

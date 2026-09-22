@@ -348,6 +348,7 @@ impl Database {
         let base: i64 = connection.query_row("SELECT server_version FROM cloud_sync_metadata WHERE entity_type=?1 AND entity_id=?2", params![entity_type.as_str(), entity_id], |row| row.get(0)).optional().map_err(display)?.unwrap_or(0);
         let sequence: i64 = connection.query_row("SELECT COALESCE(MAX(local_sequence),0)+1 FROM cloud_sync_outbox", [], |row| row.get(0)).map_err(display)?;
         let fields = fields.unwrap_or_else(|| payload.as_object().map(|value| value.keys().cloned().collect()).unwrap_or_else(|| BTreeSet::from(["*".into()])));
+        let complete_payload = payload.clone();
         let patch = match payload.as_object() {
             Some(object) if !fields.contains("*") => Value::Object(
                 object.iter().filter(|(key, _)| fields.contains(*key)).map(|(key, value)| (key.clone(), value.clone())).collect()
@@ -356,6 +357,10 @@ impl Database {
         };
         connection.execute("INSERT INTO cloud_sync_outbox(operation_id,entity_type,entity_id,base_version,changed_fields,patch,deleted,local_sequence,created_at) VALUES(?1,?2,?3,?4,?5,?6,0,?7,?8)",
             params![Uuid::new_v4().to_string(),entity_type.as_str(),entity_id,base,serde_json::to_string(&fields).map_err(display)?,patch.to_string(),sequence,Utc::now().to_rfc3339()]).map_err(display)?;
+        drop(connection);
+        if crate::replicated_sync::enabled() {
+            self.record_replicated_write(entity_type, entity_id, &fields, &complete_payload)?;
+        }
         Ok(())
     }
 
@@ -367,6 +372,10 @@ impl Database {
         let sequence: i64 = connection.query_row("SELECT COALESCE(MAX(local_sequence),0)+1 FROM cloud_sync_outbox", [], |row| row.get(0)).map_err(display)?;
         connection.execute("INSERT INTO cloud_sync_outbox(operation_id,entity_type,entity_id,base_version,changed_fields,deleted,local_sequence,created_at) VALUES(?1,?2,?3,?4,'[\"*\"]',1,?5,?6)",
             params![Uuid::new_v4().to_string(),entity_type.as_str(),entity_id,base,sequence,Utc::now().to_rfc3339()]).map_err(display)?;
+        drop(connection);
+        if crate::replicated_sync::enabled() {
+            self.record_replicated_deletion(entity_type, entity_id)?;
+        }
         Ok(())
     }
 

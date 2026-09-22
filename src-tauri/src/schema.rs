@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 26;
+pub(crate) const LATEST_VERSION: i64 = 27;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -603,6 +603,100 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         }
         tx.pragma_update(None, "user_version", 26).map_err(error)?;
     }
+    if version < 27 {
+        // The pluggable replicated-sync engine's local operation graph,
+        // logical events, transports, and delivery ledger, added in one
+        // complete migration (see `replicated_sync.rs`). Entirely inert
+        // until `THREESTRANDS_REPLICATED_SYNC` is set: no code writes to
+        // these tables otherwise. Reserve a new schema number for every
+        // later change to this graph rather than editing this block once
+        // it has shipped.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sync_spaces (
+                id TEXT PRIMARY KEY,
+                active_epoch INTEGER NOT NULL DEFAULT 0,
+                -- NULL until the Phase 5 key hierarchy generates a real
+                -- recovery keypair; the plan's suggested schema treats this
+                -- as required, but nothing can populate it yet.
+                recovery_public_key BLOB,
+                lamport INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT
+            );
+            CREATE TABLE IF NOT EXISTS sync_devices (
+                device_id TEXT PRIMARY KEY,
+                public_key BLOB,
+                status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+                added_by_operation TEXT,
+                revoked_by_operation TEXT
+            );
+            CREATE TABLE IF NOT EXISTS sync_events (
+                event_id TEXT PRIMARY KEY,
+                epoch INTEGER NOT NULL,
+                device_id TEXT NOT NULL,
+                device_sequence INTEGER NOT NULL,
+                lamport INTEGER NOT NULL,
+                state TEXT NOT NULL DEFAULT 'recorded' CHECK(state IN ('recorded','sealed')),
+                created_at TEXT NOT NULL,
+                UNIQUE(device_id, device_sequence)
+            );
+            CREATE TABLE IF NOT EXISTS sync_objects (
+                cid TEXT PRIMARY KEY,
+                event_id TEXT,
+                object_kind TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                chunk_count INTEGER NOT NULL,
+                bytes BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sync_operations (
+                operation_id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL REFERENCES sync_events(event_id) ON DELETE CASCADE,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                field TEXT NOT NULL,
+                value TEXT,
+                winner_stamp BLOB NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS sync_operations_entity
+                ON sync_operations(entity_type, entity_id, field);
+            CREATE TABLE IF NOT EXISTS sync_operation_parents (
+                operation_id TEXT NOT NULL,
+                parent_operation_id TEXT NOT NULL,
+                PRIMARY KEY(operation_id, parent_operation_id)
+            );
+            CREATE INDEX IF NOT EXISTS sync_operation_parents_by_parent
+                ON sync_operation_parents(parent_operation_id);
+            CREATE TABLE IF NOT EXISTS sync_field_frontier (
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                field TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                PRIMARY KEY(entity_type, entity_id, field, operation_id)
+            );
+            CREATE TABLE IF NOT EXISTS sync_transports (
+                instance_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                account_id TEXT,
+                required INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                cursor TEXT,
+                last_success_at TEXT,
+                last_error TEXT
+            );
+            CREATE TABLE IF NOT EXISTS sync_deliveries (
+                cid TEXT NOT NULL,
+                transport_instance_id TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','delivered','failed')),
+                remote_id TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                retry_at TEXT,
+                last_error TEXT,
+                PRIMARY KEY(cid, transport_instance_id)
+            );
+            PRAGMA user_version=27;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -663,6 +757,31 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         super::migrate(&mut connection).unwrap();
         assert_eq!(account_provider(&connection, "you@gmail.com"), "gmail");
+    }
+
+    #[test]
+    fn v27_creates_the_replicated_sync_tables_and_reaches_latest_version() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
+        for table in [
+            "sync_spaces",
+            "sync_devices",
+            "sync_events",
+            "sync_objects",
+            "sync_operations",
+            "sync_operation_parents",
+            "sync_field_frontier",
+            "sync_transports",
+            "sync_deliveries",
+        ] {
+            connection
+                .execute(&format!("SELECT * FROM {table}"), [])
+                .unwrap_or_else(|error| panic!("table {table} should exist and be queryable: {error}"));
+        }
     }
 
     #[test]

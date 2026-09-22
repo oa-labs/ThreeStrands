@@ -47,6 +47,7 @@ unicode-normalization = "0.1"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 zstd = "0.13"
+threestrands-sync-core = { path = "../crates/sync-core" }
 threestrands-sync-protocol = { path = "../crates/sync-protocol" }
 
 [target.'cfg(unix)'.dependencies]
