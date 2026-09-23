@@ -157,7 +157,7 @@ export function syncOverview(transports: readonly ReplicatedSyncTransportStatus[
 }
 
 export function deviceDisplayName(device: DeviceRosterEntry): string {
-  return device.label || (device.isSelf ? "This device" : "Unnamed device");
+  return device.label || (device.isSelf ? device.hostname || "This device" : "Unnamed device");
 }
 
 /** What to tell someone typing a recovery phrase. The word still being
@@ -712,7 +712,7 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
   const [name, setName] = useState(device.label ?? "");
   const key = `device:${device.deviceId}`;
   const details = [
-    device.isSelf && device.label ? "This device" : null,
+    device.isSelf ? "This device" : null,
     device.status === "revoked" ? "Revoked" : "Active",
     device.lastChangeAt ? `Last change ${new Date(device.lastChangeAt).toLocaleString()}` : "No changes yet",
     `ID ${device.deviceId.slice(0, 8)}`,

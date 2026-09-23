@@ -39,6 +39,8 @@ export type DeviceRosterEntry = {
   deviceId: string;
   status: string;
   isSelf: boolean;
+  /** The OS hostname, provided only for this device's own roster entry. */
+  hostname?: string | null;
   /** A name given on this device only; never synchronized. */
   label?: string | null;
   /** When this device last recorded (itself) or received (a peer) a change

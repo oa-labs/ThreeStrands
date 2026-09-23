@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.26.9"
+version = "0.26.10"
 description = "A local-first, keyboard-driven email client"
 authors = ["ThreeStrands contributors"]
 edition = "2021"
@@ -23,6 +23,7 @@ chrono-tz = "0.10"
 cid = { version = "0.11", default-features = false, features = ["std"] }
 fontdb = "0.24"
 imagesize = "0.13"
+gethostname = "1.1"
 iroh-car = "0.5"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 log = "0.4"

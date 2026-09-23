@@ -5280,7 +5280,7 @@ dependencies = [
 
 [[package]]
 name = "threestrands"
-version = "0.26.9"
+version = "0.26.10"
 dependencies = [
  "argon2",
  "async-trait",
@@ -5292,6 +5292,7 @@ dependencies = [
  "chrono-tz",
  "cid",
  "fontdb",
+ "gethostname",
  "imagesize",
  "iroh-car",
  "keyring",

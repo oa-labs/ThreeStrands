@@ -106,6 +106,8 @@ pub struct DeviceRosterEntry {
     pub device_id: String,
     pub status: String,
     pub is_self: bool,
+    /// The OS hostname, provided only for this device's own roster entry.
+    pub hostname: Option<String>,
     /// A name given on this device only; see `sync_device_labels`.
     pub label: Option<String>,
     /// When this device last recorded (for itself) or received (for a
@@ -227,6 +229,12 @@ impl Database {
                     device_id: row.get(0)?,
                     status: row.get(1)?,
                     is_self: row.get(2)?,
+                    hostname: if row.get::<_, bool>(2)? {
+                        let hostname = gethostname::gethostname().to_string_lossy().trim().to_string();
+                        (!hostname.is_empty()).then_some(hostname)
+                    } else {
+                        None
+                    },
                     label: row.get(3)?,
                     last_change_at: row.get(4)?,
                 })
