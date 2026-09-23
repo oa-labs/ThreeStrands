@@ -1331,12 +1331,16 @@ async fn replicated_sync_request_enrollment(state: State<'_, AppState>) -> Resul
 
 #[tauri::command]
 async fn replicated_sync_approve_request(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.replicated_sync.approve_enrollment_request(&request_id).await
+    state.replicated_sync.approve_enrollment_request(&request_id).await?;
+    kick_replicated_sync(&state);
+    Ok(())
 }
 
 #[tauri::command]
-fn replicated_sync_reject_request(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.reject_enrollment_request(&request_id)
+async fn replicated_sync_reject_request(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.replicated_sync.reject_enrollment_request(&request_id).await?;
+    kick_replicated_sync(&state);
+    Ok(())
 }
 
 #[tauri::command]

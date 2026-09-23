@@ -16,6 +16,7 @@ use crate::{canonical_dag_cbor, decode_canonical_dag_cbor, SigningKey, Verifying
 
 const REQUEST_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-request-signature/v1";
 const GRANT_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-grant-signature/v1";
+const REJECTION_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-rejection-signature/v1";
 const ROTATION_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/key-rotation-signature/v1";
 const FINGERPRINT_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-fingerprint/v1";
 
@@ -129,6 +130,41 @@ pub fn decode_signed_enrollment_grant(bytes: &[u8]) -> Result<SignedEnrollmentGr
     decode_canonical_dag_cbor(bytes)
 }
 
+/// A trusted member's decision to reject a specific enrollment request.
+/// Rejections are signed control objects so every existing device, and the
+/// requesting device, can resolve the same request after syncing.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EnrollmentRejection {
+    pub request_id: RequestId,
+    pub rejector_device_id: DeviceId,
+    pub rejected_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SignedEnrollmentRejection {
+    pub rejection: EnrollmentRejection,
+    pub signature: Signature,
+}
+
+pub fn sign_enrollment_rejection(signing_key: &SigningKey, rejection: EnrollmentRejection) -> Result<SignedEnrollmentRejection, EnvelopeError> {
+    let canonical = canonical_dag_cbor(&rejection)?;
+    let signature = Signature(crypto::sign_bytes(signing_key, REJECTION_SIGNATURE_DOMAIN, &canonical));
+    Ok(SignedEnrollmentRejection { rejection, signature })
+}
+
+pub fn verify_enrollment_rejection(verifying_key: &VerifyingKey, signed: &SignedEnrollmentRejection) -> Result<(), EnvelopeError> {
+    let canonical = canonical_dag_cbor(&signed.rejection)?;
+    crypto::verify_bytes(verifying_key, REJECTION_SIGNATURE_DOMAIN, &canonical, signed.signature.as_bytes())
+}
+
+pub fn encode_signed_enrollment_rejection(signed: &SignedEnrollmentRejection) -> Result<Vec<u8>, EnvelopeError> {
+    canonical_dag_cbor(signed)
+}
+
+pub fn decode_signed_enrollment_rejection(bytes: &[u8]) -> Result<SignedEnrollmentRejection, EnvelopeError> {
+    decode_canonical_dag_cbor(bytes)
+}
+
 /// A new epoch: the fresh `K_epoch` sealed independently to every active
 /// device's X25519 key and the recovery X25519 key (never as a cleartext
 /// value), plus the roster snapshot that becomes active once this object is
@@ -225,6 +261,27 @@ mod tests {
         let mut signed = sign_enrollment_request(&signing_key, sample_request(&signing_key, [9u8; 32])).unwrap();
         signed.request.created_at_ms += 1;
         assert!(verify_enrollment_request(&signing_key.verifying_key(), &signed).is_err());
+    }
+
+    #[test]
+    fn rejection_round_trips_and_verifies() {
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let signed = sign_enrollment_rejection(
+            &signing_key,
+            EnrollmentRejection {
+                request_id: RequestId::from_bytes([1u8; 16]),
+                rejector_device_id: DeviceId::from_bytes([3u8; 16]),
+                rejected_at_ms: 1000,
+            },
+        )
+        .unwrap();
+        verify_enrollment_rejection(&signing_key.verifying_key(), &signed).unwrap();
+        let bytes = encode_signed_enrollment_rejection(&signed).unwrap();
+        assert_eq!(decode_signed_enrollment_rejection(&bytes).unwrap(), signed);
+
+        let mut tampered = signed;
+        tampered.rejection.rejected_at_ms += 1;
+        assert!(verify_enrollment_rejection(&signing_key.verifying_key(), &tampered).is_err());
     }
 
     #[test]

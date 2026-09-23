@@ -73,7 +73,7 @@ export const SETUP_STEPS: readonly { id: SetupStep; title: string; upcoming: str
  * wins over connectors: a device mid-verification stays there even if its
  * connectors change underneath it. */
 export function currentSetupStep(status: EnrollmentStatus | null, transportCount: number): SetupStep {
-  if (status?.state === "awaitingGrant" || status?.state === "awaitingConfirmation") return "verify";
+  if (status?.state === "awaitingGrant" || status?.state === "awaitingConfirmation" || status?.state === "rejected") return "verify";
   return transportCount === 0 ? "location" : "choose";
 }
 
@@ -599,6 +599,20 @@ function VerifyStep({ enrollmentStatus, operation }: { enrollmentStatus: Enrollm
       </>
     );
   }
+  if (enrollmentStatus?.state === "rejected") {
+    return (
+      <>
+        <p className="settings-inline-status">This request was rejected on an existing device. Check with your group before starting a new request.</p>
+        <LeaveControl
+          operation={operation}
+          trigger="Start a new request…"
+          title="Start a new request?"
+          body="This device forgets the rejected request and returns to the start of setup. Your connectors stay configured."
+          confirm="Start over"
+        />
+      </>
+    );
+  }
   return null;
 }
 
@@ -643,6 +657,7 @@ function LeaveControl({
 function PendingRequestCard({ request, operation }: { request: IncomingEnrollmentRequest; operation: Operation }) {
   const { busy, actFor } = operation;
   const [reviewing, setReviewing] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
   const [name, setName] = useState("");
   const key = `request:${request.requestId}`;
   const deviceId = request.deviceId;
@@ -667,10 +682,23 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
             Review…
           </button>
         )}
-        <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => actFor(key, () => replicatedSyncRejectRequest(request.requestId))}>
-          Reject
-        </button>
+        {rejecting ? null : (
+          <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => setRejecting(true)}>
+            Reject…
+          </button>
+        )}
       </div>
+      {rejecting ? (
+        <div className="settings-inline-confirm" role="group" aria-label="Reject device request confirmation">
+          <p>Reject this request on all your sync devices? If an approval grant has already been published, that approval takes precedence.</p>
+          <span className="settings-inline-confirm-actions">
+            <button type="button" disabled={busy} onClick={() => setRejecting(false)}>Keep pending</button>
+            <button type="button" className="danger-action" disabled={busy} onClick={() => { setRejecting(false); actFor(key, () => replicatedSyncRejectRequest(request.requestId)); }}>
+              Reject on all devices
+            </button>
+          </span>
+        </div>
+      ) : null}
       {reviewing ? (
         <div className="settings-inline-panel" role="group" aria-label="Approve device confirmation">
           <p>On the new device, check that Replicated Sync shows exactly this code:</p>

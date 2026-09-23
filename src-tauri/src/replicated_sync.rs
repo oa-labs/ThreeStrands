@@ -2223,6 +2223,14 @@ impl ReplicatedSync {
         crate::enrollment::approve_enrollment_request(&self.database, &identity, &keys, request_id_hex, &transports).await
     }
 
+    /// Rejects an incoming request and publishes the signed group-wide
+    /// decision to every configured connector.
+    pub async fn reject_enrollment_request(&self, request_id_hex: &str) -> Result<(), String> {
+        let identity = self.database.local_device_identity()?;
+        let transports = build_configured_transports(&self.database).await;
+        crate::enrollment::reject_enrollment_request(&self.database, &identity, request_id_hex, &transports).await
+    }
+
     /// Imports a staged grant after the user confirms its fingerprint.
     pub async fn confirm_enrollment(&self, request_id_hex: &str) -> Result<(), String> {
         let identity = self.database.local_device_identity()?;

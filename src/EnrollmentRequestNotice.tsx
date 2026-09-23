@@ -37,7 +37,7 @@ export function EnrollmentRequestNotice({ suppressed, onReview }: { suppressed: 
       </span>
       <button onClick={onReview}>Review</button>
       <button
-        aria-label="Dismiss"
+        aria-label="Dismiss on this device"
         onClick={() => setDismissed((current) => new Set([...current, ...visible.map((request) => request.requestId)]))}
       >
         <X size={14} />

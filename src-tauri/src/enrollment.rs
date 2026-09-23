@@ -31,14 +31,14 @@ use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use serde_bytes::ByteBuf;
 use threestrands_sync_envelope::{
-    compute_cid, decode_signed_enrollment_grant, decode_signed_enrollment_request,
-    decode_signed_key_rotation, encode_signed_enrollment_grant, encode_signed_enrollment_request,
+    compute_cid, decode_signed_enrollment_grant, decode_signed_enrollment_rejection, decode_signed_enrollment_request,
+    decode_signed_key_rotation, encode_signed_enrollment_grant, encode_signed_enrollment_rejection, encode_signed_enrollment_request,
     encode_signed_key_rotation, enrollment_fingerprint, generate_recovery_seed,
     recovery_ed25519_signing_key, recovery_phrase_from_seed, recovery_seed_from_phrase,
-    recovery_x25519_secret, seal_to_x25519, sign_enrollment_grant, sign_enrollment_request,
-    sign_key_rotation, try_open_sealed_box, verify_enrollment_grant, verify_enrollment_request,
+    recovery_x25519_secret, seal_to_x25519, sign_enrollment_grant, sign_enrollment_rejection, sign_enrollment_request,
+    sign_key_rotation, try_open_sealed_box, verify_enrollment_grant, verify_enrollment_rejection, verify_enrollment_request,
     verify_key_rotation, DeviceId as EnvelopeDeviceId, EnrollmentGrant, EnrollmentRequest,
-    KeyRotation, RequestId, RosterEntry, SignedEnrollmentGrant, SignedEnrollmentRequest,
+    EnrollmentRejection, KeyRotation, RequestId, RosterEntry, SignedEnrollmentGrant, SignedEnrollmentRequest,
     SignedKeyRotation, VerifyingKey, X25519PublicKey,
 };
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport};
@@ -52,7 +52,10 @@ pub(crate) use join_codes::{
     JoinCodeNotice, JoinCodePreview, JoinCredentialsChoice, JoinFolderChoice, OutstandingJoinCode,
 };
 #[cfg(test)]
-use join_codes::{find_invitation, verify_fetched_invitation, MAX_JOIN_CODE_HOURS, MIN_JOIN_CODE_HOURS};
+use join_codes::{
+    find_invitation, verify_fetched_invitation, CREDENTIALS_REJECTED, INVITATION_NOT_FOUND, MAX_JOIN_CODE_HOURS, MIN_JOIN_CODE_HOURS,
+    STORAGE_UNREACHABLE,
+};
 use crate::replicated_sync::{decode_id, encode_id, random_id, x25519_public_bytes, DeviceIdentity, LocalKeys, SPACE_ID};
 
 fn now_ms() -> i64 {
@@ -97,6 +100,7 @@ pub enum EnrollmentStatus {
     NotStarted,
     AwaitingGrant { request_id: String, fingerprint: String, created_at: String },
     AwaitingConfirmation { request_id: String, fingerprint: String, approver_fingerprint: String },
+    Rejected { request_id: String, fingerprint: String },
     Enrolled {
         device_count: usize,
         /// The inviter's name while this device, having joined with a join
@@ -197,9 +201,21 @@ impl Database {
             )
             .optional()
             .map_err(display)?;
+        let rejected: Option<(String, String)> = connection
+            .query_row(
+                "SELECT request_id, fingerprint FROM replicated_sync_enrollment_requests
+                 WHERE direction='outgoing' AND status='rejected' ORDER BY created_at DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(display)?;
         match pending {
             Some((request_id, fingerprint, created_at)) => Ok(EnrollmentStatus::AwaitingGrant { request_id, fingerprint, created_at }),
-            None => Ok(EnrollmentStatus::NotStarted),
+            None => match rejected {
+                Some((request_id, fingerprint)) => Ok(EnrollmentStatus::Rejected { request_id, fingerprint }),
+                None => Ok(EnrollmentStatus::NotStarted),
+            },
         }
     }
 
@@ -224,16 +240,6 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()
             .map_err(display)?;
         Ok(rows)
-    }
-
-    pub fn reject_enrollment_request(&self, request_id_hex: &str) -> Result<(), String> {
-        self.connection()?
-            .execute(
-                "UPDATE replicated_sync_enrollment_requests SET status='rejected' WHERE request_id=?1 AND direction='incoming'",
-                params![request_id_hex],
-            )
-            .map_err(display)?;
-        Ok(())
     }
 
     /// This device first, then active peers, then revoked ones.
@@ -708,6 +714,10 @@ pub async fn publish_enrollment_request(database: &Database, identity: &DeviceId
 ///   — no new trust decision is involved, since the signer is already
 ///   authenticated by our existing roster.
 pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
+    // Objects arrive in content-address order, so a join-code redemption
+    // can come before the invitation it names. Those are retried once the
+    // whole sweep has run, rather than waiting for the next cycle.
+    let mut deferred: Vec<(String, Vec<u8>)> = Vec::new();
     for transport in transports {
         let mut cursor: Option<String> = None;
         loop {
@@ -724,14 +734,20 @@ pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity
                     // seen so we never re-fetch it.
                     ControlObject::NotControl => database.mark_control_object_seen(&locator.cid.0, "other")?,
                     // A join-code redemption whose invitation hasn't
-                    // arrived yet: leave it unseen and look again.
-                    ControlObject::RetryLater => {}
+                    // arrived yet: retry after this sweep, and leave it
+                    // unseen if it still can't be applied.
+                    ControlObject::RetryLater => deferred.push((locator.cid.0.clone(), bytes)),
                 }
             }
             cursor = page.next_cursor;
             if cursor.is_none() {
                 break;
             }
+        }
+    }
+    for (cid, bytes) in deferred {
+        if matches!(try_apply_control_object(database, identity, epoch_keys, &cid, &bytes)?, ControlObject::Applied) {
+            database.mark_control_object_seen(&cid, "control")?;
         }
     }
     Ok(())
@@ -751,6 +767,9 @@ fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoc
     if let Ok(signed) = decode_signed_enrollment_grant(bytes) {
         apply_incoming_grant(database, identity, epoch_keys, signed)?;
         return Ok(ControlObject::Applied);
+    }
+    if let Ok(signed) = decode_signed_enrollment_rejection(bytes) {
+        return Ok(if apply_incoming_rejection(database, signed)? { ControlObject::Applied } else { ControlObject::RetryLater });
     }
     if let Ok(signed) = decode_signed_key_rotation(bytes) {
         apply_incoming_rotation(database, identity, epoch_keys, signed, cid)?;
@@ -807,11 +826,11 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
     // This grant may be addressed to another device that received the same
     // request. Clear our copy only when an already trusted active peer signed
     // it and the roster names the exact requester keys we recorded.
-    let pending_incoming: Option<(String, Vec<u8>, Vec<u8>)> = database
+    let unresolved_incoming: Option<(String, Vec<u8>, Vec<u8>)> = database
         .connection()?
         .query_row(
             "SELECT device_id, ed25519_public, x25519_public FROM replicated_sync_enrollment_requests
-             WHERE request_id=?1 AND direction='incoming' AND status='pending'",
+             WHERE request_id=?1 AND direction='incoming' AND status IN ('pending','rejected')",
             params![request_id_hex],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -834,7 +853,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
             .unwrap_or(false);
         let approved_requester = signed.grant.roster.iter().find(|entry| {
             entry.status == "active"
-                && pending_incoming.as_ref().is_none_or(|(requester_id, requester_ed25519, requester_x25519)| {
+                && unresolved_incoming.as_ref().is_none_or(|(requester_id, requester_ed25519, requester_x25519)| {
                     encode_id(entry.device_id.as_bytes()) == *requester_id
                         && entry.ed25519_public.as_slice() == requester_ed25519
                         && entry.x25519_public.as_slice() == requester_x25519
@@ -842,12 +861,12 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
         });
         if approver_verifies {
             if let Some(entry) = approved_requester {
-                if let Some((requester_id, _, _)) = pending_incoming {
+                if let Some((requester_id, _, _)) = unresolved_incoming {
                     if encode_id(entry.device_id.as_bytes()) == requester_id {
                         database
                             .connection()?
                             .execute(
-                                "UPDATE replicated_sync_enrollment_requests SET status='approved' WHERE request_id=?1 AND direction='incoming' AND status='pending'",
+                                "UPDATE replicated_sync_enrollment_requests SET status='approved' WHERE request_id=?1 AND direction='incoming' AND status IN ('pending','rejected')",
                                 params![request_id_hex],
                             )
                             .map_err(display)?;
@@ -885,7 +904,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
     let matches_our_request: Option<String> = database
         .connection()?
         .query_row(
-            "SELECT request_id FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='outgoing' AND status='pending'",
+            "SELECT request_id FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='outgoing' AND status IN ('pending','rejected')",
             params![request_id_hex],
             |row| row.get(0),
         )
@@ -950,8 +969,95 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
     database
         .connection()?
         .execute(
-            "UPDATE replicated_sync_enrollment_requests SET status='staged', pending_grant_cbor=?2 WHERE request_id=?1",
+            "UPDATE replicated_sync_enrollment_requests SET status='staged', pending_grant_cbor=?2 WHERE request_id=?1 AND direction='outgoing' AND status IN ('pending','rejected')",
             params![request_id_hex, grant_cbor],
+        )
+        .map_err(display)?;
+    Ok(())
+}
+
+/// Applies a rejection only when its signer is a currently trusted active
+/// peer. Missing requests are retried after the rest of the sweep so a
+/// content-address ordering difference cannot leave one device unresolved.
+fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envelope::SignedEnrollmentRejection) -> Result<bool, String> {
+    let request_id = encode_id(signed.rejection.request_id.as_bytes());
+    let rejector_id = encode_id(signed.rejection.rejector_device_id.as_bytes());
+    let trusted_key: Option<Vec<u8>> = database
+        .connection()?
+        .query_row(
+            "SELECT public_key FROM sync_devices WHERE device_id=?1 AND status='active' AND public_key IS NOT NULL",
+            params![rejector_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(display)?;
+    let Some(verifying_key) = trusted_key
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+        .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
+    else {
+        return Ok(true);
+    };
+    if verify_enrollment_rejection(&verifying_key, &signed).is_err() {
+        return Ok(true);
+    }
+
+    let exists: bool = database
+        .connection()?
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM replicated_sync_enrollment_requests WHERE request_id=?1)",
+            params![request_id],
+            |row| row.get(0),
+        )
+        .map_err(display)?;
+    if !exists {
+        return Ok(false);
+    }
+
+    // A published grant is the approval decision and cannot be undone by a
+    // later rejection. Until a grant arrives, rejection resolves both the
+    // joiner's outgoing request and every peer's incoming copy.
+    database
+        .connection()?
+        .execute(
+            "UPDATE replicated_sync_enrollment_requests SET status='rejected'
+             WHERE request_id=?1 AND status='pending'",
+            params![request_id],
+        )
+        .map_err(display)?;
+    Ok(true)
+}
+
+pub async fn reject_enrollment_request(
+    database: &Database,
+    identity: &DeviceIdentity,
+    request_id_hex: &str,
+    transports: &[Arc<dyn SyncTransport>],
+) -> Result<(), String> {
+    let exists: bool = database
+        .connection()?
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='incoming' AND status='pending')",
+            params![request_id_hex],
+            |row| row.get(0),
+        )
+        .map_err(display)?;
+    if !exists {
+        return Err("This request is no longer pending.".to_string());
+    }
+    let rejection = EnrollmentRejection {
+        request_id: RequestId::from_bytes(decode_id(request_id_hex)?),
+        rejector_device_id: identity.device_id,
+        rejected_at_ms: now_ms(),
+    };
+    let signed = sign_enrollment_rejection(&identity.signing_key, rejection).map_err(display)?;
+    let bytes = encode_signed_enrollment_rejection(&signed).map_err(display)?;
+    let cid = publish_to_all(transports, &bytes).await;
+    database.mark_control_object_seen(&cid, "enrollment_rejection")?;
+    database
+        .connection()?
+        .execute(
+            "UPDATE replicated_sync_enrollment_requests SET status='rejected' WHERE request_id=?1 AND direction='incoming' AND status='pending'",
+            params![request_id_hex],
         )
         .map_err(display)?;
     Ok(())
@@ -2053,6 +2159,50 @@ mod tests {
             assert_eq!(snippet_name(&c.database, "b-1").as_deref(), Some("From B"));
         }
 
+        /// Objects are scanned in content-address order, so a redemption can
+        /// come before the invitation it names. One sweep must still record
+        /// it, not leave it for the next cycle.
+        #[tokio::test]
+        async fn one_sweep_records_a_redemption_scanned_before_its_invitation() {
+            let folder = SharedFolder::new();
+            let (a, c) = group(&folder).await;
+            let now = now_ms();
+            let code = create(&a, now).await;
+            let b = Device::new();
+            join(&b, &code, &folder, now + 1_000).await.unwrap();
+            let invitation_cid = decode_join_code(&code).unwrap().invitation_cid;
+            let redemption_cid: String = b
+                .database
+                .connection()
+                .unwrap()
+                .query_row("SELECT redemption_cid FROM replicated_sync_invitations WHERE direction='incoming'", [], |row| row.get(0))
+                .unwrap();
+
+            // Just these two objects, invitation first, scanned in reverse.
+            let shared = a.transports().await;
+            let reordered = threestrands_sync_transport::fake::FakeTransport::new("reordered");
+            for cid in [&invitation_cid, &redemption_cid] {
+                let bytes = shared[0].get_object(&TransportCid(cid.clone())).await.unwrap();
+                reordered.put_object(&TransportCid(cid.clone()), &bytes).await.unwrap();
+            }
+            reordered.enable_scan_reordering();
+            let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(reordered)];
+
+            run_enrollment_sweep(&c.database, &c.identity, &c.epoch_keys, &transports).await.unwrap();
+            let state: String = c
+                .database
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT state FROM replicated_sync_invitation_redemptions WHERE redemption_cid=?1",
+                    params![redemption_cid],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(state, "observed");
+            assert!(c.database.seen_control_object(&redemption_cid).unwrap());
+        }
+
         #[tokio::test]
         async fn a_code_admits_only_its_first_redemption() {
             let folder = SharedFolder::new();
@@ -2570,6 +2720,83 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn find_invitation_says_why_the_invitation_could_not_be_fetched() {
+            let code = threestrands_sync_envelope::JoinCode {
+                version: 1,
+                invite_secret: ByteBuf::from(vec![1u8; 32]),
+                invitation_cid: compute_cid(b"invitation"),
+                inviter_name: String::new(),
+                expires_at_ms: 1,
+                connectors: vec![],
+            };
+            let rejecting = threestrands_sync_transport::fake::FakeTransport::new("rejecting");
+            rejecting.set_authentication_failure(true);
+            let offline = threestrands_sync_transport::fake::FakeTransport::new("offline");
+            offline.inject_transient_outage(10);
+            let empty = threestrands_sync_transport::fake::FakeTransport::new("empty");
+            let as_transports = |list: Vec<threestrands_sync_transport::fake::FakeTransport>| -> Vec<Arc<dyn SyncTransport>> {
+                list.into_iter().map(|transport| Arc::new(transport) as Arc<dyn SyncTransport>).collect()
+            };
+
+            let error = find_invitation(&code, &as_transports(vec![rejecting])).await.err().unwrap();
+            assert_eq!(error, CREDENTIALS_REJECTED);
+            let error = find_invitation(&code, &as_transports(vec![offline])).await.err().unwrap();
+            assert_eq!(error, STORAGE_UNREACHABLE);
+
+            // Rejected credentials outrank an outage or an empty connector.
+            let rejecting = threestrands_sync_transport::fake::FakeTransport::new("rejecting");
+            rejecting.set_authentication_failure(true);
+            let offline = threestrands_sync_transport::fake::FakeTransport::new("offline");
+            offline.inject_transient_outage(10);
+            let error = find_invitation(&code, &as_transports(vec![empty, offline, rejecting])).await.err().unwrap();
+            assert_eq!(error, CREDENTIALS_REJECTED);
+
+            // An object that doesn't match the code outranks everything.
+            let wrong = threestrands_sync_transport::fake::FakeTransport::new("wrong");
+            wrong.put_object(&TransportCid(code.invitation_cid.clone()), b"not the invitation").await.unwrap();
+            let rejecting = threestrands_sync_transport::fake::FakeTransport::new("rejecting");
+            rejecting.set_authentication_failure(true);
+            let error = find_invitation(&code, &as_transports(vec![rejecting, wrong])).await.err().unwrap();
+            assert!(error.contains("damaged"), "{error}");
+        }
+
+        #[tokio::test]
+        async fn joining_with_rejected_s3_credentials_says_so_and_saves_nothing() {
+            use crate::s3_transport::fake_server::FakeS3Server;
+            let server = FakeS3Server::spawn().await;
+            let a = Device::new();
+            let a_connector = format!("s3-{}", uuid::Uuid::new_v4());
+            a.database.add_s3_transport(&a_connector, &server.config("group"), &FakeS3Server::credentials()).unwrap();
+            begin_genesis(&a.database, &a.identity, &a.epoch_keys, &a.transports().await, false).await.unwrap();
+            let now = now_ms();
+            let code = create_join_code(&a.database, &a.identity, &a.keys(), &a.transports().await, &[choice(&a_connector, false)], 1, now)
+                .await
+                .unwrap();
+
+            let b = Device::new();
+            let wrong: crate::sync_connectors::ConnectorCredentials = serde_json::from_value(serde_json::json!({
+                "kind": "s3",
+                "accessKeyId": crate::s3_transport::fake_server::ACCESS_KEY,
+                "secretAccessKey": "a-revoked-secret",
+            }))
+            .unwrap();
+            let error = join_with_code(
+                &b.database,
+                &b.identity,
+                &b.epoch_keys,
+                &code,
+                &[],
+                vec![JoinCredentialsChoice { connector_index: 0, credentials: wrong }],
+                now,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error, CREDENTIALS_REJECTED);
+            assert!(b.database.configured_transports().unwrap().is_empty());
+            assert!(matches!(b.database.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
+        }
+
+        #[tokio::test]
         async fn find_invitation_reports_a_missing_object() {
             let code = threestrands_sync_envelope::JoinCode {
                 version: 1,
@@ -2580,7 +2807,7 @@ mod tests {
                 connectors: vec![],
             };
             let error = find_invitation(&code, &fake_transports("empty")).await.err().unwrap();
-            assert!(error.contains("Couldn't find"), "{error}");
+            assert_eq!(error, INVITATION_NOT_FOUND);
         }
     }
 }

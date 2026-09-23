@@ -144,6 +144,7 @@ export type EnrollmentStatus =
   | { state: "notStarted" }
   | { state: "awaitingGrant"; requestId: string; fingerprint: string; createdAt: string }
   | { state: "awaitingConfirmation"; requestId: string; fingerprint: string; approverFingerprint: string }
+  | { state: "rejected"; requestId: string; fingerprint: string }
   | {
       state: "enrolled";
       deviceCount: number;

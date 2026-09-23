@@ -36,7 +36,7 @@ use threestrands_sync_envelope::{
     verify_invitation_redemption, InvitationRedemption, Invitation, JoinCode, JoinConnector, SignedInvitation,
     SignedInvitationRedemption, VerifyingKey, X25519PublicKey, JOIN_CODE_VERSION,
 };
-use threestrands_sync_transport::{Cid as TransportCid, SyncTransport};
+use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use super::{
     default_device_name, roster_entry_verifying_key, EnrollmentStatus, EpochKeyStore, MAX_DEVICE_LABEL_CHARS,
@@ -455,23 +455,48 @@ pub(crate) fn verify_fetched_invitation(bytes: &[u8], code: &JoinCode) -> Result
     Ok(OpenedInvitation { signed, k_epoch })
 }
 
+pub(crate) const INVITATION_NOT_FOUND: &str = "Couldn't find this join code's invitation in its connectors. If it uses a shared folder, check that you chose the right folder and that your sync app has finished downloading, then try again.";
+pub(crate) const CREDENTIALS_REJECTED: &str = "Storage rejected the credentials for this join code's connector. Check the access key, or ask for a new join code.";
+pub(crate) const STORAGE_UNREACHABLE: &str = "Couldn't reach this join code's storage. Check your connection, then try again.";
+
 /// Fetches and verifies the invitation from the first transport that has
-/// it.
+/// it. When none does, the error says why, most specific first: an object
+/// that doesn't match the code, storage that rejected the credentials,
+/// storage that couldn't be reached, or simply no invitation there.
 pub(crate) async fn find_invitation(
     code: &JoinCode,
     transports: &[Arc<dyn SyncTransport>],
 ) -> Result<OpenedInvitation, String> {
     let mut mismatch = None;
+    let mut credentials_rejected = false;
+    let mut unreachable = false;
     for transport in transports {
-        let Ok(bytes) = transport.get_object(&TransportCid(code.invitation_cid.clone())).await else { continue };
+        let bytes = match transport.get_object(&TransportCid(code.invitation_cid.clone())).await {
+            Ok(bytes) => bytes,
+            Err(TransportError::Authentication(_)) => {
+                credentials_rejected = true;
+                continue;
+            }
+            Err(TransportError::Transient(_) | TransportError::Quota(_)) => {
+                unreachable = true;
+                continue;
+            }
+            Err(_) => continue,
+        };
         match verify_fetched_invitation(&bytes, code) {
             Ok(opened) => return Ok(opened),
             Err(error) => mismatch = Some(error),
         }
     }
     Err(mismatch.unwrap_or_else(|| {
-        "Couldn't find this join code's invitation in its connectors. If it uses a shared folder, check that you chose the right folder and that your sync app has finished downloading, then try again."
-            .to_string()
+        if credentials_rejected {
+            CREDENTIALS_REJECTED
+        } else if unreachable {
+            STORAGE_UNREACHABLE
+        } else {
+            INVITATION_NOT_FOUND
+        }
+        .to_string()
     }))
 }
 

@@ -39,12 +39,12 @@ pub use device_head::{
 };
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
 pub use enrollment::{
-    decode_signed_enrollment_grant, decode_signed_enrollment_request, decode_signed_key_rotation,
-    encode_signed_enrollment_grant, encode_signed_enrollment_request, encode_signed_key_rotation,
-    enrollment_fingerprint, sign_enrollment_grant, sign_enrollment_request, sign_key_rotation,
-    verify_enrollment_grant, verify_enrollment_request, verify_key_rotation, EnrollmentGrant,
-    EnrollmentRequest, KeyRotation, RosterEntry, SignedEnrollmentGrant, SignedEnrollmentRequest,
-    SignedKeyRotation,
+    decode_signed_enrollment_grant, decode_signed_enrollment_rejection, decode_signed_enrollment_request, decode_signed_key_rotation,
+    encode_signed_enrollment_grant, encode_signed_enrollment_rejection, encode_signed_enrollment_request, encode_signed_key_rotation,
+    enrollment_fingerprint, sign_enrollment_grant, sign_enrollment_rejection, sign_enrollment_request, sign_key_rotation,
+    verify_enrollment_grant, verify_enrollment_rejection, verify_enrollment_request, verify_key_rotation, EnrollmentGrant,
+    EnrollmentRejection, EnrollmentRequest, KeyRotation, RosterEntry, SignedEnrollmentGrant, SignedEnrollmentRejection,
+    SignedEnrollmentRequest, SignedKeyRotation,
 };
 pub use error::EnvelopeError;
 pub use join_code::{

@@ -47,7 +47,7 @@ describe("EnrollmentRequestNotice", () => {
     vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([request("req-1")]);
     try {
       render(<EnrollmentRequestNotice suppressed={false} onReview={vi.fn()} />);
-      fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Dismiss on this device" }));
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
       await waitFor(() => expect(listenMock).toHaveBeenCalledWith("replicated-sync-status", expect.any(Function)));
 

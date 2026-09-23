@@ -267,6 +267,20 @@ describe("currentSetupStep", () => {
     expect(currentSetupStep(null, 1)).toBe("choose");
     expect(currentSetupStep({ state: "awaitingGrant", requestId: "r", fingerprint: "f", createdAt: "t" }, 0)).toBe("verify");
     expect(currentSetupStep({ state: "awaitingConfirmation", requestId: "r", fingerprint: "f", approverFingerprint: "a" }, 1)).toBe("verify");
+    expect(currentSetupStep({ state: "rejected", requestId: "r", fingerprint: "f" }, 1)).toBe("verify");
+  });
+});
+
+describe("shared enrollment rejection", () => {
+  it("explains that the request was rejected by the group and offers a fresh request", async () => {
+    setUp({ status: { state: "rejected", requestId: "req-1", fingerprint: "AB12-CD34-EF56-0789" } });
+    vi.mocked(sync.replicatedSyncLeave).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    expect(await screen.findByText(/This request was rejected on an existing device/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start a new request…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    await waitFor(() => expect(sync.replicatedSyncLeave).toHaveBeenCalled());
   });
 });
 
