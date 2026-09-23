@@ -1,12 +1,16 @@
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use keyring::Entry;
-use rand::{rngs::OsRng, RngCore};
+use oauth2::{
+    basic::{BasicClient, BasicErrorResponse},
+    AuthType, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet,
+    EndpointSet, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope,
+    TokenResponse, TokenUrl,
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -38,6 +42,9 @@ const PENDING_KEY: &str = "pending";
 /// Returned when a newer sign-in attempt superseded this one.
 const CANCELED: &str = "Sign-in was canceled by a newer attempt.";
 
+type GoogleOAuthClient =
+    BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
+
 #[derive(Debug, thiserror::Error)]
 pub enum AccessTokenError {
     #[error("{0}")]
@@ -51,13 +58,6 @@ pub struct Tokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at: u64,
-}
-
-#[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_in: u64,
 }
 
 #[derive(Deserialize)]
@@ -108,9 +108,9 @@ impl GoogleAuthConfig {
             .ok_or_else(|| {
                 "Google OAuth is not configured. Set THREESTRANDS_GOOGLE_CLIENT_SECRET to the value from the Desktop app credential."
                     .to_string()
-            })?;
+        })?;
         Ok(Self {
-            client: build_oauth_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT)?,
+            client: build_http_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT)?,
             client_id,
             client_secret,
         })
@@ -169,10 +169,11 @@ impl GoogleAuthConfig {
     }
 
     fn keyed_for(&self, key: &str, service: &str, endpoints: OAuthEndpoints) -> GoogleAuth {
+        let oauth_client = build_oauth_client(&self.client_id, &self.client_secret, &endpoints)
+            .expect("static OAuth endpoints must be valid URLs");
         GoogleAuth {
             client: self.client.clone(),
-            client_id: self.client_id.clone(),
-            client_secret: self.client_secret.clone(),
+            oauth_client,
             service: service.to_string(),
             endpoints,
             key: Arc::new(Mutex::new(key.to_string())),
@@ -185,8 +186,7 @@ impl GoogleAuthConfig {
 #[derive(Clone)]
 pub struct GoogleAuth {
     client: Client,
-    client_id: String,
-    client_secret: String,
+    oauth_client: GoogleOAuthClient,
     service: String,
     endpoints: OAuthEndpoints,
     key: Arc<Mutex<String>>,
@@ -227,7 +227,12 @@ impl GoogleAuth {
     /// the full timeout, silently blocking any retry that shares its slot.
     pub async fn authorize(&self, cancel: &CancellationToken) -> Result<String, String> {
         let tokens = self.run_pkce_flow(cancel).await?;
-        let email = fetch_email(&self.client, &self.endpoints.profile_url, &tokens.access_token).await?;
+        let email = fetch_email(
+            &self.client,
+            &self.endpoints.profile_url,
+            &tokens.access_token,
+        )
+        .await?;
         self.accept_identity(&email)?;
         self.save(&tokens)?;
         Ok(email)
@@ -252,40 +257,24 @@ impl GoogleAuth {
             "http://127.0.0.1:{}/oauth/callback",
             listener.local_addr().map_err(display)?.port()
         );
-        let verifier = random_urlsafe(64);
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        let state = random_urlsafe(32);
-        let mut authorization = Url::parse(&self.endpoints.auth_url).map_err(display)?;
-        authorization
-            .query_pairs_mut()
-            .append_pair("client_id", &self.client_id)
-            .append_pair("redirect_uri", &redirect_uri)
-            .append_pair("response_type", "code")
-            .append_pair("scope", &self.endpoints.scopes)
-            .append_pair("code_challenge", &challenge)
-            .append_pair("code_challenge_method", "S256")
-            .append_pair("state", &state)
-            .append_pair("access_type", "offline")
-            .append_pair("prompt", "consent");
-        open::that(authorization.as_str()).map_err(display)?;
+        let redirect_uri = RedirectUrl::new(redirect_uri).map_err(display)?;
+        let (authorization_url, state, pkce_verifier) = authorization_request(
+            &self.oauth_client,
+            &self.endpoints.scopes,
+            redirect_uri.clone(),
+        );
+        open::that(authorization_url.as_str()).map_err(display)?;
 
         let (mut stream, target) = self.accept_callback(&listener, cancel).await?;
-        let callback = Url::parse(&format!("http://localhost{target}")).map_err(display)?;
-        let values = callback
-            .query_pairs()
-            .collect::<std::collections::HashMap<_, _>>();
-        let result = if values.get("state").map(|value| value.as_ref()) != Some(state.as_str()) {
-            Err("OAuth state did not match; sign-in was rejected".to_string())
-        } else if let Some(error) = values.get("error") {
-            Err(format!("Google authorization failed: {error}"))
-        } else {
-            let code = values
-                .get("code")
-                .ok_or_else(|| "OAuth callback did not contain a code".to_string())?;
-            self.exchange_code(code, &verifier, &redirect_uri).await
+        let result = match callback_code(&target, &state) {
+            Ok(code) => self.exchange_code(&code, pkce_verifier, redirect_uri).await,
+            Err(error) => Err(error),
         };
         let (status, body) = if result.is_ok() {
-            ("200 OK", "ThreeStrands is connected. You can close this tab.")
+            (
+                "200 OK",
+                "ThreeStrands is connected. You can close this tab.",
+            )
         } else {
             (
                 "400 Bad Request",
@@ -352,30 +341,18 @@ impl GoogleAuth {
     async fn exchange_code(
         &self,
         code: &str,
-        verifier: &str,
-        redirect_uri: &str,
+        verifier: PkceCodeVerifier,
+        redirect_uri: RedirectUrl,
     ) -> Result<Tokens, String> {
-        let response = self
-            .client
-            .post(&self.endpoints.token_url)
-            .form(&[
-                ("client_id", self.client_id.as_str()),
-                ("client_secret", self.client_secret.as_str()),
-                ("code", code),
-                ("code_verifier", verifier),
-                ("grant_type", "authorization_code"),
-                ("redirect_uri", redirect_uri),
-            ])
-            .send()
+        let token = self
+            .oauth_client
+            .exchange_code(AuthorizationCode::new(code.to_string()))
+            .set_pkce_verifier(verifier)
+            .set_redirect_uri(Cow::Owned(redirect_uri))
+            .request_async(&self.client)
             .await
-            .map_err(display)?;
-        let response = checked(response).await?;
-        let token: TokenResponse = response.json().await.map_err(display)?;
-        Ok(Tokens {
-            access_token: token.access_token,
-            refresh_token: token.refresh_token,
-            expires_at: now() + token.expires_in.saturating_sub(60),
-        })
+            .map_err(|error| format!("Google OAuth code exchange failed: {error}"))?;
+        tokens_from_response(&token)
     }
 
     pub async fn access_token(&self) -> Result<String, AccessTokenError> {
@@ -390,25 +367,18 @@ impl GoogleAuth {
                 "Google session expired; reconnect the account".to_string(),
             )
         })?;
-        let response = self
-            .client
-            .post(&self.endpoints.token_url)
-            .form(&[
-                ("client_id", self.client_id.as_str()),
-                ("client_secret", self.client_secret.as_str()),
-                ("refresh_token", refresh_token),
-                ("grant_type", "refresh_token"),
-            ])
-            .send()
+        let refreshed = self
+            .oauth_client
+            .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
+            .request_async(&self.client)
             .await
-            .map_err(|error| AccessTokenError::Transient(error.to_string()))?;
-        let response = checked_refresh(response).await?;
-        let refreshed: TokenResponse = response
-            .json()
-            .await
-            .map_err(|error| AccessTokenError::Transient(error.to_string()))?;
+            .map_err(map_refresh_error)?;
+        let refreshed = tokens_from_response(&refreshed).map_err(AccessTokenError::Transient)?;
         tokens.access_token = refreshed.access_token;
-        tokens.expires_at = now() + refreshed.expires_in.saturating_sub(60);
+        if refreshed.refresh_token.is_some() {
+            tokens.refresh_token = refreshed.refresh_token;
+        }
+        tokens.expires_at = refreshed.expires_at;
         self.save(&tokens).map_err(AccessTokenError::Transient)?;
         Ok(tokens.access_token)
     }
@@ -431,7 +401,7 @@ impl GoogleAuth {
         let mut endpoints = GoogleAuthConfig::mail_endpoints();
         endpoints.token_url = token_url.to_string();
         let auth = GoogleAuthConfig {
-            client: build_oauth_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT).unwrap(),
+            client: build_http_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT).unwrap(),
             client_id: "test-client-id".into(),
             client_secret: "test-client-secret".into(),
         }
@@ -499,7 +469,11 @@ impl GoogleAuth {
     }
 }
 
-async fn fetch_email(client: &Client, profile_url: &str, access_token: &str) -> Result<String, String> {
+async fn fetch_email(
+    client: &Client,
+    profile_url: &str,
+    access_token: &str,
+) -> Result<String, String> {
     let response = client
         .get(profile_url)
         .bearer_auth(access_token)
@@ -521,63 +495,99 @@ async fn checked(response: reqwest::Response) -> Result<reqwest::Response, Strin
     }
 }
 
-async fn checked_refresh(
-    response: reqwest::Response,
-) -> Result<reqwest::Response, AccessTokenError> {
-    if response.status().is_success() {
-        return Ok(response);
+fn map_refresh_error<E>(error: oauth2::RequestTokenError<E, BasicErrorResponse>) -> AccessTokenError
+where
+    E: std::error::Error + 'static,
+{
+    if let oauth2::RequestTokenError::ServerResponse(response) = &error {
+        if response.error().as_ref() == "invalid_grant" {
+            return AccessTokenError::ReauthenticationRequired(format!(
+                "Google OAuth returned error: {response}"
+            ));
+        }
     }
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    let message = format!("Google OAuth returned {status}: {body}");
-    if classify_refresh_failure(&body) == RefreshFailureKind::ReauthenticationRequired {
-        Err(AccessTokenError::ReauthenticationRequired(message))
-    } else {
-        // Endpoint outages, throttling, malformed upstream responses, and
-        // configuration errors must not revoke an otherwise valid local
-        // account. Only Google's explicit invalid_grant signal proves that
-        // this account's refresh grant is permanently unusable.
-        Err(AccessTokenError::Transient(message))
-    }
+    // Endpoint outages, throttling, malformed upstream responses, and
+    // configuration errors must not revoke an otherwise valid local
+    // account. Only Google's explicit invalid_grant signal proves that
+    // this account's refresh grant is permanently unusable.
+    AccessTokenError::Transient(format!("Google OAuth refresh failed: {error}"))
 }
 
-#[derive(Debug, PartialEq)]
-enum RefreshFailureKind {
-    ReauthenticationRequired,
-    Transient,
+fn tokens_from_response(response: &impl TokenResponse) -> Result<Tokens, String> {
+    let expires_in = response
+        .expires_in()
+        .ok_or_else(|| "Google OAuth token response omitted expires_in".to_string())?
+        .as_secs();
+    Ok(Tokens {
+        access_token: response.access_token().secret().to_string(),
+        refresh_token: response
+            .refresh_token()
+            .map(|token| token.secret().to_string()),
+        expires_at: now() + expires_in.saturating_sub(60),
+    })
 }
 
-fn classify_refresh_failure(body: &str) -> RefreshFailureKind {
-    if oauth_error_code(body).as_deref() == Some("invalid_grant") {
-        RefreshFailureKind::ReauthenticationRequired
-    } else {
-        RefreshFailureKind::Transient
+fn authorization_request(
+    client: &GoogleOAuthClient,
+    scopes: &str,
+    redirect_uri: RedirectUrl,
+) -> (Url, CsrfToken, PkceCodeVerifier) {
+    let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
+    let mut request = client
+        .authorize_url(CsrfToken::new_random)
+        .set_pkce_challenge(challenge)
+        .set_redirect_uri(Cow::Owned(redirect_uri));
+    for scope in scopes.split_ascii_whitespace() {
+        request = request.add_scope(Scope::new(scope.to_string()));
     }
+    let (url, state) = request
+        .add_extra_param("access_type", "offline")
+        .add_extra_param("prompt", "consent")
+        .url();
+    (url, state, verifier)
 }
 
-fn oauth_error_code(body: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(body)
-        .ok()?
-        .get("error")?
-        .as_str()
-        .map(str::to_owned)
+fn callback_code(target: &str, expected_state: &CsrfToken) -> Result<String, String> {
+    let callback = Url::parse(&format!("http://localhost{target}")).map_err(display)?;
+    let values = callback
+        .query_pairs()
+        .collect::<std::collections::HashMap<_, _>>();
+    if values.get("state").map(|value| value.as_ref()) != Some(expected_state.secret()) {
+        return Err("OAuth state did not match; sign-in was rejected".to_string());
+    }
+    if let Some(error) = values.get("error") {
+        return Err(format!("Google authorization failed: {error}"));
+    }
+    values
+        .get("code")
+        .map(|code| code.to_string())
+        .ok_or_else(|| "OAuth callback did not contain a code".to_string())
 }
 
 fn build_oauth_client(
+    client_id: &str,
+    client_secret: &str,
+    endpoints: &OAuthEndpoints,
+) -> Result<GoogleOAuthClient, String> {
+    let auth_url = AuthUrl::new(endpoints.auth_url.clone()).map_err(display)?;
+    let token_url = TokenUrl::new(endpoints.token_url.clone()).map_err(display)?;
+    Ok(BasicClient::new(ClientId::new(client_id.to_string()))
+        .set_client_secret(ClientSecret::new(client_secret.to_string()))
+        .set_auth_type(AuthType::RequestBody)
+        .set_auth_uri(auth_url)
+        .set_token_uri(token_url))
+}
+
+fn build_http_client(
     connect_timeout: Duration,
     request_timeout: Duration,
 ) -> Result<Client, String> {
     Client::builder()
         .connect_timeout(connect_timeout)
         .timeout(request_timeout)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(display)
-}
-
-fn random_urlsafe(bytes: usize) -> String {
-    let mut value = vec![0_u8; bytes];
-    OsRng.fill_bytes(&mut value);
-    URL_SAFE_NO_PAD.encode(value)
 }
 
 fn now() -> u64 {
@@ -590,13 +600,59 @@ fn now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        extract::{Form, State},
+        routing::post,
+        Json, Router,
+    };
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
 
     fn config() -> GoogleAuthConfig {
         GoogleAuthConfig {
-            client: build_oauth_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT).unwrap(),
+            client: build_http_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT).unwrap(),
             client_id: "test-client-id".into(),
             client_secret: "test-client-secret".into(),
         }
+    }
+
+    async fn capture_token_request(
+        State(requests): State<Arc<Mutex<Vec<HashMap<String, String>>>>>,
+        Form(form): Form<HashMap<String, String>>,
+    ) -> Json<Value> {
+        requests.lock().unwrap().push(form);
+        Json(json!({
+            "access_token": "exchanged-access",
+            "refresh_token": "exchanged-refresh",
+            "token_type": "Bearer",
+            "expires_in": 3600
+        }))
+    }
+
+    async fn error_token_response(
+        State((status, code)): State<(axum::http::StatusCode, String)>,
+    ) -> (axum::http::StatusCode, Json<Value>) {
+        (status, Json(json!({ "error": code })))
+    }
+
+    async fn start_token_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}/token"), task)
+    }
+
+    fn auth_with_token_url(token_url: &str) -> GoogleAuth {
+        let mut endpoints = GoogleAuthConfig::mail_endpoints();
+        endpoints.token_url = token_url.to_string();
+        GoogleAuthConfig {
+            client: build_http_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT).unwrap(),
+            client_id: "test-client-id".into(),
+            client_secret: "test-client-secret".into(),
+        }
+        .keyed_for("test@example.com", MAIL_SERVICE, endpoints)
     }
 
     // Deliberately does not exercise the accepting path: that would rekey
@@ -615,6 +671,142 @@ mod tests {
         assert!(auth.accept_identity("work@example.com").is_ok());
     }
 
+    #[test]
+    fn authorization_request_uses_pkce_scopes_and_google_consent_parameters() {
+        let auth = config().account("work@example.com");
+        let redirect = RedirectUrl::new("http://127.0.0.1:43210/oauth/callback".into()).unwrap();
+        let (url, state, verifier) =
+            authorization_request(&auth.oauth_client, &auth.endpoints.scopes, redirect);
+        let query = url.query_pairs().collect::<HashMap<_, _>>();
+
+        assert_eq!(query.get("response_type").map(|v| v.as_ref()), Some("code"));
+        assert_eq!(
+            query.get("client_id").map(|v| v.as_ref()),
+            Some("test-client-id")
+        );
+        assert_eq!(
+            query.get("state").map(|v| v.as_ref()),
+            Some(state.secret().as_str())
+        );
+        assert_eq!(
+            query.get("code_challenge_method").map(|v| v.as_ref()),
+            Some("S256")
+        );
+        assert!(!query.get("code_challenge").unwrap().is_empty());
+        assert_eq!(
+            query.get("access_type").map(|v| v.as_ref()),
+            Some("offline")
+        );
+        assert_eq!(query.get("prompt").map(|v| v.as_ref()), Some("consent"));
+        assert_eq!(query.get("scope").map(|v| v.as_ref()), Some(MAIL_SCOPES));
+        assert!(verifier.secret().len() >= 43);
+    }
+
+    #[test]
+    fn callback_requires_matching_state_and_an_authorization_code() {
+        let expected = CsrfToken::new("expected-state".into());
+        assert_eq!(
+            callback_code("/oauth/callback?state=expected-state&code=abc", &expected).unwrap(),
+            "abc"
+        );
+        assert!(
+            callback_code("/oauth/callback?state=wrong&code=abc", &expected)
+                .unwrap_err()
+                .contains("state did not match")
+        );
+        assert!(callback_code(
+            "/oauth/callback?state=expected-state&error=access_denied",
+            &expected
+        )
+        .unwrap_err()
+        .contains("access_denied"));
+        assert!(
+            callback_code("/oauth/callback?state=expected-state", &expected)
+                .unwrap_err()
+                .contains("did not contain a code")
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_exchanges_code_with_pkce_redirect_and_parses_tokens() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .route("/token", post(capture_token_request))
+            .with_state(requests.clone());
+        let (token_url, server) = start_token_server(app).await;
+        let auth = auth_with_token_url(&token_url);
+        let redirect = RedirectUrl::new("http://127.0.0.1:43210/oauth/callback".into()).unwrap();
+
+        let tokens = auth
+            .exchange_code(
+                "authorization-code",
+                PkceCodeVerifier::new("test-verifier-value".into()),
+                redirect,
+            )
+            .await
+            .unwrap();
+
+        let requests = requests.lock().unwrap();
+        let request = &requests[0];
+        assert_eq!(
+            request.get("grant_type").map(String::as_str),
+            Some("authorization_code")
+        );
+        assert_eq!(
+            request.get("code").map(String::as_str),
+            Some("authorization-code")
+        );
+        assert_eq!(
+            request.get("code_verifier").map(String::as_str),
+            Some("test-verifier-value")
+        );
+        assert_eq!(
+            request.get("redirect_uri").map(String::as_str),
+            Some("http://127.0.0.1:43210/oauth/callback")
+        );
+        assert_eq!(
+            request.get("client_id").map(String::as_str),
+            Some("test-client-id")
+        );
+        assert_eq!(tokens.access_token, "exchanged-access");
+        assert_eq!(tokens.refresh_token.as_deref(), Some("exchanged-refresh"));
+        assert!(tokens.expires_at > now());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn refresh_errors_preserve_reauthentication_vs_transient_classification() {
+        for (status, error, expects_reauth) in [
+            (axum::http::StatusCode::BAD_REQUEST, "invalid_grant", true),
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "temporarily_unavailable",
+                false,
+            ),
+        ] {
+            let app = Router::new()
+                .route("/token", post(error_token_response))
+                .with_state((status, error.to_string()));
+            let (token_url, server) = start_token_server(app).await;
+            let auth = GoogleAuth::in_memory_for_test(
+                &token_url,
+                Tokens {
+                    access_token: "expired-access".into(),
+                    refresh_token: Some("refresh-secret".into()),
+                    expires_at: 0,
+                },
+            );
+
+            let result = auth.access_token().await;
+            assert!(
+                matches!(result, Err(AccessTokenError::ReauthenticationRequired(_)))
+                    == expects_reauth,
+                "unexpected refresh classification: {result:?}"
+            );
+            server.abort();
+        }
+    }
+
     #[tokio::test]
     async fn oauth_client_times_out_a_stalled_request() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -623,7 +815,7 @@ mod tests {
             let (_stream, _) = listener.accept().await.unwrap();
             tokio::time::sleep(Duration::from_secs(1)).await;
         });
-        let client = build_oauth_client(Duration::from_secs(1), Duration::from_millis(25)).unwrap();
+        let client = build_http_client(Duration::from_secs(1), Duration::from_millis(25)).unwrap();
 
         let error = client
             .get(format!("http://{address}"))
@@ -656,20 +848,31 @@ mod tests {
 
     #[test]
     fn only_invalid_grant_is_a_permanent_refresh_failure() {
-        assert_eq!(
-            classify_refresh_failure(
-                r#"{"error":"invalid_grant","error_description":"revoked"}"#
+        let invalid_grant = oauth2::RequestTokenError::<std::io::Error, _>::ServerResponse(
+            BasicErrorResponse::new(
+                oauth2::basic::BasicErrorResponseType::InvalidGrant,
+                Some("revoked".to_string()),
+                None,
             ),
-            RefreshFailureKind::ReauthenticationRequired
         );
-        assert_eq!(
-            classify_refresh_failure(r#"{"error":"temporarily_unavailable"}"#),
-            RefreshFailureKind::Transient
+        assert!(matches!(
+            map_refresh_error(invalid_grant),
+            AccessTokenError::ReauthenticationRequired(_)
+        ));
+
+        let temporary = oauth2::RequestTokenError::<std::io::Error, _>::ServerResponse(
+            BasicErrorResponse::new(
+                oauth2::basic::BasicErrorResponseType::Extension(
+                    "temporarily_unavailable".to_string(),
+                ),
+                None,
+                None,
+            ),
         );
-        assert_eq!(
-            classify_refresh_failure("<html>upstream failure</html>"),
-            RefreshFailureKind::Transient
-        );
+        assert!(matches!(
+            map_refresh_error(temporary),
+            AccessTokenError::Transient(_)
+        ));
     }
 
     #[test]
