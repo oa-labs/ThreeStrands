@@ -648,12 +648,12 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument();
   });
 
-  it("opens the week calendar view from the sidebar button", async () => {
+  it("keeps the weekly calendar out of the sidebar and retains today's schedule", async () => {
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Calendar (2)" }));
-    expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Calendar (2)" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Today’s Schedule (T)" })).toBeInTheDocument();
   });
 
   it("replaces the mail viewport and manages tasks through the focused keyboard commands", async () => {

@@ -1778,6 +1778,7 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           </div>
           <div className="settings-row ai-connection-actions">
             <button
+              className="ai-connection-test"
               type="button"
               disabled={busy || testingConnection || !keyConfigured || !resolveAiModel(provider, model) || (provider === "custom" && !endpoint.trim())}
               onClick={() => {

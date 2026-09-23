@@ -2,7 +2,6 @@ import {
   Archive,
   AlertCircle,
   CalendarDays,
-  CalendarRange,
   CheckSquare,
   Check,
   ChevronDown,
@@ -1843,24 +1842,6 @@ export function App() {
         </div>
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
-          <HoverTooltip label="Tasks" shortcut="3">
-            <button
-              className={`nav-button ${rightWorkspace === "tasks" ? "active" : ""}`}
-              aria-label="Tasks (3)"
-              onClick={() => executeById("tasks.open")}
-            >
-              <CheckSquare size={19} />
-            </button>
-          </HoverTooltip>
-          <HoverTooltip label="Calendar" shortcut="2">
-            <button
-              className={`nav-button ${rightWorkspace === "week" ? "active" : ""}`}
-              aria-label="Calendar (2)"
-              onClick={() => executeById("view.calendar")}
-            >
-              <CalendarRange size={19} />
-            </button>
-          </HoverTooltip>
           <HoverTooltip label="Today’s schedule" shortcut="T">
             <button
               className={`nav-button ${rightWorkspace === "calendar" ? "active" : ""}`}
@@ -1868,6 +1849,15 @@ export function App() {
               onClick={() => executeById("calendar.today")}
             >
               <CalendarDays size={19} />
+            </button>
+          </HoverTooltip>
+          <HoverTooltip label="Tasks" shortcut="3">
+            <button
+              className={`nav-button ${rightWorkspace === "tasks" ? "active" : ""}`}
+              aria-label="Tasks (3)"
+              onClick={() => executeById("tasks.open")}
+            >
+              <CheckSquare size={19} />
             </button>
           </HoverTooltip>
           <button
