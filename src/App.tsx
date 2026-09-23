@@ -2,6 +2,7 @@ import {
   Archive,
   AlertCircle,
   CalendarDays,
+  CalendarRange,
   CheckSquare,
   Check,
   ChevronDown,
@@ -87,6 +88,7 @@ import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { CalendarSidebar } from "./CalendarSidebar";
+import { CalendarWeekView } from "./CalendarWeekView";
 import { formatAvailabilityText } from "./actionDrafting";
 import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
@@ -138,7 +140,7 @@ import { Settings, type MailAccountSettings, type SettingsSection } from "./Sett
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
-type RightWorkspace = "actions" | "calendar" | "tasks" | null;
+type RightWorkspace = "actions" | "calendar" | "tasks" | "week" | null;
 type TaskEditorState =
   | { kind: "new"; thread: ThreadDetail }
   | { kind: "standalone"; accountId: string }
@@ -1483,6 +1485,12 @@ export function App() {
     setRightWorkspace("tasks");
   }, []);
 
+  const openCalendarView = useCallback(() => {
+    setRightWorkspace("week");
+    void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
+    void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
+  }, [refreshCalendarAccounts, refreshCalendarOptions]);
+
   const cyclePrimaryView = useCallback(() => {
     if (rightWorkspace === "tasks") goToInboxTab();
     else setRightWorkspace("tasks");
@@ -1678,6 +1686,7 @@ export function App() {
     openTasks,
     openMailView,
     openTasksView,
+    openCalendarView,
     cyclePrimaryView,
     openActions,
     newTask,
@@ -1692,7 +1701,7 @@ export function App() {
       setActiveAccountId(null);
     },
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setActiveAccountId, setMessageExpansionOverrides, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setActiveAccountId, setMessageExpansionOverrides, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1775,7 +1784,7 @@ export function App() {
   };
 
   return (
-    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -1844,6 +1853,15 @@ export function App() {
               <CheckSquare size={19} />
             </button>
           </HoverTooltip>
+          <HoverTooltip label="Calendar" shortcut="2">
+            <button
+              className={`nav-button ${rightWorkspace === "week" ? "active" : ""}`}
+              aria-label="Calendar (2)"
+              onClick={() => executeById("view.calendar")}
+            >
+              <CalendarRange size={19} />
+            </button>
+          </HoverTooltip>
           <HoverTooltip label="Today’s schedule" shortcut="T">
             <button
               className={`nav-button ${rightWorkspace === "calendar" ? "active" : ""}`}
@@ -1895,7 +1913,7 @@ export function App() {
         </div>
       </nav>
 
-      {rightWorkspace !== "tasks" ? <>
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" ? <>
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
         <InboxResizeHandle {...inboxSize} />
         <header className="thread-header">
@@ -2554,6 +2572,29 @@ export function App() {
       </section>
       </> : null}
 
+      {rightWorkspace === "week" ? (
+        <CalendarWeekView
+          accounts={calendar.accounts}
+          calendars={calendar.calendars}
+          onToggleCalendar={(accountId, calendarId, selected) => {
+            const next = calendar.calendars
+              .filter((option) => option.accountId === accountId && option.selected && option.id !== calendarId)
+              .map((option) => option.id);
+            if (selected) next.push(calendarId);
+            void calendar.setSelection(accountId, next).catch((reason: unknown) => {
+              setNotice({ message: errorMessage(reason) });
+            });
+          }}
+          onAddCalendarAccount={() => {
+            setRightWorkspace(null);
+            openSettingsAt("calendarAccounts");
+          }}
+          onOpenSettings={() => {
+            setRightWorkspace(null);
+            openSettingsAt("calendarAccounts");
+          }}
+        />
+      ) : null}
       {rightWorkspace === "calendar" ? (
         <CalendarSidebar
           onClose={() => setRightWorkspace(null)}

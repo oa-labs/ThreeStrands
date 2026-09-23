@@ -77,6 +77,7 @@ function noopContext(): CommandContext {
     openTasks: () => {},
     openMailView: () => {},
     openTasksView: () => {},
+    openCalendarView: () => {},
     cyclePrimaryView: () => {},
     openActions: () => {},
     newTask: () => {},
@@ -136,6 +137,7 @@ describe("command registry", () => {
 
   it("registers direct and cycling primary-view shortcuts", () => {
     expect(commands.find((command) => command.id === "view.mail")?.keys).toEqual(["1"]);
+    expect(commands.find((command) => command.id === "view.calendar")?.keys).toEqual(["2"]);
     expect(commands.find((command) => command.id === "view.tasks")?.keys).toEqual(["3"]);
     expect(commands.find((command) => command.id === "view.cycle")?.keys).toEqual(["0"]);
   });

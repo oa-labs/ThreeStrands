@@ -1,0 +1,424 @@
+import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { EventViewer } from "./CalendarSidebar";
+import {
+  HOUR_HEIGHT,
+  HOURS,
+  addDays,
+  formatEventTime,
+  hourLabel,
+  isSameDay,
+  layOutDayEvents,
+  occursOnDay,
+  startOfLocalDay,
+  startOfWeek,
+  timeZoneLabel,
+} from "./calendarTime";
+import { isEditableTarget } from "./commands";
+import { mailClient } from "./data/client";
+import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
+
+export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
+const DEFAULT_WEEK_SCROLL_TOP = 7 * HOUR_HEIGHT;
+const MAX_WEEK_SCROLL_TOP = 24 * HOUR_HEIGHT;
+/** How often the "now" indicator re-renders, in milliseconds. */
+const NOW_TICK_MS = 60_000;
+
+function readWeekScrollTop(): number {
+  try {
+    const stored = localStorage.getItem(WEEK_SCROLL_TOP_KEY);
+    const saved = stored === null || stored.trim() === "" ? Number.NaN : Number(stored);
+    if (Number.isFinite(saved) && saved >= 0 && saved <= MAX_WEEK_SCROLL_TOP) return saved;
+  } catch {
+    // A blocked storage backend should not prevent the week view from opening.
+  }
+  return DEFAULT_WEEK_SCROLL_TOP;
+}
+
+function saveWeekScrollTop(scrollTop: number): void {
+  if (!Number.isFinite(scrollTop) || scrollTop < 0 || scrollTop > MAX_WEEK_SCROLL_TOP) return;
+  try {
+    localStorage.setItem(WEEK_SCROLL_TOP_KEY, String(scrollTop));
+  } catch {
+    // The scroll position still applies for this session when storage is unavailable.
+  }
+}
+
+function weekdayLabel(date: Date): string {
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date);
+  return `${weekday} ${date.getDate()}`;
+}
+
+function monthTitle(date: Date): string {
+  return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(date);
+}
+
+/** Six Sunday-anchored rows covering the month containing `date`. */
+export function monthGridDays(date: Date): Date[] {
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const start = startOfWeek(first);
+  return Array.from({ length: 42 }, (_, index) => addDays(start, index));
+}
+
+function MiniMonth({
+  month,
+  selected,
+  today,
+  onSelect,
+  onMoveMonth,
+}: {
+  month: Date;
+  selected: Date;
+  today: Date;
+  onSelect(date: Date): void;
+  onMoveMonth(offset: number): void;
+}) {
+  const days = useMemo(() => monthGridDays(month), [month]);
+  const weekdayInitials = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(undefined, { weekday: "narrow" });
+    const base = startOfWeek(new Date());
+    return Array.from({ length: 7 }, (_, index) => formatter.format(addDays(base, index)));
+  }, []);
+  return (
+    <section className="calendar-mini-month" aria-label="Month picker">
+      <header>
+        <h3>{monthTitle(month)}</h3>
+        <div>
+          <button type="button" aria-label="Previous Month" onClick={() => onMoveMonth(-1)}><ChevronLeft size={17} /></button>
+          <button type="button" aria-label="Next Month" onClick={() => onMoveMonth(1)}><ChevronRight size={17} /></button>
+        </div>
+      </header>
+      <div className="calendar-mini-month-grid" role="grid">
+        <div className="calendar-mini-month-weekdays" role="row" aria-hidden="true">
+          {weekdayInitials.map((initial, index) => <span key={index}>{initial}</span>)}
+        </div>
+        <div className="calendar-mini-month-days" role="row">
+          {days.map((day) => {
+            const outside = day.getMonth() !== month.getMonth();
+            const className = [
+              "calendar-mini-day",
+              outside && "calendar-mini-day-outside",
+              isSameDay(day, selected) && "calendar-mini-day-selected",
+              isSameDay(day, today) && "calendar-mini-day-today",
+            ].filter(Boolean).join(" ");
+            return (
+              <button
+                type="button"
+                role="gridcell"
+                key={day.toDateString()}
+                className={className}
+                aria-current={isSameDay(day, selected) ? "date" : undefined}
+                aria-label={new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(day)}
+                onClick={() => onSelect(day)}
+              >
+                {day.getDate()}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CalendarList({
+  accounts,
+  calendars,
+  onToggle,
+  onAdd,
+}: {
+  accounts: CalendarAccount[];
+  calendars: CalendarOption[];
+  onToggle(accountId: string, calendarId: string, selected: boolean): void;
+  onAdd(): void;
+}) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  return (
+    <section className="calendar-list" aria-label="Calendars">
+      <header>
+        <CalendarDays size={17} />
+        <h3>Calendars</h3>
+        <button type="button" aria-label="Add Calendar Account" title="Add calendar account" onClick={onAdd}>+</button>
+      </header>
+      {accounts.length === 0 ? <p className="calendar-list-empty">No calendar accounts connected.</p> : null}
+      {accounts.map((account) => {
+        const accountCalendars = calendars.filter((calendar) => calendar.accountId === account.email);
+        const open = !collapsed.has(account.email);
+        return (
+          <div className="calendar-list-account" key={account.email}>
+            <button
+              type="button"
+              className="calendar-list-account-toggle"
+              aria-expanded={open}
+              onClick={() => setCollapsed((current) => {
+                const next = new Set(current);
+                if (next.has(account.email)) next.delete(account.email);
+                else next.add(account.email);
+                return next;
+              })}
+            >
+              <span>{account.email}</span>
+              <ChevronLeft size={16} className={open ? "calendar-list-chevron-open" : "calendar-list-chevron"} />
+            </button>
+            {open ? accountCalendars.map((calendar) => (
+              <label key={calendar.id}>
+                <input
+                  type="checkbox"
+                  checked={calendar.selected}
+                  onChange={(event) => onToggle(account.email, calendar.id, event.target.checked)}
+                />
+                <span>{calendar.name}</span>
+              </label>
+            )) : null}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+export function CalendarWeekView({
+  accounts,
+  calendars,
+  onToggleCalendar,
+  onAddCalendarAccount,
+  onOpenSettings,
+}: {
+  accounts: CalendarAccount[];
+  calendars: CalendarOption[];
+  onToggleCalendar(accountId: string, calendarId: string, selected: boolean): void;
+  onAddCalendarAccount(): void;
+  onOpenSettings(): void;
+}) {
+  const [anchor, setAnchor] = useState(() => startOfLocalDay(new Date()));
+  const [month, setMonth] = useState(() => startOfLocalDay(new Date()));
+  const [events, setEvents] = useState<ScheduleEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
+  const [now, setNow] = useState(() => new Date());
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  const weekStart = useMemo(() => startOfWeek(anchor), [anchor]);
+  const days = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(weekStart, index)), [weekStart]);
+  const today = startOfLocalDay(now);
+
+  const load = useCallback(async (start: Date) => {
+    setSelectedEvent(null);
+    setLoading(true);
+    setError(null);
+    const end = addDays(start, 7);
+    try {
+      const result = await mailClient.listScheduleEvents(
+        start.toISOString(),
+        end.toISOString(),
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      );
+      setEvents(result.events);
+      if (result.errors.length > 0) {
+        console.error("Calendar week load failed:", result.errors);
+        setError("Calendar schedule load failed");
+      }
+    } catch (reason) {
+      setEvents([]);
+      console.error("Calendar week load failed:", reason);
+      setError("Calendar schedule load failed");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(weekStart);
+  }, [load, weekStart]);
+
+  useEffect(() => {
+    if (gridRef.current) gridRef.current.scrollTop = readWeekScrollTop();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), NOW_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const moveWeek = useCallback((offset: number) => {
+    setAnchor((current) => {
+      const next = addDays(current, offset * 7);
+      setMonth(next);
+      return next;
+    });
+  }, []);
+
+  const goToToday = useCallback(() => {
+    const target = startOfLocalDay(new Date());
+    setAnchor(target);
+    setMonth(target);
+  }, []);
+
+  const selectDate = useCallback((date: Date) => {
+    setAnchor(startOfLocalDay(date));
+    setMonth(startOfLocalDay(date));
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing || event.defaultPrevented) return;
+      if (event.target instanceof HTMLElement && event.target.closest("[data-shortcut-scope='modal'], [data-shortcut-scope='palette']")) return;
+      if (isEditableTarget(event.target)) return;
+      if (event.key === "-") {
+        event.preventDefault();
+        moveWeek(-1);
+      } else if (event.key === "=") {
+        event.preventDefault();
+        moveWeek(1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [moveWeek]);
+
+  const allDayByDay = useMemo(
+    () => days.map((day) => events.filter((event) => event.allDay && occursOnDay(event, day))),
+    [days, events],
+  );
+  const hasAllDay = allDayByDay.some((dayEvents) => dayEvents.length > 0);
+  const timedByDay = useMemo(
+    () => days.map((day) => layOutDayEvents(events.filter((event) => !event.allDay && occursOnDay(event, day)), day)),
+    [days, events],
+  );
+
+  return (
+    <section className="calendar-week" aria-label="Calendar week">
+      <div className="calendar-week-main">
+        <header className="calendar-week-header">
+          <div className="calendar-week-controls">
+            <button type="button" className="calendar-today-button" onClick={goToToday}>Today</button>
+            <button type="button" aria-label="Previous Week (-)" title="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={20} /></button>
+            <button type="button" aria-label="Next Week (=)" title="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={20} /></button>
+          </div>
+          <h1>{monthTitle(weekStart)}</h1>
+        </header>
+        {error ? (
+          <div className="calendar-error-notice" role="alert">
+            <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>
+            <div>
+              <button type="button" onClick={() => void load(weekStart)}>Try Again</button>
+              <button type="button" onClick={onOpenSettings}>Calendar Accounts</button>
+            </div>
+          </div>
+        ) : null}
+        <div className="calendar-week-days" role="row">
+          <span className="calendar-week-gutter" aria-hidden="true" />
+          {days.map((day) => (
+            <span
+              key={day.toDateString()}
+              className={`calendar-week-day-label${isSameDay(day, today) ? " calendar-week-day-today" : ""}`}
+              aria-current={isSameDay(day, today) ? "date" : undefined}
+            >
+              {weekdayLabel(day)}
+            </span>
+          ))}
+        </div>
+        {hasAllDay ? (
+          <div className="calendar-week-all-day" aria-label="All-day events">
+            <span className="calendar-week-gutter">All day</span>
+            {days.map((day, index) => (
+              <div key={day.toDateString()}>
+                {allDayByDay[index].map((event) => (
+                  <button
+                    type="button"
+                    key={`${event.accountId}:${event.id}`}
+                    data-calendar-event-trigger
+                    aria-expanded={selectedEvent === event}
+                    onClick={() => setSelectedEvent((current) => current === event ? null : event)}
+                  >
+                    {event.title}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <div className="calendar-week-timezone"><span className="calendar-week-gutter">{timeZoneLabel(anchor)}</span></div>
+        <div
+          className="calendar-week-scroll"
+          ref={gridRef}
+          onScroll={(event) => saveWeekScrollTop(event.currentTarget.scrollTop)}
+        >
+          <div className="calendar-week-grid">
+            <div className="calendar-hour-labels" aria-hidden="true">
+              {HOURS.map((hour) => (
+                <span key={hour} style={{ top: hour * HOUR_HEIGHT }}>{hourLabel(hour)}</span>
+              ))}
+            </div>
+            {days.map((day, dayIndex) => (
+              <div className="calendar-week-column" key={day.toDateString()}>
+                {HOURS.map((hour) => <div className="calendar-hour-line" key={hour} />)}
+                {timedByDay[dayIndex].map(({ event, lane, lanes }) => {
+                  const start = new Date(event.start);
+                  const end = new Date(event.end);
+                  const dayStart = startOfLocalDay(day);
+                  const dayEnd = addDays(dayStart, 1);
+                  const startMinutes = start <= dayStart ? 0 : start.getHours() * 60 + start.getMinutes();
+                  const endMinutes = end >= dayEnd ? 24 * 60 : end.getHours() * 60 + end.getMinutes();
+                  const height = Math.max(20, ((Math.max(startMinutes, endMinutes) - startMinutes) / 60) * HOUR_HEIGHT);
+                  const durationMinutes = (end.getTime() - start.getTime()) / 60000;
+                  const className = [
+                    "calendar-schedule-event",
+                    durationMinutes <= 30 && "calendar-schedule-event-compact",
+                    durationMinutes <= 15 && "calendar-schedule-event-tight",
+                  ].filter(Boolean).join(" ");
+                  return (
+                    <button
+                      type="button"
+                      className={className}
+                      key={`${event.accountId}:${event.id}`}
+                      data-calendar-event-trigger
+                      aria-expanded={selectedEvent === event}
+                      onClick={() => setSelectedEvent((current) => current === event ? null : event)}
+                      style={{
+                        top: (startMinutes / 60) * HOUR_HEIGHT,
+                        height,
+                        left: `${(lane / lanes) * 100}%`,
+                        width: `${100 / lanes}%`,
+                      }}
+                      title={`${event.title}, ${formatEventTime(event)}`}
+                    >
+                      <strong>{event.title}</strong>
+                      <span>{formatEventTime(event)}</span>
+                    </button>
+                  );
+                })}
+                {isSameDay(day, today) ? (
+                  <div
+                    className="calendar-now-indicator"
+                    data-testid="calendar-now-indicator"
+                    aria-hidden="true"
+                    style={{ top: ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_HEIGHT }}
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+          {loading ? <p className="calendar-grid-status">Loading schedule…</p> : null}
+        </div>
+      </div>
+      <aside className="calendar-week-side" aria-label="Calendar navigation">
+        <MiniMonth
+          month={month}
+          selected={anchor}
+          today={today}
+          onSelect={selectDate}
+          onMoveMonth={(offset) => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1))}
+        />
+        <CalendarList
+          accounts={accounts}
+          calendars={calendars}
+          onToggle={onToggleCalendar}
+          onAdd={onAddCalendarAccount}
+        />
+      </aside>
+      {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} /> : null}
+    </section>
+  );
+}

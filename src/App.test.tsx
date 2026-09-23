@@ -631,6 +631,31 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
   });
 
+  it("opens the week calendar view with 2 and returns to mail with 1", async () => {
+    const { container } = render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    fireEvent.keyDown(window, { key: "2" });
+    const week = await screen.findByRole("region", { name: "Calendar week" });
+    expect(container.querySelector("main")).toHaveClass("week-open");
+    expect(within(week).getByRole("region", { name: "Month picker" })).toBeInTheDocument();
+    expect(within(week).getByRole("region", { name: "Calendars" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Conversation" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "1" });
+    expect(await screen.findByRole("region", { name: "Inbox" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument();
+  });
+
+  it("opens the week calendar view from the sidebar button", async () => {
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Calendar (2)" }));
+    expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
+  });
+
   it("replaces the mail viewport and manages tasks through the focused keyboard commands", async () => {
     const tasks = [
       {

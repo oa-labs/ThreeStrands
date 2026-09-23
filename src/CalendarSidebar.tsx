@@ -2,14 +2,23 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { AlignLeft, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, RefreshCw, Video, X } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
+import {
+  HOUR_HEIGHT,
+  HOURS,
+  dateInputValue,
+  formatEventDate,
+  formatEventTime,
+  hourLabel,
+  safeWebUrl,
+  startOfLocalDay,
+  timeZoneLabel,
+} from "./calendarTime";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
 
-const HOUR_HEIGHT = 64;
-const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 export const CALENDAR_SCROLL_TOP_KEY = "threestrands.calendar.scrollTop";
 const DEFAULT_CALENDAR_SCROLL_TOP = 7 * HOUR_HEIGHT;
 const MAX_CALENDAR_SCROLL_TOP = 24 * HOUR_HEIGHT;
@@ -95,15 +104,6 @@ function useDaySwipe(targetRef: RefObject<HTMLElement | null>, moveDay: (offset:
   }, [targetRef, moveDay]);
 }
 
-function startOfLocalDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
-function dateInputValue(date: Date): string {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 10);
-}
-
 function AvailabilityRequestDialog({
   date,
   durationMinutes,
@@ -156,64 +156,7 @@ export function hasWorkingHoursOnDate(
   return preferences.workingWindows.some((window) => window.weekday === date.getDay());
 }
 
-function timeZoneLabel(date: Date): string {
-  const part = new Intl.DateTimeFormat(undefined, {
-    timeZoneName: "short",
-    hour: "numeric",
-  })
-    .formatToParts(date)
-    .find((candidate) => candidate.type === "timeZoneName");
-  return part?.value ?? "UTC";
-}
-
-function hourLabel(hour: number): string {
-  if (hour === 0) return "12 am";
-  if (hour === 12) return "12 pm";
-  return `${hour > 12 ? hour - 12 : hour} ${hour >= 12 ? "pm" : "am"}`;
-}
-
-function formatEventTime(event: ScheduleEvent): string {
-  if (event.allDay) return "All day";
-  const formatter = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  const start = formatter.formatToParts(new Date(event.start))
-    .filter((part) => part.type !== "dayPeriod")
-    .map((part) => part.value)
-    .join("")
-    .trim();
-  const end = formatter.formatToParts(new Date(event.end))
-    .map((part) => part.type === "dayPeriod" ? part.value.toLocaleLowerCase() : part.value)
-    .join("");
-  return `${start}–${end}`;
-}
-
-function eventDate(event: ScheduleEvent): Date {
-  if (!event.allDay) return new Date(event.start);
-  const [year, month, day] = event.start.split("-").map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function formatEventDate(event: ScheduleEvent): string {
-  return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(eventDate(event));
-}
-
-function safeWebUrl(value: string | null | undefined): string | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
-  } catch {
-    return null;
-  }
-}
-
-function EventViewer({ event, onDismiss }: { event: ScheduleEvent; onDismiss(): void }) {
+export function EventViewer({ event, onDismiss }: { event: ScheduleEvent; onDismiss(): void }) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const conferenceUrl = safeWebUrl(event.conferenceUrl);
   useEscapeDismiss(onDismiss);
