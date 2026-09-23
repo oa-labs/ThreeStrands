@@ -31,6 +31,12 @@ const MAX_POLL_INTERVAL: Duration = Duration::from_secs(300);
 /// primary sync path, so it runs rarely.
 const RECONCILE_INTERVAL_SECS: i64 = 6 * 60 * 60;
 const RECOVERY_BATCH_SIZE: usize = 50;
+/// Upper bound on change pages in one incremental round. Change detection
+/// holds the account's sync gate and persists nothing until its final page,
+/// so a provider that never stops paging would otherwise stall the account
+/// (and every manual refresh queued behind it) indefinitely. Far above any
+/// real backlog; exceeding it falls back to a full resynchronization.
+const MAX_INCREMENTAL_SYNC_PAGES: usize = 1_000;
 // Fetch enough of Gmail's ranked result set to fill the first local page,
 // while keeping a broad query from blocking the UI on hundreds of sequential
 // `threads.get` calls (each one is deliberately paced for Gmail quota).
@@ -413,11 +419,18 @@ async fn incremental_sync(
     // Only the cursor returned by the final page is persisted: a provider may
     // report its newest position on every page, so advancing early would skip
     // the pages not yet read.
+    let mut pages = 0;
     let final_cursor = loop {
         let batch = provider.poll(&position).await?;
         changed.extend(batch.changed_threads);
         if !batch.more {
             break batch.cursor;
+        }
+        pages += 1;
+        // A page that does not advance, or a round that never ends, cannot
+        // complete; start over from a fresh baseline instead of spinning.
+        if batch.cursor == position || pages >= MAX_INCREMENTAL_SYNC_PAGES {
+            return Err(ProviderError::InvalidCursor);
         }
         position = batch.cursor;
     };
@@ -486,10 +499,15 @@ async fn reconcile_and_mark(
     account_id: &str,
     provider: &(impl MailSync + ?Sized),
 ) -> ProviderResult<()> {
-    reconcile_inbox(database, account_id, provider).await?;
-    database
-        .mark_reconciled(account_id)
-        .map_err(database_provider_error)
+    // Reconciliation failures are otherwise swallowed by the poller, so a
+    // revoked grant must pause the account here just as a sync would.
+    let result = match reconcile_inbox(database, account_id, provider).await {
+        Ok(()) => database
+            .mark_reconciled(account_id)
+            .map_err(database_provider_error),
+        Err(error) => Err(error),
+    };
+    pause_for_permanent_auth_failure(database, account_id, result)
 }
 
 async fn search_and_ingest_missing(
@@ -1079,6 +1097,74 @@ mod tests {
             database.cursor("default").unwrap().as_deref(),
             Some("newest"),
             "persisting a mid-round cursor would skip the pages not yet read"
+        );
+    }
+
+    /// A provider whose change listing always reports another page, either
+    /// repeating the position it was asked for or minting a new one forever.
+    struct EndlessPagesProvider {
+        repeat_position: bool,
+        polls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl MailSync for EndlessPagesProvider {
+        async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+            unreachable!()
+        }
+
+        async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+            unreachable!()
+        }
+
+        async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
+            unreachable!("an unfinished round must not ingest anything")
+        }
+
+        async fn poll(&self, cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
+            let poll = self.polls.fetch_add(1, Ordering::SeqCst);
+            Ok(SyncBatch {
+                changed_threads: vec!["gmail-thread".into()],
+                cursor: if self.repeat_position {
+                    cursor.clone()
+                } else {
+                    SyncCursor::new(format!("start page-{poll}"))
+                },
+                more: true,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_poll_page_that_does_not_advance_requests_a_full_resync() {
+        let database = Database::open_memory();
+        let provider = EndlessPagesProvider {
+            repeat_position: true,
+            polls: AtomicUsize::new(0),
+        };
+
+        let result =
+            incremental_sync(&database, "default", &provider, &SyncCursor::new("start")).await;
+
+        assert!(matches!(result, Err(ProviderError::InvalidCursor)));
+        assert_eq!(provider.polls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn an_incremental_round_that_never_ends_is_bounded() {
+        let database = Database::open_memory();
+        let provider = EndlessPagesProvider {
+            repeat_position: false,
+            polls: AtomicUsize::new(0),
+        };
+
+        let result =
+            incremental_sync(&database, "default", &provider, &SyncCursor::new("start")).await;
+
+        assert!(matches!(result, Err(ProviderError::InvalidCursor)));
+        assert_eq!(
+            provider.polls.load(Ordering::SeqCst),
+            MAX_INCREMENTAL_SYNC_PAGES
         );
     }
 
@@ -1937,6 +2023,38 @@ mod tests {
             .unwrap();
         assert!(!database.reconciliation_due(account, 1).unwrap());
         assert_eq!(provider.list_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_with_revoked_credentials_pauses_the_account() {
+        struct RevokedProvider;
+        #[async_trait]
+        impl MailSync for RevokedProvider {
+            async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+                unreachable!()
+            }
+            async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+                Err(ProviderError::ReauthenticationRequired(
+                    "401 Unauthorized".into(),
+                ))
+            }
+            async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
+                unreachable!()
+            }
+            async fn poll(&self, _: &SyncCursor) -> ProviderResult<SyncBatch> {
+                unreachable!()
+            }
+        }
+        let account = "work@example.com";
+        let database = Database::open_memory();
+        database.adopt_account(account).unwrap();
+
+        assert!(reconcile_and_mark(&database, account, &RevokedProvider)
+            .await
+            .is_err());
+
+        assert!(database.account_needs_reauth(account).unwrap());
+        assert!(database.reconciliation_due(account, 1).unwrap());
     }
 
     #[tokio::test]

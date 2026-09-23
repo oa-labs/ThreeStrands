@@ -2133,11 +2133,7 @@ export function App() {
       </section>
 
       <section className="reader" aria-label="Conversation">
-        {correspondence.activeDraft && !composerBelongsToVisibleThread ? (
-          <div className="message-stack draft-message-stack">
-            {correspondence.composer}
-          </div>
-        ) : visibleDetail ? (
+        {visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? (
           <>
             <header className="reader-header">
               <div>
@@ -2286,8 +2282,18 @@ export function App() {
                 ) : null}
               </div>
             ) : null}
-            <div className="message-stack" ref={messageStackRef}>
-              {displayedMessages.map((message, index) => {
+          </>
+        ) : null}
+        {/* Keep one message-stack host while a draft is active. A sync can
+            change whether a reply still belongs to the visible conversation;
+            moving the composer between separate branches would remount its
+            browser-owned contenteditable DOM and erase unsaved keystrokes. */}
+        {correspondence.activeDraft || visibleDetail ? (
+          <div
+            className={`message-stack${correspondence.activeDraft && !composerBelongsToVisibleThread ? " draft-message-stack" : ""}`}
+            ref={visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? messageStackRef : undefined}
+          >
+            {visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? displayedMessages.map((message, index) => {
                 const isLatest = index === displayedMessages.length - 1;
                 const isExpanded = messageExpansionOverrides.get(message.id) ?? (isLatest || message.unread);
                 const isActive = (activeMessageId ?? latestDisplayedMessageId) === message.id;
@@ -2540,10 +2546,9 @@ export function App() {
                     </div>
                   </article>
                 );
-              })}
-              {composerBelongsToVisibleThread ? correspondence.composer : null}
-            </div>
-          </>
+            }) : null}
+            {correspondence.activeDraft ? correspondence.composer : null}
+          </div>
         ) : detailLoading ? (
           <div className="reader-empty" role="status">
             <p>Loading conversation…</p>

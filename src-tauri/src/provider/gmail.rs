@@ -2,7 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use rand::Rng;
-use reqwest::{Method, RequestBuilder, StatusCode};
+use reqwest::{
+    header::{HeaderValue, AUTHORIZATION},
+    Method, RequestBuilder, StatusCode,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::{
     sync::Mutex,
@@ -54,25 +57,47 @@ impl GmailClient {
         *next = Instant::now() + INTERVAL;
     }
 
+    async fn access_token(&self) -> ProviderResult<String> {
+        self.auth.access_token().await.map_err(|error| match error {
+            AccessTokenError::ReauthenticationRequired(message) => {
+                ProviderError::ReauthenticationRequired(message)
+            }
+            AccessTokenError::Transient(message) => ProviderError::Authentication(message),
+        })
+    }
+
     async fn request(&self, method: Method, url: String) -> ProviderResult<RequestBuilder> {
-        let token = self
-            .auth
-            .access_token()
-            .await
-            .map_err(|error| match error {
-                AccessTokenError::ReauthenticationRequired(message) => {
-                    ProviderError::ReauthenticationRequired(message)
-                }
-                AccessTokenError::Transient(message) => ProviderError::Authentication(message),
-            })?;
+        let token = self.access_token().await?;
         Ok(self.http.request(method, url).bearer_auth(token))
+    }
+
+    /// Rebuilds `request` with a replacement for the bearer token Gmail just
+    /// rejected. Replaces the header rather than appending a second one.
+    async fn reauthorize(&self, request: RequestBuilder) -> ProviderResult<RequestBuilder> {
+        let (client, request) = request.build_split();
+        let mut request =
+            request.map_err(|error| ProviderError::InvalidOperation(error.to_string()))?;
+        if let Some(rejected) = request
+            .headers()
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+        {
+            self.auth.expire_access_token(rejected);
+        }
+        let mut authorization = HeaderValue::from_str(&format!("Bearer {}", self.access_token().await?))
+            .map_err(|error| ProviderError::Authentication(error.to_string()))?;
+        authorization.set_sensitive(true);
+        request.headers_mut().insert(AUTHORIZATION, authorization);
+        Ok(RequestBuilder::from_parts(client, request))
     }
 
     async fn send(
         &self,
-        request: RequestBuilder,
+        mut request: RequestBuilder,
         history: bool,
     ) -> ProviderResult<reqwest::Response> {
+        let mut reauthorized = false;
         for attempt in 0..=4 {
             let cloned = request.try_clone().ok_or_else(|| {
                 ProviderError::InvalidOperation("Unable to retry Gmail request".into())
@@ -97,6 +122,14 @@ impl GmailClient {
                 return Err(ProviderError::NotFound);
             }
             let status = response.status();
+            if status == StatusCode::UNAUTHORIZED && !reauthorized {
+                // Google can revoke or rotate an access token before its
+                // local expiry. Replay once with a refreshed token; only a
+                // rejection of that token proves the grant itself unusable.
+                reauthorized = true;
+                request = self.reauthorize(request).await?;
+                continue;
+            }
             let retry_after = retry_after(&response);
             let body = response.text().await.unwrap_or_default();
             let quota_limited = status == StatusCode::TOO_MANY_REQUESTS
@@ -136,9 +169,8 @@ impl GmailClient {
 
 fn classify_client_rejection(status: StatusCode, detail: String) -> ProviderError {
     if status == StatusCode::UNAUTHORIZED {
-        // A bearer token accepted from local storage or the refresh endpoint
-        // but rejected by Gmail is not repaired by replaying the same
-        // request. Treat the provider's persistent 401 as a revoked/invalid
+        // `send` has already replayed once with a refreshed token, so this
+        // 401 persisted across a refresh. Treat it as a revoked/invalid
         // credential and require a fresh grant.
         ProviderError::ReauthenticationRequired(detail)
     } else if status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY {
@@ -341,18 +373,13 @@ impl MailSync for GmailClient {
         }
         ids.sort();
         ids.dedup();
+        let more = result.next_page_token.is_some();
         Ok(SyncBatch {
             changed_threads: ids,
-            // Gmail reports the newest history id on every page, so advancing
-            // the cursor while paging would skip the pages not yet read.
-            // Carry the page token alongside it and only let the caller
-            // persist a page-free cursor once the round is complete.
-            cursor: HistoryPosition {
-                history_id: result.history_id,
-                page: result.next_page_token.clone(),
-            }
-            .encode(),
-            more: result.next_page_token.is_some(),
+            cursor: position
+                .after_page(result.history_id, result.next_page_token)
+                .encode(),
+            more,
         })
     }
 
@@ -387,12 +414,32 @@ impl MailFetch for GmailClient {
 /// round spans several pages. Encoded as `historyId` alone in the common
 /// single-page case so that cursors already persisted by earlier versions
 /// keep parsing.
+#[derive(Debug, PartialEq)]
 struct HistoryPosition {
     history_id: String,
     page: Option<String>,
 }
 
 impl HistoryPosition {
+    /// Where the next `history.list` request resumes after one page. Gmail
+    /// page tokens belong to the `startHistoryId` that produced them, so a
+    /// mid-round position keeps the round's original start. Only the final
+    /// page's newest history id, reported on every page, starts the next
+    /// round; adopting it early would pair a page token with a start it was
+    /// never issued for.
+    fn after_page(&self, newest_history_id: String, next_page: Option<String>) -> Self {
+        match next_page {
+            Some(page) => Self {
+                history_id: self.history_id.clone(),
+                page: Some(page),
+            },
+            None => Self {
+                history_id: newest_history_id,
+                page: None,
+            },
+        }
+    }
+
     fn parse(cursor: &SyncCursor) -> Self {
         match cursor.as_str().split_once(' ') {
             Some((history_id, page)) => Self {
@@ -549,6 +596,140 @@ mod tests {
         let parsed = HistoryPosition::parse(&cursor);
         assert_eq!(parsed.history_id, "12345");
         assert_eq!(parsed.page.as_deref(), Some("tok-2"));
+    }
+
+    #[test]
+    fn a_history_round_keeps_its_start_until_the_final_page() {
+        let start = HistoryPosition::parse(&SyncCursor::new("100"));
+
+        let second = start.after_page("250".into(), Some("tok-2".into()));
+        assert_eq!(
+            second,
+            HistoryPosition {
+                history_id: "100".into(),
+                page: Some("tok-2".into()),
+            },
+            "a page token must be replayed with the startHistoryId that issued it"
+        );
+
+        let third = second.after_page("260".into(), Some("tok-3".into()));
+        assert_eq!(third.history_id, "100");
+        assert_eq!(third.page.as_deref(), Some("tok-3"));
+
+        let done = third.after_page("261".into(), None);
+        assert_eq!(done.encode(), SyncCursor::new("261"));
+    }
+
+    mod unauthorized_replay {
+        use std::sync::{Arc, Mutex as StdMutex};
+
+        use axum::{
+            extract::State,
+            http::{HeaderMap, StatusCode as HttpStatus},
+            routing::{get, post},
+            Router,
+        };
+
+        use super::*;
+        use crate::auth::Tokens;
+
+        #[derive(Clone, Default)]
+        struct Seen {
+            /// Every Authorization header on each Gmail request, in order.
+            api: Arc<StdMutex<Vec<Vec<String>>>>,
+            token_refreshes: Arc<StdMutex<usize>>,
+        }
+
+        /// Gmail stand-in accepting only `accepted`, plus a token endpoint
+        /// that answers every refresh with `invalid_grant`.
+        async fn serve(accepted: Option<&'static str>) -> (String, Seen) {
+            let seen = Seen::default();
+            let router = Router::new()
+                .route(
+                    "/api",
+                    get(move |State(seen): State<Seen>, headers: HeaderMap| async move {
+                        let values = headers
+                            .get_all(AUTHORIZATION)
+                            .iter()
+                            .map(|value| value.to_str().unwrap().to_string())
+                            .collect::<Vec<_>>();
+                        let ok = accepted
+                            .is_some_and(|token| values == [format!("Bearer {token}")]);
+                        seen.api.lock().unwrap().push(values);
+                        if ok {
+                            (HttpStatus::OK, "{}")
+                        } else {
+                            (HttpStatus::UNAUTHORIZED, r#"{"error":{"code":401}}"#)
+                        }
+                    }),
+                )
+                .route(
+                    "/token",
+                    post(|State(seen): State<Seen>| async move {
+                        *seen.token_refreshes.lock().unwrap() += 1;
+                        (HttpStatus::BAD_REQUEST, r#"{"error":"invalid_grant"}"#)
+                    }),
+                )
+                .with_state(seen.clone());
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            (format!("http://{address}"), seen)
+        }
+
+        fn client(base: &str, cached_access_token: &str) -> GmailClient {
+            GmailClient::new(GoogleAuth::in_memory_for_test(
+                &format!("{base}/token"),
+                Tokens {
+                    access_token: cached_access_token.into(),
+                    refresh_token: Some("refresh".into()),
+                    expires_at: u64::MAX,
+                },
+            ))
+        }
+
+        #[tokio::test]
+        async fn a_rejected_token_is_replaced_once_and_the_request_replayed() {
+            let (base, seen) = serve(Some("fresh")).await;
+            // Another request already refreshed past the token this one
+            // carried, so the replay uses the cached replacement.
+            let client = client(&base, "fresh");
+            let request = client.http.get(format!("{base}/api")).bearer_auth("stale");
+
+            client.send(request, false).await.unwrap();
+
+            assert_eq!(
+                *seen.api.lock().unwrap(),
+                vec![vec!["Bearer stale".to_string()], vec!["Bearer fresh".to_string()]],
+                "the replay must replace, not append, the Authorization header"
+            );
+            assert_eq!(*seen.token_refreshes.lock().unwrap(), 0);
+        }
+
+        #[tokio::test]
+        async fn a_401_refreshes_before_asking_for_reconnection() {
+            let (base, seen) = serve(None).await;
+            let client = client(&base, "revoked");
+            let request = client.request(Method::GET, format!("{base}/api")).await.unwrap();
+
+            let error = client.send(request, false).await.unwrap_err();
+
+            assert!(error.requires_reauthentication(), "unexpected error: {error}");
+            assert_eq!(*seen.token_refreshes.lock().unwrap(), 1);
+            assert_eq!(seen.api.lock().unwrap().len(), 1);
+        }
+
+        #[tokio::test]
+        async fn a_401_on_the_replacement_token_requires_reconnection() {
+            let (base, seen) = serve(None).await;
+            let client = client(&base, "fresh");
+            let request = client.http.get(format!("{base}/api")).bearer_auth("stale");
+
+            let error = client.send(request, false).await.unwrap_err();
+
+            assert!(error.requires_reauthentication(), "unexpected error: {error}");
+            assert_eq!(seen.api.lock().unwrap().len(), 2, "replays at most once");
+        }
     }
 
     #[test]

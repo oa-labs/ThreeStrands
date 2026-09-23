@@ -118,6 +118,69 @@ it("refreshes the open conversation when its inbox row receives a sent reply", a
   expect(screen.getByText("Joel Reed", { selector: ".address-name" })).toBeInTheDocument();
 });
 
+it("keeps an unsaved reply mounted when a refresh changes its conversation placement", async () => {
+  localStorage.removeItem("threestrands.demoCorrespondence");
+  const originalList = mailClient.listThreadsPage.bind(mailClient);
+  const originalGetThread = mailClient.getThread.bind(mailClient);
+  const syncStatus = await mailClient.syncStatus();
+  let refreshed = false;
+
+  vi.spyOn(mailClient, "sync").mockImplementation(async () => {
+    refreshed = true;
+    return syncStatus;
+  });
+  vi.spyOn(mailClient, "listThreadsPage").mockImplementation(async (...args) => {
+    const page = await originalList(...args);
+    if (!refreshed) return page;
+    return {
+      ...page,
+      threads: page.threads.map((thread) => thread.id === "welcome" ? {
+        ...thread,
+        snippet: "Conversation refreshed",
+        lastMessageAt: "2026-03-05T18:00:00Z",
+      } : thread),
+    };
+  });
+  vi.spyOn(mailClient, "getThread").mockImplementation(async (id) => {
+    const detail = await originalGetThread(id);
+    if (!refreshed || id !== "welcome") return detail;
+    return {
+      ...detail,
+      thread: {
+        ...detail.thread,
+        snippet: "Conversation refreshed",
+        lastMessageAt: "2026-03-05T18:00:00Z",
+      },
+      // A cache reconciliation can replace the source-message rows while the
+      // open local draft remains valid. That may change where the reply is
+      // displayed, but must never recreate its browser-owned editor DOM.
+      messages: detail.messages.map((message) => ({
+        ...message,
+        id: `refreshed-${message.id}`,
+      })),
+    };
+  });
+
+  try {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+
+    const editor = await screen.findByRole("textbox", { name: "Message Body" });
+    editor.insertAdjacentHTML("afterbegin", "<p>Do not lose this long reply.</p>");
+    fireEvent.input(editor);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
+
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument());
+    const refreshedEditor = screen.getByRole("textbox", { name: "Message Body" });
+    expect(refreshedEditor).toBe(editor);
+    expect(refreshedEditor).toHaveTextContent("Do not lose this long reply.");
+  } finally {
+    localStorage.removeItem("threestrands.demoCorrespondence");
+  }
+});
+
 it("reloads the local inbox after a refresh even when one account sync fails", async () => {
   const originalList = mailClient.listThreadsPage.bind(mailClient);
   const originalStatus = mailClient.syncStatus.bind(mailClient);

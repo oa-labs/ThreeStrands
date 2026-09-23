@@ -413,6 +413,33 @@ impl GoogleAuth {
         Ok(tokens.access_token)
     }
 
+    /// Marks `rejected` expired so the next [`Self::access_token`] refreshes
+    /// it. A no-op once another request has already replaced it, so several
+    /// concurrent rejections of one stale token cost a single refresh.
+    pub fn expire_access_token(&self, rejected: &str) {
+        if let Some(tokens) = self.token_cache.lock().unwrap().as_mut() {
+            if tokens.access_token == rejected {
+                tokens.expires_at = 0;
+            }
+        }
+    }
+
+    /// An account whose tokens live only in memory, refreshing against
+    /// `token_url`, so tests never reach the OS keychain.
+    #[cfg(test)]
+    pub(crate) fn in_memory_for_test(token_url: &str, tokens: Tokens) -> Self {
+        let mut endpoints = GoogleAuthConfig::mail_endpoints();
+        endpoints.token_url = token_url.to_string();
+        let auth = GoogleAuthConfig {
+            client: build_oauth_client(OAUTH_CONNECT_TIMEOUT, OAUTH_REQUEST_TIMEOUT).unwrap(),
+            client_id: "test-client-id".into(),
+            client_secret: "test-client-secret".into(),
+        }
+        .keyed_for("test@example.com", MAIL_SERVICE, endpoints);
+        *auth.token_cache.lock().unwrap() = Some(tokens);
+        auth
+    }
+
     pub fn disconnect(&self) -> Result<(), String> {
         match self.entry()?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {
@@ -606,6 +633,25 @@ mod tests {
 
         assert!(error.is_timeout(), "unexpected request error: {error}");
         server.abort();
+    }
+
+    #[test]
+    fn expiring_a_rejected_access_token_spares_its_replacement() {
+        let auth = GoogleAuth::in_memory_for_test(
+            TOKEN_URL,
+            Tokens {
+                access_token: "current".into(),
+                refresh_token: Some("refresh".into()),
+                expires_at: u64::MAX,
+            },
+        );
+
+        auth.expire_access_token("already-replaced");
+        assert_eq!(auth.load().unwrap().expires_at, u64::MAX);
+
+        auth.expire_access_token("current");
+        assert_eq!(auth.load().unwrap().expires_at, 0);
+        assert_eq!(auth.load().unwrap().access_token, "current");
     }
 
     #[test]
