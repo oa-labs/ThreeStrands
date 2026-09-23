@@ -1529,7 +1529,7 @@ export function App() {
   const switchAccount = useCallback((accountId: string | null) => {
     if (accountId === activeAccountId) return;
     const currentMailbox = mailbox === "split" ? "inbox" : mailbox;
-    if (currentMailbox !== "split") saveSelectedMailboxForAccount(activeAccountId, currentMailbox);
+    saveSelectedMailboxForAccount(activeAccountId, currentMailbox);
     const nextMailbox = readSelectedMailboxForAccount(accountId) ?? "inbox";
     setMailbox(nextMailbox);
     setActiveSplitInboxId(null);
