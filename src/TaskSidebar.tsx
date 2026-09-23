@@ -1,7 +1,8 @@
-import { Check, Clock3, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, Clock3, MessageSquare, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask } from "./domain";
 import { mailClient } from "./data/client";
+import { ActionButton, HoverTooltip } from "./AppChrome";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
 
@@ -278,11 +279,17 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             <header>
               <div><span className="eyebrow">{selectedTask.kind.replace("_", " ")}</span><h2>{selectedTask.title}</h2></div>
               <div className="task-detail-actions">
-                {onEditTask ? <button type="button" onClick={() => onEditTask(selectedTask)}><Pencil size={14} /> Edit</button> : null}
-                <button type="button" onClick={() => void setStatus(selectedTask, selectedTask.status === "completed" ? "open" : "completed")}>
-                  {selectedTask.status === "completed" ? <><RotateCcw size={14} /> Reopen</> : <><Check size={14} /> Mark Done</>}
-                </button>
-                {selectedTask.threadId ? <button type="button" onClick={() => onOpenThread(selectedTask.threadId!)}>Open Conversation</button> : null}
+                {onEditTask ? <HoverTooltip label="Edit" shortcut="Enter" placement="bottom">
+                  <ActionButton label="Edit" shortcut="Enter" onClick={() => onEditTask(selectedTask)}><Pencil size={17} /></ActionButton>
+                </HoverTooltip> : null}
+                {selectedTask.status === "completed" ? <HoverTooltip label="Reopen" shortcut="Shift+E" placement="bottom">
+                  <ActionButton label="Reopen" shortcut="Shift+E" onClick={() => void setStatus(selectedTask, "open")}><RotateCcw size={17} /></ActionButton>
+                </HoverTooltip> : <HoverTooltip label="Mark done" shortcut="e" placement="bottom">
+                  <ActionButton label="Mark Done" shortcut="e" onClick={() => void setStatus(selectedTask, "completed")}><Check size={17} /></ActionButton>
+                </HoverTooltip>}
+                {selectedTask.threadId ? <HoverTooltip label="Open conversation" shortcut="o" placement="bottom">
+                  <ActionButton label="Open Conversation" shortcut="o" onClick={() => onOpenThread(selectedTask.threadId!)}><MessageSquare size={17} /></ActionButton>
+                </HoverTooltip> : null}
               </div>
             </header>
             <dl>

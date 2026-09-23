@@ -1212,9 +1212,8 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .task-detail { min-width: 0; overflow-y: auto; padding: clamp(28px, 5vw, 68px); background: var(--surface); }
 .task-detail > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
 .task-detail h2 { margin: 5px 0 0; font-size: calc(25px * var(--font-scale)); font-weight: 600; overflow-wrap: anywhere; }
-.task-detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
-.task-detail-actions button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; background: var(--raised); cursor: pointer; }
-.task-detail-actions button:hover { border-color: var(--border-strong); background: var(--hover); }
+.task-detail-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 2px; }
+.task-detail-actions .action-button kbd { display: none; }
 .task-detail dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 28px; margin: 26px 0; }
 .task-detail dl > div { min-width: 0; }
 .task-detail dt, .task-detail-notes h3 { margin: 0 0 5px; color: var(--muted); font-size: calc(10px * var(--font-scale)); letter-spacing: .08em; text-transform: uppercase; }

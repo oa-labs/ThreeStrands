@@ -141,6 +141,21 @@ describe("replicated sync setup steps", () => {
     expect(within(ipfs).getByText(/bucket-specific RPC token/)).toBeInTheDocument();
   });
 
+  it("shows an empty RPC URL as empty and enables the connection test once the Filebase URL is filled in", async () => {
+    setUp({ transports: [] });
+    render(<ReplicatedSyncSettings />);
+
+    const ipfs = (await screen.findByText("Use an IPFS RPC endpoint instead")).closest("details")!;
+    const url = within(ipfs).getByRole("textbox", { name: "RPC base URL" });
+    expect(url).toHaveValue("");
+    expect(url).not.toHaveAttribute("placeholder", "https://rpc.filebase.io");
+    expect(within(ipfs).getByRole("button", { name: "Test connection" })).toBeDisabled();
+
+    fireEvent.click(within(ipfs).getByRole("button", { name: "Fill in Filebase URL" }));
+    expect(url).toHaveValue("https://rpc.filebase.io");
+    expect(within(ipfs).getByRole("button", { name: "Test connection" })).toBeEnabled();
+  });
+
   it("marks the location done and summarizes it once one is configured", async () => {
     vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("none");
     render(<ReplicatedSyncSettings />);

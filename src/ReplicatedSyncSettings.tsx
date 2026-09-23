@@ -952,7 +952,7 @@ function LocationManager({
           <span>RPC base URL</span>
           <input
             type="text"
-            placeholder="https://rpc.filebase.io"
+            placeholder="https://ipfs.example.com:5001"
             value={ipfsBaseUrl}
             disabled={busy}
             onChange={(event) => {
@@ -983,7 +983,7 @@ function LocationManager({
               setIpfsProbe(null);
             }}
           >
-            Use Filebase preset
+            Fill in Filebase URL
           </button>
           <button type="button" className="account-action-button" disabled={busy || !ipfsBaseUrl} onClick={probeIpfsRpc}>
             Test connection

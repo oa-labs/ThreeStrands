@@ -210,6 +210,53 @@ describe("TaskSidebar", () => {
     expect(onOpenThread).toHaveBeenCalledWith("thread-1");
   });
 
+  it("renders task detail actions as icon buttons with labelled shortcut tooltips", async () => {
+    const task: ThreadTask = {
+      id: "task-1",
+      accountId: "you@example.com",
+      threadId: "thread-1",
+      sourceMessageId: "message-1",
+      subjectSnapshot: "Website setup",
+      title: "Set up the website",
+      notes: null,
+      kind: "action",
+      dueKind: "none",
+      dueValue: null,
+      timeZone: null,
+      repeatIntervalDays: null,
+      status: "open",
+      completionSource: null,
+      evidenceText: null,
+      waitAfter: null,
+      createdAt: "2026-09-19T10:01:00Z",
+      updatedAt: "2026-09-19T10:01:00Z",
+      completedAt: null,
+    };
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue({ ...task, status: "completed", completedAt: "2026-09-19T11:00:00Z" });
+    const onOpenThread = vi.fn();
+    const onEditTask = vi.fn();
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={onOpenThread} onEditTask={onEditTask} />);
+
+    const edit = await screen.findByRole("button", { name: "Edit (Enter)" });
+    const done = screen.getByRole("button", { name: "Mark Done (e)" });
+    const open = screen.getByRole("button", { name: "Open Conversation (o)" });
+    for (const button of [edit, done, open]) {
+      expect(button).toHaveClass("action-button");
+      expect(button.querySelector("svg")).not.toBeNull();
+    }
+    const tooltips = screen.getAllByRole("tooltip", { hidden: true }).map((tooltip) => tooltip.textContent);
+    expect(tooltips).toEqual(["EditEnter", "Mark donee", "Open conversationo"]);
+
+    fireEvent.click(edit);
+    expect(onEditTask).toHaveBeenCalledWith(task);
+    fireEvent.click(open);
+    expect(onOpenThread).toHaveBeenCalledWith("thread-1");
+    fireEvent.click(done);
+    await waitFor(() => expect(setTaskStatus).toHaveBeenCalledWith("task-1", "completed"));
+    expect(await screen.findByRole("button", { name: "Reopen (Shift+E)" })).toBeInTheDocument();
+  });
+
   it("shows no conversation controls for a standalone task", async () => {
     const task: ThreadTask = {
       id: "standalone-1",
