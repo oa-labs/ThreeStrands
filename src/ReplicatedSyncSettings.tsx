@@ -930,7 +930,7 @@ function LocationManager({
                     <span className="settings-inline-confirm-actions">
                       <button type="button" disabled={busy} onClick={() => setDisconnectingTransport(null)}>Cancel</button>
                       <button type="button" disabled={busy} onClick={() => { setDisconnectingTransport(null); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, false)); }}>Disconnect and keep data</button>
-                      {transport.kind !== "ipfs_rpc" ? (
+                      {transport.supportsDeleteData ? (
                         <button type="button" className="danger-action" disabled={busy} onClick={() => { setDisconnectingTransport(null); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, true)); }}>Delete files and disconnect</button>
                       ) : null}
                     </span>

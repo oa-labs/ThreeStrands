@@ -11,6 +11,7 @@ const folder: sync.ReplicatedSyncTransportStatus = {
   instanceId: "folder-1",
   kind: "folder",
   location: "/Users/me/Shared/ThreeStrands",
+  supportsDeleteData: true,
   health: "healthy",
   headDiscovery: true,
   pending: 0,
@@ -268,6 +269,26 @@ describe("enrolled overview", () => {
 
     expect(await screen.findByRole("status", { name: "Sync status" })).toHaveTextContent("1 sync location needs attention");
     expect(screen.getByText("Sync locations (1)").closest("details")).toHaveAttribute("open");
+  });
+
+  it("offers deleting files only for connectors that report support for it", async () => {
+    const ipfs: sync.ReplicatedSyncTransportStatus = {
+      ...folder,
+      instanceId: "ipfs-1",
+      kind: "ipfs_rpc",
+      location: "https://rpc.filebase.io",
+      supportsDeleteData: false,
+    };
+    setUp({ status: enrolled, transports: [folder, ipfs] });
+    render(<ReplicatedSyncSettings />);
+
+    const [folderCard, ipfsCard] = within(await screen.findByRole("list", { name: "Sync locations" })).getAllByRole("listitem");
+    fireEvent.click(within(folderCard!).getByRole("button", { name: "Disconnect…" }));
+    expect(within(folderCard!).getByRole("button", { name: "Delete files and disconnect" })).toBeInTheDocument();
+
+    fireEvent.click(within(ipfsCard!).getByRole("button", { name: "Disconnect…" }));
+    expect(within(ipfsCard!).getByRole("button", { name: "Disconnect and keep data" })).toBeInTheDocument();
+    expect(within(ipfsCard!).queryByRole("button", { name: "Delete files and disconnect" })).not.toBeInTheDocument();
   });
 
   it("puts devices waiting to join above the other sections and approves them", async () => {

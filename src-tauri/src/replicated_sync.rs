@@ -54,6 +54,9 @@ use crate::{
     backoff::retry_at,
     db::{Database, DatabaseError, DbResult},
     error_text::display,
+    sync_connectors::{
+        is_known_kind, Connector, ConnectorProbe, FolderConfig, IpfsRpcConfig, TransportConfig, TransportSecrets,
+    },
 };
 
 /// The single local sync space Phase 2 supports. Multiple concurrent spaces
@@ -1740,48 +1743,56 @@ impl Database {
         .map_err(String::from)
     }
 
-    /// Persists (or reconfigures, if `instance_id` already exists) a folder
-    /// transport instance. Only the path is stored here — no credential, no
-    /// content.
-    pub fn add_folder_transport(&self, instance_id: &str, path: &std::path::Path) -> Result<(), String> {
-        let config = serde_json::json!({ "path": path.to_string_lossy() }).to_string();
+    /// Persists (or reconfigures, if `instance_id` already exists) one
+    /// connector: validates it, writes its non-secret config to
+    /// `sync_transports`, then stores `secrets` in the OS keychain — or,
+    /// with `None`, clears any secret a previous configuration left.
+    pub fn add_transport(
+        &self,
+        instance_id: &str,
+        config: &TransportConfig,
+        secrets: Option<&TransportSecrets>,
+    ) -> Result<(), String> {
+        config.validate(instance_id, secrets)?;
+        let config_json = config.to_config_json()?;
         self.with_connection(|connection| {
             connection.execute(
-                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'folder',?2,1,1)
-                 ON CONFLICT(instance_id) DO UPDATE SET config_json=excluded.config_json, enabled=1",
-                params![instance_id, config],
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,?2,?3,1,1)
+                 ON CONFLICT(instance_id) DO UPDATE SET kind=excluded.kind, config_json=excluded.config_json, enabled=1",
+                params![instance_id, config.kind(), config_json],
             )?;
             Ok(())
         })?;
-        Ok(())
+        match secrets {
+            Some(secrets) => secrets.store(instance_id),
+            None => TransportSecrets::delete(config.kind(), instance_id),
+        }
+    }
+
+    /// Persists (or reconfigures) a folder transport instance. Only the
+    /// path is stored — no credential, no content.
+    pub fn add_folder_transport(&self, instance_id: &str, path: &std::path::Path) -> Result<(), String> {
+        let config = TransportConfig::Folder(FolderConfig {
+            path: path.to_string_lossy().into_owned(),
+            label: None,
+        });
+        self.add_transport(instance_id, &config, None)
     }
 
     /// Persists (or reconfigures) an IPFS RPC transport instance. Only the
-    /// base URL — versioned, non-secret adapter config — is stored in
-    /// `sync_transports`; the access token (if any) goes to the OS keychain
-    /// under this instance's id, never into SQLite.
+    /// base URL is stored in `sync_transports`; the access token (if any)
+    /// goes to the OS keychain under this instance's id, never into SQLite.
     pub fn add_ipfs_rpc_transport(&self, instance_id: &str, base_url: &str, token: Option<&str>) -> Result<(), String> {
-        let config = serde_json::json!({ "baseUrl": base_url }).to_string();
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'ipfs_rpc',?2,1,1)
-                 ON CONFLICT(instance_id) DO UPDATE SET config_json=excluded.config_json, enabled=1",
-                params![instance_id, config],
-            )?;
-            Ok(())
-        })?;
-        match token {
-            Some(token) => store_ipfs_rpc_token(instance_id, token)?,
-            None => delete_ipfs_rpc_token(instance_id)?,
-        }
-        Ok(())
+        let config = TransportConfig::IpfsRpc(IpfsRpcConfig {
+            base_url: base_url.to_string(),
+            label: None,
+        });
+        let secrets = token.map(|token| TransportSecrets::IpfsRpcToken(token.to_string()));
+        self.add_transport(instance_id, &config, secrets.as_ref())
     }
 
     /// Persists (or reconfigures) an S3-compatible storage transport
-    /// instance. The config is validated by building a transport from it
-    /// before anything is written. Only the non-secret [`S3Config`] goes to
-    /// `sync_transports`; the access key, secret, and any session token go
-    /// to the OS keychain under this instance's id, never into SQLite.
+    /// instance, validated before anything is written.
     // Reached from Settings once the connector commands land.
     #[allow(dead_code)]
     pub fn add_s3_transport(
@@ -1790,38 +1801,77 @@ impl Database {
         config: &crate::s3_transport::S3Config,
         credentials: &crate::s3_transport::S3Credentials,
     ) -> Result<(), String> {
-        crate::s3_transport::S3Transport::new(instance_id, config, credentials).map_err(|error| error.to_string())?;
-        self.persist_s3_transport_config(instance_id, config)?;
-        store_s3_credentials(instance_id, credentials)
+        self.add_transport(
+            instance_id,
+            &TransportConfig::S3(config.clone()),
+            Some(&TransportSecrets::S3(credentials.clone())),
+        )
     }
 
-    /// The SQLite half of [`Self::add_s3_transport`], separate so tests can
-    /// exercise it without writing to the OS keychain.
-    fn persist_s3_transport_config(&self, instance_id: &str, config: &crate::s3_transport::S3Config) -> Result<(), String> {
-        let config = serde_json::to_string(config).map_err(display)?;
+    /// Changes an existing connector's config (for example its name) and,
+    /// when `secrets` is given, replaces its stored secret — keeping its
+    /// delivery ledger, enabled state, and last-success time. The kind
+    /// can't change; remove and re-add for that.
+    // Reached from Settings once the connector commands land.
+    #[allow(dead_code)]
+    pub fn update_transport_config(
+        &self,
+        instance_id: &str,
+        config: &TransportConfig,
+        secrets: Option<&TransportSecrets>,
+    ) -> Result<(), String> {
+        let existing = self
+            .configured_transports()?
+            .into_iter()
+            .find(|row| row.instance_id == instance_id)
+            .ok_or_else(|| "That connector no longer exists".to_string())?;
+        if existing.kind != config.kind() {
+            return Err("A connector's kind can't be changed; remove it and add a new one".to_string());
+        }
+        let stored;
+        let effective_secrets = match secrets {
+            Some(secrets) => Some(secrets),
+            None => {
+                stored = TransportSecrets::load(config.kind(), instance_id)?;
+                stored.as_ref()
+            }
+        };
+        config.validate(instance_id, effective_secrets)?;
+        let config_json = config.to_config_json()?;
         self.with_connection(|connection| {
             connection.execute(
-                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'s3',?2,1,1)
-                 ON CONFLICT(instance_id) DO UPDATE SET config_json=excluded.config_json, enabled=1",
-                params![instance_id, config],
+                "UPDATE sync_transports SET config_json=?2 WHERE instance_id=?1",
+                params![instance_id, config_json],
             )?;
             Ok(())
         })?;
-        Ok(())
+        match secrets {
+            Some(secrets) => secrets.store(instance_id),
+            None => Ok(()),
+        }
     }
 
     /// Forgets a configured transport instance, its delivery ledger rows,
-    /// and (for an IPFS RPC or S3 instance) its keychain secret. Does not
-    /// touch the remote corpus itself — the caller deletes that first
-    /// (through the live transport) if the user asked for that.
+    /// and its keychain secret, if its kind has one. Does not touch the
+    /// remote corpus itself — the caller deletes that first (through the
+    /// live connector) if the user asked for that.
     pub fn remove_transport(&self, instance_id: &str) -> Result<(), String> {
+        let kind = self
+            .configured_transports()?
+            .into_iter()
+            .find(|row| row.instance_id == instance_id)
+            .map(|row| row.kind);
         self.with_connection(|connection| {
             connection.execute("DELETE FROM sync_transports WHERE instance_id=?1", params![instance_id])?;
             connection.execute("DELETE FROM sync_deliveries WHERE transport_instance_id=?1", params![instance_id])?;
             Ok(())
         })?;
-        delete_ipfs_rpc_token(instance_id)?;
-        delete_s3_credentials(instance_id)
+        match kind {
+            Some(kind) if is_known_kind(&kind) => TransportSecrets::delete(&kind, instance_id),
+            // No row, or a kind this version doesn't know: clear every
+            // secret this instance id could have.
+            _ => TransportSecrets::delete_every_kind(instance_id),
+        }
     }
 
     fn set_transport_success(&self, instance_id: &str) -> DbResult<()> {
@@ -1845,81 +1895,19 @@ impl Database {
     }
 }
 
-/// Extracts the folder path from a `kind='folder'` row's `config_json`.
-pub(crate) fn folder_config_path(config_json: &str) -> Option<std::path::PathBuf> {
-    let value: Value = serde_json::from_str(config_json).ok()?;
-    value.get("path")?.as_str().map(std::path::PathBuf::from)
-}
-
-/// Extracts the RPC base URL from a `kind='ipfs_rpc'` row's `config_json`.
-pub(crate) fn ipfs_config_base_url(config_json: &str) -> Option<String> {
-    let value: Value = serde_json::from_str(config_json).ok()?;
-    value.get("baseUrl")?.as_str().map(str::to_string)
-}
-
-const IPFS_TOKEN_KEYCHAIN_SERVICE: &str = "app.threestrands.replicated-sync.ipfs-rpc";
-
-fn store_ipfs_rpc_token(instance_id: &str, token: &str) -> Result<(), String> {
-    Entry::new(IPFS_TOKEN_KEYCHAIN_SERVICE, instance_id)
-        .map_err(display)?
-        .set_password(token)
-        .map_err(display)
-}
-
-fn load_ipfs_rpc_token(instance_id: &str) -> Result<Option<String>, String> {
-    match Entry::new(IPFS_TOKEN_KEYCHAIN_SERVICE, instance_id).map_err(display)?.get_password() {
-        Ok(token) => Ok(Some(token)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(display(error)),
+impl ConfiguredTransport {
+    /// This row's typed config, or `None` for an unknown kind or malformed
+    /// JSON.
+    pub fn config(&self) -> Option<TransportConfig> {
+        TransportConfig::from_row(&self.kind, &self.config_json)
     }
-}
 
-fn delete_ipfs_rpc_token(instance_id: &str) -> Result<(), String> {
-    match Entry::new(IPFS_TOKEN_KEYCHAIN_SERVICE, instance_id).map_err(display)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(display(error)),
+    /// Opens this row's live connector, loading its secret from the
+    /// keychain. `None` if it's misconfigured, of an unknown kind, or its
+    /// storage can't be opened.
+    pub async fn open_connector(&self) -> Option<Connector> {
+        Connector::open_persisted(&self.instance_id, &self.config()?).await.ok()
     }
-}
-
-/// Parses a `kind='s3'` row's `config_json`.
-pub(crate) fn s3_config(config_json: &str) -> Option<crate::s3_transport::S3Config> {
-    serde_json::from_str(config_json).ok()
-}
-
-const S3_CREDENTIALS_KEYCHAIN_SERVICE: &str = "app.threestrands.replicated-sync.s3";
-
-fn store_s3_credentials(instance_id: &str, credentials: &crate::s3_transport::S3Credentials) -> Result<(), String> {
-    let secret = serde_json::to_string(credentials).map_err(display)?;
-    Entry::new(S3_CREDENTIALS_KEYCHAIN_SERVICE, instance_id)
-        .map_err(display)?
-        .set_password(&secret)
-        .map_err(display)
-}
-
-fn load_s3_credentials(instance_id: &str) -> Result<Option<crate::s3_transport::S3Credentials>, String> {
-    match Entry::new(S3_CREDENTIALS_KEYCHAIN_SERVICE, instance_id).map_err(display)?.get_password() {
-        // A malformed keychain value is reported without echoing it.
-        Ok(secret) => serde_json::from_str(&secret)
-            .map(Some)
-            .map_err(|_| "The stored S3 credentials are unreadable; replace them in Settings".to_string()),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(display(error)),
-    }
-}
-
-fn delete_s3_credentials(instance_id: &str) -> Result<(), String> {
-    match Entry::new(S3_CREDENTIALS_KEYCHAIN_SERVICE, instance_id).map_err(display)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(display(error)),
-    }
-}
-
-/// Opens the live S3 transport for one configured row, loading its
-/// credentials from the keychain.
-pub(crate) fn open_s3_transport(row: &ConfiguredTransport) -> Option<crate::s3_transport::S3Transport> {
-    let config = s3_config(&row.config_json)?;
-    let credentials = load_s3_credentials(&row.instance_id).ok().flatten()?;
-    crate::s3_transport::S3Transport::new(&row.instance_id, &config, &credentials).ok()
 }
 
 /// Builds the live transport for one configured row, or `None` if it's
@@ -1928,22 +1916,7 @@ async fn build_transport_from_row(row: &ConfiguredTransport) -> Option<Arc<dyn S
     if !row.enabled {
         return None;
     }
-    match row.kind.as_str() {
-        "folder" => {
-            let path = folder_config_path(&row.config_json)?;
-            let transport = crate::sync_folder::SyncFolderTransport::open(&row.instance_id, &path).await.ok()?;
-            Some(Arc::new(transport))
-        }
-        "ipfs_rpc" => {
-            let base_url = ipfs_config_base_url(&row.config_json)?;
-            let token = load_ipfs_rpc_token(&row.instance_id).ok().flatten();
-            let transport =
-                crate::ipfs_transport::IpfsRpcTransport::new(&row.instance_id, &base_url, token, SPACE_ID.as_bytes()).ok()?;
-            Some(Arc::new(transport))
-        }
-        "s3" => Some(Arc::new(open_s3_transport(row)?)),
-        _ => None,
-    }
+    Some(row.open_connector().await?.into_transport())
 }
 
 /// Builds the live transport for every enabled configured row. A row whose
@@ -1975,9 +1948,14 @@ pub struct ReplicatedSyncTransportStatus {
     pub instance_id: String,
     /// `"folder"`, `"ipfs_rpc"`, or `"s3"`.
     pub kind: String,
+    /// The user-chosen name, if any.
+    pub label: Option<String>,
     /// A folder's path, an RPC endpoint's base URL, or an S3 endpoint with
     /// its bucket and prefix — never a credential.
     pub location: String,
+    /// Whether "delete files and disconnect" can remove this connector's
+    /// synchronized data (folder and S3; not IPFS pins).
+    pub supports_delete_data: bool,
     pub health: String,
     /// Whether this instance can currently discover other devices'
     /// signed heads on its own (a folder's `heads/` directory; an RPC
@@ -2016,43 +1994,31 @@ impl ReplicatedSync {
         let mut statuses = Vec::with_capacity(rows.len());
         for row in rows {
             let (pending, delivered, failed) = self.database.delivery_counts(&row.instance_id).unwrap_or((0, 0, 0));
-            let location = match row.kind.as_str() {
-                "folder" => folder_config_path(&row.config_json).map(|path| path.display().to_string()),
-                "ipfs_rpc" => ipfs_config_base_url(&row.config_json),
-                "s3" => s3_config(&row.config_json).map(|config| config.display_location()),
-                _ => None,
-            }
-            .unwrap_or_default();
+            let config = row.config();
 
             let mut health = "unavailable: not configured".to_string();
             let mut head_discovery = false;
             let mut storage_bytes = None;
-            if let Some(transport) = build_transport_from_row(&row).await {
-                health = match transport.health().await {
-                    Ok(TransportHealth::Healthy) => "healthy".to_string(),
-                    Ok(TransportHealth::Degraded(message)) => format!("degraded: {message}"),
-                    Ok(TransportHealth::Unavailable(message)) => format!("unavailable: {message}"),
-                    Err(error) => format!("unavailable: {error}"),
-                };
-                head_discovery = transport.capabilities().head_discovery;
-                if row.kind == "folder" {
-                    if let Some(path) = folder_config_path(&row.config_json) {
-                        if let Ok(folder) = crate::sync_folder::SyncFolderTransport::open(&row.instance_id, &path).await {
-                            storage_bytes = folder.corpus_size_bytes().await.ok();
-                        }
-                    }
-                }
-                if row.kind == "s3" {
-                    if let Some(s3) = open_s3_transport(&row) {
-                        storage_bytes = s3.corpus_size_bytes().await.ok();
-                    }
+            if row.enabled {
+                if let Some(connector) = row.open_connector().await {
+                    let transport = connector.transport();
+                    health = match transport.health().await {
+                        Ok(TransportHealth::Healthy) => "healthy".to_string(),
+                        Ok(TransportHealth::Degraded(message)) => format!("degraded: {message}"),
+                        Ok(TransportHealth::Unavailable(message)) => format!("unavailable: {message}"),
+                        Err(error) => format!("unavailable: {error}"),
+                    };
+                    head_discovery = transport.capabilities().head_discovery;
+                    storage_bytes = connector.corpus_size_bytes().await;
                 }
             }
 
             statuses.push(ReplicatedSyncTransportStatus {
                 instance_id: row.instance_id,
                 kind: row.kind,
-                location,
+                label: config.as_ref().and_then(|config| config.label()).map(str::to_string),
+                location: config.as_ref().map(TransportConfig::location).unwrap_or_default(),
+                supports_delete_data: config.as_ref().is_some_and(TransportConfig::supports_delete_data),
                 health,
                 head_discovery,
                 pending,
@@ -2075,14 +2041,15 @@ impl ReplicatedSync {
         base_url: &str,
         token: Option<&str>,
     ) -> Result<crate::ipfs_transport::ProbeReport, String> {
-        let transport = crate::ipfs_transport::IpfsRpcTransport::new(
-            "probe",
-            base_url,
-            token.map(str::to_string),
-            SPACE_ID.as_bytes(),
-        )
-        .map_err(|error| error.to_string())?;
-        transport.probe_capabilities().await.map_err(|error| error.to_string())
+        let config = TransportConfig::IpfsRpc(IpfsRpcConfig {
+            base_url: base_url.to_string(),
+            label: None,
+        });
+        let secrets = token.map(|token| TransportSecrets::IpfsRpcToken(token.to_string()));
+        match Connector::open("probe", &config, secrets).await?.probe().await? {
+            ConnectorProbe::IpfsRpc(report) => Ok(report),
+            _ => unreachable!("an IPFS RPC connector reports an IPFS RPC probe"),
+        }
     }
 
     /// Runs one push-then-pull cycle against every configured transport,
@@ -2787,7 +2754,10 @@ mod config_tests {
         assert_eq!(rows[0].instance_id, "folder-1");
         assert_eq!(rows[0].kind, "folder");
         assert!(rows[0].enabled);
-        assert_eq!(folder_config_path(&rows[0].config_json).as_deref(), Some(folder.path.as_path()));
+        assert_eq!(
+            rows[0].config(),
+            Some(TransportConfig::Folder(FolderConfig { path: folder.path.to_string_lossy().into_owned(), label: None }))
+        );
     }
 
     #[test]
@@ -2845,17 +2815,26 @@ mod config_tests {
     #[test]
     fn add_ipfs_rpc_transport_persists_only_non_secret_config() {
         let database = Database::open_memory();
-        // `token: None` deliberately avoids the keychain-write path here —
-        // see the module doc's testing note on `local_replicated_keys`;
-        // the same reasoning applies to any OS-keychain write.
-        database.add_ipfs_rpc_transport("ipfs-1", "https://rpc.filebase.io", None).unwrap();
+        // Secrets go to an in-memory stand-in for the keychain in tests
+        // (see `sync_connectors::secret_store`).
+        let id = format!("ipfs-{}", Uuid::new_v4());
+        database.add_ipfs_rpc_transport(&id, "https://rpc.filebase.io", Some("ipfs-token-value")).unwrap();
 
         let rows = database.configured_transports().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, "ipfs_rpc");
-        assert_eq!(ipfs_config_base_url(&rows[0].config_json).as_deref(), Some("https://rpc.filebase.io"));
+        assert_eq!(rows[0].config().map(|config| config.location()).as_deref(), Some("https://rpc.filebase.io"));
         // No credential ever appears in the stored config.
         assert!(!rows[0].config_json.to_ascii_lowercase().contains("token"));
+        assert!(!rows[0].config_json.contains("ipfs-token-value"));
+        assert_eq!(
+            TransportSecrets::load("ipfs_rpc", &id).unwrap(),
+            Some(TransportSecrets::IpfsRpcToken("ipfs-token-value".to_string()))
+        );
+
+        // Re-adding without a token clears the stored one.
+        database.add_ipfs_rpc_transport(&id, "https://rpc.filebase.io", None).unwrap();
+        assert_eq!(TransportSecrets::load("ipfs_rpc", &id).unwrap(), None);
     }
 
     #[tokio::test]
@@ -2886,48 +2865,61 @@ mod config_tests {
         }
     }
 
+    fn s3_test_credentials() -> crate::s3_transport::S3Credentials {
+        crate::s3_transport::S3Credentials {
+            access_key_id: "AKIAEXAMPLE".to_string(),
+            secret_access_key: "s3-secret-value".to_string(),
+            session_token: Some("s3-session-token".to_string()),
+        }
+    }
+
     #[test]
     fn s3_transport_config_persists_without_any_secret() {
         let database = Database::open_memory();
-        // The SQLite half only — `add_s3_transport`'s keychain write is
-        // never exercised from a test (see the IPFS token test above).
+        let id = format!("s3-{}", Uuid::new_v4());
         database
-            .persist_s3_transport_config("s3-1", &s3_test_config("https://s3.us-east-1.amazonaws.com"))
+            .add_s3_transport(&id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
             .unwrap();
 
         let rows = database.configured_transports().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, "s3");
-        let config = s3_config(&rows[0].config_json).unwrap();
-        assert_eq!(config, s3_test_config("https://s3.us-east-1.amazonaws.com"));
+        assert_eq!(rows[0].config(), Some(TransportConfig::S3(s3_test_config("https://s3.us-east-1.amazonaws.com"))));
         let lowered = rows[0].config_json.to_ascii_lowercase();
-        for secret_field in ["secret", "accesskey", "access_key", "token", "credential"] {
+        for secret_field in ["secret", "accesskey", "access_key", "token", "credential", "akiaexample"] {
             assert!(!lowered.contains(secret_field), "{secret_field} in {lowered}");
         }
+        assert_eq!(
+            TransportSecrets::load("s3", &id).unwrap(),
+            Some(TransportSecrets::S3(s3_test_credentials()))
+        );
     }
 
     #[test]
     fn add_s3_transport_rejects_an_invalid_config_before_writing_anything() {
         let database = Database::open_memory();
-        let credentials = crate::s3_transport::S3Credentials {
-            access_key_id: "AKIAEXAMPLE".to_string(),
-            secret_access_key: "secret".to_string(),
-            session_token: None,
-        };
+        let id = format!("s3-{}", Uuid::new_v4());
         // Plaintext HTTP to a remote host fails validation, which runs
         // before both the SQLite and the keychain writes.
         let error = database
-            .add_s3_transport("s3-1", &s3_test_config("http://s3.example.com"), &credentials)
+            .add_s3_transport(&id, &s3_test_config("http://s3.example.com"), &s3_test_credentials())
             .unwrap_err();
         assert!(error.contains("HTTPS"), "{error}");
         assert!(database.configured_transports().unwrap().is_empty());
+        assert_eq!(TransportSecrets::load("s3", &id).unwrap(), None);
     }
 
     #[tokio::test]
     async fn an_s3_row_without_stored_credentials_is_skipped_and_reported_unavailable() {
         let database = Database::open_memory();
+        let config_json = TransportConfig::S3(s3_test_config("https://s3.us-east-1.amazonaws.com")).to_config_json().unwrap();
         database
-            .persist_s3_transport_config("s3-missing-credentials", &s3_test_config("https://s3.us-east-1.amazonaws.com"))
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'s3',?2,1,1)",
+                params![format!("s3-{}", Uuid::new_v4()), config_json],
+            )
             .unwrap();
         assert!(build_configured_transports(&database).await.is_empty());
 
@@ -2935,18 +2927,135 @@ mod config_tests {
         let statuses = engine.status().await.unwrap();
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].kind, "s3");
+        assert_eq!(statuses[0].label.as_deref(), Some("Team bucket"));
         assert_eq!(statuses[0].location, "https://s3.us-east-1.amazonaws.com · sync-bucket/team");
+        assert!(statuses[0].supports_delete_data);
         assert!(statuses[0].health.starts_with("unavailable"));
     }
 
     #[test]
-    fn removing_an_s3_transport_clears_its_config_row() {
+    fn removing_a_connector_clears_its_row_and_its_secret() {
+        let database = Database::open_memory();
+        let s3_id = format!("s3-{}", Uuid::new_v4());
+        database
+            .add_s3_transport(&s3_id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
+            .unwrap();
+        let ipfs_id = format!("ipfs-{}", Uuid::new_v4());
+        database.add_ipfs_rpc_transport(&ipfs_id, "https://rpc.filebase.io", Some("token")).unwrap();
+
+        database.remove_transport(&s3_id).unwrap();
+        assert_eq!(TransportSecrets::load("s3", &s3_id).unwrap(), None);
+        assert!(crate::sync_connectors::secret_store::values_for(&s3_id).is_empty());
+        // The other connector and its secret are untouched.
+        assert!(TransportSecrets::load("ipfs_rpc", &ipfs_id).unwrap().is_some());
+
+        database.remove_transport(&ipfs_id).unwrap();
+        assert!(database.configured_transports().unwrap().is_empty());
+        assert!(crate::sync_connectors::secret_store::values_for(&ipfs_id).is_empty());
+    }
+
+    #[test]
+    fn removing_a_row_of_an_unknown_kind_clears_every_possible_secret() {
+        let database = Database::open_memory();
+        let id = format!("future-{}", Uuid::new_v4());
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'carrier-pigeon','{}',1,1)",
+                params![id],
+            )
+            .unwrap();
+        TransportSecrets::IpfsRpcToken("stale".to_string()).store(&id).unwrap();
+        database.remove_transport(&id).unwrap();
+        assert!(crate::sync_connectors::secret_store::values_for(&id).is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unknown_kind_is_skipped_and_reported_without_a_location() {
         let database = Database::open_memory();
         database
-            .persist_s3_transport_config("s3-1", &s3_test_config("https://s3.us-east-1.amazonaws.com"))
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES ('future-1','carrier-pigeon','{}',1,1)",
+                [],
+            )
             .unwrap();
-        database.remove_transport("s3-1").unwrap();
-        assert!(database.configured_transports().unwrap().is_empty());
+        assert!(build_configured_transports(&database).await.is_empty());
+        let statuses = ReplicatedSync::new(Arc::new(database)).status().await.unwrap();
+        assert_eq!(statuses[0].location, "");
+        assert_eq!(statuses[0].label, None);
+        assert!(!statuses[0].supports_delete_data);
+        assert_eq!(statuses[0].health, "unavailable: not configured");
+    }
+
+    #[test]
+    fn update_renames_a_connector_without_losing_its_ledger_or_secret() {
+        let database = Database::open_memory();
+        let id = format!("s3-{}", Uuid::new_v4());
+        database
+            .add_s3_transport(&id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
+            .unwrap();
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sync_deliveries(cid,transport_instance_id,state,attempts) VALUES ('c1',?1,'delivered',1)",
+                params![id],
+            )
+            .unwrap();
+        database.set_transport_success(&id).unwrap();
+
+        let mut renamed = database.configured_transports().unwrap()[0].config().unwrap();
+        renamed.set_label(Some("Renamed"));
+        database.update_transport_config(&id, &renamed, None).unwrap();
+
+        let row = &database.configured_transports().unwrap()[0];
+        assert_eq!(row.config().unwrap().label(), Some("Renamed"));
+        assert!(row.last_success_at.is_some());
+        assert_eq!(database.delivery_counts(&id).unwrap(), (0, 1, 0));
+        assert_eq!(TransportSecrets::load("s3", &id).unwrap(), Some(TransportSecrets::S3(s3_test_credentials())));
+    }
+
+    #[test]
+    fn update_can_rotate_credentials_and_refuses_a_kind_change_or_invalid_config() {
+        let database = Database::open_memory();
+        let id = format!("s3-{}", Uuid::new_v4());
+        let config = TransportConfig::S3(s3_test_config("https://s3.us-east-1.amazonaws.com"));
+        database
+            .add_transport(&id, &config, Some(&TransportSecrets::S3(s3_test_credentials())))
+            .unwrap();
+
+        let mut rotated = s3_test_credentials();
+        rotated.secret_access_key = "rotated-secret".to_string();
+        database.update_transport_config(&id, &config, Some(&TransportSecrets::S3(rotated.clone()))).unwrap();
+        assert_eq!(TransportSecrets::load("s3", &id).unwrap(), Some(TransportSecrets::S3(rotated.clone())));
+
+        let folder = TransportConfig::Folder(FolderConfig { path: "/tmp".to_string(), label: None });
+        assert!(database.update_transport_config(&id, &folder, None).is_err());
+
+        let TransportConfig::S3(mut insecure) = config.clone() else { unreachable!() };
+        insecure.endpoint = "http://s3.example.com".to_string();
+        assert!(database.update_transport_config(&id, &TransportConfig::S3(insecure), None).is_err());
+        // Nothing changed after the refusals.
+        assert_eq!(database.configured_transports().unwrap()[0].config(), Some(config));
+        assert_eq!(TransportSecrets::load("s3", &id).unwrap(), Some(TransportSecrets::S3(rotated)));
+
+        assert!(database.update_transport_config("missing", &folder, None).is_err());
+    }
+
+    #[tokio::test]
+    async fn status_offers_data_deletion_for_folders_but_not_ipfs() {
+        let database = Database::open_memory();
+        let folder = TempFolder::new();
+        database.add_folder_transport("folder-1", &folder.path).unwrap();
+        database.add_ipfs_rpc_transport(&format!("ipfs-{}", Uuid::new_v4()), "https://rpc.filebase.io", None).unwrap();
+        let statuses = ReplicatedSync::new(Arc::new(database)).status().await.unwrap();
+        let by_kind = |kind: &str| statuses.iter().find(|status| status.kind == kind).unwrap();
+        assert!(by_kind("folder").supports_delete_data);
+        assert!(!by_kind("ipfs_rpc").supports_delete_data);
+        assert_eq!(by_kind("folder").label, None);
     }
 
     #[tokio::test]

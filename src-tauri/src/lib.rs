@@ -23,6 +23,7 @@ mod replicated_sync;
 mod s3_transport;
 mod schema;
 mod sync;
+mod sync_connectors;
 mod sync_folder;
 mod sync_projection;
 mod system_fonts;
@@ -1277,20 +1278,10 @@ async fn replicated_sync_remove_transport(
             .into_iter()
             .find(|row| row.instance_id == instance_id)
         {
-            match row.kind.as_str() {
-                "folder" => {
-                    if let Some(path) = replicated_sync::folder_config_path(&row.config_json) {
-                        if let Ok(transport) = sync_folder::SyncFolderTransport::open(&instance_id, &path).await {
-                            transport.delete_all_corpus_data().await.map_err(|error| error.to_string())?;
-                        }
-                    }
+            if row.config().is_some_and(|config| config.supports_delete_data()) {
+                if let Some(connector) = row.open_connector().await {
+                    connector.delete_all_corpus_data().await?;
                 }
-                "s3" => {
-                    if let Some(transport) = replicated_sync::open_s3_transport(&row) {
-                        transport.delete_all_corpus_data().await.map_err(|error| error.to_string())?;
-                    }
-                }
-                _ => {}
             }
         }
     }

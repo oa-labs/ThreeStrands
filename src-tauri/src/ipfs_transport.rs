@@ -114,7 +114,7 @@ fn parse_cid(text: &str) -> Result<cid::Cid, TransportError> {
 /// connection" action in Settings shows the user before they enable a
 /// replica, per the plan's "explain a missing required capability before
 /// the user enables the replica."
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeReport {
     pub version_ok: bool,

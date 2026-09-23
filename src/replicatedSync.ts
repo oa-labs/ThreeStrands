@@ -3,10 +3,18 @@ import type { FrontierCandidate, FrontierConflict } from "./FrontierConflictEdit
 
 export type { FrontierCandidate, FrontierConflict } from "./FrontierConflictEditor";
 
+/** Every connector kind the native side can configure. */
+export type ConnectorKind = "folder" | "ipfs_rpc" | "s3";
+
 export type ReplicatedSyncTransportStatus = {
   instanceId: string;
-  kind: string;
+  kind: ConnectorKind;
+  /** The user-chosen name, if any. */
+  label?: string | null;
   location: string;
+  /** Whether "delete files and disconnect" can remove this connector's
+   * synchronized data (folders and S3 buckets; not IPFS pins). */
+  supportsDeleteData: boolean;
   health: string;
   headDiscovery: boolean;
   pending: number;
