@@ -137,6 +137,7 @@ pub fn decode_signed_enrollment_grant(bytes: &[u8]) -> Result<SignedEnrollmentGr
 pub struct EnrollmentRejection {
     pub request_id: RequestId,
     pub rejector_device_id: DeviceId,
+    pub rejector_ed25519_public: ByteBuf,
     pub rejected_at_ms: i64,
 }
 
@@ -271,6 +272,7 @@ mod tests {
             EnrollmentRejection {
                 request_id: RequestId::from_bytes([1u8; 16]),
                 rejector_device_id: DeviceId::from_bytes([3u8; 16]),
+                rejector_ed25519_public: ByteBuf::from(signing_key.verifying_key().to_bytes().to_vec()),
                 rejected_at_ms: 1000,
             },
         )

@@ -2088,7 +2088,7 @@ export function App() {
         ) : null}
         <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={mailboxTitle}>
           {mailbox === "drafts" ? (
-            <DraftsList drafts={correspondence.drafts} onOpen={correspondence.openDraft} />
+            <DraftsList drafts={correspondence.drafts} onOpen={correspondence.openDraft} onDiscard={correspondence.discardListedDraft} />
           ) : mailbox === "outbox" ? (
             <OutboxList
               outbox={correspondence.outbox}

@@ -602,7 +602,7 @@ function VerifyStep({ enrollmentStatus, operation }: { enrollmentStatus: Enrollm
   if (enrollmentStatus?.state === "rejected") {
     return (
       <>
-        <p className="settings-inline-status">This request was rejected on an existing device. Check with your group before starting a new request.</p>
+        <p className="settings-inline-status">A rejection response arrived. Check with your group before starting a new request.</p>
         <LeaveControl
           operation={operation}
           trigger="Start a new request…"

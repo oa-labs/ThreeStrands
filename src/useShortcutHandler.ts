@@ -57,6 +57,8 @@ export function useShortcutHandler(
       const interactionScope = targetShortcutScope(event.target) ?? currentContext.interactionScope;
       const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
       const replyAssistShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j";
+      // In Drafts, "#" discards the open draft unless focus is somewhere "#" is text.
+      const discardDraftShortcut = interactionScope === "compose" && currentContext.composerActive && currentContext.mailbox === "drafts" && !isEditableTarget(event.target) && matchesShortcut(event, "#");
       const fontShortcut = (event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
       const allowsMailboxTabShortcut = event.key === "Tab"
         && event.target instanceof HTMLElement
@@ -68,7 +70,7 @@ export function useShortcutHandler(
       const entryScope = interactionScope !== "read";
       if (
         reservesNativeActivation(event)
-        || (!sendShortcut && !replyAssistShortcut && !fontShortcut && !allowsMailboxTabShortcut
+        || (!sendShortcut && !replyAssistShortcut && !discardDraftShortcut && !fontShortcut && !allowsMailboxTabShortcut
           && (entryScope || isEditableTarget(event.target) || focusedControl))
       ) {
         clearPendingStep();

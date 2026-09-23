@@ -858,6 +858,30 @@ describe("Escape dismissal", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
+  it("discards drafts with # from the Drafts list and from the open draft", async () => {
+    await mailClient.createDraft("new");
+    await mailClient.createDraft("new");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(await screen.findByRole("button", { name: /Drafts \(2\)/ }));
+    expect(await screen.findByRole("heading", { name: "2 drafts" })).toBeInTheDocument();
+
+    const [first] = screen.getAllByRole("button", { name: /\(no subject\)/ });
+    first.focus();
+    fireEvent.keyDown(first, { key: "#", code: "Digit3", shiftKey: true });
+    expect(await screen.findByRole("heading", { name: "1 drafts" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /\(no subject\)/ }));
+    const discard = await screen.findByRole("button", { name: "Discard Draft" });
+    discard.focus();
+    fireEvent.keyDown(discard, { key: "#", code: "Digit3", shiftKey: true });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Discard Draft" })).not.toBeInTheDocument());
+    expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Inbox (g then i)" }));
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+  });
+
   it("closes only the topmost popup when overlays are stacked", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

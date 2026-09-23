@@ -40,6 +40,7 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   sendDraft: vi.fn(),
   sendAndMarkDone: vi.fn(),
   attachFiles: vi.fn(),
+  discardDraft: vi.fn(),
   draftReplyWithAI: vi.fn(),
   undoSend: vi.fn(),
   selectNext: vi.fn(),
@@ -155,6 +156,41 @@ describe("useShortcutHandler", () => {
     const readButton = document.createElement("button");
     document.body.append(readButton);
     readButton.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
+  it("lets # discard the open draft in Drafts unless focus is in an editable field", () => {
+    const current = context({ interactionScope: "compose", composerActive: true, mailbox: "drafts" });
+    const execute = vi.fn();
+    const hook = renderHook(() => useShortcutHandler(current, execute));
+    const composer = document.createElement("div");
+    composer.className = "composer";
+    composer.dataset.shortcutScope = "compose";
+    const subject = document.createElement("input");
+    const body = document.createElement("textarea");
+    const button = document.createElement("button");
+    composer.append(subject, body, button);
+    document.body.append(composer);
+
+    for (const target of [subject, body]) {
+      const typed = new KeyboardEvent("keydown", { key: "#", code: "Digit3", shiftKey: true, bubbles: true, cancelable: true });
+      target.dispatchEvent(typed);
+      expect(typed.defaultPrevented).toBe(false);
+    }
+    expect(execute).not.toHaveBeenCalled();
+
+    button.dispatchEvent(new KeyboardEvent("keydown", { key: "#", code: "Digit3", shiftKey: true, bubbles: true, cancelable: true }));
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "draft.discard" }));
+    hook.unmount();
+  });
+
+  it("keeps # inert in an open composer outside the Drafts folder", () => {
+    const current = context({ interactionScope: "compose", composerActive: true, mailbox: "inbox", selectedId: "thread-1" });
+    const execute = vi.fn();
+    const hook = renderHook(() => useShortcutHandler(current, execute));
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "#", code: "Digit3", shiftKey: true, cancelable: true }));
     expect(execute).not.toHaveBeenCalled();
     hook.unmount();
   });

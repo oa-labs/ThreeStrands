@@ -26,7 +26,7 @@ import { recordSnippetUsed } from "./settings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
-export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; draftReplyWithAI(): void };
+export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; discard(): void; draftReplyWithAI(): void };
 
 export const Composer = forwardRef<ComposerHandle, {
   draft: Draft;
@@ -125,6 +125,7 @@ export const Composer = forwardRef<ComposerHandle, {
     finally { busyRef.current = false; if (mounted.current) setBusy(false); }
   }
   function close() { void run(async () => { await flush(); onClose(); }); }
+  function discard() { void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); }); }
   function send(afterQueued?: () => void, archiveOnSend?: boolean) {
     void run(async () => {
       const saved = await flush();
@@ -272,7 +273,7 @@ export const Composer = forwardRef<ComposerHandle, {
     };
     reader.readAsDataURL(file);
   }
-  useImperativeHandle(ref, () => ({ flush, send, attach, close, draftReplyWithAI, prepareExit: async () => {
+  useImperativeHandle(ref, () => ({ flush, send, attach, close, discard, draftReplyWithAI, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
     try { await flush(); }
@@ -539,7 +540,7 @@ export const Composer = forwardRef<ComposerHandle, {
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={14} /></button></li>)}</ul>}
         {error && <div className="compose-error" role="alert">{error} <button onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
       </div>
-      <footer><button className="send-button" onClick={() => send()} disabled={busy}><Send size={16} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={17} /></button><span className="save-status" role="status">{status}</span><button disabled={busy} aria-label="Discard Draft" onClick={() => void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); })}><Trash2 size={16} /></button></footer>
+      <footer><button className="send-button" onClick={() => send()} disabled={busy}><Send size={16} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={17} /></button><span className="save-status" role="status">{status}</span><button disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash2 size={16} /></button></footer>
       <p className="compose-note">Drafts are saved on this device. Send has a 10-second undo window.{!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}</p>
       {snippetPickerOpen ? (
         <SnippetPicker

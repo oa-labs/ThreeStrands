@@ -976,9 +976,10 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
     Ok(())
 }
 
-/// Applies a rejection only when its signer is a currently trusted active
-/// peer. Missing requests are retried after the rest of the sweep so a
-/// content-address ordering difference cannot leave one device unresolved.
+/// Existing members honor rejections only from a currently trusted active
+/// peer. A joining device can verify the response signature as informational
+/// status before it has a roster of its own. Missing requests are retried
+/// after the rest of the sweep so object ordering cannot leave peers stale.
 fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envelope::SignedEnrollmentRejection) -> Result<bool, String> {
     let request_id = encode_id(signed.rejection.request_id.as_bytes());
     let rejector_id = encode_id(signed.rejection.rejector_device_id.as_bytes());
@@ -991,26 +992,30 @@ fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envel
         )
         .optional()
         .map_err(display)?;
-    let Some(verifying_key) = trusted_key
+    let embedded_key = <[u8; 32]>::try_from(signed.rejection.rejector_ed25519_public.as_slice())
+        .ok()
+        .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok());
+    let Some(embedded_key) = embedded_key else { return Ok(true) };
+    let is_trusted_peer = trusted_key
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-        .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
-    else {
-        return Ok(true);
-    };
-    if verify_enrollment_rejection(&verifying_key, &signed).is_err() {
-        return Ok(true);
-    }
+        .is_some_and(|bytes| bytes == embedded_key.to_bytes());
 
-    let exists: bool = database
+    let request_direction: Option<String> = database
         .connection()?
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM replicated_sync_enrollment_requests WHERE request_id=?1)",
+            "SELECT direction FROM replicated_sync_enrollment_requests WHERE request_id=?1",
             params![request_id],
             |row| row.get(0),
         )
+        .optional()
         .map_err(display)?;
-    if !exists {
-        return Ok(false);
+    let Some(direction) = request_direction else { return Ok(false) };
+    // Existing devices only honor decisions from a peer already in their
+    // trusted roster. A joining device has no roster yet, so it can verify
+    // the signature as an informational response; a later approval grant
+    // still takes precedence and enables explicit fingerprint review.
+    if (direction == "incoming" && !is_trusted_peer) || verify_enrollment_rejection(&embedded_key, &signed).is_err() {
+        return Ok(true);
     }
 
     // A published grant is the approval decision and cannot be undone by a
@@ -1047,6 +1052,7 @@ pub async fn reject_enrollment_request(
     let rejection = EnrollmentRejection {
         request_id: RequestId::from_bytes(decode_id(request_id_hex)?),
         rejector_device_id: identity.device_id,
+        rejector_ed25519_public: ByteBuf::from(identity.verifying_key.to_bytes().to_vec()),
         rejected_at_ms: now_ms(),
     };
     let signed = sign_enrollment_rejection(&identity.signing_key, rejection).map_err(display)?;
@@ -1446,6 +1452,10 @@ mod tests {
                 }),
             ),
             (
+                EnrollmentStatus::Rejected { request_id: "request-3".to_string(), fingerprint: "AAAA-CCCC".to_string() },
+                serde_json::json!({ "state": "rejected", "requestId": "request-3", "fingerprint": "AAAA-CCCC" }),
+            ),
+            (
                 EnrollmentStatus::Enrolled { device_count: 2, awaiting_admission_from: None },
                 serde_json::json!({ "state": "enrolled", "deviceCount": 2, "awaitingAdmissionFrom": null }),
             ),
@@ -1534,6 +1544,67 @@ mod tests {
         let keys_a = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
         approve_enrollment_request(&database_a, &identity_a, &keys_a, &pending_a[0].request_id, &transports).await.unwrap();
         run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
+        assert!(database_b.pending_incoming_enrollment_requests().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejecting_a_request_resolves_it_for_the_group_and_the_joining_device() {
+        let transports = fake_transports("shared");
+        let database_a = Database::open_memory();
+        let identity_a = test_identity(&database_a);
+        let epoch_keys_a = FakeEpochKeyStore::default();
+        let phrase = begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports, false).await.unwrap();
+
+        let database_b = Database::open_memory();
+        let identity_b = test_identity(&database_b);
+        let epoch_keys_b = FakeEpochKeyStore::default();
+        join_with_recovery_phrase(&database_b, &identity_b, &epoch_keys_b, &phrase, &transports).await.unwrap();
+        run_enrollment_sweep(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+
+        let database_c = Database::open_memory();
+        let identity_c = test_identity(&database_c);
+        publish_enrollment_request(&database_c, &identity_c, &transports).await.unwrap();
+        run_enrollment_sweep(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+        run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
+        let request_id = database_a.pending_incoming_enrollment_requests().unwrap()[0].request_id.clone();
+
+        reject_enrollment_request(&database_a, &identity_a, &request_id, &transports).await.unwrap();
+        run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
+        run_enrollment_sweep(&database_c, &identity_c, &FakeEpochKeyStore::default(), &transports).await.unwrap();
+
+        assert!(database_b.pending_incoming_enrollment_requests().unwrap().is_empty());
+        assert!(matches!(database_c.enrollment_status().unwrap(), EnrollmentStatus::Rejected { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_published_approval_takes_precedence_over_a_concurrent_rejection() {
+        let transports = fake_transports("shared");
+        let database_a = Database::open_memory();
+        let identity_a = test_identity(&database_a);
+        let epoch_keys_a = FakeEpochKeyStore::default();
+        let phrase = begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports, false).await.unwrap();
+
+        let database_b = Database::open_memory();
+        let identity_b = test_identity(&database_b);
+        let epoch_keys_b = FakeEpochKeyStore::default();
+        join_with_recovery_phrase(&database_b, &identity_b, &epoch_keys_b, &phrase, &transports).await.unwrap();
+        run_enrollment_sweep(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+
+        let database_c = Database::open_memory();
+        let identity_c = test_identity(&database_c);
+        let epoch_keys_c = FakeEpochKeyStore::default();
+        publish_enrollment_request(&database_c, &identity_c, &transports).await.unwrap();
+        run_enrollment_sweep(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+        run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
+        let request_id = database_a.pending_incoming_enrollment_requests().unwrap()[0].request_id.clone();
+
+        let keys_a = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
+        approve_enrollment_request(&database_a, &identity_a, &keys_a, &request_id, &transports).await.unwrap();
+        reject_enrollment_request(&database_b, &identity_b, &request_id, &transports).await.unwrap();
+        run_enrollment_sweep(&database_c, &identity_c, &epoch_keys_c, &transports).await.unwrap();
+        run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
+
+        assert!(matches!(database_c.enrollment_status().unwrap(), EnrollmentStatus::AwaitingConfirmation { .. }));
         assert!(database_b.pending_incoming_enrollment_requests().unwrap().is_empty());
     }
 

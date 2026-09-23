@@ -35,6 +35,7 @@ export type CommandContext = {
   sendDraft(): void;
   sendAndMarkDone(): void;
   attachFiles(): void;
+  discardDraft(): void;
   draftReplyWithAI(): void;
   undoSend(): void;
   selectNext(): void;
@@ -143,6 +144,9 @@ export const commands: Command[] = [
   { id: "outbox.open", title: "Open Outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => complete(c.openOutbox) },
   { id: "draft.send", title: "Send Draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
   { id: "draft.sendAndMarkDone", title: "Send & Mark Done", keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
+  // The open draft in the Drafts folder is what "#" deletes there, matching
+  // the composer's trash button. Typing "#" in a composer field still types.
+  { id: "draft.discard", title: "Discard Draft", keys: ["#"], group: "Compose", enabled: (c) => c.composerActive && c.focusedPane === "mail" && c.mailbox === "drafts", run: (c) => complete(c.discardDraft) },
   { id: "draft.attach", title: "Attach Files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
   { id: "draft.replyAssist", title: "Draft Reply With AI", keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.draftReplyWithAI) },
   { id: "send.undo", title: "Undo Send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },

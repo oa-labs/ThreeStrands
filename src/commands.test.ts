@@ -38,6 +38,7 @@ function noopContext(): CommandContext {
     sendDraft: () => {},
     sendAndMarkDone: () => {},
     attachFiles: () => {},
+    discardDraft: () => {},
     draftReplyWithAI: () => {},
     undoSend: () => {},
     selectNext: () => {},
@@ -112,14 +113,19 @@ describe("command registry", () => {
       e: ["tasks.completeSelected", "thread.archive"],
       "shift+e": ["tasks.reopenSelected", "thread.unarchive"],
       o: ["tasks.openSelected", "thread.toggleOlderMessages"],
+      "#": ["draft.discard", "thread.trash"],
     });
 
     for (const focusedPane of ["mail", "tasks"] as const) {
       for (const selectedTaskStatus of ["open", "completed"] as const) {
         for (const selectedArchived of [false, true]) {
-          const context = { ...noopContext(), focusedPane, selectedId: "thread-1", selectedArchived, selectedTaskStatus };
-          for (const ids of [...owners.values()].filter((candidateIds) => candidateIds.length > 1)) {
-            expect(ids.filter((id) => commands.find((command) => command.id === id)?.enabled(context)).length).toBeLessThanOrEqual(1);
+          for (const mailbox of ["inbox", "drafts"] as const) {
+            for (const composerActive of [false, true]) {
+              const context = { ...noopContext(), focusedPane, selectedId: "thread-1", selectedArchived, selectedTaskStatus, mailbox, composerActive };
+              for (const ids of [...owners.values()].filter((candidateIds) => candidateIds.length > 1)) {
+                expect(ids.filter((id) => commands.find((command) => command.id === id)?.enabled(context)).length).toBeLessThanOrEqual(1);
+              }
+            }
           }
         }
       }
@@ -236,6 +242,18 @@ describe("command registry", () => {
     context.mailbox = "inbox";
     context.composerActive = true;
     expect(commands.find((command) => command.id === "thread.summarize")?.enabled(context)).toBe(false);
+  });
+
+  it("discards the open draft on # only in the Drafts folder", async () => {
+    const command = commands.find((candidate) => candidate.id === "draft.discard");
+    expect(command?.keys).toEqual(["#"]);
+    expect(command?.enabled({ ...noopContext(), mailbox: "drafts" })).toBe(false);
+    expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(false);
+    expect(command?.enabled({ ...noopContext(), composerActive: true, mailbox: "drafts", focusedPane: "tasks" })).toBe(false);
+    expect(command?.enabled({ ...noopContext(), composerActive: true, mailbox: "drafts" })).toBe(true);
+    const discardDraft = vi.fn();
+    await command?.run({ ...noopContext(), composerActive: true, mailbox: "drafts", discardDraft });
+    expect(discardDraft).toHaveBeenCalledTimes(1);
   });
 
   it("gates the trash/restore toggle on whether the selected thread is already trashed", () => {

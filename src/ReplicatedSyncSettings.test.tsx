@@ -277,7 +277,7 @@ describe("shared enrollment rejection", () => {
     vi.mocked(sync.replicatedSyncLeave).mockResolvedValue(undefined);
     render(<ReplicatedSyncSettings />);
 
-    expect(await screen.findByText(/This request was rejected on an existing device/)).toBeInTheDocument();
+    expect(await screen.findByText(/A rejection response arrived/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Start a new request…" }));
     fireEvent.click(screen.getByRole("button", { name: "Start over" }));
     await waitFor(() => expect(sync.replicatedSyncLeave).toHaveBeenCalled());
@@ -451,6 +451,20 @@ describe("approving a device from an existing device", () => {
     expect(await within(card).findByText("The request expired.")).toBeInTheDocument();
     expect(screen.getAllByText("The request expired.")).toHaveLength(1);
     expect(sync.replicatedSyncSetDeviceLabel).not.toHaveBeenCalled();
+  });
+
+  it("confirms that rejection is shared with every device", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([request]);
+    vi.mocked(sync.replicatedSyncRejectRequest).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    const waiting = await screen.findByRole("list", { name: "Devices waiting to join" });
+    fireEvent.click(within(waiting).getByRole("button", { name: "Reject…" }));
+    const confirmation = within(waiting).getByRole("group", { name: "Reject device request confirmation" });
+    expect(confirmation).toHaveTextContent("on all your sync devices");
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Reject on all devices" }));
+    await waitFor(() => expect(sync.replicatedSyncRejectRequest).toHaveBeenCalledWith(request.requestId));
   });
 });
 

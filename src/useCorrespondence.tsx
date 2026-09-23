@@ -6,6 +6,7 @@ import { Composer, type ComposerHandle } from "./Composer";
 import { mailClient } from "./data/client";
 import type { ComposeMode, Draft, OutboxItem } from "./correspondence";
 import type { Account, Snippet } from "./domain";
+import { matchesShortcut } from "./commands";
 import { logBackgroundFailure } from "./errors";
 
 type ComposeOptions = {
@@ -156,6 +157,7 @@ export function useCorrespondence(
   const sendDraftAndThen = useCallback((action: () => void, archiveOnSend?: boolean) => editor.current?.send(action, archiveOnSend), []);
   const attachFiles = useCallback(() => editor.current?.attach(), []);
   const draftReplyWithAI = useCallback(() => editor.current?.draftReplyWithAI(), []);
+  const discardDraft = useCallback(() => editor.current?.discard(), []);
   const undoSend = useCallback(() => { void undo(); }, [undo]);
   const composerActive = Boolean(active);
 
@@ -163,13 +165,19 @@ export function useCorrespondence(
     closing,
     composerActive,
     compose, reply, replyAll, forward, openInbox, openDrafts, openOutbox,
-    sendDraft, sendDraftAndThen, attachFiles, draftReplyWithAI, undoSend, canUndoSend: pendingId !== null,
-  }), [attachFiles, closing, compose, composerActive, draftReplyWithAI, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
+    sendDraft, sendDraftAndThen, attachFiles, discardDraft, draftReplyWithAI, undoSend, canUndoSend: pendingId !== null,
+  }), [attachFiles, closing, compose, composerActive, discardDraft, draftReplyWithAI, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
   const openDraft = useCallback((draft: Draft) => {
     setActiveFollowUpTaskId(draft.followUpTaskId ?? null);
     setActive(draft);
   }, []);
   const undoSendItem = useCallback((id: string) => { void undo(id); }, [undo]);
+  // Discards a draft from the Drafts list. The open draft goes through the
+  // composer so pending edits are flushed before it is removed.
+  const discardListedDraft = useCallback((draft: Draft) => {
+    if (active?.id === draft.id) { editor.current?.discard(); return; }
+    void mailClient.discardDraft(draft.id).then(refresh).catch((e: unknown) => setError(String(e)));
+  }, [active?.id, refresh]);
   const composer = active ? (
     <Composer
       key={active.id}
@@ -211,6 +219,7 @@ export function useCorrespondence(
     draftCount: drafts.length,
     outboxCount: outbox.filter((o) => !["sent", "canceled"].includes(o.state)).length,
     openDraft,
+    discardListedDraft,
     undoSendItem,
     restoreFailedSend,
     reconcileSend,
@@ -225,10 +234,20 @@ export function useCorrespondence(
   };
 }
 
-export function DraftsList({ drafts, onOpen }: { drafts: Draft[]; onOpen(draft: Draft): void }) {
+export function DraftsList({ drafts, onOpen, onDiscard }: { drafts: Draft[]; onOpen(draft: Draft): void; onDiscard(draft: Draft): void }) {
   if (drafts.length === 0) return <p className="empty">No saved drafts.</p>;
   return <>{drafts.map((d) => (
-    <button className="draft-row" key={d.id} onClick={() => onOpen(d)}>
+    <button
+      className="draft-row"
+      key={d.id}
+      aria-keyshortcuts="#"
+      onClick={() => onOpen(d)}
+      onKeyDown={(event) => {
+        if (!matchesShortcut(event.nativeEvent, "#")) return;
+        event.preventDefault();
+        onDiscard(d);
+      }}
+    >
       <strong>{d.subject || "(no subject)"}</strong>
       <span>{d.to || "No recipients"}</span>
       <small>{new Date(d.updatedAt).toLocaleString()} · Saved on this device</small>

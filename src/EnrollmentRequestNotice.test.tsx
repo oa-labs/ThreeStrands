@@ -63,6 +63,23 @@ describe("EnrollmentRequestNotice", () => {
     }
   });
 
+  it("shows a short no-action status when another device resolves a request", async () => {
+    let onStatus: () => void = () => {};
+    listenMock.mockImplementation(async (_event: string, handler: () => void) => { onStatus = handler; return () => {}; });
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
+    vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([request("req-1")]);
+    try {
+      render(<EnrollmentRequestNotice suppressed={false} onReview={vi.fn()} />);
+      expect(await screen.findByText("A new device is asking to join Replicated Sync.")).toBeInTheDocument();
+      await waitFor(() => expect(listenMock).toHaveBeenCalledWith("replicated-sync-status", expect.any(Function)));
+      vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([]);
+      await act(async () => { onStatus(); });
+      expect(await screen.findByText("A device request was resolved. No action is needed here.")).toBeInTheDocument();
+    } finally {
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    }
+  });
+
   it("treats a malformed native response as no requests", async () => {
     vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue({} as unknown as sync.IncomingEnrollmentRequest[]);
     render(<EnrollmentRequestNotice suppressed={false} onReview={vi.fn()} />);
