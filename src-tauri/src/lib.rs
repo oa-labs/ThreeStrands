@@ -1223,6 +1223,70 @@ async fn replicated_sync_update_connector(
 }
 
 #[tauri::command]
+async fn replicated_sync_create_join_code(
+    expires_in_hours: u32,
+    connectors: Vec<enrollment::JoinCodeConnectorChoice>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    if !state.database.replicated_sync_active()? {
+        return Err("Replicated sync is not enabled in this build".to_string());
+    }
+    state.replicated_sync.create_join_code(&connectors, expires_in_hours).await
+}
+
+#[tauri::command]
+fn replicated_sync_list_join_codes(state: State<'_, AppState>) -> Result<Vec<enrollment::OutstandingJoinCode>, String> {
+    state.database.outstanding_join_codes()
+}
+
+#[tauri::command]
+async fn replicated_sync_cancel_join_code(invitation_cid: String, state: State<'_, AppState>) -> Result<(), String> {
+    if !state.database.replicated_sync_active()? {
+        return Err("Replicated sync is not enabled in this build".to_string());
+    }
+    state.replicated_sync.cancel_join_code(&invitation_cid).await
+}
+
+/// Parses pasted join code text without saving or contacting anything.
+#[tauri::command]
+fn replicated_sync_preview_join_code(code: String) -> Result<enrollment::JoinCodePreview, String> {
+    enrollment::preview_join_code(&code, chrono::Utc::now().timestamp_millis())
+}
+
+/// Opens the native folder picker for a join code's shared-folder
+/// connector. `None` if the user cancels.
+#[tauri::command]
+async fn replicated_sync_pick_join_folder() -> Result<Option<String>, String> {
+    Ok(rfd::AsyncFileDialog::new()
+        .set_title("Choose this device's copy of the shared sync folder")
+        .pick_folder()
+        .await
+        .map(|folder| folder.path().to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+async fn replicated_sync_join_with_code(
+    code: String,
+    folders: Vec<enrollment::JoinFolderChoice>,
+    credentials: Vec<enrollment::JoinCredentialsChoice>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.replicated_sync.join_with_code(&code, &folders, credentials).await?;
+    kick_replicated_sync(&state);
+    Ok(())
+}
+
+#[tauri::command]
+fn replicated_sync_join_code_notices(state: State<'_, AppState>) -> Result<Vec<enrollment::JoinCodeNotice>, String> {
+    state.database.join_code_notices()
+}
+
+#[tauri::command]
+fn replicated_sync_dismiss_join_code_notice(redemption_cid: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.dismiss_join_code_notice(&redemption_cid)
+}
+
+#[tauri::command]
 async fn replicated_sync_probe_ipfs_rpc(
     base_url: String,
     token: Option<String>,
@@ -2615,6 +2679,14 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         replicated_sync_add_ipfs_rpc,
         replicated_sync_probe_ipfs_rpc,
         replicated_sync_probe_s3,
+        replicated_sync_create_join_code,
+        replicated_sync_list_join_codes,
+        replicated_sync_cancel_join_code,
+        replicated_sync_preview_join_code,
+        replicated_sync_pick_join_folder,
+        replicated_sync_join_with_code,
+        replicated_sync_join_code_notices,
+        replicated_sync_dismiss_join_code_notice,
         replicated_sync_add_s3,
         replicated_sync_update_connector,
         replicated_sync_remove_transport,

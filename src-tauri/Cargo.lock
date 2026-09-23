@@ -5360,7 +5360,7 @@ dependencies = [
 
 [[package]]
 name = "threestrands"
-version = "0.27.2"
+version = "0.27.3"
 dependencies = [
  "argon2",
  "async-trait",
@@ -5424,6 +5424,7 @@ dependencies = [
 name = "threestrands-sync-envelope"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bip39",
  "chacha20poly1305",
  "cid",

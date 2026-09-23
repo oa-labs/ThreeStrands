@@ -53,3 +53,25 @@ pub const MAX_CHUNK_PLAINTEXT_BYTES: usize = 256 * 1024;
 /// terminating at [`MAX_CHUNK_PLAINTEXT_BYTES`]. Padding hides the exact
 /// content length from anyone observing object sizes in a transport.
 pub const PADDING_BUCKETS: &[usize] = &[4_096, 16_384, 65_536, MAX_CHUNK_PLAINTEXT_BYTES];
+
+/// Longest join code text accepted, after whitespace is removed. Far above
+/// a real code (a few connectors with credentials is well under 4 KiB);
+/// bounds the work a pasted blob can cause.
+pub const MAX_JOIN_CODE_CHARS: usize = 64 * 1024;
+
+/// Most connectors one join code may carry.
+pub const MAX_JOIN_CONNECTORS: usize = 8;
+
+/// Longest inviter or joining-device name carried by a join code or
+/// redemption, in characters. Matches the app's device-name limit.
+pub const MAX_JOIN_NAME_CHARS: usize = 60;
+
+/// Longest connector kind tag in a join code, in bytes.
+pub const MAX_JOIN_CONNECTOR_KIND_BYTES: usize = 32;
+
+/// Longest non-secret connector config (JSON) in a join code, in bytes.
+pub const MAX_JOIN_CONNECTOR_CONFIG_BYTES: usize = 4 * 1024;
+
+/// Longest connector secret (JSON) in a join code, in bytes. Room for an
+/// S3 session token.
+pub const MAX_JOIN_CONNECTOR_SECRETS_BYTES: usize = 12 * 1024;

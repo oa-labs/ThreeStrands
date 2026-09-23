@@ -45,6 +45,14 @@ use threestrands_sync_transport::{Cid as TransportCid, SyncTransport};
 
 use crate::db::Database;
 use crate::error_text::display;
+
+mod join_codes;
+pub(crate) use join_codes::{
+    cancel_join_code, create_join_code, join_with_code, preview_join_code, process_join_codes, JoinCodeConnectorChoice,
+    JoinCodeNotice, JoinCodePreview, JoinCredentialsChoice, JoinFolderChoice, OutstandingJoinCode,
+};
+#[cfg(test)]
+use join_codes::{find_invitation, verify_fetched_invitation, MAX_JOIN_CODE_HOURS, MIN_JOIN_CODE_HOURS};
 use crate::replicated_sync::{decode_id, encode_id, random_id, x25519_public_bytes, DeviceIdentity, LocalKeys, SPACE_ID};
 
 fn now_ms() -> i64 {
@@ -89,7 +97,12 @@ pub enum EnrollmentStatus {
     NotStarted,
     AwaitingGrant { request_id: String, fingerprint: String, created_at: String },
     AwaitingConfirmation { request_id: String, fingerprint: String, approver_fingerprint: String },
-    Enrolled { device_count: usize },
+    Enrolled {
+        device_count: usize,
+        /// The inviter's name while this device, having joined with a join
+        /// code, waits for the inviter to finish admitting it.
+        awaiting_admission_from: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +126,8 @@ pub struct DeviceRosterEntry {
     /// peer) a change from that device. Not a liveness signal: an idle but
     /// online device keeps its last value.
     pub last_change_at: Option<String>,
+    /// Whether this device joined the group with a join code.
+    pub joined_with_join_code: bool,
 }
 
 /// Longest local device label accepted, in characters.
@@ -148,7 +163,11 @@ impl Database {
             let device_count: i64 = connection
                 .query_row("SELECT COUNT(*) FROM sync_devices WHERE status='active'", [], |row| row.get(0))
                 .map_err(display)?;
-            return Ok(EnrollmentStatus::Enrolled { device_count: device_count as usize });
+            drop(connection);
+            return Ok(EnrollmentStatus::Enrolled {
+                device_count: device_count as usize,
+                awaiting_admission_from: self.awaiting_admission_from()?,
+            });
         }
 
         let staged: Option<(String, String, Vec<u8>)> = connection
@@ -231,7 +250,10 @@ impl Database {
         let mut statement = connection
             .prepare(
                 "SELECT d.device_id, d.status, d.is_self, l.label,
-                        (SELECT MAX(e.created_at) FROM sync_events e WHERE e.device_id = d.device_id)
+                        (SELECT MAX(e.created_at) FROM sync_events e WHERE e.device_id = d.device_id),
+                        EXISTS(SELECT 1 FROM replicated_sync_invitation_redemptions r
+                               WHERE r.device_id = d.device_id AND r.state IN ('admitted','observed'))
+                        OR (d.is_self = 1 AND EXISTS(SELECT 1 FROM replicated_sync_invitations i WHERE i.direction='incoming'))
                  FROM sync_devices d LEFT JOIN sync_device_labels l ON l.device_id = d.device_id
                  ORDER BY d.is_self DESC, d.status = 'revoked', d.device_id",
             )
@@ -244,6 +266,7 @@ impl Database {
                     is_self: row.get(2)?,
                     label: row.get(3)?,
                     last_change_at: row.get(4)?,
+                    joined_with_join_code: row.get(5)?,
                 })
             })
             .map_err(display)?
@@ -377,6 +400,8 @@ impl Database {
              DELETE FROM sync_events;
              DELETE FROM sync_epoch_history;
              DELETE FROM replicated_sync_enrollment_requests;
+             DELETE FROM replicated_sync_invitation_redemptions;
+             DELETE FROM replicated_sync_invitations;
              DELETE FROM sync_control_objects_seen;
              DELETE FROM sync_device_labels;
              DELETE FROM sync_devices;",
@@ -692,13 +717,15 @@ pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity
                     continue;
                 }
                 let Ok(bytes) = transport.get_object(&locator.cid).await else { continue };
-                if try_apply_control_object(database, identity, epoch_keys, &locator.cid.0, &bytes)? {
-                    database.mark_control_object_seen(&locator.cid.0, "control")?;
-                } else {
-                    // Not recognized as an enrollment/rotation object at
-                    // all (most objects are ordinary sealed events) —
-                    // still mark seen so we never re-fetch it.
-                    database.mark_control_object_seen(&locator.cid.0, "other")?;
+                match try_apply_control_object(database, identity, epoch_keys, &locator.cid.0, &bytes)? {
+                    ControlObject::Applied => database.mark_control_object_seen(&locator.cid.0, "control")?,
+                    // Not recognized as a control object at all (most
+                    // objects are ordinary sealed events) — still mark
+                    // seen so we never re-fetch it.
+                    ControlObject::NotControl => database.mark_control_object_seen(&locator.cid.0, "other")?,
+                    // A join-code redemption whose invitation hasn't
+                    // arrived yet: leave it unseen and look again.
+                    ControlObject::RetryLater => {}
                 }
             }
             cursor = page.next_cursor;
@@ -710,20 +737,36 @@ pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity
     Ok(())
 }
 
-fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, cid: &str, bytes: &[u8]) -> Result<bool, String> {
+enum ControlObject {
+    Applied,
+    NotControl,
+    RetryLater,
+}
+
+fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, cid: &str, bytes: &[u8]) -> Result<ControlObject, String> {
     if let Ok(signed) = decode_signed_enrollment_request(bytes) {
         apply_incoming_request(database, identity, signed)?;
-        return Ok(true);
+        return Ok(ControlObject::Applied);
     }
     if let Ok(signed) = decode_signed_enrollment_grant(bytes) {
         apply_incoming_grant(database, identity, epoch_keys, signed)?;
-        return Ok(true);
+        return Ok(ControlObject::Applied);
     }
     if let Ok(signed) = decode_signed_key_rotation(bytes) {
         apply_incoming_rotation(database, identity, epoch_keys, signed, cid)?;
-        return Ok(true);
+        return Ok(ControlObject::Applied);
     }
-    Ok(false)
+    if let Ok(signed) = threestrands_sync_envelope::decode_signed_invitation(bytes) {
+        join_codes::apply_incoming_invitation(database, identity, signed, cid)?;
+        return Ok(ControlObject::Applied);
+    }
+    if let Ok(signed) = threestrands_sync_envelope::decode_signed_invitation_redemption(bytes) {
+        return Ok(match join_codes::apply_incoming_redemption(database, identity, signed, cid, now_ms())? {
+            join_codes::JoinObjectOutcome::Done => ControlObject::Applied,
+            join_codes::JoinObjectOutcome::RetryLater => ControlObject::RetryLater,
+        });
+    }
+    Ok(ControlObject::NotControl)
 }
 
 fn apply_incoming_request(database: &Database, identity: &DeviceIdentity, signed: SignedEnrollmentRequest) -> Result<(), String> {
@@ -852,6 +895,7 @@ fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch
 
 fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: &SignedKeyRotation, cid: &str) -> Result<(), String> {
     database.adopt_roster(&signed.rotation.roster)?;
+    join_codes::note_admission_if_listed(database, identity, &signed.rotation.roster)?;
     database.set_recovery_public_keys(
         signed.rotation.recovery_ed25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
         signed.rotation.recovery_x25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
@@ -1216,7 +1260,14 @@ mod tests {
                     "approverFingerprint": "EEEE-FFFF",
                 }),
             ),
-            (EnrollmentStatus::Enrolled { device_count: 2 }, serde_json::json!({ "state": "enrolled", "deviceCount": 2 })),
+            (
+                EnrollmentStatus::Enrolled { device_count: 2, awaiting_admission_from: None },
+                serde_json::json!({ "state": "enrolled", "deviceCount": 2, "awaitingAdmissionFrom": null }),
+            ),
+            (
+                EnrollmentStatus::Enrolled { device_count: 1, awaiting_admission_from: Some("Work laptop".to_string()) },
+                serde_json::json!({ "state": "enrolled", "deviceCount": 1, "awaitingAdmissionFrom": "Work laptop" }),
+            ),
         ];
 
         for (status, expected) in cases {
@@ -1246,7 +1297,7 @@ mod tests {
         assert_eq!(phrase.split_whitespace().count(), 24);
 
         match database.enrollment_status().unwrap() {
-            EnrollmentStatus::Enrolled { device_count } => assert_eq!(device_count, 1),
+            EnrollmentStatus::Enrolled { device_count, .. } => assert_eq!(device_count, 1),
             other => panic!("expected Enrolled, got {other:?}"),
         }
     }
@@ -1378,7 +1429,7 @@ mod tests {
             .unwrap();
         confirm_and_import_grant(&database_b, &identity_b, &epoch_keys_b, &outgoing_request_id).await.unwrap();
         match database_b.enrollment_status().unwrap() {
-            EnrollmentStatus::Enrolled { device_count } => assert_eq!(device_count, 2),
+            EnrollmentStatus::Enrolled { device_count, .. } => assert_eq!(device_count, 2),
             other => panic!("expected Enrolled, got {other:?}"),
         }
 
@@ -1470,7 +1521,7 @@ mod tests {
         join_with_recovery_phrase(&database_c, &identity_c, &epoch_keys_c, &phrase, &transports).await.unwrap();
         match database_c.enrollment_status().unwrap() {
             // C now trusts both the recovered roster (A) and itself.
-            EnrollmentStatus::Enrolled { device_count } => assert_eq!(device_count, 2),
+            EnrollmentStatus::Enrolled { device_count, .. } => assert_eq!(device_count, 2),
             other => panic!("expected Enrolled, got {other:?}"),
         }
 
@@ -1554,7 +1605,7 @@ mod tests {
 
         let phrase = begin_genesis(&database_b, &identity_b, &epoch_keys_b, &transports, true).await.unwrap();
         assert_eq!(phrase.split_whitespace().count(), 24);
-        assert!(matches!(database_b.enrollment_status().unwrap(), EnrollmentStatus::Enrolled { device_count: 1 }));
+        assert!(matches!(database_b.enrollment_status().unwrap(), EnrollmentStatus::Enrolled { device_count: 1, .. }));
     }
 
     /// A and B enrolled into one space through peer approval.
@@ -1700,5 +1751,727 @@ mod tests {
             "body": "body",
             "createdAt": "2026-01-01T00:00:00Z",
         })
+    }
+
+    /// Join codes end to end, over real sync folders (and S3 through the
+    /// fake server), with an explicit clock.
+    mod join_code_flows {
+        use super::*;
+        use crate::replicated_sync::build_configured_transports;
+        use threestrands_sync_envelope::{
+            decode_join_code, encode_join_code, encode_signed_invitation, encode_signed_invitation_redemption,
+            invite_ed25519_signing_key, invite_x25519_secret, sign_invitation, sign_invitation_redemption,
+            Invitation, InvitationRedemption, SigningKey,
+        };
+
+        struct SharedFolder {
+            path: std::path::PathBuf,
+        }
+
+        impl SharedFolder {
+            fn new() -> Self {
+                let path = std::env::temp_dir().join(format!("threestrands-join-code-{}", uuid::Uuid::new_v4()));
+                std::fs::create_dir_all(&path).unwrap();
+                Self { path }
+            }
+
+            fn choice(&self, index: usize) -> JoinFolderChoice {
+                JoinFolderChoice { connector_index: index, path: self.path.to_string_lossy().into_owned() }
+            }
+        }
+
+        impl Drop for SharedFolder {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        struct Device {
+            database: Database,
+            identity: DeviceIdentity,
+            epoch_keys: FakeEpochKeyStore,
+        }
+
+        impl Device {
+            fn new() -> Self {
+                let database = Database::open_memory();
+                let identity = test_identity(&database);
+                Self { database, identity, epoch_keys: FakeEpochKeyStore::default() }
+            }
+
+            fn keys(&self) -> LocalKeys {
+                local_keys_for(&self.database, &self.identity, &self.epoch_keys)
+            }
+
+            async fn transports(&self) -> Vec<Arc<dyn SyncTransport>> {
+                build_configured_transports(&self.database).await
+            }
+
+            async fn sweep(&self) {
+                run_enrollment_sweep(&self.database, &self.identity, &self.epoch_keys, &self.transports().await).await.unwrap();
+            }
+
+            async fn process(&self, now: i64) -> bool {
+                process_join_codes(&self.database, &self.identity, &self.keys(), &self.epoch_keys, &self.transports().await, now)
+                    .await
+                    .unwrap()
+            }
+
+            fn active_epoch(&self) -> u32 {
+                self.database
+                    .connection()
+                    .unwrap()
+                    .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
+                    .unwrap()
+            }
+
+            fn trusts(&self, other: &Device) -> bool {
+                self.database.known_device_roster().unwrap().iter().any(|(id, _)| *id == other.identity.device_id)
+            }
+
+            fn awaiting_admission(&self) -> Option<String> {
+                match self.database.enrollment_status().unwrap() {
+                    EnrollmentStatus::Enrolled { awaiting_admission_from, .. } => awaiting_admission_from,
+                    other => panic!("expected Enrolled, got {other:?}"),
+                }
+            }
+
+            fn device_id_hex(&self) -> String {
+                encode_id(self.identity.device_id.as_bytes())
+            }
+        }
+
+        fn choice(instance_id: &str, include_credentials: bool) -> JoinCodeConnectorChoice {
+            JoinCodeConnectorChoice { instance_id: instance_id.to_string(), include_credentials }
+        }
+
+        /// A (genesis) and C (joined by recovery phrase) sharing `folder`.
+        async fn group(folder: &SharedFolder) -> (Device, Device) {
+            let a = Device::new();
+            a.database.add_folder_transport("folder-a", &folder.path).unwrap();
+            let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &a.transports().await, false).await.unwrap();
+            let c = Device::new();
+            c.database.add_folder_transport("folder-c", &folder.path).unwrap();
+            join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &c.transports().await).await.unwrap();
+            a.sweep().await;
+            (a, c)
+        }
+
+        async fn create(a: &Device, now: i64) -> String {
+            create_join_code(&a.database, &a.identity, &a.keys(), &a.transports().await, &[choice("folder-a", true)], 24, now)
+                .await
+                .unwrap()
+        }
+
+        async fn join(device: &Device, code: &str, folder: &SharedFolder, now: i64) -> Result<(), String> {
+            join_with_code(&device.database, &device.identity, &device.epoch_keys, code, &[folder.choice(0)], vec![], now).await
+        }
+
+        fn snippet_name(database: &Database, id: &str) -> Option<String> {
+            database.connection().unwrap().query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0)).optional().unwrap()
+        }
+
+        #[tokio::test]
+        async fn a_join_code_adds_a_device_that_every_member_then_trusts() {
+            let folder = SharedFolder::new();
+            let (a, c) = group(&folder).await;
+            a.database
+                .record_replicated_write(EntityType::Snippet, "a-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("a-1", "Before B"))
+                .unwrap();
+            push_pending_events(&a.database, &a.keys(), &a.transports().await).await.unwrap();
+
+            let now = now_ms();
+            let code = create(&a, now).await;
+            assert!(code.starts_with("TSJOIN1-"));
+            let epoch_before = a.active_epoch();
+
+            let b = Device::new();
+            join(&b, &code, &folder, now + 1_000).await.unwrap();
+            // B's connector is saved, it can read at once, and it's waiting.
+            let rows = b.database.configured_transports().unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].kind, "folder");
+            assert!(b.awaiting_admission().is_some());
+            pull_from_transports(&b.database, &b.keys(), &b.transports().await).await.unwrap();
+            assert_eq!(snippet_name(&b.database, "a-1").as_deref(), Some("Before B"));
+            assert!(!c.trusts(&b));
+
+            // A admits B by rotating; C and B apply that rotation.
+            a.sweep().await;
+            assert!(a.process(now + 2_000).await);
+            assert_eq!(a.active_epoch(), epoch_before + 1);
+            assert!(a.trusts(&b));
+            c.sweep().await;
+            b.sweep().await;
+            assert!(c.trusts(&b));
+            assert_eq!(b.awaiting_admission(), None);
+            assert_eq!(b.active_epoch(), epoch_before + 1);
+
+            // Everyone can see how B joined.
+            let notices = c.database.join_code_notices().unwrap();
+            assert_eq!(notices.len(), 1);
+            assert_eq!(notices[0].kind, "joined");
+            assert_eq!(notices[0].device_id, b.device_id_hex());
+            assert_eq!(notices[0].inviter_device_id.as_deref(), Some(a.device_id_hex().as_str()));
+            c.database.dismiss_join_code_notice(&notices[0].redemption_cid).unwrap();
+            assert!(c.database.join_code_notices().unwrap().is_empty());
+            let roster = c.database.device_roster().unwrap();
+            assert!(roster.iter().find(|entry| entry.device_id == b.device_id_hex()).unwrap().joined_with_join_code);
+            assert!(!roster.iter().find(|entry| entry.device_id == a.device_id_hex()).unwrap().joined_with_join_code);
+            assert!(b.database.device_roster().unwrap().iter().find(|entry| entry.is_self).unwrap().joined_with_join_code);
+            let codes = a.database.outstanding_join_codes().unwrap();
+            assert_eq!(codes[0].status, "redeemed");
+            assert_eq!(codes[0].redeemed_by_device_id.as_deref(), Some(b.device_id_hex().as_str()));
+
+            // The redeemed invitation stays for members that sync later,
+            // then goes once the code would have expired — without another
+            // rotation.
+            let invitation_cid = TransportCid(decode_join_code(&code).unwrap().invitation_cid);
+            assert!(a.transports().await[0].get_object(&invitation_cid).await.is_ok());
+            let epoch = a.active_epoch();
+            assert!(!a.process(now + 25 * 3_600_000).await);
+            assert_eq!(a.active_epoch(), epoch);
+            assert!(a.transports().await[0].get_object(&invitation_cid).await.is_err());
+
+            // B's writes now reach A and C.
+            b.database
+                .record_replicated_write(EntityType::Snippet, "b-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("b-1", "From B"))
+                .unwrap();
+            push_pending_events(&b.database, &b.keys(), &b.transports().await).await.unwrap();
+            pull_from_transports(&a.database, &a.keys(), &a.transports().await).await.unwrap();
+            pull_from_transports(&c.database, &c.keys(), &c.transports().await).await.unwrap();
+            assert_eq!(snippet_name(&a.database, "b-1").as_deref(), Some("From B"));
+            assert_eq!(snippet_name(&c.database, "b-1").as_deref(), Some("From B"));
+        }
+
+        #[tokio::test]
+        async fn a_code_admits_only_its_first_redemption() {
+            let folder = SharedFolder::new();
+            let (a, c) = group(&folder).await;
+            let now = now_ms();
+            let code = create(&a, now).await;
+            let b = Device::new();
+            let d = Device::new();
+            join(&b, &code, &folder, now + 1_000).await.unwrap();
+            join(&d, &code, &folder, now + 1_500).await.unwrap();
+
+            a.sweep().await;
+            assert!(a.process(now + 2_000).await);
+            c.sweep().await;
+            d.sweep().await;
+            assert!(a.trusts(&b) && c.trusts(&b));
+            assert!(!a.trusts(&d) && !c.trusts(&d));
+            assert!(d.awaiting_admission().is_some());
+
+            let codes = a.database.outstanding_join_codes().unwrap();
+            assert_eq!(codes[0].rejected_attempts, 1);
+            let notices = a.database.join_code_notices().unwrap();
+            assert!(notices.iter().any(|notice| notice.kind == "rejectedAttempt" && notice.device_id == d.device_id_hex()));
+            // D never shows as "joined" anywhere.
+            assert!(!c.database.join_code_notices().unwrap().iter().any(|notice| notice.device_id == d.device_id_hex()));
+        }
+
+        #[tokio::test]
+        async fn a_redemption_arriving_after_expiry_is_rejected_and_the_old_key_stops_working() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            let now = now_ms();
+            let code = create(&a, now).await;
+            let parsed = decode_join_code(&code).unwrap();
+            let b = Device::new();
+            join(&b, &code, &folder, now + 1_000).await.unwrap();
+
+            a.sweep().await;
+            let after_expiry = now + 25 * 3_600_000;
+            assert!(a.process(after_expiry).await);
+            assert!(!a.trusts(&b));
+            let codes = a.database.outstanding_join_codes().unwrap();
+            assert_eq!(codes[0].status, "expired");
+            assert_eq!(codes[0].rejected_attempts, 1);
+
+            // The invitation object is gone, and the new epoch's stanzas
+            // don't open with the invite secret.
+            let transports = a.transports().await;
+            assert!(transports[0].get_object(&TransportCid(parsed.invitation_cid.clone())).await.is_err());
+            let invite_secret = invite_x25519_secret(&parsed.invite_secret()).to_bytes();
+            let mut rotations_checked = 0;
+            let page = transports[0].scan(None).await.unwrap().unwrap();
+            for locator in page.objects {
+                let Ok(bytes) = transports[0].get_object(&locator.cid).await else { continue };
+                let Ok(rotation) = decode_signed_key_rotation(&bytes) else { continue };
+                if rotation.rotation.key_epoch == a.active_epoch() {
+                    rotations_checked += 1;
+                    assert!(rotation.rotation.sealed_stanzas.iter().all(|stanza| try_open_sealed_box(&invite_secret, stanza).is_none()));
+                }
+            }
+            assert_eq!(rotations_checked, 1);
+        }
+
+        #[tokio::test]
+        async fn an_unused_code_expires_with_a_rotation_and_its_invitation_is_deleted() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            let now = now_ms();
+            let code = create(&a, now).await;
+            let cid = decode_join_code(&code).unwrap().invitation_cid;
+            assert!(!a.process(now + 3_600_000).await, "still open within its lifetime");
+            let epoch = a.active_epoch();
+            assert!(a.process(now + 25 * 3_600_000).await);
+            assert_eq!(a.active_epoch(), epoch + 1);
+            assert_eq!(a.database.outstanding_join_codes().unwrap()[0].status, "expired");
+            assert!(a.transports().await[0].get_object(&TransportCid(cid)).await.is_err());
+            assert!(!a.process(now + 26 * 3_600_000).await, "an expired code rotates only once");
+        }
+
+        #[tokio::test]
+        async fn cancelling_a_code_rotates_and_refuses_later_joins() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            let now = now_ms();
+            let code = create(&a, now).await;
+            let cid = decode_join_code(&code).unwrap().invitation_cid;
+            let epoch = a.active_epoch();
+
+            cancel_join_code(&a.database, &a.identity, &a.keys(), &a.epoch_keys, &a.transports().await, &cid).await.unwrap();
+            assert_eq!(a.active_epoch(), epoch + 1);
+            assert_eq!(a.database.outstanding_join_codes().unwrap()[0].status, "cancelled");
+            assert!(cancel_join_code(&a.database, &a.identity, &a.keys(), &a.epoch_keys, &a.transports().await, &cid).await.is_err());
+
+            let b = Device::new();
+            let error = join(&b, &code, &folder, now + 1_000).await.unwrap_err();
+            assert!(error.contains("Couldn't find"), "{error}");
+            assert!(b.database.configured_transports().unwrap().is_empty());
+            assert!(matches!(b.database.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
+        }
+
+        #[tokio::test]
+        async fn a_redemption_that_raced_a_cancellation_is_rejected() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            let now = now_ms();
+            let code = create(&a, now).await;
+            let b = Device::new();
+            join(&b, &code, &folder, now + 1_000).await.unwrap();
+            let cid = decode_join_code(&code).unwrap().invitation_cid;
+            cancel_join_code(&a.database, &a.identity, &a.keys(), &a.epoch_keys, &a.transports().await, &cid).await.unwrap();
+            a.sweep().await;
+            assert!(!a.process(now + 2_000).await);
+            assert!(!a.trusts(&b));
+            assert_eq!(a.database.outstanding_join_codes().unwrap()[0].rejected_attempts, 1);
+        }
+
+        #[tokio::test]
+        async fn a_code_pointing_at_the_wrong_object_or_with_the_wrong_secret_saves_nothing() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            let now = now_ms();
+            let code = decode_join_code(&create(&a, now).await).unwrap();
+
+            let mut missing = code.clone();
+            missing.invitation_cid = compute_cid(b"no such invitation");
+            let b = Device::new();
+            let error = join(&b, &encode_join_code(&missing).unwrap(), &folder, now).await.unwrap_err();
+            assert!(error.contains("Couldn't find"), "{error}");
+
+            let mut wrong_secret = code.clone();
+            wrong_secret.invite_secret = ByteBuf::from(vec![9u8; 32]);
+            let error = join(&b, &encode_join_code(&wrong_secret).unwrap(), &folder, now).await.unwrap_err();
+            assert!(error.contains("damaged"), "{error}");
+
+            assert!(b.database.configured_transports().unwrap().is_empty());
+            assert!(matches!(b.database.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
+            assert!(verify_fetched_invitation(b"not the invitation", &code).is_err());
+        }
+
+        #[tokio::test]
+        async fn a_planted_look_alike_invitation_is_never_used() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            let now = now_ms();
+            let code = decode_join_code(&create(&a, now).await).unwrap();
+            let secret = code.invite_secret();
+
+            // Someone with write access to the folder publishes an
+            // invitation with the same (public) invite keys but their own
+            // roster and epoch key.
+            let mallory_key = SigningKey::generate(&mut rand::rngs::OsRng);
+            let mallory_id = EnvelopeDeviceId::from_bytes([0xee; 16]);
+            let invite_x25519_public = X25519PublicKey::from(&invite_x25519_secret(&secret)).to_bytes();
+            let planted = sign_invitation(
+                &mallory_key,
+                Invitation {
+                    inviter_device_id: mallory_id,
+                    invite_ed25519_public: ByteBuf::from(invite_ed25519_signing_key(&secret).verifying_key().to_bytes().to_vec()),
+                    invite_x25519_public: ByteBuf::from(invite_x25519_public.to_vec()),
+                    key_epoch: 0,
+                    sealed_epoch_key: ByteBuf::from(seal_to_x25519(&invite_x25519_public, &[0x42; 32])),
+                    roster: vec![RosterEntry {
+                        device_id: mallory_id,
+                        ed25519_public: ByteBuf::from(mallory_key.verifying_key().to_bytes().to_vec()),
+                        x25519_public: ByteBuf::from(vec![1u8; 32]),
+                        status: "active".to_string(),
+                    }],
+                    recovery_ed25519_public: ByteBuf::from(vec![2u8; 32]),
+                    recovery_x25519_public: ByteBuf::from(vec![3u8; 32]),
+                    created_at_ms: now,
+                    expires_at_ms: now + 3_600_000,
+                },
+            )
+            .unwrap();
+            let planted_bytes = encode_signed_invitation(&planted).unwrap();
+            publish_to_all(&a.transports().await, &planted_bytes).await;
+            assert!(verify_fetched_invitation(&planted_bytes, &code).is_err());
+
+            let b = Device::new();
+            join(&b, &encode_join_code(&code).unwrap(), &folder, now).await.unwrap();
+            assert!(b.trusts(&a));
+            assert!(!b.database.known_device_roster().unwrap().iter().any(|(id, _)| *id == mallory_id));
+        }
+
+        #[tokio::test]
+        async fn a_redemption_without_the_code_or_reusing_a_device_id_is_never_admitted() {
+            let folder = SharedFolder::new();
+            let (a, c) = group(&folder).await;
+            let now = now_ms();
+            let code = decode_join_code(&create(&a, now).await).unwrap();
+            let transports = a.transports().await;
+            let intruder = SigningKey::generate(&mut rand::rngs::OsRng);
+
+            // Signed with an invite key that isn't the code's.
+            let forged = sign_invitation_redemption(
+                &invite_ed25519_signing_key(&[7u8; 32]),
+                &intruder,
+                InvitationRedemption {
+                    invitation_cid: code.invitation_cid.clone(),
+                    device_id: EnvelopeDeviceId::from_bytes([0xab; 16]),
+                    ed25519_public: ByteBuf::from(intruder.verifying_key().to_bytes().to_vec()),
+                    x25519_public: ByteBuf::from(vec![4u8; 32]),
+                    device_name: "Intruder".to_string(),
+                    created_at_ms: now,
+                },
+            )
+            .unwrap();
+            publish_to_all(&transports, &encode_signed_invitation_redemption(&forged).unwrap()).await;
+
+            // Holding the code, but claiming C's device id to replace C's keys.
+            let hijack = sign_invitation_redemption(
+                &invite_ed25519_signing_key(&code.invite_secret()),
+                &intruder,
+                InvitationRedemption {
+                    invitation_cid: code.invitation_cid.clone(),
+                    device_id: c.identity.device_id,
+                    ed25519_public: ByteBuf::from(intruder.verifying_key().to_bytes().to_vec()),
+                    x25519_public: ByteBuf::from(vec![5u8; 32]),
+                    device_name: "Not C".to_string(),
+                    created_at_ms: now + 1,
+                },
+            )
+            .unwrap();
+            publish_to_all(&transports, &encode_signed_invitation_redemption(&hijack).unwrap()).await;
+
+            a.sweep().await;
+            assert!(!a.process(now + 2_000).await);
+            let c_key = a.database.known_device_roster().unwrap().into_iter().find(|(id, _)| *id == c.identity.device_id).unwrap().1;
+            assert_eq!(c_key, c.identity.verifying_key);
+            let codes = a.database.outstanding_join_codes().unwrap();
+            assert_eq!(codes[0].status, "open");
+            assert_eq!(codes[0].rejected_attempts, 1, "only the code-holding attempt is recorded");
+        }
+
+        #[tokio::test]
+        async fn an_invitation_alone_is_not_evidence_of_a_group() {
+            let transports = fake_transports("empty");
+            let key = SigningKey::generate(&mut rand::rngs::OsRng);
+            let id = EnvelopeDeviceId::from_bytes([1; 16]);
+            let invitation = sign_invitation(
+                &key,
+                Invitation {
+                    inviter_device_id: id,
+                    invite_ed25519_public: ByteBuf::from(vec![1u8; 32]),
+                    invite_x25519_public: ByteBuf::from(vec![2u8; 32]),
+                    key_epoch: 0,
+                    sealed_epoch_key: ByteBuf::from(vec![3u8; 72]),
+                    roster: vec![RosterEntry {
+                        device_id: id,
+                        ed25519_public: ByteBuf::from(key.verifying_key().to_bytes().to_vec()),
+                        x25519_public: ByteBuf::from(vec![4u8; 32]),
+                        status: "active".to_string(),
+                    }],
+                    recovery_ed25519_public: ByteBuf::from(vec![5u8; 32]),
+                    recovery_x25519_public: ByteBuf::from(vec![6u8; 32]),
+                    created_at_ms: 1,
+                    expires_at_ms: 2,
+                },
+            )
+            .unwrap();
+            publish_to_all(&transports, &encode_signed_invitation(&invitation).unwrap()).await;
+            assert_eq!(inspect_sync_space(&transports).await, SyncSpacePresence::None);
+        }
+
+        #[tokio::test]
+        async fn joining_is_refused_for_an_enrolled_device_or_an_expired_code() {
+            let folder = SharedFolder::new();
+            let (a, c) = group(&folder).await;
+            let now = now_ms();
+            let code = create(&a, now).await;
+            let error = join(&c, &code, &folder, now).await.unwrap_err();
+            assert!(error.contains("already belongs"), "{error}");
+
+            let b = Device::new();
+            let error = join(&b, &code, &folder, now + 25 * 3_600_000).await.unwrap_err();
+            assert!(error.contains("expired"), "{error}");
+            assert!(b.database.configured_transports().unwrap().is_empty());
+
+            let error = join_with_code(&b.database, &b.identity, &b.epoch_keys, &code, &[], vec![], now).await.unwrap_err();
+            assert!(error.contains("Choose this device's copy"), "{error}");
+        }
+
+        #[tokio::test]
+        async fn leaving_the_group_forgets_join_codes() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            create(&a, now_ms()).await;
+            let b = Device::new();
+            join(&b, &create(&a, now_ms()).await, &folder, now_ms()).await.unwrap();
+            a.sweep().await;
+            a.database.leave_sync_space().unwrap();
+            b.database.leave_sync_space().unwrap();
+            for database in [&a.database, &b.database] {
+                let count: i64 = database
+                    .connection()
+                    .unwrap()
+                    .query_row(
+                        "SELECT (SELECT COUNT(*) FROM replicated_sync_invitations) + (SELECT COUNT(*) FROM replicated_sync_invitation_redemptions)",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(count, 0);
+            }
+        }
+
+        #[tokio::test]
+        async fn creating_a_code_validates_lifetime_and_connectors() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            let now = now_ms();
+            let transports = a.transports().await;
+            let create_for = |hours: u32, choices: Vec<JoinCodeConnectorChoice>| {
+                let transports = transports.clone();
+                let a = &a;
+                async move { create_join_code(&a.database, &a.identity, &a.keys(), &transports, &choices, hours, now).await }
+            };
+            for (hours, ok) in [
+                (MIN_JOIN_CODE_HOURS - 1, false),
+                (MIN_JOIN_CODE_HOURS, true),
+                (MIN_JOIN_CODE_HOURS + 1, true),
+                (MAX_JOIN_CODE_HOURS - 1, true),
+                (MAX_JOIN_CODE_HOURS, true),
+                (MAX_JOIN_CODE_HOURS + 1, false),
+            ] {
+                assert_eq!(create_for(hours, vec![choice("folder-a", true)]).await.is_ok(), ok, "{hours} hours");
+            }
+            assert!(create_for(24, vec![]).await.is_err());
+            assert!(create_for(24, vec![choice("missing", true)]).await.is_err());
+            let too_many = vec![choice("folder-a", true); threestrands_sync_envelope::limits::MAX_JOIN_CONNECTORS + 1];
+            let before = a.database.outstanding_join_codes().unwrap().len();
+            assert!(create_for(24, too_many).await.is_err());
+            assert_eq!(a.database.outstanding_join_codes().unwrap().len(), before, "nothing published for a code that can't encode");
+        }
+
+        /// Every text or blob value in every table, for "this secret is
+        /// stored nowhere in SQLite" assertions.
+        fn database_contains(database: &Database, needle: &[u8]) -> bool {
+            let connection = database.connection().unwrap();
+            let tables: Vec<String> = connection
+                .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            for table in tables {
+                let mut statement = connection.prepare(&format!("SELECT * FROM \"{table}\"")).unwrap();
+                let columns = statement.column_count();
+                let mut rows = statement.query([]).unwrap();
+                while let Some(row) = rows.next().unwrap() {
+                    for index in 0..columns {
+                        let bytes: &[u8] = match row.get_ref(index).unwrap() {
+                            rusqlite::types::ValueRef::Text(bytes) | rusqlite::types::ValueRef::Blob(bytes) => bytes,
+                            _ => continue,
+                        };
+                        if bytes.windows(needle.len()).any(|window| window == needle) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+
+        #[tokio::test]
+        async fn a_join_code_over_s3_carries_everything_and_secrets_stay_out_of_sqlite() {
+            use crate::s3_transport::fake_server::FakeS3Server;
+            let server = FakeS3Server::spawn().await;
+            let a = Device::new();
+            let a_connector = format!("s3-{}", uuid::Uuid::new_v4());
+            a.database.add_s3_transport(&a_connector, &server.config("group"), &FakeS3Server::credentials()).unwrap();
+            begin_genesis(&a.database, &a.identity, &a.epoch_keys, &a.transports().await, false).await.unwrap();
+
+            let now = now_ms();
+            let code = create_join_code(&a.database, &a.identity, &a.keys(), &a.transports().await, &[choice(&a_connector, true)], 1, now)
+                .await
+                .unwrap();
+            let secret = decode_join_code(&code).unwrap().invite_secret();
+            assert!(!database_contains(&a.database, code.as_bytes()));
+            assert!(!database_contains(&a.database, &secret));
+            assert!(!database_contains(&a.database, crate::s3_transport::fake_server::SECRET_KEY.as_bytes()));
+
+            let preview = preview_join_code(&code, now).unwrap();
+            assert_eq!(preview.connectors.len(), 1);
+            assert!(preview.connectors[0].supported && preview.connectors[0].credentials_included);
+            assert!(!preview.connectors[0].needs_credentials && !preview.connectors[0].needs_folder);
+
+            // No input beyond the code.
+            let b = Device::new();
+            join_with_code(&b.database, &b.identity, &b.epoch_keys, &code, &[], vec![], now).await.unwrap();
+            let rows = b.database.configured_transports().unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].kind, "s3");
+            assert!(!database_contains(&b.database, crate::s3_transport::fake_server::SECRET_KEY.as_bytes()));
+            assert!(!database_contains(&b.database, &secret));
+            assert_eq!(
+                crate::sync_connectors::TransportSecrets::load("s3", &rows[0].instance_id).unwrap(),
+                Some(crate::sync_connectors::TransportSecrets::S3(FakeS3Server::credentials()))
+            );
+
+            a.sweep().await;
+            assert!(a.process(now + 1_000).await);
+            b.sweep().await;
+            assert_eq!(b.awaiting_admission(), None);
+        }
+
+        #[tokio::test]
+        async fn a_code_without_credentials_asks_the_joiner_for_them() {
+            use crate::s3_transport::fake_server::FakeS3Server;
+            let server = FakeS3Server::spawn().await;
+            let a = Device::new();
+            let a_connector = format!("s3-{}", uuid::Uuid::new_v4());
+            a.database.add_s3_transport(&a_connector, &server.config("group"), &FakeS3Server::credentials()).unwrap();
+            begin_genesis(&a.database, &a.identity, &a.epoch_keys, &a.transports().await, false).await.unwrap();
+            let now = now_ms();
+            let code = create_join_code(&a.database, &a.identity, &a.keys(), &a.transports().await, &[choice(&a_connector, false)], 1, now)
+                .await
+                .unwrap();
+            assert!(decode_join_code(&code).unwrap().connectors[0].secrets_json.is_none());
+            assert!(preview_join_code(&code, now).unwrap().connectors[0].needs_credentials);
+
+            let b = Device::new();
+            let error = join_with_code(&b.database, &b.identity, &b.epoch_keys, &code, &[], vec![], now).await.unwrap_err();
+            assert!(error.contains("access key"), "{error}");
+            let credentials: crate::sync_connectors::ConnectorCredentials = serde_json::from_value(serde_json::json!({
+                "kind": "s3",
+                "accessKeyId": crate::s3_transport::fake_server::ACCESS_KEY,
+                "secretAccessKey": crate::s3_transport::fake_server::SECRET_KEY,
+            }))
+            .unwrap();
+            join_with_code(
+                &b.database,
+                &b.identity,
+                &b.epoch_keys,
+                &code,
+                &[],
+                vec![JoinCredentialsChoice { connector_index: 0, credentials }],
+                now,
+            )
+            .await
+            .unwrap();
+            assert!(b.awaiting_admission().is_some());
+        }
+
+        #[test]
+        fn preview_describes_each_connector_without_side_effects() {
+            let code = threestrands_sync_envelope::JoinCode {
+                version: 1,
+                invite_secret: ByteBuf::from(vec![1u8; 32]),
+                invitation_cid: compute_cid(b"invitation"),
+                inviter_name: "Laptop".to_string(),
+                expires_at_ms: 2_000_000_000_000,
+                connectors: vec![
+                    threestrands_sync_envelope::JoinConnector {
+                        kind: "folder".to_string(),
+                        config_json: r#"{"folderName":"Dropbox Sync","label":"Home"}"#.to_string(),
+                        secrets_json: None,
+                    },
+                    threestrands_sync_envelope::JoinConnector {
+                        kind: "ipfs_rpc".to_string(),
+                        config_json: r#"{"baseUrl":"https://rpc.filebase.io"}"#.to_string(),
+                        secrets_json: None,
+                    },
+                    threestrands_sync_envelope::JoinConnector {
+                        kind: "carrier-pigeon".to_string(),
+                        config_json: "{}".to_string(),
+                        secrets_json: None,
+                    },
+                ],
+            };
+            let text = encode_join_code(&code).unwrap();
+            let preview = preview_join_code(&text, 1_000).unwrap();
+            assert_eq!(preview.inviter_name, "Laptop");
+            assert!(!preview.expired);
+            assert!(preview_join_code(&text, 3_000_000_000_000).unwrap().expired);
+            let folder = &preview.connectors[0];
+            assert!(folder.supported && folder.needs_folder);
+            assert_eq!(folder.folder_name.as_deref(), Some("Dropbox Sync"));
+            assert_eq!(folder.label.as_deref(), Some("Home"));
+            let ipfs = &preview.connectors[1];
+            assert!(ipfs.supported && !ipfs.needs_credentials && !ipfs.needs_folder);
+            assert_eq!(ipfs.location, "https://rpc.filebase.io");
+            assert!(!preview.connectors[2].supported);
+
+            assert!(preview_join_code("hello", 0).unwrap_err().contains("isn't a ThreeStrands join code"));
+            assert!(preview_join_code("TSJOIN9-abc", 0).unwrap_err().contains("newer version"));
+        }
+
+        #[test]
+        fn connectors_of_unknown_kinds_are_skipped_and_all_unknown_is_an_error() {
+            let base = threestrands_sync_envelope::JoinCode {
+                version: 1,
+                invite_secret: ByteBuf::from(vec![1u8; 32]),
+                invitation_cid: compute_cid(b"invitation"),
+                inviter_name: String::new(),
+                expires_at_ms: 1,
+                connectors: vec![threestrands_sync_envelope::JoinConnector {
+                    kind: "carrier-pigeon".to_string(),
+                    config_json: "{}".to_string(),
+                    secrets_json: None,
+                }],
+            };
+            let error = join_codes::prepare_join_connectors(&base, &[], vec![]).unwrap_err();
+            assert!(error.contains("Update this app"), "{error}");
+            let mut mixed = base;
+            mixed.connectors.push(threestrands_sync_envelope::JoinConnector {
+                kind: "ipfs_rpc".to_string(),
+                config_json: r#"{"baseUrl":"https://rpc.filebase.io"}"#.to_string(),
+                secrets_json: Some(r#"{"token":"t"}"#.to_string()),
+            });
+            let prepared = join_codes::prepare_join_connectors(&mixed, &[], vec![]).unwrap();
+            assert_eq!(prepared.len(), 1);
+            assert_eq!(prepared[0].0.kind(), "ipfs_rpc");
+        }
+
+        #[tokio::test]
+        async fn find_invitation_reports_a_missing_object() {
+            let code = threestrands_sync_envelope::JoinCode {
+                version: 1,
+                invite_secret: ByteBuf::from(vec![1u8; 32]),
+                invitation_cid: compute_cid(b"invitation"),
+                inviter_name: String::new(),
+                expires_at_ms: 1,
+                connectors: vec![],
+            };
+            let error = find_invitation(&code, &fake_transports("empty")).await.err().unwrap();
+            assert!(error.contains("Couldn't find"), "{error}");
+        }
     }
 }

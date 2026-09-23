@@ -77,11 +77,77 @@ export type S3ConnectionTest = {
   spacePresence?: SyncSpacePresence | null;
 };
 
+/** Join-code lifetimes Settings offers, in hours. The native side accepts
+ * any whole number from 1 to 168 (`MIN_JOIN_CODE_HOURS`/`MAX_JOIN_CODE_HOURS`
+ * in `join_codes.rs`). */
+export const JOIN_CODE_LIFETIME_HOURS = [1, 24, 168] as const;
+
+/** One connector to include in a new join code. */
+export type JoinCodeConnectorChoice = { instanceId: string; includeCredentials: boolean };
+
+/** A join code this device created. Never includes the code text, which
+ * this device doesn't keep. */
+export type OutstandingJoinCode = {
+  invitationCid: string;
+  createdAt: string;
+  expiresAt: string;
+  status: "open" | "redeemed" | "expired" | "cancelled";
+  redeemedByDeviceId?: string | null;
+  redeemedByName?: string | null;
+  /** Attempts refused because the code was already used, expired, or cancelled. */
+  rejectedAttempts: number;
+};
+
+export type JoinCodeConnectorPreview = {
+  index: number;
+  kind: string;
+  /** `false` for a connector kind this app version doesn't know; skipped when joining. */
+  supported: boolean;
+  location: string;
+  label?: string | null;
+  credentialsIncluded: boolean;
+  /** A shared folder: this device must choose its own copy. */
+  needsFolder: boolean;
+  folderName?: string | null;
+  /** Credentials were left out of the code and this connector needs them. */
+  needsCredentials: boolean;
+};
+
+/** What a pasted join code contains, before anything is saved. */
+export type JoinCodePreview = {
+  inviterName: string;
+  expiresAt: string;
+  /** By this device's clock. */
+  expired: boolean;
+  connectors: JoinCodeConnectorPreview[];
+};
+
+export type JoinFolderChoice = { connectorIndex: number; path: string };
+export type JoinCredentialsChoice = { connectorIndex: number; credentials: ConnectorCredentials };
+
+/** `joined`: a device joined with a join code. `rejectedAttempt`: a device
+ * tried one of this device's codes after it was used, expired, or cancelled. */
+export type JoinCodeNotice = {
+  redemptionCid: string;
+  kind: "joined" | "rejectedAttempt";
+  deviceId: string;
+  deviceName: string;
+  inviterDeviceId?: string | null;
+  inviterName?: string | null;
+  at: string;
+};
+
 export type EnrollmentStatus =
   | { state: "notStarted" }
   | { state: "awaitingGrant"; requestId: string; fingerprint: string; createdAt: string }
   | { state: "awaitingConfirmation"; requestId: string; fingerprint: string; approverFingerprint: string }
-  | { state: "enrolled"; deviceCount: number };
+  | {
+      state: "enrolled";
+      deviceCount: number;
+      /** The inviter's name while this device, having joined with a join
+       * code, waits for that device to finish admitting it. */
+      awaitingAdmissionFrom?: string | null;
+    };
 
 export type IncomingEnrollmentRequest = {
   requestId: string;
@@ -99,6 +165,8 @@ export type DeviceRosterEntry = {
   /** When this device last recorded (itself) or received (a peer) a change
    * from that device — not a liveness signal. */
   lastChangeAt?: string | null;
+  /** Whether this device joined the group with a join code. */
+  joinedWithJoinCode?: boolean;
 };
 
 /** Mirrors `MAX_DEVICE_LABEL_CHARS` in `enrollment.rs`, which enforces it. */
@@ -267,6 +335,57 @@ export async function replicatedSyncUpdateConnector(
     label: changes.label ?? null,
     credentials: changes.credentials ?? null,
   });
+}
+
+/** Creates a join code for another device. The returned text is shown once
+ * and never stored on this device. */
+export async function replicatedSyncCreateJoinCode(
+  expiresInHours: number,
+  connectors: JoinCodeConnectorChoice[],
+): Promise<string> {
+  return invoke("replicated_sync_create_join_code", { expiresInHours, connectors });
+}
+
+export async function replicatedSyncListJoinCodes(): Promise<OutstandingJoinCode[]> {
+  return isDesktop() ? invoke("replicated_sync_list_join_codes") : [];
+}
+
+/** Cancels an open join code; this rotates the group's keys. */
+export async function replicatedSyncCancelJoinCode(invitationCid: string): Promise<void> {
+  return invoke("replicated_sync_cancel_join_code", { invitationCid });
+}
+
+/** Parses pasted join code text without saving or contacting anything.
+ * Rejects with a message written for the person pasting it. */
+export async function replicatedSyncPreviewJoinCode(code: string): Promise<JoinCodePreview> {
+  return invoke("replicated_sync_preview_join_code", { code });
+}
+
+/** Opens the native folder picker for a join code's shared folder.
+ * Resolves to `null` if the user cancels. */
+export async function replicatedSyncPickJoinFolder(): Promise<string | null> {
+  return invoke("replicated_sync_pick_join_folder");
+}
+
+/** Joins the sync group a join code invites this device to, setting up its
+ * connectors here. */
+export async function replicatedSyncJoinWithCode(
+  code: string,
+  choices: { folders?: JoinFolderChoice[]; credentials?: JoinCredentialsChoice[] } = {},
+): Promise<void> {
+  return invoke("replicated_sync_join_with_code", {
+    code,
+    folders: choices.folders ?? [],
+    credentials: choices.credentials ?? [],
+  });
+}
+
+export async function replicatedSyncJoinCodeNotices(): Promise<JoinCodeNotice[]> {
+  return isDesktop() ? invoke("replicated_sync_join_code_notices") : [];
+}
+
+export async function replicatedSyncDismissJoinCodeNotice(redemptionCid: string): Promise<void> {
+  return invoke("replicated_sync_dismiss_join_code_notice", { redemptionCid });
 }
 
 export async function replicatedSyncRemoveTransport(instanceId: string, deleteData: boolean): Promise<void> {

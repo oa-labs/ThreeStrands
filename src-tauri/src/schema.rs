@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 33;
+pub(crate) const LATEST_VERSION: i64 = 34;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -836,6 +836,44 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
         tx.pragma_update(None, "user_version", 33).map_err(error)?;
     }
+    if version < 34 {
+        // Join codes (see `enrollment/join_codes.rs`). Invitations this
+        // device created, joined with, or observed from another group
+        // member — never the invite secret or the code text — and the
+        // redemptions published against them.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS replicated_sync_invitations (
+                invitation_cid TEXT PRIMARY KEY,
+                direction TEXT NOT NULL,
+                status TEXT NOT NULL,
+                inviter_device_id TEXT NOT NULL,
+                inviter_name TEXT,
+                invite_ed25519_public BLOB,
+                created_at TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL,
+                redeemed_by_device_id TEXT,
+                redemption_cid TEXT,
+                object_deleted INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS replicated_sync_invitation_redemptions (
+                redemption_cid TEXT PRIMARY KEY,
+                invitation_cid TEXT NOT NULL,
+                inviter_device_id TEXT,
+                device_id TEXT NOT NULL,
+                ed25519_public BLOB NOT NULL,
+                x25519_public BLOB NOT NULL,
+                device_name TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                notice_dismissed INTEGER NOT NULL DEFAULT 0,
+                received_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS replicated_sync_invitation_redemptions_invitation
+                ON replicated_sync_invitation_redemptions(invitation_cid);",
+        )
+        .map_err(error)?;
+        tx.pragma_update(None, "user_version", 34).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1060,6 +1098,33 @@ mod tests {
 
         connection.pragma_update(None, "user_version", 31).unwrap();
         super::migrate(&mut connection).unwrap();
+        let label: String = connection.query_row("SELECT label FROM sync_device_labels WHERE device_id='d1'", [], |row| row.get(0)).unwrap();
+        assert_eq!(label, "Laptop");
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
+    }
+
+    #[test]
+    fn v34_adds_join_code_tables_and_reruns_cleanly() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        assert!(table_exists(&connection, "replicated_sync_invitations"));
+        assert!(table_exists(&connection, "replicated_sync_invitation_redemptions"));
+        connection
+            .execute(
+                "INSERT INTO replicated_sync_invitations(invitation_cid,direction,status,inviter_device_id,created_at,expires_at_ms)
+                 VALUES ('c1','outgoing','open','d1','2026-09-23T00:00:00Z',1)",
+                [],
+            )
+            .unwrap();
+        connection.execute("INSERT INTO sync_device_labels(device_id,label) VALUES ('d1','Laptop')", []).unwrap();
+
+        connection.pragma_update(None, "user_version", 33).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let status: String = connection
+            .query_row("SELECT status FROM replicated_sync_invitations WHERE invitation_cid='c1'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(status, "open");
         let label: String = connection.query_row("SELECT label FROM sync_device_labels WHERE device_id='d1'", [], |row| row.get(0)).unwrap();
         assert_eq!(label, "Laptop");
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();

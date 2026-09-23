@@ -217,6 +217,32 @@ impl TransportSecrets {
         }
     }
 
+    /// The secret as carried inside a join code: `{"token": …}` for IPFS,
+    /// the `S3Credentials` JSON for S3.
+    pub fn to_portable_json(&self) -> Result<String, String> {
+        match self {
+            Self::IpfsRpcToken(token) => Ok(serde_json::json!({ "token": token }).to_string()),
+            Self::S3(credentials) => serde_json::to_string(credentials).map_err(|error| error.to_string()),
+        }
+    }
+
+    /// Reverses [`Self::to_portable_json`] for a connector of `kind`.
+    /// Errors never echo the JSON.
+    pub fn from_portable_json(kind: &str, json: &str) -> Result<Self, String> {
+        let unreadable = || "The credentials in this join code are unreadable".to_string();
+        match kind {
+            IPFS_RPC_KIND => {
+                #[derive(Deserialize)]
+                struct Token {
+                    token: String,
+                }
+                serde_json::from_str::<Token>(json).map(|token| Self::IpfsRpcToken(token.token)).map_err(|_| unreadable())
+            }
+            S3_KIND => serde_json::from_str(json).map(Self::S3).map_err(|_| unreadable()),
+            _ => Err(unreadable()),
+        }
+    }
+
     pub fn store(&self, instance_id: &str) -> Result<(), String> {
         let service = secret_service(self.kind()).expect("every secret kind has a keychain service");
         let value = match self {
@@ -586,6 +612,17 @@ mod tests {
         TransportSecrets::S3(s3_credentials()).store(&id).unwrap();
         TransportSecrets::delete_every_kind(&id).unwrap();
         assert!(secret_store::values_for(&id).is_empty());
+    }
+
+    #[test]
+    fn secrets_round_trip_through_their_portable_json() {
+        for secrets in [TransportSecrets::S3(s3_credentials()), TransportSecrets::IpfsRpcToken("tok".to_string())] {
+            let json = secrets.to_portable_json().unwrap();
+            assert_eq!(TransportSecrets::from_portable_json(secrets.kind(), &json).unwrap(), secrets);
+        }
+        let error = TransportSecrets::from_portable_json("s3", "{\"secret\":\"leak-me\"}").unwrap_err();
+        assert!(!error.contains("leak-me"));
+        assert!(TransportSecrets::from_portable_json("folder", "{}").is_err());
     }
 
     #[test]

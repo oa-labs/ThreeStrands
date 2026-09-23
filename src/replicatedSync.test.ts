@@ -25,6 +25,14 @@ import {
   replicatedSyncProbeS3,
   replicatedSyncAddS3,
   replicatedSyncUpdateConnector,
+  replicatedSyncCreateJoinCode,
+  replicatedSyncListJoinCodes,
+  replicatedSyncCancelJoinCode,
+  replicatedSyncPreviewJoinCode,
+  replicatedSyncPickJoinFolder,
+  replicatedSyncJoinWithCode,
+  replicatedSyncJoinCodeNotices,
+  replicatedSyncDismissJoinCodeNotice,
   replicatedSyncRejectRequest,
   replicatedSyncRemoveTransport,
   replicatedSyncResolveConflict,
@@ -136,6 +144,64 @@ describe("replicated sync invoke wrappers", () => {
 
     await replicatedSyncUpdateConnector("ipfs-1", { label: "" });
     expect(invoke).toHaveBeenCalledWith("replicated_sync_update_connector", { instanceId: "ipfs-1", label: "", credentials: null });
+  });
+
+  it("creates, lists, and cancels join codes", async () => {
+    vi.mocked(invoke).mockResolvedValue("TSJOIN1-abc");
+    expect(await replicatedSyncCreateJoinCode(24, [{ instanceId: "s3-1", includeCredentials: true }])).toBe("TSJOIN1-abc");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_create_join_code", {
+      expiresInHours: 24,
+      connectors: [{ instanceId: "s3-1", includeCredentials: true }],
+    });
+
+    vi.mocked(invoke).mockResolvedValue([]);
+    await replicatedSyncListJoinCodes();
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_list_join_codes");
+
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await replicatedSyncCancelJoinCode("bafy-invitation");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_cancel_join_code", { invitationCid: "bafy-invitation" });
+  });
+
+  it("previews a pasted code, picks a folder, and joins with the choices", async () => {
+    vi.mocked(invoke).mockResolvedValue({ inviterName: "Laptop", expiresAt: "", expired: false, connectors: [] });
+    await replicatedSyncPreviewJoinCode("TSJOIN1-abc");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_preview_join_code", { code: "TSJOIN1-abc" });
+
+    vi.mocked(invoke).mockResolvedValue("/Users/me/Dropbox/Sync");
+    expect(await replicatedSyncPickJoinFolder()).toBe("/Users/me/Dropbox/Sync");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_pick_join_folder");
+
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await replicatedSyncJoinWithCode("TSJOIN1-abc");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_join_with_code", { code: "TSJOIN1-abc", folders: [], credentials: [] });
+
+    await replicatedSyncJoinWithCode("TSJOIN1-abc", {
+      folders: [{ connectorIndex: 1, path: "/Users/me/Dropbox/Sync" }],
+      credentials: [{ connectorIndex: 0, credentials: { kind: "s3", accessKeyId: "AKIA", secretAccessKey: "s" } }],
+    });
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_join_with_code", {
+      code: "TSJOIN1-abc",
+      folders: [{ connectorIndex: 1, path: "/Users/me/Dropbox/Sync" }],
+      credentials: [{ connectorIndex: 0, credentials: { kind: "s3", accessKeyId: "AKIA", secretAccessKey: "s" } }],
+    });
+  });
+
+  it("lists and dismisses join code notices", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    await replicatedSyncJoinCodeNotices();
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_join_code_notices");
+
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await replicatedSyncDismissJoinCodeNotice("bafy-redemption");
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_dismiss_join_code_notice", { redemptionCid: "bafy-redemption" });
+  });
+
+  it("reports no join codes or notices outside a desktop build without invoking anything", async () => {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    expect(await replicatedSyncListJoinCodes()).toEqual([]);
+    expect(await replicatedSyncJoinCodeNotices()).toEqual([]);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("passes instanceId and deleteData when removing a transport", async () => {

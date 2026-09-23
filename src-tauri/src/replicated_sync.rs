@@ -2137,10 +2137,26 @@ impl ReplicatedSync {
         // A device that has not finished enrollment yet (no epoch key)
         // still benefits from the sweep above; it just has nothing to
         // push/pull until a grant or genesis supplies one.
-        let keys = match self.database.local_replicated_keys() {
+        let mut keys = match self.database.local_replicated_keys() {
             Ok(keys) => keys,
             Err(_) => return Ok(()),
         };
+        // Admit or refuse join-code redemptions and expire old codes; a
+        // closed invitation rotates the epoch, so reload the keys after.
+        match crate::enrollment::process_join_codes(
+            &self.database,
+            &identity,
+            &keys,
+            &crate::enrollment::KeychainEpochKeyStore,
+            &transports,
+            Utc::now().timestamp_millis(),
+        )
+        .await
+        {
+            Ok(true) => keys = self.database.local_replicated_keys()?,
+            Ok(false) => {}
+            Err(error) => log::warn!(target: "replicated_sync", "join code processing failed: {error}"),
+        }
         self.database.record_self_device_name_if_missing(&encode_id(identity.device_id.as_bytes()))?;
 
         let push_result = push_pending_events(&self.database, &keys, &transports).await;
@@ -2222,6 +2238,71 @@ impl ReplicatedSync {
         let highest_epoch = self.database.leave_sync_space()?;
         forget_sync_space_keys(highest_epoch)
             .map_err(|error| format!("Left the sync space, but some keys could not be removed from the keychain: {error}"))
+    }
+
+    /// Creates a join code for the chosen connectors. Requires this device
+    /// to be enrolled.
+    pub async fn create_join_code(
+        &self,
+        connectors: &[crate::enrollment::JoinCodeConnectorChoice],
+        expires_in_hours: u32,
+    ) -> Result<String, String> {
+        let identity = self.database.local_device_identity()?;
+        let keys = self
+            .database
+            .local_replicated_keys()
+            .map_err(|_| "This device must belong to a sync group before it can invite another device".to_string())?;
+        let transports = build_configured_transports(&self.database).await;
+        crate::enrollment::create_join_code(
+            &self.database,
+            &identity,
+            &keys,
+            &transports,
+            connectors,
+            expires_in_hours,
+            Utc::now().timestamp_millis(),
+        )
+        .await
+    }
+
+    /// Cancels an open join code and rotates keys. Holds the sync gate so
+    /// the rotation never races a cycle's own.
+    pub async fn cancel_join_code(&self, invitation_cid: &str) -> Result<(), String> {
+        let _guard = self.gate.lock().await;
+        let identity = self.database.local_device_identity()?;
+        let keys = self.database.local_replicated_keys()?;
+        let transports = build_configured_transports(&self.database).await;
+        crate::enrollment::cancel_join_code(
+            &self.database,
+            &identity,
+            &keys,
+            &crate::enrollment::KeychainEpochKeyStore,
+            &transports,
+            invitation_cid,
+        )
+        .await
+    }
+
+    /// Joins a sync group with a pasted join code, setting up its
+    /// connectors on this device.
+    pub async fn join_with_code(
+        &self,
+        code: &str,
+        folders: &[crate::enrollment::JoinFolderChoice],
+        credentials: Vec<crate::enrollment::JoinCredentialsChoice>,
+    ) -> Result<(), String> {
+        let _guard = self.gate.lock().await;
+        let identity = self.database.local_device_identity()?;
+        crate::enrollment::join_with_code(
+            &self.database,
+            &identity,
+            &crate::enrollment::KeychainEpochKeyStore,
+            code,
+            folders,
+            credentials,
+            Utc::now().timestamp_millis(),
+        )
+        .await
     }
 
     /// Joins an existing sync space using only a recovery phrase.

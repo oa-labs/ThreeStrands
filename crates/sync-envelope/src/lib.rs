@@ -22,6 +22,7 @@ mod enrollment;
 mod error;
 pub mod header;
 mod ids;
+mod join_code;
 pub mod limits;
 mod recovery;
 
@@ -46,6 +47,13 @@ pub use enrollment::{
     SignedKeyRotation,
 };
 pub use error::EnvelopeError;
+pub use join_code::{
+    decode_join_code, decode_signed_invitation, decode_signed_invitation_redemption, encode_join_code,
+    encode_signed_invitation, encode_signed_invitation_redemption, generate_invite_secret, invite_ed25519_signing_key,
+    invite_x25519_secret, sign_invitation, sign_invitation_redemption, verify_invitation, verify_invitation_redemption,
+    Invitation, InvitationRedemption, JoinCode, JoinCodeError, JoinConnector, SignedInvitation,
+    SignedInvitationRedemption, INVITE_SECRET_LEN, JOIN_CODE_PREFIX, JOIN_CODE_VERSION,
+};
 pub use header::{CipherSuite, ObjectKind};
 pub use ids::{DeviceId, EventId, OperationId, RequestId, Signature};
 pub use recovery::{
