@@ -303,9 +303,15 @@ impl Database {
                 }
             }
         }
-        let retention_payload = json!({ "days": self.retention_days()? });
-        if self.reconcile_one_entity(EntityType::Retention, "mail", retention_payload)? {
-            repaired += 1;
+        // Unset retention is the unlimited default, not a choice this device
+        // made. Seeding it would assert "forever" as a concurrent write the
+        // moment a fresh device joins, conflicting with whatever the space
+        // already agreed on. An explicit choice — including switching back
+        // to unlimited — is recorded by the `set_retention_days` command.
+        if let Some(days) = self.retention_days()? {
+            if self.reconcile_one_entity(EntityType::Retention, "mail", json!({ "days": days }))? {
+                repaired += 1;
+            }
         }
         Ok(repaired)
     }
@@ -2828,9 +2834,6 @@ mod reconciliation_tests {
         assert_eq!(before, 0);
         drop(connection);
 
-        // The sweep also backfills the always-present retention setting on
-        // a fresh database, so at least one repair (the snippet) rather
-        // than exactly one.
         let repaired = database.reconcile_replicated_sync_backlog().unwrap();
         assert!(repaired >= 1);
 
@@ -2870,9 +2873,8 @@ mod reconciliation_tests {
             .unwrap();
         drop(connection);
 
-        // The sweep still repairs the always-present retention setting on a
-        // fresh database, so this only asserts the *snippet* is untouched —
-        // not that the whole sweep found nothing to do.
+        // Only assert the *snippet* is untouched — not that the whole sweep
+        // found nothing to do.
         database.reconcile_replicated_sync_backlog().unwrap();
 
         let connection = database.connection().unwrap();
@@ -2889,13 +2891,55 @@ mod reconciliation_tests {
         database
             .create_split_inbox("Newsletters", "domain", "news.example.com", "you@example.com")
             .unwrap();
+        database.set_retention_days(Some(90)).unwrap();
 
         let repaired = database.reconcile_replicated_sync_backlog().unwrap();
-        // Snippet, split inbox, and the always-present retention setting.
+        // Snippet, split inbox, and the explicitly chosen retention setting.
         assert!(repaired >= 3, "expected at least snippet + split inbox + retention, got {repaired}");
 
         let second_pass = database.reconcile_replicated_sync_backlog().unwrap();
         assert_eq!(second_pass, 0, "a second sweep over the same state must repair nothing");
+    }
+
+    fn retention_operation_count(database: &Database) -> i64 {
+        database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM sync_operations WHERE entity_type=?1 AND entity_id='mail'",
+                [EntityType::Retention.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn does_not_seed_the_unlimited_retention_default() {
+        // A freshly joining device has never chosen a retention period.
+        // Seeding its unset default would enter the graph as a concurrent
+        // "forever" write and conflict with the space's agreed value.
+        let database = Database::open_memory();
+        assert_eq!(database.retention_days().unwrap(), None);
+        database.reconcile_replicated_sync_backlog().unwrap();
+        assert_eq!(retention_operation_count(&database), 0);
+    }
+
+    #[test]
+    fn seeds_an_explicit_retention_choice() {
+        let database = Database::open_memory();
+        database.set_retention_days(Some(365)).unwrap();
+        database.reconcile_replicated_sync_backlog().unwrap();
+        assert!(retention_operation_count(&database) > 0);
+        let days: String = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT value FROM sync_operations WHERE entity_type=?1 AND entity_id='mail' AND field='days'",
+                [EntityType::Retention.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(days, "365");
     }
 }
 
