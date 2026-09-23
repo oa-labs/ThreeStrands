@@ -3674,6 +3674,69 @@ mod tests {
     }
 
     #[test]
+    fn adopting_an_existing_account_discards_a_recreated_default_sync_row() {
+        let database = database();
+        database.adopt_account("you@gmail.com").unwrap();
+        let connection = database.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE sync_state SET cursor = 'account-cursor' WHERE account_id = 'you@gmail.com'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO sync_state(account_id, cursor) VALUES ('default', 'placeholder-cursor')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        database.adopt_account("you@gmail.com").unwrap();
+
+        let connection = database.connection().unwrap();
+        let rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM sync_state", [], |row| row.get(0))
+            .unwrap();
+        let cursor: String = connection
+            .query_row(
+                "SELECT cursor FROM sync_state WHERE account_id = 'you@gmail.com'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        assert_eq!(cursor, "account-cursor");
+    }
+
+    #[test]
+    fn reopening_an_account_database_does_not_recreate_default_sync_state() {
+        let path = std::env::temp_dir().join(format!("dispatch-{}.sqlite", Uuid::new_v4()));
+        {
+            let database = Database::open(&path).unwrap();
+            database.adopt_account("you@gmail.com").unwrap();
+        }
+
+        let reopened = Database::open(&path).unwrap();
+        let default_rows: i64 = reopened
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM sync_state WHERE account_id = 'default'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(default_rows, 0);
+        reopened.adopt_account("you@gmail.com").unwrap();
+        drop(reopened);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    }
+
+    #[test]
     fn accounts_get_increasing_sort_order_and_rotating_colors() {
         let database = database();
         let first = database.adopt_account("first@gmail.com").unwrap();

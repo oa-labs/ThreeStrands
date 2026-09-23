@@ -58,12 +58,30 @@ impl Database {
                     params![email, color, sort_order, Utc::now().to_rfc3339()],
                 )?;
             }
-            for table in ["sync_state", "mutations", "threads", "triage_events"] {
+            for table in ["mutations", "threads", "triage_events"] {
                 transaction.execute(
                     &format!("UPDATE {table} SET account_id = ?1 WHERE account_id = 'default'"),
                     [email],
                 )?;
             }
+            // Older builds recreated the legacy placeholder row on every
+            // launch. If this account already has real sync state, discard
+            // only that placeholder; otherwise rekey it so first-connect
+            // cursors and errors retain their original behavior.
+            transaction.execute(
+                "DELETE FROM sync_state
+                 WHERE account_id = 'default'
+                   AND account_id <> ?1
+                   AND EXISTS (
+                       SELECT 1 FROM sync_state AS existing
+                       WHERE existing.account_id = ?1
+                   )",
+                [email],
+            )?;
+            transaction.execute(
+                "UPDATE sync_state SET account_id = ?1 WHERE account_id = 'default'",
+                [email],
+            )?;
             transaction.execute(
                 "INSERT OR IGNORE INTO sync_state(account_id) VALUES (?1)",
                 [email],

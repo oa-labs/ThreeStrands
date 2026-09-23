@@ -402,6 +402,7 @@ export function CalendarWeekView({
           </div>
           {loading ? <p className="calendar-grid-status">Loading schedule…</p> : null}
         </div>
+        {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} /> : null}
       </div>
       <aside className="calendar-week-side" aria-label="Calendar navigation">
         <MiniMonth
@@ -418,7 +419,6 @@ export function CalendarWeekView({
           onAdd={onAddCalendarAccount}
         />
       </aside>
-      {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} /> : null}
     </section>
   );
 }

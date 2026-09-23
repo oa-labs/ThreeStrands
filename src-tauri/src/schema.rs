@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 32;
+pub(crate) const LATEST_VERSION: i64 = 33;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -91,8 +91,6 @@ CREATE TABLE IF NOT EXISTS sync_state (
     last_error TEXT
 );
 
-INSERT OR IGNORE INTO sync_state(account_id) VALUES ('default');
-
 CREATE TABLE IF NOT EXISTS accounts (
     email TEXT PRIMARY KEY,
     display_name TEXT,
@@ -102,6 +100,12 @@ CREATE TABLE IF NOT EXISTS accounts (
     connected_at TEXT NOT NULL,
     last_synced_at TEXT
 );
+
+-- `default` is only the pre-connect placeholder. Recreating it after a real
+-- account has been adopted makes the next identity refresh collide with that
+-- account's existing sync-state primary key.
+INSERT OR IGNORE INTO sync_state(account_id)
+SELECT 'default' WHERE NOT EXISTS (SELECT 1 FROM accounts);
 
 CREATE TABLE IF NOT EXISTS calendar_accounts (
     email TEXT PRIMARY KEY,
@@ -819,6 +823,20 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
         tx.pragma_update(None, "user_version", 32).map_err(error)?;
     }
+    if version < 33 {
+        // INITIAL_SCHEMA used to recreate this pre-connect placeholder on
+        // every launch. Once an account catalog exists it is not a mailbox,
+        // and adopting the real account would collide with its sync_state
+        // primary key.
+        tx.execute(
+            "DELETE FROM sync_state
+             WHERE account_id = 'default'
+               AND EXISTS (SELECT 1 FROM accounts)",
+            [],
+        )
+        .map_err(error)?;
+        tx.pragma_update(None, "user_version", 33).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -871,6 +889,30 @@ mod tests {
         let mut connection = unmigrated_database_with_one_account();
         super::migrate(&mut connection).unwrap();
         assert_eq!(account_provider(&connection, "you@gmail.com"), "gmail");
+    }
+
+    #[test]
+    fn upgrading_removes_the_default_sync_placeholder_when_an_account_exists() {
+        let mut connection = unmigrated_database_with_one_account();
+        let before: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sync_state WHERE account_id = 'default'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 1);
+
+        super::migrate(&mut connection).unwrap();
+
+        let after: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sync_state WHERE account_id = 'default'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(after, 0);
     }
 
     #[test]

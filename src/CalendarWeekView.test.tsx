@@ -112,6 +112,22 @@ describe("CalendarWeekView", () => {
     expect(within(viewer).getByText(/Tue, Sep 22/)).toBeInTheDocument();
   });
 
+  it("anchors event details to the time grid instead of spanning the whole screen", async () => {
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({
+      events: [event("a", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Standup")],
+      errors: [],
+    });
+    const { container } = renderWeek();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Standup/ }));
+    const viewer = await screen.findByRole("dialog", { name: "Standup details" });
+
+    // Scoped to the grid column so it never overlaps the month/calendar rail,
+    // and width-capped rather than pinned to both edges.
+    expect(container.querySelector(".calendar-week-main")).toContainElement(viewer);
+    expect(container.querySelector(".calendar-week-side")).not.toContainElement(viewer);
+  });
+
   it("renders all-day events in their own row above the time grid", async () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({
       events: [{
