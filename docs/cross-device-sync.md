@@ -21,10 +21,12 @@ enrolled device, or joins with the recovery phrase.
 
 Replicated entities are tasks, snippets, Split Inboxes, mail-account display
 metadata, calendar-account metadata and selections, retention, and the
-portable preference allowlist. Cached mail and bodies, attachments, drafts,
-queued mail, provider mutations, OAuth tokens, AI API keys, crash reports,
-telemetry consent, and device navigation state never leave the device.
-Storage providers see only ciphertext.
+portable preference allowlist. Device roster names are also synchronized so
+each device has the same name in every roster; the hostname is used as the
+initial name. Cached mail and bodies, attachments, drafts, queued mail,
+provider mutations, OAuth tokens, AI API keys, crash reports, telemetry
+consent, and device navigation state never leave the device. Storage
+providers see only ciphertext.
 
 Gmail and Calendar authorization remain separate per-device grants.
 

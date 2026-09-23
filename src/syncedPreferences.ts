@@ -12,8 +12,14 @@ function isDesktop(): boolean {
  */
 export function queuePortablePreferences(): void {
   if (!isDesktop()) return;
+  void queuePortablePreferencesAndWait();
+}
+
+/** Queues the current portable preference record and waits for native storage. */
+export async function queuePortablePreferencesAndWait(): Promise<void> {
+  if (!isDesktop()) return;
   const { selectedAccountId: _deviceNavigation, ...preferences } = readExportablePreferences();
-  void invoke("update_synced_preferences", { preferences });
+  await invoke("update_synced_preferences", { preferences });
 }
 
 /** Applies portable preferences synchronized from another device, if any. */

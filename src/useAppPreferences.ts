@@ -46,13 +46,20 @@ export function useAppPreferences() {
     if (!("__TAURI_INTERNALS__" in window)) return;
     const applySynced = () => {
       void pullSyncedPreferences().then((changed) => {
-        if (!changed) return;
-        setThemeState(readTheme());
-        setFontScaleState(readFontScale());
-        setFontFamilyState(readFontFamily());
-        setAutoReadDelayState(readAutoReadDelaySeconds());
-        setLoadRemoteImagesState(readLoadRemoteImages());
-        setAvailabilityPreferencesState(readAvailabilityPreferences());
+        if (changed) {
+          setThemeState(readTheme());
+          setFontScaleState(readFontScale());
+          setFontFamilyState(readFontFamily());
+          setAutoReadDelayState(readAutoReadDelaySeconds());
+          setLoadRemoteImagesState(readLoadRemoteImages());
+          setAvailabilityPreferencesState(readAvailabilityPreferences());
+        }
+        // Publish the complete portable preference record before adding
+        // per-device names to it, so older clients still materialize a
+        // complete preferences object when they receive name updates. The
+        // native command records only changed fields, so this is safe after
+        // every sync-status refresh and also retries once sync is enabled.
+        queuePortablePreferences();
       });
     };
     applySynced();

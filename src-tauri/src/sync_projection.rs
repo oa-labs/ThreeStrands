@@ -108,13 +108,21 @@ impl Database {
                 EntityType::MailAccount => self.upsert_synced_account(payload)?,
                 EntityType::CalendarAccount => self.upsert_synced_calendar(payload)?,
                 EntityType::CalendarSelection => self.upsert_synced_calendar_selection(payload)?,
-                EntityType::Preferences => self.with_connection(|connection| {
-                    connection.execute(
-                        "INSERT INTO synced_preferences(key,value,updated_at) VALUES('portable',?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
-                        params![payload.to_string(), Utc::now().to_rfc3339()],
-                    )?;
-                    Ok(())
-                })?,
+                EntityType::Preferences => {
+                    if let Some(fields) = payload.as_object() {
+                        for (field, value) in fields.iter().filter(|(field, _)| field.starts_with("deviceName:")) {
+                            let device_id_hex = &field["deviceName:".len()..];
+                            self.materialize_device_name(device_id_hex, value.as_str())?;
+                        }
+                    }
+                    self.with_connection(|connection| {
+                        connection.execute(
+                            "INSERT INTO synced_preferences(key,value,updated_at) VALUES('portable',?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                            params![payload.to_string(), Utc::now().to_rfc3339()],
+                        )?;
+                        Ok(())
+                    })?
+                }
                 EntityType::Retention => self.set_retention_days(payload.get("days").and_then(Value::as_i64))?,
             }
         }
@@ -248,7 +256,25 @@ impl Database {
                 )
                 .optional()?)
         })?;
-        value.map(|value| serde_json::from_str(&value).map_err(display)).transpose()
+        let Some(value) = value else { return Ok(None) };
+        let mut preferences: Value = serde_json::from_str(&value).map_err(display)?;
+        if let Some(object) = preferences.as_object_mut() {
+            object.retain(|key, _| !key.starts_with("deviceName:"));
+            if object.is_empty() {
+                return Ok(None);
+            }
+        }
+        Ok(Some(preferences))
+    }
+
+    pub fn synced_preferences_recorded(&self) -> Result<bool, String> {
+        self.with_connection(|connection| {
+            Ok(connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_operations WHERE entity_type='preferences' AND entity_id='portable')",
+                [],
+                |row| row.get(0),
+            )?)
+        }).map_err(display)
     }
 }
 

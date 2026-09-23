@@ -38,6 +38,7 @@ import {
   type ReplicatedSyncTransportStatus,
   type SyncSpacePresence,
 } from "./replicatedSync";
+import { queuePortablePreferencesAndWait } from "./syncedPreferences";
 import { ANY_OPERATION, useLiveStatus, useSettingsOperation } from "./settingsOperations";
 
 const FILEBASE_RPC_URL = "https://rpc.filebase.io";
@@ -157,7 +158,7 @@ export function syncOverview(transports: readonly ReplicatedSyncTransportStatus[
 }
 
 export function deviceDisplayName(device: DeviceRosterEntry): string {
-  return device.label || (device.isSelf ? device.hostname || "This device" : "Unnamed device");
+  return device.label || (device.isSelf ? "This device" : "Unnamed device");
 }
 
 /** What to tell someone typing a recovery phrase. The word still being
@@ -664,7 +665,10 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
 
   const approve = () => actFor(key, async () => {
     await replicatedSyncApproveRequest(request.requestId);
-    if (deviceId && name.trim()) await replicatedSyncSetDeviceLabel(deviceId, name);
+    if (deviceId && name.trim()) {
+      await queuePortablePreferencesAndWait();
+      await replicatedSyncSetDeviceLabel(deviceId, name);
+    }
   });
 
   return (
@@ -690,7 +694,7 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
           <p className="settings-hint">If the codes don’t match, reject the request. Someone else may be trying to join.</p>
           {deviceId ? (
             <label className="settings-field">
-              <span>Name this device (optional, only shown on this device)</span>
+              <span>Name this device (shared with your other devices)</span>
               <input type="text" maxLength={MAX_DEVICE_LABEL_CHARS} value={name} disabled={busy} onChange={(event) => setName(event.target.value)} />
             </label>
           ) : null}
@@ -743,11 +747,14 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
           onSubmit={(event) => {
             event.preventDefault();
             setRenaming(false);
-            actFor(key, () => replicatedSyncSetDeviceLabel(device.deviceId, name));
+            actFor(key, async () => {
+              await queuePortablePreferencesAndWait();
+              await replicatedSyncSetDeviceLabel(device.deviceId, name);
+            });
           }}
         >
           <label className="settings-field">
-            <span>Name (only shown on this device)</span>
+            <span>Name (shared with your other devices)</span>
             <input type="text" maxLength={MAX_DEVICE_LABEL_CHARS} value={name} disabled={busy} autoFocus onChange={(event) => setName(event.target.value)} />
           </label>
           <span className="settings-inline-confirm-actions">

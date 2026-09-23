@@ -23,6 +23,7 @@
 //!   a phrase-derived recovery secret is itself the trust proof — see
 //!   [`join_with_recovery_phrase`].
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -106,9 +107,7 @@ pub struct DeviceRosterEntry {
     pub device_id: String,
     pub status: String,
     pub is_self: bool,
-    /// The OS hostname, provided only for this device's own roster entry.
-    pub hostname: Option<String>,
-    /// A name given on this device only; see `sync_device_labels`.
+    /// The resolved shared device name, cached in `sync_device_labels`.
     pub label: Option<String>,
     /// When this device last recorded (for itself) or received (for a
     /// peer) a change from that device. Not a liveness signal: an idle but
@@ -118,6 +117,12 @@ pub struct DeviceRosterEntry {
 
 /// Longest local device label accepted, in characters.
 pub const MAX_DEVICE_LABEL_CHARS: usize = 60;
+
+fn default_device_name() -> String {
+    let hostname = gethostname::gethostname().to_string_lossy().trim().to_string();
+    let hostname = hostname.chars().take(MAX_DEVICE_LABEL_CHARS).collect::<String>();
+    if hostname.is_empty() { "This device".to_string() } else { hostname }
+}
 
 impl Database {
     /// A pure-SQL status read (no keychain I/O) for the Settings panel:
@@ -214,6 +219,14 @@ impl Database {
 
     /// This device first, then active peers, then revoked ones.
     pub fn device_roster(&self) -> Result<Vec<DeviceRosterEntry>, String> {
+        let self_device_id: Option<String> = self.connection()?.query_row(
+            "SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).optional().map_err(display)?;
+        if let Some(device_id) = self_device_id {
+            self.ensure_self_device_name(&device_id)?;
+        }
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
@@ -229,12 +242,6 @@ impl Database {
                     device_id: row.get(0)?,
                     status: row.get(1)?,
                     is_self: row.get(2)?,
-                    hostname: if row.get::<_, bool>(2)? {
-                        let hostname = gethostname::gethostname().to_string_lossy().trim().to_string();
-                        (!hostname.is_empty()).then_some(hostname)
-                    } else {
-                        None
-                    },
                     label: row.get(3)?,
                     last_change_at: row.get(4)?,
                 })
@@ -245,9 +252,70 @@ impl Database {
         Ok(rows)
     }
 
-    /// Names a device on this device only. A blank label removes it.
+    /// Gives this device its hostname the first time it appears in the roster.
+    /// The sync loop records it once the portable preference entity exists.
+    pub(crate) fn ensure_self_device_name(&self, device_id_hex: &str) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "INSERT OR IGNORE INTO sync_device_labels(device_id,label) SELECT ?1,?2
+                 WHERE EXISTS (SELECT 1 FROM sync_devices WHERE device_id=?1 AND is_self=1)",
+                params![device_id_hex, default_device_name()],
+            )
+            .map_err(display)?;
+        Ok(())
+    }
+
+    pub(crate) fn record_self_device_name_if_missing(&self, device_id_hex: &str) -> Result<(), String> {
+        let field = format!("deviceName:{device_id_hex}");
+        let (label, preferences_exist, already_recorded): (Option<String>, bool, bool) = self.connection()?.query_row(
+            "SELECT l.label,
+                    EXISTS(SELECT 1 FROM sync_operations WHERE entity_type='preferences' AND entity_id='portable'),
+                    EXISTS(SELECT 1 FROM sync_operations WHERE entity_type='preferences' AND entity_id='portable' AND field=?1)
+             FROM sync_device_labels l WHERE l.device_id=?2",
+            params![field, device_id_hex],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional().map_err(display)?.unwrap_or((None, false, false));
+        if preferences_exist && !already_recorded {
+            if let Some(label) = label {
+                let fields = BTreeSet::from([field.clone()]);
+                let payload = serde_json::json!({ (field): label });
+                self.record_local_entity_write(threestrands_sync_protocol::EntityType::Preferences, "portable", payload, Some(fields))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies a resolved shared device-name field to this device's roster cache.
+    pub(crate) fn materialize_device_name(&self, device_id_hex: &str, name: Option<&str>) -> Result<(), String> {
+        let connection = self.connection()?;
+        match name {
+            Some(name) => {
+                connection.execute(
+                    "INSERT INTO sync_device_labels(device_id,label) VALUES (?1,?2)
+                     ON CONFLICT(device_id) DO UPDATE SET label=excluded.label",
+                    params![device_id_hex, name],
+                ).map_err(display)?;
+            }
+            None => {
+                connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex]).map_err(display)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Sets a shared roster name. A blank self-name restores this machine's
+    /// hostname; a blank peer name removes its name from the shared roster.
     pub fn set_device_label(&self, device_id_hex: &str, label: &str) -> Result<(), String> {
-        let label = label.trim();
+        let label = if label.trim().is_empty() {
+            let is_self: bool = self.connection()?.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id=?1 AND is_self=1)",
+                params![device_id_hex],
+                |row| row.get(0),
+            ).map_err(display)?;
+            if is_self { default_device_name() } else { String::new() }
+        } else {
+            label.trim().to_string()
+        };
         if label.chars().count() > MAX_DEVICE_LABEL_CHARS {
             return Err(format!("Device names can be at most {MAX_DEVICE_LABEL_CHARS} characters."));
         }
@@ -262,6 +330,19 @@ impl Database {
                     params![device_id_hex, label],
                 )
                 .map_err(display)?;
+        }
+        drop(connection);
+
+        let field = format!("deviceName:{device_id_hex}");
+        let fields = BTreeSet::from([field.clone()]);
+        let payload = serde_json::json!({ (field): if label.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(label) } });
+        let preferences_exist: bool = self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sync_operations WHERE entity_type='preferences' AND entity_id='portable')",
+            [],
+            |row| row.get(0),
+        ).map_err(display)?;
+        if preferences_exist {
+            self.record_local_entity_write(threestrands_sync_protocol::EntityType::Preferences, "portable", payload, Some(fields))?;
         }
         Ok(())
     }
@@ -1449,7 +1530,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_roster_reports_local_labels_and_each_devices_latest_change() {
+    async fn the_roster_reports_shared_labels_and_each_devices_latest_change() {
         let (database_a, _, identity_a, identity_b, _, _) = two_enrolled_devices().await;
         let peer = encode_id(identity_b.device_id.as_bytes());
         let own = encode_id(identity_a.device_id.as_bytes());
@@ -1469,7 +1550,7 @@ mod tests {
         assert_eq!(peer_entry.label.as_deref(), Some("Work laptop"));
         assert_eq!(peer_entry.last_change_at.as_deref(), Some("2026-09-21T10:00:00+00:00"));
         let own_entry = roster.iter().find(|entry| entry.device_id == own).unwrap();
-        assert_eq!(own_entry.label, None);
+        assert!(own_entry.label.as_deref().is_some_and(|label| !label.is_empty()));
         assert_eq!(own_entry.last_change_at, None);
 
         database_a.set_device_label(&peer, "   ").unwrap();

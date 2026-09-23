@@ -1091,11 +1091,24 @@ fn synced_preferences(state: State<'_, AppState>) -> Result<Option<serde_json::V
 
 #[tauri::command]
 fn update_synced_preferences(preferences: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
+    let current = state.database.synced_preferences()?;
+    let has_synced_record = state.database.synced_preferences_recorded()?;
+    let fields = preferences
+        .as_object()
+        .ok_or_else(|| "Synced preferences must be an object".to_string())?
+        .iter()
+        .filter_map(|(key, value)| {
+            (!has_synced_record || current.as_ref().and_then(|current| current.get(key)) != Some(value)).then_some(key.clone())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    if fields.is_empty() {
+        return Ok(());
+    }
     state.database.record_local_entity_write(
         threestrands_sync_protocol::EntityType::Preferences,
         "portable",
         preferences,
-        None,
+        Some(fields),
     )?;
     kick_replicated_sync(&state);
     Ok(())
@@ -1229,7 +1242,9 @@ async fn replicated_sync_rotate_epoch(revoke_device_id: Option<String>, state: S
 
 #[tauri::command]
 fn replicated_sync_set_device_label(device_id: String, label: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.set_device_label(&device_id, &label)
+    state.database.set_device_label(&device_id, &label)?;
+    kick_replicated_sync(&state);
+    Ok(())
 }
 
 #[tauri::command]

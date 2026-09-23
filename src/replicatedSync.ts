@@ -39,9 +39,7 @@ export type DeviceRosterEntry = {
   deviceId: string;
   status: string;
   isSelf: boolean;
-  /** The OS hostname, provided only for this device's own roster entry. */
-  hostname?: string | null;
-  /** A name given on this device only; never synchronized. */
+  /** The shared device name, synchronized to the other devices. */
   label?: string | null;
   /** When this device last recorded (itself) or received (a peer) a change
    * from that device — not a liveness signal. */
@@ -143,7 +141,7 @@ export async function replicatedSyncJoinWithRecoveryPhrase(phrase: string): Prom
   return invoke("replicated_sync_join_with_recovery_phrase", { phrase });
 }
 
-/** Names a device on this device only; a blank label removes the name. */
+/** Sets the shared name for a device; blank restores this device's hostname or clears a peer name. */
 export async function replicatedSyncSetDeviceLabel(deviceId: string, label: string): Promise<void> {
   return invoke("replicated_sync_set_device_label", { deviceId, label });
 }

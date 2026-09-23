@@ -125,6 +125,22 @@ fn validate_preferences(object: &Map<String, Value>) -> Result<(), String> {
     optional_string(object, "fontFamily", 200)?;
     optional_string(object, "aiModel", 2_048)?;
     optional_string(object, "aiEndpoint", 2_048)?;
+    for (key, value) in object
+        .iter()
+        .filter(|(key, _)| key.starts_with("deviceName:"))
+    {
+        let device_id = &key["deviceName:".len()..];
+        if device_id.len() != 32 || !device_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("A synchronized device name has an invalid device id".to_string());
+        }
+        if !matches!(value, Value::Null)
+            && value
+                .as_str()
+                .is_none_or(|name| name.trim().is_empty() || name.chars().count() > 60)
+        {
+            return Err("A synchronized device name is invalid".to_string());
+        }
+    }
     Ok(())
 }
 

@@ -810,10 +810,9 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         tx.pragma_update(None, "user_version", 31).map_err(error)?;
     }
     if version < 32 {
-        // Device names are local labels, never replicated: control-plane
-        // objects are public and signed over their exact fields (a new
-        // field would fail verification on older clients), and an unknown
-        // synchronized entity type would stall older clients' pulls.
+        // The roster cache stores device names. Shared names travel as
+        // reserved fields on the existing Preferences entity, preserving
+        // compatibility with clients that predate this table.
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS sync_device_labels (
                 device_id TEXT PRIMARY KEY,

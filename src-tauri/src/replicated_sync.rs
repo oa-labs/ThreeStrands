@@ -693,6 +693,7 @@ impl Database {
         let verifying_key = signing_key.verifying_key();
         let x25519_public = x25519_public_bytes(&x25519_secret);
         self.trust_device_keys(&device_id, &verifying_key, &x25519_public)?;
+        self.ensure_self_device_name(&encode_id(&device_id))?;
         Ok(DeviceIdentity {
             verifying_key,
             signing_key,
@@ -2040,6 +2041,7 @@ impl ReplicatedSync {
             Ok(keys) => keys,
             Err(_) => return Ok(()),
         };
+        self.database.record_self_device_name_if_missing(&encode_id(identity.device_id.as_bytes()))?;
 
         let push_result = push_pending_events(&self.database, &keys, &transports).await;
         let pull_result = pull_from_transports(&self.database, &keys, &transports).await;

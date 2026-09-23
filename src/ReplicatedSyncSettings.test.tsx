@@ -326,7 +326,7 @@ describe("approving a device from an existing device", () => {
     expect(sync.replicatedSyncApproveRequest).not.toHaveBeenCalled();
   });
 
-  it("names the approved device locally when a name is given", async () => {
+  it("sets a shared name for the approved device when a name is given", async () => {
     setUp({ status: enrolled });
     vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([request]);
     vi.mocked(sync.replicatedSyncApproveRequest).mockResolvedValue(undefined);
@@ -360,7 +360,7 @@ describe("approving a device from an existing device", () => {
 describe("device names and activity", () => {
   const enrolled: sync.EnrollmentStatus = { state: "enrolled", deviceCount: 2 };
 
-  it("shows local names and the last change from each device", async () => {
+  it("shows shared names and the last change from each device", async () => {
     setUp({ status: enrolled });
     vi.mocked(sync.replicatedSyncDeviceRoster).mockResolvedValue([
       { deviceId: "device-self", status: "active", isSelf: true, label: "Desk", lastChangeAt: "2026-09-22T10:00:00Z" },
@@ -382,7 +382,7 @@ describe("device names and activity", () => {
     render(<ReplicatedSyncSettings />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Name" }));
-    const input = screen.getByRole("textbox", { name: /Name \(only shown on this device\)/ });
+    const input = screen.getByRole("textbox", { name: /Name \(shared with your other devices\)/ });
     expect(input).toHaveAttribute("maxLength", String(sync.MAX_DEVICE_LABEL_CHARS));
     fireEvent.change(input, { target: { value: "Desk" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
