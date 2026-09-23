@@ -295,8 +295,6 @@ fn is_not_found(status: reqwest::StatusCode, body: &str) -> bool {
 /// What "Test connection" reports before the user saves a connector, so a
 /// missing permission is explained up front instead of surfacing later as
 /// a stuck enrollment.
-// Reached from Settings once the connector commands land.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct S3ProbeReport {
@@ -561,8 +559,6 @@ impl S3Transport {
     /// delete one random object under `<root>/probe/`, then (best-effort)
     /// read the bucket's versioning setting. Stops at the first failed
     /// step, leaving the later checks `false`.
-    // Reached from Settings once the connector commands land.
-    #[allow(dead_code)]
     pub async fn probe(&self) -> S3ProbeReport {
         let mut report = S3ProbeReport::default();
 
@@ -618,7 +614,6 @@ impl S3Transport {
     /// `GetBucketVersioning`: `Some(true)` only for `Enabled` — a
     /// `Suspended` bucket stops creating new versions. `None` if the key
     /// may not read the setting or the server doesn't implement it.
-    #[allow(dead_code)]
     async fn versioning_enabled(&self) -> Option<bool> {
         let url = rusty_s3::signing::sign(
             &jiff::Timestamp::now(),

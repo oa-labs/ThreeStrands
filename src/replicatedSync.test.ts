@@ -22,6 +22,9 @@ import {
   replicatedSyncNow,
   replicatedSyncPendingRequests,
   replicatedSyncProbeIpfsRpc,
+  replicatedSyncProbeS3,
+  replicatedSyncAddS3,
+  replicatedSyncUpdateConnector,
   replicatedSyncRejectRequest,
   replicatedSyncRemoveTransport,
   replicatedSyncResolveConflict,
@@ -32,6 +35,8 @@ import {
   removeSyncedCalendarAccount,
   removeSyncedMailAccount,
   type FrontierConflict,
+  type S3ConnectorConfig,
+  type S3Credentials,
 } from "./replicatedSync";
 
 describe("replicated sync invoke wrappers", () => {
@@ -90,6 +95,47 @@ describe("replicated sync invoke wrappers", () => {
       token: "secret-token",
     });
     expect(report).toEqual({ versionOk: true, headDiscoveryAvailable: true });
+  });
+
+  const s3Config: S3ConnectorConfig = {
+    endpoint: "https://s3.us-east-1.amazonaws.com",
+    region: "us-east-1",
+    bucket: "sync-bucket",
+    prefix: "threestrands",
+  };
+  const s3Credentials: S3Credentials = { accessKeyId: "AKIAEXAMPLE", secretAccessKey: "secret" };
+
+  it("tests an S3 connector with its config and credentials without saving it", async () => {
+    const result = { reachable: true, canList: true, canWrite: true, canRead: true, canDelete: true, spacePresence: "none" };
+    vi.mocked(invoke).mockResolvedValue(result);
+    expect(await replicatedSyncProbeS3(s3Config, s3Credentials)).toEqual(result);
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_probe_s3", { config: s3Config, credentials: s3Credentials });
+  });
+
+  it("adds an S3 connector with its config and credentials", async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
+    await replicatedSyncAddS3(s3Config, s3Credentials);
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_add_s3", { config: s3Config, credentials: s3Credentials });
+  });
+
+  it("updates a connector's name or credentials, sending null for what stays unchanged", async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
+    await replicatedSyncUpdateConnector("s3-1", { label: "Personal R2" });
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_update_connector", {
+      instanceId: "s3-1",
+      label: "Personal R2",
+      credentials: null,
+    });
+
+    await replicatedSyncUpdateConnector("s3-1", { credentials: { kind: "s3", ...s3Credentials } });
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_update_connector", {
+      instanceId: "s3-1",
+      label: null,
+      credentials: { kind: "s3", accessKeyId: "AKIAEXAMPLE", secretAccessKey: "secret" },
+    });
+
+    await replicatedSyncUpdateConnector("ipfs-1", { label: "" });
+    expect(invoke).toHaveBeenCalledWith("replicated_sync_update_connector", { instanceId: "ipfs-1", label: "", credentials: null });
   });
 
   it("passes instanceId and deleteData when removing a transport", async () => {

@@ -1179,6 +1179,50 @@ async fn replicated_sync_add_ipfs_rpc(
 }
 
 #[tauri::command]
+async fn replicated_sync_probe_s3(
+    config: s3_transport::S3Config,
+    credentials: s3_transport::S3Credentials,
+    state: State<'_, AppState>,
+) -> Result<replicated_sync::S3ConnectionTest, String> {
+    if !state.database.replicated_sync_active()? {
+        return Err("Replicated sync is not enabled in this build".to_string());
+    }
+    state.replicated_sync.probe_s3(&config, &credentials).await
+}
+
+#[tauri::command]
+async fn replicated_sync_add_s3(
+    config: s3_transport::S3Config,
+    credentials: s3_transport::S3Credentials,
+    state: State<'_, AppState>,
+) -> Result<Option<replicated_sync::ReplicatedSyncTransportStatus>, String> {
+    if !state.database.replicated_sync_active()? {
+        return Err("Replicated sync is not enabled in this build".to_string());
+    }
+    let instance_id = format!("s3-{}", uuid::Uuid::new_v4());
+    state.database.add_s3_transport(&instance_id, &config, &credentials)?;
+    kick_replicated_sync(&state);
+    let statuses = state.replicated_sync.status().await?;
+    Ok(statuses.into_iter().find(|status| status.instance_id == instance_id))
+}
+
+#[tauri::command]
+async fn replicated_sync_update_connector(
+    instance_id: String,
+    label: Option<String>,
+    credentials: Option<sync_connectors::ConnectorCredentials>,
+    state: State<'_, AppState>,
+) -> Result<Option<replicated_sync::ReplicatedSyncTransportStatus>, String> {
+    if !state.database.replicated_sync_active()? {
+        return Err("Replicated sync is not enabled in this build".to_string());
+    }
+    state.replicated_sync.update_connector(&instance_id, label.as_deref(), credentials)?;
+    kick_replicated_sync(&state);
+    let statuses = state.replicated_sync.status().await?;
+    Ok(statuses.into_iter().find(|status| status.instance_id == instance_id))
+}
+
+#[tauri::command]
 async fn replicated_sync_probe_ipfs_rpc(
     base_url: String,
     token: Option<String>,
@@ -2570,6 +2614,9 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         replicated_sync_add_folder,
         replicated_sync_add_ipfs_rpc,
         replicated_sync_probe_ipfs_rpc,
+        replicated_sync_probe_s3,
+        replicated_sync_add_s3,
+        replicated_sync_update_connector,
         replicated_sync_remove_transport,
         replicated_sync_now,
         replicated_sync_conflicts,

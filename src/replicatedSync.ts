@@ -30,6 +30,53 @@ export type IpfsRpcProbeReport = {
   headDiscoveryAvailable: boolean;
 };
 
+/** The non-secret settings of an S3-compatible connector. Mirrors
+ * `S3Config` in `s3_transport.rs`, which validates every field. */
+export type S3ConnectorConfig = {
+  /** `https://…`; `http://` only for this machine (e.g. local MinIO). */
+  endpoint: string;
+  /** Use `"auto"` where the provider says so (e.g. Cloudflare R2). */
+  region: string;
+  bucket: string;
+  /** An optional folder inside the bucket. */
+  prefix?: string;
+  /** Required for IP-address or localhost endpoints. */
+  pathStyle?: boolean;
+  label?: string | null;
+};
+
+/** An S3 access key. Sent to the native side once, stored only in the OS
+ * keychain, and never returned to the frontend. */
+export type S3Credentials = {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string | null;
+};
+
+/** Replacement credentials for an existing connector, tagged by kind. */
+export type ConnectorCredentials =
+  | ({ kind: "s3" } & S3Credentials)
+  | { kind: "ipfs_rpc"; token: string };
+
+/** What "Test connection" found for a candidate S3 connector. Each check
+ * after the first failure stays `false`. */
+export type S3ConnectionTest = {
+  /** Whether the endpoint answered at all. */
+  reachable: boolean;
+  canList: boolean;
+  canWrite: boolean;
+  canRead: boolean;
+  canDelete: boolean;
+  /** `true` when bucket versioning keeps old versions of deleted and
+   * replaced files; `null` when the key can't read that setting. */
+  versioningEnabled?: boolean | null;
+  /** The first failure, in plain language. */
+  error?: string | null;
+  /** Whether this bucket and prefix already hold a sync group; `null` when
+   * the key couldn't list and read, so nothing could be checked. */
+  spacePresence?: SyncSpacePresence | null;
+};
+
 export type EnrollmentStatus =
   | { state: "notStarted" }
   | { state: "awaitingGrant"; requestId: string; fingerprint: string; createdAt: string }
@@ -192,6 +239,34 @@ export async function replicatedSyncProbeIpfsRpc(
   token: string | null,
 ): Promise<IpfsRpcProbeReport> {
   return invoke("replicated_sync_probe_ipfs_rpc", { baseUrl, token });
+}
+
+/** Tests a candidate S3 connector without saving anything. Rejects only
+ * when a field is invalid before any request is made. */
+export async function replicatedSyncProbeS3(config: S3ConnectorConfig, credentials: S3Credentials): Promise<S3ConnectionTest> {
+  return invoke("replicated_sync_probe_s3", { config, credentials });
+}
+
+/** Saves an S3 connector: its settings in the app database, its access key
+ * in the OS keychain only. */
+export async function replicatedSyncAddS3(
+  config: S3ConnectorConfig,
+  credentials: S3Credentials,
+): Promise<ReplicatedSyncTransportStatus | null> {
+  return invoke("replicated_sync_add_s3", { config, credentials });
+}
+
+/** Renames a connector and/or replaces its credentials, keeping what it has
+ * already synced. Omit `label` to keep the name; pass `""` to clear it. */
+export async function replicatedSyncUpdateConnector(
+  instanceId: string,
+  changes: { label?: string; credentials?: ConnectorCredentials },
+): Promise<ReplicatedSyncTransportStatus | null> {
+  return invoke("replicated_sync_update_connector", {
+    instanceId,
+    label: changes.label ?? null,
+    credentials: changes.credentials ?? null,
+  });
 }
 
 export async function replicatedSyncRemoveTransport(instanceId: string, deleteData: boolean): Promise<void> {

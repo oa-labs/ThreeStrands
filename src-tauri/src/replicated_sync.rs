@@ -54,8 +54,10 @@ use crate::{
     backoff::retry_at,
     db::{Database, DatabaseError, DbResult},
     error_text::display,
+    s3_transport::{S3Config, S3Credentials, S3ProbeReport, S3Transport},
     sync_connectors::{
-        is_known_kind, Connector, ConnectorProbe, FolderConfig, IpfsRpcConfig, TransportConfig, TransportSecrets,
+        is_known_kind, Connector, ConnectorCredentials, ConnectorProbe, FolderConfig, IpfsRpcConfig, TransportConfig,
+        TransportSecrets,
     },
 };
 
@@ -1793,8 +1795,6 @@ impl Database {
 
     /// Persists (or reconfigures) an S3-compatible storage transport
     /// instance, validated before anything is written.
-    // Reached from Settings once the connector commands land.
-    #[allow(dead_code)]
     pub fn add_s3_transport(
         &self,
         instance_id: &str,
@@ -1812,8 +1812,6 @@ impl Database {
     /// when `secrets` is given, replaces its stored secret — keeping its
     /// delivery ledger, enabled state, and last-success time. The kind
     /// can't change; remove and re-add for that.
-    // Reached from Settings once the connector commands land.
-    #[allow(dead_code)]
     pub fn update_transport_config(
         &self,
         instance_id: &str,
@@ -1971,6 +1969,17 @@ pub struct ReplicatedSyncTransportStatus {
     pub storage_bytes: Option<u64>,
 }
 
+/// What "Test connection" reports for a candidate S3 connector.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3ConnectionTest {
+    #[serde(flatten)]
+    pub checks: S3ProbeReport,
+    /// Whether this bucket and prefix already hold a sync group; `None`
+    /// when the key couldn't list and read, so nothing could be checked.
+    pub space_presence: Option<crate::enrollment::SyncSpacePresence>,
+}
+
 /// Owns the replicated-sync background cycle: a cheaply `Clone`-able handle
 /// held directly in `AppState`, constructed once, cloned into commands and
 /// the background task.
@@ -2050,6 +2059,47 @@ impl ReplicatedSync {
             ConnectorProbe::IpfsRpc(report) => Ok(report),
             _ => unreachable!("an IPFS RPC connector reports an IPFS RPC probe"),
         }
+    }
+
+    /// "Test connection" for a candidate S3 connector, persisting nothing:
+    /// the permission checklist, plus — when the key can list and read —
+    /// whether the bucket and prefix already hold a sync group. `Err` only
+    /// when the config or credentials are invalid before any request.
+    pub async fn probe_s3(&self, config: &S3Config, credentials: &S3Credentials) -> Result<S3ConnectionTest, String> {
+        let transport = S3Transport::new("probe", config, credentials).map_err(|error| error.to_string())?;
+        let checks = transport.probe().await;
+        let space_presence = if checks.can_list && checks.can_read {
+            let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(transport)];
+            Some(crate::enrollment::inspect_sync_space(&transports).await)
+        } else {
+            None
+        };
+        Ok(S3ConnectionTest { checks, space_presence })
+    }
+
+    /// Renames a connector (`label`: `None` keeps the name, a blank string
+    /// clears it) and/or replaces its credentials, keeping its delivery
+    /// ledger. Credentials of the wrong kind, or for a folder, are refused.
+    pub fn update_connector(
+        &self,
+        instance_id: &str,
+        label: Option<&str>,
+        credentials: Option<ConnectorCredentials>,
+    ) -> Result<(), String> {
+        let row = self
+            .database
+            .configured_transports()?
+            .into_iter()
+            .find(|row| row.instance_id == instance_id)
+            .ok_or_else(|| "That connector no longer exists".to_string())?;
+        let mut config = row
+            .config()
+            .ok_or_else(|| "This connector's settings can't be read by this version of ThreeStrands".to_string())?;
+        if let Some(label) = label {
+            config.set_label(Some(label));
+        }
+        let secrets = credentials.map(ConnectorCredentials::into_secrets).transpose()?;
+        self.database.update_transport_config(instance_id, &config, secrets.as_ref())
     }
 
     /// Runs one push-then-pull cycle against every configured transport,
@@ -2723,6 +2773,7 @@ mod replicator_tests {
 #[cfg(test)]
 mod config_tests {
     use super::*;
+    use serde_json::json;
     use uuid::Uuid;
 
     struct TempFolder {
@@ -3043,6 +3094,133 @@ mod config_tests {
         assert_eq!(TransportSecrets::load("s3", &id).unwrap(), Some(TransportSecrets::S3(rotated)));
 
         assert!(database.update_transport_config("missing", &folder, None).is_err());
+    }
+
+    #[tokio::test]
+    async fn probe_s3_checks_permissions_and_an_empty_bucket_without_persisting_anything() {
+        use crate::s3_transport::fake_server::FakeS3Server;
+        let server = FakeS3Server::spawn().await;
+        let database = Arc::new(Database::open_memory());
+        let engine = ReplicatedSync::new(database.clone());
+
+        let test = engine.probe_s3(&server.config("group"), &FakeS3Server::credentials()).await.unwrap();
+        assert!(test.checks.can_list && test.checks.can_write && test.checks.can_read && test.checks.can_delete);
+        assert_eq!(test.space_presence, Some(crate::enrollment::SyncSpacePresence::None));
+        assert!(database.configured_transports().unwrap().is_empty());
+        assert!(server.state().objects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn probe_s3_skips_the_group_check_when_the_key_cannot_list() {
+        use crate::s3_transport::fake_server::FakeS3Server;
+        let server = FakeS3Server::spawn().await;
+        let mut credentials = FakeS3Server::credentials();
+        credentials.secret_access_key = "wrong".to_string();
+        let test = ReplicatedSync::new(Arc::new(Database::open_memory()))
+            .probe_s3(&server.config(""), &credentials)
+            .await
+            .unwrap();
+        assert!(test.checks.reachable && !test.checks.can_list);
+        assert_eq!(test.space_presence, None);
+    }
+
+    #[tokio::test]
+    async fn probe_s3_rejects_an_invalid_config_before_any_request() {
+        use crate::s3_transport::fake_server::FakeS3Server;
+        let server = FakeS3Server::spawn().await;
+        let mut config = server.config("");
+        config.path_style = false; // an IP-address endpoint needs path-style
+        let error = ReplicatedSync::new(Arc::new(Database::open_memory()))
+            .probe_s3(&config, &FakeS3Server::credentials())
+            .await
+            .unwrap_err();
+        assert!(error.contains("path-style"), "{error}");
+        assert_eq!(server.state().faults.requests, 0);
+    }
+
+    #[test]
+    fn a_connection_test_serializes_flat_in_camel_case() {
+        let test = S3ConnectionTest {
+            checks: S3ProbeReport { reachable: true, can_list: true, versioning_enabled: Some(true), ..Default::default() },
+            space_presence: Some(crate::enrollment::SyncSpacePresence::Existing),
+        };
+        assert_eq!(
+            serde_json::to_value(&test).unwrap(),
+            json!({
+                "reachable": true, "canList": true, "canWrite": false, "canRead": false, "canDelete": false,
+                "versioningEnabled": true, "error": null, "spacePresence": "existing"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn an_added_s3_connector_reports_healthy_with_a_storage_estimate() {
+        use crate::s3_transport::fake_server::FakeS3Server;
+        let server = FakeS3Server::spawn().await;
+        let database = Arc::new(Database::open_memory());
+        let id = format!("s3-{}", Uuid::new_v4());
+        database.add_s3_transport(&id, &server.config("group"), &FakeS3Server::credentials()).unwrap();
+        server.state().objects.insert("group/threestrands-sync/objects/ab/x.block".to_string(), vec![0; 10]);
+
+        let statuses = ReplicatedSync::new(database).status().await.unwrap();
+        assert_eq!(statuses[0].health, "healthy");
+        assert_eq!(statuses[0].storage_bytes, Some(10));
+        assert!(statuses[0].head_discovery);
+    }
+
+    #[test]
+    fn update_connector_renames_clears_and_rotates_credentials() {
+        let database = Arc::new(Database::open_memory());
+        let engine = ReplicatedSync::new(database.clone());
+        let id = format!("s3-{}", Uuid::new_v4());
+        database
+            .add_s3_transport(&id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
+            .unwrap();
+        let label = || database.configured_transports().unwrap()[0].config().unwrap().label().map(str::to_string);
+
+        engine.update_connector(&id, Some("  Personal R2 "), None).unwrap();
+        assert_eq!(label().as_deref(), Some("Personal R2"));
+
+        // No label argument keeps the name.
+        let rotated: ConnectorCredentials = serde_json::from_value(json!({
+            "kind": "s3", "accessKeyId": "AKIAROTATED", "secretAccessKey": "rotated-secret"
+        }))
+        .unwrap();
+        engine.update_connector(&id, None, Some(rotated)).unwrap();
+        assert_eq!(label().as_deref(), Some("Personal R2"));
+        match TransportSecrets::load("s3", &id).unwrap() {
+            Some(TransportSecrets::S3(credentials)) => assert_eq!(credentials.access_key_id, "AKIAROTATED"),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        engine.update_connector(&id, Some(""), None).unwrap();
+        assert_eq!(label(), None);
+    }
+
+    #[test]
+    fn update_connector_refuses_mismatched_credentials_long_names_and_unknown_ids() {
+        let database = Arc::new(Database::open_memory());
+        let engine = ReplicatedSync::new(database.clone());
+        let folder = TempFolder::new();
+        database.add_folder_transport("folder-1", &folder.path).unwrap();
+
+        let token: ConnectorCredentials = serde_json::from_value(json!({ "kind": "ipfs_rpc", "token": "t" })).unwrap();
+        assert!(engine.update_connector("folder-1", None, Some(token)).is_err());
+        assert!(engine.update_connector("folder-1", Some(&"x".repeat(61)), None).is_err());
+        assert_eq!(database.configured_transports().unwrap()[0].config().unwrap().label(), None);
+        assert!(engine.update_connector("missing", Some("name"), None).is_err());
+
+        let ipfs_id = format!("ipfs-{}", Uuid::new_v4());
+        database.add_ipfs_rpc_transport(&ipfs_id, "https://rpc.filebase.io", None).unwrap();
+        let s3: ConnectorCredentials =
+            serde_json::from_value(json!({ "kind": "s3", "accessKeyId": "a", "secretAccessKey": "b" })).unwrap();
+        assert!(engine.update_connector(&ipfs_id, None, Some(s3)).is_err());
+        let token: ConnectorCredentials = serde_json::from_value(json!({ "kind": "ipfs_rpc", "token": "new" })).unwrap();
+        engine.update_connector(&ipfs_id, None, Some(token)).unwrap();
+        assert_eq!(
+            TransportSecrets::load("ipfs_rpc", &ipfs_id).unwrap(),
+            Some(TransportSecrets::IpfsRpcToken("new".to_string()))
+        );
     }
 
     #[tokio::test]

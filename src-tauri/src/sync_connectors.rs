@@ -21,6 +21,10 @@ pub(crate) const FOLDER_KIND: &str = "folder";
 pub(crate) const IPFS_RPC_KIND: &str = "ipfs_rpc";
 pub(crate) const S3_KIND: &str = "s3";
 
+/// The longest connector name Settings accepts, matching the device-name
+/// limit (`MAX_DEVICE_LABEL_CHARS`).
+pub(crate) const MAX_CONNECTOR_LABEL_CHARS: usize = 60;
+
 /// Whether this app version knows how to handle connectors of `kind`.
 pub(crate) fn is_known_kind(kind: &str) -> bool {
     matches!(kind, FOLDER_KIND | IPFS_RPC_KIND | S3_KIND)
@@ -98,8 +102,6 @@ impl TransportConfig {
     }
 
     /// Sets (or, with `None` or a blank string, clears) the name.
-    // Reached from Settings once the connector commands land.
-    #[allow(dead_code)]
     pub fn set_label(&mut self, label: Option<&str>) {
         let label = label.map(str::trim).filter(|label| !label.is_empty()).map(str::to_string);
         match self {
@@ -143,6 +145,9 @@ impl TransportConfig {
     /// been; only S3 is rejected up front.
     pub fn validate(&self, instance_id: &str, secrets: Option<&TransportSecrets>) -> Result<(), String> {
         self.check_secrets(secrets)?;
+        if self.label().is_some_and(|label| label.chars().count() > MAX_CONNECTOR_LABEL_CHARS) {
+            return Err(format!("Connector names can be at most {MAX_CONNECTOR_LABEL_CHARS} characters"));
+        }
         if let (Self::S3(config), Some(TransportSecrets::S3(credentials))) = (self, secrets) {
             S3Transport::new(instance_id, config, credentials).map_err(|error| error.to_string())?;
         }
@@ -165,6 +170,29 @@ impl std::fmt::Debug for TransportSecrets {
         match self {
             Self::IpfsRpcToken(_) => f.write_str("IpfsRpcToken(<redacted>)"),
             Self::S3(credentials) => write!(f, "S3({credentials:?})"),
+        }
+    }
+}
+
+/// Replacement credentials as Settings sends them, tagged by kind:
+/// `{ "kind": "s3", "accessKeyId": …, "secretAccessKey": …, "sessionToken"? }`
+/// or `{ "kind": "ipfs_rpc", "token": … }`. Deserialize-only, and never
+/// `Debug`, so it can't be echoed back or logged.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConnectorCredentials {
+    IpfsRpc { token: String },
+    S3(S3Credentials),
+}
+
+impl ConnectorCredentials {
+    pub fn into_secrets(self) -> Result<TransportSecrets, String> {
+        match self {
+            Self::IpfsRpc { token } if token.trim().is_empty() => {
+                Err("Enter the new access token, or remove the connector and add it again without one".to_string())
+            }
+            Self::IpfsRpc { token } => Ok(TransportSecrets::IpfsRpcToken(token)),
+            Self::S3(credentials) => Ok(TransportSecrets::S3(credentials)),
         }
     }
 }
@@ -486,6 +514,34 @@ mod tests {
         config.set_label(Some("Laptop"));
         let value: serde_json::Value = serde_json::from_str(&config.to_config_json().unwrap()).unwrap();
         assert_eq!(value["path"], "/tmp/sync");
+    }
+
+    #[test]
+    fn connector_names_are_limited_below_at_and_above_the_limit() {
+        let credentials = TransportSecrets::S3(s3_credentials());
+        let mut config = TransportConfig::S3(s3_config());
+        for (length, ok) in [(MAX_CONNECTOR_LABEL_CHARS - 1, true), (MAX_CONNECTOR_LABEL_CHARS, true), (MAX_CONNECTOR_LABEL_CHARS + 1, false)] {
+            config.set_label(Some(&"é".repeat(length)));
+            assert_eq!(config.validate("s3", Some(&credentials)).is_ok(), ok, "length {length}");
+        }
+    }
+
+    #[test]
+    fn credentials_from_settings_deserialize_by_kind() {
+        let s3: ConnectorCredentials = serde_json::from_str(
+            r#"{"kind":"s3","accessKeyId":"AKIAEXAMPLE","secretAccessKey":"s3-secret-value","sessionToken":null}"#,
+        )
+        .unwrap();
+        assert_eq!(s3.into_secrets().unwrap(), TransportSecrets::S3(s3_credentials()));
+
+        let ipfs: ConnectorCredentials = serde_json::from_str(r#"{"kind":"ipfs_rpc","token":"t"}"#).unwrap();
+        assert_eq!(ipfs.into_secrets().unwrap(), TransportSecrets::IpfsRpcToken("t".to_string()));
+
+        let blank: ConnectorCredentials = serde_json::from_str(r#"{"kind":"ipfs_rpc","token":"  "}"#).unwrap();
+        assert!(blank.into_secrets().is_err());
+
+        assert!(serde_json::from_str::<ConnectorCredentials>(r#"{"kind":"folder"}"#).is_err());
+        assert!(serde_json::from_str::<ConnectorCredentials>(r#"{"kind":"s3","accessKeyId":"a"}"#).is_err());
     }
 
     #[test]

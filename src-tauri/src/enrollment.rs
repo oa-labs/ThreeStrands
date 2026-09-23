@@ -1318,6 +1318,22 @@ mod tests {
         assert_eq!(name, "From C over S3");
     }
 
+    #[tokio::test]
+    async fn an_s3_connection_test_finds_a_group_another_device_created() {
+        use crate::s3_transport::fake_server::FakeS3Server;
+        let server = FakeS3Server::spawn().await;
+        let (transports_a, _) = shared_s3_transports(&server).await;
+        let database_a = Database::open_memory();
+        let identity_a = test_identity(&database_a);
+        begin_genesis(&database_a, &identity_a, &FakeEpochKeyStore::default(), &transports_a, false).await.unwrap();
+
+        let engine = crate::replicated_sync::ReplicatedSync::new(Arc::new(Database::open_memory()));
+        let found = engine.probe_s3(&server.config("group"), &FakeS3Server::credentials()).await.unwrap();
+        assert_eq!(found.space_presence, Some(SyncSpacePresence::Existing));
+        let elsewhere = engine.probe_s3(&server.config("other-prefix"), &FakeS3Server::credentials()).await.unwrap();
+        assert_eq!(elsewhere.space_presence, Some(SyncSpacePresence::None));
+    }
+
     async fn assert_peer_enrollment_round_trips(transports: Vec<Arc<dyn SyncTransport>>) {
         let database_a = Database::open_memory();
         let database_b = Database::open_memory();
