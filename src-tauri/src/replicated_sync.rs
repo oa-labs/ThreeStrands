@@ -1954,6 +1954,9 @@ pub struct ReplicatedSyncTransportStatus {
     /// Whether "delete files and disconnect" can remove this connector's
     /// synchronized data (folder and S3; not IPFS pins).
     pub supports_delete_data: bool,
+    /// An S3 connector's non-secret settings, so Settings can re-test
+    /// replacement credentials against the same bucket. Never credentials.
+    pub s3_config: Option<S3Config>,
     pub health: String,
     /// Whether this instance can currently discover other devices'
     /// signed heads on its own (a folder's `heads/` directory; an RPC
@@ -2028,6 +2031,10 @@ impl ReplicatedSync {
                 label: config.as_ref().and_then(|config| config.label()).map(str::to_string),
                 location: config.as_ref().map(TransportConfig::location).unwrap_or_default(),
                 supports_delete_data: config.as_ref().is_some_and(TransportConfig::supports_delete_data),
+                s3_config: match &config {
+                    Some(TransportConfig::S3(s3)) => Some(s3.clone()),
+                    _ => None,
+                },
                 health,
                 head_discovery,
                 pending,
@@ -2237,7 +2244,7 @@ impl ReplicatedSync {
         let _guard = self.gate.lock().await;
         let highest_epoch = self.database.leave_sync_space()?;
         forget_sync_space_keys(highest_epoch)
-            .map_err(|error| format!("Left the sync space, but some keys could not be removed from the keychain: {error}"))
+            .map_err(|error| format!("Left the sync group, but some keys could not be removed from the keychain: {error}"))
     }
 
     /// Creates a join code for the chosen connectors. Requires this device
@@ -3062,6 +3069,10 @@ mod config_tests {
         assert_eq!(statuses[0].label.as_deref(), Some("Team bucket"));
         assert_eq!(statuses[0].location, "https://s3.us-east-1.amazonaws.com · sync-bucket/team");
         assert!(statuses[0].supports_delete_data);
+        assert_eq!(statuses[0].s3_config, Some(s3_test_config("https://s3.us-east-1.amazonaws.com")));
+        let json = serde_json::to_string(&statuses[0]).unwrap();
+        assert!(json.contains("\"s3Config\":{\"endpoint\""), "{json}");
+        assert!(!json.to_ascii_lowercase().contains("secret"), "{json}");
         assert!(statuses[0].health.starts_with("unavailable"));
     }
 
@@ -3314,6 +3325,7 @@ mod config_tests {
         let by_kind = |kind: &str| statuses.iter().find(|status| status.kind == kind).unwrap();
         assert!(by_kind("folder").supports_delete_data);
         assert!(!by_kind("ipfs_rpc").supports_delete_data);
+        assert_eq!(by_kind("folder").s3_config, None);
         assert_eq!(by_kind("folder").label, None);
     }
 

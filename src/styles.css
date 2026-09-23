@@ -1799,7 +1799,42 @@ form.split-inbox-add select {
 .settings-field textarea[aria-invalid="true"] { border-color: var(--error); }
 .recovery-phrase-feedback-attention { color: var(--error); }
 .sync-location-attention .sync-location-health { color: var(--warning, #a16c18); font-weight: 600; }
-.enrollment-request-toast { top: 24px; bottom: auto; }
+.sync-join-code-panel { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; padding: 12px 14px; border: 1px solid var(--primary-border); border-radius: 10px; }
+.sync-join-code-panel h4 { margin: 0; }
+.sync-setup-divider { width: 100%; padding-top: 4px; }
+.settings-field textarea.sync-join-code, textarea.sync-join-code { box-sizing: border-box; width: 100%; padding: 8px 9px; border: 1px solid var(--border-strong); border-radius: 7px; color: var(--text); background: var(--input); font-family: monospace; font-size: calc(12px * var(--font-scale)); word-break: break-all; resize: vertical; user-select: text; }
+.sync-connector-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; width: 100%; }
+.sync-connector-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.sync-connector-choice:hover:not(:disabled), .sync-connector-choice:focus-visible { border-color: var(--primary-border); }
+.sync-connector-form { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+.sync-connector-form h4 { margin: 0; }
+.sync-kind-badge { color: var(--text); font-weight: 600; }
+.sync-probe-results { display: flex; flex-direction: column; gap: 4px; }
+.sync-probe-checklist { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; font-size: calc(12px * var(--font-scale)); }
+.sync-probe-ok { color: var(--success, #2d8a56); }
+.sync-probe-failed, .sync-probe-error { color: var(--error); }
+.sync-attention-text { color: var(--warning, #a16c18); }
+.sync-policy { box-sizing: border-box; width: 100%; max-height: 220px; margin: 0; padding: 8px 9px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: calc(11px * var(--font-scale)); user-select: text; }
+.sync-join-connectors { display: flex; flex-direction: column; gap: 6px; width: 100%; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.sync-join-connectors legend { padding: 0 4px; color: var(--muted); font-size: calc(12px * var(--font-scale)); }
+.sync-join-connector { display: flex; flex-direction: column; gap: 2px; }
+.sync-join-credentials { padding-left: 22px; }
+.sync-notice { border-color: color-mix(in srgb, var(--warning, #a16c18) 40%, var(--border)); }
+.link-button { padding: 0; border: 0; color: var(--accent); background: none; font: inherit; text-decoration: underline; cursor: pointer; }
+.enrollment-request-toast {
+  top: 24px;
+  right: 24px;
+  bottom: auto;
+  left: auto;
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: min(520px, calc(100vw - 48px));
+  min-height: 0;
+  height: auto;
+  align-items: center;
+}
+.enrollment-request-icon { flex: 0 0 auto; color: var(--link); }
+.enrollment-request-message { min-width: 0; }
 .settings-inline-confirm .danger-action { color: var(--error); border-color: color-mix(in srgb, var(--error) 40%, var(--border-strong)); }
 .settings-panel > .accounts-manager { padding: 0; }
 .settings-connection-status { display: inline-flex; align-items: center; gap: 5px; color: var(--error); font-size: calc(12px * var(--font-scale)); }

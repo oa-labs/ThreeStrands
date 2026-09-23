@@ -15,6 +15,9 @@ export type ReplicatedSyncTransportStatus = {
   /** Whether "delete files and disconnect" can remove this connector's
    * synchronized data (folders and S3 buckets; not IPFS pins). */
   supportsDeleteData: boolean;
+  /** An S3 connector's non-secret settings, for re-testing replacement
+   * credentials. Never includes credentials. */
+  s3Config?: S3ConnectorConfig | null;
   health: string;
   headDiscovery: boolean;
   pending: number;

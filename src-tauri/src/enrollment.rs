@@ -555,7 +555,7 @@ pub enum SyncSpacePresence {
 }
 
 pub const EXISTING_SPACE_REFUSAL: &str =
-    "A sync space already exists in this location. Join it from another device or with its recovery phrase, or confirm that you want a separate new space.";
+    "A sync group already exists in this connector. Join it with a join code, its recovery phrase, or approval from another device, or confirm that you want a separate new group.";
 
 /// A rotation counts as evidence of a space only when it verifies against
 /// its own initiator's roster entry — the same self-consistency check a
@@ -803,6 +803,85 @@ fn apply_incoming_request(database: &Database, identity: &DeviceIdentity, signed
 
 fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedEnrollmentGrant) -> Result<(), String> {
     let request_id_hex = encode_id(signed.grant.request_id.as_bytes());
+
+    // This grant may be addressed to another device that received the same
+    // request. Clear our copy only when an already trusted active peer signed
+    // it and the roster names the exact requester keys we recorded.
+    let pending_incoming: Option<(String, Vec<u8>, Vec<u8>)> = database
+        .connection()?
+        .query_row(
+            "SELECT device_id, ed25519_public, x25519_public FROM replicated_sync_enrollment_requests
+             WHERE request_id=?1 AND direction='incoming' AND status='pending'",
+            params![request_id_hex],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(display)?;
+    if !signed.grant.signed_by_recovery {
+        let trusted_approver: Option<Vec<u8>> = database
+            .connection()?
+            .query_row(
+                "SELECT public_key FROM sync_devices WHERE device_id=?1 AND status='active' AND public_key IS NOT NULL",
+                params![encode_id(signed.grant.approver_device_id.as_bytes())],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(display)?;
+        let approver_verifies = trusted_approver
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
+            .map(|key| verify_enrollment_grant(&key, &signed).is_ok())
+            .unwrap_or(false);
+        let approved_requester = signed.grant.roster.iter().find(|entry| {
+            entry.status == "active"
+                && pending_incoming.as_ref().is_none_or(|(requester_id, requester_ed25519, requester_x25519)| {
+                    encode_id(entry.device_id.as_bytes()) == *requester_id
+                        && entry.ed25519_public.as_slice() == requester_ed25519
+                        && entry.x25519_public.as_slice() == requester_x25519
+                })
+        });
+        if approver_verifies {
+            if let Some(entry) = approved_requester {
+                if let Some((requester_id, _, _)) = pending_incoming {
+                    if encode_id(entry.device_id.as_bytes()) == requester_id {
+                        database
+                            .connection()?
+                            .execute(
+                                "UPDATE replicated_sync_enrollment_requests SET status='approved' WHERE request_id=?1 AND direction='incoming' AND status='pending'",
+                                params![request_id_hex],
+                            )
+                            .map_err(display)?;
+                    }
+                } else {
+                    // A peer may have been offline until after both objects
+                    // were published. Keep an approved marker so a grant
+                    // scanned before its request cannot resurrect a stale
+                    // pending notice when that request is seen later.
+                    let requester_id = encode_id(entry.device_id.as_bytes());
+                    let requester_ed25519 = entry.ed25519_public.as_slice();
+                    if let Ok(requester_x25519) = roster_entry_x25519(entry) {
+                        let fingerprint = enrollment_fingerprint(requester_ed25519, &requester_x25519);
+                        database
+                            .connection()?
+                            .execute(
+                                "INSERT OR IGNORE INTO replicated_sync_enrollment_requests(request_id, direction, device_id, ed25519_public, x25519_public, fingerprint, status, created_at)
+                                 VALUES (?1,'incoming',?2,?3,?4,?5,'approved',?6)",
+                                params![
+                                    request_id_hex,
+                                    requester_id,
+                                    requester_ed25519,
+                                    requester_x25519.to_vec(),
+                                    fingerprint,
+                                    Utc::now().to_rfc3339(),
+                                ],
+                            )
+                            .map_err(display)?;
+                    }
+                }
+            }
+        }
+    }
+
     let matches_our_request: Option<String> = database
         .connection()?
         .query_row(
@@ -990,7 +1069,7 @@ pub async fn approve_enrollment_request(
     database.trust_device_keys(&requester_device_id_bytes, &requester_verifying_key, &requester_x25519)?;
 
     let roster = database.full_roster_snapshot()?;
-    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or_else(|| "No recovery keys on record for this sync space".to_string())?;
+    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or_else(|| "No recovery keys on record for this sync group".to_string())?;
 
     let grant = EnrollmentGrant {
         request_id: RequestId::from_bytes(decode_id(request_id_hex)?),
@@ -1032,7 +1111,7 @@ pub async fn rotate_epoch(
     transports: &[Arc<dyn SyncTransport>],
     revoke_device_id_hex: Option<&str>,
 ) -> Result<(), String> {
-    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or_else(|| "No recovery keys on record for this sync space".to_string())?;
+    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or_else(|| "No recovery keys on record for this sync group".to_string())?;
 
     if let Some(hex) = revoke_device_id_hex {
         let device_id = decode_id(hex)?;
@@ -1320,6 +1399,36 @@ mod tests {
     #[tokio::test]
     async fn two_device_peer_enrollment_lets_the_new_device_push_and_the_first_pull_it() {
         assert_peer_enrollment_round_trips(fake_transports("shared")).await;
+    }
+
+    #[tokio::test]
+    async fn another_existing_device_clears_a_request_after_a_trusted_peer_approves_it() {
+        let transports = fake_transports("shared");
+        let database_a = Database::open_memory();
+        let identity_a = test_identity(&database_a);
+        let epoch_keys_a = FakeEpochKeyStore::default();
+        let phrase = begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports, false).await.unwrap();
+
+        let database_b = Database::open_memory();
+        let identity_b = test_identity(&database_b);
+        let epoch_keys_b = FakeEpochKeyStore::default();
+        join_with_recovery_phrase(&database_b, &identity_b, &epoch_keys_b, &phrase, &transports).await.unwrap();
+        run_enrollment_sweep(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+
+        let database_c = Database::open_memory();
+        let identity_c = test_identity(&database_c);
+        publish_enrollment_request(&database_c, &identity_c, &transports).await.unwrap();
+        run_enrollment_sweep(&database_a, &identity_a, &epoch_keys_a, &transports).await.unwrap();
+        run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
+        let pending_a = database_a.pending_incoming_enrollment_requests().unwrap();
+        let pending_b = database_b.pending_incoming_enrollment_requests().unwrap();
+        assert_eq!(pending_a.len(), 1);
+        assert_eq!(pending_b.len(), 1);
+
+        let keys_a = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
+        approve_enrollment_request(&database_a, &identity_a, &keys_a, &pending_a[0].request_id, &transports).await.unwrap();
+        run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
+        assert!(database_b.pending_incoming_enrollment_requests().unwrap().is_empty());
     }
 
     /// Two S3 connector instances (one per device) pointed at the same

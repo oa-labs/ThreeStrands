@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { X } from "lucide-react";
+import { Smartphone, X } from "lucide-react";
 import { logBackgroundFailure } from "./errors";
 import { replicatedSyncEnabled, replicatedSyncPendingRequests, type IncomingEnrollmentRequest } from "./replicatedSync";
 import { useLiveStatus } from "./settingsOperations";
@@ -29,9 +29,12 @@ export function EnrollmentRequestNotice({ suppressed, onReview }: { suppressed: 
 
   return (
     <div className="toast enrollment-request-toast" role="status" aria-live="polite">
-      {visible.length === 1
-        ? "A new device is asking to join Replicated Sync."
-        : `${visible.length} devices are asking to join Replicated Sync.`}
+      <Smartphone className="enrollment-request-icon" size={18} aria-hidden="true" />
+      <span className="enrollment-request-message">
+        {visible.length === 1
+          ? "A new device is asking to join Replicated Sync."
+          : `${visible.length} devices are asking to join Replicated Sync.`}
+      </span>
       <button onClick={onReview}>Review</button>
       <button
         aria-label="Dismiss"

@@ -30,6 +30,8 @@ function setUp({
   vi.mocked(sync.replicatedSyncEnrollmentStatus).mockResolvedValue(status);
   vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([]);
   vi.mocked(sync.replicatedSyncDeviceRoster).mockResolvedValue([]);
+  vi.mocked(sync.replicatedSyncListJoinCodes).mockResolvedValue([]);
+  vi.mocked(sync.replicatedSyncJoinCodeNotices).mockResolvedValue([]);
 }
 
 beforeEach(() => {
@@ -39,40 +41,51 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("replicated sync setup choice", () => {
-  it("steers toward joining when the location already holds a space", async () => {
+  it("steers toward the recovery phrase when the connector already holds a group", async () => {
     vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("existing");
     render(<ReplicatedSyncSettings />);
 
-    expect(await screen.findByText(/Another device already set up a sync space/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create a new sync space" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Request to join from an existing device" })).toHaveClass("primary-action");
-    expect(screen.getByRole("button", { name: "Join with recovery phrase" })).toBeInTheDocument();
+    expect(await screen.findByText(/Another device already set up a sync group/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create a new sync group" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Enter the recovery phrase" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Join with recovery phrase" })).toHaveClass("primary-action");
+    expect(screen.getByRole("button", { name: "Ask another device to approve this one" })).not.toHaveClass("primary-action");
+    expect(screen.getByRole("button", { name: "Paste a join code" })).toBeInTheDocument();
   });
 
-  it("creates a separate space over an existing one only after explicit confirmation", async () => {
+  it("points back to the join-code field from the setup choice", async () => {
+    vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("existing");
+    render(<ReplicatedSyncSettings />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Paste a join code" }));
+    expect(screen.getByRole("textbox", { name: "Join code" })).toHaveFocus();
+  });
+
+  it("creates a separate group over an existing one only after explicit confirmation", async () => {
     vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("existing");
     vi.mocked(sync.replicatedSyncBeginGenesis).mockResolvedValue("separate space phrase");
     render(<ReplicatedSyncSettings />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Create a separate sync space instead…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create a separate sync group instead…" }));
     expect(sync.replicatedSyncBeginGenesis).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    fireEvent.click(screen.getByRole("button", { name: "Create a separate sync space instead…" }));
-    fireEvent.click(screen.getByRole("button", { name: "Create separate space" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create a separate sync group instead…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create separate group" }));
 
     await waitFor(() => expect(sync.replicatedSyncBeginGenesis).toHaveBeenCalledWith(true));
     await waitFor(() => expect(pendingRecoveryPhrase()).toBe("separate space phrase"));
   });
 
-  it("offers creation first when the location is empty, and holds the phrase instead of showing it inline", async () => {
+  it("offers creation first when the connector is empty, and holds the phrase instead of showing it inline", async () => {
     vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("none");
     vi.mocked(sync.replicatedSyncBeginGenesis).mockResolvedValue("fresh space phrase");
     render(<ReplicatedSyncSettings />);
 
-    expect(await screen.findByText(/No sync space found here yet/)).toBeInTheDocument();
-    const create = screen.getByRole("button", { name: "Create a new sync space" });
+    expect(await screen.findByText(/No sync group found here yet/)).toBeInTheDocument();
+    const create = screen.getByRole("button", { name: "Create a new sync group" });
     expect(create).toHaveClass("primary-action");
-    expect(screen.getByRole("button", { name: "Request to join from an existing device" })).not.toHaveClass("primary-action");
+    expect(screen.getByRole("button", { name: "Ask another device to approve this one" })).not.toHaveClass("primary-action");
+    expect(screen.getByRole("textbox", { name: "Or join with a recovery phrase" })).toBeInTheDocument();
     fireEvent.click(create);
 
     await waitFor(() => expect(sync.replicatedSyncBeginGenesis).toHaveBeenCalledWith(false));
@@ -84,39 +97,39 @@ describe("replicated sync setup choice", () => {
     vi.mocked(sync.replicatedSyncInspectSpace).mockReturnValue(new Promise(() => {}));
     render(<ReplicatedSyncSettings />);
 
-    expect(await screen.findByText(/Checking your sync locations/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create a new sync space" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Request to join from an existing device" })).toBeEnabled();
+    expect(await screen.findByText(/Checking your connectors/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create a new sync group" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Ask another device to approve this one" })).toBeEnabled();
   });
 
-  it("warns but still allows creation when a location could not be checked", async () => {
+  it("warns but still allows creation when a connector could not be checked", async () => {
     vi.mocked(sync.replicatedSyncInspectSpace).mockRejectedValue(new Error("offline"));
     render(<ReplicatedSyncSettings />);
 
-    expect(await screen.findByText(/Couldn’t check every sync location/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create a new sync space" })).toBeEnabled();
+    expect(await screen.findByText(/Couldn’t check every connector/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create a new sync group" })).toBeEnabled();
   });
 
-  it("does not inspect or offer the choice before any location is configured", async () => {
+  it("does not inspect or offer the choice before any connector is configured", async () => {
     setUp({ transports: [] });
     render(<ReplicatedSyncSettings />);
 
-    expect(await screen.findByRole("button", { name: "Add a sync folder" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Shared folder/ })).toBeInTheDocument();
     expect(sync.replicatedSyncInspectSpace).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Create a new sync space" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create a new sync group" })).not.toBeInTheDocument();
   });
 
-  it("re-inspects after the native guard refuses a space that appeared since the last check", async () => {
+  it("re-inspects after the native guard refuses a group that appeared since the last check", async () => {
     vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValueOnce("none").mockResolvedValue("existing");
     vi.mocked(sync.replicatedSyncBeginGenesis).mockRejectedValue("A sync space already exists in this location.");
     render(<ReplicatedSyncSettings />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Create a new sync space" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create a new sync group" }));
 
-    expect(await screen.findByText(/Another device already set up a sync space/)).toBeInTheDocument();
+    expect(await screen.findByText(/Another device already set up a sync group/)).toBeInTheDocument();
     expect(screen.getByText("A sync space already exists in this location.")).toBeInTheDocument();
     expect(sync.replicatedSyncBeginGenesis).toHaveBeenCalledWith(false);
-    expect(screen.queryByRole("button", { name: "Create a new sync space" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create a new sync group" })).not.toBeInTheDocument();
   });
 });
 
@@ -126,27 +139,45 @@ function stepState(title: string): string | null {
 }
 
 describe("replicated sync setup steps", () => {
-  it("starts at choosing a location, with the shared-folder requirement and IPFS behind a disclosure", async () => {
+  it("starts at adding a connector, offering the three kinds and each kind's form", async () => {
     setUp({ transports: [] });
     render(<ReplicatedSyncSettings />);
 
     expect(await screen.findByRole("list", { name: "Replicated sync setup" })).toBeInTheDocument();
-    expect(stepState("Choose where to sync")).toBe("current");
-    expect(stepState("Join or create a sync space")).toBe("Up next");
+    expect(stepState("Add a connector")).toBe("current");
+    expect(stepState("Join your sync group")).toBe("Up next");
     expect(stepState("Verify this device")).toBe("Up next");
-    expect(screen.getByText(/one dedicated Filebase bucket for the sync space/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add a sync folder" })).toHaveClass("primary-action");
-    const ipfs = screen.getByText("Use an IPFS RPC endpoint instead").closest("details")!;
-    expect(ipfs).not.toHaveAttribute("open");
+    const kinds = within(screen.getByRole("group", { name: "Connector type" })).getAllByRole("button");
+    expect(kinds.map((button) => button.querySelector("strong")?.textContent)).toEqual(["Shared folder", "S3 storage", "IPFS"]);
+
+    fireEvent.click(screen.getByRole("button", { name: /^IPFS/ }));
+    const ipfs = screen.getByRole("group", { name: "Add IPFS" });
     expect(within(ipfs).getByRole("button", { name: "Add IPFS RPC endpoint" })).toBeInTheDocument();
     expect(within(ipfs).getByText(/bucket-specific RPC token/)).toBeInTheDocument();
+    fireEvent.click(within(ipfs).getByRole("button", { name: "← Back" }));
+    expect(screen.getByRole("group", { name: "Connector type" })).toBeInTheDocument();
+  });
+
+  it("offers joining with a code above the manual steps, but not while verifying", async () => {
+    setUp({ transports: [] });
+    render(<ReplicatedSyncSettings />);
+    const panel = await screen.findByRole("group", { name: "Join with a code from another device" });
+    expect(within(panel).getByRole("textbox", { name: "Join code" })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Join sync group" })).toBeDisabled();
+    cleanup();
+
+    setUp({ status: { state: "awaitingGrant", requestId: "req-1", fingerprint: "AB12-CD34-EF56-0789", createdAt: "2026-09-22T10:00:00Z" } });
+    render(<ReplicatedSyncSettings />);
+    expect(await screen.findByText("AB12-CD34-EF56-0789")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Join with a code from another device" })).not.toBeInTheDocument();
   });
 
   it("shows an empty RPC URL as empty and enables the connection test once the Filebase URL is filled in", async () => {
     setUp({ transports: [] });
     render(<ReplicatedSyncSettings />);
 
-    const ipfs = (await screen.findByText("Use an IPFS RPC endpoint instead")).closest("details")!;
+    fireEvent.click(await screen.findByRole("button", { name: /^IPFS/ }));
+    const ipfs = screen.getByRole("group", { name: "Add IPFS" });
     const url = within(ipfs).getByRole("textbox", { name: "RPC base URL" });
     expect(url).toHaveValue("");
     expect(url).not.toHaveAttribute("placeholder", "https://rpc.filebase.io");
@@ -157,16 +188,16 @@ describe("replicated sync setup steps", () => {
     expect(within(ipfs).getByRole("button", { name: "Test connection" })).toBeEnabled();
   });
 
-  it("marks the location done and summarizes it once one is configured", async () => {
+  it("marks the connector step done and summarizes it once one is configured", async () => {
     vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("none");
     render(<ReplicatedSyncSettings />);
 
-    expect(await screen.findByRole("button", { name: "Create a new sync space" })).toBeInTheDocument();
-    expect(stepState("Choose where to sync")).toBe("Done");
-    expect(stepState("Join or create a sync space")).toBe("current");
-    const done = screen.getByRole("listitem", { name: "Choose where to sync" });
+    expect(await screen.findByRole("button", { name: "Create a new sync group" })).toBeInTheDocument();
+    expect(stepState("Add a connector")).toBe("Done");
+    expect(stepState("Join your sync group")).toBe("current");
+    const done = screen.getByRole("listitem", { name: "Add a connector" });
     expect(within(done).getByText(folder.location, { selector: "summary" })).toBeInTheDocument();
-    expect(within(done).getByRole("button", { name: "Add another sync folder" })).toBeInTheDocument();
+    expect(within(done).getByRole("button", { name: "Add another connector" })).toBeInTheDocument();
   });
 
   it("waits for approval on the verify step and can check for it", async () => {
@@ -175,7 +206,7 @@ describe("replicated sync setup steps", () => {
     render(<ReplicatedSyncSettings />);
 
     expect(await screen.findByText("AB12-CD34-EF56-0789")).toBeInTheDocument();
-    expect(stepState("Join or create a sync space")).toBe("Done");
+    expect(stepState("Join your sync group")).toBe("Done");
     expect(stepState("Verify this device")).toBe("current");
     fireEvent.click(screen.getByRole("button", { name: "Check for approval" }));
     await waitFor(() => expect(sync.replicatedSyncNow).toHaveBeenCalled());
@@ -255,7 +286,8 @@ describe("enrolled overview", () => {
     expect(summary).toHaveTextContent(/Syncing · 2 devices · last synced/);
     expect(screen.queryByRole("list", { name: "Replicated sync setup" })).not.toBeInTheDocument();
     expect(screen.getByText("Devices (2)").closest("details")).toHaveAttribute("open");
-    expect(screen.getByText("Sync locations (1)").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Connectors (1)").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByRole("button", { name: "Add a device" })).toBeEnabled();
     const devices = within(screen.getByRole("list", { name: "Devices" })).getAllByRole("listitem");
     expect(devices[0]).toHaveTextContent("This device");
     expect(devices[1]).toHaveTextContent("Unnamed device");
@@ -263,12 +295,12 @@ describe("enrolled overview", () => {
     expect(within(devices[1]!).getByRole("button", { name: "Revoke…" })).toBeInTheDocument();
   });
 
-  it("opens sync locations when one needs attention", async () => {
+  it("opens connectors when one needs attention", async () => {
     setUp({ status: enrolled, transports: [{ ...folder, health: "unavailable: folder missing" }] });
     render(<ReplicatedSyncSettings />);
 
-    expect(await screen.findByRole("status", { name: "Sync status" })).toHaveTextContent("1 sync location needs attention");
-    expect(screen.getByText("Sync locations (1)").closest("details")).toHaveAttribute("open");
+    expect(await screen.findByRole("status", { name: "Sync status" })).toHaveTextContent("1 connector needs attention");
+    expect(screen.getByText("Connectors (1)").closest("details")).toHaveAttribute("open");
   });
 
   it("offers deleting files only for connectors that report support for it", async () => {
@@ -282,13 +314,43 @@ describe("enrolled overview", () => {
     setUp({ status: enrolled, transports: [folder, ipfs] });
     render(<ReplicatedSyncSettings />);
 
-    const [folderCard, ipfsCard] = within(await screen.findByRole("list", { name: "Sync locations" })).getAllByRole("listitem");
+    const [folderCard, ipfsCard] = within(await screen.findByRole("list", { name: "Connectors" })).getAllByRole("listitem");
     fireEvent.click(within(folderCard!).getByRole("button", { name: "Disconnect…" }));
     expect(within(folderCard!).getByRole("button", { name: "Delete files and disconnect" })).toBeInTheDocument();
 
     fireEvent.click(within(ipfsCard!).getByRole("button", { name: "Disconnect…" }));
     expect(within(ipfsCard!).getByRole("button", { name: "Disconnect and keep data" })).toBeInTheDocument();
     expect(within(ipfsCard!).queryByRole("button", { name: "Delete files and disconnect" })).not.toBeInTheDocument();
+  });
+
+  it("shows the waiting-for-admission banner above the sync status after joining with a code", async () => {
+    setUp({ status: { state: "enrolled", deviceCount: 2, awaitingAdmissionFrom: "Work laptop" } });
+    render(<ReplicatedSyncSettings />);
+
+    const banner = await screen.findByRole("status", { name: "Joining" });
+    expect(banner).toHaveTextContent("Waiting for Work laptop to finish adding this device");
+    expect(banner.compareDocumentPosition(screen.getByRole("status", { name: "Sync status" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows join-code notices, how each device joined, and opens the add-a-device panel", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncDeviceRoster).mockResolvedValue([
+      ...roster,
+      { deviceId: "device-code", status: "active", isSelf: false, label: "Phone", joinedWithJoinCode: true },
+    ]);
+    vi.mocked(sync.replicatedSyncJoinCodeNotices).mockResolvedValue([
+      { redemptionCid: "r1", kind: "joined", deviceId: "device-code", deviceName: "Phone", inviterDeviceId: "device-self", inviterName: "Desk", at: "2026-09-22T10:00:00Z" },
+    ]);
+    render(<ReplicatedSyncSettings />);
+
+    const notices = await screen.findByRole("list", { name: "Join code notices" });
+    expect(notices).toHaveTextContent("Phone joined with a join code from Desk.");
+    const devices = within(screen.getByRole("list", { name: "Devices" })).getAllByRole("listitem");
+    expect(devices[2]).toHaveTextContent("Joined with a join code");
+    expect(devices[1]).not.toHaveTextContent("Joined with a join code");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add a device" }));
+    expect(screen.getByRole("group", { name: "Add a device" })).toBeInTheDocument();
   });
 
   it("puts devices waiting to join above the other sections and approves them", async () => {
@@ -306,17 +368,17 @@ describe("enrolled overview", () => {
 });
 
 describe("syncOverview", () => {
-  it("reports a missing location as not syncing", () => {
+  it("reports a missing connector as not syncing", () => {
     expect(syncOverview([], 1)).toEqual({ tone: "attention", text: expect.stringMatching(/^Not syncing · 1 device · /) });
   });
 
-  it("counts degraded or failing locations as needing attention", () => {
+  it("counts degraded or failing connectors as needing attention", () => {
     const failing = { ...folder, instanceId: "b", failed: 2 };
     const degraded = { ...folder, instanceId: "c", health: "degraded: recent transient failures" };
-    expect(syncOverview([folder, failing, degraded], 3)).toEqual({ tone: "attention", text: "3 devices · 2 sync locations need attention" });
+    expect(syncOverview([folder, failing, degraded], 3)).toEqual({ tone: "attention", text: "3 devices · 2 connectors need attention" });
   });
 
-  it("uses the most recent success across healthy locations", () => {
+  it("uses the most recent success across healthy connectors", () => {
     const older = { ...folder, lastSuccessAt: "2026-09-20T10:00:00Z" };
     const newer = { ...folder, instanceId: "b", lastSuccessAt: "2026-09-22T10:00:00Z" };
     expect(syncOverview([older, newer], 2).text).toBe(`Syncing · 2 devices · last synced ${new Date("2026-09-22T10:00:00Z").toLocaleString()}`);
@@ -418,17 +480,17 @@ describe("describeTransportHealth", () => {
     expect(describeTransportHealth({ ...folder, pending: 3 }).label).toBe("Uploading 3 changes");
     expect(describeTransportHealth({ ...folder, failed: 1, lastError: "disk full" })).toEqual({ tone: "attention", label: "1 change couldn’t be uploaded", detail: "disk full" });
     expect(describeTransportHealth({ ...folder, health: "degraded: recent transient failures" })).toEqual({ tone: "attention", label: "Having trouble, retrying automatically", detail: "recent transient failures" });
-    expect(describeTransportHealth({ ...folder, health: "unavailable: folder missing: /x" })).toEqual({ tone: "attention", label: "Can’t reach this location", detail: "folder missing: /x" });
+    expect(describeTransportHealth({ ...folder, health: "unavailable: folder missing: /x" })).toEqual({ tone: "attention", label: "Can’t reach this connector", detail: "folder missing: /x" });
     expect(describeTransportHealth({ ...folder, health: "unavailable: not configured" }).label).toMatch(/Not set up correctly/);
     expect(describeTransportHealth({ ...folder, health: "mystery" })).toEqual({ tone: "attention", label: "Status unknown", detail: "mystery" });
   });
 
-  it("shows the plain label on the location card instead of the raw status", async () => {
+  it("shows the plain label on the connector card instead of the raw status", async () => {
     setUp({ status: { state: "enrolled", deviceCount: 1 }, transports: [{ ...folder, health: "unavailable: folder missing" }] });
     render(<ReplicatedSyncSettings />);
 
-    const locations = await screen.findByRole("list", { name: "Sync locations" });
-    expect(within(locations).getByText("Can’t reach this location")).toBeInTheDocument();
+    const locations = await screen.findByRole("list", { name: "Connectors" });
+    expect(within(locations).getByText("Can’t reach this connector")).toBeInTheDocument();
     expect(within(locations).getByText("folder missing")).toBeInTheDocument();
     expect(within(locations).queryByText(/unavailable:/)).not.toBeInTheDocument();
   });
@@ -457,7 +519,7 @@ describe("recovery phrase entry", () => {
     vi.mocked(sync.replicatedSyncJoinWithRecoveryPhrase).mockResolvedValue(undefined);
     render(<ReplicatedSyncSettings />);
 
-    const input = await screen.findByRole("textbox", { name: "Or join with a recovery phrase" });
+    const input = await screen.findByRole("textbox", { name: "Enter the recovery phrase" });
     const join = screen.getByRole("button", { name: "Join with recovery phrase" });
     fireEvent.change(input, { target: { value: "abandon typo " } });
     expect(await screen.findByText(/Word 2 isn’t a recovery phrase word/)).toBeInTheDocument();
@@ -473,12 +535,13 @@ describe("recovery phrase entry", () => {
 });
 
 describe("inline status messages", () => {
-  it("shows a cancelled folder picker next to the add-folder button", async () => {
+  it("shows a cancelled folder picker next to the choose-folder button", async () => {
     setUp({ transports: [] });
     vi.mocked(sync.replicatedSyncAddFolder).mockResolvedValue(null);
     render(<ReplicatedSyncSettings />);
 
-    const add = await screen.findByRole("button", { name: "Add a sync folder" });
+    fireEvent.click(await screen.findByRole("button", { name: /^Shared folder/ }));
+    const add = screen.getByRole("button", { name: "Choose folder…" });
     fireEvent.click(add);
     const message = await screen.findByText("No folder selected.");
     expect(add.nextElementSibling).toBe(message);
@@ -489,28 +552,28 @@ describe("inline status messages", () => {
     vi.mocked(sync.replicatedSyncRequestEnrollment).mockRejectedValue("No location accepted the request.");
     render(<ReplicatedSyncSettings />);
 
-    const request = await screen.findByRole("button", { name: "Request to join from an existing device" });
+    const request = await screen.findByRole("button", { name: "Ask another device to approve this one" });
     fireEvent.click(request);
     const message = await screen.findByText("No location accepted the request.");
     expect(request.nextElementSibling).toBe(message);
   });
 });
 
-describe("leaving the sync space", () => {
+describe("leaving the sync group", () => {
   it("leaves from Advanced only after confirmation", async () => {
     setUp({ status: { state: "enrolled", deviceCount: 2 } });
     vi.mocked(sync.replicatedSyncLeave).mockResolvedValue(undefined);
     render(<ReplicatedSyncSettings />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Leave this sync space…" }));
-    const confirm = screen.getByRole("group", { name: "Leave this sync space?" });
+    fireEvent.click(await screen.findByRole("button", { name: "Leave this sync group…" }));
+    const confirm = screen.getByRole("group", { name: "Leave this sync group?" });
     expect(confirm).toHaveTextContent(/data stay on this device/);
     expect(confirm).toHaveTextContent(/until you revoke it from one of them/);
     fireEvent.click(within(confirm).getByRole("button", { name: "Keep" }));
     expect(sync.replicatedSyncLeave).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Leave this sync space…" }));
-    fireEvent.click(screen.getByRole("button", { name: "Leave sync space" }));
+    fireEvent.click(screen.getByRole("button", { name: "Leave this sync group…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Leave sync group" }));
     await waitFor(() => expect(sync.replicatedSyncLeave).toHaveBeenCalledTimes(1));
   });
 
