@@ -143,7 +143,7 @@ export function CommandPalette({
         {visible.map((command) => (
           <button key={command.id} disabled={!command.enabled(context)} onClick={() => { execute(command); onClose(); }}>
             <span><small>{command.group}</small>{command.title}</span>
-            <span>{command.keys.map((key) => <kbd key={key}>{key}</kbd>)}</span>
+            <span>{command.keys.map((key) => <ShortcutKeys key={key} shortcut={key} />)}</span>
           </button>
         ))}
       </div>
@@ -177,8 +177,13 @@ export function ShortcutHelp({ extraCommands = [], onClose }: { extraCommands?: 
   );
 }
 
+/** Splits on "+" separators only, so a literal plus key ("Mod++") survives as its own part. */
+function formatShortcutStep(step: string): string {
+  return step.split(/\+(?=.)/).map((part) => (part === "Mod" ? "⌘/Ctrl" : part)).join(" + ");
+}
+
 function ShortcutKeys({ shortcut }: { shortcut: string }) {
-  return <span className="shortcut-keys">{shortcutSteps(shortcut).map((step, index) => <span key={step}>{index > 0 ? <small>then</small> : null}<kbd>{step.replace("Mod", "⌘/Ctrl").replaceAll("+", " + ")}</kbd></span>)}</span>;
+  return <span className="shortcut-keys">{shortcutSteps(shortcut).map((step, index) => <span key={step}>{index > 0 ? <small>then</small> : null}<kbd>{formatShortcutStep(step)}</kbd></span>)}</span>;
 }
 
 export function Modal({

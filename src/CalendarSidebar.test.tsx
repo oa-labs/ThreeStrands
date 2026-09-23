@@ -417,7 +417,8 @@ describe("calendar sidebar", () => {
   it("includes the T shortcut in keyboard help", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "Keyboard Shortcuts (?)" }));
+    expect(screen.queryByRole("button", { name: /Keyboard Shortcuts/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "?" });
 
     const dialog = await screen.findByRole("dialog", { name: "Keyboard Shortcuts" });
     expect(dialog).toHaveTextContent("Toggle Today’s Schedule");

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandContext } from "./commands";
@@ -50,6 +50,28 @@ describe("App chrome", () => {
     fireEvent.click(newMessage);
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "draft.new" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows readable shortcut keys in the command palette", () => {
+    render(<CommandPalette context={context} execute={vi.fn()} onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "Filter Commands" });
+
+    fireEvent.change(input, { target: { value: "command palette" } });
+    const palette = screen.getByRole("button", { name: /Command Palette/ });
+    expect(within(palette).getByText("⌘/Ctrl + k").tagName).toBe("KBD");
+    expect(palette).not.toHaveTextContent("Mod");
+
+    fireEvent.change(input, { target: { value: "go to inbox" } });
+    const inbox = screen.getByRole("button", { name: /Go to Inbox/ });
+    expect(within(inbox).getByText("g").tagName).toBe("KBD");
+    expect(within(inbox).getByText("then").tagName).toBe("SMALL");
+    expect(within(inbox).getByText("i").tagName).toBe("KBD");
+
+    fireEvent.change(input, { target: { value: "font size" } });
+    const increase = screen.getByRole("button", { name: /Increase Font Size/ });
+    expect(within(increase).getByText("⌘/Ctrl + =")).toBeInTheDocument();
+    expect(within(increase).getByText("⌘/Ctrl + +")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: /Decrease Font Size/ })).getByText("⌘/Ctrl + -")).toBeInTheDocument();
   });
 
   it("renders shortcut help and reusable action buttons", () => {

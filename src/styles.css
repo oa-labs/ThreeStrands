@@ -1569,8 +1569,8 @@ div.message-body-plain { color: var(--body-text); font-size: calc(15px * var(--f
 .command-list button:hover { background: var(--hover); }
 .command-list button:disabled { opacity: .4; }
 .command-list button > span:first-child { display: flex; flex-direction: column; gap: 2px; }
-.command-list small { color: var(--muted); font-size: calc(9px * var(--font-scale)); text-transform: uppercase; letter-spacing: .08em; }
-.command-list kbd { margin-left: 4px; }
+.command-list button > span:first-child small { color: var(--muted); font-size: calc(9px * var(--font-scale)); text-transform: uppercase; letter-spacing: .08em; }
+.command-list .shortcut-keys { margin-left: 6px; }
 .shortcut-help-modal { width: min(720px, calc(100vw - 40px)); overflow-y: auto; }
 .shortcut-help-intro { margin: 0; padding: 2px 17px 14px; color: var(--muted); font-size: calc(13px * var(--font-scale)); }
 .shortcut-help-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 28px; padding: 4px 17px 22px; }

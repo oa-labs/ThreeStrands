@@ -98,7 +98,7 @@ test("Superhuman formatting shortcuts edit rich compose content and appear in he
   await expect(body.locator("blockquote")).toHaveText("Quoted");
 
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
-  await page.getByRole("button", { name: "Keyboard Shortcuts (?)" }).click();
+  await page.keyboard.press("Shift+/");
   const help = page.getByRole("dialog", { name: "Keyboard Shortcuts" });
   await expect(help.getByText("Bold", { exact: true })).toBeVisible();
   await expect(help.getByText("Hyperlink", { exact: true })).toBeVisible();

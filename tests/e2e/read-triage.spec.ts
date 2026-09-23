@@ -80,9 +80,9 @@ test("searches and opens the command palette", async ({ page }) => {
   await page.keyboard.press("ControlOrMeta+k");
   const palette = page.getByRole("dialog", { name: "Command Palette" });
   await expect(palette).toBeVisible();
-  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText("Mod+=");
-  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText("Mod++");
-  await expect(palette.getByRole("button", { name: /Decrease Font Size/ })).toContainText("Mod+-");
+  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText("⌘/Ctrl + =");
+  await expect(palette.getByRole("button", { name: /Increase Font Size/ })).toContainText("⌘/Ctrl + +");
+  await expect(palette.getByRole("button", { name: /Decrease Font Size/ })).toContainText("⌘/Ctrl + -");
 });
 
 test("dismisses search with Escape", async ({ page }) => {
@@ -140,7 +140,13 @@ test("shows and dismisses dedicated keyboard shortcut help", async ({ page }) =>
   await expect(search).toHaveValue("?");
   await expect(help).not.toBeVisible();
 
-  await page.getByRole("button", { name: "Keyboard Shortcuts (?)" }).click();
+  // The sidebar has no dedicated button; the palette entry is the discoverable path.
+  await expect(page.getByRole("button", { name: /Keyboard Shortcuts/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Command Palette" }).click();
+  const palette = page.getByRole("dialog", { name: "Command Palette" });
+  await palette.getByRole("textbox", { name: "Filter Commands" }).fill("keyboard");
+  await palette.getByRole("button", { name: /Keyboard Shortcuts/ }).click();
+  await expect(palette).not.toBeVisible();
   await expect(help).toBeVisible();
   await page.locator(".modal-backdrop").click({ position: { x: 5, y: 5 } });
   await expect(help).not.toBeVisible();

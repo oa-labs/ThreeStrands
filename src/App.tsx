@@ -15,7 +15,6 @@ import {
   ReplyAll,
   Forward,
   Inbox,
-  Keyboard,
   Mail,
   Mails,
   MailOpen,
@@ -1886,14 +1885,6 @@ export function App() {
             onClick={toggleTheme}
           >
             {effectiveThemeValue === "dark" ? <Sun size={19} /> : <Moon size={19} />}
-          </button>
-          <button
-            className="nav-button"
-            aria-label="Keyboard Shortcuts (?)"
-            title="Keyboard shortcuts (?)"
-            onClick={() => executeById("shortcuts.open")}
-          >
-            <Keyboard size={19} />
           </button>
           <button
             className="nav-button"
