@@ -62,13 +62,29 @@ export const Composer = forwardRef<ComposerHandle, {
   const savedSnippetRange = useRef<Range | null>(null);
   const panel = useRef<HTMLDivElement>(null);
   const bodyEditor = useRef<HTMLDivElement>(null);
+  const bodyDirty = useRef(false);
   const pendingRecipientFocus = useRef<"cc" | "bcc" | null>(null);
   const initialBodyHtml = useRef(sanitizeComposeHtml(initial.bodyHtml || plainTextToHtml(initial.body)));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
 
+  const captureBody = useCallback(() => {
+    const editor = bodyEditor.current;
+    if (!bodyDirty.current || !editor) return;
+    const html = serializeComposeHtml(editor);
+    const textOnly = editor.cloneNode(true) as HTMLElement;
+    textOnly.querySelectorAll("[data-compose-image-remove], [data-compose-image-resize]").forEach((control) => control.remove());
+    latest.current = {
+      ...latest.current,
+      body: textOnly.innerText ?? textOnly.textContent ?? "",
+      bodyHtml: html,
+    };
+    bodyDirty.current = false;
+  }, []);
+
   const flush = useCallback(function flush(): Promise<Draft> {
     if (timer.current) clearTimeout(timer.current);
+    captureBody();
     if (pending.current) return pending.current.then(() => generation.current === savedGeneration.current ? latest.current : flush());
     if (generation.current === savedGeneration.current) return Promise.resolve(latest.current);
     const version = generation.current;
@@ -85,24 +101,20 @@ export const Composer = forwardRef<ComposerHandle, {
     }).finally(() => { pending.current = null; });
     pending.current = saving;
     return saving.then(() => generation.current === savedGeneration.current ? latest.current : flush());
-  }, []);
+  }, [captureBody]);
   function edit(field: "to" | "cc" | "bcc" | "subject" | "body", value: string) {
     latest.current = { ...latest.current, [field]: value }; generation.current++;
     setDraft(latest.current); setStatus("Unsaved changes");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, 300);
   }
-  const editBody = useCallback((editor: HTMLElement) => {
-    const html = serializeComposeHtml(editor);
-    const textOnly = editor.cloneNode(true) as HTMLElement;
-    textOnly.querySelectorAll("[data-compose-image-remove], [data-compose-image-resize]").forEach((control) => control.remove());
-    latest.current = {
-      ...latest.current,
-      body: textOnly.innerText,
-      bodyHtml: html,
-    };
+  const editBody = useCallback(() => {
+    // Keep the browser-owned contenteditable DOM off React's render path.
+    // Cloning and sanitizing a long reply on every input made typing cost grow
+    // with the entire quoted thread; capture it only at an autosave boundary.
+    bodyDirty.current = true;
     generation.current++;
-    setDraft(latest.current); setStatus("Unsaved changes");
+    setStatus("Unsaved changes");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, 300);
   }, [flush]);
@@ -155,6 +167,7 @@ export const Composer = forwardRef<ComposerHandle, {
   }
   async function generateReply(confirmed = false) {
     if (!replyAssistContext || !bodyEditor.current) return;
+    captureBody();
     if (replyBodyHasAuthoredContent(latest.current.body) && !confirmed) {
       setConfirmAddToExisting(true);
       return;
@@ -177,7 +190,7 @@ export const Composer = forwardRef<ComposerHandle, {
       // the final defense before the draft is persisted.
       const generatedHtml = sanitizeComposeHtml(plainTextToHtml(`${result.body.trim()}\n\n`));
       bodyEditor.current.insertAdjacentHTML("afterbegin", generatedHtml);
-      editBody(bodyEditor.current);
+      editBody();
       setReplyAssistOpen(false);
       setReplyInstruction("");
     } catch (reason) {
@@ -252,9 +265,9 @@ export const Composer = forwardRef<ComposerHandle, {
           const available = bodyEditor.current?.clientWidth ?? image.naturalWidth;
           const width = Math.max(80, Math.min(image.naturalWidth, available));
           if (width) { image.setAttribute("width", String(Math.round(width))); wrapper.style.width = `${Math.round(width)}px`; }
-          editBody(bodyEditor.current!);
+          editBody();
         };
-        editBody(bodyEditor.current);
+        editBody();
       });
     };
     reader.readAsDataURL(file);
@@ -308,7 +321,7 @@ export const Composer = forwardRef<ComposerHandle, {
       "afterbegin",
       sanitizeComposeHtml(plainTextToHtml(`${availabilityText}\n\n`)),
     );
-    editBody(bodyEditor.current);
+    editBody();
   }, [availabilityText, editBody]);
   useEffect(() => {
     if (!["reply", "replyAll"].includes(initial.mode)) return;
@@ -370,7 +383,7 @@ export const Composer = forwardRef<ComposerHandle, {
           suppressContentEditableWarning
           data-placeholder="Write your message…"
           dangerouslySetInnerHTML={{ __html: initialBodyHtml.current }}
-          onInput={(event) => editBody(event.currentTarget)}
+          onInput={editBody}
           onPaste={(event) => {
             const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
             if (images.length) {
@@ -389,7 +402,7 @@ export const Composer = forwardRef<ComposerHandle, {
             const wrapper = remove.closest<HTMLElement>("[data-compose-image]");
             const attachmentId = wrapper?.dataset.attachmentId;
             wrapper?.remove();
-            editBody(event.currentTarget);
+            editBody();
             event.currentTarget.focus();
             if (attachmentId) void run(async () => {
               await flush();
@@ -416,7 +429,7 @@ export const Composer = forwardRef<ComposerHandle, {
             const finish = () => {
               window.removeEventListener("pointermove", move);
               window.removeEventListener("pointerup", finish);
-              editBody(editor);
+              editBody();
             };
             window.addEventListener("pointermove", move);
             window.addEventListener("pointerup", finish, { once: true });
@@ -439,7 +452,7 @@ export const Composer = forwardRef<ComposerHandle, {
               wrapper.style.width = `${width}px`;
               image.setAttribute("width", String(width));
               resize.setAttribute("aria-valuenow", String(width));
-              editBody(event.currentTarget);
+              editBody();
               event.preventDefault();
               event.stopPropagation();
               return;
@@ -447,7 +460,7 @@ export const Composer = forwardRef<ComposerHandle, {
             if (!event.nativeEvent.isComposing && event.key === " " && applyAsteriskListShortcut(event.currentTarget)) {
               event.preventDefault();
               event.stopPropagation();
-              editBody(event.currentTarget);
+              editBody();
               return;
             }
             const shortcut = formattingShortcutFor(event.nativeEvent);
@@ -455,7 +468,7 @@ export const Composer = forwardRef<ComposerHandle, {
             if (applyFormattingShortcut(event.currentTarget, shortcut)) {
               event.preventDefault();
               event.stopPropagation();
-              editBody(event.currentTarget);
+              editBody();
             }
           }}
         />
@@ -549,7 +562,7 @@ export const Composer = forwardRef<ComposerHandle, {
             }
             const rendered = renderSnippetBody(snippet.body, { firstName: firstNameFromRecipient(draft.to) });
             insertHtmlAtRange(editor, range, rendered);
-            editBody(editor);
+            editBody();
           }}
           onCreate={onCreateSnippet}
           onUpdate={onUpdateSnippet}

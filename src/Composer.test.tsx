@@ -141,6 +141,57 @@ describe("Composer asterisk list shortcut", () => {
   });
 });
 
+describe("Composer body input responsiveness", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("defers cloning and sanitizing the message body until the autosave boundary", async () => {
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    const cloneNode = vi.spyOn(editor, "cloneNode");
+
+    for (const text of ["A", "A longer", "A longer message"]) {
+      editor.innerHTML = text;
+      fireEvent.input(editor);
+    }
+
+    expect(cloneNode).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(cloneNode).toHaveBeenCalled();
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      body: "A longer message",
+      bodyHtml: "A longer message",
+    }));
+  });
+
+  it("captures the latest body immediately when a send or close flushes the draft", async () => {
+    const ref = createRef<ComposerHandle>();
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    render(<Composer ref={ref} draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+
+    editor.innerHTML = "<strong>Send this text</strong>";
+    fireEvent.input(editor);
+    await ref.current?.flush();
+
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Send this text",
+      bodyHtml: "<strong>Send this text</strong>",
+    }));
+  });
+});
+
 describe("Composer pasted images", () => {
   afterEach(() => {
     cleanup();
