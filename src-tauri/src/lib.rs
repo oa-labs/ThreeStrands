@@ -8,6 +8,7 @@ mod calendar;
 mod correspondence;
 mod credentials;
 mod db;
+mod endpoint_origin;
 mod enrollment;
 mod error_text;
 mod image_format;
@@ -19,6 +20,7 @@ mod models;
 mod net_safety;
 mod provider;
 mod replicated_sync;
+mod s3_transport;
 mod schema;
 mod sync;
 mod sync_folder;
@@ -1275,10 +1277,20 @@ async fn replicated_sync_remove_transport(
             .into_iter()
             .find(|row| row.instance_id == instance_id)
         {
-            if let Some(path) = replicated_sync::folder_config_path(&row.config_json) {
-                if let Ok(transport) = sync_folder::SyncFolderTransport::open(&instance_id, &path).await {
-                    transport.delete_all_corpus_data().await.map_err(|error| error.to_string())?;
+            match row.kind.as_str() {
+                "folder" => {
+                    if let Some(path) = replicated_sync::folder_config_path(&row.config_json) {
+                        if let Ok(transport) = sync_folder::SyncFolderTransport::open(&instance_id, &path).await {
+                            transport.delete_all_corpus_data().await.map_err(|error| error.to_string())?;
+                        }
+                    }
                 }
+                "s3" => {
+                    if let Some(transport) = replicated_sync::open_s3_transport(&row) {
+                        transport.delete_all_corpus_data().await.map_err(|error| error.to_string())?;
+                    }
+                }
+                _ => {}
             }
         }
     }

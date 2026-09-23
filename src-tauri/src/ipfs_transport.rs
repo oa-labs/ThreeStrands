@@ -35,84 +35,18 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ================================ URL handling ===============================
 
-/// A validated, normalized RPC origin: scheme + host + optional port +
-/// optional fixed path prefix. Never carries user-info, a query string, or
-/// a fragment — every real request path is appended structurally by this
-/// crate, never by string-splicing a caller-supplied URL.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct RpcOrigin {
-    scheme: &'static str,
-    host: String,
-    port: Option<u16>,
-    path_prefix: String,
+use crate::endpoint_origin::EndpointOrigin as RpcOrigin;
+
+fn parse_rpc_origin(input: &str) -> Result<RpcOrigin, String> {
+    RpcOrigin::parse(input, "RPC URL")
 }
 
-impl RpcOrigin {
-    fn parse(input: &str) -> Result<Self, String> {
-        let url =
-            url::Url::parse(input.trim()).map_err(|error| format!("Invalid RPC URL: {error}"))?;
-        let scheme = match url.scheme() {
-            "https" => "https",
-            "http" => "http",
-            other => return Err(format!("RPC URL must use http or https, not {other}")),
-        };
-        if !url.username().is_empty() || url.password().is_some() {
-            return Err("RPC URL must not contain user-info".to_string());
-        }
-        if url.query().is_some() {
-            return Err("RPC URL must not contain a query string".to_string());
-        }
-        if url.fragment().is_some() {
-            return Err("RPC URL must not contain a fragment".to_string());
-        }
-        let host = url
-            .host_str()
-            .ok_or("RPC URL must have a host")?
-            .to_string();
-        let loopback = is_loopback_host(&host);
-        if scheme == "http" && !loopback {
-            return Err("Non-loopback RPC endpoints must use HTTPS".to_string());
-        }
-        let mut path_prefix = url.path().trim_end_matches('/').to_string();
-        if path_prefix == "/" {
-            path_prefix.clear();
-        }
-        Ok(Self {
-            scheme,
-            host,
-            port: url.port(),
-            path_prefix,
-        })
-    }
-
-    /// Builds the exact URL for one RPC method. `method` is always a fixed
-    /// string literal at the call site, never derived from user input, so
-    /// this can never be used to smuggle a differently interpreted path or
-    /// change the credential origin.
-    fn method_url(&self, method: &str) -> String {
-        let port = self.port.map(|port| format!(":{port}")).unwrap_or_default();
-        format!(
-            "{}://{}{}{}/api/v0/{method}",
-            self.scheme, self.host, port, self.path_prefix
-        )
-    }
-}
-
-fn is_loopback_host(host: &str) -> bool {
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    // `Url::host_str` returns a bracketed literal for IPv6 (`"[::1]"`),
-    // since that's the form a URL authority requires; strip the brackets
-    // before parsing it as an address.
-    let unbracketed = host
-        .strip_prefix('[')
-        .and_then(|host| host.strip_suffix(']'))
-        .unwrap_or(host);
-    unbracketed
-        .parse::<std::net::IpAddr>()
-        .map(|ip| ip.is_loopback())
-        .unwrap_or(false)
+/// Builds the exact URL for one RPC method. `method` is always a fixed
+/// string literal at the call site, never derived from user input, so
+/// this can never be used to smuggle a differently interpreted path or
+/// change the credential origin.
+fn method_url(origin: &RpcOrigin, method: &str) -> String {
+    format!("{}/api/v0/{method}", origin.base_url())
 }
 
 // ============================== Kubo error shapes ============================
@@ -202,7 +136,7 @@ impl IpfsRpcTransport {
         token: Option<String>,
         sync_space_id: &[u8],
     ) -> Result<Self, TransportError> {
-        let origin = RpcOrigin::parse(base_url).map_err(TransportError::Permanent)?;
+        let origin = parse_rpc_origin(base_url).map_err(TransportError::Permanent)?;
         let client = reqwest::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
@@ -234,7 +168,7 @@ impl IpfsRpcTransport {
         })?;
         // Keeps the token out of any Debug-formatted request/header dump —
         // the other half of "redact all credentials from diagnostics" is
-        // simply never putting it in a URL (see `RpcOrigin`/`method_url`).
+        // simply never putting it in a URL (see `parse_rpc_origin`/`method_url`).
         value.set_sensitive(true);
         Ok(Some(value))
     }
@@ -244,7 +178,7 @@ impl IpfsRpcTransport {
         method: &str,
         query: &[(&str, &str)],
     ) -> Result<reqwest::Response, TransportError> {
-        let mut url = reqwest::Url::parse(&self.origin.method_url(method))
+        let mut url = reqwest::Url::parse(&method_url(&self.origin, method))
             .map_err(|error| TransportError::Permanent(error.to_string()))?;
         {
             let mut pairs = url.query_pairs_mut();
@@ -272,7 +206,7 @@ impl IpfsRpcTransport {
         query: &[(&str, &str)],
         form: reqwest::multipart::Form,
     ) -> Result<reqwest::Response, TransportError> {
-        let mut url = reqwest::Url::parse(&self.origin.method_url(method))
+        let mut url = reqwest::Url::parse(&method_url(&self.origin, method))
             .map_err(|error| TransportError::Permanent(error.to_string()))?;
         {
             let mut pairs = url.query_pairs_mut();
@@ -581,80 +515,80 @@ mod url_tests {
 
     #[test]
     fn accepts_a_plain_https_origin() {
-        let origin = RpcOrigin::parse("https://rpc.filebase.io").unwrap();
+        let origin = parse_rpc_origin("https://rpc.filebase.io").unwrap();
         assert_eq!(origin.scheme, "https");
         assert_eq!(origin.host, "rpc.filebase.io");
         assert_eq!(origin.port, None);
         assert_eq!(origin.path_prefix, "");
         assert_eq!(
-            origin.method_url("version"),
+            method_url(&origin, "version"),
             "https://rpc.filebase.io/api/v0/version"
         );
     }
 
     #[test]
     fn keeps_a_path_prefix_and_strips_a_trailing_slash() {
-        let origin = RpcOrigin::parse("https://example.com/ipfs-gateway/").unwrap();
+        let origin = parse_rpc_origin("https://example.com/ipfs-gateway/").unwrap();
         assert_eq!(origin.path_prefix, "/ipfs-gateway");
         assert_eq!(
-            origin.method_url("version"),
+            method_url(&origin, "version"),
             "https://example.com/ipfs-gateway/api/v0/version"
         );
     }
 
     #[test]
     fn rejects_user_info() {
-        assert!(RpcOrigin::parse("https://user:pass@rpc.filebase.io").is_err());
+        assert!(parse_rpc_origin("https://user:pass@rpc.filebase.io").is_err());
     }
 
     #[test]
     fn rejects_a_query_string() {
-        assert!(RpcOrigin::parse("https://rpc.filebase.io/?token=abc").is_err());
+        assert!(parse_rpc_origin("https://rpc.filebase.io/?token=abc").is_err());
     }
 
     #[test]
     fn rejects_a_fragment() {
-        assert!(RpcOrigin::parse("https://rpc.filebase.io/#section").is_err());
+        assert!(parse_rpc_origin("https://rpc.filebase.io/#section").is_err());
     }
 
     #[test]
     fn rejects_non_loopback_http() {
-        assert!(RpcOrigin::parse("http://rpc.filebase.io").is_err());
+        assert!(parse_rpc_origin("http://rpc.filebase.io").is_err());
     }
 
     #[test]
     fn allows_http_only_for_ipv4_loopback() {
-        let origin = RpcOrigin::parse("http://127.0.0.1:5001").unwrap();
+        let origin = parse_rpc_origin("http://127.0.0.1:5001").unwrap();
         assert_eq!(origin.host, "127.0.0.1");
         assert_eq!(origin.port, Some(5001));
     }
 
     #[test]
     fn allows_http_for_ipv6_loopback() {
-        let origin = RpcOrigin::parse("http://[::1]:5001").unwrap();
+        let origin = parse_rpc_origin("http://[::1]:5001").unwrap();
         // `Url::host_str` keeps the bracketed form for IPv6, which is also
         // exactly what a valid URL authority requires when rebuilding a
         // request URL, so that's what's retained here.
         assert_eq!(origin.host, "[::1]");
         assert_eq!(
-            origin.method_url("version"),
+            method_url(&origin, "version"),
             "http://[::1]:5001/api/v0/version"
         );
     }
 
     #[test]
     fn allows_http_for_the_localhost_name() {
-        assert!(RpcOrigin::parse("http://localhost:5001").is_ok());
+        assert!(parse_rpc_origin("http://localhost:5001").is_ok());
     }
 
     #[test]
     fn rejects_http_for_a_non_loopback_ip_literal() {
-        assert!(RpcOrigin::parse("http://192.168.1.5:5001").is_err());
+        assert!(parse_rpc_origin("http://192.168.1.5:5001").is_err());
     }
 
     #[test]
     fn rejects_an_unsupported_scheme() {
-        assert!(RpcOrigin::parse("ftp://rpc.filebase.io").is_err());
+        assert!(parse_rpc_origin("ftp://rpc.filebase.io").is_err());
     }
 
     #[test]
@@ -662,14 +596,14 @@ mod url_tests {
         // "münchen.example" in its ASCII (punycode) form — the `url` crate
         // performs IDNA normalization, so this must not error and must
         // produce a consistent, ASCII-only host.
-        let origin = RpcOrigin::parse("https://xn--mnchen-3ya.example").unwrap();
+        let origin = parse_rpc_origin("https://xn--mnchen-3ya.example").unwrap();
         assert_eq!(origin.host, "xn--mnchen-3ya.example");
     }
 
     #[test]
     fn rejects_garbage_input() {
-        assert!(RpcOrigin::parse("not a url").is_err());
-        assert!(RpcOrigin::parse("").is_err());
+        assert!(parse_rpc_origin("not a url").is_err());
+        assert!(parse_rpc_origin("").is_err());
     }
 
     #[test]

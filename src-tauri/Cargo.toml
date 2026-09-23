@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.26.11"
+version = "0.27.0"
 description = "A local-first, keyboard-driven email client"
 authors = ["ThreeStrands contributors"]
 edition = "2021"
@@ -25,16 +25,21 @@ fontdb = "0.24"
 imagesize = "0.13"
 gethostname = "1.1"
 iroh-car = "0.5"
+jiff = "0.2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 log = "0.4"
 mail-builder = "0.5"
 mail-parser = "0.11"
+md-5 = "0.10"
 open = "5"
 percent-encoding = "2.3.2"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 rfd = "0.15"
 rusqlite = { version = "0.32", features = ["bundled"] }
+# Sans-IO SigV4 presigning and ListObjectsV2 parsing for the S3 sync
+# connector; requests go over the app's own `reqwest` client.
+rusty-s3 = { version = "0.10", default-features = false, features = ["rustcrypto", "xml"] }
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 serde_json = "1"

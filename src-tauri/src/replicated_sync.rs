@@ -1777,8 +1777,41 @@ impl Database {
         Ok(())
     }
 
+    /// Persists (or reconfigures) an S3-compatible storage transport
+    /// instance. The config is validated by building a transport from it
+    /// before anything is written. Only the non-secret [`S3Config`] goes to
+    /// `sync_transports`; the access key, secret, and any session token go
+    /// to the OS keychain under this instance's id, never into SQLite.
+    // Reached from Settings once the connector commands land.
+    #[allow(dead_code)]
+    pub fn add_s3_transport(
+        &self,
+        instance_id: &str,
+        config: &crate::s3_transport::S3Config,
+        credentials: &crate::s3_transport::S3Credentials,
+    ) -> Result<(), String> {
+        crate::s3_transport::S3Transport::new(instance_id, config, credentials).map_err(|error| error.to_string())?;
+        self.persist_s3_transport_config(instance_id, config)?;
+        store_s3_credentials(instance_id, credentials)
+    }
+
+    /// The SQLite half of [`Self::add_s3_transport`], separate so tests can
+    /// exercise it without writing to the OS keychain.
+    fn persist_s3_transport_config(&self, instance_id: &str, config: &crate::s3_transport::S3Config) -> Result<(), String> {
+        let config = serde_json::to_string(config).map_err(display)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'s3',?2,1,1)
+                 ON CONFLICT(instance_id) DO UPDATE SET config_json=excluded.config_json, enabled=1",
+                params![instance_id, config],
+            )?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     /// Forgets a configured transport instance, its delivery ledger rows,
-    /// and (if it was an IPFS RPC instance) its keychain token. Does not
+    /// and (for an IPFS RPC or S3 instance) its keychain secret. Does not
     /// touch the remote corpus itself — the caller deletes that first
     /// (through the live transport) if the user asked for that.
     pub fn remove_transport(&self, instance_id: &str) -> Result<(), String> {
@@ -1787,7 +1820,8 @@ impl Database {
             connection.execute("DELETE FROM sync_deliveries WHERE transport_instance_id=?1", params![instance_id])?;
             Ok(())
         })?;
-        delete_ipfs_rpc_token(instance_id)
+        delete_ipfs_rpc_token(instance_id)?;
+        delete_s3_credentials(instance_id)
     }
 
     fn set_transport_success(&self, instance_id: &str) -> DbResult<()> {
@@ -1847,6 +1881,47 @@ fn delete_ipfs_rpc_token(instance_id: &str) -> Result<(), String> {
     }
 }
 
+/// Parses a `kind='s3'` row's `config_json`.
+pub(crate) fn s3_config(config_json: &str) -> Option<crate::s3_transport::S3Config> {
+    serde_json::from_str(config_json).ok()
+}
+
+const S3_CREDENTIALS_KEYCHAIN_SERVICE: &str = "app.threestrands.replicated-sync.s3";
+
+fn store_s3_credentials(instance_id: &str, credentials: &crate::s3_transport::S3Credentials) -> Result<(), String> {
+    let secret = serde_json::to_string(credentials).map_err(display)?;
+    Entry::new(S3_CREDENTIALS_KEYCHAIN_SERVICE, instance_id)
+        .map_err(display)?
+        .set_password(&secret)
+        .map_err(display)
+}
+
+fn load_s3_credentials(instance_id: &str) -> Result<Option<crate::s3_transport::S3Credentials>, String> {
+    match Entry::new(S3_CREDENTIALS_KEYCHAIN_SERVICE, instance_id).map_err(display)?.get_password() {
+        // A malformed keychain value is reported without echoing it.
+        Ok(secret) => serde_json::from_str(&secret)
+            .map(Some)
+            .map_err(|_| "The stored S3 credentials are unreadable; replace them in Settings".to_string()),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(display(error)),
+    }
+}
+
+fn delete_s3_credentials(instance_id: &str) -> Result<(), String> {
+    match Entry::new(S3_CREDENTIALS_KEYCHAIN_SERVICE, instance_id).map_err(display)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(display(error)),
+    }
+}
+
+/// Opens the live S3 transport for one configured row, loading its
+/// credentials from the keychain.
+pub(crate) fn open_s3_transport(row: &ConfiguredTransport) -> Option<crate::s3_transport::S3Transport> {
+    let config = s3_config(&row.config_json)?;
+    let credentials = load_s3_credentials(&row.instance_id).ok().flatten()?;
+    crate::s3_transport::S3Transport::new(&row.instance_id, &config, &credentials).ok()
+}
+
 /// Builds the live transport for one configured row, or `None` if it's
 /// disabled, misconfigured, or of an unknown kind.
 async fn build_transport_from_row(row: &ConfiguredTransport) -> Option<Arc<dyn SyncTransport>> {
@@ -1866,6 +1941,7 @@ async fn build_transport_from_row(row: &ConfiguredTransport) -> Option<Arc<dyn S
                 crate::ipfs_transport::IpfsRpcTransport::new(&row.instance_id, &base_url, token, SPACE_ID.as_bytes()).ok()?;
             Some(Arc::new(transport))
         }
+        "s3" => Some(Arc::new(open_s3_transport(row)?)),
         _ => None,
     }
 }
@@ -1897,9 +1973,10 @@ const SYNC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 #[serde(rename_all = "camelCase")]
 pub struct ReplicatedSyncTransportStatus {
     pub instance_id: String,
-    /// `"folder"` or `"ipfs_rpc"`.
+    /// `"folder"`, `"ipfs_rpc"`, or `"s3"`.
     pub kind: String,
-    /// A folder's path, or an RPC endpoint's base URL — never a credential.
+    /// A folder's path, an RPC endpoint's base URL, or an S3 endpoint with
+    /// its bucket and prefix — never a credential.
     pub location: String,
     pub health: String,
     /// Whether this instance can currently discover other devices'
@@ -1942,6 +2019,7 @@ impl ReplicatedSync {
             let location = match row.kind.as_str() {
                 "folder" => folder_config_path(&row.config_json).map(|path| path.display().to_string()),
                 "ipfs_rpc" => ipfs_config_base_url(&row.config_json),
+                "s3" => s3_config(&row.config_json).map(|config| config.display_location()),
                 _ => None,
             }
             .unwrap_or_default();
@@ -1962,6 +2040,11 @@ impl ReplicatedSync {
                         if let Ok(folder) = crate::sync_folder::SyncFolderTransport::open(&row.instance_id, &path).await {
                             storage_bytes = folder.corpus_size_bytes().await.ok();
                         }
+                    }
+                }
+                if row.kind == "s3" {
+                    if let Some(s3) = open_s3_transport(&row) {
+                        storage_bytes = s3.corpus_size_bytes().await.ok();
                     }
                 }
             }
@@ -2789,6 +2872,80 @@ mod config_tests {
         let database = Database::open_memory();
         database.add_ipfs_rpc_transport("ipfs-1", "https://rpc.filebase.io", None).unwrap();
         database.remove_transport("ipfs-1").unwrap();
+        assert!(database.configured_transports().unwrap().is_empty());
+    }
+
+    fn s3_test_config(endpoint: &str) -> crate::s3_transport::S3Config {
+        crate::s3_transport::S3Config {
+            endpoint: endpoint.to_string(),
+            region: "us-east-1".to_string(),
+            bucket: "sync-bucket".to_string(),
+            prefix: "team".to_string(),
+            path_style: false,
+            label: Some("Team bucket".to_string()),
+        }
+    }
+
+    #[test]
+    fn s3_transport_config_persists_without_any_secret() {
+        let database = Database::open_memory();
+        // The SQLite half only — `add_s3_transport`'s keychain write is
+        // never exercised from a test (see the IPFS token test above).
+        database
+            .persist_s3_transport_config("s3-1", &s3_test_config("https://s3.us-east-1.amazonaws.com"))
+            .unwrap();
+
+        let rows = database.configured_transports().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "s3");
+        let config = s3_config(&rows[0].config_json).unwrap();
+        assert_eq!(config, s3_test_config("https://s3.us-east-1.amazonaws.com"));
+        let lowered = rows[0].config_json.to_ascii_lowercase();
+        for secret_field in ["secret", "accesskey", "access_key", "token", "credential"] {
+            assert!(!lowered.contains(secret_field), "{secret_field} in {lowered}");
+        }
+    }
+
+    #[test]
+    fn add_s3_transport_rejects_an_invalid_config_before_writing_anything() {
+        let database = Database::open_memory();
+        let credentials = crate::s3_transport::S3Credentials {
+            access_key_id: "AKIAEXAMPLE".to_string(),
+            secret_access_key: "secret".to_string(),
+            session_token: None,
+        };
+        // Plaintext HTTP to a remote host fails validation, which runs
+        // before both the SQLite and the keychain writes.
+        let error = database
+            .add_s3_transport("s3-1", &s3_test_config("http://s3.example.com"), &credentials)
+            .unwrap_err();
+        assert!(error.contains("HTTPS"), "{error}");
+        assert!(database.configured_transports().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_s3_row_without_stored_credentials_is_skipped_and_reported_unavailable() {
+        let database = Database::open_memory();
+        database
+            .persist_s3_transport_config("s3-missing-credentials", &s3_test_config("https://s3.us-east-1.amazonaws.com"))
+            .unwrap();
+        assert!(build_configured_transports(&database).await.is_empty());
+
+        let engine = ReplicatedSync::new(Arc::new(database));
+        let statuses = engine.status().await.unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].kind, "s3");
+        assert_eq!(statuses[0].location, "https://s3.us-east-1.amazonaws.com · sync-bucket/team");
+        assert!(statuses[0].health.starts_with("unavailable"));
+    }
+
+    #[test]
+    fn removing_an_s3_transport_clears_its_config_row() {
+        let database = Database::open_memory();
+        database
+            .persist_s3_transport_config("s3-1", &s3_test_config("https://s3.us-east-1.amazonaws.com"))
+            .unwrap();
+        database.remove_transport("s3-1").unwrap();
         assert!(database.configured_transports().unwrap().is_empty());
     }
 

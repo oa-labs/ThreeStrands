@@ -1268,13 +1268,63 @@ mod tests {
 
     #[tokio::test]
     async fn two_device_peer_enrollment_lets_the_new_device_push_and_the_first_pull_it() {
+        assert_peer_enrollment_round_trips(fake_transports("shared")).await;
+    }
+
+    /// Two S3 connector instances (one per device) pointed at the same
+    /// bucket, over a real SigV4-verifying fake S3 server.
+    async fn shared_s3_transports(server: &crate::s3_transport::fake_server::FakeS3Server) -> (Vec<Arc<dyn SyncTransport>>, Vec<Arc<dyn SyncTransport>>) {
+        use crate::s3_transport::{fake_server::FakeS3Server, S3Transport};
+        let open = |id: &str| -> Vec<Arc<dyn SyncTransport>> {
+            vec![Arc::new(S3Transport::new(id, &server.config("group"), &FakeS3Server::credentials()).unwrap())]
+        };
+        (open("s3-device-a"), open("s3-device-b"))
+    }
+
+    #[tokio::test]
+    async fn peer_enrollment_round_trips_over_an_s3_connector() {
+        let server = crate::s3_transport::fake_server::FakeS3Server::spawn().await;
+        let (transports, _) = shared_s3_transports(&server).await;
+        assert_peer_enrollment_round_trips(transports).await;
+        assert!(!server.state().objects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn recovery_phrase_join_round_trips_over_s3_connectors() {
+        let server = crate::s3_transport::fake_server::FakeS3Server::spawn().await;
+        let (transports_a, transports_c) = shared_s3_transports(&server).await;
+        let database_a = Database::open_memory();
+        let database_c = Database::open_memory();
+        let identity_a = test_identity(&database_a);
+        let identity_c = test_identity(&database_c);
+        let epoch_keys_a = FakeEpochKeyStore::default();
+        let epoch_keys_c = FakeEpochKeyStore::default();
+
+        let phrase = begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports_a, false).await.unwrap();
+        assert_eq!(inspect_sync_space(&transports_c).await, SyncSpacePresence::Existing);
+        join_with_recovery_phrase(&database_c, &identity_c, &epoch_keys_c, &phrase, &transports_c).await.unwrap();
+        run_enrollment_sweep(&database_a, &identity_a, &epoch_keys_a, &transports_a).await.unwrap();
+        assert!(database_a.known_device_roster().unwrap().iter().any(|(id, _)| *id == identity_c.device_id));
+
+        database_c
+            .record_replicated_write(EntityType::Snippet, "c-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("c-1", "From C over S3"))
+            .unwrap();
+        let keys_c = local_keys_for(&database_c, &identity_c, &epoch_keys_c);
+        push_pending_events(&database_c, &keys_c, &transports_c).await.unwrap();
+        let keys_a = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
+        let outcome = pull_from_transports(&database_a, &keys_a, &transports_a).await.unwrap();
+        assert_eq!(outcome.applied_events, 1);
+        let name: String = database_a.connection().unwrap().query_row("SELECT name FROM snippets WHERE id='c-1'", [], |row| row.get(0)).unwrap();
+        assert_eq!(name, "From C over S3");
+    }
+
+    async fn assert_peer_enrollment_round_trips(transports: Vec<Arc<dyn SyncTransport>>) {
         let database_a = Database::open_memory();
         let database_b = Database::open_memory();
         let identity_a = test_identity(&database_a);
         let identity_b = test_identity(&database_b);
         let epoch_keys_a = FakeEpochKeyStore::default();
         let epoch_keys_b = FakeEpochKeyStore::default();
-        let transports = fake_transports("shared");
 
         // A creates the space.
         begin_genesis(&database_a, &identity_a, &epoch_keys_a, &transports, false).await.unwrap();
