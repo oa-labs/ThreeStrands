@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use x25519_dalek::StaticSecret as X25519StaticSecret;
 
 use crate::crypto;
-use crate::enrollment::RosterEntry;
+use crate::enrollment::{validate_earlier_epoch_keys, RosterEntry, SealedEpochKey};
 use crate::error::EnvelopeError;
 use crate::ids::{DeviceId, Signature};
 use crate::limits::{
@@ -253,6 +253,12 @@ pub struct Invitation {
     pub recovery_x25519_public: ByteBuf,
     pub created_at_ms: i64,
     pub expires_at_ms: i64,
+    /// Every earlier epoch the inviter holds, sealed to the invite X25519
+    /// key like `sealed_epoch_key`. Omitted from the encoding when empty, so
+    /// an invitation with none is byte-identical to one made before this
+    /// field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub earlier_epoch_keys: Vec<SealedEpochKey>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -262,6 +268,7 @@ pub struct SignedInvitation {
 }
 
 pub fn sign_invitation(signing_key: &SigningKey, invitation: Invitation) -> Result<SignedInvitation, EnvelopeError> {
+    validate_earlier_epoch_keys(&invitation.earlier_epoch_keys, invitation.key_epoch)?;
     let canonical = canonical_dag_cbor(&invitation)?;
     let signature = Signature(crypto::sign_bytes(signing_key, INVITATION_SIGNATURE_DOMAIN, &canonical));
     Ok(SignedInvitation { invitation, signature })
@@ -280,7 +287,9 @@ pub fn encode_signed_invitation(signed: &SignedInvitation) -> Result<Vec<u8>, En
 }
 
 pub fn decode_signed_invitation(bytes: &[u8]) -> Result<SignedInvitation, EnvelopeError> {
-    decode_canonical_dag_cbor(bytes)
+    let signed: SignedInvitation = decode_canonical_dag_cbor(bytes)?;
+    validate_earlier_epoch_keys(&signed.invitation.earlier_epoch_keys, signed.invitation.key_epoch)?;
+    Ok(signed)
 }
 
 // ================================= Redemption ================================
@@ -601,6 +610,7 @@ mod tests {
             recovery_x25519_public: ByteBuf::from(vec![7u8; 32]),
             created_at_ms: 10,
             expires_at_ms: 20,
+            earlier_epoch_keys: vec![],
         };
         let signed = sign_invitation(&inviter, invitation).unwrap();
         verify_invitation(&inviter.verifying_key(), &signed).unwrap();
@@ -626,6 +636,7 @@ mod tests {
                 recovery_x25519_public: ByteBuf::from(vec![7u8; 32]),
                 created_at_ms: 1,
                 expires_at_ms: 2,
+                earlier_epoch_keys: vec![],
             },
         )
         .unwrap();

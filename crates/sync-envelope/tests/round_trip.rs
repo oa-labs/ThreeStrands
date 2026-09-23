@@ -154,3 +154,24 @@ fn rejects_an_event_with_no_operations() {
     );
     assert!(result.is_err());
 }
+
+#[test]
+fn every_chunk_reports_the_epoch_it_was_sealed_under() {
+    let (signing_key, k_epoch, sync_space_id, key_epoch) = keys_and_epoch();
+    let (_, sealed) = seal_event(
+        sample_event(),
+        &SealParams {
+            sync_space_id,
+            k_epoch: &k_epoch,
+            key_epoch,
+            object_kind: ObjectKind::Operations,
+            signing_key: &signing_key,
+        },
+    )
+    .unwrap();
+    for chunk in &sealed.chunks {
+        assert_eq!(threestrands_sync_envelope::message_key_epoch(chunk).unwrap(), key_epoch);
+    }
+    assert!(threestrands_sync_envelope::message_key_epoch(&sealed.chunks[0][..19]).is_err());
+    assert!(threestrands_sync_envelope::message_key_epoch(&[]).is_err());
+}

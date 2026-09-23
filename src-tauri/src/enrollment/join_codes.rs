@@ -39,7 +39,8 @@ use threestrands_sync_envelope::{
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use super::{
-    default_device_name, roster_entry_verifying_key, EnrollmentStatus, EpochKeyStore, MAX_DEVICE_LABEL_CHARS,
+    default_device_name, open_earlier_epoch_keys, roster_entry_verifying_key, seal_earlier_epoch_keys, store_earlier_epoch_keys,
+    EnrollmentStatus, EpochKeyStore, MAX_DEVICE_LABEL_CHARS,
 };
 use crate::db::Database;
 use crate::error_text::display;
@@ -293,6 +294,7 @@ pub(crate) async fn create_join_code(
         recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
         created_at_ms: now_ms,
         expires_at_ms,
+        earlier_epoch_keys: seal_earlier_epoch_keys(keys, &invite_x25519_public)?,
     };
     let signed = sign_invitation(&identity.signing_key, invitation).map_err(display)?;
     let bytes = encode_signed_invitation(&signed).map_err(display)?;
@@ -421,6 +423,7 @@ pub(crate) fn prepare_join_connectors(
 pub(crate) struct OpenedInvitation {
     signed: SignedInvitation,
     k_epoch: [u8; 32],
+    earlier_epoch_keys: Vec<(u32, [u8; 32])>,
 }
 
 /// Checks fetched bytes against the code: exactly the CID it names, signed
@@ -452,7 +455,9 @@ pub(crate) fn verify_fetched_invitation(bytes: &[u8], code: &JoinCode) -> Result
     let k_epoch: [u8; 32] = try_open_sealed_box(&x25519_secret.to_bytes(), &invitation.sealed_epoch_key)
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(damaged)?;
-    Ok(OpenedInvitation { signed, k_epoch })
+    let earlier_epoch_keys =
+        open_earlier_epoch_keys(&x25519_secret.to_bytes(), &invitation.earlier_epoch_keys).ok_or_else(damaged)?;
+    Ok(OpenedInvitation { signed, k_epoch, earlier_epoch_keys })
 }
 
 pub(crate) const INVITATION_NOT_FOUND: &str = "Couldn't find this join code's invitation in its connectors. If it uses a shared folder, check that you chose the right folder and that your sync app has finished downloading, then try again.";
@@ -540,6 +545,7 @@ pub(crate) async fn commit_redemption(
     epoch_keys.store(invitation.key_epoch, &opened.k_epoch)?;
     database.set_active_epoch(invitation.key_epoch)?;
     database.record_epoch_activation(invitation.key_epoch, &code.invitation_cid)?;
+    store_earlier_epoch_keys(database, epoch_keys, &opened.earlier_epoch_keys, &code.invitation_cid)?;
     database.mark_control_object_seen(&code.invitation_cid, "invitation")?;
     database.mark_control_object_seen(&redemption_cid, "invitation_redemption")?;
     database

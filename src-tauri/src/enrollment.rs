@@ -38,9 +38,10 @@ use threestrands_sync_envelope::{
     recovery_x25519_secret, seal_to_x25519, sign_enrollment_grant, sign_enrollment_rejection, sign_enrollment_request,
     sign_key_rotation, try_open_sealed_box, verify_enrollment_grant, verify_enrollment_rejection, verify_enrollment_request,
     verify_key_rotation, DeviceId as EnvelopeDeviceId, EnrollmentGrant, EnrollmentRequest,
-    EnrollmentRejection, KeyRotation, RequestId, RosterEntry, SignedEnrollmentGrant, SignedEnrollmentRequest,
+    EnrollmentRejection, KeyRotation, RequestId, RosterEntry, SealedEpochKey, SignedEnrollmentGrant, SignedEnrollmentRequest,
     SignedKeyRotation, VerifyingKey, X25519PublicKey,
 };
+use threestrands_sync_envelope::limits::MAX_EARLIER_EPOCH_KEYS;
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport};
 
 use crate::db::Database;
@@ -136,6 +137,53 @@ pub struct DeviceRosterEntry {
 
 /// Longest local device label accepted, in characters.
 pub const MAX_DEVICE_LABEL_CHARS: usize = 60;
+
+/// Seals every earlier epoch key this device holds to `recipient_x25519`,
+/// for a grant or invitation, so the new device can open history sealed
+/// before the current epoch.
+pub(crate) fn seal_earlier_epoch_keys(keys: &LocalKeys, recipient_x25519: &[u8; 32]) -> Result<Vec<SealedEpochKey>, String> {
+    if keys.earlier_epoch_keys.len() > MAX_EARLIER_EPOCH_KEYS {
+        return Err(format!(
+            "This sync group has changed its keys more than {MAX_EARLIER_EPOCH_KEYS} times, so it can't hand its history to a new device. Create a new sync group instead."
+        ));
+    }
+    Ok(keys
+        .earlier_epoch_keys
+        .iter()
+        .map(|(key_epoch, key)| SealedEpochKey {
+            key_epoch: *key_epoch,
+            sealed_key: ByteBuf::from(seal_to_x25519(recipient_x25519, key)),
+        })
+        .collect())
+}
+
+/// Opens every earlier epoch key in a grant or invitation with
+/// `recipient_secret`. `None` if any entry fails to open: a partial
+/// history is never adopted silently.
+pub(crate) fn open_earlier_epoch_keys(recipient_secret: &[u8; 32], entries: &[SealedEpochKey]) -> Option<Vec<(u32, [u8; 32])>> {
+    entries
+        .iter()
+        .map(|entry| {
+            let key: [u8; 32] = try_open_sealed_box(recipient_secret, &entry.sealed_key)?.try_into().ok()?;
+            Some((entry.key_epoch, key))
+        })
+        .collect()
+}
+
+/// Stores opened earlier epoch keys and records each epoch as known, so
+/// `Database::local_replicated_keys` loads them for opening old history.
+pub(crate) fn store_earlier_epoch_keys(
+    database: &Database,
+    epoch_keys: &dyn EpochKeyStore,
+    earlier: &[(u32, [u8; 32])],
+    source_cid: &str,
+) -> Result<(), String> {
+    for (key_epoch, key) in earlier {
+        epoch_keys.store(*key_epoch, key)?;
+        database.record_epoch_activation(*key_epoch, source_cid)?;
+    }
+    Ok(())
+}
 
 fn default_device_name() -> String {
     let hostname = gethostname::gethostname().to_string_lossy().trim().to_string();
@@ -453,6 +501,16 @@ impl Database {
     fn set_active_epoch(&self, key_epoch: u32) -> Result<(), String> {
         self.connection()?
             .execute("UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1", params![SPACE_ID, key_epoch])
+            .map_err(display)?;
+        Ok(())
+    }
+
+    fn advance_active_epoch(&self, key_epoch: u32) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1 AND active_epoch < ?2",
+                params![SPACE_ID, key_epoch],
+            )
             .map_err(display)?;
         Ok(())
     }
@@ -1106,7 +1164,11 @@ fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_k
     }
     if let Some(k_epoch) = opened {
         epoch_keys.store(signed.rotation.key_epoch, &k_epoch)?;
-        database.set_active_epoch(signed.rotation.key_epoch)?;
+        // Rotations are scanned in content-address order, not epoch order,
+        // so a device catching up can meet an older rotation after a newer
+        // one. Keep its key for opening that epoch's history, but never move
+        // the active epoch backwards.
+        database.advance_active_epoch(signed.rotation.key_epoch)?;
         database.record_epoch_activation(signed.rotation.key_epoch, cid)?;
     }
     Ok(())
@@ -1128,6 +1190,8 @@ pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIden
     let k_epoch_bytes = try_open_sealed_box(&identity.x25519_secret, &signed.grant.sealed_epoch_key)
         .ok_or_else(|| "This grant was not sealed to this device".to_string())?;
     let k_epoch: [u8; 32] = k_epoch_bytes.try_into().map_err(|_| "Invalid sealed epoch key".to_string())?;
+    let earlier = open_earlier_epoch_keys(&identity.x25519_secret, &signed.grant.earlier_epoch_keys)
+        .ok_or_else(|| "This grant's earlier keys were not sealed to this device".to_string())?;
 
     database.adopt_roster(&signed.grant.roster)?;
     let recovery_ed25519: [u8; 32] = signed.grant.recovery_ed25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?;
@@ -1138,6 +1202,7 @@ pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIden
     database.set_active_epoch(signed.grant.key_epoch)?;
     let source_cid = compute_cid(&grant_cbor);
     database.record_epoch_activation(signed.grant.key_epoch, &source_cid)?;
+    store_earlier_epoch_keys(database, epoch_keys, &earlier, &source_cid)?;
 
     database
         .connection()?
@@ -1193,6 +1258,7 @@ pub async fn approve_enrollment_request(
         recovery_ed25519_public: ByteBuf::from(recovery_ed25519.to_vec()),
         recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
         created_at_ms: now_ms(),
+        earlier_epoch_keys: seal_earlier_epoch_keys(keys, &requester_x25519)?,
     };
     let signed = sign_enrollment_grant(&identity.signing_key, grant).map_err(display)?;
     let bytes = encode_signed_enrollment_grant(&signed).map_err(display)?;
@@ -1271,65 +1337,42 @@ pub async fn rotate_epoch(
 // ============================ Recovery-phrase import ============================
 
 /// Joins an existing sync space using only a recovery phrase — no peer
-/// device needs to be online. Scans every transport for a rotation object
+/// device needs to be online. Scans every transport for rotation objects
 /// whose sealed stanzas open with the phrase-derived recovery X25519
 /// secret; that success is itself the trust proof (see the module docs).
+///
+/// Every rotation carries a recovery stanza, so the scan collects the key
+/// for every epoch it finds, which is what lets this device open history
+/// sealed before the latest rotation. It adopts the roster and active epoch
+/// of the newest rotation, not whichever one the scan happens to meet
+/// first. Only rotations that verify against their own initiator count, so
+/// arbitrary bytes that happen to decode can't steer the choice.
 pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, phrase: &str, transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
     database.set_beta_features_enabled(true)?;
     let seed = recovery_seed_from_phrase(phrase)?;
     let recovery_secret_bytes = recovery_x25519_secret(&seed).to_bytes();
 
+    let mut opened: std::collections::BTreeMap<u32, (SignedKeyRotation, String, [u8; 32])> = std::collections::BTreeMap::new();
     for transport in transports {
         let mut cursor: Option<String> = None;
         loop {
             let Some(page) = transport.scan(cursor.as_deref()).await.map_err(display)? else { break };
             for locator in &page.objects {
                 let Ok(bytes) = transport.get_object(&locator.cid).await else { continue };
+                if !is_self_consistent_rotation(&bytes) {
+                    continue;
+                }
                 let Ok(signed) = decode_signed_key_rotation(&bytes) else { continue };
-                let opened = signed
+                let Some(k_epoch_bytes) = signed
                     .rotation
                     .sealed_stanzas
                     .iter()
-                    .find_map(|stanza| try_open_sealed_box(&recovery_secret_bytes, stanza));
-                let Some(k_epoch_bytes) = opened else { continue };
-                let Ok(k_epoch): Result<[u8; 32], _> = k_epoch_bytes.try_into() else { continue };
-
-                database.adopt_roster(&signed.rotation.roster)?;
-                database.set_recovery_public_keys(
-                    signed.rotation.recovery_ed25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
-                    signed.rotation.recovery_x25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
-                )?;
-                // Trust ourselves alongside the recovered roster — a fresh
-                // device recovering has no prior self-entry there.
-                let self_x25519_public = x25519_public_bytes(&identity.x25519_secret);
-                database.trust_device_keys(identity.device_id.as_bytes(), &identity.verifying_key, &self_x25519_public)?;
-                epoch_keys.store(signed.rotation.key_epoch, &k_epoch)?;
-                database.set_active_epoch(signed.rotation.key_epoch)?;
-                database.record_epoch_activation(signed.rotation.key_epoch, &locator.cid.0)?;
-
-                // Broadcast our own membership so every other device
-                // (which has no pending request matching this — nothing
-                // asked it to expect us) learns about and trusts us too.
-                // Signed by the recovery key, not a peer, so every device
-                // that already knows the recovery public key applies it
-                // immediately — see `apply_incoming_grant`.
-                let recovery_ed25519_public = recovery_ed25519_signing_key(&seed).verifying_key();
-                let announcement = EnrollmentGrant {
-                    request_id: RequestId::from_bytes(random_id()),
-                    approver_device_id: identity.device_id,
-                    signed_by_recovery: true,
-                    key_epoch: signed.rotation.key_epoch,
-                    sealed_epoch_key: ByteBuf::from(seal_to_x25519(&self_x25519_public, &k_epoch)),
-                    roster: database.full_roster_snapshot()?,
-                    recovery_ed25519_public: ByteBuf::from(recovery_ed25519_public.to_bytes().to_vec()),
-                    recovery_x25519_public: signed.rotation.recovery_x25519_public.clone(),
-                    created_at_ms: now_ms(),
+                    .find_map(|stanza| try_open_sealed_box(&recovery_secret_bytes, stanza))
+                else {
+                    continue;
                 };
-                let signed_announcement = sign_enrollment_grant(&recovery_ed25519_signing_key(&seed), announcement).map_err(display)?;
-                let announcement_bytes = encode_signed_enrollment_grant(&signed_announcement).map_err(display)?;
-                let announcement_cid = publish_to_all(transports, &announcement_bytes).await;
-                database.mark_control_object_seen(&announcement_cid, "enrollment_grant")?;
-                return Ok(());
+                let Ok(k_epoch): Result<[u8; 32], _> = k_epoch_bytes.try_into() else { continue };
+                opened.entry(signed.rotation.key_epoch).or_insert((signed, locator.cid.0.clone(), k_epoch));
             }
             cursor = page.next_cursor;
             if cursor.is_none() {
@@ -1337,7 +1380,49 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
             }
         }
     }
-    Err("No rotation object on any configured transport opened with this recovery phrase yet".to_string())
+    let Some((&latest_epoch, (latest, _, latest_key))) = opened.iter().next_back() else {
+        return Err("No rotation object on any configured transport opened with this recovery phrase yet".to_string());
+    };
+    let latest_key = *latest_key;
+
+    database.adopt_roster(&latest.rotation.roster)?;
+    database.set_recovery_public_keys(
+        latest.rotation.recovery_ed25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
+        latest.rotation.recovery_x25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
+    )?;
+    // Trust ourselves alongside the recovered roster — a fresh device
+    // recovering has no prior self-entry there.
+    let self_x25519_public = x25519_public_bytes(&identity.x25519_secret);
+    database.trust_device_keys(identity.device_id.as_bytes(), &identity.verifying_key, &self_x25519_public)?;
+    for (key_epoch, (_, cid, k_epoch)) in &opened {
+        epoch_keys.store(*key_epoch, k_epoch)?;
+        database.record_epoch_activation(*key_epoch, cid)?;
+    }
+    database.set_active_epoch(latest_epoch)?;
+
+    // Broadcast our own membership so every other device (which has no
+    // pending request matching this — nothing asked it to expect us) learns
+    // about and trusts us too. Signed by the recovery key, not a peer, so
+    // every device that already knows the recovery public key applies it
+    // immediately — see `apply_incoming_grant`.
+    let recovery_ed25519_public = recovery_ed25519_signing_key(&seed).verifying_key();
+    let announcement = EnrollmentGrant {
+        request_id: RequestId::from_bytes(random_id()),
+        approver_device_id: identity.device_id,
+        signed_by_recovery: true,
+        key_epoch: latest_epoch,
+        sealed_epoch_key: ByteBuf::from(seal_to_x25519(&self_x25519_public, &latest_key)),
+        roster: database.full_roster_snapshot()?,
+        recovery_ed25519_public: ByteBuf::from(recovery_ed25519_public.to_bytes().to_vec()),
+        recovery_x25519_public: latest.rotation.recovery_x25519_public.clone(),
+        created_at_ms: now_ms(),
+        earlier_epoch_keys: vec![],
+    };
+    let signed_announcement = sign_enrollment_grant(&recovery_ed25519_signing_key(&seed), announcement).map_err(display)?;
+    let announcement_bytes = encode_signed_enrollment_grant(&signed_announcement).map_err(display)?;
+    let announcement_cid = publish_to_all(transports, &announcement_bytes).await;
+    database.mark_control_object_seen(&announcement_cid, "enrollment_grant")?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1407,10 +1492,12 @@ mod tests {
             .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
             .unwrap();
         let k_epoch = epoch_keys.get(active_epoch).expect("epoch key must already be stored for this test");
+        let earlier_epoch_keys = epoch_keys.0.lock().unwrap().iter().filter(|(epoch, _)| **epoch < active_epoch).map(|(epoch, key)| (*epoch, *key)).collect();
         LocalKeys {
             signing_key: identity.signing_key.clone(),
             k_epoch,
             key_epoch: active_epoch,
+            earlier_epoch_keys,
             device_id: identity.device_id,
             sync_space_id: identity.sync_space_id.clone(),
         }
@@ -1817,6 +1904,226 @@ mod tests {
         let roster = database_a.known_device_roster().unwrap();
         assert_eq!(roster.len(), 2);
         assert!(roster.iter().any(|(id, _)| *id == identity_c.device_id));
+    }
+
+    /// One simulated device with its own database, identity, and keychain.
+    struct Member {
+        database: Database,
+        identity: DeviceIdentity,
+        epoch_keys: FakeEpochKeyStore,
+    }
+
+    impl Member {
+        fn new() -> Self {
+            let database = Database::open_memory();
+            let identity = test_identity(&database);
+            Self { database, identity, epoch_keys: FakeEpochKeyStore::default() }
+        }
+
+        fn keys(&self) -> LocalKeys {
+            local_keys_for(&self.database, &self.identity, &self.epoch_keys)
+        }
+
+        fn active_epoch(&self) -> u32 {
+            self.database
+                .connection()
+                .unwrap()
+                .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
+                .unwrap()
+        }
+
+        fn write_snippet(&self, id: &str) {
+            self.database
+                .record_replicated_write(EntityType::Snippet, id, &fields(&["id", "name", "body", "createdAt"]), &snippet_payload(id, id))
+                .unwrap();
+        }
+
+        async fn push(&self, transports: &[Arc<dyn SyncTransport>]) {
+            push_pending_events(&self.database, &self.keys(), transports).await.unwrap();
+        }
+
+        async fn pull(&self, transports: &[Arc<dyn SyncTransport>]) -> crate::replicated_sync::PullOutcome {
+            pull_from_transports(&self.database, &self.keys(), transports).await.unwrap()
+        }
+
+        async fn sweep(&self, transports: &[Arc<dyn SyncTransport>]) {
+            run_enrollment_sweep(&self.database, &self.identity, &self.epoch_keys, transports).await.unwrap();
+        }
+
+        async fn rotate(&self, transports: &[Arc<dyn SyncTransport>]) {
+            rotate_epoch(&self.database, &self.identity, &self.keys(), &self.epoch_keys, transports, None).await.unwrap();
+        }
+
+        fn snippet(&self, id: &str) -> Option<String> {
+            self.database
+                .connection()
+                .unwrap()
+                .query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0))
+                .optional()
+                .unwrap()
+        }
+    }
+
+    /// A founding device that wrote under epoch 0, rotated twice, and wrote
+    /// under epoch 2.
+    async fn founder_with_history_across_rotations(transports: &[Arc<dyn SyncTransport>]) -> Member {
+        let a = Member::new();
+        begin_genesis(&a.database, &a.identity, &a.epoch_keys, transports, false).await.unwrap();
+        a.write_snippet("epoch-0");
+        a.push(transports).await;
+        a.rotate(transports).await;
+        a.rotate(transports).await;
+        assert_eq!(a.active_epoch(), 2);
+        a.write_snippet("epoch-2");
+        a.push(transports).await;
+        a
+    }
+
+    #[tokio::test]
+    async fn a_device_approved_after_rotations_reads_history_from_every_epoch() {
+        let transports = fake_transports("shared");
+        let a = founder_with_history_across_rotations(&transports).await;
+
+        let b = Member::new();
+        publish_enrollment_request(&b.database, &b.identity, &transports).await.unwrap();
+        a.sweep(&transports).await;
+        let pending = a.database.pending_incoming_enrollment_requests().unwrap();
+        approve_enrollment_request(&a.database, &a.identity, &a.keys(), &pending[0].request_id, &transports).await.unwrap();
+        b.sweep(&transports).await;
+        let request_id: String = b
+            .database
+            .connection()
+            .unwrap()
+            .query_row("SELECT request_id FROM replicated_sync_enrollment_requests WHERE direction='outgoing'", [], |row| row.get(0))
+            .unwrap();
+        confirm_and_import_grant(&b.database, &b.identity, &b.epoch_keys, &request_id).await.unwrap();
+
+        assert_eq!(b.active_epoch(), 2);
+        for epoch in 0..=2 {
+            assert_eq!(b.epoch_keys.get(epoch), a.epoch_keys.get(epoch), "epoch {epoch}");
+        }
+        let outcome = b.pull(&transports).await;
+        assert_eq!(outcome.failed_transports, 0);
+        assert_eq!(outcome.applied_events, 2);
+        assert_eq!(b.snippet("epoch-0").as_deref(), Some("epoch-0"));
+        assert_eq!(b.snippet("epoch-2").as_deref(), Some("epoch-2"));
+    }
+
+    #[tokio::test]
+    async fn a_grant_whose_earlier_keys_are_not_sealed_to_this_device_is_refused() {
+        let transports = fake_transports("shared");
+        let a = founder_with_history_across_rotations(&transports).await;
+        let b = Member::new();
+        publish_enrollment_request(&b.database, &b.identity, &transports).await.unwrap();
+        a.sweep(&transports).await;
+        let pending = a.database.pending_incoming_enrollment_requests().unwrap();
+        approve_enrollment_request(&a.database, &a.identity, &a.keys(), &pending[0].request_id, &transports).await.unwrap();
+        b.sweep(&transports).await;
+
+        // Swap one earlier key for a box sealed to someone else, re-signed
+        // by the approver so only the sealing is wrong.
+        let (request_id, grant_cbor): (String, Vec<u8>) = b
+            .database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT request_id, pending_grant_cbor FROM replicated_sync_enrollment_requests WHERE direction='outgoing'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let mut grant = decode_signed_enrollment_grant(&grant_cbor).unwrap().grant;
+        grant.earlier_epoch_keys[0].sealed_key = ByteBuf::from(seal_to_x25519(&[9u8; 32], &[1u8; 32]));
+        let resigned = encode_signed_enrollment_grant(&sign_enrollment_grant(&a.identity.signing_key, grant).unwrap()).unwrap();
+        b.database
+            .connection()
+            .unwrap()
+            .execute("UPDATE replicated_sync_enrollment_requests SET pending_grant_cbor=?1 WHERE request_id=?2", params![resigned, request_id])
+            .unwrap();
+
+        assert!(confirm_and_import_grant(&b.database, &b.identity, &b.epoch_keys, &request_id).await.is_err());
+        assert!(b.epoch_keys.get(2).is_none());
+        assert!(!matches!(b.database.enrollment_status().unwrap(), EnrollmentStatus::Enrolled { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_recovery_phrase_join_after_rotations_adopts_the_newest_epoch_and_reads_every_one() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        a.write_snippet("epoch-0");
+        a.push(&transports).await;
+        a.rotate(&transports).await;
+        a.rotate(&transports).await;
+        a.write_snippet("epoch-2");
+        a.push(&transports).await;
+
+        let c = Member::new();
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await.unwrap();
+        assert_eq!(c.active_epoch(), 2);
+        for epoch in 0..=2 {
+            assert_eq!(c.epoch_keys.get(epoch), a.epoch_keys.get(epoch), "epoch {epoch}");
+        }
+        let outcome = c.pull(&transports).await;
+        assert_eq!(outcome.failed_transports, 0);
+        assert_eq!(c.snippet("epoch-0").as_deref(), Some("epoch-0"));
+        assert_eq!(c.snippet("epoch-2").as_deref(), Some("epoch-2"));
+    }
+
+    #[tokio::test]
+    async fn a_member_offline_across_a_rotation_catches_up_on_events_from_before_it() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        let c = Member::new();
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await.unwrap();
+        a.sweep(&transports).await;
+
+        // While C is away, A writes, rotates, and writes again.
+        a.write_snippet("before-rotation");
+        a.push(&transports).await;
+        a.rotate(&transports).await;
+        a.write_snippet("after-rotation");
+        a.push(&transports).await;
+
+        c.sweep(&transports).await;
+        assert_eq!(c.active_epoch(), 1);
+        let outcome = c.pull(&transports).await;
+        assert_eq!(outcome.failed_transports, 0);
+        assert_eq!(outcome.applied_events, 2);
+        assert_eq!(c.snippet("before-rotation").as_deref(), Some("before-rotation"));
+        assert_eq!(c.snippet("after-rotation").as_deref(), Some("after-rotation"));
+    }
+
+    #[tokio::test]
+    async fn meeting_an_older_rotation_after_a_newer_one_never_moves_the_active_epoch_back() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        let c = Member::new();
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await.unwrap();
+        a.sweep(&transports).await;
+        a.rotate(&transports).await;
+        a.rotate(&transports).await;
+
+        let rotation_cids: Vec<String> = {
+            let connection = a.database.connection().unwrap();
+            let mut statement = connection.prepare("SELECT cid FROM sync_control_objects_seen WHERE object_kind='key_rotation'").unwrap();
+            let rows = statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<Vec<String>, _>>().unwrap();
+            rows
+        };
+        let mut rotations = Vec::new();
+        for cid in rotation_cids {
+            let bytes = transports[0].get_object(&TransportCid(cid.clone())).await.unwrap();
+            rotations.push((decode_signed_key_rotation(&bytes).unwrap(), cid));
+        }
+        rotations.sort_by_key(|(signed, _)| std::cmp::Reverse(signed.rotation.key_epoch));
+        for (signed, cid) in rotations {
+            apply_incoming_rotation(&c.database, &c.identity, &c.epoch_keys, signed, &cid).unwrap();
+        }
+        assert_eq!(c.active_epoch(), 2);
+        assert_eq!(c.epoch_keys.get(1), a.epoch_keys.get(1));
+        assert_eq!(c.epoch_keys.get(2), a.epoch_keys.get(2));
     }
 
     #[tokio::test]
@@ -2230,6 +2537,37 @@ mod tests {
             assert_eq!(snippet_name(&c.database, "b-1").as_deref(), Some("From B"));
         }
 
+        #[tokio::test]
+        async fn a_device_joining_by_code_after_a_rotation_reads_history_from_every_epoch() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            a.database
+                .record_replicated_write(EntityType::Snippet, "old", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("old", "Old"))
+                .unwrap();
+            push_pending_events(&a.database, &a.keys(), &a.transports().await).await.unwrap();
+
+            // A first join code admits B, which rotates the epoch.
+            let now = now_ms();
+            let b = Device::new();
+            join(&b, &create(&a, now).await, &folder, now + 1_000).await.unwrap();
+            a.sweep().await;
+            assert!(a.process(now + 2_000).await);
+            let rotated = a.active_epoch();
+            a.database
+                .record_replicated_write(EntityType::Snippet, "new", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("new", "New"))
+                .unwrap();
+            push_pending_events(&a.database, &a.keys(), &a.transports().await).await.unwrap();
+
+            // D joins with a second code, under the rotated epoch.
+            let d = Device::new();
+            join(&d, &create(&a, now + 3_000).await, &folder, now + 4_000).await.unwrap();
+            assert_eq!(d.active_epoch(), rotated);
+            let outcome = pull_from_transports(&d.database, &d.keys(), &d.transports().await).await.unwrap();
+            assert_eq!(outcome.failed_transports, 0);
+            assert_eq!(snippet_name(&d.database, "old").as_deref(), Some("Old"));
+            assert_eq!(snippet_name(&d.database, "new").as_deref(), Some("New"));
+        }
+
         /// Objects are scanned in content-address order, so a redemption can
         /// come before the invitation it names. One sweep must still record
         /// it, not leave it for the next cycle.
@@ -2445,6 +2783,7 @@ mod tests {
                     recovery_x25519_public: ByteBuf::from(vec![3u8; 32]),
                     created_at_ms: now,
                     expires_at_ms: now + 3_600_000,
+                    earlier_epoch_keys: vec![],
                 },
             )
             .unwrap();
@@ -2531,6 +2870,7 @@ mod tests {
                     recovery_x25519_public: ByteBuf::from(vec![6u8; 32]),
                     created_at_ms: 1,
                     expires_at_ms: 2,
+                    earlier_epoch_keys: vec![],
                 },
             )
             .unwrap();

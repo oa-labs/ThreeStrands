@@ -43,7 +43,7 @@ pub use enrollment::{
     encode_signed_enrollment_grant, encode_signed_enrollment_rejection, encode_signed_enrollment_request, encode_signed_key_rotation,
     enrollment_fingerprint, sign_enrollment_grant, sign_enrollment_rejection, sign_enrollment_request, sign_key_rotation,
     verify_enrollment_grant, verify_enrollment_rejection, verify_enrollment_request, verify_key_rotation, EnrollmentGrant,
-    EnrollmentRejection, EnrollmentRequest, KeyRotation, RosterEntry, SignedEnrollmentGrant, SignedEnrollmentRejection,
+    EnrollmentRejection, EnrollmentRequest, KeyRotation, RosterEntry, SealedEpochKey, SignedEnrollmentGrant, SignedEnrollmentRejection,
     SignedEnrollmentRequest, SignedKeyRotation,
 };
 pub use error::EnvelopeError;
@@ -311,6 +311,19 @@ pub fn seal_event(
     params: &SealParams,
 ) -> Result<(SyncEvent, SealedMessage), EnvelopeError> {
     seal_event_with_nonces(unsigned, params, crypto::random_nonce)
+}
+
+/// The key epoch a sealed chunk claims in its header, so a caller holding
+/// several epochs' keys can pick the one to pass to [`open_message`]. The
+/// header is authenticated only once the chunk is opened with that key; a
+/// forged epoch here can only select a key that then fails to open it.
+pub fn message_key_epoch(chunk: &[u8]) -> Result<u32, EnvelopeError> {
+    let header_bytes: [u8; HEADER_LEN] = chunk
+        .get(0..HEADER_LEN)
+        .ok_or(EnvelopeError::Truncated)?
+        .try_into()
+        .expect("slice is exactly HEADER_LEN bytes");
+    Ok(EnvelopeHeader::decode(&header_bytes)?.key_epoch)
 }
 
 /// Opens a complete set of chunks (in any order) for one message, verifying

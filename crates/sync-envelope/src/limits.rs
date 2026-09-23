@@ -54,6 +54,12 @@ pub const MAX_CHUNK_PLAINTEXT_BYTES: usize = 256 * 1024;
 /// content length from anyone observing object sizes in a transport.
 pub const PADDING_BUCKETS: &[usize] = &[4_096, 16_384, 65_536, MAX_CHUNK_PLAINTEXT_BYTES];
 
+/// Most earlier-epoch keys one enrollment grant or invitation may carry.
+/// Every join code rotates the epoch, so this bounds how many rotations a
+/// group can accumulate before a new device can no longer be handed its
+/// whole history; about 100 bytes per entry.
+pub const MAX_EARLIER_EPOCH_KEYS: usize = 1_024;
+
 /// Longest join code text accepted, after whitespace is removed. Far above
 /// a real code (a few connectors with credentials is well under 4 KiB);
 /// bounds the work a pasted blob can cause.

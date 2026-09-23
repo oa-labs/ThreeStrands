@@ -12,6 +12,7 @@ use serde_bytes::ByteBuf;
 use crate::crypto;
 use crate::error::EnvelopeError;
 use crate::ids::{DeviceId, RequestId, Signature};
+use crate::limits::MAX_EARLIER_EPOCH_KEYS;
 use crate::{canonical_dag_cbor, decode_canonical_dag_cbor, SigningKey, VerifyingKey};
 
 const REQUEST_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/enrollment-request-signature/v1";
@@ -30,6 +31,33 @@ pub struct RosterEntry {
     pub ed25519_public: ByteBuf,
     pub x25519_public: ByteBuf,
     pub status: String,
+}
+
+/// One earlier epoch's `K_epoch`, sealed to the same recipient as the
+/// object's current-epoch key. A device joining after a rotation needs
+/// these to open history sealed before it arrived.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SealedEpochKey {
+    pub key_epoch: u32,
+    pub sealed_key: ByteBuf,
+}
+
+/// Earlier-epoch keys must name distinct epochs in ascending order, all
+/// before `key_epoch`, and fit [`MAX_EARLIER_EPOCH_KEYS`]. Checked when
+/// signing and again when decoding, so an out-of-contract list can neither
+/// be produced nor accepted.
+pub(crate) fn validate_earlier_epoch_keys(entries: &[SealedEpochKey], key_epoch: u32) -> Result<(), EnvelopeError> {
+    if entries.len() > MAX_EARLIER_EPOCH_KEYS {
+        return Err(EnvelopeError::LimitExceeded("earlier epoch key count"));
+    }
+    let mut previous: Option<u32> = None;
+    for entry in entries {
+        if entry.key_epoch >= key_epoch || previous.is_some_and(|previous| entry.key_epoch <= previous) {
+            return Err(EnvelopeError::LimitExceeded("earlier epoch key order"));
+        }
+        previous = Some(entry.key_epoch);
+    }
+    Ok(())
 }
 
 /// A new device's request to join, containing its full public keys and no
@@ -97,6 +125,11 @@ pub struct EnrollmentGrant {
     pub recovery_ed25519_public: ByteBuf,
     pub recovery_x25519_public: ByteBuf,
     pub created_at_ms: i64,
+    /// Every earlier epoch the approver holds, sealed to the requester like
+    /// `sealed_epoch_key`. Omitted from the encoding when empty, so a grant
+    /// with none is byte-identical to one made before this field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub earlier_epoch_keys: Vec<SealedEpochKey>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -106,6 +139,7 @@ pub struct SignedEnrollmentGrant {
 }
 
 pub fn sign_enrollment_grant(signing_key: &SigningKey, grant: EnrollmentGrant) -> Result<SignedEnrollmentGrant, EnvelopeError> {
+    validate_earlier_epoch_keys(&grant.earlier_epoch_keys, grant.key_epoch)?;
     let canonical = canonical_dag_cbor(&grant)?;
     let signature = Signature(crypto::sign_bytes(signing_key, GRANT_SIGNATURE_DOMAIN, &canonical));
     Ok(SignedEnrollmentGrant { grant, signature })
@@ -127,7 +161,9 @@ pub fn encode_signed_enrollment_grant(signed: &SignedEnrollmentGrant) -> Result<
 }
 
 pub fn decode_signed_enrollment_grant(bytes: &[u8]) -> Result<SignedEnrollmentGrant, EnvelopeError> {
-    decode_canonical_dag_cbor(bytes)
+    let signed: SignedEnrollmentGrant = decode_canonical_dag_cbor(bytes)?;
+    validate_earlier_epoch_keys(&signed.grant.earlier_epoch_keys, signed.grant.key_epoch)?;
+    Ok(signed)
 }
 
 /// A trusted member's decision to reject a specific enrollment request.
@@ -304,6 +340,7 @@ mod tests {
             recovery_ed25519_public: ByteBuf::from(vec![5u8; 32]),
             recovery_x25519_public: ByteBuf::from(vec![6u8; 32]),
             created_at_ms: 2000,
+            earlier_epoch_keys: vec![],
         };
         let signed = sign_enrollment_grant(&approver, grant).unwrap();
         verify_enrollment_grant(&approver.verifying_key(), &signed).unwrap();
@@ -313,6 +350,133 @@ mod tests {
 
         let bytes = encode_signed_enrollment_grant(&signed).unwrap();
         assert_eq!(decode_signed_enrollment_grant(&bytes).unwrap(), signed);
+    }
+
+    fn sample_grant(approver: &SigningKey, key_epoch: u32, earlier_epoch_keys: Vec<SealedEpochKey>) -> EnrollmentGrant {
+        EnrollmentGrant {
+            request_id: RequestId::from_bytes([1u8; 16]),
+            approver_device_id: DeviceId::from_bytes([3u8; 16]),
+            signed_by_recovery: false,
+            key_epoch,
+            sealed_epoch_key: ByteBuf::from(vec![7u8; 40]),
+            roster: vec![RosterEntry {
+                device_id: DeviceId::from_bytes([3u8; 16]),
+                ed25519_public: ByteBuf::from(approver.verifying_key().to_bytes().to_vec()),
+                x25519_public: ByteBuf::from(vec![1u8; 32]),
+                status: "active".to_string(),
+            }],
+            recovery_ed25519_public: ByteBuf::from(vec![5u8; 32]),
+            recovery_x25519_public: ByteBuf::from(vec![6u8; 32]),
+            created_at_ms: 2000,
+            earlier_epoch_keys,
+        }
+    }
+
+    fn earlier(epochs: impl IntoIterator<Item = u32>) -> Vec<SealedEpochKey> {
+        epochs
+            .into_iter()
+            .map(|key_epoch| SealedEpochKey { key_epoch, sealed_key: ByteBuf::from(vec![key_epoch as u8; 72]) })
+            .collect()
+    }
+
+    #[test]
+    fn a_grant_carries_earlier_epoch_keys_under_its_signature() {
+        let approver = SigningKey::generate(&mut OsRng);
+        let signed = sign_enrollment_grant(&approver, sample_grant(&approver, 4, earlier([0, 1, 3]))).unwrap();
+        let bytes = encode_signed_enrollment_grant(&signed).unwrap();
+        let decoded = decode_signed_enrollment_grant(&bytes).unwrap();
+        assert_eq!(decoded, signed);
+        verify_enrollment_grant(&approver.verifying_key(), &decoded).unwrap();
+
+        let mut tampered = decoded.clone();
+        tampered.grant.earlier_epoch_keys[1].sealed_key = ByteBuf::from(vec![0u8; 72]);
+        assert!(verify_enrollment_grant(&approver.verifying_key(), &tampered).is_err());
+        let mut dropped = decoded;
+        dropped.grant.earlier_epoch_keys.pop();
+        assert!(verify_enrollment_grant(&approver.verifying_key(), &dropped).is_err());
+    }
+
+    /// The shape `EnrollmentGrant` had before `earlier_epoch_keys` existed.
+    #[derive(Serialize)]
+    struct PreKeyringGrant {
+        request_id: RequestId,
+        approver_device_id: DeviceId,
+        signed_by_recovery: bool,
+        key_epoch: u32,
+        sealed_epoch_key: ByteBuf,
+        roster: Vec<RosterEntry>,
+        recovery_ed25519_public: ByteBuf,
+        recovery_x25519_public: ByteBuf,
+        created_at_ms: i64,
+    }
+
+    #[derive(Serialize)]
+    struct PreKeyringSignedGrant {
+        grant: PreKeyringGrant,
+        signature: Signature,
+    }
+
+    #[test]
+    fn a_grant_from_before_earlier_epoch_keys_still_decodes_and_verifies() {
+        let approver = SigningKey::generate(&mut OsRng);
+        let current = sample_grant(&approver, 4, vec![]);
+        let legacy = PreKeyringGrant {
+            request_id: current.request_id,
+            approver_device_id: current.approver_device_id,
+            signed_by_recovery: current.signed_by_recovery,
+            key_epoch: current.key_epoch,
+            sealed_epoch_key: current.sealed_epoch_key.clone(),
+            roster: current.roster.clone(),
+            recovery_ed25519_public: current.recovery_ed25519_public.clone(),
+            recovery_x25519_public: current.recovery_x25519_public.clone(),
+            created_at_ms: current.created_at_ms,
+        };
+        let legacy_canonical = canonical_dag_cbor(&legacy).unwrap();
+        let signature = Signature(crypto::sign_bytes(&approver, GRANT_SIGNATURE_DOMAIN, &legacy_canonical));
+        let legacy_bytes = canonical_dag_cbor(&PreKeyringSignedGrant { grant: legacy, signature }).unwrap();
+
+        let decoded = decode_signed_enrollment_grant(&legacy_bytes).unwrap();
+        assert!(decoded.grant.earlier_epoch_keys.is_empty());
+        verify_enrollment_grant(&approver.verifying_key(), &decoded).unwrap();
+        // With no earlier keys, a grant encodes exactly as it did before.
+        assert_eq!(encode_signed_enrollment_grant(&decoded).unwrap(), legacy_bytes);
+    }
+
+    #[test]
+    fn earlier_epoch_keys_are_limited_in_count() {
+        let approver = SigningKey::generate(&mut OsRng);
+        let at_limit = MAX_EARLIER_EPOCH_KEYS as u32;
+        let below = sign_enrollment_grant(&approver, sample_grant(&approver, at_limit, earlier(0..at_limit - 1))).unwrap();
+        assert!(decode_signed_enrollment_grant(&encode_signed_enrollment_grant(&below).unwrap()).is_ok());
+        let exact = sign_enrollment_grant(&approver, sample_grant(&approver, at_limit, earlier(0..at_limit))).unwrap();
+        assert!(decode_signed_enrollment_grant(&encode_signed_enrollment_grant(&exact).unwrap()).is_ok());
+
+        let above = sample_grant(&approver, at_limit + 1, earlier(0..at_limit + 1));
+        assert!(matches!(
+            sign_enrollment_grant(&approver, above.clone()),
+            Err(EnvelopeError::LimitExceeded("earlier epoch key count"))
+        ));
+        // A peer that skipped the check when signing is still refused.
+        let unchecked = SignedEnrollmentGrant { grant: above, signature: Signature([0u8; 64]) };
+        let bytes = canonical_dag_cbor(&unchecked).unwrap();
+        assert!(matches!(
+            decode_signed_enrollment_grant(&bytes),
+            Err(EnvelopeError::LimitExceeded("earlier epoch key count"))
+        ));
+    }
+
+    #[test]
+    fn earlier_epoch_keys_must_be_distinct_ascending_and_before_the_current_epoch() {
+        let approver = SigningKey::generate(&mut OsRng);
+        for bad in [earlier([2, 1]), earlier([1, 1]), earlier([1, 4]), earlier([5])] {
+            let grant = sample_grant(&approver, 4, bad);
+            assert!(matches!(
+                sign_enrollment_grant(&approver, grant.clone()),
+                Err(EnvelopeError::LimitExceeded("earlier epoch key order"))
+            ));
+            let bytes = canonical_dag_cbor(&SignedEnrollmentGrant { grant, signature: Signature([0u8; 64]) }).unwrap();
+            assert!(decode_signed_enrollment_grant(&bytes).is_err());
+        }
     }
 
     #[test]

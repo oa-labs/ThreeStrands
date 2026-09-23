@@ -47,32 +47,36 @@ sync coupling), so AGENTS.md's settings-transfer rules are unaffected.
 - `ObjectKind::Snapshot` is reserved (`crates/sync-envelope/src/header.rs:24`),
   but nothing produces or reads it.
 
-### Existing bug: history does not survive a key rotation
+### Fixed in 0.28.5: history did not survive a key rotation
 
-`pull_device_chain` opens every event with only the **current** epoch key
-(`replicated_sync.rs:1606`). `open_message` rejects any chunk from another epoch
-(`crates/sync-envelope/src/lib.rs:342`). Grants and join-code invitations seal
-only the current epoch key (`EnrollmentGrant.sealed_epoch_key`,
-`Invitation.sealed_epoch_key`).
+Before 0.28.5, `pull_device_chain` opened every event with only the current
+epoch key, and grants and join-code invitations sealed only that key. Every
+join-code use, expiry and cancellation rotates the epoch, so a device that
+joined after any rotation could not open older events. The error aborted the
+whole chain walk, so even the newer, readable events were not applied.
 
-Every join-code use, expiry and cancellation rotates the epoch. So a device that
-joins after any rotation cannot open any peer's older events. The error aborts
-the whole chain walk, so that device's newer, readable events are not applied
-either.
+The fix, done ahead of the rest of this plan as "Step 0":
 
-This was reproduced with a temporary test, since reverted, in
-`enrollment.rs`'s `join_code_flows`:
-1. A writes a snippet.
-2. A join code admits B, which rotates the epoch.
-3. A writes a second snippet.
-4. D joins with a second code and pulls.
+- **Earlier keys travel with enrollment.** `EnrollmentGrant` and `Invitation`
+  carry `earlier_epoch_keys`, each sealed to the same recipient as the current
+  key and limited by `MAX_EARLIER_EPOCH_KEYS`. The field is left out of the
+  encoding when empty, so objects without it are byte-identical to the old
+  format and still verify.
+- **Recovery-phrase join** opens the recovery stanza of every self-consistent
+  rotation. It adopts the newest one instead of whichever the scan met first.
+- **Pull** opens each event with the key for the epoch in its header
+  (`LocalKeys::epoch_key`).
+- **The active epoch never moves backwards** when a device meets an older
+  rotation after a newer one.
+- **A related bug in the chain walk is also fixed.** It used to save each
+  fetched event locally before the walk finished. If a later fetch failed,
+  those saved events were never applied, and every later walk stopped at them.
+  The walk now saves an event only after applying it, and
+  `forget_unapplied_remote_messages` removes events that older builds left
+  saved but unapplied, so they are fetched again.
 
-Result: `PullOutcome { applied_events: 0, failed_transports: 1 }`. Neither
-snippet appears on D. A device that is offline across a rotation hits the same
-failure for any events it has not yet pulled.
-
-Step 1 fixes this. Snapshots and pruning depend on the fix, because a newcomer
-bootstraps from a snapshot and events that may be sealed under older epochs.
+The Step 1 epoch-keyring item below is therefore done. Protocol v2 only needs
+to carry it forward.
 
 ## Core model
 
@@ -162,13 +166,8 @@ are tested with. No data is deleted yet.
 
 ### Wire format (sync-envelope, protocol v2)
 
-- **Epoch keyring.**
-  - Add a bounded `sealed_keyring: Vec<(key_epoch, sealed key)>` to
-    `EnrollmentGrant` and `Invitation`, holding every retained epoch. Before
-    Step 3 that means all epochs.
-  - Recovery-phrase join rebuilds its keyring by opening the recovery stanza in
-    every kept rotation object.
-  - Add the limit `MAX_KEYRING_EPOCHS` to `crates/sync-envelope/src/limits.rs`.
+- **Epoch keyring.** Done in 0.28.5 as `earlier_epoch_keys`; see "Fixed in
+  0.28.5" above. In v2, limit it to retained epochs once Step 3 retires keys.
 - **Signed head v2.**
   - Add `published_at_ms`, `ack` (the progress vector as sorted
     `(DeviceId, u64)` pairs, limited by `MAX_ACK_ENTRIES`) and

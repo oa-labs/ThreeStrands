@@ -8,7 +8,7 @@ use threestrands_sync_envelope::{
     decode_join_code, decode_signed_invitation, decode_signed_invitation_redemption, encode_join_code,
     encode_signed_invitation, encode_signed_invitation_redemption, invite_ed25519_signing_key, invite_x25519_secret,
     sign_invitation, sign_invitation_redemption, verify_invitation, verify_invitation_redemption, DeviceId,
-    Invitation, InvitationRedemption, JoinCode, JoinConnector, RosterEntry, SigningKey, X25519PublicKey,
+    Invitation, InvitationRedemption, JoinCode, JoinConnector, RosterEntry, SealedEpochKey, SigningKey, X25519PublicKey,
     JOIN_CODE_VERSION,
 };
 
@@ -74,6 +74,7 @@ fn golden_invitation() -> Invitation {
         recovery_x25519_public: ByteBuf::from(vec![0x55; 32]),
         created_at_ms: 1_700_000_000_000,
         expires_at_ms: 1_700_086_400_000,
+        earlier_epoch_keys: vec![],
     }
 }
 
@@ -99,6 +100,32 @@ fn the_signed_invitation_encodes_to_the_frozen_bytes() {
     assert_eq!(hex_encode(&bytes), GOLDEN_INVITATION_HEX.trim());
     let decoded = decode_signed_invitation(&hex_decode(GOLDEN_INVITATION_HEX)).unwrap();
     verify_invitation(&inviter.verifying_key(), &decoded).unwrap();
+}
+
+#[test]
+fn an_invitation_carries_earlier_epoch_keys_under_its_signature() {
+    let inviter = SigningKey::from_bytes(&INVITER_SEED);
+    let mut invitation = golden_invitation();
+    invitation.earlier_epoch_keys = (0..invitation.key_epoch)
+        .map(|key_epoch| SealedEpochKey { key_epoch, sealed_key: ByteBuf::from(vec![key_epoch as u8; 72]) })
+        .collect();
+    let signed = sign_invitation(&inviter, invitation).unwrap();
+    let bytes = encode_signed_invitation(&signed).unwrap();
+    assert_ne!(hex_encode(&bytes), GOLDEN_INVITATION_HEX.trim());
+    let decoded = decode_signed_invitation(&bytes).unwrap();
+    assert_eq!(decoded, signed);
+    verify_invitation(&inviter.verifying_key(), &decoded).unwrap();
+
+    let mut tampered = decoded;
+    tampered.invitation.earlier_epoch_keys.remove(0);
+    assert!(verify_invitation(&inviter.verifying_key(), &tampered).is_err());
+
+    let mut out_of_order = golden_invitation();
+    out_of_order.earlier_epoch_keys = vec![
+        SealedEpochKey { key_epoch: 2, sealed_key: ByteBuf::from(vec![2u8; 72]) },
+        SealedEpochKey { key_epoch: 1, sealed_key: ByteBuf::from(vec![1u8; 72]) },
+    ];
+    assert!(sign_invitation(&inviter, out_of_order).is_err());
 }
 
 #[test]

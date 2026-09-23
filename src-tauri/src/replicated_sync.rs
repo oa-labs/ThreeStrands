@@ -27,7 +27,7 @@
 //! operation-graph algorithm (out-of-order and duplicate tolerant), because
 //! a remote origin genuinely can deliver a child before its parent.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use threestrands_sync_core::{EntityType, WinnerStamp, ENTITY_EXISTENCE_FIELD};
 use threestrands_sync_envelope::{
-    compute_cid, open_message, seal_event, sign_device_head, verify_device_head, DeviceHead,
+    compute_cid, message_key_epoch, open_message, seal_event, sign_device_head, verify_device_head, DeviceHead,
     DeviceId as EnvelopeDeviceId, EventId as EnvelopeEventId, FieldOperation, ObjectKind,
     OpenParams, OperationId as EnvelopeOperationId, SealParams, SignedDeviceHead, SigningKey,
     SyncEvent, UnsignedSyncEvent, VerifyingKey,
@@ -662,16 +662,31 @@ fn epoch_key_entry(key_epoch: u32) -> String {
 }
 
 /// The minimal single-device key material push/pull need to seal and open
-/// messages for real: an Ed25519 device signing key and the active epoch's
-/// symmetric key, all generated once and kept in the OS keychain. The X25519
+/// messages for real: an Ed25519 device signing key, the active epoch's
+/// symmetric key, and every earlier epoch's key this device holds, all kept
+/// in the OS keychain. New events are sealed only under the active epoch;
+/// earlier keys exist to open history sealed before a rotation. The X25519
 /// device key stays on [`DeviceIdentity`] — only enrollment/rotation
 /// sealed-box handling needs it, not ordinary push/pull.
 pub struct LocalKeys {
     pub signing_key: SigningKey,
     pub k_epoch: [u8; 32],
     pub key_epoch: u32,
+    pub earlier_epoch_keys: BTreeMap<u32, [u8; 32]>,
     pub device_id: EnvelopeDeviceId,
     pub sync_space_id: Vec<u8>,
+}
+
+impl LocalKeys {
+    /// The key for `key_epoch`, whether active or earlier, or `None` if this
+    /// device never received it.
+    pub fn epoch_key(&self, key_epoch: u32) -> Option<&[u8; 32]> {
+        if key_epoch == self.key_epoch {
+            Some(&self.k_epoch)
+        } else {
+            self.earlier_epoch_keys.get(&key_epoch)
+        }
+    }
 }
 
 /// This device's identity — always available once replicated sync is turned
@@ -725,10 +740,25 @@ impl Database {
         })?;
         let k_epoch = load_epoch_key(active_epoch)?
             .ok_or_else(|| "This device has not completed replicated-sync enrollment yet".to_string())?;
+        let earlier_epochs: Vec<u32> = self.with_connection(|connection| {
+            let mut statement =
+                connection.prepare("SELECT key_epoch FROM sync_epoch_history WHERE key_epoch < ?1 ORDER BY key_epoch")?;
+            let rows = statement
+                .query_map(params![active_epoch], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
+        let mut earlier_epoch_keys = BTreeMap::new();
+        for key_epoch in earlier_epochs {
+            if let Some(key) = load_epoch_key(key_epoch)? {
+                earlier_epoch_keys.insert(key_epoch, key);
+            }
+        }
         Ok(LocalKeys {
             signing_key: identity.signing_key,
             k_epoch,
             key_epoch: active_epoch,
+            earlier_epoch_keys,
             device_id: identity.device_id,
             sync_space_id: identity.sync_space_id,
         })
@@ -1096,6 +1126,32 @@ impl Database {
             }
             Ok(())
         })
+    }
+}
+
+impl Database {
+    /// Drops locally stored remote objects whose event was never applied.
+    /// Earlier builds stored each fetched event before a chain walk had
+    /// finished, so a walk that failed partway left newer events stored but
+    /// unapplied, and every later walk stopped at them. Removing those
+    /// objects (and their pending repair deliveries) lets the next walk
+    /// fetch and apply them. Objects of applied events, and of this
+    /// device's own events, always have a `sync_events` row and are kept.
+    pub(crate) fn forget_unapplied_remote_messages(&self) -> Result<usize, String> {
+        self.with_transaction(|tx| {
+            tx.execute(
+                "DELETE FROM sync_deliveries WHERE cid IN (
+                     SELECT cid FROM sync_objects so WHERE so.event_id IS NOT NULL
+                       AND NOT EXISTS (SELECT 1 FROM sync_events se WHERE se.event_id = so.event_id))",
+                [],
+            )?;
+            Ok(tx.execute(
+                "DELETE FROM sync_objects WHERE event_id IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM sync_events se WHERE se.event_id = sync_objects.event_id)",
+                [],
+            )?)
+        })
+        .map_err(String::from)
     }
 }
 
@@ -1569,11 +1625,26 @@ impl Database {
     }
 }
 
+/// One remote event fetched and opened during a chain walk, held until the
+/// whole walk succeeds so it can be applied and remembered oldest first.
+struct FetchedEvent {
+    index_cid: String,
+    chunk_cids: Vec<String>,
+    chunks: Vec<Vec<u8>>,
+    event: SyncEvent,
+}
+
 /// Resolves and walks one device's signed head back through
 /// `previous_device_event` until reaching an already-known chunk index or
 /// genesis, verifying every fetched object's bytes against its requested
 /// CID before it is parsed or decrypted, then applies every newly-seen
 /// event oldest first.
+///
+/// Each event is opened with the key for the epoch its header names, so
+/// history sealed before a rotation stays readable. A fetched event is only
+/// remembered locally after it has been applied: remembering marks where
+/// the next walk stops, so remembering an event that a failure later in the
+/// walk left unapplied would hide it from every future walk.
 async fn pull_device_chain(
     database: &Database,
     transport: &dyn SyncTransport,
@@ -1582,7 +1653,7 @@ async fn pull_device_chain(
     signed_head: &SignedDeviceHead,
 ) -> Result<usize, String> {
     let mut cursor = signed_head.head.latest_event_cid.clone();
-    let mut chain: Vec<SyncEvent> = Vec::new();
+    let mut chain: Vec<FetchedEvent> = Vec::new();
 
     while let Some(index_cid) = cursor {
         if database.object_exists(&index_cid)? {
@@ -1603,28 +1674,40 @@ async fn pull_device_chain(
             chunks.push(bytes);
         }
 
+        let key_epoch = chunks
+            .first()
+            .ok_or_else(|| "A chunk index lists no chunks".to_string())
+            .and_then(|chunk| message_key_epoch(chunk).map_err(display))?;
+        let k_epoch = keys
+            .epoch_key(key_epoch)
+            .ok_or_else(|| format!("This device doesn't have the key for sync epoch {key_epoch}"))?;
         let event = open_message(
             &chunks,
             &OpenParams {
                 sync_space_id: &keys.sync_space_id,
-                k_epoch: &keys.k_epoch,
-                key_epoch: keys.key_epoch,
+                k_epoch,
+                key_epoch,
                 verifying_key,
             },
         )
         .map_err(display)?;
 
-        let event_id_hex = encode_id(event.event_id.as_bytes());
-        database.remember_remote_message(&index_cid, &index.chunk_cids, &chunks, &event_id_hex)?;
-
-        let next_cursor = event.previous_device_event.clone();
-        chain.push(event);
-        cursor = next_cursor;
+        cursor = event.previous_device_event.clone();
+        chain.push(FetchedEvent {
+            index_cid,
+            chunk_cids: index.chunk_cids,
+            chunks,
+            event,
+        });
     }
 
     let count = chain.len();
-    for event in chain.into_iter().rev() {
-        database.apply_sealed_message_and_materialize(event)?;
+    for fetched in chain.into_iter().rev() {
+        let event_id_hex = encode_id(fetched.event.event_id.as_bytes());
+        // Apply before remembering: a crash in between only means the next
+        // walk fetches this event again, and applying it again is a no-op.
+        database.apply_sealed_message_and_materialize(fetched.event)?;
+        database.remember_remote_message(&fetched.index_cid, &fetched.chunk_cids, &fetched.chunks, &event_id_hex)?;
     }
     Ok(count)
 }
@@ -1646,6 +1729,7 @@ pub async fn pull_from_transports(
     keys: &LocalKeys,
     transports: &[Arc<dyn SyncTransport>],
 ) -> Result<PullOutcome, String> {
+    database.forget_unapplied_remote_messages()?;
     let roster = database.known_device_roster()?;
     let locators: Vec<HeadLocator> = roster
         .iter()
@@ -1675,7 +1759,15 @@ pub async fn pull_from_transports(
             }
             match pull_device_chain(database, transport.as_ref(), verifying_key, keys, &signed_head).await {
                 Ok(count) => applied_events += count,
-                Err(_) => failed_transports += 1,
+                Err(error) => {
+                    log::warn!(
+                        target: "replicated_sync",
+                        "pulling device {} from transport {} failed: {error}",
+                        encode_id(signed_head.head.device_id.as_bytes()),
+                        transport.instance_id().0
+                    );
+                    failed_transports += 1;
+                }
             }
         }
     }
@@ -2623,6 +2715,7 @@ mod replicator_tests {
             signing_key,
             k_epoch: [7u8; 32],
             key_epoch: 0,
+            earlier_epoch_keys: BTreeMap::new(),
             device_id: EnvelopeDeviceId::from_bytes(device_id),
             sync_space_id: b"test-space".to_vec(),
         }
@@ -2769,6 +2862,169 @@ mod replicator_tests {
         // applies nothing new.
         let second = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
         assert_eq!(second.applied_events, 0);
+    }
+
+    /// The same device's keys, as they would be after its group rotated to
+    /// `key_epoch`, holding `earlier` for older epochs.
+    fn at_epoch(keys: &LocalKeys, key_epoch: u32, k_epoch: [u8; 32], earlier: &[(u32, [u8; 32])]) -> LocalKeys {
+        LocalKeys {
+            signing_key: keys.signing_key.clone(),
+            k_epoch,
+            key_epoch,
+            earlier_epoch_keys: earlier.iter().copied().collect(),
+            device_id: keys.device_id,
+            sync_space_id: keys.sync_space_id.clone(),
+        }
+    }
+
+    fn stored_snippet_name(database: &Database, id: &str) -> Option<String> {
+        database
+            .connection()
+            .unwrap()
+            .query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0))
+            .optional()
+            .unwrap()
+    }
+
+    fn write_snippet(database: &Database, id: &str) {
+        database
+            .record_replicated_write(EntityType::Snippet, id, &fields(&["id", "name", "body", "createdAt"]), &snippet_payload(id, id))
+            .unwrap();
+    }
+
+    fn stored_object_count(database: &Database) -> i64 {
+        database.connection().unwrap().query_row("SELECT COUNT(*) FROM sync_objects", [], |row| row.get(0)).unwrap()
+    }
+
+    /// The chunk index CID of `database`'s own event at `device_sequence`.
+    fn own_chunk_index_cid(database: &Database, device_sequence: i64) -> String {
+        database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT so.cid FROM sync_objects so JOIN sync_events se ON se.event_id = so.event_id
+                 WHERE so.object_kind='chunk_index' AND se.device_sequence=?1",
+                params![device_sequence],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn each_remote_event_opens_with_the_key_for_its_own_epoch() {
+        let database_a = Database::open_memory();
+        let database_b = Database::open_memory();
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(FakeTransport::new("shared"))];
+
+        // A writes once before its group rotates and once after.
+        write_snippet(&database_a, "epoch-0");
+        let keys_a = test_keys(&database_a);
+        push_pending_events(&database_a, &keys_a, &transports).await.unwrap();
+        write_snippet(&database_a, "epoch-1");
+        let keys_a_rotated = at_epoch(&keys_a, 1, [9u8; 32], &[(0, keys_a.k_epoch)]);
+        push_pending_events(&database_a, &keys_a_rotated, &transports).await.unwrap();
+
+        let keys_b = test_keys(&database_b);
+        database_b.trust_device_public_key(keys_a.device_id.as_bytes(), &keys_a.signing_key.verifying_key()).unwrap();
+
+        // Without epoch 0's key, B applies nothing and keeps nothing, so a
+        // later pull still walks the whole chain.
+        let missing = at_epoch(&keys_b, 1, [9u8; 32], &[]);
+        let outcome = pull_from_transports(&database_b, &missing, &transports).await.unwrap();
+        assert_eq!(outcome.applied_events, 0);
+        assert_eq!(outcome.failed_transports, 1);
+        assert_eq!(stored_object_count(&database_b), 0);
+        assert_eq!(stored_snippet_name(&database_b, "epoch-1"), None);
+
+        let complete = at_epoch(&keys_b, 1, [9u8; 32], &[(0, [7u8; 32])]);
+        let outcome = pull_from_transports(&database_b, &complete, &transports).await.unwrap();
+        assert_eq!(outcome.failed_transports, 0);
+        assert_eq!(outcome.applied_events, 2);
+        assert_eq!(stored_snippet_name(&database_b, "epoch-0").as_deref(), Some("epoch-0"));
+        assert_eq!(stored_snippet_name(&database_b, "epoch-1").as_deref(), Some("epoch-1"));
+    }
+
+    #[tokio::test]
+    async fn a_walk_that_fails_partway_applies_everything_on_the_next_pull() {
+        let database_a = Database::open_memory();
+        let database_b = Database::open_memory();
+        let fake = Arc::new(FakeTransport::new("shared"));
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![fake.clone()];
+
+        let keys_a = test_keys(&database_a);
+        for id in ["first", "second", "third"] {
+            write_snippet(&database_a, id);
+            push_pending_events(&database_a, &keys_a, &transports).await.unwrap();
+        }
+        let keys_b = test_keys(&database_b);
+        database_b.trust_device_public_key(keys_a.device_id.as_bytes(), &keys_a.signing_key.verifying_key()).unwrap();
+
+        // The oldest event isn't visible yet, so the walk from the newest
+        // one fails after fetching the two newer events.
+        fake.inject_delayed_visibility(&TransportCid(own_chunk_index_cid(&database_a, 1)), 1);
+        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        assert_eq!(outcome.failed_transports, 1);
+        assert_eq!(outcome.applied_events, 0);
+        assert_eq!(stored_snippet_name(&database_b, "third"), None);
+
+        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        assert_eq!(outcome.failed_transports, 0);
+        assert_eq!(outcome.applied_events, 3);
+        for id in ["first", "second", "third"] {
+            assert_eq!(stored_snippet_name(&database_b, id).as_deref(), Some(id));
+        }
+    }
+
+    #[tokio::test]
+    async fn events_an_earlier_build_stored_without_applying_are_fetched_again_and_applied() {
+        let database_a = Database::open_memory();
+        let database_b = Database::open_memory();
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(FakeTransport::new("shared"))];
+
+        let keys_a = test_keys(&database_a);
+        for id in ["first", "second"] {
+            write_snippet(&database_a, id);
+            push_pending_events(&database_a, &keys_a, &transports).await.unwrap();
+        }
+
+        // Reproduce what a failed walk used to leave behind on B: A's newest
+        // event stored locally, never applied.
+        let newest_index_cid = own_chunk_index_cid(&database_a, 2);
+        let (event_id_hex, index_bytes): (String, Vec<u8>) = database_a
+            .connection()
+            .unwrap()
+            .query_row("SELECT event_id, bytes FROM sync_objects WHERE cid=?1", params![newest_index_cid], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        let index: ChunkIndex = serde_json::from_slice(&index_bytes).unwrap();
+        let chunks: Vec<Vec<u8>> = index
+            .chunk_cids
+            .iter()
+            .map(|cid| {
+                database_a
+                    .connection()
+                    .unwrap()
+                    .query_row("SELECT bytes FROM sync_objects WHERE cid=?1", params![cid], |row| row.get(0))
+                    .unwrap()
+            })
+            .collect();
+        let keys_b = test_keys(&database_b);
+        database_b.remember_remote_message(&newest_index_cid, &index.chunk_cids, &chunks, &event_id_hex).unwrap();
+        database_b.enqueue_repair_deliveries(&[TransportInstanceId("shared".to_string())]).unwrap();
+        database_b.trust_device_public_key(keys_a.device_id.as_bytes(), &keys_a.signing_key.verifying_key()).unwrap();
+
+        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        assert_eq!(outcome.applied_events, 2);
+        assert_eq!(stored_snippet_name(&database_b, "first").as_deref(), Some("first"));
+        assert_eq!(stored_snippet_name(&database_b, "second").as_deref(), Some("second"));
+
+        // Applied remote events and this device's own events are kept.
+        write_snippet(&database_b, "own");
+        push_pending_events(&database_b, &keys_b, &transports).await.unwrap();
+        let before = stored_object_count(&database_b);
+        assert_eq!(database_b.forget_unapplied_remote_messages().unwrap(), 0);
+        assert_eq!(stored_object_count(&database_b), before);
     }
 
     #[tokio::test]

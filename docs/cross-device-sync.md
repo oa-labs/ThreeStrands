@@ -81,6 +81,12 @@ The last three need a connector added first. Settings checks whether the
 connector already holds a group and steers toward joining it rather than
 starting a separate one.
 
+Every join method gives the new device all of the group's keys, including
+keys from before the group last changed them, so it can read the group's whole
+history. A device that was offline while the keys changed also catches up on
+everything it missed. Devices must all run 0.28.5 or later to join a group
+whose keys have changed; an older app reports the invitation as damaged.
+
 ### Join codes
 
 A join code is one pasteable string (it starts with `TSJOIN1-`) that carries:
