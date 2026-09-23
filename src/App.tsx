@@ -95,8 +95,11 @@ import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds 
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import {
   readLabelUsage,
+  readSelectedAccountId,
+  readSelectedMailboxForAccount,
   readSelectedTabForAccount,
   recordLabelUsed,
+  saveSelectedMailboxForAccount,
   saveSelectedTabForAccount,
 } from "./settings";
 import {
@@ -391,7 +394,7 @@ export function App() {
   const splitInboxCatalog = useSplitInboxes();
   const { splitInboxes, loaded: splitInboxesLoaded, refresh: refreshSplitInboxes } = splitInboxCatalog;
   const [activeSplitInboxId, setActiveSplitInboxId] = useState<string | null>(null);
-  const [mailbox, setMailbox] = useState<MailboxKind>("inbox");
+  const [mailbox, setMailbox] = useState<MailboxKind>(() => readSelectedMailboxForAccount(readSelectedAccountId()) ?? "inbox");
   const [mailboxError, setMailboxError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "trash" || mailbox === "split";
@@ -1472,6 +1475,7 @@ export function App() {
     setMailbox(splitInboxId ? "split" : "inbox");
     setActiveSplitInboxId(splitInboxId);
     saveSelectedTabForAccount(activeAccountId, splitInboxId);
+    saveSelectedMailboxForAccount(activeAccountId, "inbox");
   }, [correspondence.context, activeAccountId]);
   const goToInboxTab = useCallback(() => goToTab(null), [goToTab]);
 
@@ -1516,11 +1520,30 @@ export function App() {
     setQuery("");
     setSearchOpen(false);
     setMailbox(folder);
+    saveSelectedMailboxForAccount(activeAccountId, folder);
     if (folder === "drafts" || folder === "outbox") {
       setSelectedId(null);
       setDetail(null);
     }
-  }, [correspondence.context]);
+  }, [correspondence.context, activeAccountId]);
+  const switchAccount = useCallback((accountId: string | null) => {
+    if (accountId === activeAccountId) return;
+    const currentMailbox = mailbox === "split" ? "inbox" : mailbox;
+    if (currentMailbox !== "split") saveSelectedMailboxForAccount(activeAccountId, currentMailbox);
+    const nextMailbox = readSelectedMailboxForAccount(accountId) ?? "inbox";
+    setMailbox(nextMailbox);
+    setActiveSplitInboxId(null);
+    setQuery("");
+    setSearchOpen(false);
+    if (nextMailbox === "drafts") correspondence.context.openDrafts();
+    else if (nextMailbox === "outbox") correspondence.context.openOutbox();
+    else correspondence.context.openInbox();
+    if (nextMailbox === "drafts" || nextMailbox === "outbox") {
+      setSelectedId(null);
+      setDetail(null);
+    }
+    setActiveAccountId(accountId);
+  }, [activeAccountId, correspondence.context, mailbox, setActiveAccountId]);
   const goToPreviousSplitTab = useCallback(() => goToRelativeSplitTab(-1), [goToRelativeSplitTab]);
   const interactionScope = correspondence.activeDraft
     ? "compose"
@@ -1671,6 +1694,7 @@ export function App() {
       if (!isTabbedMailbox) {
         correspondence.context.openInbox();
         setMailbox("inbox");
+        saveSelectedMailboxForAccount(activeAccountId, "inbox");
         setActiveSplitInboxId(null);
       }
       setSearchOpen(true);
@@ -1692,14 +1716,10 @@ export function App() {
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
     undoLastAction: () => { void undoLastAction(); },
-    switchAccount: (email) => {
-      setActiveAccountId(email);
-    },
-    showAllAccounts: () => {
-      setActiveAccountId(null);
-    },
+    switchAccount,
+    showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setActiveAccountId, setMessageExpansionOverrides, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)

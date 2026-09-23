@@ -232,6 +232,49 @@ export function saveSelectedTabForAccount(accountId: string | null, splitInboxId
   }
 }
 
+const SELECTED_MAILBOX_BY_ACCOUNT_KEY = "threestrands.settings.selectedMailboxByAccount";
+const MAILBOXES = ["inbox", "allMail", "trash", "drafts", "outbox"] as const;
+export type SavedMailbox = typeof MAILBOXES[number];
+type SelectedMailboxByAccount = Record<string, SavedMailbox>;
+
+function validSelectedMailboxByAccount(value: unknown): value is SelectedMailboxByAccount {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.entries(value).every(([key, mailbox]) =>
+    key.length > 0
+    && key.length <= MAX_ACCOUNT_ID_LENGTH
+    && MAILBOXES.includes(mailbox as SavedMailbox),
+  );
+}
+
+/** Returns the last non-split folder selected for an account, if one was saved. */
+export function readSelectedMailboxForAccount(accountId: string | null): SavedMailbox | undefined {
+  try {
+    const saved = localStorage.getItem(SELECTED_MAILBOX_BY_ACCOUNT_KEY);
+    if (saved) {
+      const parsed: unknown = JSON.parse(saved);
+      if (validSelectedMailboxByAccount(parsed)) {
+        const key = accountId ?? ALL_ACCOUNTS_TAB_KEY;
+        return parsed[key];
+      }
+    }
+  } catch {
+    // A blocked or corrupted storage backend should not prevent the app from opening.
+  }
+  return undefined;
+}
+
+export function saveSelectedMailboxForAccount(accountId: string | null, mailbox: SavedMailbox): void {
+  try {
+    const saved = localStorage.getItem(SELECTED_MAILBOX_BY_ACCOUNT_KEY);
+    const parsed: unknown = saved ? JSON.parse(saved) : {};
+    const current = validSelectedMailboxByAccount(parsed) ? parsed : {};
+    const key = accountId ?? ALL_ACCOUNTS_TAB_KEY;
+    localStorage.setItem(SELECTED_MAILBOX_BY_ACCOUNT_KEY, JSON.stringify({ ...current, [key]: mailbox }));
+  } catch {
+    // The preference still applies for this session when storage is unavailable.
+  }
+}
+
 export function readFontFamily(): FontFamily {
   try {
     const saved = localStorage.getItem(FONT_FAMILY_KEY);

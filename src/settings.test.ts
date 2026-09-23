@@ -13,6 +13,7 @@ import {
   readLabelUsage,
   readLoadRemoteImages,
   readSelectedAccountId,
+  readSelectedMailboxForAccount,
   readSelectedTabForAccount,
   readSnippetUsage,
   recordLabelUsed,
@@ -22,6 +23,7 @@ import {
   saveFontFamily,
   saveLoadRemoteImages,
   saveSelectedAccountId,
+  saveSelectedMailboxForAccount,
   saveSelectedTabForAccount,
 } from "./settings";
 
@@ -139,6 +141,24 @@ describe("selected account preference", () => {
   it("ignores an invalid stored account id", () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "work@example.com\ninvalid");
     expect(readSelectedAccountId()).toBeNull();
+  });
+});
+
+describe("selected mailbox preference", () => {
+  afterEach(() => localStorage.clear());
+
+  it("stores the current folder independently for each account", () => {
+    saveSelectedMailboxForAccount("work@example.com", "outbox");
+    saveSelectedMailboxForAccount("home@example.com", "allMail");
+
+    expect(readSelectedMailboxForAccount("work@example.com")).toBe("outbox");
+    expect(readSelectedMailboxForAccount("home@example.com")).toBe("allMail");
+    expect(readSelectedMailboxForAccount("other@example.com")).toBeUndefined();
+  });
+
+  it("ignores corrupted saved folders", () => {
+    localStorage.setItem("threestrands.settings.selectedMailboxByAccount", JSON.stringify({ "work@example.com": "not-a-folder" }));
+    expect(readSelectedMailboxForAccount("work@example.com")).toBeUndefined();
   });
 });
 

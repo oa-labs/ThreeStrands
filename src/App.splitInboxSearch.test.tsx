@@ -7,6 +7,7 @@ describe("split inbox search shortcuts", () => {
   afterEach(() => {
     cleanup();
     localStorage.removeItem("threestrands.settings.selectedAccountId");
+    localStorage.removeItem("threestrands.settings.selectedMailboxByAccount");
     localStorage.removeItem("threestrands.settings.selectedTabByAccount");
     vi.restoreAllMocks();
   });
@@ -57,6 +58,32 @@ describe("split inbox search shortcuts", () => {
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Search Mail" }), { key: "Tab", shiftKey: true });
     await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
+  });
+
+  it("restores each account's last folder after keyboard and mouse account switches", async () => {
+    const [primary] = await mailClient.listAccounts();
+    vi.spyOn(mailClient, "listAccounts").mockResolvedValue([
+      primary!,
+      { ...primary!, email: "work@example.com", displayName: "Work", color: "#34A853", sortOrder: 1 },
+    ]);
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Outbox/ }));
+    expect(screen.getByRole("button", { name: /^Outbox/ })).toHaveClass("active");
+
+    fireEvent.keyDown(window, { key: "2", ctrlKey: true });
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true"));
+    fireEvent.click(screen.getByRole("button", { name: "All Mail (g then a)" }));
+    expect(screen.getByRole("button", { name: "All Mail (g then a)" })).toHaveClass("active");
+
+    fireEvent.click(screen.getByRole("radio", { name: /^demo@example\.com/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Outbox/ })).toHaveClass("active"));
+
+    fireEvent.keyDown(window, { key: "2", ctrlKey: true });
+    await waitFor(() => expect(screen.getByRole("button", { name: "All Mail (g then a)" })).toHaveClass("active"));
   });
 
   it("closes the search box when switching accounts, but not when switching tabs", async () => {
