@@ -991,7 +991,7 @@ function LocationManager({
         </div>
         {ipfsProbe?.versionOk ? (
           <p className="settings-hint">
-            {`Reachable · ${ipfsProbe.mfsAvailable ? "supports discovery (MFS)" : "storage-only, no MFS discovery"}`}
+            {`Reachable · ${ipfsProbe.headDiscoveryAvailable ? "supports sync discovery through bucket pins" : "bucket pins unavailable"}`}
           </p>
         ) : null}
         <button type="button" className="primary-action" disabled={busy || !ipfsBaseUrl} onClick={addIpfsRpc}>

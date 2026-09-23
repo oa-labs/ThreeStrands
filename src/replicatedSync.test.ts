@@ -83,13 +83,13 @@ describe("replicated sync invoke wrappers", () => {
   });
 
   it("probes an IPFS RPC endpoint without persisting anything", async () => {
-    vi.mocked(invoke).mockResolvedValue({ versionOk: true, mfsAvailable: false });
+    vi.mocked(invoke).mockResolvedValue({ versionOk: true, headDiscoveryAvailable: true });
     const report = await replicatedSyncProbeIpfsRpc("https://rpc.filebase.io", "secret-token");
     expect(invoke).toHaveBeenCalledWith("replicated_sync_probe_ipfs_rpc", {
       baseUrl: "https://rpc.filebase.io",
       token: "secret-token",
     });
-    expect(report).toEqual({ versionOk: true, mfsAvailable: false });
+    expect(report).toEqual({ versionOk: true, headDiscoveryAvailable: true });
   });
 
   it("passes instanceId and deleteData when removing a transport", async () => {

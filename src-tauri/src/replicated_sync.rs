@@ -1897,7 +1897,7 @@ pub struct ReplicatedSyncTransportStatus {
     pub health: String,
     /// Whether this instance can currently discover other devices'
     /// signed heads on its own (a folder's `heads/` directory; an RPC
-    /// endpoint's MFS index) — `false` means "storage-only": still a
+    /// endpoint's dedicated bucket pin index) — `false` means "storage-only": still a
     /// valid write/read replica, but it cannot bootstrap a new device by
     /// itself.
     pub head_discovery: bool,

@@ -10,26 +10,23 @@
 //! Object storage uses `dag/import` with a minimal single-block CAR whose
 //! root is the exact locally computed raw-block CID — not `/add`, which
 //! creates a UnixFS object under a different CID. Discovery of per-device
-//! signed heads uses Kubo's mutable filesystem (MFS) purely as an opaque
-//! index (`/threestrands/<space-tag>/heads/<device-tag>/<sequence>-<cid>`);
-//! an endpoint that cannot provide MFS is still a valid storage replica, it
-//! just cannot bootstrap a new device by itself — see
-//! [`TransportCapabilities::head_discovery`].
+//! signed heads uses the bucket's pin index. Each sync space owns a bucket,
+//! so enumerating its pins is both the object scan and the independently
+//! bootstrappable head-discovery index.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use rand::{rngs::OsRng, RngCore};
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use serde::Serialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use async_trait::async_trait;
-use threestrands_sync_envelope::{compute_cid, decode_signed_head, encode_signed_head, DeviceId, SignedDeviceHead};
+use threestrands_sync_envelope::{
+    compute_cid, decode_signed_head, encode_signed_head, SignedDeviceHead,
+};
 use threestrands_sync_transport::{
-    Cid as TransportCid, HeadLocator, ObjectLocator, ScanPage, SyncTransport, TransportCapabilities,
-    TransportError, TransportHealth, TransportInstanceId,
+    Cid as TransportCid, HeadLocator, ObjectLocator, ScanPage, SyncTransport,
+    TransportCapabilities, TransportError, TransportHealth, TransportInstanceId,
 };
 
 const SCAN_PAGE_SIZE: usize = 500;
@@ -52,7 +49,8 @@ struct RpcOrigin {
 
 impl RpcOrigin {
     fn parse(input: &str) -> Result<Self, String> {
-        let url = url::Url::parse(input.trim()).map_err(|error| format!("Invalid RPC URL: {error}"))?;
+        let url =
+            url::Url::parse(input.trim()).map_err(|error| format!("Invalid RPC URL: {error}"))?;
         let scheme = match url.scheme() {
             "https" => "https",
             "http" => "http",
@@ -67,7 +65,10 @@ impl RpcOrigin {
         if url.fragment().is_some() {
             return Err("RPC URL must not contain a fragment".to_string());
         }
-        let host = url.host_str().ok_or("RPC URL must have a host")?.to_string();
+        let host = url
+            .host_str()
+            .ok_or("RPC URL must have a host")?
+            .to_string();
         let loopback = is_loopback_host(&host);
         if scheme == "http" && !loopback {
             return Err("Non-loopback RPC endpoints must use HTTPS".to_string());
@@ -90,7 +91,10 @@ impl RpcOrigin {
     /// change the credential origin.
     fn method_url(&self, method: &str) -> String {
         let port = self.port.map(|port| format!(":{port}")).unwrap_or_default();
-        format!("{}://{}{}{}/api/v0/{method}", self.scheme, self.host, port, self.path_prefix)
+        format!(
+            "{}://{}{}{}/api/v0/{method}",
+            self.scheme, self.host, port, self.path_prefix
+        )
     }
 }
 
@@ -101,8 +105,14 @@ fn is_loopback_host(host: &str) -> bool {
     // `Url::host_str` returns a bracketed literal for IPv6 (`"[::1]"`),
     // since that's the form a URL authority requires; strip the brackets
     // before parsing it as an address.
-    let unbracketed = host.strip_prefix('[').and_then(|host| host.strip_suffix(']')).unwrap_or(host);
-    unbracketed.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false)
+    let unbracketed = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    unbracketed
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
 }
 
 // ============================== Kubo error shapes ============================
@@ -129,12 +139,6 @@ fn is_not_found_error(status: reqwest::StatusCode, body: &str) -> bool {
         || kubo_error_message(body)
             .map(|message| message.to_ascii_lowercase().contains("not found"))
             .unwrap_or(false)
-}
-
-fn is_already_exists_error(body: &str) -> bool {
-    kubo_error_message(body)
-        .map(|message| message.to_ascii_lowercase().contains("already exists"))
-        .unwrap_or(false)
 }
 
 /// Maps an unexpected (not already handled by a call-site-specific check
@@ -170,19 +174,6 @@ fn parse_cid(text: &str) -> Result<cid::Cid, TransportError> {
         .map_err(|_| TransportError::Corruption(format!("invalid content identifier: {text}")))
 }
 
-/// A stable, opaque tag derived from an identifier that is already random
-/// application-internal bytes (a sync-space id or a device id — never a
-/// name, email, or other user content). Used as an MFS path component so
-/// the path itself carries no meaning to anyone browsing the endpoint.
-fn derive_tag(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest[..8].iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn device_tag(device_id: &DeviceId) -> String {
-    derive_tag(device_id.as_bytes())
-}
-
 // ================================= Transport ==================================
 
 /// Reported by [`IpfsRpcTransport::probe_capabilities`] — what a "test
@@ -193,7 +184,7 @@ fn device_tag(device_id: &DeviceId) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct ProbeReport {
     pub version_ok: bool,
-    pub mfs_available: bool,
+    pub head_discovery_available: bool,
 }
 
 pub struct IpfsRpcTransport {
@@ -201,13 +192,7 @@ pub struct IpfsRpcTransport {
     origin: RpcOrigin,
     client: reqwest::Client,
     token: Option<String>,
-    space_tag: String,
-    /// Optimistically `true` until a probe (explicit, or the first
-    /// `health()` call) says otherwise — matches the other adapters'
-    /// default posture, and MFS absence is discovered the first time it's
-    /// actually needed if nothing ever probes explicitly.
-    mfs_available: AtomicBool,
-    enumeration_available: AtomicBool,
+    sync_space_id: Vec<u8>,
 }
 
 impl IpfsRpcTransport {
@@ -234,16 +219,19 @@ impl IpfsRpcTransport {
             origin,
             client,
             token,
-            space_tag: derive_tag(sync_space_id),
-            mfs_available: AtomicBool::new(true),
-            enumeration_available: AtomicBool::new(true),
+            sync_space_id: sync_space_id.to_vec(),
         })
     }
 
     fn auth_header(&self) -> Result<Option<HeaderValue>, TransportError> {
-        let Some(token) = &self.token else { return Ok(None) };
-        let mut value = HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|_| TransportError::Authentication("the configured access token is not a valid header value".to_string()))?;
+        let Some(token) = &self.token else {
+            return Ok(None);
+        };
+        let mut value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
+            TransportError::Authentication(
+                "the configured access token is not a valid header value".to_string(),
+            )
+        })?;
         // Keeps the token out of any Debug-formatted request/header dump —
         // the other half of "redact all credentials from diagnostics" is
         // simply never putting it in a URL (see `RpcOrigin`/`method_url`).
@@ -251,7 +239,11 @@ impl IpfsRpcTransport {
         Ok(Some(value))
     }
 
-    async fn post(&self, method: &str, query: &[(&str, &str)]) -> Result<reqwest::Response, TransportError> {
+    async fn post(
+        &self,
+        method: &str,
+        query: &[(&str, &str)],
+    ) -> Result<reqwest::Response, TransportError> {
         let mut url = reqwest::Url::parse(&self.origin.method_url(method))
             .map_err(|error| TransportError::Permanent(error.to_string()))?;
         {
@@ -267,7 +259,8 @@ impl IpfsRpcTransport {
         let response = request.send().await.map_err(map_reqwest_error)?;
         if response.status().is_redirection() {
             return Err(TransportError::Permanent(
-                "the RPC endpoint attempted to redirect the request; redirects are never followed".to_string(),
+                "the RPC endpoint attempted to redirect the request; redirects are never followed"
+                    .to_string(),
             ));
         }
         Ok(response)
@@ -294,7 +287,8 @@ impl IpfsRpcTransport {
         let response = request.send().await.map_err(map_reqwest_error)?;
         if response.status().is_redirection() {
             return Err(TransportError::Permanent(
-                "the RPC endpoint attempted to redirect the request; redirects are never followed".to_string(),
+                "the RPC endpoint attempted to redirect the request; redirects are never followed"
+                    .to_string(),
             ));
         }
         Ok(response)
@@ -310,50 +304,16 @@ impl IpfsRpcTransport {
         Ok(())
     }
 
-    async fn probe_mfs(&self) -> bool {
-        let probe_dir = format!("/threestrands/{}/.probe", self.space_tag);
-        if self.mfs_mkdir_p(&probe_dir).await.is_err() {
-            return false;
-        }
-
-        // Exercise the exact path device-head publication needs. Filebase
-        // accepts a CID already imported into this bucket as a files/cp
-        // source; probing only mkdir/ls would miss an endpoint or account
-        // tier that cannot perform that in-bucket link.
-        let mut probe_bytes = [0u8; 32];
-        OsRng.fill_bytes(&mut probe_bytes);
-        let cid = TransportCid::for_bytes(&probe_bytes);
-        let probe_file = format!("{probe_dir}/{}", cid.0);
-        let result = async {
-            self.put_object(&cid, &probe_bytes).await?;
-            self.mfs_cp(&format!("/ipfs/{}", cid.0), &probe_file).await?;
-            self.mfs_stat(&probe_file).await
-        }
-        .await;
-
-        // Cleanup is deliberately best-effort: capability reporting must
-        // reflect whether the required operation worked, while a transient
-        // cleanup failure must not hide that result. Random probe content
-        // prevents unpinning a caller-owned object with the same CID.
-        let _ = self.mfs_rm(&probe_file).await;
-        let _ = self.delete_object(&cid).await;
-        let _ = self.mfs_rm(&probe_dir).await;
-        result.is_ok()
-    }
-
-    /// Probes `version` and the complete MFS publication path (`dag/import`,
-    /// `files/mkdir`, `files/cp`, `files/stat`, and cleanup) against a
-    /// private probe path, caching the result for
-    /// [`SyncTransport::capabilities`] and [`SyncTransport::health`].
-    /// Call this explicitly (Settings' "test connection") before enabling a
-    /// replica; it also runs lazily the first time `health()` is called.
+    /// Probes the RPC endpoint and confirms that its bucket pin index can be
+    /// enumerated. Pin enumeration is the discovery mechanism for the
+    /// one-bucket-per-sync-space model, and this read-only probe leaves no
+    /// temporary objects behind.
     pub async fn probe_capabilities(&self) -> Result<ProbeReport, TransportError> {
         self.probe_version().await?;
-        let mfs_available = self.probe_mfs().await;
-        self.mfs_available.store(mfs_available, Ordering::Relaxed);
+        self.list_pinned_cids().await?;
         Ok(ProbeReport {
             version_ok: true,
-            mfs_available,
+            head_discovery_available: true,
         })
     }
 
@@ -370,102 +330,21 @@ impl IpfsRpcTransport {
         Err(map_status_error(status, &body))
     }
 
-    async fn mfs_mkdir_p(&self, path: &str) -> Result<(), TransportError> {
-        if !path.starts_with('/') {
-            return Err(TransportError::Permanent("MFS paths must start with /".to_string()));
-        }
-        // Filebase exposes MFS over a bucket but rejects Kubo's
-        // `parents=true` convenience flag. Build the hierarchy one
-        // component at a time instead. This remains valid against Kubo and
-        // idempotent when another device creates a parent first.
-        let mut current = String::new();
-        for component in path.split('/').filter(|component| !component.is_empty()) {
-            if component == "." || component == ".." {
-                return Err(TransportError::Permanent("MFS paths must not contain . or ..".to_string()));
-            }
-            current.push('/');
-            current.push_str(component);
-            let response = self.post("files/mkdir", &[("arg", &current)]).await?;
-            if response.status().is_success() {
-                continue;
-            }
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            if is_already_exists_error(&body) {
-                continue;
-            }
-            return Err(map_status_error(status, &body));
-        }
-        Ok(())
-    }
-
-    async fn mfs_cp(&self, source: &str, destination: &str) -> Result<(), TransportError> {
-        let response = self.post("files/cp", &[("arg", source), ("arg", destination)]).await?;
+    async fn list_pinned_cids(&self) -> Result<Vec<String>, TransportError> {
+        let response = self.post("pin/ls", &[("type", "recursive")]).await?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            // "already exists" happens if a repair/anti-entropy path tries
-            // to relink an entry that is already there; that is success,
-            // not a real conflict, since a head entry is never overwritten
-            // and the destination path already encodes the CID.
-            if kubo_error_message(&body).map(|m| m.to_ascii_lowercase().contains("already exists")).unwrap_or(false) {
-                return Ok(());
-            }
-            return Err(map_status_error(status, &body));
-        }
-        Ok(())
-    }
-
-    async fn mfs_ls(&self, path: &str) -> Result<Vec<String>, TransportError> {
-        let response = self.post("files/ls", &[("arg", path)]).await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            if is_not_found_error(status, &body) {
-                return Err(TransportError::NotFound);
-            }
             return Err(map_status_error(status, &body));
         }
         let body: Value = response.json().await.map_err(map_reqwest_error)?;
-        let names = body
-            .get("Entries")
-            .and_then(Value::as_array)
-            .map(|entries| {
-                entries
-                    .iter()
-                    .filter_map(|entry| entry.get("Name").and_then(Value::as_str).map(str::to_string))
-                    .collect()
-            })
+        let mut cids: Vec<String> = body
+            .get("Keys")
+            .and_then(Value::as_object)
+            .map(|keys| keys.keys().cloned().collect())
             .unwrap_or_default();
-        Ok(names)
-    }
-
-    async fn mfs_stat(&self, path: &str) -> Result<(), TransportError> {
-        let response = self.post("files/stat", &[("arg", path)]).await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            if is_not_found_error(status, &body) {
-                return Err(TransportError::NotFound);
-            }
-            return Err(map_status_error(status, &body));
-        }
-        Ok(())
-    }
-
-    async fn mfs_rm(&self, path: &str) -> Result<(), TransportError> {
-        // Probe cleanup only removes one file and then its empty directory.
-        // Filebase supports files/rm but rejects recursive and force.
-        let response = self.post("files/rm", &[("arg", path)]).await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            if is_not_found_error(status, &body) {
-                return Ok(());
-            }
-            return Err(map_status_error(status, &body));
-        }
-        Ok(())
+        cids.sort();
+        Ok(cids)
     }
 }
 
@@ -473,14 +352,12 @@ async fn build_single_block_car(cid: cid::Cid, bytes: &[u8]) -> Result<Vec<u8>, 
     let header = iroh_car::CarHeader::new_v1(vec![cid]);
     let mut buffer = Vec::new();
     let mut writer = iroh_car::CarWriter::new(header, &mut buffer);
-    writer
-        .write(cid, bytes)
-        .await
-        .map_err(|error| TransportError::Permanent(format!("failed to build the upload CAR: {error}")))?;
-    writer
-        .finish()
-        .await
-        .map_err(|error| TransportError::Permanent(format!("failed to build the upload CAR: {error}")))?;
+    writer.write(cid, bytes).await.map_err(|error| {
+        TransportError::Permanent(format!("failed to build the upload CAR: {error}"))
+    })?;
+    writer.finish().await.map_err(|error| {
+        TransportError::Permanent(format!("failed to build the upload CAR: {error}"))
+    })?;
     Ok(buffer)
 }
 
@@ -494,19 +371,29 @@ fn dag_import_confirms_root(body: &str, expected_cid: &str) -> Result<bool, Tran
         if line.is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(line)
-            .map_err(|error| TransportError::Corruption(format!("malformed dag/import response: {error}")))?;
-        let Some(root) = value.get("Root") else { continue };
-        let cid_str = root
-            .get("Cid")
-            .and_then(|cid| cid.get("/").and_then(Value::as_str).or_else(|| cid.as_str()));
+        let value: Value = serde_json::from_str(line).map_err(|error| {
+            TransportError::Corruption(format!("malformed dag/import response: {error}"))
+        })?;
+        let Some(root) = value.get("Root") else {
+            continue;
+        };
+        let cid_str = root.get("Cid").and_then(|cid| {
+            cid.get("/")
+                .and_then(Value::as_str)
+                .or_else(|| cid.as_str())
+        });
         let Some(cid_str) = cid_str else { continue };
         if cid_str != expected_cid {
             continue;
         }
-        let pin_error = root.get("PinErrorMsg").and_then(Value::as_str).unwrap_or("");
+        let pin_error = root
+            .get("PinErrorMsg")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if !pin_error.is_empty() {
-            return Err(TransportError::Permanent(format!("pin error during import: {pin_error}")));
+            return Err(TransportError::Permanent(format!(
+                "pin error during import: {pin_error}"
+            )));
         }
         return Ok(true);
     }
@@ -521,13 +408,17 @@ impl SyncTransport for IpfsRpcTransport {
 
     fn capabilities(&self) -> TransportCapabilities {
         TransportCapabilities {
-            enumeration: self.enumeration_available.load(Ordering::Relaxed),
+            enumeration: true,
             incremental_cursor: true,
-            head_discovery: self.mfs_available.load(Ordering::Relaxed),
+            head_discovery: true,
         }
     }
 
-    async fn put_object(&self, cid: &TransportCid, bytes: &[u8]) -> Result<ObjectLocator, TransportError> {
+    async fn put_object(
+        &self,
+        cid: &TransportCid,
+        bytes: &[u8],
+    ) -> Result<ObjectLocator, TransportError> {
         let expected_cid = parse_cid(&cid.0)?;
         let car_bytes = build_single_block_car(expected_cid, bytes).await?;
         let part = reqwest::multipart::Part::bytes(car_bytes)
@@ -536,7 +427,9 @@ impl SyncTransport for IpfsRpcTransport {
             .map_err(|error| TransportError::Permanent(error.to_string()))?;
         let form = reqwest::multipart::Form::new().part("file", part);
 
-        let response = self.post_multipart("dag/import", &[("pin-roots", "true")], form).await?;
+        let response = self
+            .post_multipart("dag/import", &[("pin-roots", "true")], form)
+            .await?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
@@ -585,59 +478,48 @@ impl SyncTransport for IpfsRpcTransport {
     }
 
     async fn publish_head(&self, head: &SignedDeviceHead) -> Result<HeadLocator, TransportError> {
-        let bytes = encode_signed_head(head).map_err(|error| TransportError::Permanent(error.to_string()))?;
+        let bytes = encode_signed_head(head)
+            .map_err(|error| TransportError::Permanent(error.to_string()))?;
         let cid_string = compute_cid(&bytes);
-        self.put_object(&TransportCid(cid_string.clone()), &bytes).await?;
-
-        let tag = device_tag(&head.head.device_id);
-        let dir = format!("/threestrands/{}/heads/{}", self.space_tag, tag);
-        self.mfs_mkdir_p(&dir).await?;
-        let entry_path = format!("{dir}/{}-{cid_string}", head.head.contiguous_sequence);
-        self.mfs_cp(&format!("/ipfs/{cid_string}"), &entry_path).await?;
+        self.put_object(&TransportCid(cid_string.clone()), &bytes)
+            .await?;
 
         Ok(HeadLocator {
             device_id: head.head.device_id,
-            remote_id: Some(entry_path),
+            remote_id: Some(cid_string),
         })
     }
 
-    async fn resolve_heads(&self, known: &[HeadLocator]) -> Result<Vec<SignedDeviceHead>, TransportError> {
-        if !self.mfs_available.load(Ordering::Relaxed) {
-            // storage-only: cannot discover, but that is not an error.
-            return Ok(Vec::new());
-        }
+    async fn resolve_heads(
+        &self,
+        known: &[HeadLocator],
+    ) -> Result<Vec<SignedDeviceHead>, TransportError> {
         let mut heads = Vec::new();
-        for locator in known {
-            let tag = device_tag(&locator.device_id);
-            let dir = format!("/threestrands/{}/heads/{}", self.space_tag, tag);
-            let entries = match self.mfs_ls(&dir).await {
-                Ok(entries) => entries,
-                // One device's missing or unreadable directory must never
-                // fail resolving every other device's head.
-                Err(_) => continue,
+        for cid in self.list_pinned_cids().await? {
+            let Ok(bytes) = self.get_object(&TransportCid(cid)).await else {
+                continue;
             };
-            let mut candidates: Vec<(u64, String)> = entries
+            let Ok(signed) = decode_signed_head(&bytes) else {
+                continue;
+            };
+            if signed.head.sync_space_id != self.sync_space_id {
+                continue;
+            }
+            if known
                 .iter()
-                .filter_map(|name| {
-                    let (sequence, cid) = name.split_once('-')?;
-                    Some((sequence.parse().ok()?, cid.to_string()))
-                })
-                .collect();
-            candidates.sort_by_key(|(sequence, _)| std::cmp::Reverse(*sequence));
-            for (_, cid) in candidates {
-                let Ok(bytes) = self.get_object(&TransportCid(cid)).await else { continue };
-                let Ok(signed) = decode_signed_head(&bytes) else { continue };
+                .any(|locator| locator.device_id == signed.head.device_id)
+            {
                 heads.push(signed);
-                break;
             }
         }
+        // Verification happens in the sync layer, which has the roster's
+        // public keys. Return every self-describing candidate instead of
+        // trusting an unverified high sequence to suppress a valid head.
+        heads.sort_by_key(|signed| std::cmp::Reverse(signed.head.contiguous_sequence));
         Ok(heads)
     }
 
     async fn scan(&self, cursor: Option<&str>) -> Result<Option<ScanPage>, TransportError> {
-        if !self.enumeration_available.load(Ordering::Relaxed) {
-            return Ok(None);
-        }
         let offset: usize = match cursor {
             None => 0,
             Some(cursor) => match cursor.parse() {
@@ -646,27 +528,22 @@ impl SyncTransport for IpfsRpcTransport {
             },
         };
 
-        let response = self.post("pin/ls", &[("type", "recursive")]).await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(map_status_error(status, &body));
-        }
-        let body: Value = response.json().await.map_err(map_reqwest_error)?;
-        let mut cids: Vec<String> = body
-            .get("Keys")
-            .and_then(Value::as_object)
-            .map(|keys| keys.keys().cloned().collect())
-            .unwrap_or_default();
-        cids.sort();
+        let cids = self.list_pinned_cids().await?;
 
         let end = (offset + SCAN_PAGE_SIZE).min(cids.len());
         let page = cids.get(offset..end).unwrap_or_default().to_vec();
-        let next_cursor = if end < cids.len() { Some(end.to_string()) } else { None };
+        let next_cursor = if end < cids.len() {
+            Some(end.to_string())
+        } else {
+            None
+        };
         Ok(Some(ScanPage {
             objects: page
                 .into_iter()
-                .map(|cid| ObjectLocator { remote_id: None, cid: TransportCid(cid) })
+                .map(|cid| ObjectLocator {
+                    remote_id: None,
+                    cid: TransportCid(cid),
+                })
                 .collect(),
             next_cursor,
         }))
@@ -691,16 +568,8 @@ impl SyncTransport for IpfsRpcTransport {
     }
 
     async fn health(&self) -> Result<TransportHealth, TransportError> {
-        match self.probe_version().await {
-            Ok(()) => {
-                if self.mfs_available.load(Ordering::Relaxed) {
-                    Ok(TransportHealth::Healthy)
-                } else {
-                    Ok(TransportHealth::Degraded(
-                        "no MFS discovery index on this endpoint: it can store and be read from, but cannot bootstrap a new device by itself".to_string(),
-                    ))
-                }
-            }
+        match self.probe_capabilities().await {
+            Ok(_) => Ok(TransportHealth::Healthy),
             Err(error) => Ok(TransportHealth::Unavailable(error.to_string())),
         }
     }
@@ -717,14 +586,20 @@ mod url_tests {
         assert_eq!(origin.host, "rpc.filebase.io");
         assert_eq!(origin.port, None);
         assert_eq!(origin.path_prefix, "");
-        assert_eq!(origin.method_url("version"), "https://rpc.filebase.io/api/v0/version");
+        assert_eq!(
+            origin.method_url("version"),
+            "https://rpc.filebase.io/api/v0/version"
+        );
     }
 
     #[test]
     fn keeps_a_path_prefix_and_strips_a_trailing_slash() {
         let origin = RpcOrigin::parse("https://example.com/ipfs-gateway/").unwrap();
         assert_eq!(origin.path_prefix, "/ipfs-gateway");
-        assert_eq!(origin.method_url("version"), "https://example.com/ipfs-gateway/api/v0/version");
+        assert_eq!(
+            origin.method_url("version"),
+            "https://example.com/ipfs-gateway/api/v0/version"
+        );
     }
 
     #[test]
@@ -761,7 +636,10 @@ mod url_tests {
         // exactly what a valid URL authority requires when rebuilding a
         // request URL, so that's what's retained here.
         assert_eq!(origin.host, "[::1]");
-        assert_eq!(origin.method_url("version"), "http://[::1]:5001/api/v0/version");
+        assert_eq!(
+            origin.method_url("version"),
+            "http://[::1]:5001/api/v0/version"
+        );
     }
 
     #[test]
@@ -792,17 +670,6 @@ mod url_tests {
     fn rejects_garbage_input() {
         assert!(RpcOrigin::parse("not a url").is_err());
         assert!(RpcOrigin::parse("").is_err());
-    }
-
-    #[test]
-    fn derive_tag_is_stable_and_content_dependent() {
-        assert_eq!(derive_tag(b"same"), derive_tag(b"same"));
-        assert_ne!(derive_tag(b"a"), derive_tag(b"b"));
-        // No user content survives into the tag: fixed length regardless
-        // of input length, and hex-only.
-        assert_eq!(derive_tag(b"short").len(), 16);
-        assert_eq!(derive_tag(b"a much much much longer input string").len(), 16);
-        assert!(derive_tag(b"x").chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -837,7 +704,7 @@ mod url_tests {
 /// exercised, not a mocked function call.
 #[cfg(test)]
 mod fake_server {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex, MutexGuard};
 
     use axum::extract::{Multipart, State};
@@ -853,7 +720,6 @@ mod fake_server {
         pub quota_after_puts: Option<usize>,
         pub puts_so_far: usize,
         pub corrupt_next_block_get: bool,
-        pub mfs_disabled: bool,
         /// When set, `dag/import` reports this CID as the imported root
         /// instead of the one actually requested — simulating a `/add`-style
         /// endpoint that silently substitutes a different (UnixFS) CID.
@@ -863,8 +729,6 @@ mod fake_server {
     #[derive(Default)]
     pub struct ServerState {
         pub pins: HashMap<String, Vec<u8>>,
-        pub dirs: HashSet<String>,
-        pub files: HashMap<String, String>,
         pub faults: FaultInjection,
     }
 
@@ -884,11 +748,6 @@ mod fake_server {
                 .route("/api/v0/pin/ls", post(pin_ls))
                 .route("/api/v0/pin/rm", post(pin_rm))
                 .route("/api/v0/block/get", post(block_get))
-                .route("/api/v0/files/mkdir", post(files_mkdir))
-                .route("/api/v0/files/cp", post(files_cp))
-                .route("/api/v0/files/ls", post(files_ls))
-                .route("/api/v0/files/stat", post(files_stat))
-                .route("/api/v0/files/rm", post(files_rm))
                 .with_state(state.clone());
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
@@ -909,16 +768,19 @@ mod fake_server {
 
     fn query_pairs(uri: &Uri) -> Vec<(String, String)> {
         uri.query()
-            .map(|query| url::form_urlencoded::parse(query.as_bytes()).into_owned().collect())
+            .map(|query| {
+                url::form_urlencoded::parse(query.as_bytes())
+                    .into_owned()
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
-    fn query_all<'a>(pairs: &'a [(String, String)], key: &str) -> Vec<&'a str> {
-        pairs.iter().filter(|(k, _)| k == key).map(|(_, v)| v.as_str()).collect()
-    }
-
     fn query_one<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
-        query_all(pairs, key).first().copied()
+        pairs
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value.as_str())
     }
 
     fn kubo_error(message: &str) -> String {
@@ -931,9 +793,15 @@ mod fake_server {
     #[allow(clippy::result_large_err)]
     fn check_auth(state: &ServerState, headers: &HeaderMap) -> Result<(), Response> {
         if let Some(required) = &state.faults.required_token {
-            let provided = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok());
+            let provided = headers
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok());
             if provided != Some(format!("Bearer {required}")).as_deref() {
-                return Err((StatusCode::UNAUTHORIZED, kubo_error("authentication required")).into_response());
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    kubo_error("authentication required"),
+                )
+                    .into_response());
             }
         }
         Ok(())
@@ -943,19 +811,14 @@ mod fake_server {
     fn check_outage(state: &mut ServerState) -> Result<(), Response> {
         if state.faults.outage_remaining > 0 {
             state.faults.outage_remaining -= 1;
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, kubo_error("injected outage")).into_response());
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                kubo_error("injected outage"),
+            )
+                .into_response());
         }
         Ok(())
     }
-
-    #[allow(clippy::result_large_err)]
-    fn check_mfs(state: &ServerState) -> Result<(), Response> {
-        if state.faults.mfs_disabled {
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, kubo_error("MFS is not supported on this endpoint")).into_response());
-        }
-        Ok(())
-    }
-
     async fn version(State(state): State<SharedState>, headers: HeaderMap) -> Response {
         let mut guard = state.lock().unwrap();
         if let Err(response) = check_auth(&guard, &headers) {
@@ -967,7 +830,12 @@ mod fake_server {
         axum::Json(serde_json::json!({"Version": "fake-kubo/0.1"})).into_response()
     }
 
-    async fn dag_import(State(state): State<SharedState>, headers: HeaderMap, uri: Uri, mut multipart: Multipart) -> Response {
+    async fn dag_import(
+        State(state): State<SharedState>,
+        headers: HeaderMap,
+        uri: Uri,
+        mut multipart: Multipart,
+    ) -> Response {
         {
             let guard = state.lock().unwrap();
             if let Err(response) = check_auth(&guard, &headers) {
@@ -997,7 +865,8 @@ mod fake_server {
         }
         if let Some(limit) = guard.faults.quota_after_puts {
             if guard.faults.puts_so_far >= limit {
-                return (StatusCode::TOO_MANY_REQUESTS, kubo_error("quota exceeded")).into_response();
+                return (StatusCode::TOO_MANY_REQUESTS, kubo_error("quota exceeded"))
+                    .into_response();
             }
         }
         if pin_roots {
@@ -1011,8 +880,15 @@ mod fake_server {
 
         let mut lines = String::new();
         for root in &roots {
-            let reported = guard.faults.substitute_root.clone().unwrap_or_else(|| root.to_string());
-            lines.push_str(&serde_json::json!({"Root": {"Cid": {"/": reported}, "PinErrorMsg": ""}}).to_string());
+            let reported = guard
+                .faults
+                .substitute_root
+                .clone()
+                .unwrap_or_else(|| root.to_string());
+            lines.push_str(
+                &serde_json::json!({"Root": {"Cid": {"/": reported}, "PinErrorMsg": ""}})
+                    .to_string(),
+            );
             lines.push('\n');
         }
         (StatusCode::OK, lines).into_response()
@@ -1029,9 +905,14 @@ mod fake_server {
         let pairs = query_pairs(&uri);
         if let Some(cid) = query_one(&pairs, "arg") {
             if guard.pins.contains_key(cid) {
-                return axum::Json(serde_json::json!({"Keys": {cid: {"Type": "recursive"}}})).into_response();
+                return axum::Json(serde_json::json!({"Keys": {cid: {"Type": "recursive"}}}))
+                    .into_response();
             }
-            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("path is not pinned")).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                kubo_error("path is not pinned"),
+            )
+                .into_response();
         }
         let keys: serde_json::Map<String, serde_json::Value> = guard
             .pins
@@ -1056,7 +937,11 @@ mod fake_server {
         if guard.pins.remove(cid).is_some() {
             axum::Json(serde_json::json!({"Pins": [cid]})).into_response()
         } else {
-            (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("path is not pinned")).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                kubo_error("path is not pinned"),
+            )
+                .into_response()
         }
     }
 
@@ -1073,7 +958,11 @@ mod fake_server {
             return (StatusCode::BAD_REQUEST, kubo_error("missing arg")).into_response();
         };
         let Some(bytes) = guard.pins.get(cid).cloned() else {
-            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("blockstore: block not found")).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                kubo_error("blockstore: block not found"),
+            )
+                .into_response();
         };
         let bytes = if guard.faults.corrupt_next_block_get {
             guard.faults.corrupt_next_block_get = false;
@@ -1089,135 +978,13 @@ mod fake_server {
         };
         (StatusCode::OK, bytes).into_response()
     }
-
-    async fn files_mkdir(State(state): State<SharedState>, headers: HeaderMap, uri: Uri) -> Response {
-        let mut guard = state.lock().unwrap();
-        if let Err(response) = check_auth(&guard, &headers) {
-            return response;
-        }
-        if let Err(response) = check_mfs(&guard) {
-            return response;
-        }
-        let pairs = query_pairs(&uri);
-        if query_one(&pairs, "parents").is_some() {
-            return (StatusCode::BAD_REQUEST, kubo_error("parents is not supported")).into_response();
-        }
-        let Some(path) = query_one(&pairs, "arg") else {
-            return (StatusCode::BAD_REQUEST, kubo_error("missing arg")).into_response();
-        };
-        if guard.dirs.contains(path) {
-            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("file already exists")).into_response();
-        }
-        let parent = path
-            .rsplit_once('/')
-            .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
-            .unwrap_or("/");
-        if parent != "/" && !guard.dirs.contains(parent) {
-            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("parent does not exist")).into_response();
-        }
-        guard.dirs.insert(path.to_string());
-        (StatusCode::OK, String::new()).into_response()
-    }
-
-    async fn files_cp(State(state): State<SharedState>, headers: HeaderMap, uri: Uri) -> Response {
-        let mut guard = state.lock().unwrap();
-        if let Err(response) = check_auth(&guard, &headers) {
-            return response;
-        }
-        if let Err(response) = check_mfs(&guard) {
-            return response;
-        }
-        let pairs = query_pairs(&uri);
-        let args = query_all(&pairs, "arg");
-        let [source, destination] = args.as_slice() else {
-            return (StatusCode::BAD_REQUEST, kubo_error("files/cp requires two arguments")).into_response();
-        };
-        let Some(cid) = source.strip_prefix("/ipfs/") else {
-            return (StatusCode::BAD_REQUEST, kubo_error("source must be /ipfs/<cid>")).into_response();
-        };
-        if !guard.pins.contains_key(cid) {
-            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("source does not exist in this bucket")).into_response();
-        }
-        if guard.files.contains_key(*destination) {
-            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("already exists")).into_response();
-        }
-        guard.files.insert(destination.to_string(), cid.to_string());
-        (StatusCode::OK, String::new()).into_response()
-    }
-
-    async fn files_ls(State(state): State<SharedState>, headers: HeaderMap, uri: Uri) -> Response {
-        let guard = state.lock().unwrap();
-        if let Err(response) = check_auth(&guard, &headers) {
-            return response;
-        }
-        if let Err(response) = check_mfs(&guard) {
-            return response;
-        }
-        let pairs = query_pairs(&uri);
-        let Some(path) = query_one(&pairs, "arg") else {
-            return (StatusCode::BAD_REQUEST, kubo_error("missing arg")).into_response();
-        };
-        if !guard.dirs.contains(path) {
-            return (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("file does not exist")).into_response();
-        }
-        let prefix = format!("{path}/");
-        let entries: Vec<_> = guard
-            .files
-            .keys()
-            .filter_map(|file_path| {
-                file_path
-                    .strip_prefix(prefix.as_str())
-                    .filter(|rest| !rest.contains('/'))
-                    .map(|name| serde_json::json!({"Name": name}))
-            })
-            .collect();
-        axum::Json(serde_json::json!({"Entries": entries})).into_response()
-    }
-
-    async fn files_stat(State(state): State<SharedState>, headers: HeaderMap, uri: Uri) -> Response {
-        let guard = state.lock().unwrap();
-        if let Err(response) = check_auth(&guard, &headers) {
-            return response;
-        }
-        if let Err(response) = check_mfs(&guard) {
-            return response;
-        }
-        let pairs = query_pairs(&uri);
-        let Some(path) = query_one(&pairs, "arg") else {
-            return (StatusCode::BAD_REQUEST, kubo_error("missing arg")).into_response();
-        };
-        if let Some(cid) = guard.files.get(path) {
-            return axum::Json(serde_json::json!({"Hash": cid, "Type": "file"})).into_response();
-        }
-        if guard.dirs.contains(path) {
-            return axum::Json(serde_json::json!({"Hash": "directory", "Type": "directory"})).into_response();
-        }
-        (StatusCode::INTERNAL_SERVER_ERROR, kubo_error("file does not exist")).into_response()
-    }
-
-    async fn files_rm(State(state): State<SharedState>, headers: HeaderMap, uri: Uri) -> Response {
-        let mut guard = state.lock().unwrap();
-        if let Err(response) = check_auth(&guard, &headers) {
-            return response;
-        }
-        let pairs = query_pairs(&uri);
-        if query_one(&pairs, "recursive").is_some() || query_one(&pairs, "force").is_some() {
-            return (StatusCode::BAD_REQUEST, kubo_error("recursive and force are not supported")).into_response();
-        }
-        let Some(path) = query_one(&pairs, "arg") else {
-            return (StatusCode::BAD_REQUEST, kubo_error("missing arg")).into_response();
-        };
-        guard.dirs.remove(path);
-        guard.files.remove(path);
-        (StatusCode::OK, String::new()).into_response()
-    }
 }
 
 #[cfg(test)]
 mod transport_tests {
     use super::fake_server::FakeKuboServer;
     use super::*;
-    use threestrands_sync_envelope::{sign_device_head, DeviceHead, SigningKey};
+    use threestrands_sync_envelope::{sign_device_head, DeviceHead, DeviceId, SigningKey};
     use threestrands_sync_transport::conformance;
 
     fn open(server: &FakeKuboServer, instance_id: &str) -> IpfsRpcTransport {
@@ -1228,59 +995,26 @@ mod transport_tests {
     async fn passes_the_shared_conformance_suite() {
         let server_a = FakeKuboServer::spawn().await;
         let server_b = FakeKuboServer::spawn().await;
-        let a = open(&server_a, "a");
-        let b = open(&server_b, "b");
+        let a =
+            IpfsRpcTransport::new("a", &server_a.base_url(), None, b"conformance-space").unwrap();
+        let b =
+            IpfsRpcTransport::new("b", &server_b.base_url(), None, b"conformance-space").unwrap();
         conformance::run_all(&a, &b).await;
     }
 
     #[tokio::test]
-    async fn reports_healthy_and_storage_and_discovery_when_mfs_works() {
+    async fn probe_confirms_pin_index_discovery_without_mutating_the_bucket() {
         let server = FakeKuboServer::spawn().await;
         let transport = open(&server, "a");
         let report = transport.probe_capabilities().await.unwrap();
         assert!(report.version_ok);
-        assert!(report.mfs_available);
+        assert!(report.head_discovery_available);
         assert_eq!(transport.health().await.unwrap(), TransportHealth::Healthy);
         assert!(transport.capabilities().head_discovery);
-    }
-
-    #[tokio::test]
-    async fn mfs_probe_uses_filebase_compatible_calls_and_cleans_up_its_object() {
-        let server = FakeKuboServer::spawn().await;
-        let transport = open(&server, "a");
-
-        let report = transport.probe_capabilities().await.unwrap();
-
-        assert!(report.mfs_available);
-        let state = server.faults();
-        assert!(state.pins.is_empty(), "the random probe block must be unpinned");
-        assert!(state.files.is_empty(), "the temporary MFS link must be removed");
-        assert!(state.dirs.contains("/threestrands"));
-        assert!(state.dirs.contains(&format!("/threestrands/{}", transport.space_tag)));
-        assert!(!state.dirs.contains(&format!("/threestrands/{}/.probe", transport.space_tag)));
-    }
-
-    #[tokio::test]
-    async fn reports_degraded_and_storage_only_when_mfs_is_unavailable() {
-        let server = FakeKuboServer::spawn().await;
-        server.faults().faults.mfs_disabled = true;
-        let transport = open(&server, "a");
-        let report = transport.probe_capabilities().await.unwrap();
-        assert!(report.version_ok);
-        assert!(!report.mfs_available);
-        assert!(matches!(transport.health().await.unwrap(), TransportHealth::Degraded(_)));
-        assert!(!transport.capabilities().head_discovery);
-
-        // Storage-only still works fine as a plain replica.
-        let bytes = b"still a valid replica".to_vec();
-        let cid = TransportCid::for_bytes(&bytes);
-        transport.put_object(&cid, &bytes).await.unwrap();
-        assert_eq!(transport.get_object(&cid).await.unwrap(), bytes);
-
-        // But it cannot discover: resolve_heads returns empty, not an error.
-        let device_id = DeviceId::from_bytes([1u8; 16]);
-        let heads = transport.resolve_heads(&[HeadLocator { device_id, remote_id: None }]).await.unwrap();
-        assert!(heads.is_empty());
+        assert!(
+            server.faults().pins.is_empty(),
+            "the read-only probe must not add an object"
+        );
     }
 
     #[tokio::test]
@@ -1300,8 +1034,13 @@ mod transport_tests {
             assert!(!message.contains("secret-token"));
         }
 
-        let authenticated =
-            IpfsRpcTransport::new("a", &server.base_url(), Some("secret-token".to_string()), b"space").unwrap();
+        let authenticated = IpfsRpcTransport::new(
+            "a",
+            &server.base_url(),
+            Some("secret-token".to_string()),
+            b"space",
+        )
+        .unwrap();
         authenticated.put_object(&cid, &bytes).await.unwrap();
     }
 
@@ -1309,12 +1048,19 @@ mod transport_tests {
     async fn a_wrong_token_never_appears_in_any_error_message() {
         let server = FakeKuboServer::spawn().await;
         server.faults().faults.required_token = Some("correct-token".to_string());
-        let transport =
-            IpfsRpcTransport::new("a", &server.base_url(), Some("wrong-token-value".to_string()), b"space").unwrap();
+        let transport = IpfsRpcTransport::new(
+            "a",
+            &server.base_url(),
+            Some("wrong-token-value".to_string()),
+            b"space",
+        )
+        .unwrap();
         let bytes = b"x".to_vec();
         let cid = TransportCid::for_bytes(&bytes);
         let result = transport.put_object(&cid, &bytes).await;
-        let Err(error) = result else { panic!("expected an authentication failure") };
+        let Err(error) = result else {
+            panic!("expected an authentication failure")
+        };
         assert!(!error.to_string().contains("wrong-token-value"));
     }
 
@@ -1353,12 +1099,16 @@ mod transport_tests {
         // An endpoint nothing is listening on: connection failures map to
         // Transient, never a panic or a hang that could block a caller
         // iterating over multiple configured transports.
-        let unreachable = IpfsRpcTransport::new("unreachable", "http://127.0.0.1:1", None, b"space").unwrap();
+        let unreachable =
+            IpfsRpcTransport::new("unreachable", "http://127.0.0.1:1", None, b"space").unwrap();
 
         let bytes = b"data".to_vec();
         let cid = TransportCid::for_bytes(&bytes);
         healthy.put_object(&cid, &bytes).await.unwrap();
-        assert!(matches!(unreachable.put_object(&cid, &bytes).await, Err(TransportError::Transient(_))));
+        assert!(matches!(
+            unreachable.put_object(&cid, &bytes).await,
+            Err(TransportError::Transient(_))
+        ));
         // The healthy one is completely unaffected by the other's failure.
         assert_eq!(healthy.get_object(&cid).await.unwrap(), bytes);
     }
@@ -1368,12 +1118,16 @@ mod transport_tests {
         // Simulates an `/add`-style endpoint that reports a different
         // (UnixFS) CID than the raw-block CID actually requested.
         let server = FakeKuboServer::spawn().await;
-        server.faults().faults.substitute_root = Some("bafyreianotmyrootatall000000000000000000000000000000000".to_string());
+        server.faults().faults.substitute_root =
+            Some("bafyreianotmyrootatall000000000000000000000000000000000".to_string());
         let transport = open(&server, "a");
         let bytes = b"data".to_vec();
         let cid = TransportCid::for_bytes(&bytes);
         let result = transport.put_object(&cid, &bytes).await;
-        assert!(result.is_err(), "a substituted root must never satisfy delivery of the requested CID");
+        assert!(
+            result.is_err(),
+            "a substituted root must never satisfy delivery of the requested CID"
+        );
     }
 
     #[tokio::test]
@@ -1386,9 +1140,12 @@ mod transport_tests {
 
         server.faults().faults.corrupt_next_block_get = true;
         let result = transport.get_object(&cid).await;
-        assert_eq!(result, Err(TransportError::Corruption(
-            "returned block bytes do not match the requested CID".to_string()
-        )));
+        assert_eq!(
+            result,
+            Err(TransportError::Corruption(
+                "returned block bytes do not match the requested CID".to_string()
+            ))
+        );
     }
 
     #[tokio::test]
@@ -1398,18 +1155,24 @@ mod transport_tests {
         server.faults().faults.outage_remaining = 1;
         let bytes = b"data".to_vec();
         let cid = TransportCid::for_bytes(&bytes);
-        assert!(matches!(transport.put_object(&cid, &bytes).await, Err(TransportError::Transient(_))));
+        assert!(matches!(
+            transport.put_object(&cid, &bytes).await,
+            Err(TransportError::Transient(_))
+        ));
         // The outage was consumed; a retry succeeds.
         transport.put_object(&cid, &bytes).await.unwrap();
 
         server.faults().faults.quota_after_puts = Some(0);
         let more_bytes = b"more data".to_vec();
         let more_cid = TransportCid::for_bytes(&more_bytes);
-        assert!(matches!(transport.put_object(&more_cid, &more_bytes).await, Err(TransportError::Quota(_))));
+        assert!(matches!(
+            transport.put_object(&more_cid, &more_bytes).await,
+            Err(TransportError::Quota(_))
+        ));
     }
 
     #[tokio::test]
-    async fn publish_and_resolve_head_round_trips_through_mfs() {
+    async fn publish_and_resolve_head_round_trips_through_the_pin_index() {
         let server = FakeKuboServer::spawn().await;
         let transport = open(&server, "a");
         let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
@@ -1424,13 +1187,19 @@ mod transport_tests {
         let signed = sign_device_head(&signing_key, head).unwrap();
         transport.publish_head(&signed).await.unwrap();
 
-        let resolved = transport.resolve_heads(&[HeadLocator { device_id, remote_id: None }]).await.unwrap();
+        let resolved = transport
+            .resolve_heads(&[HeadLocator {
+                device_id,
+                remote_id: None,
+            }])
+            .await
+            .unwrap();
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], signed);
     }
 
     #[tokio::test]
-    async fn resolve_heads_picks_the_highest_sequence_never_overwriting_entries() {
+    async fn resolve_heads_returns_all_candidates_newest_first_for_signature_verification() {
         let server = FakeKuboServer::spawn().await;
         let transport = open(&server, "a");
         let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
@@ -1447,23 +1216,62 @@ mod transport_tests {
             transport.publish_head(&signed).await.unwrap();
         }
 
-        let resolved = transport.resolve_heads(&[HeadLocator { device_id, remote_id: None }]).await.unwrap();
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].head.contiguous_sequence, 3);
-
-        // All three entries are still present in MFS — none were
-        // overwritten, matching "never overwrite a head entry."
-        let dir = format!("/threestrands/{}/heads/{}", transport.space_tag, super::device_tag(&device_id));
-        let entries = transport.mfs_ls(&dir).await.unwrap();
-        assert_eq!(entries.len(), 3);
+        let resolved = transport
+            .resolve_heads(&[HeadLocator {
+                device_id,
+                remote_id: None,
+            }])
+            .await
+            .unwrap();
+        let sequences: Vec<u64> = resolved
+            .iter()
+            .map(|head| head.head.contiguous_sequence)
+            .collect();
+        assert_eq!(sequences, vec![3, 2, 1]);
+        assert_eq!(
+            server.faults().pins.len(),
+            3,
+            "immutable head objects remain pinned"
+        );
     }
 
     #[tokio::test]
-    async fn resolve_heads_tolerates_a_missing_device_directory() {
+    async fn resolve_heads_ignores_non_heads_other_spaces_and_unknown_devices() {
         let server = FakeKuboServer::spawn().await;
         let transport = open(&server, "a");
-        let device_id = DeviceId::from_bytes([7u8; 16]);
-        let resolved = transport.resolve_heads(&[HeadLocator { device_id, remote_id: None }]).await.unwrap();
+        let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+        let known_device = DeviceId::from_bytes([7u8; 16]);
+
+        let ordinary = b"not a signed head".to_vec();
+        transport
+            .put_object(&TransportCid::for_bytes(&ordinary), &ordinary)
+            .await
+            .unwrap();
+        for (sync_space_id, device_id) in [
+            (b"other-space".to_vec(), known_device),
+            (b"space".to_vec(), DeviceId::from_bytes([8u8; 16])),
+        ] {
+            let signed = sign_device_head(
+                &signing_key,
+                DeviceHead {
+                    sync_space_id,
+                    device_id,
+                    epoch: 1,
+                    contiguous_sequence: 1,
+                    latest_event_cid: None,
+                },
+            )
+            .unwrap();
+            transport.publish_head(&signed).await.unwrap();
+        }
+
+        let resolved = transport
+            .resolve_heads(&[HeadLocator {
+                device_id: known_device,
+                remote_id: None,
+            }])
+            .await
+            .unwrap();
         assert!(resolved.is_empty());
     }
 
@@ -1475,7 +1283,10 @@ mod transport_tests {
         let cid = TransportCid::for_bytes(&bytes);
         transport.put_object(&cid, &bytes).await.unwrap();
         transport.delete_object(&cid).await.unwrap();
-        assert_eq!(transport.get_object(&cid).await, Err(TransportError::NotFound));
+        assert_eq!(
+            transport.get_object(&cid).await,
+            Err(TransportError::NotFound)
+        );
         // Deleting again is idempotent, not an error.
         transport.delete_object(&cid).await.unwrap();
     }

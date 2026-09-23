@@ -57,7 +57,7 @@ pub struct TransportCapabilities {
     pub incremental_cursor: bool,
     /// Whether `publish_head`/`resolve_heads` are backed by a real,
     /// independently enumerable discovery index on this instance (a local
-    /// folder's `heads/` directory; an RPC endpoint's MFS namespace).
+    /// folder's `heads/` directory; a dedicated IPFS bucket's pin index).
     /// `false` distinguishes a `storage-only` endpoint — still a valid
     /// write/read replica — from `storage-and-discovery`: a storage-only
     /// endpoint cannot, by itself, bootstrap a new device, and the UI must

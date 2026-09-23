@@ -19,7 +19,7 @@ export type ReplicatedSyncTransportStatus = {
 
 export type IpfsRpcProbeReport = {
   versionOk: boolean;
-  mfsAvailable: boolean;
+  headDiscoveryAvailable: boolean;
 };
 
 export type EnrollmentStatus =
