@@ -4,11 +4,15 @@ pub enum EnvelopeError {
     HeaderInvalid,
     #[error("unsupported envelope format version")]
     UnsupportedFormatVersion,
+    #[error("unsupported sync protocol version")]
+    UnsupportedProtocolVersion,
+    #[error("sealed object is not of the expected kind")]
+    UnexpectedObjectKind,
     #[error("envelope is too short to contain a header, nonce, and authentication tag")]
     Truncated,
     #[error("envelope authentication failed")]
     DecryptionFailed,
-    #[error("event signature is invalid")]
+    #[error("signature is invalid")]
     SignatureInvalid,
     #[error("compressed body exceeds the configured limit")]
     CompressedTooLarge,

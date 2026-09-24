@@ -1117,6 +1117,9 @@ mod transport_tests {
             epoch: 1,
             contiguous_sequence: 1,
             latest_event_cid: None,
+            published_at_ms: 0,
+            ack: vec![],
+            snapshot_cid: None,
         };
         let signed = sign_device_head(&signing_key, head).unwrap();
         transport.publish_head(&signed).await.unwrap();
@@ -1145,6 +1148,9 @@ mod transport_tests {
                 epoch: 1,
                 contiguous_sequence: sequence,
                 latest_event_cid: None,
+                published_at_ms: 0,
+                ack: vec![],
+                snapshot_cid: None,
             };
             let signed = sign_device_head(&signing_key, head).unwrap();
             transport.publish_head(&signed).await.unwrap();
@@ -1193,6 +1199,9 @@ mod transport_tests {
                     epoch: 1,
                     contiguous_sequence: 1,
                     latest_event_cid: None,
+                    published_at_ms: 0,
+                    ack: vec![],
+                    snapshot_cid: None,
                 },
             )
             .unwrap();

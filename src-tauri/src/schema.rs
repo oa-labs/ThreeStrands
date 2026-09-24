@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 34;
+pub(crate) const LATEST_VERSION: i64 = 35;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -873,6 +873,129 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
         tx.pragma_update(None, "user_version", 34).map_err(error)?;
+    }
+    if version < 35 {
+        // Replicated-sync protocol version 2 (causal vectors, v2 heads,
+        // per-kind signatures). Version 1 groups can't be joined or read by
+        // this build, so a device that belonged to one leaves it here, the
+        // way "Leave this sync group" does: local data, connectors, and the
+        // beta toggle stay, and the next sync re-records local entities
+        // for whichever new group this device creates or joins. The OS
+        // keychain can't be reached from a migration, so the highest epoch
+        // to forget is recorded for the sync loop to clean up.
+        // Enrolled in a group, or at least recorded local changes for one.
+        let was_enrolled: bool = tx
+            .query_row("SELECT EXISTS(SELECT 1 FROM sync_epoch_history)", [], |row| row.get(0))
+            .map_err(error)?;
+        let had_graph: bool = tx
+            .query_row("SELECT EXISTS(SELECT 1 FROM sync_events)", [], |row| row.get(0))
+            .map_err(error)?;
+        let highest_epoch: i64 = tx
+            .query_row(
+                "SELECT MAX(COALESCE((SELECT MAX(key_epoch) FROM sync_epoch_history), 0),
+                            COALESCE((SELECT MAX(active_epoch) FROM sync_spaces), 0))",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(error)?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sync_notices (
+                kind TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sync_pending_keychain_cleanup (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                highest_epoch INTEGER NOT NULL
+            );",
+        )
+        .map_err(error)?;
+        if was_enrolled {
+            tx.execute(
+                "INSERT OR REPLACE INTO sync_pending_keychain_cleanup(id, highest_epoch) VALUES (1, ?1)",
+                [highest_epoch],
+            )
+            .map_err(error)?;
+            tx.execute(
+                "INSERT OR IGNORE INTO sync_notices(kind, created_at) VALUES ('protocol_reset', datetime('now'))",
+                [],
+            )
+            .map_err(error)?;
+        }
+        if was_enrolled || had_graph {
+            tx.execute_batch(
+                "DELETE FROM sync_deliveries;
+                 DELETE FROM sync_field_frontier;
+                 DELETE FROM sync_operation_parents;
+                 DELETE FROM sync_objects;
+                 DELETE FROM sync_epoch_history;
+                 DELETE FROM replicated_sync_enrollment_requests;
+                 DELETE FROM replicated_sync_invitation_redemptions;
+                 DELETE FROM replicated_sync_invitations;
+                 DELETE FROM sync_control_objects_seen;
+                 DELETE FROM sync_device_labels;
+                 DELETE FROM sync_devices;
+                 UPDATE sync_spaces SET active_epoch=0, lamport=0, recovery_public_key=NULL, recovery_x25519_public=NULL, last_error=NULL;",
+            )
+            .map_err(error)?;
+        }
+        // The graph tables are rebuilt either way: their shape changed.
+        tx.execute_batch(
+            "DROP INDEX IF EXISTS sync_operations_entity;
+             DROP TABLE IF EXISTS sync_operations;
+             DROP TABLE IF EXISTS sync_events;
+             CREATE TABLE sync_events (
+                event_id TEXT PRIMARY KEY,
+                epoch INTEGER NOT NULL,
+                device_id TEXT NOT NULL,
+                device_sequence INTEGER NOT NULL,
+                lamport INTEGER NOT NULL,
+                state TEXT NOT NULL DEFAULT 'recorded' CHECK(state IN ('recorded','sealed')),
+                created_at TEXT NOT NULL,
+                -- JSON [[device_id_hex, sequence], ...]: the event's causal
+                -- vector, set once it is sealed (local) or applied (remote).
+                causal_vector TEXT,
+                UNIQUE(device_id, device_sequence)
+            );
+            -- An operation comes from exactly one event or, once snapshots
+            -- exist, one snapshot. Deleting an event row never deletes its
+            -- operations: an operation that still holds a field's current
+            -- value must outlive its event once history is compacted.
+            CREATE TABLE sync_operations (
+                operation_id TEXT PRIMARY KEY,
+                event_id TEXT,
+                snapshot_id TEXT,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                field TEXT NOT NULL,
+                value TEXT,
+                winner_stamp BLOB NOT NULL,
+                CHECK((event_id IS NULL) != (snapshot_id IS NULL))
+            );
+            CREATE INDEX sync_operations_entity ON sync_operations(entity_type, entity_id, field);
+            CREATE INDEX sync_operations_event ON sync_operations(event_id);
+            -- Per device: how much of its feed is applied here (a
+            -- contiguous prefix), how much of that is causally closed
+            -- (this device's ack), and what its latest head said.
+            CREATE TABLE IF NOT EXISTS sync_device_progress (
+                device_id TEXT PRIMARY KEY,
+                applied_sequence INTEGER NOT NULL DEFAULT 0,
+                progress_sequence INTEGER NOT NULL DEFAULT 0,
+                last_event_at TEXT,
+                last_head_seen_at_ms INTEGER,
+                last_head_published_at_ms INTEGER,
+                ack_json TEXT
+            );
+            -- What this device last published as its head on each
+            -- transport, so an unchanged head is republished only when the
+            -- heartbeat is due.
+            CREATE TABLE IF NOT EXISTS sync_head_publications (
+                transport_instance_id TEXT PRIMARY KEY,
+                head_content TEXT NOT NULL,
+                published_at_ms INTEGER NOT NULL
+            );",
+        )
+        .map_err(error)?;
+        tx.pragma_update(None, "user_version", 35).map_err(error)?;
     }
     tx.commit().map_err(error)?;
 

@@ -112,6 +112,7 @@ describe("the S3 form model", () => {
     expect(s3TestChecklist({ ...passing, canWrite: false }).find((line) => line.label === "Can write")?.ok).toBe(false);
     expect(s3SpaceLine({ ...passing, spacePresence: "existing" })).toMatch(/Existing sync group/);
     expect(s3SpaceLine({ ...passing, spacePresence: "none" })).toMatch(/ready for a new sync group/);
+    expect(s3SpaceLine({ ...passing, spacePresence: "legacy" })).toMatch(/earlier test version/);
     expect(s3SpaceLine({ ...passing, spacePresence: null })).toBeNull();
   });
 });

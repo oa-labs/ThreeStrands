@@ -80,14 +80,22 @@ to carry it forward.
 
 ## Core model
 
+**Applied.** For each device X, `applied[X]` is the contiguous prefix of X's
+feed applied locally. Events apply strictly in feed order, and an arriving event
+at or below `applied[X]` is dropped (invariant 4).
+
 **Progress vector.** For each device X, `progress[X]` is the highest sequence s
 such that:
 - every event from X numbered 1 to s has been applied locally, and
 - every event those depend on is also covered by `progress`.
 
-Progress is computed as a fixpoint over the per-event causal vectors described
-below. It is always causally closed: if an event is covered, so is everything
-it depends on.
+Progress is computed as a fixpoint over per-event causal vectors. An event's
+causal vector is its author's *applied* vector when sealing it. That vector may
+be more than the event depends on, but never less, because every parent an
+operation names was already in the author's graph. Along one feed causal vectors
+only grow, so a prefix `1..=s` is closed exactly when event `s`'s vector is
+covered. Progress is always causally closed: if an event is covered, so is
+everything it depends on.
 
 **Ack.** Each device publishes its progress vector in its signed head. That
 published vector is its ack.
@@ -157,114 +165,122 @@ Each invariant has named tests, and later steps cite them by number.
 
 ---
 
-## Step 1 — Design, protocol v2 groundwork, and test harness
+## Step 1 — Protocol v2 groundwork and test harness
 
-The aim of this step is to get every wire and schema change that compaction
-needs in at once, because the reset means there is no compatibility cost now.
-The step also fixes the rotation bug and builds the harness that Steps 2 and 3
-are tested with. No data is deleted yet.
+**Status: done in 0.29.0.** Existing test groups are left on upgrade (see
+below) and must be recreated. No data is deleted from connectors.
 
 ### Wire format (sync-envelope, protocol v2)
 
-- **Epoch keyring.** Done in 0.28.5 as `earlier_epoch_keys`; see "Fixed in
-  0.28.5" above. In v2, limit it to retained epochs once Step 3 retires keys.
-- **Signed head v2.**
-  - Add `published_at_ms`, `ack` (the progress vector as sorted
-    `(DeviceId, u64)` pairs, limited by `MAX_ACK_ENTRIES`) and
-    `snapshot_cid: Option<String>`.
-  - Use a new signature domain `…/device-head-signature/v2`.
-  - A device republishes its head when its content changes, and also at least
-    once every `HEAD_HEARTBEAT` (6 h) so dormancy can be measured.
-- **Events v2.**
-  - Set `protocol_version: 2` and add `causal_vector`: the sealing device's
-    progress vector at seal time.
-  - `open_message` rejects any other version.
-- **Generic sealing.**
-  - Add `seal_object` and `open_object` for non-event bodies. They reuse the
-    chunking, padding, AEAD and signature code, and use a separate signature
-    domain per `ObjectKind`.
-  - `seal_event` and `open_message` become thin wrappers around them.
-- **Corpus marker.**
-  - The folder transport writes `format-v2`; S3 and IPFS use the same marker
-    object.
-  - `inspect_sync_space` reports a v1 corpus as `SyncSpacePresence::Legacy`.
-    Settings then offers **Delete files and create a new group**. There is no
-    join path for v1.
+- **Epoch keyring:** done in 0.28.5 as `earlier_epoch_keys`. In Step 3, limit
+  it to retained epochs.
+- **Signed head v2:**
+  - Adds `published_at_ms`, `ack` (the progress vector) and `snapshot_cid`,
+    under the signature domain `…/device-head-signature/v2`.
+  - Vectors are `SequenceEntry { device_id, sequence }` lists in ascending id
+    order with no zero entries, limited by `MAX_SEQUENCE_VECTOR_ENTRIES`.
+- **Events v2:** `PROTOCOL_VERSION = 2` and `causal_vector`. Sealing and opening
+  refuse any other version and any vector that names its own author.
+- **Generic sealing:**
+  - `seal_object` / `open_object` sign `domain || message_id || body`, with a
+    domain per `ObjectKind`. `open_object` also refuses a header of the wrong
+    kind.
+  - `seal_event` / `open_message` are wrappers. `open_message` also checks
+    that the message id is the one derived from the event id.
+- **Protocol marker (changed from the plan).** Instead of a per-transport
+  marker file, every v2 group stores `PROTOCOL_MARKER` as an ordinary
+  content-addressed object on each connector. It works unchanged on every
+  transport, and it is recorded locally so repair delivers it to connectors
+  added later.
+  - `inspect_sync_space` reports `Legacy` when a self-consistent rotation
+    exists but the marker is definitely absent. A marker that can't be
+    fetched for any other reason counts as `Unknown`.
+  - Genesis, recovery-phrase join, enrollment requests and join codes all
+    refuse a legacy connector before any side effect.
+  - A shared folder that is still syncing can look the same as a legacy
+    group, so the message tells the user to wait and retry before deleting
+    anything.
+- **Golden vectors:** the v2 vectors are checked in. The v1 vectors are kept,
+  and tests pin that they are refused.
 
-### Local schema (next `user_version`)
+### Local schema (version 35)
 
-- **Leave v1 groups.** Clear the sync graph tables, `sync_epoch_history`, the
-  roster and enrollment tables, the way `leave_sync_space` does. Local app data,
-  connectors and the beta toggle stay. On the next sync,
-  `reconcile_replicated_sync_backlog` re-records local entities into the new
-  group. Show a one-time notice that sync was reset for the new format.
-- **`sync_operations.event_id`** becomes nullable with no cascade. Add a
-  `snapshot_id` column. Every operation has exactly one of the two.
-- **New `sync_device_progress` table:** `device_id`, `contiguous_sequence`,
-  `last_head_seen_at`, `last_head_published_at`, `ack_json`. The device list
-  reads "last synced" from this table instead of `sync_events`.
-- **New `sync_snapshots` table:** `snapshot_id`, `cid`, `author_device_id`,
-  `key_epoch`, `cut_json`, `created_at`, `state` (`local`, `published` or
-  `dominated`).
+- **Leaving a v1 group.** A device that belonged to a v1 group leaves it in the
+  migration, as "Leave this sync group" does. App data, connectors and the beta
+  toggle stay.
+  - `sync_notices` holds a one-time `protocol_reset` notice, shown in
+    Settings.
+  - `sync_pending_keychain_cleanup` holds the highest epoch to forget. The
+    sync loop does the keychain cleanup, since a migration can't reach the
+    keychain.
+- **`sync_operations`** is rebuilt without the cascade. Each row has exactly
+  one of `event_id` or `snapshot_id` (a `CHECK` constraint).
+- **`sync_events`** gains `causal_vector`.
+- **`sync_device_progress`** stores `applied_sequence`, `progress_sequence`,
+  `last_event_at`, and the last head's publication time, when this device saw
+  it, and its ack. The device list reads "last change" from here.
+- **`sync_head_publications`** records what was last published to each
+  transport, for the heartbeat.
+- **`sync_snapshots` moves to Step 2.** It is local-only, so it doesn't need
+  the reset.
 
-### Engine changes
+### Engine
 
-- **`pull_device_chain`:**
-  - Open each event with the key for its header's epoch, not the active key.
-  - Stop walking when the next sequence would be at or below
-    `progress[device]`, instead of when the object already exists locally.
-  - Apply invariant 4 to events at or below progress.
-  - A missing key or a failed decrypt for one event stops only that device's
-    chain. Events already walked are still applied, oldest first.
-- **Progress fixpoint.** After each pull, recompute progress from the stored
-  `causal_vector`s and persist it. `publish_local_head` publishes it.
-- **`seal_one_event`** records `causal_vector`.
+- **Chain walk (`pull_device_chain`):**
+  - Stops at `applied[author]`, not at "object already stored".
+  - Checks the feed is gapless and every event is the author's.
+  - Skips this device's own head.
+- **All or nothing per walk (changed from the plan).** The events walked
+  before a failure are *newer* than the failed one, so applying them would
+  break the applied prefix. A failed walk applies nothing, the next pull walks
+  again, and an event is remembered only after it is applied.
+- **Heads:**
+  - Published even before any event exists.
+  - Republished when content changes, or after `HEAD_HEARTBEAT_MS` (6 h, in
+    `sync_policy.rs`).
+  - **Per transport (added):** each transport's head names only events whose
+    objects *that transport* has confirmed receiving. Before this, one failed
+    upload made every reader's walk fail until the retry landed.
+- **Pulls** record each peer's verified head (ack, publication time, time
+  seen), then recompute progress.
 
-### Test harness
+### Bugs the harness found, now fixed
 
-- Add a `sync_sim` test module in `src-tauri` that drives N in-memory
-  `Database`s with the following:
-  - the fault-injecting fake transport (`crates/sync-transport/src/fake.rs`),
-  - an injected clock, passed as `now` like `process_join_codes` already does,
-  - partition, delay, reorder and duplicate controls.
-- **Reference oracle.** Every scenario runs twice, once with compaction and
-  pruning disabled and once enabled. The runs must produce identical
-  materialized tables and identical conflict lists. This is invariants 3 and 9.
-- **Seeded randomized scenarios.** A deterministic seed loop generates writes,
-  deletes, concurrent edits, rotations, joins, partitions and dormancy. Failing
-  seeds are printed so they can be pinned as regression cases.
+These were already in the code before v2; the harness exposed them.
+- **A rotation seen before its initiator was known was dropped for good.** An
+  offline device could scan a new member's rotation before that member's
+  announcement. It is now retried: at the end of the sweep, and on later
+  sweeps. A known but revoked initiator is still ignored.
+- **Control objects were never re-delivered.** `publish_to_all` was
+  best-effort. Rotations, grants, requests, rejections and announcements are
+  now recorded as local objects, so repair re-delivers them. Before, a
+  rotation published during an outage locked every other device out of the
+  new epoch.
+- **A recovery-phrase join could miss a rotation permanently.** If any
+  rotation hadn't reached the connector yet, the device joined without that
+  epoch's key and could never get it. A join now waits
+  (`RECOVERY_INCOMPLETE`) when epochs have a gap, or when a member's head names
+  a newer epoch than any visible rotation.
 
-### Tests for Step 1
+### Test harness (`src-tauri/src/sync_sim.rs`)
 
-- A new device joins after two rotations and reads history from all three
-  epochs. This is the scenario that fails today.
-- A device offline across a rotation catches up on events from before the
-  rotation.
-- A peer's chain in which one event cannot be opened still applies its readable
-  prefix and reports the failure.
-- Progress:
-  - the fixpoint does not advance past an event whose causal dependencies are
-    missing;
-  - it advances once they arrive;
-  - it holds under reordering and duplicate delivery.
-- A late, already-covered ancestor is dropped and does not create a conflict
-  (invariant 4).
-- Head v2:
-  - round-trips;
-  - tampering with `ack`, `published_at_ms` or `snapshot_cid` breaks the
-    signature;
-  - a v1 head is rejected.
-- Keyring:
-  - over-limit keyrings are rejected;
-  - a keyring sealed to another device does not open.
-- A v1 folder or S3 corpus is reported as `Legacy`, and genesis over it
-  requires explicit deletion.
-- The upgrade migration leaves a v1 group, keeps tasks, snippets and
-  connectors, and re-records local entities on the next sync.
-
-**Done when:** the harness runs, all Step 1 tests pass, and the rotation bug is
-fixed. **Version:** protocol v2 intentionally breaks existing test groups.
-Before 1.0, bump the minor version: 0.27.x → 0.28.0.
+- **Devices:** seeded schedules drive up to five in-memory devices through the
+  app's own snippet mutations, enrollment, push and pull.
+- **Faults:** one fake transport with outages, delayed visibility and
+  reordered scans, plus an injected clock (`sync_policy::set_test_clock`).
+- **Events:** devices go offline for days or weeks, new devices join by
+  recovery phrase, and the group rotates keys.
+- **Checked after every sync:** progress ≤ applied, and progress is causally
+  closed.
+- **Checked at the end:** every device has the exact frontier (values *and*
+  unresolved conflicts) of an oracle, has the oracle's snippet rows, and has
+  applied every other device's whole feed, with progress equal to applied. The
+  oracle is the union of all devices' operations fed through
+  `threestrands_sync_core`.
+- **Runs:** 24 seeds by default, with `THREESTRANDS_SYNC_SIM_SEEDS` for more
+  and `THREESTRANDS_SYNC_SIM_SEED` for one. Seeds that found bugs are pinned.
+- **Compaction comparison:** comparing runs with compaction on and off arrives
+  with Steps 2 and 3. There is no compaction to switch yet.
 
 ---
 
@@ -502,6 +518,15 @@ pruning on, and the docs are updated. **Version:** minor, 0.29.0 → 0.30.0.
 ---
 
 ## Risks and open questions
+
+- **Two concurrent rotations claim the same epoch number.** Each device keeps
+  only one key per epoch. The harness avoids this, and it needs its own fix,
+  for example a tie-break on the rotation CID plus re-keying.
+- **A rotation made before its initiator heard of a new member** isn't sealed
+  to that member. The new member never gets that epoch's key.
+- **A connector shared by two separate groups** makes each group's devices
+  refetch the other group's rotations on every sweep. That traffic is
+  harmless but wasteful. This setup is discouraged but allowed.
 
 - **Clock skew on the compactor.** If the compactor's clock runs far ahead, it
   can mark live devices dormant too early. The damage is recoverable, because

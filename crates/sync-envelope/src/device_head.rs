@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 use crate::crypto;
 use crate::error::EnvelopeError;
 use crate::ids::{DeviceId, Signature};
+use crate::vector::{validate_sequence_vector, SequenceEntry};
 use crate::{canonical_dag_cbor, decode_canonical_dag_cbor, validate_cid_reference, SigningKey, VerifyingKey};
 
-const HEAD_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/device-head-signature/v1";
+const HEAD_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/device-head-signature/v2";
 
 /// The fields of a device head that get signed. `sync_space_id` is opaque
 /// bytes (not necessarily UTF-8) so it can be a random identifier rather
@@ -27,6 +28,17 @@ pub struct DeviceHead {
     /// `SealedMessage::head_cid`). `None` for a brand new device with no
     /// events yet.
     pub latest_event_cid: Option<String>,
+    /// The signing device's wall-clock time when it published this head.
+    /// Only for telling how recently a device synced; never used for
+    /// ordering or causality.
+    pub published_at_ms: i64,
+    /// This device's causally closed progress through every device's feed,
+    /// including its own: the events it has applied along with everything
+    /// they depend on. See [`crate::SequenceEntry`].
+    pub ack: Vec<SequenceEntry>,
+    /// The chunk-index CID of the latest snapshot this device published,
+    /// if any.
+    pub snapshot_cid: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -35,13 +47,20 @@ pub struct SignedDeviceHead {
     pub signature: Signature,
 }
 
+/// Every link must be a CIDv1 and the ack a canonical sequence vector,
+/// checked on signing, verifying, and decoding alike.
+fn validate_head(head: &DeviceHead) -> Result<(), EnvelopeError> {
+    for cid in [&head.latest_event_cid, &head.snapshot_cid].into_iter().flatten() {
+        validate_cid_reference(cid)?;
+    }
+    validate_sequence_vector(&head.ack, None)
+}
+
 pub fn sign_device_head(
     signing_key: &SigningKey,
     head: DeviceHead,
 ) -> Result<SignedDeviceHead, EnvelopeError> {
-    if let Some(latest) = &head.latest_event_cid {
-        validate_cid_reference(latest)?;
-    }
+    validate_head(&head)?;
     let canonical = canonical_dag_cbor(&head)?;
     let signature = Signature(crypto::sign_bytes(signing_key, HEAD_SIGNATURE_DOMAIN, &canonical));
     Ok(SignedDeviceHead { head, signature })
@@ -55,9 +74,7 @@ pub fn verify_device_head(
     verifying_key: &VerifyingKey,
     signed: &SignedDeviceHead,
 ) -> Result<(), EnvelopeError> {
-    if let Some(latest) = &signed.head.latest_event_cid {
-        validate_cid_reference(latest)?;
-    }
+    validate_head(&signed.head)?;
     let canonical = canonical_dag_cbor(&signed.head)?;
     crypto::verify_bytes(
         verifying_key,
@@ -79,9 +96,7 @@ pub fn encode_signed_head(signed: &SignedDeviceHead) -> Result<Vec<u8>, Envelope
 
 pub fn decode_signed_head(bytes: &[u8]) -> Result<SignedDeviceHead, EnvelopeError> {
     let signed: SignedDeviceHead = decode_canonical_dag_cbor(bytes)?;
-    if let Some(latest) = &signed.head.latest_event_cid {
-        validate_cid_reference(latest)?;
-    }
+    validate_head(&signed.head)?;
     Ok(signed)
 }
 
@@ -97,6 +112,12 @@ mod tests {
             epoch: 2,
             contiguous_sequence: 9,
             latest_event_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
+            published_at_ms: 1_700_000_000_000,
+            ack: vec![
+                SequenceEntry { device_id: DeviceId::from_bytes([3u8; 16]), sequence: 4 },
+                SequenceEntry { device_id: DeviceId::from_bytes([7u8; 16]), sequence: 9 },
+            ],
+            snapshot_cid: Some("bafkreihyp2mdkcvn2et4tbcjqsirtmpevqgemx5ab2ac5oioyzmfkwlhlu".to_string()),
         }
     }
 
@@ -123,6 +144,34 @@ mod tests {
         let mut signed = sign_device_head(&signing_key, sample_head()).unwrap();
         signed.head.contiguous_sequence += 1;
         assert!(verify_device_head(&signing_key.verifying_key(), &signed).is_err());
+    }
+
+    #[test]
+    fn the_signature_covers_the_ack_publication_time_and_snapshot() {
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let signed = sign_device_head(&signing_key, sample_head()).unwrap();
+        let verifying_key = signing_key.verifying_key();
+
+        let mut ack = signed.clone();
+        ack.head.ack[0].sequence += 1;
+        assert!(verify_device_head(&verifying_key, &ack).is_err());
+        let mut published = signed.clone();
+        published.head.published_at_ms += 1;
+        assert!(verify_device_head(&verifying_key, &published).is_err());
+        let mut snapshot = signed;
+        snapshot.head.snapshot_cid = None;
+        assert!(verify_device_head(&verifying_key, &snapshot).is_err());
+    }
+
+    #[test]
+    fn a_malformed_ack_or_snapshot_link_is_refused() {
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let mut unordered = sample_head();
+        unordered.ack.reverse();
+        assert!(sign_device_head(&signing_key, unordered).is_err());
+        let mut bad_link = sample_head();
+        bad_link.snapshot_cid = Some("not-a-cid".to_string());
+        assert!(sign_device_head(&signing_key, bad_link).is_err());
     }
 
     #[test]

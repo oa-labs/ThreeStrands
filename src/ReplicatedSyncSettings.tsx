@@ -12,6 +12,7 @@ import {
   replicatedSyncConfirmEnrollment,
   replicatedSyncConflicts,
   replicatedSyncDeviceRoster,
+  replicatedSyncDismissProtocolResetNotice,
   replicatedSyncEnabled,
   replicatedSyncEnrollmentStatus,
   replicatedSyncInspectSpace,
@@ -21,6 +22,7 @@ import {
   replicatedSyncListJoinCodes,
   replicatedSyncNow,
   replicatedSyncPendingRequests,
+  replicatedSyncProtocolResetNotice,
   replicatedSyncRejectRequest,
   replicatedSyncResolveConflict,
   replicatedSyncRequestEnrollment,
@@ -133,13 +135,14 @@ export function ReplicatedSyncSettings() {
   const [joinNotices, setJoinNotices] = useState<JoinCodeNotice[]>([]);
   const [spacePresence, setSpacePresence] = useState<SyncSpacePresence | "checking" | null>(null);
   const [presenceCheck, setPresenceCheck] = useState(0);
+  const [protocolResetNotice, setProtocolResetNotice] = useState(false);
 
   const refresh = useCallback(async () => {
     const [enabled, beta] = await Promise.all([replicatedSyncEnabled(), replicatedSyncBetaEnabled()]);
     setAvailable(enabled);
     setBetaEnabledState(beta);
     if (enabled) {
-      const [nextTransports, nextConflicts, nextStatus, nextPending, nextRoster, nextCodes, nextNotices] = await Promise.all([
+      const [nextTransports, nextConflicts, nextStatus, nextPending, nextRoster, nextCodes, nextNotices, nextResetNotice] = await Promise.all([
         replicatedSyncStatus(),
         replicatedSyncConflicts(),
         replicatedSyncEnrollmentStatus(),
@@ -147,7 +150,9 @@ export function ReplicatedSyncSettings() {
         replicatedSyncDeviceRoster(),
         replicatedSyncListJoinCodes(),
         replicatedSyncJoinCodeNotices(),
+        replicatedSyncProtocolResetNotice(),
       ]);
+      setProtocolResetNotice(nextResetNotice === true);
       setTransports(nextTransports);
       setConflicts(nextConflicts);
       setEnrollmentStatus(nextStatus);
@@ -163,6 +168,7 @@ export function ReplicatedSyncSettings() {
       setDeviceRoster([]);
       setJoinCodes([]);
       setJoinNotices([]);
+      setProtocolResetNotice(false);
     }
   }, []);
 
@@ -254,6 +260,27 @@ export function ReplicatedSyncSettings() {
           not erase copies elsewhere (other devices, provider version history, or other connectors).
         </p>
       </Disclosure>
+
+      {protocolResetNotice ? (
+        <div className="account-card sync-notice" role="status">
+          <div className="account-card-row">
+            <p className="account-card-identity">
+              This update reset sync on this device: sync groups made by earlier test versions can’t be used any more.
+              Your data here is kept. Update every device, create a new sync group on one of them, then join it from
+              the others.
+            </p>
+            <button
+              type="button"
+              className="account-action-button"
+              disabled={busy}
+              onClick={() => actFor("protocol-reset-notice", replicatedSyncDismissProtocolResetNotice)}
+            >
+              Dismiss
+            </button>
+          </div>
+          <InlineStatus operation={operation} for="protocol-reset-notice" />
+        </div>
+      ) : null}
 
       {conflicts.length > 0 ? (
         <div>
@@ -419,6 +446,7 @@ function SetupChoice({
   const feedbackId = useId();
   const noConnector = transportCount === 0;
   const existing = spacePresence === "existing";
+  const legacy = spacePresence === "legacy";
 
   useEffect(() => {
     if (!recoveryPhraseInput.trim()) {
@@ -487,6 +515,17 @@ function SetupChoice({
       <InlineStatus operation={operation} for="join-phrase" />
     </>
   );
+
+  if (legacy) {
+    return (
+      <p className="settings-hint" role="status">
+        This connector holds a sync group from an earlier test version of Three Strands, which this version can’t use
+        — or a shared folder hasn’t finished syncing yet. If you just set up sync on another device, wait for your sync
+        app to finish, then reopen this page. Otherwise update every device, delete this connector’s files (Delete files and
+        disconnect, under its settings), add it again, and create a new sync group.
+      </p>
+    );
+  }
 
   return (
     <>

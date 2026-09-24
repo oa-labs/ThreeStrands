@@ -54,6 +54,11 @@ pub const MAX_CHUNK_PLAINTEXT_BYTES: usize = 256 * 1024;
 /// content length from anyone observing object sizes in a transport.
 pub const PADDING_BUCKETS: &[usize] = &[4_096, 16_384, 65_536, MAX_CHUNK_PLAINTEXT_BYTES];
 
+/// Most devices one sequence vector (a head's `ack`, an event's
+/// `causal_vector`) may name. Far above any real sync group; bounds the work
+/// a hostile head or event can cause.
+pub const MAX_SEQUENCE_VECTOR_ENTRIES: usize = 1_024;
+
 /// Most earlier-epoch keys one enrollment grant or invitation may carry.
 /// Every join code rotates the epoch, so this bounds how many rotations a
 /// group can accumulate before a new device can no longer be handed its

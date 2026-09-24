@@ -25,6 +25,10 @@ mod schema;
 mod sync;
 mod sync_connectors;
 mod sync_folder;
+mod sync_policy;
+mod sync_progress;
+#[cfg(test)]
+mod sync_sim;
 mod sync_projection;
 mod system_fonts;
 mod transfer;
@@ -1320,6 +1324,16 @@ async fn replicated_sync_begin_genesis(allow_existing_space: bool, state: State<
 #[tauri::command]
 async fn replicated_sync_inspect_space(state: State<'_, AppState>) -> Result<enrollment::SyncSpacePresence, String> {
     Ok(state.replicated_sync.inspect_sync_space().await)
+}
+
+#[tauri::command]
+fn replicated_sync_protocol_reset_notice(state: State<'_, AppState>) -> Result<bool, String> {
+    state.database.protocol_reset_notice()
+}
+
+#[tauri::command]
+fn replicated_sync_dismiss_protocol_reset_notice(state: State<'_, AppState>) -> Result<(), String> {
+    state.database.dismiss_protocol_reset_notice()
 }
 
 #[tauri::command]
@@ -2670,6 +2684,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         replicated_sync_device_roster,
         replicated_sync_begin_genesis,
         replicated_sync_inspect_space,
+        replicated_sync_protocol_reset_notice,
+        replicated_sync_dismiss_protocol_reset_notice,
         replicated_sync_request_enrollment,
         replicated_sync_approve_request,
         replicated_sync_reject_request,

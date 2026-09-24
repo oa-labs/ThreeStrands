@@ -43,8 +43,9 @@ use threestrands_sync_envelope::{
     compute_cid, message_key_epoch, open_message, seal_event, sign_device_head, verify_device_head, DeviceHead,
     DeviceId as EnvelopeDeviceId, EventId as EnvelopeEventId, FieldOperation, ObjectKind,
     OpenParams, OperationId as EnvelopeOperationId, SealParams, SignedDeviceHead, SigningKey,
-    SyncEvent, UnsignedSyncEvent, VerifyingKey,
+    SyncEvent, UnsignedSyncEvent, VerifyingKey, PROTOCOL_MARKER, PROTOCOL_VERSION,
 };
+use threestrands_sync_envelope::protocol_marker_cid;
 use threestrands_sync_transport::{
     Cid as TransportCid, HeadLocator, SyncTransport, TransportError, TransportHealth,
     TransportInstanceId,
@@ -961,6 +962,9 @@ impl Database {
         for (event_id_hex, device_id_hex, device_sequence) in &pending {
             self.seal_one_event(event_id_hex, device_id_hex, *device_sequence, keys, transports)?;
         }
+        if !pending.is_empty() {
+            self.recompute_progress()?;
+        }
         Ok(pending.len())
     }
 
@@ -991,15 +995,20 @@ impl Database {
                 None
             };
 
+            // Every parent this event's operations name was already in the
+            // local graph, so it came from an event inside what this device
+            // has applied: that applied vector is a safe causal vector.
+            let causal_vector = crate::sync_progress::causal_vector_for_seal(tx, device_id_hex)?;
             let unsigned = UnsignedSyncEvent {
                 event_id: EnvelopeEventId::from_bytes(decode_id(event_id_hex)?),
-                protocol_version: 1,
+                protocol_version: PROTOCOL_VERSION,
                 key_epoch: keys.key_epoch,
                 device_id: keys.device_id,
                 device_sequence: device_sequence as u64,
                 previous_device_event,
                 lamport: lamport as u64,
-                created_at_ms: Utc::now().timestamp_millis(),
+                created_at_ms: crate::sync_policy::now_ms(),
+                causal_vector: causal_vector.clone(),
                 operations,
             };
 
@@ -1045,32 +1054,40 @@ impl Database {
                 )?;
             }
 
-            tx.execute("UPDATE sync_events SET state='sealed' WHERE event_id=?1", params![event_id_hex])?;
+            tx.execute(
+                "UPDATE sync_events SET state='sealed', epoch=?2, causal_vector=?3 WHERE event_id=?1",
+                params![event_id_hex, keys.key_epoch, crate::sync_progress::encode_vector(&causal_vector)],
+            )?;
+            crate::sync_progress::note_event_applied(tx, device_id_hex, device_sequence as u64, &Utc::now().to_rfc3339())?;
             Ok(())
         })
     }
 
-    /// The greatest contiguous device-sequence (no gaps starting at 1) this
-    /// device has sealed, and that event's chunk-index CID — the pair a
-    /// signed device head publishes.
-    fn contiguous_head(&self, device_id_hex: &str) -> DbResult<(u64, Option<String>)> {
+    /// Like [`Self::contiguous_head`], but counting only events whose every
+    /// object `transport_instance_id` has confirmed receiving: the head that
+    /// transport can honestly publish.
+    fn contiguous_delivered_head(&self, device_id_hex: &str, transport_instance_id: &str) -> DbResult<(u64, Option<String>)> {
         self.with_connection(|connection| {
-            let sequences: Vec<i64> = {
+            let events: Vec<(i64, i64)> = {
                 let mut statement = connection.prepare(
-                    "SELECT device_sequence FROM sync_events WHERE device_id=?1 AND state='sealed' ORDER BY device_sequence",
+                    "SELECT se.device_sequence, SUM(CASE WHEN sd.state='delivered' THEN 0 ELSE 1 END)
+                     FROM sync_events se
+                     JOIN sync_objects so ON so.event_id = se.event_id
+                     LEFT JOIN sync_deliveries sd ON sd.cid = so.cid AND sd.transport_instance_id = ?2
+                     WHERE se.device_id=?1 AND se.state='sealed'
+                     GROUP BY se.device_sequence ORDER BY se.device_sequence",
                 )?;
                 let rows = statement
-                    .query_map(params![device_id_hex], |row| row.get(0))?
+                    .query_map(params![device_id_hex, transport_instance_id], |row| Ok((row.get(0)?, row.get(1)?)))?
                     .collect::<Result<Vec<_>, _>>()?;
                 rows
             };
             let mut contiguous = 0i64;
-            for sequence in &sequences {
-                if *sequence == contiguous + 1 {
-                    contiguous = *sequence;
-                } else {
+            for (sequence, undelivered) in events {
+                if sequence != contiguous + 1 || undelivered > 0 {
                     break;
                 }
+                contiguous = sequence;
             }
             if contiguous == 0 {
                 return Ok((0, None));
@@ -1084,16 +1101,6 @@ impl Database {
                 )
                 .optional()?;
             Ok((contiguous as u64, latest_event_cid))
-        })
-    }
-
-    fn object_exists(&self, cid: &str) -> DbResult<bool> {
-        self.with_connection(|connection| {
-            Ok(connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_objects WHERE cid=?1)",
-                params![cid],
-                |row| row.get(0),
-            )?)
         })
     }
 
@@ -1130,6 +1137,56 @@ impl Database {
 }
 
 impl Database {
+    /// Records the protocol marker as a local object, so anti-entropy
+    /// repair stores it on every connector this device uses, including ones
+    /// added later. Idempotent.
+    pub(crate) fn ensure_protocol_marker_object(&self) -> Result<(), String> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT OR IGNORE INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,NULL,'protocol_marker',0,1,?2)",
+                params![protocol_marker_cid(), PROTOCOL_MARKER],
+            )?;
+            Ok(())
+        })
+        .map_err(String::from)
+    }
+
+    /// Whether to tell the user that upgrading reset sync: this device left
+    /// a group created by an earlier, incompatible build.
+    pub fn protocol_reset_notice(&self) -> Result<bool, String> {
+        self.with_connection(|connection| {
+            Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM sync_notices WHERE kind='protocol_reset')", [], |row| row.get(0))?)
+        })
+        .map_err(String::from)
+    }
+
+    pub fn dismiss_protocol_reset_notice(&self) -> Result<(), String> {
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM sync_notices WHERE kind='protocol_reset'", [])?;
+            Ok(())
+        })
+        .map_err(String::from)
+    }
+
+    /// The highest epoch whose keychain entries a schema migration left
+    /// behind (it can't reach the keychain itself), if any.
+    fn pending_keychain_cleanup(&self) -> Result<Option<u32>, String> {
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row("SELECT highest_epoch FROM sync_pending_keychain_cleanup WHERE id=1", [], |row| row.get(0))
+                .optional()?)
+        })
+        .map_err(String::from)
+    }
+
+    fn clear_pending_keychain_cleanup(&self) -> Result<(), String> {
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM sync_pending_keychain_cleanup", [])?;
+            Ok(())
+        })
+        .map_err(String::from)
+    }
+
     /// Drops locally stored remote objects whose event was never applied.
     /// Earlier builds stored each fetched event before a chain walk had
     /// finished, so a walk that failed partway left newer events stored but
@@ -1374,39 +1431,67 @@ pub async fn push_pending_events(
     })
 }
 
-/// Publishes this device's current signed head to every transport,
-/// best-effort: one transport failing to accept the head never blocks
-/// publishing to the others, and never fails the push cycle.
+/// Publishes this device's current signed head to every transport where
+/// it's due, best-effort: one transport failing to accept the head never
+/// blocks publishing to the others, and never fails the push cycle.
+///
+/// Each transport's head names the newest event whose objects — and every
+/// earlier event's — that transport has confirmed receiving, so a reader
+/// never walks into an event that isn't there yet (a walk that fails
+/// applies nothing from this device). A head is published even before this
+/// device has written anything, so peers always see its ack and how
+/// recently it synced. It's due on a transport when its content
+/// (everything except the publication time) changed since it was last
+/// published there, or once the heartbeat interval has passed.
 async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &[Arc<dyn SyncTransport>]) {
     let device_id_hex = encode_id(keys.device_id.as_bytes());
-    let Ok((contiguous_sequence, latest_event_cid)) = database.contiguous_head(&device_id_hex) else {
+    let Ok(ack) = database.progress_vector() else {
         return;
     };
-    if contiguous_sequence == 0 {
-        return;
-    }
-    let head = DeviceHead {
-        sync_space_id: keys.sync_space_id.clone(),
-        device_id: keys.device_id,
-        epoch: keys.key_epoch,
-        contiguous_sequence,
-        latest_event_cid,
-    };
-    let Ok(signed) = sign_device_head(&keys.signing_key, head) else {
-        return;
-    };
+    let now = crate::sync_policy::now_ms();
     for transport in transports {
-        if let Err(error) = transport.publish_head(&signed).await {
-            log::debug!(
+        let instance_id = transport.instance_id();
+        let Ok((contiguous_sequence, latest_event_cid)) = database.contiguous_delivered_head(&device_id_hex, &instance_id.0) else {
+            continue;
+        };
+        let head = DeviceHead {
+            sync_space_id: keys.sync_space_id.clone(),
+            device_id: keys.device_id,
+            epoch: keys.key_epoch,
+            contiguous_sequence,
+            latest_event_cid,
+            published_at_ms: now,
+            ack: ack.clone(),
+            snapshot_cid: None,
+        };
+        let content = json!({
+            "epoch": head.epoch,
+            "contiguousSequence": head.contiguous_sequence,
+            "latestEventCid": head.latest_event_cid,
+            "ack": crate::sync_progress::encode_vector(&head.ack),
+            "snapshotCid": head.snapshot_cid,
+        })
+        .to_string();
+        if !database.head_publication_due(&instance_id.0, &content, now).unwrap_or(true) {
+            continue;
+        }
+        let Ok(signed) = sign_device_head(&keys.signing_key, head) else {
+            continue;
+        };
+        match transport.publish_head(&signed).await {
+            Ok(_) => {
+                if let Err(error) = database.record_head_publication(&instance_id.0, &content, now) {
+                    log::debug!(target: "replicated_sync", "recording the head publication to {} failed: {error}", instance_id.0);
+                }
+            }
+            Err(error) => log::debug!(
                 target: "replicated_sync",
                 "publishing the device head to {} failed: {error}",
-                transport.instance_id().0
-            );
+                instance_id.0
+            ),
         }
     }
 }
-
-// ============================ Remote apply / pull ============================
 
 impl Database {
     /// Applies one already-authenticated remote field operation to the
@@ -1477,29 +1562,35 @@ impl Database {
     /// one transaction, then materializes every entity it touched only
     /// after that transaction commits — matching the plan's projection
     /// ordering exactly.
-    fn apply_sealed_message_and_materialize(&self, event: SyncEvent) -> Result<(), String> {
+    ///
+    /// Events apply strictly in feed order: the next one must be exactly
+    /// one past the author's applied prefix. One at or below it is already
+    /// covered and is dropped without touching the graph (so an ancestor
+    /// that arrives again can never re-enter a frontier). Returns whether
+    /// the event was applied.
+    fn apply_sealed_message_and_materialize(&self, event: SyncEvent) -> Result<bool, String> {
         let event_id_hex = encode_id(event.event_id.as_bytes());
         let device_id_hex = encode_id(event.device_id.as_bytes());
 
         let touched = self.with_transaction(|tx| {
-            let already_known: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_events WHERE event_id=?1)",
-                params![event_id_hex],
-                |row| row.get(0),
-            )?;
-            if !already_known {
-                tx.execute(
-                    "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at) VALUES (?1,?2,?3,?4,?5,'sealed',?6)",
-                    params![
-                        event_id_hex,
-                        event.key_epoch,
-                        device_id_hex,
-                        event.device_sequence as i64,
-                        event.lamport as i64,
-                        Utc::now().to_rfc3339(),
-                    ],
-                )?;
+            if event.device_sequence <= crate::sync_progress::applied_sequence_in(tx, &device_id_hex)? {
+                return Ok(None);
             }
+            let applied_at = Utc::now().to_rfc3339();
+            crate::sync_progress::note_event_applied(tx, &device_id_hex, event.device_sequence, &applied_at)?;
+            tx.execute(
+                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at,causal_vector)
+                 VALUES (?1,?2,?3,?4,?5,'sealed',?6,?7)",
+                params![
+                    event_id_hex,
+                    event.key_epoch,
+                    device_id_hex,
+                    event.device_sequence as i64,
+                    event.lamport as i64,
+                    applied_at,
+                    crate::sync_progress::encode_vector(&event.causal_vector),
+                ],
+            )?;
 
             let mut touched: Vec<(EntityType, String)> = Vec::new();
             for op in &event.operations {
@@ -1526,10 +1617,12 @@ impl Database {
                     touched.push((op.entity_type, op.entity_id.clone()));
                 }
             }
-            Ok(touched)
+            Ok(Some(touched))
         })?;
 
-        self.materialize_touched_entities(&touched)
+        let Some(touched) = touched else { return Ok(false) };
+        self.materialize_touched_entities(&touched)?;
+        Ok(true)
     }
 
     fn materialize_touched_entities(&self, touched: &[(EntityType, String)]) -> Result<(), String> {
@@ -1635,16 +1728,21 @@ struct FetchedEvent {
 }
 
 /// Resolves and walks one device's signed head back through
-/// `previous_device_event` until reaching an already-known chunk index or
-/// genesis, verifying every fetched object's bytes against its requested
-/// CID before it is parsed or decrypted, then applies every newly-seen
-/// event oldest first.
+/// `previous_device_event` until reaching the part of its feed already
+/// applied here, verifying every fetched object's bytes against its
+/// requested CID before it is parsed or decrypted, then applies every
+/// newly-seen event oldest first.
 ///
-/// Each event is opened with the key for the epoch its header names, so
-/// history sealed before a rotation stays readable. A fetched event is only
-/// remembered locally after it has been applied: remembering marks where
-/// the next walk stops, so remembering an event that a failure later in the
-/// walk left unapplied would hide it from every future walk.
+/// The walk stops by sequence number, not by whether an object happens to
+/// be stored locally, and checks the feed is gapless and in order: each
+/// event must be the author's and exactly one before the last. Each event
+/// is opened with the key for the epoch its header names, so history sealed
+/// before a rotation stays readable.
+///
+/// All or nothing per walk: the events walked so far are newer than any
+/// that failed, so applying them would leave a gap in the author's applied
+/// prefix. A failure applies nothing and the next pull walks again. A
+/// fetched event is only remembered locally after it has been applied.
 async fn pull_device_chain(
     database: &Database,
     transport: &dyn SyncTransport,
@@ -1652,13 +1750,15 @@ async fn pull_device_chain(
     keys: &LocalKeys,
     signed_head: &SignedDeviceHead,
 ) -> Result<usize, String> {
+    let author = signed_head.head.device_id;
+    let author_hex = encode_id(author.as_bytes());
+    let applied = database.applied_sequence(&author_hex)?;
+    let mut expected = signed_head.head.contiguous_sequence;
     let mut cursor = signed_head.head.latest_event_cid.clone();
     let mut chain: Vec<FetchedEvent> = Vec::new();
 
-    while let Some(index_cid) = cursor {
-        if database.object_exists(&index_cid)? {
-            break;
-        }
+    while expected > applied {
+        let index_cid = cursor.ok_or_else(|| format!("Device {author_hex}'s feed ends before its event {expected}"))?;
         let index_bytes = transport.get_object(&TransportCid(index_cid.clone())).await.map_err(display)?;
         if compute_cid(&index_bytes) != index_cid {
             return Err("Fetched chunk index bytes do not match the requested CID".to_string());
@@ -1691,8 +1791,16 @@ async fn pull_device_chain(
             },
         )
         .map_err(display)?;
+        if event.device_id != author || event.device_sequence != expected {
+            return Err(format!(
+                "Device {author_hex}'s feed is out of order: expected its event {expected}, found {} from {}",
+                event.device_sequence,
+                encode_id(event.device_id.as_bytes())
+            ));
+        }
 
         cursor = event.previous_device_event.clone();
+        expected -= 1;
         chain.push(FetchedEvent {
             index_cid,
             chunk_cids: index.chunk_cids,
@@ -1701,12 +1809,14 @@ async fn pull_device_chain(
         });
     }
 
-    let count = chain.len();
+    let mut count = 0;
     for fetched in chain.into_iter().rev() {
         let event_id_hex = encode_id(fetched.event.event_id.as_bytes());
         // Apply before remembering: a crash in between only means the next
-        // walk fetches this event again, and applying it again is a no-op.
-        database.apply_sealed_message_and_materialize(fetched.event)?;
+        // walk fetches this event again, and it's then already covered.
+        if database.apply_sealed_message_and_materialize(fetched.event)? {
+            count += 1;
+        }
         database.remember_remote_message(&fetched.index_cid, &fetched.chunk_cids, &fetched.chunks, &event_id_hex)?;
     }
     Ok(count)
@@ -1751,12 +1861,17 @@ pub async fn pull_from_transports(
             }
         };
         for signed_head in heads {
+            // This device's own feed is applied as it is sealed.
+            if signed_head.head.device_id == keys.device_id {
+                continue;
+            }
             let Some((_, verifying_key)) = roster.iter().find(|(device_id, _)| *device_id == signed_head.head.device_id) else {
                 continue;
             };
             if verify_device_head(verifying_key, &signed_head).is_err() {
                 continue;
             }
+            database.record_head_observation(&signed_head.head, crate::sync_policy::now_ms())?;
             match pull_device_chain(database, transport.as_ref(), verifying_key, keys, &signed_head).await {
                 Ok(count) => applied_events += count,
                 Err(error) => {
@@ -1772,6 +1887,7 @@ pub async fn pull_from_transports(
         }
     }
 
+    database.recompute_progress()?;
     let instance_ids: Vec<TransportInstanceId> = transports.iter().map(|transport| transport.instance_id()).collect();
     database.enqueue_repair_deliveries(&instance_ids)?;
 
@@ -1954,6 +2070,7 @@ impl Database {
         self.with_connection(|connection| {
             connection.execute("DELETE FROM sync_transports WHERE instance_id=?1", params![instance_id])?;
             connection.execute("DELETE FROM sync_deliveries WHERE transport_instance_id=?1", params![instance_id])?;
+            connection.execute("DELETE FROM sync_head_publications WHERE transport_instance_id=?1", params![instance_id])?;
             Ok(())
         })?;
         match kind {
@@ -2211,6 +2328,14 @@ impl ReplicatedSync {
             return Ok(());
         }
         let _guard = self.gate.lock().await;
+        // Finish leaving a group from an earlier, incompatible build: the
+        // schema migration left that group but couldn't reach the keychain.
+        // Forgetting the device keys too means this device joins its next
+        // group as a fresh identity.
+        if let Some(highest_epoch) = self.database.pending_keychain_cleanup()? {
+            forget_sync_space_keys(highest_epoch)?;
+            self.database.clear_pending_keychain_cleanup()?;
+        }
         // Best-effort: catch up any entity a crash left un-enqueued before
         // doing anything else, so it is never more than one cycle behind
         // even with no transport configured yet.
@@ -2257,6 +2382,7 @@ impl ReplicatedSync {
             Err(error) => log::warn!(target: "replicated_sync", "join code processing failed: {error}"),
         }
         self.database.record_self_device_name_if_missing(&encode_id(identity.device_id.as_bytes()))?;
+        self.database.ensure_protocol_marker_object()?;
 
         let push_result = push_pending_events(&self.database, &keys, &transports).await;
         let pull_result = pull_from_transports(&self.database, &keys, &transports).await;
@@ -2744,25 +2870,55 @@ mod replicator_tests {
         assert_eq!(event_state, "sealed");
     }
 
-    #[test]
-    fn contiguous_head_tracks_sealed_events_and_their_index_objects() {
+    #[tokio::test]
+    async fn a_transports_head_names_only_events_it_has_received() {
         let database = Database::open_memory();
         let keys = test_keys(&database);
         let device_id_hex = encode_id(keys.device_id.as_bytes());
-        assert_eq!(database.contiguous_head(&device_id_hex).unwrap(), (0, None));
+        let transports = fake("shared");
+        let transport_id = transports[0].instance_id().0;
+        assert_eq!(database.contiguous_delivered_head(&device_id_hex, &transport_id).unwrap(), (0, None));
 
         for id in ["one", "two"] {
             database
                 .record_replicated_write(EntityType::Snippet, id, &fields(&["id", "name", "body", "createdAt"]), &snippet_payload(id, "n"))
                 .unwrap();
         }
-        assert_eq!(database.seal_pending_events(&keys, &[]).unwrap(), 2);
+        // Sealed, but not yet delivered: nothing to name.
+        assert_eq!(database.seal_pending_events(&keys, &[transports[0].instance_id()]).unwrap(), 2);
+        assert_eq!(database.contiguous_delivered_head(&device_id_hex, &transport_id).unwrap(), (0, None));
+        // Sealing is what applies this device's own feed.
+        assert_eq!(database.applied_sequence(&device_id_hex).unwrap(), 2);
 
-        let (sequence, latest) = database.contiguous_head(&device_id_hex).unwrap();
+        push_pending_events(&database, &keys, &transports).await.unwrap();
+        let (sequence, latest) = database.contiguous_delivered_head(&device_id_hex, &transport_id).unwrap();
         assert_eq!(sequence, 2);
-        let latest = latest.expect("a sealed head names its chunk index");
-        assert!(database.object_exists(&latest).unwrap());
-        assert!(!database.object_exists("missing").unwrap());
+        let latest = latest.expect("a delivered head names its chunk index");
+        let kind: String = database
+            .connection()
+            .unwrap()
+            .query_row("SELECT object_kind FROM sync_objects WHERE cid=?1", params![latest], |row| row.get(0))
+            .unwrap();
+        assert_eq!(kind, "chunk_index");
+        assert_eq!(published_head(&transports, &keys).await.unwrap().head.latest_event_cid.as_deref(), Some(latest.as_str()));
+    }
+
+    #[tokio::test]
+    async fn a_head_waits_for_a_failed_delivery_before_naming_its_event() {
+        let database = Database::open_memory();
+        let keys = test_keys(&database);
+        let fake_transport = Arc::new(FakeTransport::new("flaky"));
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![fake_transport.clone()];
+        write_snippet(&database, "one");
+        push_pending_events(&database, &keys, &transports).await.unwrap();
+        write_snippet(&database, "two");
+        // The second event's first object fails; the head keeps naming the
+        // first event rather than one a reader couldn't fetch.
+        fake_transport.inject_transient_outage(1);
+        push_pending_events(&database, &keys, &transports).await.unwrap();
+        let head = published_head(&transports, &keys).await.unwrap().head;
+        assert_eq!(head.contiguous_sequence, 1);
+        assert_eq!(head.latest_event_cid, Some(own_chunk_index_cid(&database, 1)));
     }
 
     #[test]
@@ -3025,6 +3181,262 @@ mod replicator_tests {
         let before = stored_object_count(&database_b);
         assert_eq!(database_b.forget_unapplied_remote_messages().unwrap(), 0);
         assert_eq!(stored_object_count(&database_b), before);
+    }
+
+    fn trust(database: &Database, keys: &LocalKeys) {
+        database.trust_device_public_key(keys.device_id.as_bytes(), &keys.signing_key.verifying_key()).unwrap();
+    }
+
+    fn fake(name: &str) -> Vec<Arc<dyn SyncTransport>> {
+        vec![Arc::new(FakeTransport::new(name))]
+    }
+
+    fn progress_row(database: &Database, keys: &LocalKeys) -> (i64, i64) {
+        database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT applied_sequence, progress_sequence FROM sync_device_progress WHERE device_id=?1",
+                params![encode_id(keys.device_id.as_bytes())],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .unwrap()
+            .unwrap_or((0, 0))
+    }
+
+    fn update_snippet(database: &Database, id: &str, name: &str) {
+        database
+            .record_replicated_write(EntityType::Snippet, id, &fields(&["name"]), &snippet_payload(id, name))
+            .unwrap();
+    }
+
+    fn signed_head_for(keys: &LocalKeys, contiguous_sequence: u64, latest_event_cid: Option<String>) -> SignedDeviceHead {
+        sign_device_head(
+            &keys.signing_key,
+            DeviceHead {
+                sync_space_id: keys.sync_space_id.clone(),
+                device_id: keys.device_id,
+                epoch: keys.key_epoch,
+                contiguous_sequence,
+                latest_event_cid,
+                published_at_ms: crate::sync_policy::now_ms(),
+                ack: vec![],
+                snapshot_cid: None,
+            },
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_sealed_event_names_everything_its_author_had_applied() {
+        let (database_a, database_c) = (Database::open_memory(), Database::open_memory());
+        let shared = fake("shared");
+        write_snippet(&database_c, "from-c");
+        let keys_c = test_keys(&database_c);
+        push_pending_events(&database_c, &keys_c, &shared).await.unwrap();
+
+        let keys_a = test_keys(&database_a);
+        trust(&database_a, &keys_c);
+        pull_from_transports(&database_a, &keys_a, &shared).await.unwrap();
+        update_snippet(&database_a, "from-c", "edited by A");
+        push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
+
+        let vector: String = database_a
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT causal_vector FROM sync_events WHERE device_id=?1 AND device_sequence=1",
+                params![encode_id(keys_a.device_id.as_bytes())],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(vector, format!("[[\"{}\",1]]", encode_id(keys_c.device_id.as_bytes())));
+    }
+
+    #[tokio::test]
+    async fn progress_waits_for_an_events_dependencies_and_advances_once_they_arrive() {
+        let (database_a, database_b, database_c) = (Database::open_memory(), Database::open_memory(), Database::open_memory());
+        let (only_a, only_c) = (fake("a-only"), fake("c-only"));
+
+        // C writes; A reads it and edits the same snippet, so A's event
+        // depends on C's.
+        write_snippet(&database_c, "shared-note");
+        let keys_c = test_keys(&database_c);
+        push_pending_events(&database_c, &keys_c, &only_c).await.unwrap();
+        let keys_a = test_keys(&database_a);
+        trust(&database_a, &keys_c);
+        pull_from_transports(&database_a, &keys_a, &only_c).await.unwrap();
+        update_snippet(&database_a, "shared-note", "edited by A");
+        push_pending_events(&database_a, &keys_a, &only_a).await.unwrap();
+
+        // B sees only A's connector: it applies A's event but can't count
+        // it as closed without C's.
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        trust(&database_b, &keys_c);
+        let outcome = pull_from_transports(&database_b, &keys_b, &only_a).await.unwrap();
+        assert_eq!(outcome.applied_events, 1);
+        assert_eq!(progress_row(&database_b, &keys_a), (1, 0));
+        assert!(database_b.progress_vector().unwrap().iter().all(|entry| entry.device_id != keys_a.device_id));
+
+        // Once C's event arrives, both are closed.
+        let both: Vec<Arc<dyn SyncTransport>> = only_a.iter().chain(only_c.iter()).cloned().collect();
+        let outcome = pull_from_transports(&database_b, &keys_b, &both).await.unwrap();
+        assert_eq!(outcome.applied_events, 1);
+        assert_eq!(progress_row(&database_b, &keys_a), (1, 1));
+        assert_eq!(progress_row(&database_b, &keys_c), (1, 1));
+        assert_eq!(stored_snippet_name(&database_b, "shared-note").as_deref(), Some("edited by A"));
+
+        // B's own next event depends on both, and B's progress is closed.
+        write_snippet(&database_b, "from-b");
+        push_pending_events(&database_b, &keys_b, &only_a).await.unwrap();
+        assert_eq!(progress_row(&database_b, &keys_b), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn the_same_feed_from_two_connectors_applies_once() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let both: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(FakeTransport::new("one")), Arc::new(FakeTransport::new("two"))];
+        let keys_a = test_keys(&database_a);
+        for id in ["first", "second"] {
+            write_snippet(&database_a, id);
+            push_pending_events(&database_a, &keys_a, &both).await.unwrap();
+        }
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        let outcome = pull_from_transports(&database_b, &keys_b, &both).await.unwrap();
+        assert_eq!(outcome.applied_events, 2);
+        assert_eq!(outcome.failed_transports, 0);
+        assert_eq!(progress_row(&database_b, &keys_a), (2, 2));
+        assert_eq!(pull_from_transports(&database_b, &keys_b, &both).await.unwrap().applied_events, 0);
+    }
+
+    #[tokio::test]
+    async fn a_stale_head_naming_already_applied_events_changes_nothing() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let shared = fake("shared");
+        let keys_a = test_keys(&database_a);
+        write_snippet(&database_a, "note");
+        push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
+        update_snippet(&database_a, "note", "second name");
+        push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        pull_from_transports(&database_b, &keys_b, &shared).await.unwrap();
+
+        // A lagging connector still holds A's first event and a head that
+        // names it. B already has it, so nothing is fetched or re-applied,
+        // and no conflict appears.
+        let lagging = fake("lagging");
+        let first_index = own_chunk_index_cid(&database_a, 1);
+        lagging[0].publish_head(&signed_head_for(&keys_a, 1, Some(first_index))).await.unwrap();
+        let outcome = pull_from_transports(&database_b, &keys_b, &lagging).await.unwrap();
+        assert_eq!(outcome.failed_transports, 0);
+        assert_eq!(outcome.applied_events, 0);
+        assert!(database_b.list_frontier_conflicts().unwrap().is_empty());
+        assert_eq!(stored_snippet_name(&database_b, "note").as_deref(), Some("second name"));
+    }
+
+    #[tokio::test]
+    async fn a_head_whose_feed_skips_or_reorders_events_applies_nothing() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let shared = fake("shared");
+        let keys_a = test_keys(&database_a);
+        for id in ["first", "second"] {
+            write_snippet(&database_a, id);
+            push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
+        }
+        // A head claiming a third event while naming the second.
+        let forged = fake("forged");
+        for cid in [own_chunk_index_cid(&database_a, 2)] {
+            let bytes = shared[0].get_object(&TransportCid(cid.clone())).await.unwrap();
+            forged[0].put_object(&TransportCid(cid.clone()), &bytes).await.unwrap();
+            let index: ChunkIndex = serde_json::from_slice(&bytes).unwrap();
+            for chunk in index.chunk_cids {
+                let chunk_bytes = shared[0].get_object(&TransportCid(chunk.clone())).await.unwrap();
+                forged[0].put_object(&TransportCid(chunk), &chunk_bytes).await.unwrap();
+            }
+        }
+        forged[0].publish_head(&signed_head_for(&keys_a, 3, Some(own_chunk_index_cid(&database_a, 2)))).await.unwrap();
+
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        let outcome = pull_from_transports(&database_b, &keys_b, &forged).await.unwrap();
+        assert_eq!(outcome.failed_transports, 1);
+        assert_eq!(outcome.applied_events, 0);
+        assert_eq!(progress_row(&database_b, &keys_a), (0, 0));
+        assert_eq!(stored_object_count(&database_b), 0);
+    }
+
+    async fn published_head(transports: &[Arc<dyn SyncTransport>], keys: &LocalKeys) -> Option<SignedDeviceHead> {
+        transports[0]
+            .resolve_heads(&[HeadLocator { device_id: keys.device_id, remote_id: None }])
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_head_is_republished_only_when_the_heartbeat_is_due() {
+        let database = Database::open_memory();
+        let shared = fake("shared");
+        let keys = test_keys(&database);
+        let start = 1_800_000_000_000;
+        crate::sync_policy::set_test_clock(Some(start));
+
+        // Published even with nothing written yet.
+        push_pending_events(&database, &keys, &shared).await.unwrap();
+        let head = published_head(&shared, &keys).await.unwrap();
+        assert_eq!(head.head.published_at_ms, start);
+        assert_eq!((head.head.contiguous_sequence, head.head.latest_event_cid.clone()), (0, None));
+
+        crate::sync_policy::set_test_clock(Some(start + crate::sync_policy::HEAD_HEARTBEAT_MS - 1));
+        push_pending_events(&database, &keys, &shared).await.unwrap();
+        assert_eq!(published_head(&shared, &keys).await.unwrap().head.published_at_ms, start);
+
+        let due = start + crate::sync_policy::HEAD_HEARTBEAT_MS;
+        crate::sync_policy::set_test_clock(Some(due));
+        push_pending_events(&database, &keys, &shared).await.unwrap();
+        assert_eq!(published_head(&shared, &keys).await.unwrap().head.published_at_ms, due);
+
+        // A change is published at once.
+        crate::sync_policy::set_test_clock(Some(due + 1));
+        write_snippet(&database, "note");
+        push_pending_events(&database, &keys, &shared).await.unwrap();
+        let head = published_head(&shared, &keys).await.unwrap().head;
+        assert_eq!(head.published_at_ms, due + 1);
+        assert_eq!(head.contiguous_sequence, 1);
+        assert_eq!(head.ack, vec![threestrands_sync_envelope::SequenceEntry { device_id: keys.device_id, sequence: 1 }]);
+        crate::sync_policy::set_test_clock(None);
+    }
+
+    #[tokio::test]
+    async fn a_pull_records_each_peers_ack_and_publication_time() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let shared = fake("shared");
+        crate::sync_policy::set_test_clock(Some(1_800_000_000_000));
+        let keys_a = test_keys(&database_a);
+        write_snippet(&database_a, "note");
+        push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
+
+        crate::sync_policy::set_test_clock(Some(1_800_000_060_000));
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        pull_from_transports(&database_b, &keys_b, &shared).await.unwrap();
+        let (published, seen, ack): (i64, i64, String) = database_b
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT last_head_published_at_ms, last_head_seen_at_ms, ack_json FROM sync_device_progress WHERE device_id=?1",
+                params![encode_id(keys_a.device_id.as_bytes())],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((published, seen), (1_800_000_000_000, 1_800_000_060_000));
+        assert_eq!(ack, format!("[[\"{}\",1]]", encode_id(keys_a.device_id.as_bytes())));
+        crate::sync_policy::set_test_clock(None);
     }
 
     #[tokio::test]
@@ -3623,6 +4035,110 @@ mod config_tests {
 #[cfg(test)]
 mod reconciliation_tests {
     use super::*;
+
+    fn count(database: &Database, sql: &str) -> i64 {
+        database.connection().unwrap().query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    /// Fills `database` with a group as a protocol-1 build left it (in the
+    /// columns the upgrade reads), marks the schema as the version before
+    /// the upgrade, and runs the migration again.
+    fn upgrade_from_a_protocol_1_group(database: &Database, enrolled: bool) {
+        database
+            .connection()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at)
+                   VALUES ('e1',3,'d1',1,1,'sealed','2026-09-01T00:00:00Z');
+                 INSERT INTO sync_operations(operation_id,event_id,entity_type,entity_id,field,value,winner_stamp)
+                   VALUES ('o1','e1','snippet','s1','name','\"n\"',X'00');
+                 INSERT INTO sync_field_frontier VALUES ('snippet','s1','name','o1');
+                 INSERT INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES ('c1','e1','operations',0,1,X'00');
+                 INSERT INTO sync_devices(device_id,status,is_self) VALUES ('d1','active',1);
+                 INSERT INTO sync_device_labels VALUES ('d1','Laptop');",
+            )
+            .unwrap();
+        if enrolled {
+            database
+                .connection()
+                .unwrap()
+                .execute_batch(
+                    "INSERT INTO sync_epoch_history VALUES (3,'2026-09-01T00:00:00Z','cid');
+                     UPDATE sync_spaces SET active_epoch=3;",
+                )
+                .unwrap();
+        }
+        let mut connection = database.connection().unwrap();
+        connection.pragma_update(None, "user_version", 34).unwrap();
+        crate::schema::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn upgrading_leaves_a_protocol_1_group_but_keeps_local_data_connectors_and_the_beta() {
+        let database = Database::open_memory();
+        database.set_beta_features_enabled(true).unwrap();
+        let snippet = database.create_snippet("Signature", "Best, Alex").unwrap();
+        database.add_folder_transport("folder-1", &std::env::temp_dir()).unwrap();
+        upgrade_from_a_protocol_1_group(&database, true);
+
+        for table in ["sync_events", "sync_operations", "sync_field_frontier", "sync_objects", "sync_devices", "sync_device_labels", "sync_epoch_history"] {
+            assert_eq!(count(&database, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table} should be empty");
+        }
+        assert_eq!(count(&database, "SELECT active_epoch FROM sync_spaces"), 0);
+        assert!(database.beta_features_enabled().unwrap());
+        assert_eq!(database.configured_transports().unwrap().len(), 1);
+        assert_eq!(count(&database, "SELECT COUNT(*) FROM snippets"), 1);
+        assert_eq!(database.pending_keychain_cleanup().unwrap(), Some(3));
+
+        // The user is told once, and can dismiss it.
+        assert!(database.protocol_reset_notice().unwrap());
+        database.dismiss_protocol_reset_notice().unwrap();
+        assert!(!database.protocol_reset_notice().unwrap());
+
+        // The next sync re-records local data for the next group.
+        assert!(database.reconcile_replicated_sync_backlog().unwrap() >= 1);
+        let recorded: i64 = database
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1 AND field='_entity'", [&snippet.id], |row| row.get(0))
+            .unwrap();
+        assert_eq!(recorded, 1);
+    }
+
+    #[test]
+    fn upgrading_a_device_that_never_joined_a_group_says_nothing() {
+        let database = Database::open_memory();
+        upgrade_from_a_protocol_1_group(&database, false);
+        assert!(!database.protocol_reset_notice().unwrap());
+        assert_eq!(database.pending_keychain_cleanup().unwrap(), None);
+        assert_eq!(count(&database, "SELECT COUNT(*) FROM sync_events"), 0);
+    }
+
+    #[test]
+    fn an_operation_belongs_to_exactly_one_event_or_snapshot() {
+        let database = Database::open_memory();
+        let insert = |event: Option<&str>, snapshot: Option<&str>| {
+            database.connection().unwrap().execute(
+                "INSERT INTO sync_operations(operation_id,event_id,snapshot_id,entity_type,entity_id,field,winner_stamp)
+                 VALUES (lower(hex(randomblob(16))),?1,?2,'snippet','s1','name',X'00')",
+                params![event, snapshot],
+            )
+        };
+        assert!(insert(Some("e1"), None).is_ok());
+        assert!(insert(None, Some("snap-1")).is_ok());
+        assert!(insert(None, None).is_err());
+        assert!(insert(Some("e1"), Some("snap-1")).is_err());
+        // Removing an event row never removes its operations.
+        database
+            .connection()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at) VALUES ('e1',0,'d1',1,1,'sealed','x');
+                 DELETE FROM sync_events WHERE event_id='e1';",
+            )
+            .unwrap();
+        assert_eq!(count(&database, "SELECT COUNT(*) FROM sync_operations WHERE event_id='e1'"), 1);
+    }
 
     #[test]
     fn catches_up_an_entity_created_without_being_enqueued() {

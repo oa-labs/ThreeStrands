@@ -437,6 +437,9 @@ mod tests {
             epoch: 0,
             contiguous_sequence: 1,
             latest_event_cid: Some(cid.0.clone()),
+            published_at_ms: 0,
+            ack: vec![],
+            snapshot_cid: None,
         };
         let signed = sign_device_head(&signing_key, head).unwrap();
         source.publish_head(&signed).await.unwrap();

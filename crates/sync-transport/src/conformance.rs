@@ -100,6 +100,9 @@ pub async fn resolve_heads_round_trips_a_published_head(transport: &dyn SyncTran
         epoch: 1,
         contiguous_sequence: 3,
         latest_event_cid: None,
+        published_at_ms: 0,
+        ack: vec![],
+        snapshot_cid: None,
     };
     let signed = sign_device_head(&signing_key, head).unwrap();
     transport.publish_head(&signed).await.unwrap();

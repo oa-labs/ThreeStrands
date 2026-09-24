@@ -39,8 +39,8 @@ use threestrands_sync_envelope::{
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use super::{
-    default_device_name, open_earlier_epoch_keys, roster_entry_verifying_key, seal_earlier_epoch_keys, store_earlier_epoch_keys,
-    EnrollmentStatus, EpochKeyStore, MAX_DEVICE_LABEL_CHARS,
+    default_device_name, open_earlier_epoch_keys, protocol_marker_missing, roster_entry_verifying_key, seal_earlier_epoch_keys,
+    store_earlier_epoch_keys, EnrollmentStatus, EpochKeyStore, LEGACY_SPACE_REFUSAL, MAX_DEVICE_LABEL_CHARS,
 };
 use crate::db::Database;
 use crate::error_text::display;
@@ -604,6 +604,9 @@ pub(crate) async fn join_with_code(
         return Err(open_error.unwrap_or_else(|| "Couldn't open any of this join code's connectors".to_string()));
     }
     let opened = find_invitation(&code, &transports).await?;
+    if protocol_marker_missing(&transports).await {
+        return Err(LEGACY_SPACE_REFUSAL.to_string());
+    }
     for (instance_id, config, secrets) in &opened_connectors {
         database.add_transport(instance_id, config, secrets.as_ref())?;
     }

@@ -131,6 +131,28 @@ use the recovery phrase or ask another device to approve this one instead.
 A join code made by one version of Three Strands keeps working in later
 versions. A code made by a newer version asks for this app to be updated.
 
+### Groups from earlier test versions
+
+Version 0.29.0 changed the sync format, and it can't read or join a group made
+by an earlier test version. When it upgrades a device that belonged to such a
+group, the device leaves it:
+- Local data, connectors and the beta toggle stay.
+- Settings shows a one-time notice explaining the reset.
+
+To sync again, update every device first. Then, on each connector:
+1. Delete the old group's files (**Delete files and disconnect**).
+2. Add the connector again.
+3. Create a new group on one device and join it from the others.
+
+Settings recognizes a connector that still holds an old group. It won't
+create or join a group there, and it explains what to do. A shared folder that
+hasn't finished syncing a new group can look the same for a moment, so the
+message also suggests waiting for the sync app and trying again.
+
+For the same reason, a recovery-phrase join waits if the group's key changes
+haven't all reached the connector yet. Joining without every one of them would
+leave part of the history permanently unreadable.
+
 ## Data boundary
 
 Replicated entities are tasks, snippets, Split Inboxes, mail-account display

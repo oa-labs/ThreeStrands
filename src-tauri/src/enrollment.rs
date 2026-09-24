@@ -42,7 +42,8 @@ use threestrands_sync_envelope::{
     SignedKeyRotation, VerifyingKey, X25519PublicKey,
 };
 use threestrands_sync_envelope::limits::MAX_EARLIER_EPOCH_KEYS;
-use threestrands_sync_transport::{Cid as TransportCid, SyncTransport};
+use threestrands_sync_envelope::{protocol_marker_cid, PROTOCOL_MARKER};
+use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use crate::db::Database;
 use crate::error_text::display;
@@ -304,7 +305,7 @@ impl Database {
         let mut statement = connection
             .prepare(
                 "SELECT d.device_id, d.status, d.is_self, l.label,
-                        (SELECT MAX(e.created_at) FROM sync_events e WHERE e.device_id = d.device_id),
+                        (SELECT p.last_event_at FROM sync_device_progress p WHERE p.device_id = d.device_id),
                         EXISTS(SELECT 1 FROM replicated_sync_invitation_redemptions r
                                WHERE r.device_id = d.device_id AND r.state IN ('admitted','observed'))
                         OR (d.is_self = 1 AND EXISTS(SELECT 1 FROM replicated_sync_invitations i WHERE i.direction='incoming'))
@@ -458,7 +459,9 @@ impl Database {
              DELETE FROM replicated_sync_invitations;
              DELETE FROM sync_control_objects_seen;
              DELETE FROM sync_device_labels;
-             DELETE FROM sync_devices;",
+             DELETE FROM sync_devices;
+             DELETE FROM sync_device_progress;
+             DELETE FROM sync_head_publications;",
         )
         .map_err(display)?;
         tx.execute(
@@ -556,6 +559,27 @@ impl Database {
 
 // ============================ Publishing helpers ============================
 
+/// Publishes a control object (a rotation, grant, request, rejection, or
+/// announcement) to every transport now, and records it as a local object
+/// so anti-entropy repair keeps delivering it: to a transport that failed
+/// just now, and to any connector added later. A control object that never
+/// reaches storage would otherwise be lost silently — a rotation lost that
+/// way leaves every other device without the new epoch's key.
+async fn publish_control_object(database: &Database, transports: &[Arc<dyn SyncTransport>], bytes: &[u8]) -> Result<String, String> {
+    let cid = compute_cid(bytes);
+    database
+        .connection()?
+        .execute(
+            "INSERT OR IGNORE INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,NULL,'control',0,1,?2)",
+            params![cid, bytes],
+        )
+        .map_err(display)?;
+    publish_to_all(transports, bytes).await;
+    Ok(cid)
+}
+
+/// Puts `bytes` on every transport, best effort, without recording it for
+/// repair. Tests use it to plant objects no device would publish.
 async fn publish_to_all(transports: &[Arc<dyn SyncTransport>], bytes: &[u8]) -> String {
     let cid = compute_cid(bytes);
     let locator = TransportCid(cid.clone());
@@ -616,10 +640,25 @@ pub enum SyncSpacePresence {
     /// No transport is configured, or at least one could not be scanned
     /// completely, and no rotation was found on the ones that could.
     Unknown,
+    /// A rotation exists but the protocol marker doesn't: a group created
+    /// by an earlier test build, which this version can neither join nor
+    /// share a connector with.
+    Legacy,
 }
 
 pub const EXISTING_SPACE_REFUSAL: &str =
     "A sync group already exists in this connector. Join it with a join code, its recovery phrase, or approval from another device, or confirm that you want a separate new group.";
+
+pub const LEGACY_SPACE_REFUSAL: &str =
+    "This connector holds a sync group this version of Three Strands can't use: either it was created by an earlier test version, or a shared folder hasn't finished syncing yet. If you just set up sync on another device, wait for your sync app to finish, then try again. Otherwise update every device, delete this connector's files (Connectors → Delete files and disconnect), add it again, and create a new sync group.";
+
+/// What one transport holds, as far as a scan can tell.
+enum TransportSpace {
+    Current,
+    Legacy,
+    Empty,
+    Unknown,
+}
 
 /// A rotation counts as evidence of a space only when it verifies against
 /// its own initiator's roster entry — the same self-consistency check a
@@ -636,34 +675,127 @@ fn is_self_consistent_rotation(bytes: &[u8]) -> bool {
 
 /// Read-only scan for an existing sync space, stopping at the first one
 /// found. Used to steer a not-yet-enrolled device toward joining instead
-/// of starting a second, disconnected space in the same location.
+/// of starting a second, disconnected space in the same location, and to
+/// recognize a group created by an earlier, incompatible build.
 pub async fn inspect_sync_space(transports: &[Arc<dyn SyncTransport>]) -> SyncSpacePresence {
     let mut incomplete = transports.is_empty();
+    let mut legacy = false;
     for transport in transports {
-        let mut cursor: Option<String> = None;
-        loop {
-            let page = match transport.scan(cursor.as_deref()).await {
-                Ok(Some(page)) => page,
-                Ok(None) => break,
-                Err(_) => {
-                    incomplete = true;
-                    break;
+        match inspect_transport(transport.as_ref()).await {
+            TransportSpace::Current => return SyncSpacePresence::Existing,
+            TransportSpace::Legacy => legacy = true,
+            TransportSpace::Empty => {}
+            TransportSpace::Unknown => incomplete = true,
+        }
+    }
+    if legacy {
+        SyncSpacePresence::Legacy
+    } else if incomplete {
+        SyncSpacePresence::Unknown
+    } else {
+        SyncSpacePresence::None
+    }
+}
+
+/// Scans one transport until it finds a self-consistent rotation, then
+/// asks whether the protocol marker is there too. Only a definite absence
+/// counts as a legacy group; a marker that can't be fetched for any other
+/// reason is unknown, never legacy, so a flaky connector is never mistaken
+/// for one to delete.
+async fn inspect_transport(transport: &dyn SyncTransport) -> TransportSpace {
+    let mut incomplete = false;
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = match transport.scan(cursor.as_deref()).await {
+            Ok(Some(page)) => page,
+            Ok(None) => break,
+            Err(_) => return TransportSpace::Unknown,
+        };
+        for locator in &page.objects {
+            match transport.get_object(&locator.cid).await {
+                Ok(bytes) if is_self_consistent_rotation(&bytes) => {
+                    return match transport.get_object(&TransportCid(protocol_marker_cid())).await {
+                        Ok(marker) if marker == PROTOCOL_MARKER => TransportSpace::Current,
+                        Err(TransportError::NotFound) => TransportSpace::Legacy,
+                        _ => TransportSpace::Unknown,
+                    };
                 }
-            };
-            for locator in &page.objects {
-                match transport.get_object(&locator.cid).await {
-                    Ok(bytes) if is_self_consistent_rotation(&bytes) => return SyncSpacePresence::Existing,
-                    Ok(_) => {}
-                    Err(_) => incomplete = true,
-                }
+                Ok(_) => {}
+                Err(_) => incomplete = true,
             }
-            cursor = page.next_cursor;
-            if cursor.is_none() {
-                break;
+        }
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    if incomplete { TransportSpace::Unknown } else { TransportSpace::Empty }
+}
+
+pub(crate) const RECOVERY_INCOMPLETE: &str =
+    "Some of this sync group's files haven't reached this connector yet, so joining now would leave part of its history unreadable. Wait for your sync app to finish, then try again.";
+
+/// The newest key epoch any listed, still-active device's verified head
+/// says it's using, on any transport. Heads that can't be fetched or
+/// verified are skipped.
+async fn newest_epoch_in_heads(transports: &[Arc<dyn SyncTransport>], roster: &[RosterEntry]) -> u32 {
+    let locators: Vec<threestrands_sync_transport::HeadLocator> = roster
+        .iter()
+        .filter(|entry| entry.status == "active")
+        .map(|entry| threestrands_sync_transport::HeadLocator { device_id: entry.device_id, remote_id: None })
+        .collect();
+    let mut newest = 0;
+    for transport in transports {
+        let Ok(heads) = transport.resolve_heads(&locators).await else { continue };
+        for signed in heads {
+            let verified = roster
+                .iter()
+                .find(|entry| entry.device_id == signed.head.device_id)
+                .and_then(|entry| roster_entry_verifying_key(entry).ok())
+                .is_some_and(|key| threestrands_sync_envelope::verify_device_head(&key, &signed).is_ok());
+            if verified {
+                newest = newest.max(signed.head.epoch);
             }
         }
     }
-    if incomplete { SyncSpacePresence::Unknown } else { SyncSpacePresence::None }
+    newest
+}
+
+/// Refuses to set up or join sync over a connector that holds a group from
+/// an earlier, incompatible build.
+async fn refuse_legacy_space(transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
+    if inspect_sync_space(transports).await == SyncSpacePresence::Legacy {
+        return Err(LEGACY_SPACE_REFUSAL.to_string());
+    }
+    Ok(())
+}
+
+/// Whether every transport definitely lacks the protocol marker. Where a
+/// group is known to exist (an invitation was just found), that means the
+/// group is from an earlier, incompatible build. Cheaper than a full
+/// [`inspect_sync_space`] scan.
+pub(crate) async fn protocol_marker_missing(transports: &[Arc<dyn SyncTransport>]) -> bool {
+    let cid = TransportCid(protocol_marker_cid());
+    for transport in transports {
+        match transport.get_object(&cid).await {
+            Err(TransportError::NotFound) => {}
+            _ => return false,
+        }
+    }
+    !transports.is_empty()
+}
+
+/// Stores the protocol marker on every transport now, and records it as a
+/// local object so repair delivers it to any connector added later.
+pub(crate) async fn publish_protocol_marker(database: &Database, transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
+    database.ensure_protocol_marker_object()?;
+    let cid = TransportCid(protocol_marker_cid());
+    for transport in transports {
+        if let Err(error) = transport.put_object(&cid, PROTOCOL_MARKER).await {
+            log::debug!(target: "replicated_sync", "storing the protocol marker on {} failed: {error}", transport.instance_id().0);
+        }
+    }
+    Ok(())
 }
 
 /// Starts a new sync space. Refuses, before any side effect, when a space
@@ -676,10 +808,15 @@ pub async fn begin_genesis(
     transports: &[Arc<dyn SyncTransport>],
     allow_existing_space: bool,
 ) -> Result<String, String> {
-    if !allow_existing_space && inspect_sync_space(transports).await == SyncSpacePresence::Existing {
-        return Err(EXISTING_SPACE_REFUSAL.to_string());
+    match inspect_sync_space(transports).await {
+        SyncSpacePresence::Legacy => return Err(LEGACY_SPACE_REFUSAL.to_string()),
+        SyncSpacePresence::Existing if !allow_existing_space => return Err(EXISTING_SPACE_REFUSAL.to_string()),
+        _ => {}
     }
     database.set_beta_features_enabled(true)?;
+    // The marker goes out before the genesis rotation, so a device that
+    // inspects this connector never sees the group without it.
+    publish_protocol_marker(database, transports).await?;
 
     let seed = generate_recovery_seed();
     let phrase = recovery_phrase_from_seed(&seed);
@@ -710,7 +847,7 @@ pub async fn begin_genesis(
     };
     let signed = sign_key_rotation(&identity.signing_key, rotation).map_err(display)?;
     let bytes = encode_signed_key_rotation(&signed).map_err(display)?;
-    let cid = publish_to_all(transports, &bytes).await;
+    let cid = publish_control_object(database, transports, &bytes).await?;
 
     epoch_keys.store(0, &k_epoch)?;
     database.set_active_epoch(0)?;
@@ -724,6 +861,7 @@ pub async fn begin_genesis(
 /// publishes a signed enrollment request. Returns the request's fingerprint
 /// for display — the same value an approving device must see and confirm.
 pub async fn publish_enrollment_request(database: &Database, identity: &DeviceIdentity, transports: &[Arc<dyn SyncTransport>]) -> Result<String, String> {
+    refuse_legacy_space(transports).await?;
     database.set_beta_features_enabled(true)?;
     let x25519_public = x25519_public_bytes(&identity.x25519_secret);
     let fingerprint = enrollment_fingerprint(identity.verifying_key.as_bytes(), &x25519_public);
@@ -738,7 +876,7 @@ pub async fn publish_enrollment_request(database: &Database, identity: &DeviceId
     };
     let signed = sign_enrollment_request(&identity.signing_key, request).map_err(display)?;
     let bytes = encode_signed_enrollment_request(&signed).map_err(display)?;
-    let cid = publish_to_all(transports, &bytes).await;
+    let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_request")?;
 
     database
@@ -830,8 +968,10 @@ fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoc
         return Ok(if apply_incoming_rejection(database, signed)? { ControlObject::Applied } else { ControlObject::RetryLater });
     }
     if let Ok(signed) = decode_signed_key_rotation(bytes) {
-        apply_incoming_rotation(database, identity, epoch_keys, signed, cid)?;
-        return Ok(ControlObject::Applied);
+        return Ok(match apply_incoming_rotation(database, identity, epoch_keys, signed, cid)? {
+            RotationOutcome::Done => ControlObject::Applied,
+            RotationOutcome::UnknownInitiator => ControlObject::RetryLater,
+        });
     }
     if let Ok(signed) = threestrands_sync_envelope::decode_signed_invitation(bytes) {
         join_codes::apply_incoming_invitation(database, identity, signed, cid)?;
@@ -1115,7 +1255,7 @@ pub async fn reject_enrollment_request(
     };
     let signed = sign_enrollment_rejection(&identity.signing_key, rejection).map_err(display)?;
     let bytes = encode_signed_enrollment_rejection(&signed).map_err(display)?;
-    let cid = publish_to_all(transports, &bytes).await;
+    let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_rejection")?;
     database
         .connection()?
@@ -1127,19 +1267,42 @@ pub async fn reject_enrollment_request(
     Ok(())
 }
 
-fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedKeyRotation, cid: &str) -> Result<(), String> {
+/// Whether a rotation was applied (or deliberately ignored), or names an
+/// initiator this device hasn't heard of yet and should be retried.
+enum RotationOutcome {
+    Done,
+    UnknownInitiator,
+}
+
+fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedKeyRotation, cid: &str) -> Result<RotationOutcome, String> {
     // A rotation is only auto-applied when its signer is already in our
     // roster: no new trust decision, just an authenticated update to an
     // existing one. A genesis/recovery-only rotation (signer not yet
     // trusted) is picked up by `join_with_recovery_phrase` instead.
+    //
+    // A signer this device has never heard of is usually a member that
+    // joined while it was away: the announcement that introduces it can be
+    // scanned after this rotation, in the same sweep or a later one. Such a
+    // rotation is retried rather than dropped, or this device would never
+    // receive that epoch's key. A signer that is known but revoked is
+    // ignored for good.
     let roster = database.known_device_roster()?;
     let Some((_, verifying_key)) = roster.iter().find(|(device_id, _)| *device_id == signed.rotation.initiator_device_id) else {
-        return Ok(());
+        let known_but_revoked: bool = database
+            .connection()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id=?1)",
+                params![encode_id(signed.rotation.initiator_device_id.as_bytes())],
+                |row| row.get(0),
+            )
+            .map_err(display)?;
+        return Ok(if known_but_revoked { RotationOutcome::Done } else { RotationOutcome::UnknownInitiator });
     };
     if verify_key_rotation(verifying_key, &signed).is_err() {
-        return Ok(());
+        return Ok(RotationOutcome::Done);
     }
-    apply_rotation_common(database, identity, epoch_keys, &signed, cid)
+    apply_rotation_common(database, identity, epoch_keys, &signed, cid)?;
+    Ok(RotationOutcome::Done)
 }
 
 fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: &SignedKeyRotation, cid: &str) -> Result<(), String> {
@@ -1262,7 +1425,7 @@ pub async fn approve_enrollment_request(
     };
     let signed = sign_enrollment_grant(&identity.signing_key, grant).map_err(display)?;
     let bytes = encode_signed_enrollment_grant(&signed).map_err(display)?;
-    let cid = publish_to_all(transports, &bytes).await;
+    let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_grant")?;
 
     database
@@ -1325,7 +1488,7 @@ pub async fn rotate_epoch(
     };
     let signed = sign_key_rotation(&identity.signing_key, rotation).map_err(display)?;
     let bytes = encode_signed_key_rotation(&signed).map_err(display)?;
-    let cid = publish_to_all(transports, &bytes).await;
+    let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "key_rotation")?;
 
     epoch_keys.store(next_epoch, &k_epoch)?;
@@ -1348,6 +1511,7 @@ pub async fn rotate_epoch(
 /// first. Only rotations that verify against their own initiator count, so
 /// arbitrary bytes that happen to decode can't steer the choice.
 pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, phrase: &str, transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
+    refuse_legacy_space(transports).await?;
     database.set_beta_features_enabled(true)?;
     let seed = recovery_seed_from_phrase(phrase)?;
     let recovery_secret_bytes = recovery_x25519_secret(&seed).to_bytes();
@@ -1384,6 +1548,16 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
         return Err("No rotation object on any configured transport opened with this recovery phrase yet".to_string());
     };
     let latest_key = *latest_key;
+    // Joining without every epoch's key is permanent: the missing epoch's
+    // rotation was sealed only to the members of the time and the recovery
+    // key, and this device won't keep the phrase. Epochs are consecutive,
+    // and every device's head names the epoch it's on, so a rotation that
+    // hasn't reached this connector yet shows up as a gap or as a newer
+    // epoch in use. Either way, wait rather than join incomplete.
+    let newest_in_use = newest_epoch_in_heads(transports, &latest.rotation.roster).await;
+    if (0..=latest_epoch).any(|epoch| !opened.contains_key(&epoch)) || newest_in_use > latest_epoch {
+        return Err(RECOVERY_INCOMPLETE.to_string());
+    }
 
     database.adopt_roster(&latest.rotation.roster)?;
     database.set_recovery_public_keys(
@@ -1418,26 +1592,25 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
         created_at_ms: now_ms(),
         earlier_epoch_keys: vec![],
     };
+    database.ensure_protocol_marker_object()?;
     let signed_announcement = sign_enrollment_grant(&recovery_ed25519_signing_key(&seed), announcement).map_err(display)?;
     let announcement_bytes = encode_signed_enrollment_grant(&signed_announcement).map_err(display)?;
-    let announcement_cid = publish_to_all(transports, &announcement_bytes).await;
+    let announcement_cid = publish_control_object(database, transports, &announcement_bytes).await?;
     database.mark_control_object_seen(&announcement_cid, "enrollment_grant")?;
     Ok(())
 }
 
+/// Keychain-free stand-ins for a device's identity and epoch-key storage,
+/// shared by every test that drives enrollment and sync end to end.
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
     use super::*;
     use rand::RngCore;
     use threestrands_sync_envelope::SigningKey;
-    use threestrands_sync_protocol::EntityType;
-    use threestrands_sync_transport::fake::FakeTransport;
-
-    use crate::replicated_sync::{pull_from_transports, push_pending_events};
 
     /// Builds a synthetic device identity directly, exactly as `test_keys`
     /// does in `replicated_sync.rs` — never touches the OS keychain.
-    fn test_identity(database: &Database) -> DeviceIdentity {
+    pub(crate) fn test_identity(database: &Database) -> DeviceIdentity {
         let device_id = {
             let mut connection = database.connection().unwrap();
             let tx = connection.transaction().unwrap();
@@ -1466,7 +1639,7 @@ mod tests {
     /// simulated device gets its own instance, exactly like separate
     /// physical machines each having their own keychain.
     #[derive(Default)]
-    struct FakeEpochKeyStore(std::sync::Mutex<std::collections::HashMap<u32, [u8; 32]>>);
+    pub(crate) struct FakeEpochKeyStore(pub(crate) std::sync::Mutex<std::collections::HashMap<u32, [u8; 32]>>);
 
     impl EpochKeyStore for FakeEpochKeyStore {
         fn store(&self, key_epoch: u32, key: &[u8; 32]) -> Result<(), String> {
@@ -1476,7 +1649,7 @@ mod tests {
     }
 
     impl FakeEpochKeyStore {
-        fn get(&self, key_epoch: u32) -> Option<[u8; 32]> {
+        pub(crate) fn get(&self, key_epoch: u32) -> Option<[u8; 32]> {
             self.0.lock().unwrap().get(&key_epoch).copied()
         }
     }
@@ -1485,7 +1658,7 @@ mod tests {
     /// synthetic identity and fake epoch-key store — the test equivalent of
     /// `Database::local_replicated_keys`, which touches the real keychain
     /// and so is never called from a test.
-    fn local_keys_for(database: &Database, identity: &DeviceIdentity, epoch_keys: &FakeEpochKeyStore) -> LocalKeys {
+    pub(crate) fn local_keys_for(database: &Database, identity: &DeviceIdentity, epoch_keys: &FakeEpochKeyStore) -> LocalKeys {
         let active_epoch: u32 = database
             .connection()
             .unwrap()
@@ -1502,6 +1675,16 @@ mod tests {
             sync_space_id: identity.sync_space_id.clone(),
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::test_support::{local_keys_for, test_identity, FakeEpochKeyStore};
+    use threestrands_sync_protocol::EntityType;
+    use threestrands_sync_transport::fake::FakeTransport;
+
+    use crate::replicated_sync::{pull_from_transports, push_pending_events};
 
     fn fake_transports(name: &str) -> Vec<Arc<dyn SyncTransport>> {
         let transport: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new(name));
@@ -2071,6 +2254,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_recovery_join_waits_until_every_epochs_rotation_has_arrived() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        a.rotate(&transports).await;
+        a.rotate(&transports).await;
+        a.write_snippet("epoch-2");
+        a.push(&transports).await;
+
+        let mut rotations: std::collections::BTreeMap<u32, (String, Vec<u8>)> = std::collections::BTreeMap::new();
+        let page = transports[0].scan(None).await.unwrap().unwrap();
+        for locator in page.objects {
+            let bytes = transports[0].get_object(&locator.cid).await.unwrap();
+            if let Ok(signed) = decode_signed_key_rotation(&bytes) {
+                rotations.insert(signed.rotation.key_epoch, (locator.cid.0, bytes));
+            }
+        }
+        assert_eq!(rotations.keys().copied().collect::<Vec<_>>(), vec![0, 1, 2]);
+        let hide = |epoch: u32| {
+            let transport = transports[0].clone();
+            let cid = rotations[&epoch].0.clone();
+            async move { transport.delete_object(&TransportCid(cid)).await.unwrap() }
+        };
+        let restore = |epoch: u32| {
+            let transport = transports[0].clone();
+            let (cid, bytes) = rotations[&epoch].clone();
+            async move { transport.put_object(&TransportCid(cid), &bytes).await.unwrap() }
+        };
+
+        // A gap in the middle.
+        hide(1).await;
+        let c = Member::new();
+        let refused = join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await;
+        assert_eq!(refused.unwrap_err(), RECOVERY_INCOMPLETE);
+        restore(1).await;
+
+        // The newest rotation missing, while A's head already says epoch 2.
+        hide(2).await;
+        let refused = join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await;
+        assert_eq!(refused.unwrap_err(), RECOVERY_INCOMPLETE);
+        assert!(c.epoch_keys.get(0).is_none(), "a refused join stores no keys");
+        restore(2).await;
+
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await.unwrap();
+        assert_eq!(c.active_epoch(), 2);
+        c.pull(&transports).await;
+        assert_eq!(c.snippet("epoch-2").as_deref(), Some("epoch-2"));
+    }
+
+    #[tokio::test]
     async fn a_member_offline_across_a_rotation_catches_up_on_events_from_before_it() {
         let transports = fake_transports("shared");
         let a = Member::new();
@@ -2119,11 +2352,82 @@ mod tests {
         }
         rotations.sort_by_key(|(signed, _)| std::cmp::Reverse(signed.rotation.key_epoch));
         for (signed, cid) in rotations {
-            apply_incoming_rotation(&c.database, &c.identity, &c.epoch_keys, signed, &cid).unwrap();
+            assert!(matches!(
+                apply_incoming_rotation(&c.database, &c.identity, &c.epoch_keys, signed, &cid).unwrap(),
+                RotationOutcome::Done
+            ));
         }
         assert_eq!(c.active_epoch(), 2);
         assert_eq!(c.epoch_keys.get(1), a.epoch_keys.get(1));
         assert_eq!(c.epoch_keys.get(2), a.epoch_keys.get(2));
+    }
+
+    /// A group as an earlier build left it on `transports`: a genesis
+    /// rotation with no protocol marker. Returns its recovery phrase.
+    async fn legacy_group(transports: &[Arc<dyn SyncTransport>]) -> String {
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, transports, false).await.unwrap();
+        for transport in transports {
+            transport.delete_object(&TransportCid(protocol_marker_cid())).await.unwrap();
+        }
+        phrase
+    }
+
+    #[tokio::test]
+    async fn genesis_stores_the_protocol_marker_where_every_connector_gets_it() {
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(FakeTransport::new("one")), Arc::new(FakeTransport::new("two"))];
+        let a = Member::new();
+        begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        for transport in &transports {
+            assert_eq!(transport.get_object(&TransportCid(protocol_marker_cid())).await.unwrap(), PROTOCOL_MARKER);
+        }
+        assert_eq!(inspect_sync_space(&transports).await, SyncSpacePresence::Existing);
+
+        // A connector added later receives it through repair.
+        let later = fake_transports("later");
+        a.database.enqueue_repair_deliveries(&[later[0].instance_id()]).unwrap();
+        a.push(&later).await;
+        assert_eq!(later[0].get_object(&TransportCid(protocol_marker_cid())).await.unwrap(), PROTOCOL_MARKER);
+    }
+
+    #[tokio::test]
+    async fn a_group_from_an_earlier_build_is_reported_as_legacy_and_never_joined_or_replaced() {
+        let transports = fake_transports("shared");
+        let phrase = legacy_group(&transports).await;
+        assert_eq!(inspect_sync_space(&transports).await, SyncSpacePresence::Legacy);
+        let objects_before = transports[0].scan(None).await.unwrap().unwrap().objects.len();
+
+        let b = Member::new();
+        for allow_existing_space in [false, true] {
+            let refused = begin_genesis(&b.database, &b.identity, &b.epoch_keys, &transports, allow_existing_space).await;
+            assert_eq!(refused.unwrap_err(), LEGACY_SPACE_REFUSAL);
+        }
+        let refused = join_with_recovery_phrase(&b.database, &b.identity, &b.epoch_keys, &phrase, &transports).await;
+        assert_eq!(refused.unwrap_err(), LEGACY_SPACE_REFUSAL);
+        let refused = publish_enrollment_request(&b.database, &b.identity, &transports).await;
+        assert_eq!(refused.unwrap_err(), LEGACY_SPACE_REFUSAL);
+        // Nothing was set up or published on the way to refusing.
+        assert_eq!(transports[0].scan(None).await.unwrap().unwrap().objects.len(), objects_before);
+        assert!(b.epoch_keys.get(0).is_none());
+        let recorded: i64 = b
+            .database
+            .connection()
+            .unwrap()
+            .query_row("SELECT (SELECT COUNT(*) FROM sync_epoch_history) + (SELECT COUNT(*) FROM replicated_sync_enrollment_requests)", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(recorded, 0);
+        assert_eq!(inspect_sync_space(&transports).await, SyncSpacePresence::Legacy);
+    }
+
+    #[tokio::test]
+    async fn an_s3_group_from_an_earlier_build_is_reported_as_legacy() {
+        use crate::s3_transport::fake_server::FakeS3Server;
+        let server = FakeS3Server::spawn().await;
+        let (transports, _) = shared_s3_transports(&server).await;
+        legacy_group(&transports).await;
+        let engine = crate::replicated_sync::ReplicatedSync::new(Arc::new(Database::open_memory()));
+        let found = engine.probe_s3(&server.config("group"), &FakeS3Server::credentials()).await.unwrap();
+        assert_eq!(found.space_presence, Some(SyncSpacePresence::Legacy));
     }
 
     #[tokio::test]
@@ -2160,8 +2464,14 @@ mod tests {
         begin_genesis(&database, &identity, &epoch_keys, &genesis_transports, false).await.unwrap();
 
         let page = genesis_transports[0].scan(None).await.unwrap().unwrap();
-        let bytes = genesis_transports[0].get_object(&page.objects[0].cid).await.unwrap();
-        let mut tampered = decode_signed_key_rotation(&bytes).unwrap();
+        let mut rotation = None;
+        for locator in &page.objects {
+            let bytes = genesis_transports[0].get_object(&locator.cid).await.unwrap();
+            if let Ok(decoded) = decode_signed_key_rotation(&bytes) {
+                rotation = Some(decoded);
+            }
+        }
+        let mut tampered = rotation.expect("genesis publishes a rotation");
         tampered.rotation.created_at_ms += 1;
 
         let transports = fake_transports("tampered");
@@ -2248,11 +2558,10 @@ mod tests {
         database_a
             .connection()
             .unwrap()
-            .execute_batch(&format!(
-                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at) VALUES
-                   ('e1',0,'{peer}',1,1,'sealed','2026-09-20T10:00:00+00:00'),
-                   ('e2',0,'{peer}',2,2,'sealed','2026-09-21T10:00:00+00:00');"
-            ))
+            .execute(
+                "INSERT INTO sync_device_progress(device_id, applied_sequence, last_event_at) VALUES (?1, 2, '2026-09-21T10:00:00+00:00')",
+                params![peer],
+            )
             .unwrap();
 
         let roster = database_a.device_roster().unwrap();
@@ -2566,6 +2875,21 @@ mod tests {
             assert_eq!(outcome.failed_transports, 0);
             assert_eq!(snippet_name(&d.database, "old").as_deref(), Some("Old"));
             assert_eq!(snippet_name(&d.database, "new").as_deref(), Some("New"));
+        }
+
+        #[tokio::test]
+        async fn a_join_code_for_a_group_from_an_earlier_build_is_refused() {
+            let folder = SharedFolder::new();
+            let (a, _c) = group(&folder).await;
+            let now = now_ms();
+            let code = create(&a, now).await;
+            a.transports().await[0].delete_object(&TransportCid(protocol_marker_cid())).await.unwrap();
+            assert_eq!(inspect_sync_space(&a.transports().await).await, SyncSpacePresence::Legacy);
+
+            let d = Device::new();
+            assert_eq!(join(&d, &code, &folder, now + 1_000).await.unwrap_err(), LEGACY_SPACE_REFUSAL);
+            assert!(d.database.configured_transports().unwrap().is_empty());
+            assert!(matches!(d.database.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
         }
 
         /// Objects are scanned in content-address order, so a redemption can

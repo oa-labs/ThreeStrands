@@ -18,13 +18,14 @@ mod support;
 fn event(operation_value: &str) -> UnsignedSyncEvent {
     UnsignedSyncEvent {
         event_id: EventId::from_bytes([1u8; 16]),
-        protocol_version: 1,
+        protocol_version: threestrands_sync_envelope::PROTOCOL_VERSION,
         key_epoch: 5,
         device_id: DeviceId::from_bytes([2u8; 16]),
         device_sequence: 1,
         previous_device_event: None,
         lamport: 1,
         created_at_ms: 0,
+        causal_vector: vec![],
         operations: vec![FieldOperation {
             operation_id: OperationId::from_bytes([3u8; 16]),
             entity_type: EntityType::Task,

@@ -32,6 +32,7 @@ function setUp({
   vi.mocked(sync.replicatedSyncDeviceRoster).mockResolvedValue([]);
   vi.mocked(sync.replicatedSyncListJoinCodes).mockResolvedValue([]);
   vi.mocked(sync.replicatedSyncJoinCodeNotices).mockResolvedValue([]);
+  vi.mocked(sync.replicatedSyncProtocolResetNotice).mockResolvedValue(false);
 }
 
 beforeEach(() => {
@@ -108,6 +109,17 @@ describe("replicated sync setup choice", () => {
 
     expect(await screen.findByText(/Couldn’t check every connector/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create a new sync group" })).toBeEnabled();
+  });
+
+  it("offers no way to create or join over a group from an earlier test version", async () => {
+    vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("legacy");
+    render(<ReplicatedSyncSettings />);
+
+    expect(await screen.findByText(/sync group from an earlier test version/)).toBeInTheDocument();
+    expect(screen.getByText(/wait for your sync app to finish/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create a new sync group" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Join with recovery phrase" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ask another device to approve this one" })).not.toBeInTheDocument();
   });
 
   it("does not inspect or offer the choice before any connector is configured", async () => {
@@ -613,5 +625,28 @@ describe("leaving the sync group", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cancel and start over…" }));
     fireEvent.click(screen.getByRole("button", { name: "Cancel request" }));
     await waitFor(() => expect(sync.replicatedSyncLeave).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("replicated sync protocol reset notice", () => {
+  it("explains once that the update reset sync, and can be dismissed", async () => {
+    vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("none");
+    vi.mocked(sync.replicatedSyncProtocolResetNotice).mockResolvedValueOnce(true).mockResolvedValue(false);
+    vi.mocked(sync.replicatedSyncDismissProtocolResetNotice).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    const notice = await screen.findByText(/This update reset sync on this device/);
+    expect(notice).toHaveTextContent(/Your data here is kept/);
+    fireEvent.click(within(notice.closest(".sync-notice") as HTMLElement).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(sync.replicatedSyncDismissProtocolResetNotice).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText(/This update reset sync on this device/)).not.toBeInTheDocument());
+  });
+
+  it("says nothing when sync wasn't reset", async () => {
+    vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("none");
+    render(<ReplicatedSyncSettings />);
+
+    expect(await screen.findByRole("button", { name: "Create a new sync group" })).toBeInTheDocument();
+    expect(screen.queryByText(/This update reset sync/)).not.toBeInTheDocument();
   });
 });

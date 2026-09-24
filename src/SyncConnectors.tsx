@@ -180,6 +180,7 @@ export function s3SpaceLine(test: S3ConnectionTest): string | null {
     case "existing": return "Existing sync group found in this bucket and folder.";
     case "none": return "Empty — ready for a new sync group.";
     case "unknown": return "Couldn’t check for an existing sync group.";
+    case "legacy": return "Holds a sync group from an earlier test version, which this version can’t use.";
     default: return null;
   }
 }

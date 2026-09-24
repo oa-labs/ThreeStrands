@@ -15,7 +15,6 @@ use crate::error::EnvelopeError;
 use crate::header::NONCE_LEN;
 
 const EPOCH_KEY_HKDF_DOMAIN: &[u8] = b"threestrands/sync-envelope/epoch-key/v1";
-const SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/event-signature/v1";
 const SEALED_BOX_HKDF_DOMAIN: &[u8] = b"threestrands/sync-envelope/sealed-box/v1";
 const SEALED_BOX_AAD: &[u8] = b"threestrands/sync-envelope/sealed-box/v1";
 
@@ -81,25 +80,29 @@ pub fn aead_decrypt(
         .map_err(|_| EnvelopeError::DecryptionFailed)
 }
 
-/// Signs `message_id || canonical_unsigned_body` under the fixed signature
-/// domain. `canonical_unsigned_body` is the canonical DAG-CBOR encoding of
-/// every event field except the signature itself.
-pub fn sign_event(
+/// Signs `domain || message_id || canonical_unsigned_body`. The domain names
+/// the object kind (see `crate::object_signature_domain`), so a signature
+/// over one kind of sealed object can never verify as another.
+/// `canonical_unsigned_body` is the canonical DAG-CBOR encoding of the
+/// object's body without its signature.
+pub fn sign_object(
     signing_key: &SigningKey,
+    domain: &[u8],
     message_id: &[u8; 8],
     canonical_unsigned_body: &[u8],
 ) -> [u8; 64] {
-    let preimage = signing_preimage(message_id, canonical_unsigned_body);
+    let preimage = signing_preimage(domain, message_id, canonical_unsigned_body);
     signing_key.sign(&preimage).to_bytes()
 }
 
-pub fn verify_event(
+pub fn verify_object(
     verifying_key: &VerifyingKey,
+    domain: &[u8],
     message_id: &[u8; 8],
     canonical_unsigned_body: &[u8],
     signature: &[u8; 64],
 ) -> Result<(), EnvelopeError> {
-    let preimage = signing_preimage(message_id, canonical_unsigned_body);
+    let preimage = signing_preimage(domain, message_id, canonical_unsigned_body);
     let signature = EdSignature::from_bytes(signature);
     verifying_key
         .verify(&preimage, &signature)
@@ -188,10 +191,9 @@ fn derive_sealed_box_key(shared_secret: &[u8; 32], ephemeral_public: &[u8; 32], 
     out
 }
 
-fn signing_preimage(message_id: &[u8; 8], canonical_unsigned_body: &[u8]) -> Vec<u8> {
-    let mut preimage =
-        Vec::with_capacity(SIGNATURE_DOMAIN.len() + 8 + canonical_unsigned_body.len());
-    preimage.extend_from_slice(SIGNATURE_DOMAIN);
+fn signing_preimage(domain: &[u8], message_id: &[u8; 8], canonical_unsigned_body: &[u8]) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(domain.len() + 8 + canonical_unsigned_body.len());
+    preimage.extend_from_slice(domain);
     preimage.extend_from_slice(message_id);
     preimage.extend_from_slice(canonical_unsigned_body);
     preimage
@@ -271,14 +273,16 @@ mod tests {
     fn signature_round_trips_and_rejects_tampering() {
         let signing_key = SigningKey::generate(&mut RandOsRng);
         let verifying_key = signing_key.verifying_key();
+        let domain = b"test-domain";
         let message_id = [9u8; 8];
         let body = b"canonical-unsigned-body";
-        let signature = sign_event(&signing_key, &message_id, body);
-        verify_event(&verifying_key, &message_id, body, &signature).unwrap();
+        let signature = sign_object(&signing_key, domain, &message_id, body);
+        verify_object(&verifying_key, domain, &message_id, body, &signature).unwrap();
 
         let other_key = SigningKey::generate(&mut RandOsRng).verifying_key();
-        assert!(verify_event(&other_key, &message_id, body, &signature).is_err());
-        assert!(verify_event(&verifying_key, &message_id, b"different-body", &signature).is_err());
-        assert!(verify_event(&verifying_key, &[0u8; 8], body, &signature).is_err());
+        assert!(verify_object(&other_key, domain, &message_id, body, &signature).is_err());
+        assert!(verify_object(&verifying_key, domain, &message_id, b"different-body", &signature).is_err());
+        assert!(verify_object(&verifying_key, domain, &[0u8; 8], body, &signature).is_err());
+        assert!(verify_object(&verifying_key, b"other-domain", &message_id, body, &signature).is_err());
     }
 }

@@ -219,7 +219,10 @@ export async function replicatedSyncDeviceRoster(): Promise<DeviceRosterEntry[]>
 
 /** Whether the configured transports already hold a sync space: `unknown`
  * when nothing is configured or a transport could not be scanned fully. */
-export type SyncSpacePresence = "existing" | "none" | "unknown";
+/** `legacy`: a group created by an earlier, incompatible test build (or a
+ * shared folder that hasn't finished syncing one). It can't be joined or
+ * created over. */
+export type SyncSpacePresence = "existing" | "none" | "unknown" | "legacy";
 
 export async function replicatedSyncInspectSpace(): Promise<SyncSpacePresence> {
   return invoke("replicated_sync_inspect_space");
@@ -390,6 +393,16 @@ export async function replicatedSyncJoinCodeNotices(): Promise<JoinCodeNotice[]>
 
 export async function replicatedSyncDismissJoinCodeNotice(redemptionCid: string): Promise<void> {
   return invoke("replicated_sync_dismiss_join_code_notice", { redemptionCid });
+}
+
+/** Whether this update reset sync because the device belonged to a group
+ * created by an earlier, incompatible test build. */
+export async function replicatedSyncProtocolResetNotice(): Promise<boolean> {
+  return isDesktop() ? invoke("replicated_sync_protocol_reset_notice") : false;
+}
+
+export async function replicatedSyncDismissProtocolResetNotice(): Promise<void> {
+  return invoke("replicated_sync_dismiss_protocol_reset_notice");
 }
 
 export async function replicatedSyncRemoveTransport(instanceId: string, deleteData: boolean): Promise<void> {
