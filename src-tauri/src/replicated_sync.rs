@@ -1281,6 +1281,9 @@ pub async fn pull_from_transports(
             if verify_device_head(verifying_key, &signed_head).is_err() {
                 continue;
             }
+            if signed_head.head.sync_space_id.as_slice() != keys.sync_space_id.as_slice() {
+                continue;
+            }
             database.record_head_observation(&signed_head.head, crate::sync_policy::now_ms())?;
             let author_hex = encode_id(signed_head.head.device_id.as_bytes());
             if signed_head.head.state_sequence <= database.merged_state_sequence(&author_hex)? {
@@ -1772,7 +1775,13 @@ impl ReplicatedSync {
         // push/pull until a grant or genesis supplies one.
         let mut keys = match self.database.local_replicated_keys() {
             Ok(keys) => keys,
-            Err(_) => return Ok(()),
+            Err(error) => {
+                log::debug!(
+                    target: "replicated_sync",
+                    "local replicated-sync keys are unavailable; skipping push/pull this cycle: {error}"
+                );
+                return Ok(());
+            }
         };
         // Admit or refuse join-code redemptions and expire old codes; a
         // closed invitation rotates the epoch, so reload the keys after.
@@ -2416,6 +2425,38 @@ mod replicator_tests {
         let keys_a = test_keys(&database_a);
         assert_eq!(pull_from_transports(&database_a, &keys_a, &transports).await.unwrap().merged_states, 0);
         assert_eq!(stored_snippet_name(&database_a, "b-1"), None);
+    }
+
+    #[tokio::test]
+    async fn pull_skips_a_trusted_head_from_another_sync_space_before_observing_or_fetching_it() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let (keys_a, keys_b) = (test_keys(&database_a), test_keys(&database_b));
+        trust(&database_a, &keys_b);
+
+        let foreign_head = DeviceHead {
+            sync_space_id: b"another-sync-space".to_vec(),
+            device_id: keys_b.device_id,
+            epoch: 7,
+            state_sequence: 1,
+            state_cid: Some(TransportCid::for_bytes(b"foreign snapshot index").0),
+            published_at_ms: 1_800_000_000_000,
+        };
+        let signed_foreign_head = sign_device_head(&keys_b.signing_key, foreign_head).unwrap();
+        transports[0].publish_head(&signed_foreign_head).await.unwrap();
+
+        let outcome = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
+        assert_eq!((outcome.merged_states, outcome.failed_transports), (0, 0));
+        let observed_foreign_heads: i64 = database_a
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM sync_remote_states WHERE device_id=?1 AND last_head_epoch IS NOT NULL",
+                params![encode_id(keys_b.device_id.as_bytes())],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(observed_foreign_heads, 0);
     }
 
     #[tokio::test]
