@@ -190,6 +190,33 @@ describe("Composer body input responsiveness", () => {
       bodyHtml: "<strong>Send this text</strong>",
     }));
   });
+
+  it("discards a completely empty draft when the composer closes", async () => {
+    const onClose = vi.fn();
+    const discardDraft = vi.spyOn(mailClient, "discardDraft").mockResolvedValue();
+    const saveDraft = vi.spyOn(mailClient, "saveDraft");
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(discardDraft).toHaveBeenCalledWith("draft-1");
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("keeps a draft with authored content when the composer closes", async () => {
+    const onClose = vi.fn();
+    const discardDraft = vi.spyOn(mailClient, "discardDraft").mockResolvedValue();
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={() => {}} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Keep this draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ subject: "Keep this draft" }));
+    expect(discardDraft).not.toHaveBeenCalled();
+  });
 });
 
 describe("Composer pasted images", () => {

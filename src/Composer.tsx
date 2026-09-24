@@ -124,7 +124,20 @@ export const Composer = forwardRef<ComposerHandle, {
     try { await action(); } catch (e) { setError(String(e)); }
     finally { busyRef.current = false; if (mounted.current) setBusy(false); }
   }
-  function close() { void run(async () => { await flush(); onClose(); }); }
+  function close() {
+    void run(async () => {
+      const saved = await flush();
+      const isEmpty = !saved.to.trim()
+        && !saved.cc.trim()
+        && !saved.bcc.trim()
+        && !saved.subject.trim()
+        && !saved.body.trim()
+        && !saved.bodyHtml?.trim()
+        && saved.attachments.length === 0;
+      if (isEmpty) await mailClient.discardDraft(saved.id);
+      onClose();
+    });
+  }
   function discard() { void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); }); }
   function send(afterQueued?: () => void, archiveOnSend?: boolean) {
     void run(async () => {
