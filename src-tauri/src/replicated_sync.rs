@@ -641,7 +641,7 @@ impl Database {
             return Ok(false);
         }
         let next = sequence + 1;
-        let snapshot = self.take_local_snapshot(keys.device_id, next, crate::sync_policy::now_ms())?;
+        let (snapshot, snapshot_generation) = self.take_local_snapshot(keys.device_id, next, crate::sync_policy::now_ms())?;
         let sealed = match seal_snapshot(
             snapshot,
             &SealParams {
@@ -700,9 +700,12 @@ impl Database {
                 }
             }
             tx.execute(
-                "UPDATE sync_local_state SET state_sequence=?1, sealed_epoch=?2 WHERE id=1",
+                "UPDATE sync_local_state
+                 SET state_sequence=?1, sealed_epoch=?2
+                 WHERE id=1",
                 params![next as i64, keys.key_epoch],
             )?;
+            crate::sync_state::clear_dirty_if_generation(tx, snapshot_generation)?;
             Ok(())
         });
         if let Err(error) = stored {
@@ -2259,6 +2262,22 @@ mod replicator_tests {
             .unwrap()
             .into_iter()
             .next()
+    }
+
+    #[test]
+    fn snapshot_capture_keeps_dirty_until_storage_and_preserves_a_racing_write() {
+        let database = Database::open_memory();
+        let keys = test_keys(&database);
+        write_snippet(&database, "one", "before");
+
+        let (_, generation) = database.take_local_snapshot(keys.device_id, 1, 1).unwrap();
+        assert!(database.local_state_status().unwrap().0, "a crash before storage must leave the replica dirty");
+
+        rename_snippet(&database, "one", "after");
+        database
+            .with_transaction(|tx| crate::sync_state::clear_dirty_if_generation(tx, generation))
+            .unwrap();
+        assert!(database.local_state_status().unwrap().0, "storing an older snapshot must not clear a later write");
     }
 
     #[tokio::test]

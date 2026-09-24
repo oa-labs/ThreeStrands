@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 36;
+pub(crate) const LATEST_VERSION: i64 = 37;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1136,6 +1136,15 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
         tx.pragma_update(None, "user_version", 36).map_err(error)?;
     }
+    if version < 37 {
+        // Distinguishes the replica state captured by an in-progress seal
+        // from writes committed before that seal is stored.
+        if !has_column(&tx, "sync_local_state", "generation")? {
+            tx.execute("ALTER TABLE sync_local_state ADD COLUMN generation INTEGER NOT NULL DEFAULT 0", [])
+                .map_err(error)?;
+        }
+        tx.pragma_update(None, "user_version", 37).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1247,6 +1256,13 @@ mod tests {
                 .execute(&format!("SELECT * FROM {table}"), [])
                 .unwrap_or_else(|error| panic!("table {table} should exist and be queryable: {error}"));
         }
+        connection
+            .execute("INSERT OR IGNORE INTO sync_local_state(id) VALUES (1)", [])
+            .unwrap();
+        let generation: i64 = connection
+            .query_row("SELECT generation FROM sync_local_state WHERE id=1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(generation, 0);
     }
 
     #[test]

@@ -33,10 +33,20 @@ use crate::replicated_sync::{decode_id, encode_id, ensure_space_and_device, Fron
 /// device list shows as this device's latest change.
 fn mark_changed(tx: &Transaction, local: bool) -> DbResult<()> {
     tx.execute("INSERT OR IGNORE INTO sync_local_state(id) VALUES (1)", [])?;
-    tx.execute("UPDATE sync_local_state SET dirty=1 WHERE id=1", [])?;
+    tx.execute("UPDATE sync_local_state SET dirty=1, generation=generation+1 WHERE id=1", [])?;
     if local {
         tx.execute("UPDATE sync_local_state SET last_change_at=?1 WHERE id=1", params![Utc::now().to_rfc3339()])?;
     }
+    Ok(())
+}
+
+/// Marks the replica clean only if it is still the generation captured by
+/// the snapshot whose sealed objects are being stored.
+pub(crate) fn clear_dirty_if_generation(tx: &Transaction, generation: i64) -> DbResult<()> {
+    tx.execute(
+        "UPDATE sync_local_state SET dirty=0 WHERE id=1 AND generation=?1",
+        params![generation],
+    )?;
     Ok(())
 }
 
@@ -247,17 +257,20 @@ impl Database {
         })
     }
 
-    /// Takes a snapshot of this replica to seal as `state_sequence`, and in
-    /// the same transaction marks the replica unchanged: a write made while
-    /// the snapshot is being sealed marks it changed again, so the next push
-    /// seals that too. A caller that fails to seal calls
-    /// [`Self::mark_replica_changed`] to try again next time.
-    pub(crate) fn take_local_snapshot(&self, device_id: EnvelopeDeviceId, state_sequence: u64, created_at_ms: i64) -> DbResult<ReplicaSnapshot> {
+    /// Takes a snapshot and records the replica generation it represents.
+    /// Dirty is cleared only after the sealed objects are stored, and only
+    /// when no write has advanced this generation in the meantime.
+    pub(crate) fn take_local_snapshot(
+        &self,
+        device_id: EnvelopeDeviceId,
+        state_sequence: u64,
+        created_at_ms: i64,
+    ) -> DbResult<(ReplicaSnapshot, i64)> {
         self.with_transaction(|tx| {
             tx.execute("INSERT OR IGNORE INTO sync_local_state(id) VALUES (1)", [])?;
-            tx.execute("UPDATE sync_local_state SET dirty=0 WHERE id=1", [])?;
             let state = load_state(tx)?;
-            Ok(snapshot_of(&state, device_id, state_sequence, created_at_ms))
+            let generation = tx.query_row("SELECT generation FROM sync_local_state WHERE id=1", [], |row| row.get(0))?;
+            Ok((snapshot_of(&state, device_id, state_sequence, created_at_ms), generation))
         })
     }
 
