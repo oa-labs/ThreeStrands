@@ -384,6 +384,7 @@ describe("Composer Reply Assist", () => {
       "gpt-4o",
       null,
     ));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Assist" })).not.toBeInTheDocument());
     const editor = screen.getByRole("textbox", { name: "Message Body" });
     await waitFor(() => expect(editor).toHaveTextContent('<img src=x onerror="alert(1)">Friday works for me.'));
     expect(editor.querySelector("img")).toBeNull();
@@ -421,7 +422,8 @@ describe("Composer Reply Assist", () => {
       />,
     );
 
-    expect(await screen.findByText(/Task-derived instruction:/)).toBeInTheDocument();
+    const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
+    expect(within(assist).getByText(/Task-derived instruction:/)).toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
   });
 
@@ -440,7 +442,7 @@ describe("Composer Reply Assist", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Generate Draft" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Provider unavailable");
-    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent("Can we meet Friday?");
+    expect(screen.getByRole("textbox", { name: "Message Body", hidden: true })).toHaveTextContent("Can we meet Friday?");
   });
 
   it("requires confirmation before adding a suggestion above existing authored text", async () => {
@@ -459,6 +461,7 @@ describe("Composer Reply Assist", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add Anyway" }));
 
     await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Assist" })).not.toBeInTheDocument());
     const editor = screen.getByRole("textbox", { name: "Message Body" });
     await waitFor(() => expect(editor).toHaveTextContent("Suggested reply."));
     expect(editor).toHaveTextContent("My existing words.");
@@ -474,6 +477,43 @@ describe("Composer Reply Assist", () => {
     ref.current?.draftReplyWithAI();
 
     expect(await screen.findByText("Can we meet Friday?")).toBeInTheDocument();
+  });
+
+  it("opens over the composer, focuses the instruction, and restores focus when dismissed", async () => {
+    vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
+    const { container } = render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const trigger = await screen.findByRole("button", { name: /Draft Reply With AI/ });
+    trigger.focus();
+
+    fireEvent.click(trigger);
+
+    const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
+    expect(assist).toHaveAttribute("aria-modal", "true");
+    expect(assist).toHaveClass("reply-assist-modal");
+    expect(assist.parentElement).toHaveClass("reply-assist-backdrop");
+    expect(assist.parentElement?.parentElement).toBe(document.body);
+    expect(container).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("textbox", { name: "Optional Short Instruction" })).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "Reply Assist" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Reply Message" })).toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(container).not.toHaveAttribute("aria-hidden");
+  });
+
+  it("keeps a dismissed task-opened assist closed until the user opens it again", async () => {
+    vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} replyAssistInstruction="Ask for available times." />);
+
+    const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
+    fireEvent.click(within(assist).getByRole("button", { name: "Close" }));
+
+    expect(screen.queryByRole("dialog", { name: "Reply Assist" })).not.toBeInTheDocument();
+    ref.current?.draftReplyWithAI();
+    expect(await screen.findByRole("dialog", { name: "Reply Assist" })).toBeInTheDocument();
   });
 
   it("does nothing when Reply Assist is unavailable or already open", async () => {

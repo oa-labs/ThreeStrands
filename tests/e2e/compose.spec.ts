@@ -62,6 +62,35 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await expect(forward.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: Welcome to ThreeStrands");
 });
 
+test("Reply Assist opens in the viewport over a long reply and Escape returns to compose", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 600 });
+  await page.goto("/");
+  await page.evaluate(() => {
+    localStorage.setItem("threestrands.settings.ai.provider", "openai");
+    localStorage.setItem("threestrands.settings.ai.features", JSON.stringify({ draftAssist: true, summarize: false, actionExtraction: false }));
+  });
+  await page.evaluate('import("/src/aiSettings.ts").then(({ setAiApiKey }) => setAiApiKey("test-key"))');
+  await page.getByTitle("Message content").contentFrame().locator("body").click();
+  await page.keyboard.press("r");
+  const reply = page.getByRole("dialog", { name: "Reply Message" });
+  const editor = reply.getByRole("textbox", { name: "Message Body" });
+  await editor.fill("A long quoted thread.\n".repeat(80));
+
+  await editor.press("ControlOrMeta+j");
+
+  const assist = page.getByRole("dialog", { name: "Reply Assist" });
+  await expect(assist).toBeInViewport({ ratio: 1 });
+  await expect(assist.getByRole("textbox", { name: "Optional Short Instruction" })).toBeFocused();
+  const box = await assist.boundingBox();
+  expect(box).not.toBeNull();
+  expect(Math.abs(box!.y + box!.height / 2 - 300)).toBeLessThan(24);
+
+  await page.keyboard.press("Escape");
+  await expect(assist).not.toBeVisible();
+  await expect(reply).toBeVisible();
+  await expect(editor).toBeFocused();
+});
+
 test("removing an added reply recipient keeps the original recipient", async ({ page }) => {
   await page.goto("/");
   await page.getByTitle("Message content").contentFrame().locator("body").click();

@@ -10,6 +10,7 @@ import {
   readAiRequestConfig,
 } from "./aiSettings";
 import { RecipientField } from "./RecipientField";
+import { Modal } from "./AppChrome";
 import {
   applyAsteriskListShortcut,
   applyFormattingShortcut,
@@ -56,6 +57,8 @@ export const Composer = forwardRef<ComposerHandle, {
   const [replyInstruction, setReplyInstruction] = useState("");
   const [replyAssistBusy, setReplyAssistBusy] = useState(false);
   const [replyAssistError, setReplyAssistError] = useState("");
+  const replyInstructionInput = useRef<HTMLInputElement>(null);
+  const automaticallyOpenedInstruction = useRef<string | null>(null);
   const insertedAvailabilityText = useRef<string | null>(null);
   const [confirmAddToExisting, setConfirmAddToExisting] = useState(false);
   const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
@@ -171,6 +174,7 @@ export const Composer = forwardRef<ComposerHandle, {
     setReplyAssistOpen(true);
     setReplyAssistBusy(true);
     setReplyAssistError("");
+    setReplyAssistContext(null);
     try {
       setReplyAssistContext(await mailClient.replyAssistContext(latest.current.id));
     } catch (reason) {
@@ -346,7 +350,8 @@ export const Composer = forwardRef<ComposerHandle, {
       .catch(() => { if (mounted.current) setReplyAssistAvailable(false); });
   }, [initial.mode]);
   useEffect(() => {
-    if (!replyAssistInstruction || !replyAssistAvailable) return;
+    if (!replyAssistInstruction || !replyAssistAvailable || automaticallyOpenedInstruction.current === replyAssistInstruction) return;
+    automaticallyOpenedInstruction.current = replyAssistInstruction;
     setReplyInstruction(replyAssistInstruction);
     if (!replyAssistOpen) void openReplyAssist();
   }, [replyAssistAvailable, replyAssistInstruction, replyAssistOpen]);
@@ -359,7 +364,7 @@ export const Composer = forwardRef<ComposerHandle, {
   useEscapeDismiss(close);
   return <div ref={panel} className="composer composer-inline" role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward Message" : "Reply Message"}
       onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
+        if (event.nativeEvent.isComposing || replyAssistOpen) return;
         if ((event.metaKey || event.ctrlKey) && event.shiftKey && ["o", "c", "b"].includes(event.key.toLowerCase())) {
           const field = event.key.toLowerCase() === "o" ? "to" : event.key.toLowerCase() === "c" ? "cc" : "bcc";
           event.preventDefault();
@@ -488,66 +493,12 @@ export const Composer = forwardRef<ComposerHandle, {
         />
         {replyAssistAvailable ? (
           <div className="reply-assist">
-            {!replyAssistOpen ? (
-              <button type="button" className="reply-assist-trigger" onClick={() => void openReplyAssist()}>
-                <Sparkles size={14} /> Draft Reply With AI <kbd>⌘/Ctrl J</kbd>
-              </button>
-            ) : (
-              <section className="reply-assist-panel" aria-label="Reply Assist">
-                <div className="reply-assist-heading">
-                  <strong><Sparkles size={14} /> Reply Assist</strong>
-                  <button type="button" aria-label="Close Reply Assist" onClick={() => setReplyAssistOpen(false)}>
-                    <X size={14} />
-                  </button>
-                </div>
-                <label>
-                  <span>Optional Short Instruction</span>
-                  <input
-                    value={replyInstruction}
-                    placeholder="e.g. Accept and ask for available times"
-                    onChange={(event) => setReplyInstruction(event.target.value)}
-                    disabled={replyAssistBusy}
-                  />
-                </label>
-                {replyAssistInstruction ? <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction}</p> : null}
-                {replyAssistContext ? (
-                  <details open className="reply-assist-context">
-                    <summary>Exact email content sent to {readAiProvider()}</summary>
-                    <div className="reply-assist-context-body">
-                      <p><strong>Subject:</strong> {replyAssistContext.subject}</p>
-                      {replyAssistContext.messages.map((message, index) => (
-                        <article key={`${message.sentAt}-${index}`}>
-                          <p><strong>From:</strong> {message.sender}</p>
-                          <p><strong>Date:</strong> {message.sentAt}</p>
-                          <pre>{message.bodyText}</pre>
-                        </article>
-                      ))}
-                    </div>
-                  </details>
-                ) : null}
-                {confirmAddToExisting ? (
-                  <div className="reply-assist-confirm" role="alert">
-                    <span>Your reply already contains text. The suggestion will be added above it without replacing anything.</span>
-                    <button type="button" onClick={() => void generateReply(true)}>Add Anyway</button>
-                    <button type="button" onClick={() => setConfirmAddToExisting(false)}>Cancel</button>
-                  </div>
-                ) : null}
-                {replyAssistError ? <div className="notice compose-error" role="alert">{replyAssistError}</div> : null}
-                <div className="reply-assist-actions">
-                  <button
-                    type="button"
-                    disabled={replyAssistBusy || !replyAssistContext || confirmAddToExisting}
-                    onClick={() => void generateReply()}
-                  >
-                    {replyAssistBusy ? "Preparing…" : "Generate Draft"}
-                  </button>
-                  <span>The suggestion is never sent automatically.</span>
-                </div>
-              </section>
-            )}
+            <button type="button" className="reply-assist-trigger" onClick={() => void openReplyAssist()}>
+              <Sparkles size={14} /> Draft Reply With AI <kbd>⌘/Ctrl J</kbd>
+            </button>
           </div>
         ) : null}
-        {replyAssistInstruction && !replyAssistOpen ? (
+        {replyAssistInstruction && !replyAssistAvailable ? (
           <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction} Configure Reply Assist in AI settings to generate a suggestion.</p>
         ) : null}
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={14} /></button></li>)}</ul>}
@@ -582,6 +533,55 @@ export const Composer = forwardRef<ComposerHandle, {
           onUpdate={onUpdateSnippet}
           onDelete={onDeleteSnippet}
         />
+      ) : null}
+      {replyAssistOpen ? (
+        <Modal title="Reply Assist" className="reply-assist-modal" backdropClassName="reply-assist-backdrop" initialFocusRef={replyInstructionInput} onClose={() => { setReplyAssistOpen(false); setConfirmAddToExisting(false); }}>
+          <div className="reply-assist-panel">
+            <label>
+              <span>Optional Short Instruction</span>
+              <input
+                ref={replyInstructionInput}
+                value={replyInstruction}
+                placeholder="e.g. Accept and ask for available times"
+                onChange={(event) => setReplyInstruction(event.target.value)}
+              />
+            </label>
+            {replyAssistInstruction ? <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction}</p> : null}
+            {replyAssistContext ? (
+              <details open className="reply-assist-context">
+                <summary>Exact email content sent to {readAiProvider()}</summary>
+                <div className="reply-assist-context-body">
+                  <p><strong>Subject:</strong> {replyAssistContext.subject}</p>
+                  {replyAssistContext.messages.map((message, index) => (
+                    <article key={`${message.sentAt}-${index}`}>
+                      <p><strong>From:</strong> {message.sender}</p>
+                      <p><strong>Date:</strong> {message.sentAt}</p>
+                      <pre>{message.bodyText}</pre>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+            {confirmAddToExisting ? (
+              <div className="reply-assist-confirm" role="alert">
+                <span>Your reply already contains text. The suggestion will be added above it without replacing anything.</span>
+                <button type="button" onClick={() => void generateReply(true)}>Add Anyway</button>
+                <button type="button" onClick={() => setConfirmAddToExisting(false)}>Cancel</button>
+              </div>
+            ) : null}
+            {replyAssistError ? <div className="notice compose-error" role="alert">{replyAssistError}</div> : null}
+            <div className="reply-assist-actions">
+              <button
+                type="button"
+                disabled={replyAssistBusy || !replyAssistContext || confirmAddToExisting}
+                onClick={() => void generateReply()}
+              >
+                {replyAssistBusy ? "Preparing…" : "Generate Draft"}
+              </button>
+              <span>The suggestion is never sent automatically.</span>
+            </div>
+          </div>
+        </Modal>
       ) : null}
   </div>;
 });

@@ -191,6 +191,7 @@ function ShortcutKeys({ shortcut }: { shortcut: string }) {
 }
 
 export function Modal({
+  backdropClassName,
   className,
   children,
   dismissible = true,
@@ -199,6 +200,7 @@ export function Modal({
   shortcutScope = "modal",
   title,
 }: {
+  backdropClassName?: string;
   className?: string;
   children: ReactNode;
   /** When false, Escape, a backdrop click, and the header close button do
@@ -276,7 +278,7 @@ export function Modal({
   };
 
   return createPortal(
-    <div ref={backdropRef} className="modal-backdrop" role="presentation" onMouseDown={dismiss}>
+    <div ref={backdropRef} className={`modal-backdrop${backdropClassName ? ` ${backdropClassName}` : ""}`} role="presentation" onMouseDown={dismiss}>
       <div
         ref={dialogRef}
         className={`modal${className ? ` ${className}` : ""}`}
