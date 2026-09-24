@@ -1,610 +1,232 @@
-# Product and architecture plan
+# ThreeStrands product plan
 
-**Status:** Proposed  
-**Last reviewed:** 2026-03-05
+**Status:** Current product baseline and forward-looking roadmap
+**Reviewed:** 2026-09-24 against the 0.32.1 codebase
 
-## 1. Executive summary
+## Product direction
 
-The product should not be framed as “Gmail with a different skin.” Its promise
-is:
+ThreeStrands is an open-source, keyboard-first desktop email client for people
+who spend much of their day in their inbox. Its aim is to make important
+conversations easy to process while keeping follow-ups, scheduling context, and
+control of personal data close to the mail itself.
 
-> Process important email at the speed of thought, without losing follow-ups,
-> context, or control of your data.
+The product is local-first. The desktop app connects directly to Gmail; it does
+not require a ThreeStrands account or an application-operated mail backend.
+Mail is cached in SQLite for fast reading, search, and offline work. Gmail
+remains the source of truth for mail. The app stores OAuth credentials in the
+operating system's credential store and sends mail through a durable local
+outbox. Optional AI sends bounded thread context to a provider the user
+configures. Optional cross-device sync, currently a beta, replicates selected
+workflow data through storage the user chooses.
 
-The product is inspired by some of the best email clients available: combining
-speed, deliberate keyboard workflows, focused triage, and safeguards against
-dropped work. AI-assisted writing, intelligent triage, and collaboration are
-valuable later additions. Matching a competitor's feature list is less
-important than building a complete, trustworthy, low-latency workflow.
+This document distinguishes implemented behavior from future work. “Available”
+means present in the repository, with automated coverage; it is not a claim
+that every native integration has completed live-account or release
+validation. The older phase plans linked below are useful implementation
+history, but their milestone labels and uncompleted-item lists are no longer
+the product status.
 
-The recommended product is a standalone, local-first Tauri desktop application.
-It stores mail in local SQLite, keeps OAuth credentials in the operating
-system's keychain, and connects directly to Gmail. It requires no
-project-operated backend. Start with Gmail, one account, and individual
-workflows. Design a provider boundary from day one, but do not implement Gmail,
-Microsoft Graph, and IMAP simultaneously.
+## Current feature set — website draft
 
-## 2. Key value propositions
+This section is written at the level of a future product website. It describes
+features in the current desktop app without promising a release date, a
+particular platform package, or always-on service behavior.
 
-### 2.1 Speed as a product feature
+### Move through mail quickly
 
-The user can read, reply, archive, snooze, search, and navigate without taking
-their hands off the keyboard. Optimistic updates and a local cache make actions
-feel instantaneous even on a poor connection.
+- Navigate conversations, messages, accounts, and views from the keyboard.
+  Use a command palette and shortcut help to discover actions.
+- Read and triage multiple Gmail accounts in one merged view, or focus on one
+  account. Archive, restore, trash, mark as spam, mark read or unread, star,
+  label, and process selected conversations in batches, with undo for
+  reversible actions.
+- Search the local mail index; when relevant mail is outside the cache, Gmail
+  search can bring older results into the local view. Filter the mailbox by
+  unread, starred, important, or unanswered conversations.
+- Create account-specific Split Inboxes using a sending domain, Gmail label,
+  or address pattern. Keep high-volume mail in its own view while the main
+  inbox stays focused.
 
-This is more than shortcuts. It requires:
+### Keep the whole conversation moving
 
-- predictable shortcuts across every screen;
-- a command palette that makes functionality discoverable;
-- prefetching the next likely conversation;
-- no blocking network call in an interactive path;
-- undo rather than confirmation dialogs for reversible actions; and
-- tight latency budgets with measurement in production.
+- Compose, reply, reply all, and forward with rich text, attachments, and
+  reusable snippets. Recipient suggestions come from correspondence history
+  and addresses pinned in the composer.
+- Drafts save locally. A queued send has a ten-second undo window, and the
+  durable outbox preserves pending work across restarts. Sent mail is
+  reconciled with Gmail when the delivery result is uncertain.
+- Turn a conversation into an action, follow-up, or waiting-for task; create
+  standalone tasks too. Set due dates and repeating follow-ups. Waiting and
+  follow-up tasks linked to a conversation can complete when a new reply
+  arrives.
+- Unsubscribe when a message advertises a supported unsubscribe method, with
+  confirmation before the request.
 
-**Success signal:** a practiced user can process a representative inbox at
-least twice as fast as in their previous client.
+### Bring schedule and assistance into context
 
-### 2.2 Focused triage instead of one undifferentiated inbox
+- Connect Google Calendar separately from mail. See today's schedule or a
+  week view, choose visible calendars, preview calendar invitations, and
+  check available times against selected calendars and working hours. Put
+  selected times into a draft reply.
+- Optionally connect an AI provider with your own API key for thread
+  summaries, draft assistance, and suggested tasks or meetings. Suggested
+  actions stay proposals until you review them; the app does not create a
+  task or send a message from AI output on its own.
 
-Split Inbox separates VIPs, team mail, notifications, newsletters, or arbitrary
-search criteria. It lets users process categories in batches and protects
-important messages from high-volume noise.
+### Stay in control of local data
 
-An open-source implementation should begin with deterministic rules that users
-can inspect. AI classification can be added as an explicit, confidence-scored
-rule type rather than becoming an invisible source of truth.
+- Read cached mail and work on drafts while offline. Mail changes and sends
+  queue locally and resume when the app can reach Gmail.
+- Adjust local mail retention and remote-image loading. Sender HTML is
+  sanitized and contained in a sandboxed reader; remote images stay behind
+  the native proxy and the chosen image-loading setting.
+- Transfer settings and account display metadata with a password-encrypted
+  export. Mail, drafts, queued sends, OAuth credentials, and AI keys are
+  excluded; accounts need authorization on the new device.
+- Inspect sync diagnostics and use opt-in crash reporting. Local database
+  backups and startup recovery protect access when the cache is damaged.
 
-**Success signal:** important conversations are answered sooner, with a low
-rate of incorrectly hidden mail.
+**Beta:** End-to-end encrypted cross-device sync can replicate tasks,
+snippets, Split Inboxes, selected preferences, and account display metadata
+through a shared folder, S3-compatible storage, or an IPFS connector. Devices
+can join with a code, recovery phrase, or approval from another device.
+Cached mail, attachments, drafts, queued sends, and provider credentials stay
+on each device. See [cross-device sync](docs/cross-device-sync.md) for the
+precise data boundary and connector behavior.
 
-### 2.3 Inbox zero as a reliable workflow
+## Product roadmap — website draft
 
-Archive, snooze, send later, reminders, and “remind me if nobody replies”
-convert the inbox from storage into a work queue. Follow-up reminders are
-especially valuable because they track whether the conversation received a
-qualifying reply, not merely whether a timer elapsed.
+These are directions for unfinished product work, not a dated commitment or
+an assertion that a feature is already in beta. Keep this section separate
+from the current feature set when publishing a website.
 
-**Success signal:** users can clear the inbox without maintaining a parallel
-task list for email follow-ups.
+| Direction | What users could expect |
+| --- | --- |
+| Snooze and scheduled sending | Put a conversation aside until a chosen time and queue a message for later delivery, with clear behavior when the desktop app is closed. |
+| A fuller address book | Browse, add, and edit contacts outside the composer, building on today's history-based suggestions and pinned addresses. |
+| Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
+| Calendar planning | Move from checking availability and reviewing meeting proposals to creating events after explicit review. |
+| More mail providers | Add Microsoft 365 and, after its folder and threading behavior is designed, IMAP/SMTP. Gmail is the only implemented mail provider today. |
+| More ways to stay in sync | Mature the optional encrypted sync beta, its onboarding, recovery, compatibility, and reliability across devices. |
+| Shared and mobile workflows | Explore a mobile companion and shared conversations or drafts where demand justifies the additional architecture. |
 
-### 2.4 Faster, higher-quality responses
+The roadmap should be revised as research and reliability work change
+priorities. Meeting proposals and available-time replies exist today; direct
+calendar-event creation does not. Task follow-ups exist today; snoozing a
+conversation and scheduled sending do not.
 
-Snippets, autocomplete, quick replies, polished composition, thread summaries,
-and context-aware draft generation reduce repetitive work. AI is valuable when
-it is fast, editable, grounded in the visible thread, and optional.
+## Current product model and decisions
 
-**Success signal:** lower median compose time without an increase in edits,
-regretted sends, or privacy concerns.
+### Audience and scope
 
-### 2.5 Context where the user acts
+The primary user is an individual who wants a fast daily mail workflow across
+one or more Gmail accounts. Tasks, calendar context, and optional AI support
+that workflow. ThreeStrands is not yet a general-purpose mail client: the
+provider seam is implemented, but Gmail is its only production mail adapter.
 
-Contact history, calendar availability, scheduling, and attachment previews
-reduce application switching. Team comments and shared drafts bring internal
-discussion next to an external conversation without leaking comments to email
-recipients.
+The app does not operate a backend for mailbox access or cross-device sync.
+Polling, task reconciliation, queued sends, and replication run while the
+desktop app is active and catch up when it starts or resumes. A future feature
+that needs execution while all devices are closed requires an explicit new
+architecture decision; a scheduled-send UI alone would not provide it.
 
-**Success signal:** fewer context switches and forwarded-email discussion
-loops.
-
-### 2.6 A premium-feeling, trustworthy experience
-
-The best email clients also create confidence through careful visual design,
-onboarding, offline support, undo send, and reliable synchronization. Privacy,
-inspectability, local-first storage, and operation without a third-party
-application backend are additional open-source differentiators.
-
-**Success signal:** users trust the client as their primary inbox, not as an
-occasional secondary view.
-
-## 3. Product scope
-
-### Initial target user
-
-An individual power user with one Google Workspace or Gmail account who spends
-at least an hour per day in email and prefers keyboard workflows.
-
-### MVP: prove the core loop
-
-1. Google OAuth and incremental Gmail synchronization.
-2. Conversation list and thread reader with sanitized HTML.
-3. Compose, reply, forward, drafts, attachments, and undo send.
-4. Archive, trash, star, mark read/unread, labels, and batch actions.
-5. Complete keyboard navigation and searchable command palette.
-6. Local search over synchronized headers and message bodies.
-7. Deterministic Split Inbox rules.
-8. Snooze and follow-up reminders.
-9. Snippets.
-10. Offline read, draft, and queued mutation support.
-
-### Next
-
-- [multiple accounts and a unified inbox](docs/multi-account.md);
-- send later;
-- unsubscribe and sender blocking;
-- [a dedicated address book / contacts management screen](docs/address-book.md);
-- calendar sidebar and availability sharing;
-- Microsoft 365 through Microsoft Graph;
-- optional AI summarize, draft, rewrite, and classification;
-- mobile companion;
-- shared conversations, comments, and drafts; and
-- generic IMAP/SMTP for providers that lack richer APIs.
-
-### Explicit non-goals for MVP
-
-- pixel-for-pixel imitation of any existing email client;
-- generic IMAP, Exchange on-premises, or every Gmail edge case;
-- autonomous AI sending;
-- CRM integrations;
-- organization administration, SSO, SCIM, or compliance certification;
-- real-time collaboration; and
-- read receipts/open tracking, which has privacy, reliability, and abuse
-  implications and should require a separate product decision.
-
-## 4. Architectural drivers
-
-In priority order:
-
-1. **Correctness:** never lose, duplicate, or send an email unexpectedly.
-2. **Perceived latency:** local reads and optimistic writes under 100 ms at p95.
-3. **Privacy and security:** keep mailbox data local and make every external
-   integration explicit.
-4. **Offline resilience:** normal reading and composition continue offline.
-5. **Provider portability:** preserve provider semantics without reducing all
-   providers to the least common denominator.
-6. **Operability:** synchronization failures must be observable and repairable.
-7. **Extensibility:** commands, rules, and AI providers need stable contracts.
-
-## 5. Recommended architecture
+### Implementation shape
 
 ```mermaid
 flowchart LR
-    subgraph Desktop["Tauri desktop application"]
-        UI["React UI and command system"]
-        Core["Domain and workflow core"]
-        LocalDB[("SQLite local database")]
-        Index["SQLite FTS5 index"]
-        Outbox["Durable mutation outbox"]
-        Poller["Local sync and polling engine"]
-        Keychain["OS credential store"]
-        UI --> Core
-        Core --> LocalDB
-        Core --> Index
-        Core --> Outbox
-        Core --> Poller
-        Poller --> Keychain
-    end
-
-    subgraph Providers["External providers"]
-        Gmail["Gmail API"]
-        Future["Future provider adapters"]
-    end
-
-    Poller <-->|"HTTPS"| Gmail
-    Poller -.-> Future
+    UI[React and TypeScript UI] --> IPC[Typed Tauri commands]
+    IPC --> Core[Rust mail, task, calendar, and sync services]
+    Core --> DB[(Local SQLite and FTS5)]
+    Core --> Vault[OS credential store]
+    Core --> Gmail[Gmail API]
+    Core --> Calendar[Google Calendar API]
+    Core --> AI[User-selected AI provider]
+    Core --> Transport[Optional encrypted sync connectors]
 ```
 
-### Why this shape
-
-- **Standalone and local-first:** instant navigation, offline use, local search,
-  privacy, and optimistic mutation are central product requirements. Users
-  should not need an account with this project or operate server infrastructure.
-- **Direct provider access:** the desktop application completes OAuth with PKCE,
-  retrieves the token from the OS keychain, and calls Gmail over HTTPS. Gmail
-  remains the source of truth; SQLite is a local cache and workflow store.
-- **Polling while running:** the local sync engine reads Gmail history on an
-  adaptive interval and after user activity. It performs a catch-up sync at
-  startup and does no work while the application is closed.
-- **Provider APIs before IMAP:** Gmail exposes stable history cursors, native
-  threads, labels, and modern OAuth. IMAP remains valuable but introduces
-  substantially different threading and sync behavior.
-
-### Deliberate limitations
-
-Without a continuously running backend:
-
-- scheduled actions and reminders execute only while the application is
-  running;
-- mail and settings do not automatically synchronize between installations,
-  although mail state still converges through Gmail;
-- the client polls instead of receiving push notifications at a public webhook;
-  and
-- team comments, shared drafts, and other project-owned collaboration state are
-  out of scope.
-
-These are accepted initial constraints, not reasons to pre-build a backend. If
-future validated features require always-on execution or shared
-application-owned state, design that service separately at that time.
-
-### Suggested technology baseline
-
-This is a starting recommendation, not a permanent constraint:
-
-| Area | Choice | Reason |
-| --- | --- | --- |
-| Monorepo | pnpm workspaces + Turborepo | Shared typed packages and simple OSS contribution |
-| UI | React + TypeScript | Mature accessibility, editor, and virtualization ecosystem |
-| Frontend build | Vite | Fast desktop webview build and development loop |
-| Desktop | Tauri 2 | Native packaging, OS integration, and smaller footprint than Electron |
-| Local data | SQLite with FTS5 | Transactions, migrations, full-text search, and durable queues |
-| Credentials | Tauri Stronghold or OS keyring plugin | Keep OAuth tokens outside JavaScript and the mail database |
-| Gmail access | Gmail REST API with OAuth 2.0 PKCE | Direct, supported access with incremental history |
-| Contracts | TypeBox/JSON Schema | Runtime validation at provider and Tauri command boundaries |
-| Telemetry | OpenTelemetry | Vendor-neutral traces, metrics, and logs |
-
-Keep the domain and provider conformance tests runtime-neutral. If profiling
-shows sync, MIME parsing, search, or cryptography to be a bottleneck, move that
-bounded component to Rust rather than starting with two implementation
-languages throughout the stack.
-
-## 6. Component boundaries
-
-Suggested workspace layout:
-
-```text
-apps/
-  desktop/             React UI and Tauri shell
-packages/
-  domain/              Entities, commands, policies, and state transitions
-  client-db/           Local schema, migrations, and repositories
-  sync-engine/         Cursor management, merge logic, outbox processing
-  provider-contract/   Capabilities and canonical provider types
-  provider-gmail/      Gmail adapter
-  commands/            Command registry, keymaps, and palette metadata
-  rules/               Split Inbox parser and evaluator
-  mime/                Parsing, rendering, quoting, and sanitization
-  ui/                  Accessible reusable components and design tokens
-  ai/                  Redaction, consent, prompts, and provider adapters
-docs/
-  adr/                 One architectural decision per record
-```
-
-Dependencies point inward: applications and adapters depend on domain
-contracts; the domain never imports React, Tauri, Gmail, Graph, or a specific
-AI SDK.
-
-## 7. Core domain model
-
-Use internal stable IDs and retain provider IDs separately.
-
-- **Account:** identity, provider, scopes, sync state, capabilities.
-- **Mailbox:** folder or label projection with provider semantics.
-- **Thread:** conversation projection and participants.
-- **Message:** immutable RFC message content plus mutable flags and labels.
-- **Draft:** mutable composition state with local and provider revisions.
-- **Attachment:** metadata, content locator, cache state, and malware status.
-- **Contact:** normalized addresses, interaction stats, and optional profile.
-- **Rule / Split:** deterministic predicate and ordered inbox projection.
-- **Reminder:** trigger time, condition, lifecycle, and associated thread.
-- **Snippet:** title, shortcut, body, variables, and ownership.
-- **Mutation:** idempotent intended action in the durable outbox.
-- **ProviderCursor:** mailbox history token plus last successful checkpoint.
-
-Do not pretend Gmail labels and IMAP folders are identical. The canonical model
-should expose common operations while every account advertises capabilities:
-
-```ts
-type ProviderCapabilities = {
-  nativeThreads: boolean;
-  labels: boolean;
-  folders: boolean;
-  push: boolean;
-  scheduledSend: boolean;
-  serverSearch: boolean;
-  undoSend: boolean;
-};
-```
-
-The UI queries capabilities and either changes the interaction honestly or
-hides unsupported actions.
-
-## 8. Synchronization and mutation model
-
-### Initial synchronization
-
-1. Complete OAuth with the narrowest scopes that support the enabled features.
-2. Record the provider's initial cursor.
-3. Fetch mailbox/label metadata and recent message metadata in bounded pages.
-4. Prioritize visible inbox content, then hydrate bodies and older history.
-5. Write each page and its next cursor in one local transaction.
-6. Build the full-text index asynchronously.
-7. Continue background backfill according to the user's retention setting.
-
-### Incremental synchronization
-
-While the application is running, poll Gmail history on an adaptive interval:
-poll quickly after startup, resume, a local mutation, or recent incoming mail,
-then back off while idle. Also sync immediately when the user requests it.
-
-1. Ensure only one local sync runs per account.
-2. Read changes after the durable cursor.
-3. Normalize them into idempotent upserts/deletes.
-4. Commit data and the new cursor atomically.
-5. Publish local projection changes.
-6. evaluate reminder cancellation and Split Inbox rules; and
-7. refetch a bounded window if the cursor expired.
-
-On application startup or system resume, run this flow before returning to the
-normal polling interval. Poll failures use exponential backoff and respect
-Gmail quota and `Retry-After` guidance.
-
-### Local mutations
-
-Every user action follows the same pipeline:
-
-1. Create a mutation with a UUID idempotency key.
-2. Apply its optimistic local projection in the same transaction.
-3. Return control to the UI.
-4. Send through the provider adapter when online.
-5. Reconcile the authoritative provider result.
-6. Retry transient failures with exponential backoff and jitter.
-7. On a permanent conflict, revert or repair the projection and show an
-   actionable error.
-
-Per-account ordering is required where provider operations are order-sensitive.
-Sending is never retried blindly: persist the provider request ID and reconcile
-sent mail before another attempt.
-
-### Undo send
-
-Implement MVP undo send as a local delayed outbox, for example 10 seconds.
-During the delay the message is cancelable and has not left the system. The
-application must warn or briefly defer shutdown while a send is in this undo
-window. A queued send that cannot complete remains durable and resumes the next
-time the application runs.
-
-## 9. Command and interaction architecture
-
-Treat commands as the primary application API, not as UI event handlers:
-
-```ts
-type Command<Context = unknown> = {
-  id: string;
-  title: string;
-  defaultKeys?: string[];
-  when(context: Context): boolean;
-  run(context: Context): Promise<CommandResult>;
-  undo?: (result: CommandResult) => Promise<void>;
-};
-```
-
-Buttons, keyboard shortcuts, menus, and the command palette invoke the same
-command. This guarantees behavior parity and creates one place for analytics,
-authorization, optimistic updates, undo, and error reporting.
-
-Requirements:
-
-- user-remappable keymap with collision detection;
-- focus scopes so editor shortcuts do not trigger inbox actions;
-- WCAG-compliant list and dialog semantics;
-- screen-reader announcements for optimistic changes and undo;
-- keyboard-only automated acceptance suite; and
-- development warnings when a visible action lacks a command.
-
-## 10. Search and Split Inbox
-
-Use local SQLite FTS5 for low-latency search over sender, recipient, subject,
-and hydrated body text. Fall back to provider search for uncached history and
-merge results by provider identity.
-
-Define Split Inbox rules with a versioned abstract syntax tree, not raw provider
-query strings:
-
-```text
-and(
-  from.domain("example.com"),
-  not(header.listUnsubscribe.exists()),
-  received.within("30d")
-)
-```
-
-The rule engine compiles this AST to local predicates and, where possible,
-provider queries. Explain why each message matched. Later, an AI classifier can
-be one predicate with a model version, confidence threshold, and deterministic
-fallback.
-
-## 11. AI architecture
-
-AI must be optional and behind a provider-neutral interface:
-
-- local model, user-supplied API key, or hosted service;
-- feature-level consent for summary, drafting, search, and classification;
-- a preview of the exact context categories being shared;
-- thread text treated as untrusted input to limit prompt injection;
-- structured outputs validated before use;
-- citations back to source messages for factual summaries;
-- no training on mailbox data by default; and
-- cached outputs keyed by content hash, model, and prompt version.
-
-AI may propose a draft or classification. It must not send, delete, change
-permissions, or follow instructions embedded in an email without a distinct,
-user-confirmed command.
-
-## 12. Security and privacy
-
-Email is hostile input and highly sensitive data.
-
-- Use OAuth Authorization Code with PKCE and narrow, incremental scopes.
-- Store refresh tokens in the OS keychain; never expose them to the React
-  webview or store them in SQLite.
-- Perform token exchange, refresh, and authenticated Gmail requests in the
-  trusted Tauri layer rather than browser JavaScript.
-- Sanitize HTML with an allowlist, isolate rendered mail, block scripts and
-  forms, and require consent for remote images.
-- Prevent tracking pixels by default and warn before external navigation.
-- Scan attachment downloads where a configured scanner is available.
-- Encrypt transport everywhere and document what is and is not encrypted at
-  rest.
-- Make local retention configurable and provide account data deletion.
-- Protect the loopback or custom-URI OAuth callback against CSRF with `state`
-  and PKCE, and prevent other applications from injecting authorization codes.
-- Add dependency scanning, secret scanning, signed releases, an SBOM, and a
-  private vulnerability reporting process before public beta.
-
-End-to-end encryption is not promised by this design: providers can read normal
-email, and anyone with access to an unlocked local profile may be able to read
-the local cache. Claims in the UI and documentation must state this plainly.
-
-## 13. Desktop trust boundaries
-
-React invokes a narrow set of typed Tauri commands rather than receiving OAuth
-tokens or unrestricted filesystem/network access:
-
-```text
-account.connect()
-account.sync()
-thread.archive()
-thread.snooze()
-draft.save()
-draft.send()
-```
-
-The trusted layer owns keychain access, SQLite, Gmail HTTP requests, MIME and
-attachment filesystem operations, and mutation execution. Validate every
-command payload at the boundary and grant only the Tauri capabilities each
-window requires. Domain commands still create idempotent local mutations before
-provider access.
-
-## 14. Reliability and observability
-
-Define service-level indicators before optimization:
-
-| Indicator | Initial target |
-| --- | --- |
-| Local command acknowledgement | p95 < 100 ms |
-| Cached thread open | p95 < 150 ms |
-| Warm application interactive | p95 < 1.5 s |
-| Poll-discovered mail to local projection while active | p95 < 60 s |
-| Successful mutation convergence | 99.9% within 60 s |
-| Duplicate sends caused by the client | 0 |
-| Crash-free sessions | > 99.8% |
-
-Trace one correlation ID from command through local mutation and provider
-request. Metrics must avoid subjects, addresses, body content, and attachment
-names. Telemetry is opt-in. Provide a user-visible sync diagnostics screen with
-cursors, queue state, redacted recent errors, and a safe “repair account”
-workflow.
-
-## 15. Test strategy
-
-The sync engine is the highest-risk subsystem.
-
-1. **Unit tests:** command policies, MIME quoting, address normalization, rule
-   evaluation, merge logic, and reminder conditions.
-2. **Contract tests:** run every provider adapter against the same capability
-   suite.
-3. **Recorded provider tests:** replay redacted API fixtures, expired cursors,
-   repeated history entries, rate limits, and malformed MIME.
-4. **Property tests:** duplicate/reordered events converge to the same state;
-   retries never create a second send.
-5. **Integration tests:** temporary SQLite databases plus a fake provider and
-   fake clock for polling, undo send, snooze, and reminders.
-6. **End-to-end tests:** keyboard-only inbox processing, offline compose,
-   reconnect, undo send, and OAuth recovery.
-7. **Performance tests:** 100k-message local database, large threads, attachment
-   pressure, and sync storms.
-8. **Security tests:** HTML/MIME corpus, malicious links, OAuth CSRF, keychain
-   isolation, Tauri capabilities, and command-boundary validation.
-
-Use fault injection early: terminate the process between provider success and
-local commit, repeat history entries, expire tokens, and reorder changes.
-
-## 16. Delivery plan
-
-### Phase 0 — foundations (2–3 weeks)
-
-- choose project name, license, contribution model, and governance;
-- validate Gmail restricted-scope and OAuth verification requirements;
-- create desktop workspace, CI, release signing, SQLite migrations, and ADR
-  templates;
-- prototype PKCE login with keychain-backed token storage;
-- prototype Gmail history sync into SQLite; and
-- benchmark virtualized list and cached thread rendering.
-
-**Exit:** technical spikes demonstrate the latency budget and correct recovery
-from duplicate history entries, expired cursors, and application restart.
-
-### Phase 1 — read and triage (4–6 weeks)
-
-- authentication, initial/incremental sync, list, reader, local search;
-- adaptive polling, startup/resume catch-up, and manual refresh;
-- archive/read/star/label mutations with optimistic UI;
-- command registry, shortcut help, palette, and undo framework; and
-- HTML sanitization, remote-image policy, diagnostics, and crash reporting.
-
-**Exit:** team members can use it as a reliable read/triage client for two
-weeks without data-loss incidents.
-
-### Phase 2 — compose and workflow (4–6 weeks)
-
-Detailed correspondence implementation: [compose, drafts, safe sending, attachments, and keyboard integration](docs/phase-2-compose.md).
-
-- draft, reply, forward, attachment upload, and safe send;
-- delayed undo send, snooze, conditional follow-up, snippets;
-- deterministic Split Inbox and offline mutation queue; and
-- accessibility and large-mailbox performance passes.
-
-**Exit:** target users can complete the entire daily email loop and recover
-cleanly from offline and token-expiry scenarios.
-
-### Phase 3 — hardening and public alpha (3–5 weeks)
-
-- installer/update path, [password-encrypted settings and account-list
-  transfer](docs/settings-transfer.md), retention controls;
-- threat model, external security review, telemetry consent;
-- provider quota/load tests and operational runbooks; and
-- contributor documentation and stable extension contracts.
-
-**Exit:** reproducible signed builds, documented local settings backup/restore,
-and no known critical security or sync correctness issue.
-
-### Phase 4 — expand based on evidence
-
-Add multiple accounts, Microsoft Graph, calendar, and AI in that order only if
-usage research supports it. Generic IMAP follows once the threading and folder
-UX is explicitly designed, not merely adapted from Gmail. Mobile,
-cross-device application settings, collaboration, or reliable execution while
-all clients are closed each require a separate architecture decision and may
-justify an optional service later.
-
-## 17. Decisions to make before implementation
-
-1. **License:** permissive (Apache-2.0) or reciprocal (GPL-3.0)?
-   Recommendation: Apache-2.0 to encourage provider adapters and desktop
-   contributions, unless preventing proprietary redistribution is a core
-   governance goal. Confirm with counsel.
-2. **Gmail OAuth registration:** project-provided client ID or require users to
-   configure their own?
-   Recommendation: provide an official client ID in signed releases, while
-   allowing custom credentials for independently distributed builds.
-3. **Local database encryption:** rely on full-disk encryption or add
-   application-level encryption?
-   Recommendation: document full-disk encryption as the initial requirement
-   and evaluate SQLCipher before public beta based on its key-management and
-   distribution costs.
-4. **AI default:** local, bring-your-own-key, or hosted?
-   Recommendation: no AI dependency in MVP; begin with bring-your-own-key and
-   local adapters after the core workflow is reliable.
-5. **Read tracking:** include or reject?
-   Recommendation: omit by default. Tracking pixels are unreliable and work
-   against the project's privacy differentiation.
-
-## 18. Principal risks
-
-| Risk | Mitigation |
-| --- | --- |
-| Gmail OAuth restricted-scope verification delays launch | Validate scopes in Phase 0 and allow custom OAuth credentials in independent builds |
-| Sync bugs damage trust | One mutation pipeline, idempotency, cursor transactions, fault injection, diagnostics |
-| “Multi-provider” abstraction leaks | Capability model, provider-native IDs, shared conformance suite |
-| Local databases grow without bound | Configurable cache window, body/attachment eviction, index compaction |
-| Polling consumes quota or feels stale | Adaptive polling, manual refresh, quota metrics, startup/resume catch-up |
-| Laptop sleep delays reminders and queued sends | Make the limitation visible and execute overdue work on resume |
-| AI creates privacy or correctness incidents | Opt-in adapters, context preview, validated outputs, no autonomous send |
-| Feature parity delays useful release | Gate phases on the daily core loop, not competitor checklist parity |
-
-## 19. Research basis
-
-The product definition draws on publicly documented patterns across leading
-email clients: keyboard-driven processing, categorized inboxes, follow-up
-reminders, snippets, delayed send, local caching, AI assistance, and team
-collaboration. The architecture and implementation are independent and use
-their own code, identity, assets, and product language.
+- Tauri 2 hosts the React/Vite interface. The Rust side owns provider calls,
+  OAuth, credentials, SQLite, MIME and attachment handling, image fetching,
+  and correspondence delivery. The browser development build uses fixtures;
+  it does not deliver real mail.
+- Gmail sync uses initial import, incremental History cursors, adaptive
+  polling, startup/resume catch-up, and recovery when a cursor expires.
+  Accounts have separate identities and sync state. Local mail actions use a
+  durable mutation queue and reconcile with Gmail.
+- Sending uses a separate durable outbox with immutable MIME snapshots,
+  cancellation during the undo window, and explicit handling for uncertain
+  delivery. Drafts and outbox records are local to an installation; they do
+  not synchronize through Gmail Drafts or optional cross-device sync.
+- The SQLite cache provides local full-text search, workflow records, and
+  periodic backups. Settings include a local mail-retention policy. Provider
+  data and application-owned workflow data have deliberately different sync
+  boundaries.
+- Split Inbox rules currently match a domain, label, or address pattern and
+  are scoped to one account. Snippets are shared across accounts locally.
+  Tasks can be standalone or linked to a thread; a new inbound reply can
+  complete a linked waiting or follow-up task. AI action extraction offers
+  reviewable proposals rather than directly mutating tasks or calendar.
+
+### Security and privacy boundaries
+
+- OAuth uses a desktop authorization flow with PKCE. Tokens and optional AI
+  keys remain outside the webview and mail database, in the OS credential
+  store. The app talks directly to Google and to an AI provider only when
+  that integration is configured and used.
+- Sender-authored HTML is untrusted. The reader sanitizes unsafe capabilities,
+  preserves safe layout, and renders inside a sandboxed, CSP-scoped iframe.
+  Remote images use the native proxy and can be blocked. Attachment operations
+  stay behind native commands.
+- The encrypted settings export contains a versioned, validated allowlist and
+  deliberately excludes message content and secrets. Its format is persistent
+  across app versions; changes require compatibility handling. See
+  [settings transfer](docs/settings-transfer.md).
+- Optional replicated sync is off by default and uses a user-chosen connector,
+  not a ThreeStrands account. It carries only the application-owned data listed
+  in [the sync guide](docs/cross-device-sync.md). Transport providers see
+  ciphertext, although file sizes and timing remain visible to them.
+- Local mail storage is not described as end-to-end encrypted. Gmail and
+  recipients process ordinary email, and someone with access to an unlocked
+  local profile may be able to read the cache.
+
+## Work remaining before broader release
+
+1. **Validate the native workflow end to end.** The repository has substantial
+   automated unit, integration, and Playwright coverage. Earlier phase status
+   documents explicitly leave live Gmail OAuth, synchronization, sending,
+   attachment, and recovery checks to controlled real-account validation.
+   Keep those checks as release gates until they are recorded as complete.
+2. **Harden the current scope.** Continue testing large mailboxes, provider
+   rate limits, offline/reconnect behavior, uncertain send outcomes, database
+   recovery, and cross-device sync compatibility. Report progress in user
+   terms rather than treating a feature's presence in code as proof of
+   production reliability.
+3. **Build the near-term roadmap deliberately.** Define scheduled-action
+   behavior around app sleep and shutdown before adding snooze or send later.
+   Build the standalone address book on the existing local suggestion model.
+   Mature replicated sync before presenting it as a standard feature.
+4. **Expand integrations from tested contracts.** The Rust provider traits
+   isolate Gmail-specific access. Add another provider only with its own
+   threading, folder, search, mutation, and send semantics plus contract and
+   fault-recovery tests. Keep AI optional and user-reviewed.
+
+## Operating principles
+
+1. Do not lose or duplicate mail or send it unexpectedly. Reconcile uncertain
+   outcomes rather than retrying a send blindly.
+2. Make common actions fast and keyboard-accessible. Keep typing scopes,
+   dialogs, undo, and focus behavior predictable.
+3. Treat email, attachment names, provider responses, and AI output as
+   untrusted. Preserve safe sender layout without weakening the reader's
+   isolation boundary.
+4. Keep local, Gmail, AI-provider, and connector data boundaries explicit in
+   both the product and its marketing claims.
+5. Make offline, reconnect, failed mutation, and recovery states visible and
+   repairable. Do not promise always-on execution from a desktop-only app.
+
+## Source documents
+
+- [Design principles](DESIGN.md) — current keyboard, workspace, form, and AI
+  review decisions.
+- [Cross-device sync](docs/cross-device-sync.md) and [replicated sync design](docs/replicated-sync-design.md) — beta scope and trust model.
+- [Settings transfer](docs/settings-transfer.md) and [email rendering policy](docs/email-rendering-policy.md) — persistent-format and reader boundaries.
+- [Phase 1 status](docs/phase-1.md), [Phase 2 correspondence status](docs/phase-2-status.md), [multi-account plan](docs/multi-account.md), and [address-book proposal](docs/address-book.md) — historical milestones and feature-specific context; check the current code before treating their status labels as current.
