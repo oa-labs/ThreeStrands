@@ -354,6 +354,11 @@ test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "0 drafts" })).toBeVisible();
 
   await page.keyboard.press("g");
+  await page.keyboard.press("o");
+  await expect(eyebrow).toHaveText("Outbox");
+  await expect(page.getByRole("heading", { name: "0 outgoing" })).toBeVisible();
+
+  await page.keyboard.press("g");
   await page.keyboard.press("a");
   await expect(eyebrow).toHaveText("All Mail");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
@@ -473,7 +478,7 @@ test("shows folder labels and shortcuts in the header menu", async ({ page }) =>
   const folders = page.getByRole("group", { name: "Folders" });
   await expect(folders.getByRole("button", { name: "Inbox" }).locator("kbd")).toHaveText("G I");
   await expect(folders.getByRole("button", { name: "Drafts" }).locator("kbd")).toHaveText("G D");
-  await expect(folders.getByRole("button", { name: "Outbox" }).locator("kbd")).toHaveCount(0);
+  await expect(folders.getByRole("button", { name: "Outbox" }).locator("kbd")).toHaveText("G O");
   await trigger.click();
 
   await page.getByRole("button", { name: "Labels (l)" }).hover();

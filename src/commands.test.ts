@@ -172,6 +172,8 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "mailbox.allMail")?.keys).toEqual(["g then a"]);
     expect(commands.find((command) => command.id === "mailbox.trash")?.keys).toEqual(["g then t"]);
     expect(commands.find((command) => command.id === "drafts.open")?.keys).toEqual(["g then d"]);
+    expect(commands.find((command) => command.id === "outbox.open")?.keys).toEqual(["g then o"]);
+    expect(commands.find((command) => command.id === "outbox.open")?.enabled({ ...noopContext(), composerActive: true })).toBe(false);
     expect(commands.find((command) => command.id === "labels.open")?.keys).toEqual(["l"]);
   });
 

@@ -2857,7 +2857,7 @@ const FOLDER_OPTIONS = [
   { id: "inbox", label: "Inbox", commandId: "mailbox.inbox", shortcut: "G I" },
   { id: "allMail", label: "All Mail", commandId: "mailbox.allMail", shortcut: "G A" },
   { id: "drafts", label: "Drafts", commandId: "drafts.open", shortcut: "G D" },
-  { id: "outbox", label: "Outbox", commandId: "outbox.open", shortcut: null },
+  { id: "outbox", label: "Outbox", commandId: "outbox.open", shortcut: "G O" },
   { id: "trash", label: "Trash", commandId: "mailbox.trash", shortcut: "G T" },
 ] as const;
 

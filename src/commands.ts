@@ -125,6 +125,7 @@ export const commands: Command[] = [
   { id: "mailbox.allMail", title: "Go to All Mail", keys: ["g then a"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openAllMail) },
   { id: "mailbox.trash", title: "Go to Trash", keys: ["g then t"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openTrash) },
   { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openDrafts) },
+  { id: "outbox.open", title: "Open Outbox", keys: ["g then o"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openOutbox) },
   {
     id: "mailbox.nextSplit",
     title: "Next Split Inbox",
@@ -141,7 +142,6 @@ export const commands: Command[] = [
     enabled: (c) => !c.composerActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
     run: (c) => complete(c.goToPreviousSplitTab),
   },
-  { id: "outbox.open", title: "Open Outbox", keys: [], group: "Compose", enabled: () => true, run: (c) => complete(c.openOutbox) },
   { id: "draft.send", title: "Send Draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
   { id: "draft.sendAndMarkDone", title: "Send & Mark Done", keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
   // The open draft in the Drafts folder is what "#" deletes there, matching
