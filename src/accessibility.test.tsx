@@ -5,9 +5,9 @@ import { App } from "./App";
 
 describe("read and triage accessibility", () => {
   it("has no automatically detectable serious violations", async () => {
-    const { container } = render(<App />);
+    render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const result = await axe.run(container, {
+    const result = await axe.run(document.body, {
       // Message bodies render in a sandboxed iframe (see SafeMessage.tsx) whose
       // content is untrusted, sanitized email HTML axe doesn't need to police;
       // jsdom also doesn't support the cross-frame messaging axe needs to reach in.
