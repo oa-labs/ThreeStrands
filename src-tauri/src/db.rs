@@ -1286,12 +1286,23 @@ impl Database {
         if changed == 0 {
             return Err("Thread not found".into());
         }
-        let account_id: String = transaction
+        let (account_id, provider_thread_id): (String, String) = transaction
             .query_row(
-                "SELECT account_id FROM threads WHERE id = ?1",
+                "SELECT account_id, provider_thread_id FROM threads WHERE id = ?1",
                 [mutation.thread_id()],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+        if let ThreadMutation::Archive { value, .. } = mutation {
+            // A separate Archive during Undo Send has the same lasting intent
+            // as Send & Mark Done. Keep it with the outbox item so delivery
+            // can remove INBOX again after Gmail adds the sent message.
+            transaction.execute(
+                "UPDATE outbox_messages SET archive_on_send = ?1
+                 WHERE account = ?2 AND json_extract(payload, '$.threadId') = ?3
+                   AND state IN ('undo_pending', 'ready', 'sending', 'uncertain')",
+                params![value, account_id, provider_thread_id],
+            )?;
+        }
         // Metadata actions use one stable representative message rather than
         // rewriting the state of every message in a Gmail conversation.
         // Capture the target now so an offline mutation cannot drift if a new

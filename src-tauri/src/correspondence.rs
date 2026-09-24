@@ -91,7 +91,8 @@ pub struct OutboxItem {
     pub deadline: i64,
     pub error: Option<String>,
     pub provider_id: Option<String>,
-    /// Set when this send was queued via "send and archive": once the
+    /// Set when this send was queued via "send and archive", or when its
+    /// conversation was archived while delivery was pending: once the
     /// message actually sends, the thread's INBOX label is stripped again
     /// server-side, since Gmail re-adds INBOX to the thread for the newly
     /// delivered sent message. Without this, a thread archived optimistically
@@ -544,6 +545,15 @@ impl Database {
             })
         })
         .collect()
+    }
+    fn archive_on_send(&self, id: &str) -> Result<bool, String> {
+        self.connection()?
+            .query_row(
+                "SELECT archive_on_send FROM outbox_messages WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(error)
     }
     pub fn queue(
         &self,
@@ -1134,7 +1144,7 @@ impl Correspondence {
         {
             self.database.connection()?.execute("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id]).map_err(error)?;
             if let Some(thread_id) = message.thread_id.as_deref() {
-                if item.archive_on_send {
+                if self.database.archive_on_send(&item.id)? {
                     let _ = provider
                         .modify_thread(thread_id, &[], &["INBOX".to_string()])
                         .await;
@@ -1210,7 +1220,7 @@ impl Correspondence {
                     .await?;
                 if let Some(sent) = sent {
                     if let Some(thread_id) = sent.thread_id.as_deref() {
-                        if item.archive_on_send {
+                        if self.database.archive_on_send(&item.id)? {
                             // Gmail attaches INBOX to the thread when the
                             // sent message lands, which would otherwise
                             // silently undo the archive done at queue time.
@@ -1392,6 +1402,64 @@ mod tests {
         assert_eq!(restored.body, d.body);
         assert!(restored.revision > d.revision);
         assert!(db.cancel_send(&item.id, false).is_err());
+    }
+    #[test]
+    fn archive_after_queue_keeps_only_matching_sends_archived() {
+        use crate::models::ThreadMutation;
+
+        let db = database();
+        for (account, provider_thread_id) in [
+            ("you@example.com", "reply-thread"),
+            ("you@example.com", "other-thread"),
+            ("other@example.com", "reply-thread"),
+        ] {
+            db.connection().unwrap().execute(
+                "INSERT INTO threads SELECT ?1, ?2, subject, snippet, participants_json,
+                    last_message_at, unread, starred, archived, labels_json, trashed, ?3,
+                    summary, summary_generated_at, has_attachments, last_received_at
+                 FROM threads WHERE id='welcome'",
+                params![format!("{account}:{provider_thread_id}"), provider_thread_id, account],
+            ).unwrap();
+        }
+        let queue_for = |account: &str, thread_id: &str, archive_on_send: bool| {
+            db.set_compose_identity(account).unwrap();
+            db.adopt_account(account).unwrap();
+            let draft = saved(&db);
+            // Native reply creation owns routing fields; a regular save
+            // deliberately refuses to change them.
+            db.connection().unwrap().execute(
+                "UPDATE drafts SET payload=json_set(payload, '$.mode', 'reply', '$.threadId', ?1)
+                 WHERE id=?2",
+                params![thread_id, draft.id],
+            ).unwrap();
+            db.queue(&draft.id, draft.revision, archive_on_send, Path::new("/unused")).unwrap()
+        };
+        let target = queue_for("you@example.com", "reply-thread", false);
+        let already_archiving = queue_for("you@example.com", "reply-thread", true);
+        let other_thread = queue_for("you@example.com", "other-thread", false);
+        let other_account = queue_for("other@example.com", "reply-thread", false);
+
+        let archive = |value| db.mutate_thread(&ThreadMutation::Archive {
+            thread_id: "you@example.com:reply-thread".into(), value,
+        }).unwrap();
+        archive(true);
+        assert!(db.archive_on_send(&target.id).unwrap());
+        assert!(db.archive_on_send(&already_archiving.id).unwrap());
+        assert!(!db.archive_on_send(&other_thread.id).unwrap());
+        assert!(!db.archive_on_send(&other_account.id).unwrap());
+
+        archive(false);
+        assert!(!db.archive_on_send(&target.id).unwrap());
+        assert!(!db.archive_on_send(&already_archiving.id).unwrap());
+
+        // A completed send follows the ordinary archive mutation, rather
+        // than retaining a stale post-send instruction.
+        db.connection().unwrap().execute(
+            "UPDATE outbox_messages SET state='sent' WHERE id=?1", [&target.id],
+        ).unwrap();
+        archive(true);
+        assert!(!db.archive_on_send(&target.id).unwrap());
+        assert!(db.archive_on_send(&already_archiving.id).unwrap());
     }
     #[test]
     fn pausing_ready_sends_for_one_account_never_touches_another_accounts_outbox() {
