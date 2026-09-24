@@ -26,6 +26,7 @@ import {
 } from "./crashReporting";
 import { formatLabelName } from "./labels";
 import { Modal } from "./AppChrome";
+import { InlineConfirm } from "./InlineConfirm";
 import type {
   Account,
   AuthStatus,
@@ -901,23 +902,18 @@ function AccountsSettings({
                 </span>
               </div>
               {confirmEverywhereEmail === account.email ? (
-                <div className="settings-inline-confirm" role="group" aria-label="Remove mail account from all devices confirmation">
-                  <p><strong>Remove from every device?</strong><br />This disconnects {account.email} everywhere. Gmail itself is not changed.</p>
-                  <span className="settings-inline-confirm-actions">
-                    <button type="button" disabled={busyEmail !== null} onClick={() => setConfirmEverywhereEmail(null)}>Cancel</button>
-                    <button
-                      type="button"
-                      className="danger-action"
-                      disabled={busyEmail !== null}
-                      onClick={() => {
-                        runFor(account.email, () => onRemoveEverywhere(account.email));
-                        setConfirmEverywhereEmail(null);
-                      }}
-                    >
-                      Remove on all devices
-                    </button>
-                  </span>
-                </div>
+                <InlineConfirm
+                  ariaLabel="Remove mail account from all devices confirmation"
+                  cancelLabel="Cancel"
+                  onCancel={() => setConfirmEverywhereEmail(null)}
+                  disabled={busyEmail !== null}
+                  actions={[{ label: "Remove on all devices", className: "danger-action", onClick: () => {
+                    runFor(account.email, () => onRemoveEverywhere(account.email));
+                    setConfirmEverywhereEmail(null);
+                  } }]}
+                >
+                  <strong>Remove from every device?</strong><br />This disconnects {account.email} everywhere. Gmail itself is not changed.
+                </InlineConfirm>
               ) : null}
             </li>
           ))}
@@ -1157,23 +1153,18 @@ function CalendarAccountsSettings({
                 </span>
               </div>
               {confirmEverywhereEmail === account.email ? (
-                <div className="settings-inline-confirm" role="group" aria-label="Remove calendar account from all devices confirmation">
-                  <p><strong>Remove from every device?</strong><br />This disconnects {account.email} everywhere. Google Calendar itself is not changed.</p>
-                  <span className="settings-inline-confirm-actions">
-                    <button type="button" disabled={busyEmail !== null} onClick={() => setConfirmEverywhereEmail(null)}>Cancel</button>
-                    <button
-                      type="button"
-                      className="danger-action"
-                      disabled={busyEmail !== null}
-                      onClick={() => {
-                        runFor(account.email, () => onRemoveEverywhere(account.email));
-                        setConfirmEverywhereEmail(null);
-                      }}
-                    >
-                      Remove on all devices
-                    </button>
-                  </span>
-                </div>
+                <InlineConfirm
+                  ariaLabel="Remove calendar account from all devices confirmation"
+                  cancelLabel="Cancel"
+                  onCancel={() => setConfirmEverywhereEmail(null)}
+                  disabled={busyEmail !== null}
+                  actions={[{ label: "Remove on all devices", className: "danger-action", onClick: () => {
+                    runFor(account.email, () => onRemoveEverywhere(account.email));
+                    setConfirmEverywhereEmail(null);
+                  } }]}
+                >
+                  <strong>Remove from every device?</strong><br />This disconnects {account.email} everywhere. Google Calendar itself is not changed.
+                </InlineConfirm>
               ) : null}
               {account.status === "connected" ? (
                 <fieldset className="calendar-picker">

@@ -56,12 +56,12 @@ describe("CalendarWeekView", () => {
     expect(new Date(listScheduleEvents.mock.calls[0][0])).toEqual(new Date(2026, 8, 20));
     expect(new Date(listScheduleEvents.mock.calls[0][1])).toEqual(new Date(2026, 8, 27));
 
-    fireEvent.click(screen.getByRole("button", { name: "Next Week (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
     await waitFor(() => expect(listScheduleEvents).toHaveBeenCalledTimes(2));
     expect(new Date(listScheduleEvents.mock.calls[1][0])).toEqual(new Date(2026, 8, 27));
     await screen.findByText("Sun 27");
 
-    fireEvent.click(screen.getByRole("button", { name: "Previous Week (-)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous week (-)" }));
     await screen.findByText("Sun 20");
   });
 
@@ -150,7 +150,7 @@ describe("CalendarWeekView", () => {
     // 14:30 with a 64px hour row.
     expect((indicators[0] as HTMLElement).style.top).toBe(`${14.5 * 64}px`);
 
-    fireEvent.click(screen.getByRole("button", { name: "Next Week (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
     await screen.findByText("Sun 27");
     expect(container.querySelectorAll("[data-testid='calendar-now-indicator']")).toHaveLength(0);
   });
@@ -207,7 +207,7 @@ describe("CalendarWeekView", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
 
     listScheduleEvents.mockRejectedValue(new Error("offline"));
-    fireEvent.click(screen.getByRole("button", { name: "Next Week (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
     fireEvent.click(within(await screen.findByRole("alert")).getByRole("button", { name: "Calendar Accounts" }));
     expect(props.onOpenSettings).toHaveBeenCalled();
   });

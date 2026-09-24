@@ -212,6 +212,12 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     ))}
   </div>;
 
+  const analysisActionLabel = !analysis?.enabled
+    ? "Enable thread actions in AI settings"
+    : !analysis.ready
+      ? "Configure an AI provider and API key"
+      : "Analyze thread";
+
   return (
     <section className={variant === "workspace" ? "tasks-workspace" : "tasks-sidebar"} role={variant === "sidebar" ? "complementary" : "region"} aria-label={title}>
       <header className="tasks-sidebar-header">
@@ -225,9 +231,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
-          {analysis ? <button type="button" aria-label="Analyze Thread" title={!analysis.enabled ? "Enable thread actions in AI settings" : !analysis.ready ? "Configure an AI provider and API key" : "Analyze thread"} onClick={analysis.onAnalyze} disabled={!analysis.ready || analysis.loading}><Sparkles size={17} /></button> : null}
-          {onCheckSchedule ? <button type="button" aria-label="Check Schedule" title="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button> : null}
-          {onNewTask && (variant === "workspace" || currentThread) ? <button type="button" aria-label="Add Task" title="Add task" onClick={onNewTask}><Plus size={17} /></button> : null}
+          {analysis ? <HoverTooltip title={analysisActionLabel}><button type="button" aria-label={analysisActionLabel} onClick={analysis.onAnalyze} disabled={!analysis.ready || analysis.loading}><Sparkles size={17} /></button></HoverTooltip> : null}
+          {onCheckSchedule ? <HoverTooltip title="Check schedule"><button type="button" aria-label="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button></HoverTooltip> : null}
+          {onNewTask && (variant === "workspace" || currentThread) ? <HoverTooltip title="Add task"><button type="button" aria-label="Add task" onClick={onNewTask}><Plus size={17} /></button></HoverTooltip> : null}
           <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>
         </div>
       </header>

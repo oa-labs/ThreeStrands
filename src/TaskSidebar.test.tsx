@@ -61,7 +61,7 @@ describe("TaskSidebar", () => {
     const onNewTask = vi.fn();
     render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} onNewTask={onNewTask} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
     expect(onNewTask).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -309,14 +309,14 @@ describe("TaskSidebar", () => {
     const { rerender } = render(
       <TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" />,
     );
-    expect(screen.queryByRole("button", { name: "Analyze Thread" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Analyze thread" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Thread actions" })).not.toBeInTheDocument();
 
     const onAnalyze = vi.fn();
     rerender(
       <TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ onAnalyze })} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Analyze Thread" }));
+    fireEvent.click(screen.getByRole("button", { name: "Analyze thread" }));
     expect(onAnalyze).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("region", { name: "Thread actions" })).toBeInTheDocument();
   });

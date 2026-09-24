@@ -834,7 +834,7 @@ describe("Escape dismissal", () => {
   it("closes the composer when focus is in a field", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
+    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
 
     const recipient = await screen.findByRole("textbox", { name: "To" });
     recipient.focus();
@@ -885,7 +885,7 @@ describe("Escape dismissal", () => {
   it("closes only the topmost popup when overlays are stacked", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "New Message (c)" }));
+    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
     const composer = await screen.findByRole("dialog", { name: "New Message" });
     fireEvent.click(screen.getByRole("button", { name: "Command Palette" }));
 

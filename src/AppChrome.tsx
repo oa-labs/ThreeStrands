@@ -88,18 +88,22 @@ function FiltersMenu({
 export function HoverTooltip({
   children,
   label,
+  title,
   placement = "right",
   shortcut,
 }: {
   children: ReactNode;
-  label: string;
+  label?: string;
+  title?: string;
   placement?: "right" | "bottom";
   shortcut?: string;
 }) {
+  const tooltipLabel = label ?? title;
+  if (!tooltipLabel) throw new Error("HoverTooltip requires a label or title");
   return (
-    <span className={`tooltip-anchor tooltip-${placement}`}>
+    <span className={`tooltip-anchor tooltip-${placement}`} title={title}>
       {children}
-      <span className="hover-tooltip" role="tooltip"><strong>{label}</strong>{shortcut ? <kbd>{shortcut}</kbd> : null}</span>
+      <span className="hover-tooltip" role="tooltip"><strong>{tooltipLabel}</strong>{shortcut ? <kbd>{shortcut}</kbd> : null}</span>
     </span>
   );
 }

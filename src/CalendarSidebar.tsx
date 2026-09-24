@@ -1,7 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { AlignLeft, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, RefreshCw, Video, X } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Modal } from "./AppChrome";
+import { HoverTooltip, Modal } from "./AppChrome";
 import {
   HOUR_HEIGHT,
   HOURS,
@@ -345,12 +345,12 @@ export function CalendarSidebar({
           day: "numeric",
         }).format(date)}</h2>
         <div>
-          <button type="button" aria-label="Previous Day (-)" title="Previous day (-)" onClick={() => moveDay(-1)}>
+          <HoverTooltip title="Previous day (-)"><button type="button" aria-label="Previous day (-)" onClick={() => moveDay(-1)}>
             <ChevronLeft size={18} />
-          </button>
-          <button type="button" aria-label="Next Day (=)" title="Next day (=)" onClick={() => moveDay(1)}>
+          </button></HoverTooltip>
+          <HoverTooltip title="Next day (=)"><button type="button" aria-label="Next day (=)" onClick={() => moveDay(1)}>
             <ChevronRight size={18} />
-          </button>
+          </button></HoverTooltip>
           {!embedded ? (
             <button type="button" aria-label="Close Calendar" onClick={onClose}>
               <X size={18} />

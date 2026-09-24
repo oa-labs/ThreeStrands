@@ -554,11 +554,11 @@ describe("calendar sidebar", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Check Schedule" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Previous Day (-)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous day (-)" }));
     expect(screen.queryByRole("region", { name: "Check Availability" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check Schedule" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Next Day (=)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next day (=)" }));
     expect(await screen.findByRole("button", { name: "Check Schedule" })).toBeInTheDocument();
   });
 

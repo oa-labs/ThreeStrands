@@ -24,6 +24,7 @@ import {
   type S3CredentialDraft,
 } from "./SyncConnectors";
 import { formatTimeUntil, InlineStatus, plural, type Operation } from "./syncSettingsParts";
+import { InlineConfirm } from "./InlineConfirm";
 
 /** How long a pasted code waits before it's parsed, like the recovery-phrase check. */
 const PREVIEW_DELAY_MS = 200;
@@ -318,15 +319,10 @@ function OutstandingJoinCodeRow({ code, operation }: { code: OutstandingJoinCode
         ) : null}
       </div>
       {confirming ? (
-        <div className="settings-inline-confirm" role="group" aria-label="Cancel join code confirmation">
-          <p><strong>Cancel this join code?</strong><br />It stops working, and your sync group’s keys change so it can’t be used later.</p>
-          <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={() => setConfirming(false)}>Keep</button>
-            <button type="button" className="danger-action" disabled={busy} onClick={() => { setConfirming(false); actFor(key, () => replicatedSyncCancelJoinCode(code.invitationCid)); }}>
-              Cancel code
-            </button>
-          </span>
-        </div>
+        <InlineConfirm ariaLabel="Cancel join code confirmation" cancelLabel="Keep" onCancel={() => setConfirming(false)} disabled={busy}
+          actions={[{ label: "Cancel code", className: "danger-action", onClick: () => { setConfirming(false); actFor(key, () => replicatedSyncCancelJoinCode(code.invitationCid)); } }]}>
+          <strong>Cancel this join code?</strong><br />It stops working, and your sync group’s keys change so it can’t be used later.
+        </InlineConfirm>
       ) : null}
       <InlineStatus operation={operation} for={key} />
     </li>
@@ -369,15 +365,10 @@ function JoinCodeNoticeRow({ notice, operation }: { notice: JoinCodeNotice; oper
         </button>
       </div>
       {revoking ? (
-        <div className="settings-inline-confirm" role="group" aria-label="Revoke device confirmation">
-          <p><strong>Revoke this device?</strong><br />It keeps existing data, but future writes from it will no longer be trusted.</p>
-          <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={() => setRevoking(false)}>Cancel</button>
-            <button type="button" className="danger-action" disabled={busy} onClick={() => { setRevoking(false); actFor(key, () => replicatedSyncRotateEpoch(notice.deviceId)); }}>
-              Revoke device
-            </button>
-          </span>
-        </div>
+        <InlineConfirm ariaLabel="Revoke device confirmation" cancelLabel="Cancel" onCancel={() => setRevoking(false)} disabled={busy}
+          actions={[{ label: "Revoke device", className: "danger-action", onClick: () => { setRevoking(false); actFor(key, () => replicatedSyncRotateEpoch(notice.deviceId)); } }]}>
+          <strong>Revoke this device?</strong><br />It keeps existing data, but future writes from it will no longer be trusted.
+        </InlineConfirm>
       ) : null}
       <InlineStatus operation={operation} for={key} />
     </li>

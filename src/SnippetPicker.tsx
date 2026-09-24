@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Modal } from "./AppChrome";
 import type { Snippet } from "./domain";
 import { readSnippetUsage } from "./settings";
 import { linkifyPlainText, sanitizeComposeHtml } from "./richText";
 import { snippetBodyPreview } from "./snippets";
+import { FindOrCreatePicker } from "./FindOrCreatePicker";
 
 function htmlToPlainText(html: string): string {
   const container = document.createElement("div");
@@ -27,9 +28,8 @@ export function SnippetPicker({
   onUpdate(id: string, name: string, body: string): Promise<Snippet>;
   onDelete(id: string): Promise<void>;
 }) {
-  const [query, setQuery] = useState("");
-  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [editorTarget, setEditorTarget] = useState<Snippet | "new" | null>(null);
+  const [newSnippetName, setNewSnippetName] = useState("");
 
   const orderedSnippets = useMemo(() => {
     const usage = readSnippetUsage();
@@ -40,32 +40,11 @@ export function SnippetPicker({
     });
   }, [snippets]);
 
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredSnippets = normalizedQuery
-    ? orderedSnippets.filter((snippet) => snippet.name.toLowerCase().includes(normalizedQuery))
-    : orderedSnippets;
-  const exactMatchExists = orderedSnippets.some((snippet) => snippet.name.toLowerCase() === normalizedQuery);
-  const showCreateRow = normalizedQuery.length > 0 && !exactMatchExists;
-  const rowCount = filteredSnippets.length + (showCreateRow ? 1 : 0);
-  const activeIndex = rowCount === 0 ? -1 : Math.min(Math.max(highlightedIndex, 0), rowCount - 1);
-
-  useEffect(() => {
-    setHighlightedIndex(0);
-  }, [query]);
-
-  const selectRow = (index: number) => {
-    if (index < filteredSnippets.length) {
-      onInsert(filteredSnippets[index]);
-    } else if (showCreateRow) {
-      setEditorTarget("new");
-    }
-  };
-
   if (editorTarget) {
     return (
       <SnippetEditor
         target={editorTarget}
-        initialName={editorTarget === "new" ? query.trim() : editorTarget.name}
+        initialName={editorTarget === "new" ? newSnippetName : editorTarget.name}
         onClose={onClose}
         onBack={() => setEditorTarget(null)}
         onCreate={async (name, body) => {
@@ -82,41 +61,26 @@ export function SnippetPicker({
 
   return (
     <Modal title="Insert Snippet" onClose={onClose} className="snippet-picker">
-      <div className="label-search">
-        <input
-          autoFocus
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Find or create a snippet"
-          aria-label="Find or Create a Snippet"
-          role="combobox"
-          aria-expanded="true"
-          aria-controls="snippet-options"
-          aria-activedescendant={activeIndex >= 0 ? `snippet-option-${activeIndex}` : undefined}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              setHighlightedIndex((index) => Math.min(index + 1, Math.max(rowCount - 1, 0)));
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setHighlightedIndex((index) => Math.max(index - 1, 0));
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              if (activeIndex >= 0) selectRow(activeIndex);
-            }
-          }}
-        />
-      </div>
-      <div className="label-list" id="snippet-options" role="listbox" aria-label="Snippets">
-        {filteredSnippets.map((snippet, index) => (
+      <FindOrCreatePicker
+        items={orderedSnippets}
+        getSearchText={(snippet) => snippet.name}
+        placeholder="Find or create a snippet"
+        ariaLabel="Find or Create a Snippet"
+        listId="snippet-options"
+        listLabel="Snippets"
+        emptyMessage="No snippets yet. Type a name to create one."
+        createLabel={(name) => <><Plus size={14} /> Create snippet "{name}"</>}
+        onSelect={onInsert}
+        onCreate={(name) => { setNewSnippetName(name); setEditorTarget("new"); }}
+        renderItem={(snippet, option) => (
           <div
             key={snippet.id}
-            id={`snippet-option-${index}`}
+            id={option.id}
             role="option"
-            aria-selected={index === activeIndex}
-            className={index === activeIndex ? "highlighted" : undefined}
-            onMouseEnter={() => setHighlightedIndex(index)}
-            onClick={() => selectRow(index)}
+            aria-selected={option.active}
+            className={option.active ? "highlighted" : undefined}
+            onMouseEnter={option.onMouseEnter}
+            onClick={option.onClick}
           >
             <span className="snippet-option-name">
               <strong>{snippet.name}</strong>
@@ -143,23 +107,14 @@ export function SnippetPicker({
               </button>
             </span>
           </div>
-        ))}
-        {showCreateRow ? (
-          <div
-            id={`snippet-option-${filteredSnippets.length}`}
-            role="option"
-            aria-selected={filteredSnippets.length === activeIndex}
-            className={filteredSnippets.length === activeIndex ? "highlighted" : undefined}
-            onMouseEnter={() => setHighlightedIndex(filteredSnippets.length)}
-            onClick={() => setEditorTarget("new")}
-          >
-            <Plus size={14} /> Create snippet "{query.trim()}"
+        )}
+        renderCreateItem={(name, option) => (
+          <div id={option.id} role="option" aria-selected={option.active} className={option.active ? "highlighted" : undefined}
+            onMouseEnter={option.onMouseEnter} onClick={option.onClick}>
+            <Plus size={14} /> Create snippet "{name}"
           </div>
-        ) : null}
-        {filteredSnippets.length === 0 && !showCreateRow ? (
-          <p className="empty">No snippets yet. Type a name to create one.</p>
-        ) : null}
-      </div>
+        )}
+      />
     </Modal>
   );
 }

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { mailClient } from "./data/client";
 import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from "./domain";
 import { errorMessage } from "./errors";
+import { HoverTooltip } from "./AppChrome";
 
 export function isCalendarAttachment(attachment: MessageAttachment): boolean {
   return attachment.mimeType.split(";", 1)[0]?.trim().toLocaleLowerCase() === "text/calendar"
@@ -154,9 +155,9 @@ export function CalendarAttachment({ messageId, attachment, onError, loadedPrevi
       <footer className="calendar-card-actions">
         <span><CalendarDays size={14} /> {attachment.filename}</span>
         <button type="button" onClick={open}><ExternalLink size={14} /> Open Invitation</button>
-        <button type="button" aria-label={`Download ${attachment.filename}`} title={`Download ${attachment.filename}`} onClick={download}>
+        <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button type="button" aria-label={`Download ${attachment.filename}`} onClick={download}>
           <Download size={14} />
-        </button>
+        </button></HoverTooltip>
       </footer>
     </section>
   );

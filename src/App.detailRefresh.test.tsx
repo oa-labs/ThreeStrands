@@ -109,7 +109,7 @@ it("refreshes the open conversation when its inbox row receives a sent reply", a
 
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
 
   await waitFor(() => {
     const bodies = screen.getAllByTestId("message-body") as HTMLIFrameElement[];
@@ -170,7 +170,7 @@ it("keeps an unsaved reply mounted when a refresh changes its conversation place
     editor.insertAdjacentHTML("afterbegin", "<p>Do not lose this long reply.</p>");
     fireEvent.input(editor);
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
 
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument());
     const refreshedEditor = screen.getByRole("textbox", { name: "Message Body" });
@@ -197,7 +197,7 @@ it("reloads the local inbox after a refresh even when one account sync fails", a
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
   const callsBeforeRefresh = listCalls;
 
-  fireEvent.click(screen.getByRole("button", { name: "Refresh Mail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
 
   await waitFor(() => expect(listCalls).toBeGreaterThan(callsBeforeRefresh));
 });

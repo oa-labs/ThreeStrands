@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandContext } from "./commands";
-import { ActionButton, CommandPalette, FiltersButton, Modal, ShortcutHelp } from "./AppChrome";
+import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, Modal, ShortcutHelp } from "./AppChrome";
 
 afterEach(cleanup);
 
@@ -22,6 +22,14 @@ const context = {
 } as unknown as CommandContext;
 
 describe("App chrome", () => {
+  it("uses one tooltip label for the custom tooltip and native title fallback", () => {
+    render(<HoverTooltip title="Refresh mail"><button aria-label="Refresh mail">Refresh</button></HoverTooltip>);
+
+    expect(screen.getByRole("button", { name: "Refresh mail" })).toBeInTheDocument();
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Refresh mail");
+    expect(screen.getByTitle("Refresh mail")).toHaveClass("tooltip-anchor");
+  });
+
   it("opens filters, reports the selected filter, and closes on Escape", () => {
     const onToggleFilter = vi.fn();
     render(<FiltersButton activeFilters={new Set(["starred"])} onToggleFilter={onToggleFilter} />);

@@ -1,6 +1,7 @@
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventViewer } from "./CalendarSidebar";
+import { HoverTooltip } from "./AppChrome";
 import {
   HOUR_HEIGHT,
   HOURS,
@@ -138,7 +139,7 @@ function CalendarList({
       <header>
         <CalendarDays size={17} />
         <h3>Calendars</h3>
-        <button type="button" aria-label="Add Calendar Account" title="Add calendar account" onClick={onAdd}>+</button>
+        <HoverTooltip title="Add calendar account"><button type="button" aria-label="Add calendar account" onClick={onAdd}>+</button></HoverTooltip>
       </header>
       {accounts.length === 0 ? <p className="calendar-list-empty">No calendar accounts connected.</p> : null}
       {accounts.map((account) => {
@@ -293,8 +294,8 @@ export function CalendarWeekView({
         <header className="calendar-week-header">
           <div className="calendar-week-controls">
             <button type="button" className="calendar-today-button" onClick={goToToday}>Today</button>
-            <button type="button" aria-label="Previous Week (-)" title="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={20} /></button>
-            <button type="button" aria-label="Next Week (=)" title="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={20} /></button>
+            <HoverTooltip title="Previous week (-)"><button type="button" aria-label="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={20} /></button></HoverTooltip>
+            <HoverTooltip title="Next week (=)"><button type="button" aria-label="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={20} /></button></HoverTooltip>
           </div>
           <h1>{monthTitle(weekStart)}</h1>
         </header>

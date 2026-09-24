@@ -80,6 +80,7 @@ import type {
   ThreadTask,
 } from "./domain";
 import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
+import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { ThreadRow } from "./ThreadList";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
@@ -1813,7 +1814,7 @@ export function App() {
           onReorder={reorderNavbarAccounts}
         />
         <div className="sidebar-nav">
-          <button className="nav-button" aria-label="New Message (c)" title="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button>
+          <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button></HoverTooltip>
           <HoverTooltip label="Inbox" shortcut="G I">
             <button
               className={`nav-button ${isTabbedMailbox ? "active" : ""}`}
@@ -1880,22 +1881,14 @@ export function App() {
               <CheckSquare size={19} />
             </button>
           </HoverTooltip>
-          <button
-            className="nav-button"
-            aria-label="Refresh Mail"
-            title="Refresh mail"
-            onClick={() => executeById("mail.refresh")}
-          >
+          <HoverTooltip title="Refresh mail"><button className="nav-button" aria-label="Refresh mail" onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={19} className={syncStatus?.state === "syncing" ? "spin" : ""} />
-          </button>
-          <button
-            className="nav-button"
-            aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
-            title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}
-            onClick={toggleTheme}
-          >
-            {effectiveThemeValue === "dark" ? <Sun size={19} /> : <Moon size={19} />}
-          </button>
+          </button></HoverTooltip>
+          <HoverTooltip title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}>
+            <button className="nav-button" aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} onClick={toggleTheme}>
+              {effectiveThemeValue === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+            </button>
+          </HoverTooltip>
           <button
             className="nav-button"
             aria-label="Command Palette"
@@ -1903,14 +1896,9 @@ export function App() {
           >
             <CommandIcon size={19} />
           </button>
-          <button
-            className="nav-button"
-            aria-label="Settings (⌘,)"
-            title="Settings (⌘,)"
-            onClick={() => executeById("settings.open")}
-          >
+          <HoverTooltip title="Settings (⌘,)"><button className="nav-button" aria-label="Settings (⌘,)" onClick={() => executeById("settings.open")}>
             <SettingsIcon size={19} />
-          </button>
+          </button></HoverTooltip>
         </div>
       </nav>
 
@@ -2521,7 +2509,7 @@ export function App() {
                           ) : null}
                           {downloadableAttachments.filter((attachment) => !isCalendarAttachment(attachment)).map((attachment) => (
                               <div className="message-attachment" key={attachment.id}>
-                                <button
+                                <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button
                                   type="button"
                                   className="attachment-badge"
                                   aria-label={`View ${attachment.filename}`}
@@ -2535,12 +2523,11 @@ export function App() {
                                   <span>{attachment.filename}</span>
                                   <small>{formatAttachmentSize(attachment.size)}</small>
                                   <ExternalLink size={13} />
-                                </button>
+                                </button></HoverTooltip>
                                 <button
                                   type="button"
                                   className="attachment-download"
                                   aria-label={`Download ${attachment.filename}`}
-                                  title={`Download ${attachment.filename}`}
                                   onClick={() => {
                                     void mailClient.saveAttachment(message.id, attachment.id).catch((reason: unknown) => {
                                       setNotice({ message: `Could not download attachment: ${errorMessage(reason)}` });
@@ -2979,13 +2966,12 @@ export function AccountSwitcher({
         const name = account.displayName ?? account.email;
         const unreadCount = unreadCounts[account.email] ?? 0;
         return (
-          <HoverTooltip key={account.email} label={name}>
+          <HoverTooltip key={account.email} label={name} title="Drag to reorder accounts">
             <button
               type="button"
               role="radio"
               aria-checked={activeAccountId === account.email}
               aria-label={unreadCount > 0 ? `${name}, ${unreadCount} unread` : name}
-              title="Drag to reorder accounts"
               draggable
               className={`account-icon ${activeAccountId === account.email ? "active" : ""} ${draggedEmail === account.email ? "dragging" : ""} ${dragOverEmail === account.email && draggedEmail !== account.email ? "drag-over" : ""}`}
               style={{ background: account.color }}
@@ -3044,11 +3030,9 @@ function LabelManager({
   onRename(id: string, name: string): Promise<void>;
   onToggle(label: Label, value: boolean): void;
 }) {
-  const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<Label | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const [highlightedIndex, setHighlightedIndex] = useState(0);
 
   // Labels the user hasn't touched sort alphabetically; ones applied or
   // removed through Dispatch before bubble to the top, most-recent first,
@@ -3065,29 +3049,14 @@ function LabelManager({
       });
   }, [labels, accountId]);
 
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredLabels = normalizedQuery
-    ? orderedLabels.filter((label) => formatLabelName(label).toLowerCase().includes(normalizedQuery))
-    : orderedLabels;
-  const exactMatchExists = orderedLabels.some(
-    (label) => formatLabelName(label).toLowerCase() === normalizedQuery,
-  );
-  const showCreateRow = normalizedQuery.length > 0 && !exactMatchExists;
-  const rowCount = filteredLabels.length + (showCreateRow ? 1 : 0);
-  const activeIndex = rowCount === 0 ? -1 : Math.min(Math.max(highlightedIndex, 0), rowCount - 1);
-
-  useEffect(() => {
-    setHighlightedIndex(0);
-  }, [query]);
-
   const applyLabel = (label: Label) => {
     onToggle(label, !checkedLabelIds.has(label.id));
     if (accountId) recordLabelUsed(accountId, label.id);
     onClose();
   };
 
-  const createAndApply = async () => {
-    const trimmed = query.trim();
+  const createAndApply = async (name: string) => {
+    const trimmed = name.trim();
     if (!trimmed || busy) return;
     setBusy(true);
     try {
@@ -3100,52 +3069,29 @@ function LabelManager({
     }
   };
 
-  const selectRow = (index: number) => {
-    if (index < filteredLabels.length) {
-      applyLabel(filteredLabels[index]);
-    } else if (showCreateRow) {
-      void createAndApply();
-    }
-  };
-
   return (
     <Modal title="Manage Labels" onClose={onClose}>
-      <div className="label-search">
-        <input
-          autoFocus
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Find or create a label"
-          aria-label="Find or Create a Label"
-          role="combobox"
-          aria-expanded="true"
-          aria-controls="label-options"
-          aria-activedescendant={activeIndex >= 0 ? `label-option-${activeIndex}` : undefined}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              setHighlightedIndex((index) => Math.min(index + 1, Math.max(rowCount - 1, 0)));
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setHighlightedIndex((index) => Math.max(index - 1, 0));
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              if (activeIndex >= 0) selectRow(activeIndex);
-            }
-          }}
-        />
-      </div>
-      <div className="label-list" id="label-options" role="listbox" aria-label="Labels">
-        {filteredLabels.map((label, index) => (
+      <FindOrCreatePicker
+        items={orderedLabels}
+        getSearchText={(label: Label) => formatLabelName(label)}
+        placeholder="Find or create a label"
+        ariaLabel="Find or Create a Label"
+        listId="label-options"
+        listLabel="Labels"
+        emptyMessage="No labels yet. Type a name to create one."
+        createLabel={(name) => <>Create label "{name}"</>}
+        onSelect={applyLabel}
+        onCreate={(name) => { void createAndApply(name); }}
+        renderItem={(label, option) => (
           <div
             key={label.id}
-            id={`label-option-${index}`}
+            id={option.id}
             role="option"
             aria-label={checkedLabelIds.has(label.id) ? `${formatLabelName(label)}, added` : formatLabelName(label)}
-            aria-selected={index === activeIndex}
-            className={index === activeIndex ? "highlighted" : undefined}
-            onMouseEnter={() => setHighlightedIndex(index)}
-            onClick={() => selectRow(index)}
+            aria-selected={option.active}
+            className={option.active ? "highlighted" : undefined}
+            onMouseEnter={option.onMouseEnter}
+            onClick={option.onClick}
           >
             <span className="label-option-name">
               {checkedLabelIds.has(label.id) ? <Check size={14} /> : <span className="label-option-check-spacer" />}
@@ -3175,23 +3121,8 @@ function LabelManager({
               </span>
             ) : null}
           </div>
-        ))}
-        {showCreateRow ? (
-          <div
-            id={`label-option-${filteredLabels.length}`}
-            role="option"
-            aria-selected={filteredLabels.length === activeIndex}
-            className={filteredLabels.length === activeIndex ? "highlighted" : undefined}
-            onMouseEnter={() => setHighlightedIndex(filteredLabels.length)}
-            onClick={() => void createAndApply()}
-          >
-            Create label "{query.trim()}"
-          </div>
-        ) : null}
-        {filteredLabels.length === 0 && !showCreateRow ? (
-          <p className="empty">No labels yet. Type a name to create one.</p>
-        ) : null}
-      </div>
+        )}
+      />
       {renaming ? (
         <form
           className="rename-label"

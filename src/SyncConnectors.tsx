@@ -15,6 +15,7 @@ import {
   type S3Credentials,
 } from "./replicatedSync";
 import { describeTransportHealth, Disclosure, formatStorageEstimate, InlineStatus, type Operation } from "./syncSettingsParts";
+import { InlineConfirm } from "./InlineConfirm";
 
 const FILEBASE_RPC_URL = "https://rpc.filebase.io";
 /** Mirrors `MAX_CONNECTOR_LABEL_CHARS` in `sync_connectors.rs`, which enforces it. */
@@ -564,23 +565,18 @@ export function ConnectorCard({ transport, operation, refresh }: { transport: Re
       ) : null}
       {panel === "credentials" ? <ReplaceCredentials transport={transport} operation={operation} refresh={refresh} onDone={() => setPanel("none")} /> : null}
       {panel === "disconnect" ? (
-        <div className="settings-inline-confirm" role="group" aria-label="Disconnect connector confirmation">
-          <p>
-            <strong>Stop syncing through this connector?</strong><br />
-            {disconnectExplanation(transport)}
-          </p>
-          <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={() => setPanel("none")}>Cancel</button>
-            <button type="button" disabled={busy} onClick={() => { setPanel("none"); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, false)); }}>
-              Disconnect and keep data
-            </button>
-            {transport.supportsDeleteData ? (
-              <button type="button" className="danger-action" disabled={busy} onClick={() => { setPanel("none"); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, true)); }}>
-                Delete files and disconnect
-              </button>
-            ) : null}
-          </span>
-        </div>
+        <InlineConfirm
+          ariaLabel="Disconnect connector confirmation"
+          cancelLabel="Cancel"
+          onCancel={() => setPanel("none")}
+          disabled={busy}
+          actions={[
+            { label: "Disconnect and keep data", onClick: () => { setPanel("none"); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, false)); } },
+            ...(transport.supportsDeleteData ? [{ label: "Delete files and disconnect", className: "danger-action", onClick: () => { setPanel("none"); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, true)); } }] : []),
+          ]}
+        >
+          <strong>Stop syncing through this connector?</strong><br />{disconnectExplanation(transport)}
+        </InlineConfirm>
       ) : null}
       <InlineStatus operation={operation} for={key} />
     </li>

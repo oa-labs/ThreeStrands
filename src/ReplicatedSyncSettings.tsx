@@ -44,6 +44,7 @@ import { connectorDisplayName, ConnectorList } from "./SyncConnectors";
 import { queuePortablePreferencesAndWait } from "./syncedPreferences";
 import { ANY_OPERATION, useLiveStatus, useSettingsOperation } from "./settingsOperations";
 import { describeTransportHealth, Disclosure, InlineStatus, plural, type Operation, type Tone } from "./syncSettingsParts";
+import { InlineConfirm } from "./InlineConfirm";
 
 export { describeTransportHealth, type Tone, type TransportHealthSummary } from "./syncSettingsParts";
 
@@ -569,24 +570,10 @@ function SetupChoice({
       ) : null}
       {existing ? (
         confirmingSeparateSpace ? (
-          <div className="settings-inline-confirm" role="group" aria-label="Create a separate sync group confirmation">
-            <p>
-              <strong>Create a separate sync group?</strong><br />
-              This device will not sync with the devices already using this connector, and the new group gets its own
-              recovery phrase.
-            </p>
-            <span className="settings-inline-confirm-actions">
-              <button type="button" disabled={busy} onClick={() => setConfirmingSeparateSpace(false)}>Cancel</button>
-              <button
-                type="button"
-                className="danger-action"
-                disabled={busy}
-                onClick={() => { setConfirmingSeparateSpace(false); beginGenesis(true); }}
-              >
-                Create separate group
-              </button>
-            </span>
-          </div>
+          <InlineConfirm ariaLabel="Create a separate sync group confirmation" cancelLabel="Cancel" onCancel={() => setConfirmingSeparateSpace(false)} disabled={busy}
+            actions={[{ label: "Create separate group", className: "danger-action", onClick: () => { setConfirmingSeparateSpace(false); beginGenesis(true); } }]}>
+            <strong>Create a separate sync group?</strong><br />This device will not sync with the devices already using this connector, and the new group gets its own recovery phrase.
+          </InlineConfirm>
         ) : (
           <>
             <button type="button" className="account-action-button" disabled={busy} onClick={() => setConfirmingSeparateSpace(true)}>
@@ -681,15 +668,10 @@ function LeaveControl({
   return (
     <>
       {confirming ? (
-        <div className="settings-inline-confirm" role="group" aria-label={title}>
-          <p><strong>{title}</strong><br />{body}</p>
-          <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={() => setConfirming(false)}>Keep</button>
-            <button type="button" className="danger-action" disabled={busy} onClick={() => { setConfirming(false); actFor("leave", replicatedSyncLeave); }}>
-              {confirm}
-            </button>
-          </span>
-        </div>
+        <InlineConfirm ariaLabel={title} cancelLabel="Keep" onCancel={() => setConfirming(false)} disabled={busy}
+          actions={[{ label: confirm, className: "danger-action", onClick: () => { setConfirming(false); actFor("leave", replicatedSyncLeave); } }]}>
+          <strong>{title}</strong><br />{body}
+        </InlineConfirm>
       ) : (
         <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => setConfirming(true)}>
           {trigger}
@@ -735,15 +717,10 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
         )}
       </div>
       {rejecting ? (
-        <div className="settings-inline-confirm" role="group" aria-label="Reject device request confirmation">
-          <p>Reject this request on all your sync devices? If an approval grant has already been published, that approval takes precedence.</p>
-          <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={() => setRejecting(false)}>Keep pending</button>
-            <button type="button" className="danger-action" disabled={busy} onClick={() => { setRejecting(false); actFor(key, () => replicatedSyncRejectRequest(request.requestId)); }}>
-              Reject on all devices
-            </button>
-          </span>
-        </div>
+        <InlineConfirm ariaLabel="Reject device request confirmation" cancelLabel="Keep pending" onCancel={() => setRejecting(false)} disabled={busy}
+          actions={[{ label: "Reject on all devices", className: "danger-action", onClick: () => { setRejecting(false); actFor(key, () => replicatedSyncRejectRequest(request.requestId)); } }]}>
+          Reject this request on all your sync devices? If an approval grant has already been published, that approval takes precedence.
+        </InlineConfirm>
       ) : null}
       {reviewing ? (
         <div className="settings-inline-panel" role="group" aria-label="Approve device confirmation">
@@ -823,13 +800,10 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
         </form>
       ) : null}
       {revoking ? (
-        <div className="settings-inline-confirm" role="group" aria-label="Revoke device confirmation">
-          <p><strong>Revoke this device?</strong><br />It keeps existing data, but future writes from it will no longer be trusted.</p>
-          <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={() => setRevoking(false)}>Cancel</button>
-            <button type="button" className="danger-action" disabled={busy} onClick={() => { setRevoking(false); actFor(key, () => replicatedSyncRotateEpoch(device.deviceId)); }}>Revoke device</button>
-          </span>
-        </div>
+        <InlineConfirm ariaLabel="Revoke device confirmation" cancelLabel="Cancel" onCancel={() => setRevoking(false)} disabled={busy}
+          actions={[{ label: "Revoke device", className: "danger-action", onClick: () => { setRevoking(false); actFor(key, () => replicatedSyncRotateEpoch(device.deviceId)); } }]}>
+          <strong>Revoke this device?</strong><br />It keeps existing data, but future writes from it will no longer be trusted.
+        </InlineConfirm>
       ) : null}
       <InlineStatus operation={operation} for={key} />
     </li>
