@@ -237,7 +237,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>
         </div>
       </header>
-      {error ? <p className="tasks-error" role="alert">{error}</p> : null}
+      {error ? <p className="form-error tasks-error" role="alert">{error}</p> : null}
       {analysis ? (
         <section className="action-analysis" aria-label="Thread actions">
           <div className="action-analysis-heading"><strong>Thread actions</strong>{analysis.loading ? <span role="status">Analyzing…</span> : null}</div>

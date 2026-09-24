@@ -39,7 +39,7 @@ export function FrontierConflictEditor({
     if (chosen) onResolve(chosen);
   };
   return (
-    <div className="accounts-config-notice">
+    <div className="notice accounts-config-notice">
       <strong>{conflict.entityType.replaceAll("_", " ")} conflict: {conflict.field}</strong>
       <fieldset className="settings-field">
         <legend>{conflict.candidates.length} concurrent {conflict.candidates.length === 1 ? "value" : "values"}</legend>

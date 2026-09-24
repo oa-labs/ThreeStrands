@@ -350,7 +350,7 @@ function JoinCodeNoticeRow({ notice, operation }: { notice: JoinCodeNotice; oper
   const key = `join-notice:${notice.redemptionCid}`;
   const inviter = notice.inviterName?.trim() || "another device";
   return (
-    <li className="account-card sync-notice">
+    <li className="account-card notice--warning">
       <div className="account-card-row">
         <p className="account-card-identity">
           {notice.kind === "joined"

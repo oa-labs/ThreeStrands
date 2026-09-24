@@ -96,7 +96,7 @@ export function TaskEditorDialog({
         {kind === "follow_up" ? <label><span>Repeat Every (Days)</span><input type="number" min="1" max="3650" value={repeatIntervalDays} onChange={(event) => setRepeatIntervalDays(event.target.value)} placeholder="Optional" /></label> : null}
         <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional details" /></label>
         {evidence ? <div className="modal-form-evidence"><span>Evidence</span><blockquote>{evidence}</blockquote></div> : null}
-        {error ? <p className="modal-form-error" role="alert">{error}</p> : null}
+        {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={busy || !title.trim()}>{busy ? "Saving…" : submitLabel}</button></div>
       </form>
     </Modal>

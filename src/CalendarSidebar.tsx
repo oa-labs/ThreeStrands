@@ -131,7 +131,7 @@ function AvailabilityRequestDialog({
       }}>
         <label><span>Date</span><input ref={dateRef} type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value)} required /></label>
         <label><span>Duration</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{[15, 30, 45, 60, 90, 120].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
-        {error ? <p className="modal-form-error" role="alert">{error}</p> : null}
+        {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={loading}>{loading ? "Checking…" : "Check Schedule"}</button></div>
       </form>
     </Modal>

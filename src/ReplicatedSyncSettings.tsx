@@ -263,7 +263,7 @@ export function ReplicatedSyncSettings() {
       </Disclosure>
 
       {protocolResetNotice ? (
-        <div className="account-card sync-notice" role="status">
+        <div className="account-card notice--warning" role="status">
           <div className="account-card-row">
             <p className="account-card-identity">
               This update reset sync on this device: sync groups made by earlier test versions can’t be used any more.
@@ -307,7 +307,7 @@ export function ReplicatedSyncSettings() {
       {enrolled ? (
         <>
           {enrolled.historyHandoffWarning ? (
-            <div className="sync-overview sync-overview-attention" role="status" aria-label="Sync history capacity">
+            <div className="sync-overview notice--warning" role="status" aria-label="Sync history capacity">
               This group has used {enrolled.historyHandoffWarning.used.toLocaleString()} of {enrolled.historyHandoffWarning.limit.toLocaleString()} historical key slots. At the limit, new devices can’t receive the full sync history. Consider starting a new group before adding more devices.
             </div>
           ) : null}
@@ -842,7 +842,7 @@ function EnrolledOverview({
   return (
     <>
       {awaitingAdmissionFrom ? (
-        <div className="sync-overview sync-overview-attention" role="status" aria-label="Joining">
+        <div className="sync-overview notice--warning" role="status" aria-label="Joining">
           <span>
             Waiting for {awaitingAdmissionFrom} to finish adding this device. This happens automatically the next time
             it syncs. Until then, your changes here reach your other devices only after it does.

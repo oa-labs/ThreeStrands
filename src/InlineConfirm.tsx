@@ -22,7 +22,7 @@ export function InlineConfirm({
   disabled?: boolean;
 }) {
   return (
-    <div className="settings-inline-confirm" role="group" aria-label={ariaLabel}>
+    <div className="settings-inline-confirm notice--error" role="group" aria-label={ariaLabel}>
       <p>{children}</p>
       <span className="settings-inline-confirm-actions">
         <button type="button" disabled={disabled} onClick={onCancel}>{cancelLabel}</button>

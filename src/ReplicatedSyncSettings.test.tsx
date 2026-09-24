@@ -653,7 +653,7 @@ describe("replicated sync protocol reset notice", () => {
 
     const notice = await screen.findByText(/This update reset sync on this device/);
     expect(notice).toHaveTextContent(/Your data here is kept/);
-    fireEvent.click(within(notice.closest(".sync-notice") as HTMLElement).getByRole("button", { name: "Dismiss" }));
+    fireEvent.click(within(notice.closest(".notice--warning") as HTMLElement).getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(sync.replicatedSyncDismissProtocolResetNotice).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryByText(/This update reset sync on this device/)).not.toBeInTheDocument());
   });

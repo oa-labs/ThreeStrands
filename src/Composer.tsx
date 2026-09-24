@@ -519,7 +519,7 @@ export const Composer = forwardRef<ComposerHandle, {
                     <button type="button" onClick={() => setConfirmAddToExisting(false)}>Cancel</button>
                   </div>
                 ) : null}
-                {replyAssistError ? <div className="compose-error" role="alert">{replyAssistError}</div> : null}
+                {replyAssistError ? <div className="notice compose-error" role="alert">{replyAssistError}</div> : null}
                 <div className="reply-assist-actions">
                   <button
                     type="button"
@@ -538,7 +538,7 @@ export const Composer = forwardRef<ComposerHandle, {
           <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction} Configure Reply Assist in AI settings to generate a suggestion.</p>
         ) : null}
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={14} /></button></li>)}</ul>}
-        {error && <div className="compose-error" role="alert">{error} <button onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
+        {error && <div className="notice compose-error" role="alert">{error} <button onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
       </div>
       <footer><button className="send-button" onClick={() => send()} disabled={busy}><Send size={16} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={17} /></button><span className="save-status" role="status">{status}</span><button disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash2 size={16} /></button></footer>
       <p className="compose-note">Drafts are saved on this device. Send has a 10-second undo window.{!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}</p>

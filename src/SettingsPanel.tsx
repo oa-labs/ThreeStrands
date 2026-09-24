@@ -114,7 +114,7 @@ function SyncDiagnosticsDetails({
       {recovery ? (
         <>
           <dt>Database recovery</dt>
-          <dd className="recovery-notice">{recoveryStatusMessage(recovery)}</dd>
+          <dd className="notice">{recoveryStatusMessage(recovery)}</dd>
         </>
       ) : null}
       <dt>State</dt><dd>{status?.state ?? "unknown"}</dd>
@@ -790,7 +790,7 @@ function AccountsSettings({
         </button>
       </div>
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
-        <div className="accounts-config-notice">
+        <div className="notice accounts-config-notice">
           <AlertCircle size={16} />
           <div>
             <strong>Google OAuth is not configured</strong>
@@ -1090,7 +1090,7 @@ function CalendarAccountsSettings({
         </button>
       </div>
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
-        <div className="accounts-config-notice">
+        <div className="notice accounts-config-notice">
           <AlertCircle size={16} />
           <div>
             <strong>Google OAuth is not configured</strong>
