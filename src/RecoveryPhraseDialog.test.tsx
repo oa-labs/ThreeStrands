@@ -18,45 +18,13 @@ beforeEach(async () => {
 });
 afterEach(cleanup);
 
-function answerRequestedWords(transform: (word: string) => string = (word) => word) {
-  for (const input of screen.getAllByRole("textbox")) {
-    const label = input.closest("label")!.textContent!;
-    const position = Number(/Word (\d+)/.exec(label)![1]) - 1;
-    fireEvent.change(input, { target: { value: transform(WORDS[position]!) } });
-  }
-}
-
-describe("pickConfirmationPositions", () => {
-  it("returns distinct in-range positions in reading order", () => {
-    for (let trial = 0; trial < 50; trial += 1) {
-      const positions = dialog.pickConfirmationPositions(24);
-      expect(positions).toHaveLength(dialog.RECOVERY_CONFIRMATION_WORDS);
-      expect(new Set(positions).size).toBe(positions.length);
-      expect(positions.every((position) => position >= 0 && position < 24)).toBe(true);
-      expect([...positions].sort((a, b) => a - b)).toEqual(positions);
-    }
-  });
-
-  it("never asks for more words than the phrase has", () => {
-    expect(dialog.pickConfirmationPositions(2, 3, () => 0)).toEqual([0, 1]);
-  });
-});
-
-describe("recoveryWordMatches", () => {
-  it("ignores surrounding whitespace and case but not the word itself", () => {
-    expect(dialog.recoveryWordMatches("absorb", "  Absorb ")).toBe(true);
-    expect(dialog.recoveryWordMatches("absorb", "absurd")).toBe(false);
-    expect(dialog.recoveryWordMatches("absorb", "")).toBe(false);
-  });
-});
-
 describe("PendingRecoveryPhraseDialog", () => {
   it("renders nothing while no phrase is pending", () => {
     render(<dialog.PendingRecoveryPhraseDialog />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("shows every word numbered and cannot be dismissed without confirming", () => {
+  it("shows every word numbered and cannot be dismissed without acknowledging", () => {
     act(() => dialog.holdRecoveryPhrase(PHRASE));
     render(<dialog.PendingRecoveryPhraseDialog />);
     const modal = screen.getByRole("dialog", { name: "Save Your Recovery Phrase" });
@@ -79,33 +47,13 @@ describe("PendingRecoveryPhraseDialog", () => {
     expect(screen.getByRole("list", { name: "Recovery phrase" })).toHaveTextContent(WORDS[0]!);
   });
 
-  it("releases the phrase only after the requested words are re-entered correctly", () => {
+  it("releases the phrase after the user acknowledges recording it without re-entering words", () => {
     act(() => dialog.holdRecoveryPhrase(PHRASE));
     render(<dialog.PendingRecoveryPhraseDialog />);
+    expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "I’ve written it down" }));
-
-    const finish = screen.getByRole("button", { name: "Finish" });
-    expect(screen.getAllByRole("textbox")).toHaveLength(dialog.RECOVERY_CONFIRMATION_WORDS);
-    expect(finish).toBeDisabled();
-
-    answerRequestedWords((word) => `${word}x`);
-    expect(finish).toBeDisabled();
-    fireEvent.submit(finish.closest("form")!);
-    expect(dialog.pendingRecoveryPhrase()).toBe(PHRASE);
-
-    answerRequestedWords((word) => ` ${word.toUpperCase()} `);
-    expect(finish).toBeEnabled();
-    fireEvent.click(finish);
     expect(dialog.pendingRecoveryPhrase()).toBeNull();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
-
-  it("lets the user return to the phrase from the confirmation step", () => {
-    act(() => dialog.holdRecoveryPhrase(PHRASE));
-    render(<dialog.PendingRecoveryPhraseDialog />);
-    fireEvent.click(screen.getByRole("button", { name: "I’ve written it down" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show phrase again" }));
-    expect(screen.getByRole("list", { name: "Recovery phrase" })).toBeInTheDocument();
   });
 
   it("copies the phrase and reports when the clipboard is unavailable", async () => {
