@@ -379,7 +379,14 @@ impl Database {
                         value: value.map(|json| serde_json::from_str(&json)).transpose().map_err(display)?,
                     });
                 }
-                if resolved.iter().all(|candidate| candidate.value == resolved[0].value) {
+                if resolved.iter().all(|candidate| {
+                    same_frontier_value(
+                        entity_type.as_str(),
+                        &field,
+                        &candidate.value,
+                        &resolved[0].value,
+                    )
+                }) {
                     continue;
                 }
                 conflicts.push(FrontierConflict { entity_type, entity_id, field, candidates: resolved });
@@ -429,5 +436,40 @@ impl Database {
                 Ok((row.get::<_, bool>(0)?, row.get::<_, i64>(1)? as u64, row.get(2)?))
             })?)
         })
+    }
+}
+
+/// Task optionals are materialized as JSON `null`, while older or partial
+/// writes can leave the same unset field as a replica tombstone (`None`).
+/// They have identical task semantics and should not create a user-facing
+/// conflict. Keep this scoped to nullable task fields so a missing required
+/// value on another entity remains visible as a real conflict.
+fn same_frontier_value(
+    entity_type: &str,
+    field: &str,
+    left: &Option<Value>,
+    right: &Option<Value>,
+) -> bool {
+    if entity_type == EntityType::Task.as_str()
+        && matches!(
+            field,
+            "threadId"
+                | "sourceMessageId"
+                | "subjectSnapshot"
+                | "notes"
+                | "dueValue"
+                | "timeZone"
+                | "repeatIntervalDays"
+                | "completionSource"
+                | "evidenceText"
+                | "waitAfter"
+                | "completedAt"
+        )
+        && left.as_ref().is_none_or(Value::is_null)
+        && right.as_ref().is_none_or(Value::is_null)
+    {
+        true
+    } else {
+        left == right
     }
 }

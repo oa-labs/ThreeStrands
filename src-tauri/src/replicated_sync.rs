@@ -3572,6 +3572,74 @@ mod frontier_conflict_tests {
     }
 
     #[test]
+    fn task_null_and_absent_optional_values_are_not_reported_as_conflicts() {
+        let database = Database::open_memory();
+        let payload = json!({
+            "id": "t1", "title": "Follow up", "notes": null, "kind": "follow_up",
+            "dueKind": "none", "dueValue": null, "timeZone": null,
+            "repeatIntervalDays": null, "status": "open", "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z"
+        });
+        let task_fields = payload.as_object().unwrap().keys().cloned().collect();
+        database
+            .record_replicated_write(EntityType::Task, "t1", &task_fields, &payload)
+            .unwrap();
+
+        for field in ["dueValue", "timeZone", "repeatIntervalDays", "notes"] {
+            let base = database.load_replica_state().unwrap();
+            for value in [None, Some(Value::Null)] {
+                let mut remote = base.clone();
+                remote.write(
+                    random_id(),
+                    10,
+                    EntityType::Task,
+                    "t1",
+                    [(field.to_string(), value)],
+                );
+                database.merge_replica_state(&remote).unwrap();
+            }
+        }
+
+        assert!(database.list_frontier_conflicts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn absent_required_values_remain_conflicts() {
+        let database = Database::open_memory();
+        database
+            .record_replicated_write(
+                EntityType::Snippet,
+                "s1",
+                &fields(&["id", "name", "body", "createdAt"]),
+                &json!({
+                    "id": "s1",
+                    "name": "original",
+                    "body": "b",
+                    "createdAt": "2026-01-01T00:00:00Z"
+                }),
+            )
+            .unwrap();
+
+        let base = database.load_replica_state().unwrap();
+        for value in [None, Some(json!(null))] {
+            let mut remote = base.clone();
+            remote.write(
+                random_id(),
+                10,
+                EntityType::Snippet,
+                "s1",
+                [("name".to_string(), value)],
+            );
+            database.merge_replica_state(&remote).unwrap();
+        }
+        assert!(database
+            .list_frontier_conflicts()
+            .unwrap()
+            .iter()
+            .any(|conflict| { conflict.entity_id == "s1" && conflict.field == "name" }));
+    }
+
+    #[test]
     fn resolving_replaces_every_value_in_the_field_with_the_chosen_one() {
         let database = Database::open_memory();
         database
