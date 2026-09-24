@@ -8,14 +8,11 @@ import {
   ChevronUp,
   Command as CommandIcon,
   Copy,
-  FileText,
-  Send,
   Reply,
   ReplyAll,
   Forward,
   Inbox,
   Mail,
-  Mails,
   MailOpen,
   Moon,
   Download,
@@ -1720,7 +1717,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1781,8 +1778,6 @@ export function App() {
     selectAllRef.current.indeterminate = checkedIds.size > 0 && checkedIds.size < threads.length;
   }, [checkedIds, threads.length]);
 
-  const activeAccount = accounts.find((account) => account.email === activeAccountId) ?? null;
-
   const selectedThreads = threads.filter((thread) => checkedIds.has(thread.id));
   const allSelectedThreadsStarred = selectedThreads.length > 0
     && selectedThreads.every((thread) => thread.starred);
@@ -1813,56 +1808,9 @@ export function App() {
           onShowAll={context.showAllAccounts}
           onReorder={reorderNavbarAccounts}
         />
-        <div className="sidebar-nav sidebar-nav-primary">
-          <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button></HoverTooltip>
-          <HoverTooltip label="Inbox" shortcut="G I">
-            <button
-              className={`nav-button ${isTabbedMailbox ? "active" : ""}`}
-              aria-label="Inbox (g then i)"
-              onClick={() => executeById("mailbox.inbox")}
-            >
-              <Inbox size={19} />
-            </button>
-          </HoverTooltip>
-          <HoverTooltip label="All Mail" shortcut="G A">
-            <button
-              className={`nav-button ${mailbox === "allMail" ? "active" : ""}`}
-              aria-label="All Mail (g then a)"
-              onClick={() => executeById("mailbox.allMail")}
-            >
-              <Mails size={19} />
-            </button>
-          </HoverTooltip>
-          <HoverTooltip label="Drafts" shortcut="G D">
-            <button
-              className={`nav-button ${mailbox === "drafts" ? "active" : ""}`}
-              aria-label={`Drafts (${correspondence.draftCount}) (g then d)`}
-              onClick={() => executeById("drafts.open")}
-            >
-              <FileText size={19} />
-            </button>
-          </HoverTooltip>
-          <HoverTooltip label="Outbox">
-            <button
-              className={`nav-button ${mailbox === "outbox" ? "active" : ""}`}
-              aria-label={`Outbox (${correspondence.outboxCount})`}
-              onClick={() => executeById("outbox.open")}
-            >
-              <Send size={19} />
-            </button>
-          </HoverTooltip>
-          <HoverTooltip label="Trash" shortcut="G T">
-            <button
-              className={`nav-button ${mailbox === "trash" ? "active" : ""}`}
-              aria-label="Trash (g then t)"
-              onClick={() => executeById("mailbox.trash")}
-            >
-              <Trash2 size={19} />
-            </button>
-          </HoverTooltip>
-        </div>
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
+          <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button></HoverTooltip>
           <HoverTooltip label="Today’s schedule" shortcut="T">
             <button
               className={`nav-button ${rightWorkspace === "calendar" ? "active" : ""}`}
@@ -1984,12 +1932,13 @@ export function App() {
             <>
               <div className="thread-header-title">
                 <div>
-                  <span className="eyebrow">
-                    {isTabbedMailbox ? null : mailboxTitle}
-                    {activeAccount ? (
-                      <span className="eyebrow-account">{isTabbedMailbox ? "" : " · "}{activeAccount.email}</span>
-                    ) : null}
-                  </span>
+                  <FolderSwitcher
+                    selected={isTabbedMailbox ? "inbox" : mailbox}
+                    inboxUnreadCount={mailboxUnreadCounts.inbox}
+                    draftCount={correspondence.draftCount}
+                    outboxCount={correspondence.outboxCount}
+                    onSelect={(commandId) => executeById(commandId)}
+                  />
                   <h1>
                     {mailbox === "drafts"
                       ? `${correspondence.drafts.length} drafts`
@@ -2007,7 +1956,7 @@ export function App() {
                           className={`mailbox-tab ${mailbox === "inbox" ? "active" : ""}`}
                           onClick={() => context.openInbox()}
                         >
-                          Inbox{mailboxUnreadCounts.inbox > 0 ? ` ${mailboxUnreadCounts.inbox}` : ""}
+                          Main{mailboxUnreadCounts.inbox > 0 ? ` ${mailboxUnreadCounts.inbox}` : ""}
                         </button>
                         {accountSplitInboxes.map((splitInbox) => (
                           <button
@@ -2904,6 +2853,97 @@ function summaryPreview(summary: string, maxLength = 90): string {
   return first.length > maxLength ? `${first.slice(0, maxLength).trimEnd()}…` : first;
 }
 
+const FOLDER_OPTIONS = [
+  { id: "inbox", label: "Inbox", commandId: "mailbox.inbox", shortcut: "G I" },
+  { id: "allMail", label: "All Mail", commandId: "mailbox.allMail", shortcut: "G A" },
+  { id: "drafts", label: "Drafts", commandId: "drafts.open", shortcut: "G D" },
+  { id: "outbox", label: "Outbox", commandId: "outbox.open", shortcut: null },
+  { id: "trash", label: "Trash", commandId: "mailbox.trash", shortcut: "G T" },
+] as const;
+
+function FolderSwitcher({
+  selected,
+  inboxUnreadCount,
+  draftCount,
+  outboxCount,
+  onSelect,
+}: {
+  selected: Exclude<MailboxKind, "split">;
+  inboxUnreadCount: number;
+  draftCount: number;
+  outboxCount: number;
+  onSelect(commandId: string): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const title = MAILBOX_TITLES[selected];
+  useEscapeDismiss(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, open);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!anchorRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [open]);
+
+  const countFor = (id: (typeof FOLDER_OPTIONS)[number]["id"]) => {
+    if (id === "inbox") return inboxUnreadCount;
+    if (id === "drafts") return draftCount;
+    if (id === "outbox") return outboxCount;
+    return 0;
+  };
+
+  return (
+    <div className="folder-switcher" ref={anchorRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="folder-trigger eyebrow"
+        aria-label={`Choose folder, current folder ${title}`}
+        aria-expanded={open}
+        aria-controls={open ? "folder-switcher-options" : undefined}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {title}<ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div id="folder-switcher-options" className="folder-menu" role="group" aria-label="Folders">
+          {FOLDER_OPTIONS.map((option) => {
+            const count = countFor(option.id);
+            return (
+              <button
+                key={option.id}
+                type="button"
+                className={`folder-menu-item ${selected === option.id ? "active" : ""}`}
+                aria-current={selected === option.id ? "page" : undefined}
+                onClick={() => {
+                  setOpen(false);
+                  onSelect(option.commandId);
+                }}
+              >
+                <span className="folder-menu-label">
+                  <span className="folder-menu-check" aria-hidden="true">{selected === option.id ? <Check size={14} /> : null}</span>
+                  {option.label}
+                </span>
+                <span className="folder-menu-meta" aria-hidden="true">
+                  {count > 0 ? <span>{count}</span> : null}
+                  {option.shortcut ? <kbd>{option.shortcut}</kbd> : null}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function AccountSwitcher({
   accounts,
   unreadCounts,
@@ -2923,7 +2963,7 @@ export function AccountSwitcher({
   const [dragOverEmail, setDragOverEmail] = useState<string | null>(null);
   const draggedEmailRef = useRef<string | null>(null);
 
-  if (accounts.length <= 1) return null;
+  if (accounts.length === 0) return null;
 
   const totalUnread = accounts.reduce((total, account) => total + (unreadCounts[account.email] ?? 0), 0);
 
@@ -2950,7 +2990,7 @@ export function AccountSwitcher({
 
   return (
     <div className="account-rail" role="radiogroup" aria-label="Filter by account">
-      <HoverTooltip label="All accounts">
+      {accounts.length > 1 ? <HoverTooltip label="All accounts">
         <button
           type="button"
           role="radio"
@@ -2961,19 +3001,20 @@ export function AccountSwitcher({
         >
           {totalUnread > 0 ? <UnreadBadge count={totalUnread} /> : null}
         </button>
-      </HoverTooltip>
+      </HoverTooltip> : null}
       {accounts.map((account) => {
         const name = account.displayName ?? account.email;
         const unreadCount = unreadCounts[account.email] ?? 0;
+        const selected = activeAccountId === account.email || (accounts.length === 1 && activeAccountId === null);
         return (
-          <HoverTooltip key={account.email} label={name} title="Drag to reorder accounts">
+          <HoverTooltip key={account.email} label={account.email}>
             <button
               type="button"
               role="radio"
-              aria-checked={activeAccountId === account.email}
+              aria-checked={selected}
               aria-label={unreadCount > 0 ? `${name}, ${unreadCount} unread` : name}
               draggable
-              className={`account-icon ${activeAccountId === account.email ? "active" : ""} ${draggedEmail === account.email ? "dragging" : ""} ${dragOverEmail === account.email && draggedEmail !== account.email ? "drag-over" : ""}`}
+              className={`account-icon ${selected ? "active" : ""} ${draggedEmail === account.email ? "dragging" : ""} ${dragOverEmail === account.email && draggedEmail !== account.email ? "drag-over" : ""}`}
               style={{ background: account.color }}
               onClick={() => onSwitch(account.email)}
               onDragStart={(event) => {

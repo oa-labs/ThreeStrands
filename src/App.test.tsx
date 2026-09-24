@@ -6,6 +6,11 @@ import { FOREGROUND_DEBOUNCE_MS, FOREGROUND_IDLE_MS } from "./foregroundRefresh"
 
 const demoThreadIds = ["welcome", "roadmap", "privacy"];
 
+function selectFolder(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: /Choose folder, current folder/ }));
+  fireEvent.click(within(screen.getByRole("group", { name: "Folders" })).getByRole("button", { name }));
+}
+
 async function archiveSelected() {
   const button = await screen.findByRole("button", { name: "Archive (e)" });
   await act(async () => {
@@ -82,7 +87,7 @@ describe("archive notice", () => {
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
       expect(screen.queryByText(/Label_18/i)).not.toBeInTheDocument();
-      expect(await screen.findByText("Inbox", { selector: ".eyebrow" })).toBeInTheDocument();
+      expect(await screen.findByText("Inbox", { selector: "span.eyebrow" })).toBeInTheDocument();
       expect(await screen.findByText("Projects", { selector: ".user-label-badge" })).toBeInTheDocument();
       expect(listLabels).toHaveBeenCalledWith("demo@example.com");
     } finally {
@@ -849,12 +854,12 @@ describe("Escape dismissal", () => {
   it("switches to the inline Drafts view and back to the inbox without losing state", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: /Drafts \(0\)/ }));
+    selectFolder("Drafts");
 
     expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Inbox (g then i)" }));
+    selectFolder("Inbox");
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
@@ -863,7 +868,7 @@ describe("Escape dismissal", () => {
     await mailClient.createDraft("new");
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(await screen.findByRole("button", { name: /Drafts \(2\)/ }));
+    selectFolder("Drafts");
     expect(await screen.findByRole("heading", { name: "2 drafts" })).toBeInTheDocument();
 
     const [first] = screen.getAllByRole("button", { name: /\(no subject\)/ });
@@ -878,7 +883,7 @@ describe("Escape dismissal", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Discard Draft" })).not.toBeInTheDocument());
     expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Inbox (g then i)" }));
+    selectFolder("Inbox");
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
@@ -1018,6 +1023,25 @@ describe("account selection persistence", () => {
 
     expect(screen.getByRole("radio", { name: "All accounts, 123 unread" })).toHaveTextContent("99+");
     expect(screen.getByRole("radio", { name: `${primary.email}, 3 unread` })).toHaveTextContent("3");
+    expect(screen.getByRole("tooltip", { name: "work@example.com" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Work, 120 unread" })).toHaveTextContent("99+");
+  });
+
+  it("keeps a single account visible when the header shows the folder", async () => {
+    const [account] = await mailClient.listAccounts();
+    render(
+      <AccountSwitcher
+        accounts={[account!]}
+        unreadCounts={{}}
+        activeAccountId={null}
+        onSwitch={() => {}}
+        onShowAll={() => {}}
+        onReorder={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("radio", { name: account!.email })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("tooltip", { name: account!.email, hidden: true })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "All Accounts" })).not.toBeInTheDocument();
   });
 });

@@ -219,7 +219,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await rail.getByRole("radio", { name: "All Accounts" }).click();
   await expect(page.locator(".thread-row .account-dot").first()).toBeVisible();
 
-  // Removing the second account leaves the first one's shortcuts and inbox unaffected.
+  // Removing the second account keeps the first account identifiable and its inbox unaffected.
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
@@ -227,7 +227,9 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await expect(settings.locator(".accounts-list li")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
-  await expect(rail).toBeHidden();
+  await expect(rail.getByRole("radio")).toHaveCount(1);
+  await rail.getByRole("radio", { name: /demo@example.com/ }).hover();
+  await expect(page.getByRole("tooltip", { name: "demo@example.com" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
   await page.keyboard.press("j");
   await expect(page.getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
@@ -363,7 +365,8 @@ test("opens Superhuman-compatible folder destinations", async ({ page }) => {
 
   await page.keyboard.press("g");
   await page.keyboard.press("i");
-  await expect(page.getByRole("button", { name: "Inbox (g then i)" })).toHaveClass(/active/);
+  await expect(page.getByRole("button", { name: "Choose folder, current folder Inbox" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
   await page.keyboard.press("l");
@@ -461,30 +464,23 @@ test("archived and trashed threads move between Inbox, All Mail, and Trash", asy
   await expect(page.getByRole("option", { name: roadmap })).toBeVisible();
 });
 
-test("shows folder labels and shortcuts on hover", async ({ page }) => {
+test("shows folder labels and shortcuts in the header menu", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Inbox (g then i)" }).hover();
-  const inboxTooltip = page.getByRole("tooltip").filter({ hasText: "Inbox" });
-  await expect(inboxTooltip).toBeVisible();
-  await expect(inboxTooltip.locator("strong")).toHaveText("Inbox");
-  await expect(inboxTooltip.locator("kbd")).toHaveText("G I");
-
-  await page.getByRole("button", { name: /Drafts .*g then d/ }).hover();
-  const draftsTooltip = page.getByRole("tooltip").filter({ hasText: "Drafts" });
-  await expect(draftsTooltip).toBeVisible();
-  await expect(draftsTooltip.locator("kbd")).toHaveText("G D");
+  const trigger = page.getByRole("button", { name: "Choose folder, current folder Inbox" });
+  await trigger.click();
+  const folders = page.getByRole("group", { name: "Folders" });
+  await expect(folders.getByRole("button", { name: "Inbox" }).locator("kbd")).toHaveText("G I");
+  await expect(folders.getByRole("button", { name: "Drafts" }).locator("kbd")).toHaveText("G D");
+  await expect(folders.getByRole("button", { name: "Outbox" }).locator("kbd")).toHaveCount(0);
+  await trigger.click();
 
   await page.getByRole("button", { name: "Labels (l)" }).hover();
   const labelsTooltip = page.getByRole("tooltip").filter({ hasText: "Manage Labels" });
   await expect(labelsTooltip).toBeVisible();
   await expect(labelsTooltip.locator("kbd")).toHaveText("L");
 
-  await page.getByRole("button", { name: /Outbox/ }).hover();
-  const outboxTooltip = page.getByRole("tooltip").filter({ hasText: "Outbox" });
-  await expect(outboxTooltip).toBeVisible();
-  await expect(outboxTooltip.locator("kbd")).toHaveCount(0);
 });
 
 test("switches themes and remembers the choice after reload", async ({ page }) => {

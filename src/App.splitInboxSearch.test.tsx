@@ -1,7 +1,12 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { mailClient } from "./data/client";
+
+function selectFolder(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: /Choose folder, current folder/ }));
+  fireEvent.click(within(screen.getByRole("group", { name: "Folders" })).getByRole("button", { name }));
+}
 
 describe("split inbox search shortcuts", () => {
   afterEach(() => {
@@ -10,6 +15,25 @@ describe("split inbox search shortcuts", () => {
     localStorage.removeItem("threestrands.settings.selectedMailboxByAccount");
     localStorage.removeItem("threestrands.settings.selectedTabByAccount");
     vi.restoreAllMocks();
+  });
+
+  it("shows Inbox as the folder and Main as the default tab, with a dismissible folder menu", async () => {
+    render(<App />);
+    expect(await screen.findByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true");
+    const trigger = screen.getByRole("button", { name: "Choose folder, current folder Inbox" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("navigation", { name: "Mailboxes" }).querySelectorAll(".sidebar-nav")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "New message (c)" }).closest(".sidebar-nav")).toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const folders = screen.getByRole("group", { name: "Folders" });
+    expect(within(folders).getByRole("button", { name: "Inbox" })).toHaveAttribute("aria-current", "page");
+    expect(within(folders).getAllByRole("button").map((button) => button.textContent)).toEqual(
+      expect.arrayContaining([expect.stringContaining("All Mail"), expect.stringContaining("Drafts"), expect.stringContaining("Outbox"), expect.stringContaining("Trash")]),
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("group", { name: "Folders" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it("keeps the search query while cycling or clicking between mailbox tabs", async () => {
@@ -32,7 +56,7 @@ describe("split inbox search shortcuts", () => {
     const splitTab = await screen.findByRole("tab", { name: "Work" });
     fireEvent.click(splitTab);
     await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
-    expect(screen.getByRole("button", { name: "Inbox (g then i)" })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: "Choose folder, current folder Inbox" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "/" });
     const search = await screen.findByRole("textbox", { name: "Search Mail" });
@@ -47,7 +71,7 @@ describe("split inbox search shortcuts", () => {
     await waitFor(() => expect(backfillSearchThreads).toHaveBeenCalledWith("roadmap", "demo@example.com"));
 
     fireEvent.keyDown(search, { key: "Tab" });
-    await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
     expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveFocus();
 
@@ -56,7 +80,7 @@ describe("split inbox search shortcuts", () => {
     expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
 
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Search Mail" }), { key: "Tab", shiftKey: true });
-    await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
   });
 
@@ -71,19 +95,19 @@ describe("split inbox search shortcuts", () => {
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
 
-    fireEvent.click(screen.getByRole("button", { name: /^Outbox/ }));
-    expect(screen.getByRole("button", { name: /^Outbox/ })).toHaveClass("active");
+    selectFolder("Outbox");
+    expect(screen.getByRole("button", { name: "Choose folder, current folder Outbox" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "2", ctrlKey: true });
     await waitFor(() => expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true"));
-    fireEvent.click(screen.getByRole("button", { name: "All Mail (g then a)" }));
-    expect(screen.getByRole("button", { name: "All Mail (g then a)" })).toHaveClass("active");
+    selectFolder("All Mail");
+    expect(screen.getByRole("button", { name: "Choose folder, current folder All Mail" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("radio", { name: /^demo@example\.com/ }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /^Outbox/ })).toHaveClass("active"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose folder, current folder Outbox" })).toBeInTheDocument());
 
     fireEvent.keyDown(window, { key: "2", ctrlKey: true });
-    await waitFor(() => expect(screen.getByRole("button", { name: "All Mail (g then a)" })).toHaveClass("active"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose folder, current folder All Mail" })).toBeInTheDocument());
   });
 
   it("closes the search box when switching accounts, but not when switching tabs", async () => {
@@ -129,19 +153,18 @@ describe("split inbox search shortcuts", () => {
   it("starts every folder outside the tab bar with a closed, empty search", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     render(<App />);
-    await screen.findByRole("tab", { name: /^Inbox/ });
+    await screen.findByRole("tab", { name: /^Main/ });
 
-    for (const folder of ["All Mail (g then a)", "Trash (g then t)", /^Drafts \(\d+\) \(g then d\)$/, /^Outbox \(\d+\)$/]) {
+    for (const folder of ["All Mail", "Trash", "Drafts", "Outbox"]) {
       fireEvent.keyDown(window, { key: "/" });
       fireEvent.change(await screen.findByRole("textbox", { name: "Search Mail" }), { target: { value: "roadmap" } });
 
-      const button = screen.getByRole("button", { name: folder });
-      fireEvent.click(button);
-      await waitFor(() => expect(button).toHaveClass("active"));
+      selectFolder(folder);
+      await waitFor(() => expect(screen.getByRole("button", { name: `Choose folder, current folder ${folder}` })).toBeInTheDocument());
       expect(screen.queryByRole("textbox", { name: "Search Mail" })).not.toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: "Inbox (g then i)" }));
-      await screen.findByRole("tab", { name: /^Inbox/ });
+      selectFolder("Inbox");
+      await screen.findByRole("tab", { name: /^Main/ });
     }
   });
 
@@ -167,8 +190,8 @@ describe("split inbox search shortcuts", () => {
     await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
     expect(rememberedTab()).toBe("work-split");
 
-    fireEvent.click(screen.getByRole("tab", { name: /^Inbox/ }));
-    await waitFor(() => expect(screen.getByRole("tab", { name: /^Inbox/ })).toHaveAttribute("aria-selected", "true"));
+    fireEvent.click(screen.getByRole("tab", { name: /^Main/ }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true"));
     expect(rememberedTab()).toBeNull();
   });
 

@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
 
+async function openFolders(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: /Choose folder, current folder/ }).click();
+  return page.getByRole("group", { name: "Folders" });
+}
+
 test("saves an offline draft, restores after reload, sends once, and undoes", async ({ page, context }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New Message (c)" }).click();
@@ -12,14 +17,16 @@ test("saves an offline draft, restores after reload, sends once, and undoes", as
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
   await context.setOffline(false);
   await page.reload();
-  await page.getByRole("button", { name: "Drafts (1)" }).click();
+  const folders = await openFolders(page);
+  await expect(folders.getByRole("button", { name: "Drafts" })).toContainText("1");
+  await folders.getByRole("button", { name: "Drafts" }).click();
   await page.getByRole("button", { name: /Offline draft/ }).click();
   await expect(composer.getByRole("textbox", { name: "Message Body" })).toHaveText("Hello j k e r a f — these are text, not inbox actions.");
   await page.keyboard.press("ControlOrMeta+Enter");
   await expect(composer).not.toBeVisible();
   await page.getByRole("button", { name: "Undo Send", exact: true }).click();
   await expect(composer.getByRole("textbox", { name: "Subject" })).toHaveValue("Offline draft");
-  await expect(page.getByRole("button", { name: "Outbox (0)" })).toBeVisible();
+  await expect((await openFolders(page)).getByRole("button", { name: "Outbox" }).locator(".folder-menu-meta > span")).toHaveCount(0);
 });
 
 test("reply shortcuts keep inbox actions out of the composer and forwarding starts unaddressed", async ({ page }) => {
@@ -144,7 +151,7 @@ test("the command palette can send from a composer and the outbox records simula
   await page.getByRole("button", { name: /Send Draft/ }).click();
   await expect(page.getByRole("dialog", { name: "New Message" })).not.toBeVisible();
   await page.clock.fastForward(11000);
-  await page.getByRole("button", { name: /Outbox \(/ }).click();
+  await (await openFolders(page)).getByRole("button", { name: "Outbox" }).click();
   await expect(page.getByRole("list", { name: "Outbox" })).toContainText("sent");
 });
 
