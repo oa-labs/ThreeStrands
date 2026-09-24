@@ -146,6 +146,7 @@ button { color: inherit; }
 
 .account-rail, .sidebar-nav { display: flex; flex-direction: column; align-items: center; gap: var(--sidebar-item-gap); }
 .account-rail { gap: 16px; }
+.sidebar-nav-primary { flex: 1 1 auto; justify-content: center; min-height: 0; }
 .account-icon {
   position: relative;
   width: var(--sidebar-item-size);

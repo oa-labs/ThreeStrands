@@ -1813,7 +1813,7 @@ export function App() {
           onShowAll={context.showAllAccounts}
           onReorder={reorderNavbarAccounts}
         />
-        <div className="sidebar-nav">
+        <div className="sidebar-nav sidebar-nav-primary">
           <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button></HoverTooltip>
           <HoverTooltip label="Inbox" shortcut="G I">
             <button
