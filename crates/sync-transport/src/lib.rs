@@ -12,7 +12,7 @@
 //!   reconstruct history.
 //! - `put_object` is at-least-once and idempotent by CID.
 //! - A provider deletion is not a logical sync deletion and never inverts
-//!   an already-applied event.
+//!   anything already merged.
 //! - This crate never branches on a named provider; adapters live outside
 //!   it and are held only as `dyn SyncTransport` by callers.
 
@@ -61,7 +61,7 @@ pub trait SyncTransport: Send + Sync {
 
     /// Removes an object from this transport instance. A *provider*
     /// deletion, not a logical sync deletion: it never inverts an
-    /// already-applied event, and other replicas are unaffected.
+    /// anything already merged, and other replicas are unaffected.
     async fn delete_object(&self, cid: &Cid) -> Result<(), TransportError>;
 
     /// This instance's current health, for the replicator's aggregation

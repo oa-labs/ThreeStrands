@@ -449,7 +449,7 @@ impl SyncTransport for IpfsRpcTransport {
         // Verification happens in the sync layer, which has the roster's
         // public keys. Return every self-describing candidate instead of
         // trusting an unverified high sequence to suppress a valid head.
-        heads.sort_by_key(|signed| std::cmp::Reverse(signed.head.contiguous_sequence));
+        heads.sort_by_key(|signed| std::cmp::Reverse(signed.head.state_sequence));
         Ok(heads)
     }
 
@@ -1115,11 +1115,9 @@ mod transport_tests {
             sync_space_id: b"space".to_vec(),
             device_id,
             epoch: 1,
-            contiguous_sequence: 1,
-            latest_event_cid: None,
+            state_sequence: 1,
+            state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
             published_at_ms: 0,
-            ack: vec![],
-            snapshot_cid: None,
         };
         let signed = sign_device_head(&signing_key, head).unwrap();
         transport.publish_head(&signed).await.unwrap();
@@ -1146,11 +1144,9 @@ mod transport_tests {
                 sync_space_id: b"space".to_vec(),
                 device_id,
                 epoch: 1,
-                contiguous_sequence: sequence,
-                latest_event_cid: None,
+                state_sequence: sequence,
+                state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
                 published_at_ms: 0,
-                ack: vec![],
-                snapshot_cid: None,
             };
             let signed = sign_device_head(&signing_key, head).unwrap();
             transport.publish_head(&signed).await.unwrap();
@@ -1165,7 +1161,7 @@ mod transport_tests {
             .unwrap();
         let sequences: Vec<u64> = resolved
             .iter()
-            .map(|head| head.head.contiguous_sequence)
+            .map(|head| head.head.state_sequence)
             .collect();
         assert_eq!(sequences, vec![3, 2, 1]);
         assert_eq!(
@@ -1197,11 +1193,9 @@ mod transport_tests {
                     sync_space_id,
                     device_id,
                     epoch: 1,
-                    contiguous_sequence: 1,
-                    latest_event_cid: None,
+                    state_sequence: 1,
+                    state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
                     published_at_ms: 0,
-                    ack: vec![],
-                    snapshot_cid: None,
                 },
             )
             .unwrap();

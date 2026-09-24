@@ -1,34 +1,23 @@
-//! Local persistence and projection scaffolding for the pluggable
-//! replicated-sync engine (see `docs`/the sync rewrite plan, Phase 2).
+//! The replicated-sync engine: keys, transports, and the push/pull cycle
+//! that replicates this device's replica state (`sync_state.rs`) with its
+//! peers'.
 //!
-//! This module owns the local operation graph: one row per logical event
-//! (`sync_events`), one row per field-level write (`sync_operations`), its
-//! parent edges (`sync_operation_parents`), and the current frontier per
-//! field (`sync_field_frontier`) — the same model implemented and property
-//! tested in `crates/sync-core`, here reduced to its local-only case: every
-//! operation recorded through this module originates on this device, so a
-//! write's parents are always exactly the field's current frontier and can
-//! never already be "consumed" by an unseen child. The general (possibly
-//! out-of-order, possibly duplicate) case belongs to a future phase's
-//! remote-apply path, which can reuse `threestrands_sync_core::OperationGraph`
-//! directly instead of this module's simpler SQL.
+//! Each device keeps one sealed, encrypted snapshot of its whole replica
+//! on every connector and a signed head pointing at it. A push seals a new
+//! snapshot when the replica changed, delivers it, points each connector's
+//! head at it once that connector has all of it, and deletes the previous
+//! snapshot there. A pull merges each peer's latest snapshot that is newer
+//! than the one last merged from it, then materializes whatever changed.
+//! There is no log to replay, walk, or compact: a device offline for any
+//! length of time just merges its peers' current states.
 //!
 //! Entirely inert unless [`Database::replicated_sync_active`] is true (the
 //! Settings beta toggle, or the `THREESTRANDS_REPLICATED_SYNC` environment
-//! override). Mutation commands in `lib.rs` reach this module through
+//! override). Mutation commands in `lib.rs` reach the replica through
 //! `Database::record_local_entity_write` and
 //! `Database::record_local_entity_deletion` in `sync_projection.rs`.
-//!
-//! The rest of this module (from "Key material" on) is the Phase 3/4
-//! replicator: sealing local events, delivering them to configured
-//! transports, pulling and applying remote events, anti-entropy repair, and
-//! health aggregation, plus the folder transport (`sync_folder.rs`). Unlike
-//! the section above, `apply_remote_operation` implements the *general*
-//! operation-graph algorithm (out-of-order and duplicate tolerant), because
-//! a remote origin genuinely can deliver a child before its parent.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -38,14 +27,12 @@ use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use threestrands_sync_core::{EntityType, WinnerStamp, ENTITY_EXISTENCE_FIELD};
+use threestrands_sync_core::{EntityType, ENTITY_EXISTENCE_FIELD};
 use threestrands_sync_envelope::{
-    compute_cid, message_key_epoch, open_message, seal_event, sign_device_head, verify_device_head, DeviceHead,
-    DeviceId as EnvelopeDeviceId, EventId as EnvelopeEventId, FieldOperation, ObjectKind,
-    OpenParams, OperationId as EnvelopeOperationId, SealParams, SignedDeviceHead, SigningKey,
-    SyncEvent, UnsignedSyncEvent, VerifyingKey, PROTOCOL_MARKER, PROTOCOL_VERSION,
+    compute_cid, message_key_epoch, open_snapshot, protocol_marker_cid, seal_snapshot, sign_device_head, verify_device_head,
+    DeviceHead, DeviceId as EnvelopeDeviceId, ObjectKind, OpenParams, SealParams, SignedDeviceHead, SigningKey, VerifyingKey,
+    PROTOCOL_MARKER,
 };
-use threestrands_sync_envelope::protocol_marker_cid;
 use threestrands_sync_transport::{
     Cid as TransportCid, HeadLocator, SyncTransport, TransportError, TransportHealth,
     TransportInstanceId,
@@ -127,7 +114,7 @@ impl Database {
 /// pending and is retried after the account materializes." Reuses the exact
 /// same dependency check `sync_projection::upsert_synced_calendar_selection`
 /// performs. Used by `materialize_one_entity`
-/// while projecting a pulled remote event.
+/// while projecting a merged peer snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectionReadiness {
     Ready,
@@ -158,85 +145,13 @@ pub struct FrontierConflict {
 }
 
 impl Database {
-    /// Records a local field-level write (creation or update) into the
-    /// replicated-sync operation graph, in one transaction: device-sequence
-    /// increment, lamport increment, event insert, one operation per field,
-    /// and frontier maintenance. A no-op while a remote projection is being
-    /// applied (see [`Self::with_remote_projection`]), so applying an
-    /// already-authenticated remote write can reuse the same materializer
-    /// path this module will grow without creating an echo.
-    ///
-    /// `fields` names the changed fields; each one's value is read from the
-    /// complete `payload` (see `Database::record_local_entity_write`).
-    pub fn record_replicated_write(
-        &self,
-        entity_type: EntityType,
-        entity_id: &str,
-        fields: &BTreeSet<String>,
-        payload: &Value,
-    ) -> Result<(), String> {
-        if self.is_projecting_remote_operation() {
-            return Ok(());
-        }
-        self.with_transaction(|tx| {
-            let device_id = ensure_space_and_device(tx)?;
-            let creating = !entity_has_any_operation(tx, entity_type, entity_id)?;
-            let (event_id_hex, event_id, lamport) = begin_event(tx, device_id)?;
-
-            if creating {
-                apply_field_operation(
-                    tx,
-                    entity_type,
-                    entity_id,
-                    ENTITY_EXISTENCE_FIELD,
-                    Some(Value::Bool(true)),
-                    &event_id_hex,
-                    device_id,
-                    event_id,
-                    lamport,
-                )?;
-            }
-            for field in fields {
-                if field == "*" {
-                    continue;
-                }
-                let value = payload.get(field).cloned();
-                apply_field_operation(
-                    tx,
-                    entity_type,
-                    entity_id,
-                    field,
-                    value,
-                    &event_id_hex,
-                    device_id,
-                    event_id,
-                    lamport,
-                )?;
-            }
-            Ok(())
-        })
-        .map_err(String::from)
-    }
-
-    /// True once at least one operation has been recorded for this entity
-    /// anywhere in the graph (locally or via a pulled remote event).
-    fn entity_recorded_in_graph(&self, entity_type: EntityType, entity_id: &str) -> DbResult<bool> {
-        self.with_connection(|connection| {
-            Ok(connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_operations WHERE entity_type=?1 AND entity_id=?2)",
-                params![entity_type.as_str(), entity_id],
-                |row| row.get(0),
-            )?)
-        })
-    }
-
     /// Enqueues `entity_id` as a creation if the graph has no operation for
     /// it yet; a no-op otherwise. `record_replicated_write` already treats
     /// "no prior operation" as creation and writes `_entity=true` plus
     /// every field in `payload`, so this is just that call guarded by the
     /// existence check.
     fn reconcile_one_entity(&self, entity_type: EntityType, entity_id: &str, payload: Value) -> Result<bool, String> {
-        if self.entity_recorded_in_graph(entity_type, entity_id)? {
+        if self.entity_recorded(entity_type, entity_id)? {
             return Ok(false);
         }
         let fields: BTreeSet<String> = payload
@@ -322,141 +237,18 @@ impl Database {
         Ok(repaired)
     }
 
-    /// Records a local deletion: an ordinary write of `_entity = false`, the
-    /// reserved existence field. See the module doc for why deletion never
-    /// touches any other field's frontier.
-    pub fn record_replicated_deletion(&self, entity_type: EntityType, entity_id: &str) -> Result<(), String> {
-        if self.is_projecting_remote_operation() {
-            return Ok(());
-        }
-        self.with_transaction(|tx| {
-            let device_id = ensure_space_and_device(tx)?;
-            let (event_id_hex, event_id, lamport) = begin_event(tx, device_id)?;
-            apply_field_operation(
-                tx,
-                entity_type,
-                entity_id,
-                ENTITY_EXISTENCE_FIELD,
-                Some(Value::Bool(false)),
-                &event_id_hex,
-                device_id,
-                event_id,
-                lamport,
-            )
-        })
-        .map_err(String::from)
-    }
-
-    /// Every field currently in conflict: a frontier with more than one
-    /// member whose values differ. This is the multi-value register the
-    /// plan's conflict UI reviews and resolves — see
-    /// [`Self::resolve_frontier_conflict`]. Concurrent writes that agree on
-    /// the value (for example, two devices that already held the same data
-    /// before joining one space) leave nothing to choose between, so they
-    /// are not reported; the frontier still keeps both members and the next
-    /// write to the field collapses it as usual.
-    pub fn list_frontier_conflicts(&self) -> Result<Vec<FrontierConflict>, String> {
-        self.with_connection(|connection| {
-            let keys: Vec<(String, String, String)> = {
-                let mut statement = connection.prepare(
-                    "SELECT entity_type, entity_id, field FROM sync_field_frontier
-                     GROUP BY entity_type, entity_id, field HAVING COUNT(*) > 1",
-                )?;
-                let rows = statement
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                rows
-            };
-
-            let mut conflicts = Vec::with_capacity(keys.len());
-            for (entity_type, entity_id, field) in keys {
-                let candidates: Vec<(String, Option<String>, Vec<u8>)> = {
-                    let mut statement = connection.prepare(
-                        "SELECT so.operation_id, so.value, so.winner_stamp FROM sync_field_frontier sf
-                         JOIN sync_operations so ON so.operation_id = sf.operation_id
-                         WHERE sf.entity_type=?1 AND sf.entity_id=?2 AND sf.field=?3",
-                    )?;
-                    let rows = statement
-                        .query_map(params![entity_type, entity_id, field], |row| {
-                            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                        })?
-                        .collect::<Result<Vec<_>, _>>()?;
-                    rows
-                };
-                let mut resolved_candidates = Vec::with_capacity(candidates.len());
-                for (operation_id, value_json, stamp_bytes) in candidates {
-                    // encode_winner_stamp lays out lamport(8) || device_id(16) ||
-                    // event_id(16) || operation_id(16); device_id is the middle
-                    // 16 bytes.
-                    let device_id = stamp_bytes.get(8..24).map(hex_encode).unwrap_or_default();
-                    let value: Option<Value> =
-                        value_json.map(|json| serde_json::from_str(&json)).transpose().map_err(display)?;
-                    resolved_candidates.push(FrontierConflictCandidate {
-                        operation_id,
-                        device_id,
-                        value,
-                    });
-                }
-                let first_value = &resolved_candidates[0].value;
-                if resolved_candidates.iter().all(|candidate| &candidate.value == first_value) {
-                    continue;
-                }
-                conflicts.push(FrontierConflict {
-                    entity_type,
-                    entity_id,
-                    field,
-                    candidates: resolved_candidates,
-                });
-            }
-            Ok(conflicts)
-        })
-        .map_err(String::from)
-    }
-
-    /// Resolves a field conflict: an ordinary local write carrying the
-    /// chosen candidate's value. `apply_field_operation` already names
-    /// whatever is *currently* in the field's frontier as this write's
-    /// parents, which — because every candidate in the conflict is, by
-    /// definition, still in that frontier — is exactly "names the entire
-    /// current frontier as parents," the plan's conflict-resolution
-    /// contract, with no special-cased logic needed beyond picking the
-    /// value.
-    pub fn resolve_frontier_conflict(
-        &self,
-        entity_type: EntityType,
-        entity_id: &str,
-        field: &str,
-        chosen_operation_id: &str,
-    ) -> Result<(), String> {
-        let stored_value: Option<String> = self.with_connection(|connection| {
-            Ok(connection.query_row(
-                "SELECT value FROM sync_operations WHERE operation_id=?1",
-                params![chosen_operation_id],
-                |row| row.get(0),
-            )?)
-        })?;
-        let value: Option<Value> = stored_value.map(|json| serde_json::from_str(&json)).transpose().map_err(display)?;
-
-        self.with_transaction(|tx| {
-            let device_id = ensure_space_and_device(tx)?;
-            let (event_id_hex, event_id, lamport) = begin_event(tx, device_id)?;
-            apply_field_operation(tx, entity_type, entity_id, field, value, &event_id_hex, device_id, event_id, lamport)
-        })
-        .map_err(String::from)
-    }
-
     /// True while an already-authenticated remote (or conflict-resolution)
     /// operation is being applied. A shared materializer checks this before
     /// calling [`Self::record_replicated_write`] / [`Self::record_replicated_deletion`]
     /// so projecting a remote write never re-enqueues it as a new local
-    /// event — the echo-prevention the plan calls for.
+    /// write — the echo-prevention the plan calls for.
     pub(crate) fn is_projecting_remote_operation(&self) -> bool {
         self.replicated_sync_projecting.load(Ordering::SeqCst)
     }
 
     /// Runs `work` with remote-projection suppression engaged. Always
     /// restores the flag afterward, including when `work` returns an error.
-    /// Wraps `materialize_touched_entities`'s projection of a pulled event.
+    /// Wraps `materialize_touched_entities`'s projection of a merged snapshot.
     pub(crate) fn with_remote_projection<R>(&self, work: impl FnOnce() -> Result<R, String>) -> Result<R, String> {
         self.replicated_sync_projecting.store(true, Ordering::SeqCst);
         let result = work();
@@ -512,103 +304,6 @@ pub(crate) fn ensure_space_and_device(tx: &Transaction) -> DbResult<[u8; 16]> {
     Ok(device_id)
 }
 
-fn entity_has_any_operation(tx: &Transaction, entity_type: EntityType, entity_id: &str) -> DbResult<bool> {
-    Ok(tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sync_operations WHERE entity_type=?1 AND entity_id=?2)",
-        params![entity_type.as_str(), entity_id],
-        |row| row.get(0),
-    )?)
-}
-
-/// Bumps this device's sequence and the space's lamport, inserts the event
-/// row, and returns identifiers every operation in the event shares.
-fn begin_event(tx: &Transaction, device_id: [u8; 16]) -> DbResult<(String, [u8; 16], u64)> {
-    let device_id_hex = encode_id(&device_id);
-    let device_sequence: i64 = tx.query_row(
-        "SELECT COALESCE(MAX(device_sequence),0)+1 FROM sync_events WHERE device_id=?1",
-        params![device_id_hex],
-        |row| row.get(0),
-    )?;
-    let lamport: i64 = tx.query_row(
-        "UPDATE sync_spaces SET lamport = lamport + 1 WHERE id=?1 RETURNING lamport",
-        params![SPACE_ID],
-        |row| row.get(0),
-    )?;
-    let event_id = random_id();
-    let event_id_hex = encode_id(&event_id);
-    tx.execute(
-        "INSERT INTO sync_events(event_id, epoch, device_id, device_sequence, lamport, state, created_at)
-         VALUES (?1,0,?2,?3,?4,'recorded',?5)",
-        params![event_id_hex, device_id_hex, device_sequence, lamport, Utc::now().to_rfc3339()],
-    )?;
-    Ok((event_id_hex, event_id, lamport as u64))
-}
-
-/// Names the current frontier as parents, inserts the new operation and its
-/// parent edges, and replaces the field's frontier with just this operation
-/// — correct because every caller is local-only (see the module doc).
-#[allow(clippy::too_many_arguments)]
-fn apply_field_operation(
-    tx: &Transaction,
-    entity_type: EntityType,
-    entity_id: &str,
-    field: &str,
-    value: Option<Value>,
-    event_id_hex: &str,
-    device_id: [u8; 16],
-    event_id: [u8; 16],
-    lamport: u64,
-) -> DbResult<()> {
-    let parents: Vec<String> = {
-        let mut statement = tx.prepare(
-            "SELECT operation_id FROM sync_field_frontier
-             WHERE entity_type=?1 AND entity_id=?2 AND field=?3",
-        )?;
-        let rows = statement
-            .query_map(params![entity_type.as_str(), entity_id, field], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        rows
-    };
-
-    let operation_id = random_id();
-    let operation_id_hex = encode_id(&operation_id);
-    let stamp = WinnerStamp {
-        lamport,
-        device_id,
-        event_id,
-        operation_id,
-    };
-    tx.execute(
-        "INSERT INTO sync_operations(operation_id, event_id, entity_type, entity_id, field, value, winner_stamp)
-         VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        params![
-            operation_id_hex,
-            event_id_hex,
-            entity_type.as_str(),
-            entity_id,
-            field,
-            value.as_ref().map(Value::to_string),
-            encode_winner_stamp(&stamp),
-        ],
-    )?;
-
-    for parent in &parents {
-        tx.execute(
-            "INSERT INTO sync_operation_parents(operation_id, parent_operation_id) VALUES (?1,?2)",
-            params![operation_id_hex, parent],
-        )?;
-    }
-    tx.execute(
-        "DELETE FROM sync_field_frontier WHERE entity_type=?1 AND entity_id=?2 AND field=?3",
-        params![entity_type.as_str(), entity_id, field],
-    )?;
-    tx.execute(
-        "INSERT INTO sync_field_frontier(entity_type, entity_id, field, operation_id) VALUES (?1,?2,?3,?4)",
-        params![entity_type.as_str(), entity_id, field, operation_id_hex],
-    )?;
-    Ok(())
-}
-
 pub(crate) fn random_id() -> [u8; 16] {
     let mut bytes = [0u8; 16];
     OsRng.fill_bytes(&mut bytes);
@@ -643,15 +338,6 @@ pub(crate) fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-fn encode_winner_stamp(stamp: &WinnerStamp) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(8 + 16 + 16 + 16);
-    bytes.extend_from_slice(&stamp.lamport.to_be_bytes());
-    bytes.extend_from_slice(&stamp.device_id);
-    bytes.extend_from_slice(&stamp.event_id);
-    bytes.extend_from_slice(&stamp.operation_id);
-    bytes
-}
-
 // ============================== Key material ==============================
 
 pub(crate) const KEYCHAIN_SERVICE: &str = "app.threestrands.replicated-sync";
@@ -665,7 +351,7 @@ fn epoch_key_entry(key_epoch: u32) -> String {
 /// The minimal single-device key material push/pull need to seal and open
 /// messages for real: an Ed25519 device signing key, the active epoch's
 /// symmetric key, and every earlier epoch's key this device holds, all kept
-/// in the OS keychain. New events are sealed only under the active epoch;
+/// in the OS keychain. Snapshots are sealed only under the active epoch;
 /// earlier keys exist to open history sealed before a rotation. The X25519
 /// device key stays on [`DeviceIdentity`] — only enrollment/rotation
 /// sealed-box handling needs it, not ordinary push/pull.
@@ -693,7 +379,7 @@ impl LocalKeys {
 /// This device's identity — always available once replicated sync is turned
 /// on, regardless of enrollment state. Enough to sign and publish an
 /// enrollment request/grant/rotation object; not enough to seal or open an
-/// ordinary event, which additionally needs an active epoch key (see
+/// ordinary snapshot, which additionally needs an active epoch key (see
 /// [`Database::local_replicated_keys`]).
 pub struct DeviceIdentity {
     pub signing_key: SigningKey,
@@ -802,7 +488,7 @@ impl Database {
     }
 
     /// Marks a device revoked: it stops being trusted for future signature
-    /// verification (ordinary events, heads, and enrollment/rotation
+    /// verification (snapshots, heads, and enrollment/rotation
     /// objects alike), though it cannot un-decrypt ciphertext it already
     /// received under a prior epoch.
     pub(crate) fn revoke_device(&self, device_id: &[u8; 16]) -> DbResult<()> {
@@ -928,109 +614,83 @@ pub(crate) fn store_epoch_key(key_epoch: u32, key: &[u8; 32]) -> Result<(), Stri
 
 // ================================ Sealing ==================================
 
-/// The discovery hint an event's `previous_device_event`/a device head's
-/// `latest_event_cid` actually point to: not a chunk's CID directly (a
-/// multi-chunk message has several, and there is no way to derive the rest
-/// from just one), but this small, unauthenticated index listing every
-/// chunk CID in order. It needs no signature of its own: every chunk is
-/// independently AEAD-authenticated, every chunk in one message shares an
-/// authenticated hash of the complete reassembled plaintext, and the
-/// reassembled event itself carries a device signature — a forged or
-/// corrupted index can only ever make `open_message` fail, never make a
-/// wrong message succeed.
+/// What a device head's `state_cid` actually points to: not a chunk's CID
+/// directly (a multi-chunk snapshot has several, and there is no way to
+/// derive the rest from just one), but this small, unauthenticated index
+/// listing every chunk CID in order. It needs no signature of its own:
+/// every chunk is independently AEAD-authenticated, every chunk in one
+/// message shares an authenticated hash of the complete reassembled
+/// plaintext, and the reassembled snapshot carries its author's signature —
+/// a forged or corrupted index can only ever make `open_snapshot` fail,
+/// never make a wrong snapshot succeed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ChunkIndex {
     chunk_cids: Vec<String>,
 }
 
 impl Database {
-    /// Seals every locally recorded event not yet sealed: builds its
-    /// encrypted chunks and chunk index, stores them in `sync_objects`, and
-    /// creates one pending delivery row per object per transport instance
-    /// in `transports`. Pure local bookkeeping — no network I/O.
-    pub fn seal_pending_events(&self, keys: &LocalKeys, transports: &[TransportInstanceId]) -> Result<usize, String> {
-        let pending: Vec<(String, String, i64)> = self.with_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT event_id, device_id, device_sequence FROM sync_events WHERE state='recorded' ORDER BY device_sequence",
-            )?;
-            let rows = statement
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rows)
-        })?;
-
-        for (event_id_hex, device_id_hex, device_sequence) in &pending {
-            self.seal_one_event(event_id_hex, device_id_hex, *device_sequence, keys, transports)?;
+    /// Seals a new snapshot of this replica when it changed since the last
+    /// one, or was sealed under an older epoch (so a key rotation re-seals
+    /// everything under the new key): builds its encrypted chunks and chunk
+    /// index, stores them, schedules delivery to every transport in
+    /// `transports`, and retires the previous snapshot's objects. Pure local
+    /// bookkeeping — no network I/O. Returns whether it sealed one.
+    pub fn seal_local_state(&self, keys: &LocalKeys, transports: &[TransportInstanceId]) -> Result<bool, String> {
+        let (dirty, sequence, sealed_epoch) = self.local_state_status()?;
+        if !dirty && sequence > 0 && sealed_epoch == Some(keys.key_epoch) {
+            return Ok(false);
         }
-        if !pending.is_empty() {
-            self.recompute_progress()?;
-        }
-        Ok(pending.len())
-    }
-
-    fn seal_one_event(
-        &self,
-        event_id_hex: &str,
-        device_id_hex: &str,
-        device_sequence: i64,
-        keys: &LocalKeys,
-        transports: &[TransportInstanceId],
-    ) -> DbResult<()> {
-        self.with_transaction(|tx| {
-            let operations = load_operations_for_event(tx, event_id_hex)?;
-            let lamport: i64 = tx.query_row(
-                "SELECT lamport FROM sync_events WHERE event_id=?1",
-                params![event_id_hex],
-                |row| row.get(0),
-            )?;
-            let previous_device_event: Option<String> = if device_sequence > 1 {
-                tx.query_row(
-                    "SELECT so.cid FROM sync_objects so JOIN sync_events se ON se.event_id = so.event_id
-                     WHERE se.device_id=?1 AND se.device_sequence=?2 AND so.object_kind='chunk_index'",
-                    params![device_id_hex, device_sequence - 1],
-                    |row| row.get(0),
-                )
-                .optional()?
-            } else {
-                None
-            };
-
-            // Every parent this event's operations name was already in the
-            // local graph, so it came from an event inside what this device
-            // has applied: that applied vector is a safe causal vector.
-            let causal_vector = crate::sync_progress::causal_vector_for_seal(tx, device_id_hex)?;
-            let unsigned = UnsignedSyncEvent {
-                event_id: EnvelopeEventId::from_bytes(decode_id(event_id_hex)?),
-                protocol_version: PROTOCOL_VERSION,
+        let next = sequence + 1;
+        let snapshot = self.take_local_snapshot(keys.device_id, next, crate::sync_policy::now_ms())?;
+        let sealed = match seal_snapshot(
+            snapshot,
+            &SealParams {
+                sync_space_id: &keys.sync_space_id,
+                k_epoch: &keys.k_epoch,
                 key_epoch: keys.key_epoch,
-                device_id: keys.device_id,
-                device_sequence: device_sequence as u64,
-                previous_device_event,
-                lamport: lamport as u64,
-                created_at_ms: crate::sync_policy::now_ms(),
-                causal_vector: causal_vector.clone(),
-                operations,
+                object_kind: ObjectKind::Snapshot,
+                signing_key: &keys.signing_key,
+            },
+        ) {
+            Ok(sealed) => sealed,
+            Err(error) => {
+                self.mark_replica_changed()?;
+                return Err(display(error));
+            }
+        };
+        let stored = self.with_transaction(|tx| {
+            // The previous snapshot stays on each transport that has it
+            // until that transport's head names this one; see
+            // `delete_retired_objects`.
+            let previous: Vec<(String, i64)> = {
+                let mut statement = tx.prepare("SELECT cid, state_sequence FROM sync_objects WHERE state_sequence IS NOT NULL")?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+                rows
             };
-
-            let (_, sealed) = seal_event(
-                unsigned,
-                &SealParams {
-                    sync_space_id: &keys.sync_space_id,
-                    k_epoch: &keys.k_epoch,
-                    key_epoch: keys.key_epoch,
-                    object_kind: ObjectKind::Operations,
-                    signing_key: &keys.signing_key,
-                },
-            )
-            .map_err(display)?;
+            for (cid, state_sequence) in previous {
+                tx.execute(
+                    "INSERT OR IGNORE INTO sync_retired_objects(cid, transport_instance_id, state_sequence)
+                     SELECT cid, transport_instance_id, ?2 FROM sync_deliveries WHERE cid=?1 AND state='delivered'",
+                    params![cid, state_sequence],
+                )?;
+                tx.execute("DELETE FROM sync_deliveries WHERE cid=?1", params![cid])?;
+                tx.execute("DELETE FROM sync_objects WHERE cid=?1", params![cid])?;
+            }
 
             let chunk_count = sealed.chunks.len() as i64;
             let mut chunk_cids = Vec::with_capacity(sealed.chunks.len());
+            let mut objects: Vec<(String, &str, i64, i64, Vec<u8>)> = Vec::with_capacity(sealed.chunks.len() + 1);
             for (index, chunk) in sealed.chunks.iter().enumerate() {
                 let cid = compute_cid(chunk);
+                objects.push((cid.clone(), "state_chunk", index as i64, chunk_count, chunk.clone()));
+                chunk_cids.push(cid);
+            }
+            let index_bytes = serde_json::to_vec(&ChunkIndex { chunk_cids }).map_err(display)?;
+            objects.push((compute_cid(&index_bytes), "state_index", 0, 1, index_bytes));
+            for (cid, kind, chunk_index, chunk_count, bytes) in objects {
                 tx.execute(
-                    "INSERT OR IGNORE INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,?2,'operations',?3,?4,?5)",
-                    params![cid, event_id_hex, index as i64, chunk_count, chunk],
+                    "INSERT OR IGNORE INTO sync_objects(cid,object_kind,state_sequence,chunk_index,chunk_count,bytes) VALUES (?1,?2,?3,?4,?5,?6)",
+                    params![cid, kind, next as i64, chunk_index, chunk_count, bytes],
                 )?;
                 for transport_id in transports {
                     tx.execute(
@@ -1038,99 +698,149 @@ impl Database {
                         params![cid, transport_id.0],
                     )?;
                 }
-                chunk_cids.push(cid);
             }
-
-            let index_bytes = serde_json::to_vec(&ChunkIndex { chunk_cids }).map_err(display)?;
-            let index_cid = compute_cid(&index_bytes);
             tx.execute(
-                "INSERT OR IGNORE INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,?2,'chunk_index',0,1,?3)",
-                params![index_cid, event_id_hex, index_bytes],
+                "UPDATE sync_local_state SET state_sequence=?1, sealed_epoch=?2 WHERE id=1",
+                params![next as i64, keys.key_epoch],
             )?;
-            for transport_id in transports {
-                tx.execute(
-                    "INSERT OR IGNORE INTO sync_deliveries(cid,transport_instance_id,state,attempts) VALUES (?1,?2,'pending',0)",
-                    params![index_cid, transport_id.0],
-                )?;
+            Ok(())
+        });
+        if let Err(error) = stored {
+            self.mark_replica_changed()?;
+            return Err(String::from(error));
+        }
+        Ok(true)
+    }
+
+    /// The snapshot `transport_instance_id` can honestly be pointed at: this
+    /// device's current snapshot, once every one of its objects has reached
+    /// that transport. `None` while it hasn't, and the transport's head then
+    /// keeps naming the previous snapshot, which stays there until it's
+    /// replaced.
+    fn delivered_state_head(&self, transport_instance_id: &str) -> DbResult<Option<(u64, String)>> {
+        self.with_connection(|connection| {
+            let row: Option<(i64, i64, Option<String>)> = connection
+                .query_row(
+                    "SELECT so.state_sequence,
+                            SUM(CASE WHEN sd.state='delivered' THEN 0 ELSE 1 END),
+                            MAX(CASE WHEN so.object_kind='state_index' THEN so.cid END)
+                     FROM sync_objects so
+                     LEFT JOIN sync_deliveries sd ON sd.cid = so.cid AND sd.transport_instance_id = ?1
+                     WHERE so.state_sequence IS NOT NULL
+                     GROUP BY so.state_sequence ORDER BY so.state_sequence DESC LIMIT 1",
+                    params![transport_instance_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?;
+            Ok(match row {
+                Some((sequence, 0, Some(index_cid))) => Some((sequence as u64, index_cid)),
+                _ => None,
+            })
+        })
+    }
+
+    /// Deletes this device's superseded snapshot objects from a transport
+    /// whose head now names `head_sequence`. Best effort: a failed delete is
+    /// retried next time; an object already gone counts as deleted.
+    async fn delete_retired_objects(&self, transport: &dyn SyncTransport, head_sequence: u64) -> Result<(), String> {
+        let instance_id = transport.instance_id().0;
+        let retired: Vec<String> = self.with_connection(|connection| {
+            let mut statement = connection
+                .prepare("SELECT cid FROM sync_retired_objects WHERE transport_instance_id=?1 AND state_sequence < ?2")?;
+            let rows = statement
+                .query_map(params![instance_id, head_sequence as i64], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
+        for cid in retired {
+            match transport.delete_object(&TransportCid(cid.clone())).await {
+                Ok(()) | Err(TransportError::NotFound) => {
+                    self.with_connection(|connection| {
+                        connection.execute(
+                            "DELETE FROM sync_retired_objects WHERE cid=?1 AND transport_instance_id=?2",
+                            params![cid, instance_id],
+                        )?;
+                        Ok(())
+                    })?;
+                }
+                Err(error) => log::debug!(target: "replicated_sync", "deleting an old snapshot object from {instance_id} failed: {error}"),
             }
+        }
+        Ok(())
+    }
 
-            tx.execute(
-                "UPDATE sync_events SET state='sealed', epoch=?2, causal_vector=?3 WHERE event_id=?1",
-                params![event_id_hex, keys.key_epoch, crate::sync_progress::encode_vector(&causal_vector)],
+    /// The latest snapshot sequence merged from `device_id_hex`.
+    fn merged_state_sequence(&self, device_id_hex: &str) -> DbResult<u64> {
+        self.with_connection(|connection| {
+            let sequence: Option<i64> = connection
+                .query_row(
+                    "SELECT state_sequence FROM sync_remote_states WHERE device_id=?1",
+                    params![device_id_hex],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            Ok(sequence.unwrap_or(0) as u64)
+        })
+    }
+
+    fn record_merged_state(&self, device_id_hex: &str, state_sequence: u64) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO sync_remote_states(device_id, state_sequence, merged_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(device_id) DO UPDATE SET state_sequence=excluded.state_sequence, merged_at=excluded.merged_at
+                 WHERE excluded.state_sequence > sync_remote_states.state_sequence",
+                params![device_id_hex, state_sequence as i64, Utc::now().to_rfc3339()],
             )?;
-            crate::sync_progress::note_event_applied(tx, device_id_hex, device_sequence as u64, &Utc::now().to_rfc3339())?;
             Ok(())
         })
     }
 
-    /// Like [`Self::contiguous_head`], but counting only events whose every
-    /// object `transport_instance_id` has confirmed receiving: the head that
-    /// transport can honestly publish.
-    fn contiguous_delivered_head(&self, device_id_hex: &str, transport_instance_id: &str) -> DbResult<(u64, Option<String>)> {
+    /// Remembers when a peer's latest verified head was published, when this
+    /// device first saw it, and which key epoch the peer is on. Only a head newer than the one on record
+    /// (by its own publication time) replaces it, so a stale copy on a
+    /// lagging transport never rolls the record back.
+    pub(crate) fn record_head_observation(&self, head: &DeviceHead, seen_at_ms: i64) -> DbResult<()> {
         self.with_connection(|connection| {
-            let events: Vec<(i64, i64)> = {
-                let mut statement = connection.prepare(
-                    "SELECT se.device_sequence, SUM(CASE WHEN sd.state='delivered' THEN 0 ELSE 1 END)
-                     FROM sync_events se
-                     JOIN sync_objects so ON so.event_id = se.event_id
-                     LEFT JOIN sync_deliveries sd ON sd.cid = so.cid AND sd.transport_instance_id = ?2
-                     WHERE se.device_id=?1 AND se.state='sealed'
-                     GROUP BY se.device_sequence ORDER BY se.device_sequence",
-                )?;
-                let rows = statement
-                    .query_map(params![device_id_hex, transport_instance_id], |row| Ok((row.get(0)?, row.get(1)?)))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                rows
-            };
-            let mut contiguous = 0i64;
-            for (sequence, undelivered) in events {
-                if sequence != contiguous + 1 || undelivered > 0 {
-                    break;
-                }
-                contiguous = sequence;
-            }
-            if contiguous == 0 {
-                return Ok((0, None));
-            }
-            let latest_event_cid: Option<String> = connection
-                .query_row(
-                    "SELECT so.cid FROM sync_objects so JOIN sync_events se ON se.event_id = so.event_id
-                     WHERE se.device_id=?1 AND se.device_sequence=?2 AND so.object_kind='chunk_index'",
-                    params![device_id_hex, contiguous],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            Ok((contiguous as u64, latest_event_cid))
+            connection.execute(
+                "INSERT INTO sync_remote_states(device_id, last_head_published_at_ms, last_head_seen_at_ms, last_head_epoch) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(device_id) DO UPDATE SET last_head_published_at_ms=excluded.last_head_published_at_ms,
+                     last_head_seen_at_ms=excluded.last_head_seen_at_ms, last_head_epoch=excluded.last_head_epoch
+                 WHERE sync_remote_states.last_head_published_at_ms IS NULL
+                    OR sync_remote_states.last_head_published_at_ms < excluded.last_head_published_at_ms",
+                params![encode_id(head.device_id.as_bytes()), head.published_at_ms, seen_at_ms, head.epoch],
+            )?;
+            Ok(())
         })
     }
 
-    /// Stores a remotely fetched, already-authenticated message's chunk
-    /// index and chunks locally, so a later chain walk recognizes it
-    /// without re-fetching, and so anti-entropy repair can deliver it to
-    /// another transport without going back to the transport it came from.
-    fn remember_remote_message(
-        &self,
-        index_cid: &str,
-        chunk_cids: &[String],
-        chunks: &[Vec<u8>],
-        event_id_hex: &str,
-    ) -> DbResult<()> {
-        self.with_transaction(|tx| {
-            let index_bytes = serde_json::to_vec(&ChunkIndex {
-                chunk_cids: chunk_cids.to_vec(),
-            })
-            .map_err(display)?;
-            tx.execute(
-                "INSERT OR IGNORE INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,?2,'chunk_index',0,1,?3)",
-                params![index_cid, event_id_hex, index_bytes],
-            )?;
-            let chunk_count = chunks.len() as i64;
-            for (index, (cid, bytes)) in chunk_cids.iter().zip(chunks.iter()).enumerate() {
-                tx.execute(
-                    "INSERT OR IGNORE INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,?2,'operations',?3,?4,?5)",
-                    params![cid, event_id_hex, index as i64, chunk_count, bytes],
-                )?;
+    /// Whether `head_content` (a head's content minus its publication time)
+    /// should be published to `transport_instance_id` now: it changed since
+    /// the last publication there, or the heartbeat is due.
+    fn head_publication_due(&self, transport_instance_id: &str, head_content: &str, now_ms: i64) -> DbResult<bool> {
+        let last: Option<(String, i64)> = self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT head_content, published_at_ms FROM sync_head_publications WHERE transport_instance_id=?1",
+                    params![transport_instance_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?)
+        })?;
+        Ok(match last {
+            None => true,
+            Some((content, published_at_ms)) => {
+                content != head_content || now_ms - published_at_ms >= crate::sync_policy::HEAD_HEARTBEAT_MS
             }
+        })
+    }
+
+    fn record_head_publication(&self, transport_instance_id: &str, head_content: &str, now_ms: i64) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO sync_head_publications(transport_instance_id, head_content, published_at_ms) VALUES (?1,?2,?3)
+                 ON CONFLICT(transport_instance_id) DO UPDATE SET head_content=excluded.head_content, published_at_ms=excluded.published_at_ms",
+                params![transport_instance_id, head_content, now_ms],
+            )?;
             Ok(())
         })
     }
@@ -1143,7 +853,7 @@ impl Database {
     pub(crate) fn ensure_protocol_marker_object(&self) -> Result<(), String> {
         self.with_connection(|connection| {
             connection.execute(
-                "INSERT OR IGNORE INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,NULL,'protocol_marker',0,1,?2)",
+                "INSERT OR IGNORE INTO sync_objects(cid,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,'protocol_marker',0,1,?2)",
                 params![protocol_marker_cid(), PROTOCOL_MARKER],
             )?;
             Ok(())
@@ -1187,69 +897,6 @@ impl Database {
         .map_err(String::from)
     }
 
-    /// Drops locally stored remote objects whose event was never applied.
-    /// Earlier builds stored each fetched event before a chain walk had
-    /// finished, so a walk that failed partway left newer events stored but
-    /// unapplied, and every later walk stopped at them. Removing those
-    /// objects (and their pending repair deliveries) lets the next walk
-    /// fetch and apply them. Objects of applied events, and of this
-    /// device's own events, always have a `sync_events` row and are kept.
-    pub(crate) fn forget_unapplied_remote_messages(&self) -> Result<usize, String> {
-        self.with_transaction(|tx| {
-            tx.execute(
-                "DELETE FROM sync_deliveries WHERE cid IN (
-                     SELECT cid FROM sync_objects so WHERE so.event_id IS NOT NULL
-                       AND NOT EXISTS (SELECT 1 FROM sync_events se WHERE se.event_id = so.event_id))",
-                [],
-            )?;
-            Ok(tx.execute(
-                "DELETE FROM sync_objects WHERE event_id IS NOT NULL
-                   AND NOT EXISTS (SELECT 1 FROM sync_events se WHERE se.event_id = sync_objects.event_id)",
-                [],
-            )?)
-        })
-        .map_err(String::from)
-    }
-}
-
-fn load_operations_for_event(tx: &Transaction, event_id_hex: &str) -> DbResult<Vec<FieldOperation>> {
-    let rows: Vec<(String, String, String, String, Option<String>)> = {
-        let mut statement = tx.prepare(
-            "SELECT operation_id, entity_type, entity_id, field, value FROM sync_operations WHERE event_id=?1",
-        )?;
-        let rows = statement
-            .query_map(params![event_id_hex], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        rows
-    };
-
-    let mut operations = Vec::with_capacity(rows.len());
-    for (operation_id_hex, entity_type_str, entity_id, field, value_json) in rows {
-        let parent_hexes: Vec<String> = {
-            let mut statement =
-                tx.prepare("SELECT parent_operation_id FROM sync_operation_parents WHERE operation_id=?1")?;
-            let rows = statement
-                .query_map(params![operation_id_hex], |row| row.get(0))?
-                .collect::<Result<Vec<_>, _>>()?;
-            rows
-        };
-        let parents = parent_hexes
-            .into_iter()
-            .map(|hex| decode_id(&hex).map(EnvelopeOperationId::from_bytes))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        operations.push(FieldOperation {
-            operation_id: EnvelopeOperationId::from_bytes(decode_id(&operation_id_hex)?),
-            entity_type: EntityType::from_str(&entity_type_str)?,
-            entity_id,
-            field,
-            value: value_json.map(|json| serde_json::from_str(&json)).transpose().map_err(display)?,
-            parents,
-        });
-    }
-    Ok(operations)
 }
 
 // =============================== Delivery ===================================
@@ -1374,22 +1021,23 @@ impl Database {
 /// The result of one push cycle.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PushOutcome {
-    pub sealed_events: usize,
+    pub sealed_snapshot: bool,
     pub delivered: usize,
     pub failed: usize,
 }
 
-/// Seals every pending local event, then attempts delivery to every
-/// transport concurrently. Never holds a SQLite transaction across a
+/// Seals a new snapshot if the replica changed, then attempts delivery of
+/// every pending object to every transport concurrently, then publishes
+/// each transport's head. Never holds a SQLite transaction across a
 /// `put_object` call: sealing commits first, and each delivery outcome is
 /// recorded in its own short transaction after the network call returns.
-pub async fn push_pending_events(
+pub async fn push_local_state(
     database: &Database,
     keys: &LocalKeys,
     transports: &[Arc<dyn SyncTransport>],
 ) -> Result<PushOutcome, String> {
     let instance_ids: Vec<TransportInstanceId> = transports.iter().map(|transport| transport.instance_id()).collect();
-    let sealed_events = database.seal_pending_events(keys, &instance_ids)?;
+    let sealed_snapshot = database.seal_local_state(keys, &instance_ids)?;
 
     let mut delivered = 0usize;
     let mut failed = 0usize;
@@ -1424,54 +1072,37 @@ pub async fn push_pending_events(
     }
 
     publish_local_head(database, keys, transports).await;
-    Ok(PushOutcome {
-        sealed_events,
-        delivered,
-        failed,
-    })
+    Ok(PushOutcome { sealed_snapshot, delivered, failed })
 }
 
-/// Publishes this device's current signed head to every transport where
-/// it's due, best-effort: one transport failing to accept the head never
-/// blocks publishing to the others, and never fails the push cycle.
+/// Publishes this device's signed head to every transport where it's due,
+/// best-effort: one transport failing to accept the head never blocks
+/// publishing to the others, and never fails the push cycle.
 ///
-/// Each transport's head names the newest event whose objects — and every
-/// earlier event's — that transport has confirmed receiving, so a reader
-/// never walks into an event that isn't there yet (a walk that fails
-/// applies nothing from this device). A head is published even before this
-/// device has written anything, so peers always see its ack and how
-/// recently it synced. It's due on a transport when its content
-/// (everything except the publication time) changed since it was last
-/// published there, or once the heartbeat interval has passed.
+/// Each transport's head names this device's current snapshot only once
+/// that transport has every one of its objects, so a reader never follows
+/// a head to a snapshot that isn't there yet; until then the transport
+/// keeps its previous head, whose snapshot is still stored. Once a head
+/// names the new snapshot, the old one's objects are deleted from that
+/// transport. A head is due when its content (everything except the
+/// publication time) changed since it was last published there, or once
+/// the heartbeat interval has passed.
 async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &[Arc<dyn SyncTransport>]) {
-    let device_id_hex = encode_id(keys.device_id.as_bytes());
-    let Ok(ack) = database.progress_vector() else {
-        return;
-    };
     let now = crate::sync_policy::now_ms();
     for transport in transports {
         let instance_id = transport.instance_id();
-        let Ok((contiguous_sequence, latest_event_cid)) = database.contiguous_delivered_head(&device_id_hex, &instance_id.0) else {
+        let Ok(Some((state_sequence, state_cid))) = database.delivered_state_head(&instance_id.0) else {
             continue;
         };
         let head = DeviceHead {
             sync_space_id: keys.sync_space_id.clone(),
             device_id: keys.device_id,
             epoch: keys.key_epoch,
-            contiguous_sequence,
-            latest_event_cid,
+            state_sequence,
+            state_cid: Some(state_cid),
             published_at_ms: now,
-            ack: ack.clone(),
-            snapshot_cid: None,
         };
-        let content = json!({
-            "epoch": head.epoch,
-            "contiguousSequence": head.contiguous_sequence,
-            "latestEventCid": head.latest_event_cid,
-            "ack": crate::sync_progress::encode_vector(&head.ack),
-            "snapshotCid": head.snapshot_cid,
-        })
-        .to_string();
+        let content = json!({ "epoch": head.epoch, "stateSequence": head.state_sequence, "stateCid": head.state_cid }).to_string();
         if !database.head_publication_due(&instance_id.0, &content, now).unwrap_or(true) {
             continue;
         }
@@ -1482,6 +1113,9 @@ async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &
             Ok(_) => {
                 if let Err(error) = database.record_head_publication(&instance_id.0, &content, now) {
                     log::debug!(target: "replicated_sync", "recording the head publication to {} failed: {error}", instance_id.0);
+                }
+                if let Err(error) = database.delete_retired_objects(transport.as_ref(), state_sequence).await {
+                    log::debug!(target: "replicated_sync", "retiring old snapshot objects on {} failed: {error}", instance_id.0);
                 }
             }
             Err(error) => log::debug!(
@@ -1494,138 +1128,7 @@ async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &
 }
 
 impl Database {
-    /// Applies one already-authenticated remote field operation to the
-    /// local graph, tolerating out-of-order and duplicate delivery —
-    /// idempotent by `operation_id`. This is the general case; contrast
-    /// with `apply_field_operation` above, which assumes local-only,
-    /// always-in-order writes.
-    #[allow(clippy::too_many_arguments)]
-    fn apply_remote_operation(
-        tx: &Transaction,
-        entity_type: EntityType,
-        entity_id: &str,
-        field: &str,
-        value: Option<&Value>,
-        event_id_hex: &str,
-        operation_id_hex: &str,
-        parents: &[String],
-        stamp: &WinnerStamp,
-    ) -> DbResult<bool> {
-        let already_known: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sync_operations WHERE operation_id=?1)",
-            params![operation_id_hex],
-            |row| row.get(0),
-        )?;
-        if already_known {
-            return Ok(false);
-        }
-
-        tx.execute(
-            "INSERT INTO sync_operations(operation_id,event_id,entity_type,entity_id,field,value,winner_stamp) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-            params![
-                operation_id_hex,
-                event_id_hex,
-                entity_type.as_str(),
-                entity_id,
-                field,
-                value.map(Value::to_string),
-                encode_winner_stamp(stamp),
-            ],
-        )?;
-
-        for parent in parents {
-            tx.execute(
-                "INSERT OR IGNORE INTO sync_operation_parents(operation_id, parent_operation_id) VALUES (?1,?2)",
-                params![operation_id_hex, parent],
-            )?;
-            tx.execute(
-                "DELETE FROM sync_field_frontier WHERE entity_type=?1 AND entity_id=?2 AND field=?3 AND operation_id=?4",
-                params![entity_type.as_str(), entity_id, field, parent],
-            )?;
-        }
-
-        let consumed: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sync_operation_parents WHERE parent_operation_id=?1)",
-            params![operation_id_hex],
-            |row| row.get(0),
-        )?;
-        if !consumed {
-            tx.execute(
-                "INSERT OR IGNORE INTO sync_field_frontier(entity_type, entity_id, field, operation_id) VALUES (?1,?2,?3,?4)",
-                params![entity_type.as_str(), entity_id, field, operation_id_hex],
-            )?;
-        }
-        Ok(true)
-    }
-
-    /// Applies a complete, already-signature-verified event to the graph in
-    /// one transaction, then materializes every entity it touched only
-    /// after that transaction commits — matching the plan's projection
-    /// ordering exactly.
-    ///
-    /// Events apply strictly in feed order: the next one must be exactly
-    /// one past the author's applied prefix. One at or below it is already
-    /// covered and is dropped without touching the graph (so an ancestor
-    /// that arrives again can never re-enter a frontier). Returns whether
-    /// the event was applied.
-    fn apply_sealed_message_and_materialize(&self, event: SyncEvent) -> Result<bool, String> {
-        let event_id_hex = encode_id(event.event_id.as_bytes());
-        let device_id_hex = encode_id(event.device_id.as_bytes());
-
-        let touched = self.with_transaction(|tx| {
-            if event.device_sequence <= crate::sync_progress::applied_sequence_in(tx, &device_id_hex)? {
-                return Ok(None);
-            }
-            let applied_at = Utc::now().to_rfc3339();
-            crate::sync_progress::note_event_applied(tx, &device_id_hex, event.device_sequence, &applied_at)?;
-            tx.execute(
-                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at,causal_vector)
-                 VALUES (?1,?2,?3,?4,?5,'sealed',?6,?7)",
-                params![
-                    event_id_hex,
-                    event.key_epoch,
-                    device_id_hex,
-                    event.device_sequence as i64,
-                    event.lamport as i64,
-                    applied_at,
-                    crate::sync_progress::encode_vector(&event.causal_vector),
-                ],
-            )?;
-
-            let mut touched: Vec<(EntityType, String)> = Vec::new();
-            for op in &event.operations {
-                let operation_id_hex = hex_encode(op.operation_id.as_bytes());
-                let parents: Vec<String> = op.parents.iter().map(|parent| hex_encode(parent.as_bytes())).collect();
-                let stamp = WinnerStamp {
-                    lamport: event.lamport,
-                    device_id: *event.device_id.as_bytes(),
-                    event_id: *event.event_id.as_bytes(),
-                    operation_id: *op.operation_id.as_bytes(),
-                };
-                let applied = Self::apply_remote_operation(
-                    tx,
-                    op.entity_type,
-                    &op.entity_id,
-                    &op.field,
-                    op.value.as_ref(),
-                    &event_id_hex,
-                    &operation_id_hex,
-                    &parents,
-                    &stamp,
-                )?;
-                if applied {
-                    touched.push((op.entity_type, op.entity_id.clone()));
-                }
-            }
-            Ok(Some(touched))
-        })?;
-
-        let Some(touched) = touched else { return Ok(false) };
-        self.materialize_touched_entities(&touched)?;
-        Ok(true)
-    }
-
-    fn materialize_touched_entities(&self, touched: &[(EntityType, String)]) -> Result<(), String> {
+    pub(crate) fn materialize_touched_entities(&self, touched: &[(EntityType, String)]) -> Result<(), String> {
         let mut pending: Vec<(EntityType, String)> = touched.to_vec();
         pending.sort_by(|a, b| a.1.cmp(&b.1));
         pending.dedup();
@@ -1681,177 +1184,82 @@ impl Database {
         Ok(readiness)
     }
 
-    fn known_fields(&self, entity_type: EntityType, entity_id: &str) -> DbResult<Vec<String>> {
-        self.with_connection(|connection| {
-            let mut statement =
-                connection.prepare("SELECT DISTINCT field FROM sync_operations WHERE entity_type=?1 AND entity_id=?2")?;
-            let rows = statement
-                .query_map(params![entity_type.as_str(), entity_id], |row| row.get(0))?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rows)
-        })
-    }
-
-    /// The current winning value for one field: the frontier member with
-    /// the greatest [`WinnerStamp`]. Comparing the stored stamp *bytes*
-    /// lexicographically gives the same order as comparing
-    /// `(lamport, device_id, event_id, operation_id)`, because
-    /// `encode_winner_stamp` writes them in that priority order with a
-    /// fixed-width big-endian lamport — no need to decode a candidate to
-    /// rank it.
-    fn resolve_field_winner(&self, entity_type: EntityType, entity_id: &str, field: &str) -> DbResult<Option<Value>> {
-        let candidates: Vec<(Option<String>, Vec<u8>)> = self.with_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT so.value, so.winner_stamp FROM sync_field_frontier sf
-                 JOIN sync_operations so ON so.operation_id = sf.operation_id
-                 WHERE sf.entity_type=?1 AND sf.entity_id=?2 AND sf.field=?3",
-            )?;
-            let candidates = statement
-                .query_map(params![entity_type.as_str(), entity_id, field], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(candidates)
-        })?;
-        let Some(winner) = candidates.into_iter().max_by(|a, b| a.1.cmp(&b.1)) else {
-            return Ok(None);
-        };
-        Ok(winner.0.map(|json| serde_json::from_str(&json)).transpose().map_err(display)?)
-    }
 }
 
-/// One remote event fetched and opened during a chain walk, held until the
-/// whole walk succeeds so it can be applied and remembered oldest first.
-struct FetchedEvent {
-    index_cid: String,
-    chunk_cids: Vec<String>,
-    chunks: Vec<Vec<u8>>,
-    event: SyncEvent,
-}
 
-/// Resolves and walks one device's signed head back through
-/// `previous_device_event` until reaching the part of its feed already
-/// applied here, verifying every fetched object's bytes against its
-/// requested CID before it is parsed or decrypted, then applies every
-/// newly-seen event oldest first.
-///
-/// The walk stops by sequence number, not by whether an object happens to
-/// be stored locally, and checks the feed is gapless and in order: each
-/// event must be the author's and exactly one before the last. Each event
-/// is opened with the key for the epoch its header names, so history sealed
-/// before a rotation stays readable.
-///
-/// All or nothing per walk: the events walked so far are newer than any
-/// that failed, so applying them would leave a gap in the author's applied
-/// prefix. A failure applies nothing and the next pull walks again. A
-/// fetched event is only remembered locally after it has been applied.
-async fn pull_device_chain(
+/// Fetches, verifies, opens, and merges one peer's snapshot named by its
+/// verified head, then materializes whatever it changed. Every fetched
+/// object's bytes are checked against the CID they were requested by
+/// before being parsed or decrypted, the snapshot is opened with the key
+/// for the epoch its header names, and it must be the head's own author and
+/// sequence. Merging is idempotent, so a crash after merging only means the
+/// next pull merges the same snapshot again, harmlessly.
+async fn pull_device_state(
     database: &Database,
     transport: &dyn SyncTransport,
     verifying_key: &VerifyingKey,
     keys: &LocalKeys,
     signed_head: &SignedDeviceHead,
-) -> Result<usize, String> {
-    let author = signed_head.head.device_id;
-    let author_hex = encode_id(author.as_bytes());
-    let applied = database.applied_sequence(&author_hex)?;
-    let mut expected = signed_head.head.contiguous_sequence;
-    let mut cursor = signed_head.head.latest_event_cid.clone();
-    let mut chain: Vec<FetchedEvent> = Vec::new();
-
-    while expected > applied {
-        let index_cid = cursor.ok_or_else(|| format!("Device {author_hex}'s feed ends before its event {expected}"))?;
-        let index_bytes = transport.get_object(&TransportCid(index_cid.clone())).await.map_err(display)?;
-        if compute_cid(&index_bytes) != index_cid {
-            return Err("Fetched chunk index bytes do not match the requested CID".to_string());
+) -> Result<(), String> {
+    let head = &signed_head.head;
+    let author_hex = encode_id(head.device_id.as_bytes());
+    let index_cid = head.state_cid.clone().ok_or_else(|| format!("Device {author_hex}'s head names no snapshot"))?;
+    let index_bytes = transport.get_object(&TransportCid(index_cid.clone())).await.map_err(display)?;
+    if compute_cid(&index_bytes) != index_cid {
+        return Err("Fetched chunk index bytes do not match the requested CID".to_string());
+    }
+    let index: ChunkIndex = serde_json::from_slice(&index_bytes).map_err(display)?;
+    let mut chunks = Vec::with_capacity(index.chunk_cids.len());
+    for chunk_cid in &index.chunk_cids {
+        let bytes = transport.get_object(&TransportCid(chunk_cid.clone())).await.map_err(display)?;
+        if &compute_cid(&bytes) != chunk_cid {
+            return Err("Fetched chunk bytes do not match the requested CID".to_string());
         }
-        let index: ChunkIndex = serde_json::from_slice(&index_bytes).map_err(display)?;
-
-        let mut chunks = Vec::with_capacity(index.chunk_cids.len());
-        for chunk_cid in &index.chunk_cids {
-            let bytes = transport.get_object(&TransportCid(chunk_cid.clone())).await.map_err(display)?;
-            if &compute_cid(&bytes) != chunk_cid {
-                return Err("Fetched chunk bytes do not match the requested CID".to_string());
-            }
-            chunks.push(bytes);
-        }
-
-        let key_epoch = chunks
-            .first()
-            .ok_or_else(|| "A chunk index lists no chunks".to_string())
-            .and_then(|chunk| message_key_epoch(chunk).map_err(display))?;
-        let k_epoch = keys
-            .epoch_key(key_epoch)
-            .ok_or_else(|| format!("This device doesn't have the key for sync epoch {key_epoch}"))?;
-        let event = open_message(
-            &chunks,
-            &OpenParams {
-                sync_space_id: &keys.sync_space_id,
-                k_epoch,
-                key_epoch,
-                verifying_key,
-            },
-        )
+        chunks.push(bytes);
+    }
+    let key_epoch = chunks
+        .first()
+        .ok_or_else(|| "A chunk index lists no chunks".to_string())
+        .and_then(|chunk| message_key_epoch(chunk).map_err(display))?;
+    let k_epoch = keys
+        .epoch_key(key_epoch)
+        .ok_or_else(|| format!("This device doesn't have the key for sync epoch {key_epoch}"))?;
+    let snapshot = open_snapshot(&chunks, &OpenParams { sync_space_id: &keys.sync_space_id, k_epoch, key_epoch, verifying_key })
         .map_err(display)?;
-        if event.device_id != author || event.device_sequence != expected {
-            return Err(format!(
-                "Device {author_hex}'s feed is out of order: expected its event {expected}, found {} from {}",
-                event.device_sequence,
-                encode_id(event.device_id.as_bytes())
-            ));
-        }
-
-        cursor = event.previous_device_event.clone();
-        expected -= 1;
-        chain.push(FetchedEvent {
-            index_cid,
-            chunk_cids: index.chunk_cids,
-            chunks,
-            event,
-        });
+    if snapshot.device_id != head.device_id || snapshot.state_sequence != head.state_sequence {
+        return Err(format!("Device {author_hex}'s head and snapshot disagree about which snapshot it is"));
     }
-
-    let mut count = 0;
-    for fetched in chain.into_iter().rev() {
-        let event_id_hex = encode_id(fetched.event.event_id.as_bytes());
-        // Apply before remembering: a crash in between only means the next
-        // walk fetches this event again, and it's then already covered.
-        if database.apply_sealed_message_and_materialize(fetched.event)? {
-            count += 1;
-        }
-        database.remember_remote_message(&fetched.index_cid, &fetched.chunk_cids, &fetched.chunks, &event_id_hex)?;
-    }
-    Ok(count)
+    let remote = crate::sync_state::snapshot_to_state(&snapshot)?;
+    let touched = database.merge_replica_state(&remote)?;
+    database.record_merged_state(&author_hex, snapshot.state_sequence)?;
+    database.materialize_touched_entities(&touched)
 }
 
 /// The result of one pull cycle.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PullOutcome {
-    pub applied_events: usize,
+    pub merged_states: usize,
     pub failed_transports: usize,
 }
 
 /// Resolves every known device's head through every enabled transport
-/// independently, walks and applies whatever is new, then enqueues
-/// anti-entropy repair so a newly pulled object also reaches every other
-/// enabled transport. One failing transport is recorded and skipped —
-/// never allowed to block pulling from the others.
+/// independently, and merges each peer's snapshot that is newer than the
+/// one last merged from it. One failing transport is recorded and skipped —
+/// never allowed to block pulling from the others. This device's own head,
+/// and heads from devices that aren't trusted and active, are skipped.
 pub async fn pull_from_transports(
     database: &Database,
     keys: &LocalKeys,
     transports: &[Arc<dyn SyncTransport>],
 ) -> Result<PullOutcome, String> {
-    database.forget_unapplied_remote_messages()?;
     let roster = database.known_device_roster()?;
     let locators: Vec<HeadLocator> = roster
         .iter()
-        .map(|(device_id, _)| HeadLocator {
-            device_id: *device_id,
-            remote_id: None,
-        })
+        .map(|(device_id, _)| HeadLocator { device_id: *device_id, remote_id: None })
         .collect();
 
-    let mut applied_events = 0usize;
+    let mut merged_states = 0usize;
     let mut failed_transports = 0usize;
-
     for transport in transports {
         let heads = match transport.resolve_heads(&locators).await {
             Ok(heads) => heads,
@@ -1861,7 +1269,6 @@ pub async fn pull_from_transports(
             }
         };
         for signed_head in heads {
-            // This device's own feed is applied as it is sealed.
             if signed_head.head.device_id == keys.device_id {
                 continue;
             }
@@ -1872,13 +1279,16 @@ pub async fn pull_from_transports(
                 continue;
             }
             database.record_head_observation(&signed_head.head, crate::sync_policy::now_ms())?;
-            match pull_device_chain(database, transport.as_ref(), verifying_key, keys, &signed_head).await {
-                Ok(count) => applied_events += count,
+            let author_hex = encode_id(signed_head.head.device_id.as_bytes());
+            if signed_head.head.state_sequence <= database.merged_state_sequence(&author_hex)? {
+                continue;
+            }
+            match pull_device_state(database, transport.as_ref(), verifying_key, keys, &signed_head).await {
+                Ok(()) => merged_states += 1,
                 Err(error) => {
                     log::warn!(
                         target: "replicated_sync",
-                        "pulling device {} from transport {} failed: {error}",
-                        encode_id(signed_head.head.device_id.as_bytes()),
+                        "pulling device {author_hex}'s snapshot from transport {} failed: {error}",
                         transport.instance_id().0
                     );
                     failed_transports += 1;
@@ -1887,14 +1297,9 @@ pub async fn pull_from_transports(
         }
     }
 
-    database.recompute_progress()?;
     let instance_ids: Vec<TransportInstanceId> = transports.iter().map(|transport| transport.instance_id()).collect();
     database.enqueue_repair_deliveries(&instance_ids)?;
-
-    Ok(PullOutcome {
-        applied_events,
-        failed_transports,
-    })
+    Ok(PullOutcome { merged_states, failed_transports })
 }
 
 // ================================= Health ===================================
@@ -2071,6 +1476,7 @@ impl Database {
             connection.execute("DELETE FROM sync_transports WHERE instance_id=?1", params![instance_id])?;
             connection.execute("DELETE FROM sync_deliveries WHERE transport_instance_id=?1", params![instance_id])?;
             connection.execute("DELETE FROM sync_head_publications WHERE transport_instance_id=?1", params![instance_id])?;
+            connection.execute("DELETE FROM sync_retired_objects WHERE transport_instance_id=?1", params![instance_id])?;
             Ok(())
         })?;
         match kind {
@@ -2384,8 +1790,11 @@ impl ReplicatedSync {
         self.database.record_self_device_name_if_missing(&encode_id(identity.device_id.as_bytes()))?;
         self.database.ensure_protocol_marker_object()?;
 
-        let push_result = push_pending_events(&self.database, &keys, &transports).await;
+        let push_result = push_local_state(&self.database, &keys, &transports).await;
         let pull_result = pull_from_transports(&self.database, &keys, &transports).await;
+        if let Err(error) = crate::enrollment::share_keys_with_lagging_peers(&self.database, &keys, &transports).await {
+            log::warn!(target: "replicated_sync", "sharing keys with lagging devices failed: {error}");
+        }
 
         for (instance_id, health) in transport_health(&transports).await {
             let recorded = match health {
@@ -2590,143 +1999,82 @@ mod tests {
         assert!(parse_flag(Some("yes")));
     }
 
-    #[test]
-    fn recording_a_creation_writes_an_entity_existence_operation_first() {
-        let db = Database::open_memory();
-        db.record_replicated_write(
-            EntityType::Snippet,
-            "one",
-            &fields(&["name", "body"]),
-            &json!({"name": "n", "body": "b"}),
-        )
-        .unwrap();
-
+    fn values(db: &Database, entity_id: &str) -> Vec<(String, i64, Option<String>)> {
         let connection = db.connection().unwrap();
-        let operation_count: i64 = connection
+        let mut statement = connection
+            .prepare("SELECT field, counter, value FROM sync_values WHERE entity_id=?1 ORDER BY field, counter")
+            .unwrap();
+        let rows = statement
+            .query_map(params![entity_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        rows
+    }
+
+    fn own_counter(db: &Database) -> i64 {
+        db.connection()
+            .unwrap()
             .query_row(
-                "SELECT COUNT(*) FROM sync_operations WHERE entity_id='one'",
+                "SELECT c.counter FROM sync_context c JOIN sync_devices d ON d.device_id = c.device_id WHERE d.is_self = 1",
                 [],
                 |row| row.get(0),
             )
-            .unwrap();
-        // _entity=true, name, body.
-        assert_eq!(operation_count, 3);
-        let existence_value: String = connection
-            .query_row(
-                "SELECT value FROM sync_operations WHERE entity_id='one' AND field='_entity'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(existence_value, "true");
+            .unwrap()
     }
 
     #[test]
-    fn a_later_update_does_not_repeat_the_existence_operation() {
+    fn recording_a_creation_writes_every_field_and_existence_as_one_write() {
         let db = Database::open_memory();
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"}))
+        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name", "body"]), &json!({"name": "n", "body": "b"}))
             .unwrap();
-        db.record_replicated_write(
-            EntityType::Snippet,
-            "one",
-            &fields(&["name"]),
-            &json!({"name": "n2"}),
-        )
-        .unwrap();
-
-        let connection = db.connection().unwrap();
-        let existence_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sync_operations WHERE entity_id='one' AND field='_entity'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(existence_count, 1);
-
-        // The field's frontier now has exactly the newest write as its sole
-        // (conflict-free) member, and the old one is no longer in it.
-        let frontier_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sync_field_frontier WHERE entity_id='one' AND field='name'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(frontier_count, 1);
-        let winning_value: String = connection
-            .query_row(
-                "SELECT so.value FROM sync_field_frontier sf
-                 JOIN sync_operations so ON so.operation_id = sf.operation_id
-                 WHERE sf.entity_id='one' AND sf.field='name'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(winning_value, "\"n2\"");
+        // _entity=true, name, and body, all the device's first write.
+        assert_eq!(
+            values(&db, "one"),
+            vec![
+                ("_entity".to_string(), 1, Some("true".to_string())),
+                ("body".to_string(), 1, Some("\"b\"".to_string())),
+                ("name".to_string(), 1, Some("\"n\"".to_string())),
+            ]
+        );
+        assert_eq!(own_counter(&db), 1);
+        assert!(db.local_state_status().unwrap().0, "a write marks the replica changed");
     }
 
     #[test]
-    fn the_new_write_names_the_old_frontier_as_its_parent() {
+    fn a_later_update_replaces_the_value_and_keeps_existence() {
         let db = Database::open_memory();
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"}))
-            .unwrap();
-        let connection = db.connection().unwrap();
-        let first_operation_id: String = connection
-            .query_row(
-                "SELECT operation_id FROM sync_operations WHERE entity_id='one' AND field='name'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        drop(connection);
-
-        db.record_replicated_write(
-            EntityType::Snippet,
-            "one",
-            &fields(&["name"]),
-            &json!({"name": "n2"}),
-        )
-        .unwrap();
-
-        let connection = db.connection().unwrap();
-        let parent_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sync_operation_parents WHERE parent_operation_id=?1",
-                [&first_operation_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(parent_count, 1);
+        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"})).unwrap();
+        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n2"})).unwrap();
+        assert_eq!(
+            values(&db, "one"),
+            vec![("_entity".to_string(), 1, Some("true".to_string())), ("name".to_string(), 2, Some("\"n2\"".to_string()))]
+        );
+        assert_eq!(own_counter(&db), 2);
     }
 
     #[test]
-    fn deletion_writes_entity_false_without_touching_other_fields() {
+    fn every_write_advances_lamport_time() {
         let db = Database::open_memory();
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"}))
-            .unwrap();
+        let lamport = |db: &Database| -> i64 {
+            db.connection().unwrap().query_row("SELECT MAX(lamport) FROM sync_values", [], |row| row.get(0)).unwrap()
+        };
+        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"})).unwrap();
+        let first = lamport(&db);
+        db.record_replicated_write(EntityType::Snippet, "two", &fields(&["name"]), &json!({"name": "n"})).unwrap();
+        assert!(lamport(&db) > first);
+    }
+
+    #[test]
+    fn deletion_removes_every_value_and_leaves_no_tombstone() {
+        let db = Database::open_memory();
+        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"})).unwrap();
         db.record_replicated_deletion(EntityType::Snippet, "one").unwrap();
-
-        let connection = db.connection().unwrap();
-        let existence_value: String = connection
-            .query_row(
-                "SELECT so.value FROM sync_field_frontier sf
-                 JOIN sync_operations so ON so.operation_id = sf.operation_id
-                 WHERE sf.entity_id='one' AND sf.field='_entity'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(existence_value, "false");
-        // The name field's frontier is untouched by the deletion.
-        let name_frontier: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sync_field_frontier WHERE entity_id='one' AND field='name'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(name_frontier, 1);
+        assert!(values(&db, "one").is_empty());
+        // The context still records the deleted write, which is what keeps
+        // a peer's older copy from bringing it back.
+        assert_eq!(own_counter(&db), 1);
+        assert!(!db.entity_recorded(EntityType::Snippet, "one").unwrap());
     }
 
     #[test]
@@ -2736,33 +2084,22 @@ mod tests {
             db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"}))
         })
         .unwrap();
-
-        let connection = db.connection().unwrap();
-        let operation_count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM sync_operations", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(operation_count, 0);
+        assert!(values(&db, "one").is_empty());
         assert!(!db.is_projecting_remote_operation());
     }
 
     #[test]
-    fn field_winner_and_known_fields_read_the_recorded_graph() {
+    fn field_winner_and_known_fields_read_the_replica() {
         let db = Database::open_memory();
         assert_eq!(db.resolve_field_winner(EntityType::Snippet, "one", "name").unwrap(), None);
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "first"}))
-            .unwrap();
-        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "second"}))
-            .unwrap();
-
-        assert_eq!(
-            db.resolve_field_winner(EntityType::Snippet, "one", "name").unwrap(),
-            Some(json!("second"))
-        );
+        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "first"})).unwrap();
+        db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "second"})).unwrap();
+        assert_eq!(db.resolve_field_winner(EntityType::Snippet, "one", "name").unwrap(), Some(json!("second")));
         let mut known = db.known_fields(EntityType::Snippet, "one").unwrap();
         known.sort();
         assert_eq!(known, vec![ENTITY_EXISTENCE_FIELD.to_string(), "name".to_string()]);
-        assert!(db.entity_recorded_in_graph(EntityType::Snippet, "one").unwrap());
-        assert!(!db.entity_recorded_in_graph(EntityType::Snippet, "two").unwrap());
+        assert!(db.entity_recorded(EntityType::Snippet, "one").unwrap());
+        assert!(!db.entity_recorded(EntityType::Snippet, "two").unwrap());
     }
 
     #[test]
@@ -2847,78 +2184,538 @@ mod replicator_tests {
         }
     }
 
-    #[tokio::test]
-    async fn sealing_creates_chunk_and_index_objects_and_pending_deliveries() {
-        let database = Database::open_memory();
-        database
-            .record_replicated_write(EntityType::Snippet, "one", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("one", "n"))
-            .unwrap();
-        let keys = test_keys(&database);
-        let sealed = database.seal_pending_events(&keys, &[TransportInstanceId("t".to_string())]).unwrap();
-        assert_eq!(sealed, 1);
-
-        let connection = database.connection().unwrap();
-        let object_count: i64 = connection.query_row("SELECT COUNT(*) FROM sync_objects", [], |row| row.get(0)).unwrap();
-        assert!(object_count >= 2, "expected at least one chunk plus its index");
-        let index_count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM sync_objects WHERE object_kind='chunk_index'", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(index_count, 1);
-        let delivery_count: i64 = connection.query_row("SELECT COUNT(*) FROM sync_deliveries WHERE state='pending'", [], |row| row.get(0)).unwrap();
-        assert_eq!(delivery_count, object_count);
-        let event_state: String = connection.query_row("SELECT state FROM sync_events", [], |row| row.get(0)).unwrap();
-        assert_eq!(event_state, "sealed");
+    /// The same device's keys, as they would be after its group rotated to
+    /// `key_epoch`, holding `earlier` for older epochs.
+    fn at_epoch(keys: &LocalKeys, key_epoch: u32, k_epoch: [u8; 32], earlier: &[(u32, [u8; 32])]) -> LocalKeys {
+        LocalKeys {
+            signing_key: keys.signing_key.clone(),
+            k_epoch,
+            key_epoch,
+            earlier_epoch_keys: earlier.iter().copied().collect(),
+            device_id: keys.device_id,
+            sync_space_id: keys.sync_space_id.clone(),
+        }
     }
 
-    #[tokio::test]
-    async fn a_transports_head_names_only_events_it_has_received() {
-        let database = Database::open_memory();
-        let keys = test_keys(&database);
-        let device_id_hex = encode_id(keys.device_id.as_bytes());
-        let transports = fake("shared");
-        let transport_id = transports[0].instance_id().0;
-        assert_eq!(database.contiguous_delivered_head(&device_id_hex, &transport_id).unwrap(), (0, None));
+    fn trust(database: &Database, keys: &LocalKeys) {
+        database.trust_device_public_key(keys.device_id.as_bytes(), &keys.signing_key.verifying_key()).unwrap();
+    }
 
-        for id in ["one", "two"] {
-            database
-                .record_replicated_write(EntityType::Snippet, id, &fields(&["id", "name", "body", "createdAt"]), &snippet_payload(id, "n"))
-                .unwrap();
-        }
-        // Sealed, but not yet delivered: nothing to name.
-        assert_eq!(database.seal_pending_events(&keys, &[transports[0].instance_id()]).unwrap(), 2);
-        assert_eq!(database.contiguous_delivered_head(&device_id_hex, &transport_id).unwrap(), (0, None));
-        // Sealing is what applies this device's own feed.
-        assert_eq!(database.applied_sequence(&device_id_hex).unwrap(), 2);
+    fn fake(name: &str) -> Vec<Arc<dyn SyncTransport>> {
+        vec![Arc::new(FakeTransport::new(name))]
+    }
 
-        push_pending_events(&database, &keys, &transports).await.unwrap();
-        let (sequence, latest) = database.contiguous_delivered_head(&device_id_hex, &transport_id).unwrap();
-        assert_eq!(sequence, 2);
-        let latest = latest.expect("a delivered head names its chunk index");
-        let kind: String = database
+    /// A local snippet write as the app makes one: the app table first, then
+    /// the replica.
+    fn write_snippet(database: &Database, id: &str, name: &str) {
+        database
             .connection()
             .unwrap()
-            .query_row("SELECT object_kind FROM sync_objects WHERE cid=?1", params![latest], |row| row.get(0))
+            .execute(
+                "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, 'body', '2026-01-01T00:00:00Z')
+                 ON CONFLICT(id) DO UPDATE SET name=excluded.name",
+                params![id, name],
+            )
             .unwrap();
-        assert_eq!(kind, "chunk_index");
-        assert_eq!(published_head(&transports, &keys).await.unwrap().head.latest_event_cid.as_deref(), Some(latest.as_str()));
+        database
+            .record_replicated_write(EntityType::Snippet, id, &fields(&["id", "name", "body", "createdAt"]), &snippet_payload(id, name))
+            .unwrap();
+    }
+
+    fn rename_snippet(database: &Database, id: &str, name: &str) {
+        database.connection().unwrap().execute("UPDATE snippets SET name=?2 WHERE id=?1", params![id, name]).unwrap();
+        database
+            .record_replicated_write(EntityType::Snippet, id, &fields(&["name"]), &snippet_payload(id, name))
+            .unwrap();
+    }
+
+    fn delete_snippet(database: &Database, id: &str) {
+        database.connection().unwrap().execute("DELETE FROM snippets WHERE id=?1", params![id]).unwrap();
+        database.record_replicated_deletion(EntityType::Snippet, id).unwrap();
+    }
+
+    fn stored_snippet_name(database: &Database, id: &str) -> Option<String> {
+        database
+            .connection()
+            .unwrap()
+            .query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0))
+            .optional()
+            .unwrap()
+    }
+
+    fn state_objects(database: &Database) -> Vec<(String, String, i64)> {
+        let connection = database.connection().unwrap();
+        let mut statement = connection
+            .prepare("SELECT cid, object_kind, state_sequence FROM sync_objects WHERE state_sequence IS NOT NULL ORDER BY object_kind, cid")
+            .unwrap();
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
+        rows
+    }
+
+    async fn published_head(transports: &[Arc<dyn SyncTransport>], keys: &LocalKeys) -> Option<SignedDeviceHead> {
+        transports[0]
+            .resolve_heads(&[HeadLocator { device_id: keys.device_id, remote_id: None }])
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
     }
 
     #[tokio::test]
-    async fn a_head_waits_for_a_failed_delivery_before_naming_its_event() {
+    async fn sealing_stores_one_snapshot_and_only_reseals_after_a_change() {
         let database = Database::open_memory();
         let keys = test_keys(&database);
-        let fake_transport = Arc::new(FakeTransport::new("flaky"));
-        let transports: Vec<Arc<dyn SyncTransport>> = vec![fake_transport.clone()];
-        write_snippet(&database, "one");
-        push_pending_events(&database, &keys, &transports).await.unwrap();
-        write_snippet(&database, "two");
-        // The second event's first object fails; the head keeps naming the
-        // first event rather than one a reader couldn't fetch.
-        fake_transport.inject_transient_outage(1);
-        push_pending_events(&database, &keys, &transports).await.unwrap();
+        let transport = TransportInstanceId("folder-a".to_string());
+        write_snippet(&database, "one", "n");
+
+        assert!(database.seal_local_state(&keys, std::slice::from_ref(&transport)).unwrap());
+        let first = state_objects(&database);
+        assert!(first.iter().any(|(_, kind, sequence)| kind == "state_index" && *sequence == 1));
+        assert!(first.iter().any(|(_, kind, _)| kind == "state_chunk"));
+        let (pending, _, _) = database.delivery_counts("folder-a").unwrap();
+        assert_eq!(pending as usize, first.len());
+
+        assert!(!database.seal_local_state(&keys, std::slice::from_ref(&transport)).unwrap(), "nothing changed");
+
+        rename_snippet(&database, "one", "n2");
+        assert!(database.seal_local_state(&keys, std::slice::from_ref(&transport)).unwrap());
+        let second = state_objects(&database);
+        assert!(second.iter().all(|(_, _, sequence)| *sequence == 2), "only the current snapshot is kept locally");
+    }
+
+    #[tokio::test]
+    async fn a_rotation_reseals_the_replica_under_the_new_key() {
+        let database = Database::open_memory();
+        let keys = test_keys(&database);
+        write_snippet(&database, "one", "n");
+        assert!(database.seal_local_state(&keys, &[]).unwrap());
+        assert!(!database.seal_local_state(&keys, &[]).unwrap());
+        let rotated = at_epoch(&keys, 1, [9u8; 32], &[(0, keys.k_epoch)]);
+        assert!(database.seal_local_state(&rotated, &[]).unwrap());
+        assert_eq!(database.local_state_status().unwrap(), (false, 2, Some(1)));
+    }
+
+    #[tokio::test]
+    async fn push_delivers_the_snapshot_and_points_the_head_at_it() {
+        let database = Database::open_memory();
+        let keys = test_keys(&database);
+        let transports = fake("folder-a");
+        write_snippet(&database, "one", "n");
+
+        let outcome = push_local_state(&database, &keys, &transports).await.unwrap();
+        assert!(outcome.sealed_snapshot);
+        assert_eq!(outcome.failed, 0);
+        assert!(outcome.delivered > 0);
+        let (pending, delivered, failed) = database.delivery_counts("folder-a").unwrap();
+        assert_eq!((pending, failed), (0, 0));
+        assert!(delivered > 0);
+
         let head = published_head(&transports, &keys).await.unwrap().head;
-        assert_eq!(head.contiguous_sequence, 1);
-        assert_eq!(head.latest_event_cid, Some(own_chunk_index_cid(&database, 1)));
+        assert_eq!(head.state_sequence, 1);
+        let index_cid = state_objects(&database).into_iter().find(|(_, kind, _)| kind == "state_index").unwrap().0;
+        assert_eq!(head.state_cid.as_deref(), Some(index_cid.as_str()));
+    }
+
+    #[tokio::test]
+    async fn push_keeps_a_transient_failure_pending_for_retry() {
+        let database = Database::open_memory();
+        write_snippet(&database, "one", "n");
+        let keys = test_keys(&database);
+        let fake = FakeTransport::new("folder-a");
+        fake.inject_transient_outage(1000);
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(fake)];
+
+        let outcome = push_local_state(&database, &keys, &transports).await.unwrap();
+        assert_eq!(outcome.delivered, 0);
+        assert!(outcome.failed > 0);
+        let (pending, delivered, failed) = database.delivery_counts("folder-a").unwrap();
+        assert!(pending > 0);
+        assert_eq!(delivered, 0);
+        // Transient failures stay retryable rather than settling as
+        // permanently failed.
+        assert_eq!(failed, 0);
+    }
+
+    #[tokio::test]
+    async fn a_head_keeps_naming_the_old_snapshot_until_the_new_one_has_arrived_then_the_old_one_goes() {
+        let database = Database::open_memory();
+        let keys = test_keys(&database);
+        let flaky = Arc::new(FakeTransport::new("flaky"));
+        let transports: Vec<Arc<dyn SyncTransport>> = vec![flaky.clone()];
+        write_snippet(&database, "one", "n");
+        push_local_state(&database, &keys, &transports).await.unwrap();
+        let first_objects: Vec<String> = state_objects(&database).into_iter().map(|(cid, _, _)| cid).collect();
+
+        rename_snippet(&database, "one", "n2");
+        flaky.inject_transient_outage(1);
+        push_local_state(&database, &keys, &transports).await.unwrap();
+        assert_eq!(published_head(&transports, &keys).await.unwrap().head.state_sequence, 1);
+        for cid in &first_objects {
+            assert!(transports[0].get_object(&TransportCid(cid.clone())).await.is_ok(), "the snapshot the head names stays");
+        }
+
+        database.connection().unwrap().execute("UPDATE sync_deliveries SET retry_at=NULL", []).unwrap();
+        push_local_state(&database, &keys, &transports).await.unwrap();
+        assert_eq!(published_head(&transports, &keys).await.unwrap().head.state_sequence, 2);
+        for cid in &first_objects {
+            assert_eq!(transports[0].get_object(&TransportCid(cid.clone())).await, Err(TransportError::NotFound));
+        }
+        let retired: i64 = database.connection().unwrap().query_row("SELECT COUNT(*) FROM sync_retired_objects", [], |row| row.get(0)).unwrap();
+        assert_eq!(retired, 0);
+    }
+
+    #[tokio::test]
+    async fn two_devices_converge_through_a_shared_transport() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        write_snippet(&database_b, "b-1", "From B");
+        let keys_b = test_keys(&database_b);
+        push_local_state(&database_b, &keys_b, &transports).await.unwrap();
+
+        let keys_a = test_keys(&database_a);
+        trust(&database_a, &keys_b);
+        let outcome = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
+        assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 0));
+        assert_eq!(stored_snippet_name(&database_a, "b-1").as_deref(), Some("From B"));
+
+        // Nothing new: the same snapshot isn't merged again.
+        assert_eq!(pull_from_transports(&database_a, &keys_a, &transports).await.unwrap().merged_states, 0);
+    }
+
+    #[tokio::test]
+    async fn pull_skips_a_head_from_an_untrusted_device() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        write_snippet(&database_b, "b-1", "From B");
+        let keys_b = test_keys(&database_b);
+        push_local_state(&database_b, &keys_b, &transports).await.unwrap();
+
+        // A never trusts B.
+        let keys_a = test_keys(&database_a);
+        assert_eq!(pull_from_transports(&database_a, &keys_a, &transports).await.unwrap().merged_states, 0);
+        assert_eq!(stored_snippet_name(&database_a, "b-1"), None);
+    }
+
+    #[tokio::test]
+    async fn concurrent_edits_stay_a_visible_conflict_until_one_device_resolves_it() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let (keys_a, keys_b) = (test_keys(&database_a), test_keys(&database_b));
+        trust(&database_a, &keys_b);
+        trust(&database_b, &keys_a);
+        write_snippet(&database_a, "note", "original");
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+
+        // Both rename it before hearing from the other.
+        rename_snippet(&database_a, "note", "from A");
+        rename_snippet(&database_b, "note", "from B");
+        for (database, keys) in [(&database_a, &keys_a), (&database_b, &keys_b)] {
+            push_local_state(database, keys, &transports).await.unwrap();
+        }
+        for (database, keys) in [(&database_a, &keys_a), (&database_b, &keys_b)] {
+            pull_from_transports(database, keys, &transports).await.unwrap();
+        }
+        let conflicts_a = database_a.list_frontier_conflicts().unwrap();
+        let conflicts_b = database_b.list_frontier_conflicts().unwrap();
+        assert_eq!(conflicts_a.len(), 1);
+        assert_eq!(conflicts_a[0].field, "name");
+        assert_eq!(conflicts_a[0].candidates.len(), 2);
+        assert_eq!(conflicts_b.len(), 1);
+        // Both show the same working value.
+        assert_eq!(stored_snippet_name(&database_a, "note"), stored_snippet_name(&database_b, "note"));
+
+        // A keeps B's name; the choice settles the field on B too.
+        let from_b = conflicts_a[0].candidates.iter().find(|candidate| candidate.value == Some(serde_json::json!("from B"))).unwrap();
+        database_a.resolve_frontier_conflict(EntityType::Snippet, "note", "name", &from_b.operation_id).unwrap();
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        assert!(database_a.list_frontier_conflicts().unwrap().is_empty());
+        assert!(database_b.list_frontier_conflicts().unwrap().is_empty());
+        assert_eq!(stored_snippet_name(&database_b, "note").as_deref(), Some("from B"));
+    }
+
+    #[tokio::test]
+    async fn a_deletion_reaches_peers_and_an_older_copy_never_brings_it_back() {
+        let (database_a, database_b, database_c) = (Database::open_memory(), Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let (keys_a, keys_b, keys_c) = (test_keys(&database_a), test_keys(&database_b), test_keys(&database_c));
+        for (database, peers) in [(&database_a, [&keys_b, &keys_c]), (&database_b, [&keys_a, &keys_c]), (&database_c, [&keys_a, &keys_b])] {
+            for peer in peers {
+                trust(database, peer);
+            }
+        }
+        write_snippet(&database_a, "doomed", "doomed");
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        // C merges it, then goes quiet with its copy.
+        pull_from_transports(&database_c, &keys_c, &transports).await.unwrap();
+        assert_eq!(stored_snippet_name(&database_c, "doomed").as_deref(), Some("doomed"));
+        push_local_state(&database_c, &keys_c, &transports).await.unwrap();
+
+        delete_snippet(&database_a, "doomed");
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        assert_eq!(stored_snippet_name(&database_b, "doomed"), None);
+        let values: i64 = database_b.connection().unwrap().query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0)).unwrap();
+        assert_eq!(values, 0, "a deletion leaves no tombstone behind");
+
+        // C's older snapshot still holds the snippet; merging it brings
+        // nothing back, and C itself drops it once it hears of the deletion.
+        pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
+        assert_eq!(stored_snippet_name(&database_a, "doomed"), None);
+        pull_from_transports(&database_c, &keys_c, &transports).await.unwrap();
+        assert_eq!(stored_snippet_name(&database_c, "doomed"), None);
+    }
+
+    #[tokio::test]
+    async fn a_device_away_for_months_merges_current_states_and_keeps_its_own_edits() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let (keys_a, keys_b) = (test_keys(&database_a), test_keys(&database_b));
+        trust(&database_a, &keys_b);
+        trust(&database_b, &keys_a);
+        write_snippet(&database_a, "kept", "v1");
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+
+        // B goes away. A changes and deletes things for a long time.
+        write_snippet(&database_b, "written-offline", "offline");
+        for round in 0..50 {
+            rename_snippet(&database_a, "kept", &format!("v{}", round + 2));
+            write_snippet(&database_a, &format!("temp-{round}"), "temp");
+            delete_snippet(&database_a, &format!("temp-{round}"));
+            push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        }
+
+        // B returns: one merge of A's current state catches it up, and its
+        // own offline write reaches A.
+        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        assert_eq!(outcome.merged_states, 1);
+        assert_eq!(stored_snippet_name(&database_b, "kept").as_deref(), Some("v51"));
+        push_local_state(&database_b, &keys_b, &transports).await.unwrap();
+        pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
+        assert_eq!(stored_snippet_name(&database_a, "written-offline").as_deref(), Some("offline"));
+        // The connector holds one snapshot per device, however long the history.
+        let snapshots = transports[0].scan(None).await.unwrap().unwrap().objects.len();
+        assert!(snapshots <= 6, "expected a couple of objects per device, found {snapshots}");
+    }
+
+    #[tokio::test]
+    async fn a_device_relays_what_it_merged_to_its_other_connectors() {
+        let (database_a, database_b, database_c) = (Database::open_memory(), Database::open_memory(), Database::open_memory());
+        let (only_a, only_c) = (fake("a-and-b"), fake("b-and-c"));
+        let both: Vec<Arc<dyn SyncTransport>> = only_a.iter().chain(only_c.iter()).cloned().collect();
+        let (keys_a, keys_b, keys_c) = (test_keys(&database_a), test_keys(&database_b), test_keys(&database_c));
+        trust(&database_b, &keys_a);
+        trust(&database_c, &keys_b);
+
+        write_snippet(&database_a, "from-a", "From A");
+        push_local_state(&database_a, &keys_a, &only_a).await.unwrap();
+        pull_from_transports(&database_b, &keys_b, &both).await.unwrap();
+        // B's own snapshot now includes A's write, and goes to both of B's
+        // connectors, so C gets it without ever reaching A's.
+        push_local_state(&database_b, &keys_b, &both).await.unwrap();
+        pull_from_transports(&database_c, &keys_c, &only_c).await.unwrap();
+        assert_eq!(stored_snippet_name(&database_c, "from-a").as_deref(), Some("From A"));
+    }
+
+    #[tokio::test]
+    async fn each_peer_snapshot_opens_with_the_key_for_its_epoch() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let keys_a = test_keys(&database_a);
+        write_snippet(&database_a, "sealed-at-epoch-0", "old key");
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        let missing = at_epoch(&keys_b, 1, [9u8; 32], &[]);
+        let outcome = pull_from_transports(&database_b, &missing, &transports).await.unwrap();
+        assert_eq!((outcome.merged_states, outcome.failed_transports), (0, 1));
+
+        let complete = at_epoch(&keys_b, 1, [9u8; 32], &[(0, [7u8; 32])]);
+        let outcome = pull_from_transports(&database_b, &complete, &transports).await.unwrap();
+        assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 0));
+        assert_eq!(stored_snippet_name(&database_b, "sealed-at-epoch-0").as_deref(), Some("old key"));
+    }
+
+    fn signed_head_for(keys: &LocalKeys, state_sequence: u64, state_cid: Option<String>) -> SignedDeviceHead {
+        sign_device_head(
+            &keys.signing_key,
+            DeviceHead {
+                sync_space_id: keys.sync_space_id.clone(),
+                device_id: keys.device_id,
+                epoch: keys.key_epoch,
+                state_sequence,
+                state_cid,
+                published_at_ms: crate::sync_policy::now_ms(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_head_that_disagrees_with_its_snapshot_merges_nothing() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let keys_a = test_keys(&database_a);
+        write_snippet(&database_a, "one", "n");
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        let index_cid = published_head(&transports, &keys_a).await.unwrap().head.state_cid;
+
+        // A head claiming a later snapshot than the one it names.
+        transports[0].publish_head(&signed_head_for(&keys_a, 7, index_cid)).await.unwrap();
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        assert_eq!((outcome.merged_states, outcome.failed_transports), (0, 1));
+        assert_eq!(stored_snippet_name(&database_b, "one"), None);
+    }
+
+    #[tokio::test]
+    async fn a_stale_head_is_never_merged_again() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let lagging = fake("lagging");
+        let keys_a = test_keys(&database_a);
+        write_snippet(&database_a, "one", "first");
+        push_local_state(&database_a, &keys_a, &[transports[0].clone(), lagging[0].clone()]).await.unwrap();
+        rename_snippet(&database_a, "one", "second");
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        // The lagging connector still names A's first snapshot: it's older
+        // than what B merged, so it isn't fetched at all.
+        let outcome = pull_from_transports(&database_b, &keys_b, &lagging).await.unwrap();
+        assert_eq!((outcome.merged_states, outcome.failed_transports), (0, 0));
+        assert_eq!(stored_snippet_name(&database_b, "one").as_deref(), Some("second"));
+    }
+
+    #[tokio::test]
+    async fn the_same_snapshot_from_two_connectors_merges_once() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let both: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(FakeTransport::new("one")), Arc::new(FakeTransport::new("two"))];
+        let keys_a = test_keys(&database_a);
+        write_snippet(&database_a, "one", "n");
+        push_local_state(&database_a, &keys_a, &both).await.unwrap();
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        let outcome = pull_from_transports(&database_b, &keys_b, &both).await.unwrap();
+        assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn a_device_restored_from_an_old_backup_never_reuses_a_write_counter() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        let keys_a = test_keys(&database_a);
+        let keys_b = test_keys(&database_b);
+        trust(&database_a, &keys_b);
+        trust(&database_b, &keys_a);
+        for round in 0..3 {
+            write_snippet(&database_a, &format!("s{round}"), "n");
+        }
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        push_local_state(&database_b, &keys_b, &transports).await.unwrap();
+
+        // A's database is replaced by an empty one with the same identity,
+        // as a restore from before any of those writes would leave it.
+        let restored = Database::open_memory();
+        restored
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sync_devices(device_id, status, is_self) VALUES (?1, 'active', 1)",
+                params![encode_id(keys_a.device_id.as_bytes())],
+            )
+            .unwrap();
+        let restored_keys = LocalKeys { signing_key: keys_a.signing_key.clone(), ..at_epoch(&keys_a, 0, [7u8; 32], &[]) };
+        trust(&restored, &keys_b);
+        pull_from_transports(&restored, &restored_keys, &transports).await.unwrap();
+        write_snippet(&restored, "after-restore", "new");
+        let counter: i64 = restored
+            .connection()
+            .unwrap()
+            .query_row("SELECT counter FROM sync_values WHERE entity_id='after-restore' AND field='name'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(counter, 4, "the next write continues after what peers already saw");
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_head_is_republished_only_when_the_heartbeat_is_due() {
+        let database = Database::open_memory();
+        let transports = fake("shared");
+        let keys = test_keys(&database);
+        let start = 1_800_000_000_000;
+        crate::sync_policy::set_test_clock(Some(start));
+
+        // An empty replica still has a snapshot and a head.
+        push_local_state(&database, &keys, &transports).await.unwrap();
+        let head = published_head(&transports, &keys).await.unwrap();
+        assert_eq!((head.head.published_at_ms, head.head.state_sequence), (start, 1));
+
+        crate::sync_policy::set_test_clock(Some(start + crate::sync_policy::HEAD_HEARTBEAT_MS - 1));
+        push_local_state(&database, &keys, &transports).await.unwrap();
+        assert_eq!(published_head(&transports, &keys).await.unwrap().head.published_at_ms, start);
+
+        let due = start + crate::sync_policy::HEAD_HEARTBEAT_MS;
+        crate::sync_policy::set_test_clock(Some(due));
+        push_local_state(&database, &keys, &transports).await.unwrap();
+        assert_eq!(published_head(&transports, &keys).await.unwrap().head.published_at_ms, due);
+
+        // A change is published at once.
+        crate::sync_policy::set_test_clock(Some(due + 1));
+        write_snippet(&database, "note", "n");
+        push_local_state(&database, &keys, &transports).await.unwrap();
+        let head = published_head(&transports, &keys).await.unwrap().head;
+        assert_eq!((head.published_at_ms, head.state_sequence), (due + 1, 2));
+        crate::sync_policy::set_test_clock(None);
+    }
+
+    #[tokio::test]
+    async fn a_pull_records_each_peers_publication_time() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        let transports = fake("shared");
+        crate::sync_policy::set_test_clock(Some(1_800_000_000_000));
+        let keys_a = test_keys(&database_a);
+        write_snippet(&database_a, "note", "n");
+        push_local_state(&database_a, &keys_a, &transports).await.unwrap();
+
+        crate::sync_policy::set_test_clock(Some(1_800_000_060_000));
+        let keys_b = test_keys(&database_b);
+        trust(&database_b, &keys_a);
+        pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
+        let (published, seen, sequence): (i64, i64, i64) = database_b
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT last_head_published_at_ms, last_head_seen_at_ms, state_sequence FROM sync_remote_states WHERE device_id=?1",
+                params![encode_id(keys_a.device_id.as_bytes())],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((published, seen, sequence), (1_800_000_000_000, 1_800_000_060_000, 1));
+        crate::sync_policy::set_test_clock(None);
+    }
+
+    #[tokio::test]
+    async fn one_failed_transport_never_blocks_pull_from_a_healthy_one() {
+        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
+        write_snippet(&database_b, "b-1", "From B");
+        let keys_b = test_keys(&database_b);
+        let healthy: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new("healthy"));
+        let failing_fake = FakeTransport::new("failing");
+        failing_fake.set_authentication_failure(true);
+        let failing: Arc<dyn SyncTransport> = Arc::new(failing_fake);
+        push_local_state(&database_b, &keys_b, std::slice::from_ref(&healthy)).await.unwrap();
+
+        let keys_a = test_keys(&database_a);
+        trust(&database_a, &keys_b);
+        let outcome = pull_from_transports(&database_a, &keys_a, &[failing, healthy]).await.unwrap();
+        assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 1));
     }
 
     #[test]
@@ -2937,591 +2734,6 @@ mod replicator_tests {
         let roster = database.known_device_roster().unwrap();
         assert_eq!(roster.len(), 1);
         assert!(roster[0].0 == keys.device_id);
-    }
-
-    #[tokio::test]
-    async fn push_delivers_to_a_fake_transport_and_records_success() {
-        let database = Database::open_memory();
-        database
-            .record_replicated_write(EntityType::Snippet, "one", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("one", "n"))
-            .unwrap();
-        let keys = test_keys(&database);
-        let transport: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new("folder-a"));
-        let transports = vec![transport];
-
-        let outcome = push_pending_events(&database, &keys, &transports).await.unwrap();
-        assert_eq!(outcome.sealed_events, 1);
-        assert_eq!(outcome.failed, 0);
-        assert!(outcome.delivered > 0);
-
-        let (pending, delivered, failed) = database.delivery_counts("folder-a").unwrap();
-        assert_eq!(pending, 0);
-        assert_eq!(failed, 0);
-        assert!(delivered > 0);
-    }
-
-    #[tokio::test]
-    async fn push_keeps_a_transient_failure_pending_for_retry() {
-        let database = Database::open_memory();
-        database
-            .record_replicated_write(EntityType::Snippet, "one", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("one", "n"))
-            .unwrap();
-        let keys = test_keys(&database);
-        let fake = FakeTransport::new("folder-a");
-        fake.inject_transient_outage(1000);
-        let transport: Arc<dyn SyncTransport> = Arc::new(fake);
-        let transports = vec![transport];
-
-        let outcome = push_pending_events(&database, &keys, &transports).await.unwrap();
-        assert_eq!(outcome.delivered, 0);
-        assert!(outcome.failed > 0);
-
-        let (pending, delivered, failed) = database.delivery_counts("folder-a").unwrap();
-        assert!(pending > 0);
-        assert_eq!(delivered, 0);
-        // Transient failures stay retryable rather than settling as
-        // permanently failed.
-        assert_eq!(failed, 0);
-    }
-
-    #[tokio::test]
-    async fn two_devices_converge_through_a_shared_transport() {
-        let database_a = Database::open_memory();
-        let database_b = Database::open_memory();
-
-        database_b
-            .record_replicated_write(EntityType::Snippet, "b-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("b-1", "From B"))
-            .unwrap();
-        let keys_b = test_keys(&database_b);
-
-        let shared: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new("shared"));
-        let transports = vec![shared];
-        push_pending_events(&database_b, &keys_b, &transports).await.unwrap();
-
-        // Device A trusts device B's key (simulating completed enrollment,
-        // a later phase's job) and pulls.
-        let keys_a = test_keys(&database_a);
-        database_a.trust_device_public_key(keys_b.device_id.as_bytes(), &keys_b.signing_key.verifying_key()).unwrap();
-
-        let outcome = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
-        assert_eq!(outcome.failed_transports, 0);
-        assert_eq!(outcome.applied_events, 1);
-
-        let snippet_name: String = database_a
-            .connection()
-            .unwrap()
-            .query_row("SELECT name FROM snippets WHERE id='b-1'", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(snippet_name, "From B");
-
-        // Pulling again recognizes the already-known chunk index and
-        // applies nothing new.
-        let second = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
-        assert_eq!(second.applied_events, 0);
-    }
-
-    /// The same device's keys, as they would be after its group rotated to
-    /// `key_epoch`, holding `earlier` for older epochs.
-    fn at_epoch(keys: &LocalKeys, key_epoch: u32, k_epoch: [u8; 32], earlier: &[(u32, [u8; 32])]) -> LocalKeys {
-        LocalKeys {
-            signing_key: keys.signing_key.clone(),
-            k_epoch,
-            key_epoch,
-            earlier_epoch_keys: earlier.iter().copied().collect(),
-            device_id: keys.device_id,
-            sync_space_id: keys.sync_space_id.clone(),
-        }
-    }
-
-    fn stored_snippet_name(database: &Database, id: &str) -> Option<String> {
-        database
-            .connection()
-            .unwrap()
-            .query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0))
-            .optional()
-            .unwrap()
-    }
-
-    fn write_snippet(database: &Database, id: &str) {
-        database
-            .record_replicated_write(EntityType::Snippet, id, &fields(&["id", "name", "body", "createdAt"]), &snippet_payload(id, id))
-            .unwrap();
-    }
-
-    fn stored_object_count(database: &Database) -> i64 {
-        database.connection().unwrap().query_row("SELECT COUNT(*) FROM sync_objects", [], |row| row.get(0)).unwrap()
-    }
-
-    /// The chunk index CID of `database`'s own event at `device_sequence`.
-    fn own_chunk_index_cid(database: &Database, device_sequence: i64) -> String {
-        database
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT so.cid FROM sync_objects so JOIN sync_events se ON se.event_id = so.event_id
-                 WHERE so.object_kind='chunk_index' AND se.device_sequence=?1",
-                params![device_sequence],
-                |row| row.get(0),
-            )
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn each_remote_event_opens_with_the_key_for_its_own_epoch() {
-        let database_a = Database::open_memory();
-        let database_b = Database::open_memory();
-        let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(FakeTransport::new("shared"))];
-
-        // A writes once before its group rotates and once after.
-        write_snippet(&database_a, "epoch-0");
-        let keys_a = test_keys(&database_a);
-        push_pending_events(&database_a, &keys_a, &transports).await.unwrap();
-        write_snippet(&database_a, "epoch-1");
-        let keys_a_rotated = at_epoch(&keys_a, 1, [9u8; 32], &[(0, keys_a.k_epoch)]);
-        push_pending_events(&database_a, &keys_a_rotated, &transports).await.unwrap();
-
-        let keys_b = test_keys(&database_b);
-        database_b.trust_device_public_key(keys_a.device_id.as_bytes(), &keys_a.signing_key.verifying_key()).unwrap();
-
-        // Without epoch 0's key, B applies nothing and keeps nothing, so a
-        // later pull still walks the whole chain.
-        let missing = at_epoch(&keys_b, 1, [9u8; 32], &[]);
-        let outcome = pull_from_transports(&database_b, &missing, &transports).await.unwrap();
-        assert_eq!(outcome.applied_events, 0);
-        assert_eq!(outcome.failed_transports, 1);
-        assert_eq!(stored_object_count(&database_b), 0);
-        assert_eq!(stored_snippet_name(&database_b, "epoch-1"), None);
-
-        let complete = at_epoch(&keys_b, 1, [9u8; 32], &[(0, [7u8; 32])]);
-        let outcome = pull_from_transports(&database_b, &complete, &transports).await.unwrap();
-        assert_eq!(outcome.failed_transports, 0);
-        assert_eq!(outcome.applied_events, 2);
-        assert_eq!(stored_snippet_name(&database_b, "epoch-0").as_deref(), Some("epoch-0"));
-        assert_eq!(stored_snippet_name(&database_b, "epoch-1").as_deref(), Some("epoch-1"));
-    }
-
-    #[tokio::test]
-    async fn a_walk_that_fails_partway_applies_everything_on_the_next_pull() {
-        let database_a = Database::open_memory();
-        let database_b = Database::open_memory();
-        let fake = Arc::new(FakeTransport::new("shared"));
-        let transports: Vec<Arc<dyn SyncTransport>> = vec![fake.clone()];
-
-        let keys_a = test_keys(&database_a);
-        for id in ["first", "second", "third"] {
-            write_snippet(&database_a, id);
-            push_pending_events(&database_a, &keys_a, &transports).await.unwrap();
-        }
-        let keys_b = test_keys(&database_b);
-        database_b.trust_device_public_key(keys_a.device_id.as_bytes(), &keys_a.signing_key.verifying_key()).unwrap();
-
-        // The oldest event isn't visible yet, so the walk from the newest
-        // one fails after fetching the two newer events.
-        fake.inject_delayed_visibility(&TransportCid(own_chunk_index_cid(&database_a, 1)), 1);
-        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
-        assert_eq!(outcome.failed_transports, 1);
-        assert_eq!(outcome.applied_events, 0);
-        assert_eq!(stored_snippet_name(&database_b, "third"), None);
-
-        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
-        assert_eq!(outcome.failed_transports, 0);
-        assert_eq!(outcome.applied_events, 3);
-        for id in ["first", "second", "third"] {
-            assert_eq!(stored_snippet_name(&database_b, id).as_deref(), Some(id));
-        }
-    }
-
-    #[tokio::test]
-    async fn events_an_earlier_build_stored_without_applying_are_fetched_again_and_applied() {
-        let database_a = Database::open_memory();
-        let database_b = Database::open_memory();
-        let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(FakeTransport::new("shared"))];
-
-        let keys_a = test_keys(&database_a);
-        for id in ["first", "second"] {
-            write_snippet(&database_a, id);
-            push_pending_events(&database_a, &keys_a, &transports).await.unwrap();
-        }
-
-        // Reproduce what a failed walk used to leave behind on B: A's newest
-        // event stored locally, never applied.
-        let newest_index_cid = own_chunk_index_cid(&database_a, 2);
-        let (event_id_hex, index_bytes): (String, Vec<u8>) = database_a
-            .connection()
-            .unwrap()
-            .query_row("SELECT event_id, bytes FROM sync_objects WHERE cid=?1", params![newest_index_cid], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
-            .unwrap();
-        let index: ChunkIndex = serde_json::from_slice(&index_bytes).unwrap();
-        let chunks: Vec<Vec<u8>> = index
-            .chunk_cids
-            .iter()
-            .map(|cid| {
-                database_a
-                    .connection()
-                    .unwrap()
-                    .query_row("SELECT bytes FROM sync_objects WHERE cid=?1", params![cid], |row| row.get(0))
-                    .unwrap()
-            })
-            .collect();
-        let keys_b = test_keys(&database_b);
-        database_b.remember_remote_message(&newest_index_cid, &index.chunk_cids, &chunks, &event_id_hex).unwrap();
-        database_b.enqueue_repair_deliveries(&[TransportInstanceId("shared".to_string())]).unwrap();
-        database_b.trust_device_public_key(keys_a.device_id.as_bytes(), &keys_a.signing_key.verifying_key()).unwrap();
-
-        let outcome = pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
-        assert_eq!(outcome.applied_events, 2);
-        assert_eq!(stored_snippet_name(&database_b, "first").as_deref(), Some("first"));
-        assert_eq!(stored_snippet_name(&database_b, "second").as_deref(), Some("second"));
-
-        // Applied remote events and this device's own events are kept.
-        write_snippet(&database_b, "own");
-        push_pending_events(&database_b, &keys_b, &transports).await.unwrap();
-        let before = stored_object_count(&database_b);
-        assert_eq!(database_b.forget_unapplied_remote_messages().unwrap(), 0);
-        assert_eq!(stored_object_count(&database_b), before);
-    }
-
-    fn trust(database: &Database, keys: &LocalKeys) {
-        database.trust_device_public_key(keys.device_id.as_bytes(), &keys.signing_key.verifying_key()).unwrap();
-    }
-
-    fn fake(name: &str) -> Vec<Arc<dyn SyncTransport>> {
-        vec![Arc::new(FakeTransport::new(name))]
-    }
-
-    fn progress_row(database: &Database, keys: &LocalKeys) -> (i64, i64) {
-        database
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT applied_sequence, progress_sequence FROM sync_device_progress WHERE device_id=?1",
-                params![encode_id(keys.device_id.as_bytes())],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .unwrap()
-            .unwrap_or((0, 0))
-    }
-
-    fn update_snippet(database: &Database, id: &str, name: &str) {
-        database
-            .record_replicated_write(EntityType::Snippet, id, &fields(&["name"]), &snippet_payload(id, name))
-            .unwrap();
-    }
-
-    fn signed_head_for(keys: &LocalKeys, contiguous_sequence: u64, latest_event_cid: Option<String>) -> SignedDeviceHead {
-        sign_device_head(
-            &keys.signing_key,
-            DeviceHead {
-                sync_space_id: keys.sync_space_id.clone(),
-                device_id: keys.device_id,
-                epoch: keys.key_epoch,
-                contiguous_sequence,
-                latest_event_cid,
-                published_at_ms: crate::sync_policy::now_ms(),
-                ack: vec![],
-                snapshot_cid: None,
-            },
-        )
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn a_sealed_event_names_everything_its_author_had_applied() {
-        let (database_a, database_c) = (Database::open_memory(), Database::open_memory());
-        let shared = fake("shared");
-        write_snippet(&database_c, "from-c");
-        let keys_c = test_keys(&database_c);
-        push_pending_events(&database_c, &keys_c, &shared).await.unwrap();
-
-        let keys_a = test_keys(&database_a);
-        trust(&database_a, &keys_c);
-        pull_from_transports(&database_a, &keys_a, &shared).await.unwrap();
-        update_snippet(&database_a, "from-c", "edited by A");
-        push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
-
-        let vector: String = database_a
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT causal_vector FROM sync_events WHERE device_id=?1 AND device_sequence=1",
-                params![encode_id(keys_a.device_id.as_bytes())],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(vector, format!("[[\"{}\",1]]", encode_id(keys_c.device_id.as_bytes())));
-    }
-
-    #[tokio::test]
-    async fn progress_waits_for_an_events_dependencies_and_advances_once_they_arrive() {
-        let (database_a, database_b, database_c) = (Database::open_memory(), Database::open_memory(), Database::open_memory());
-        let (only_a, only_c) = (fake("a-only"), fake("c-only"));
-
-        // C writes; A reads it and edits the same snippet, so A's event
-        // depends on C's.
-        write_snippet(&database_c, "shared-note");
-        let keys_c = test_keys(&database_c);
-        push_pending_events(&database_c, &keys_c, &only_c).await.unwrap();
-        let keys_a = test_keys(&database_a);
-        trust(&database_a, &keys_c);
-        pull_from_transports(&database_a, &keys_a, &only_c).await.unwrap();
-        update_snippet(&database_a, "shared-note", "edited by A");
-        push_pending_events(&database_a, &keys_a, &only_a).await.unwrap();
-
-        // B sees only A's connector: it applies A's event but can't count
-        // it as closed without C's.
-        let keys_b = test_keys(&database_b);
-        trust(&database_b, &keys_a);
-        trust(&database_b, &keys_c);
-        let outcome = pull_from_transports(&database_b, &keys_b, &only_a).await.unwrap();
-        assert_eq!(outcome.applied_events, 1);
-        assert_eq!(progress_row(&database_b, &keys_a), (1, 0));
-        assert!(database_b.progress_vector().unwrap().iter().all(|entry| entry.device_id != keys_a.device_id));
-
-        // Once C's event arrives, both are closed.
-        let both: Vec<Arc<dyn SyncTransport>> = only_a.iter().chain(only_c.iter()).cloned().collect();
-        let outcome = pull_from_transports(&database_b, &keys_b, &both).await.unwrap();
-        assert_eq!(outcome.applied_events, 1);
-        assert_eq!(progress_row(&database_b, &keys_a), (1, 1));
-        assert_eq!(progress_row(&database_b, &keys_c), (1, 1));
-        assert_eq!(stored_snippet_name(&database_b, "shared-note").as_deref(), Some("edited by A"));
-
-        // B's own next event depends on both, and B's progress is closed.
-        write_snippet(&database_b, "from-b");
-        push_pending_events(&database_b, &keys_b, &only_a).await.unwrap();
-        assert_eq!(progress_row(&database_b, &keys_b), (1, 1));
-    }
-
-    #[tokio::test]
-    async fn the_same_feed_from_two_connectors_applies_once() {
-        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
-        let both: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(FakeTransport::new("one")), Arc::new(FakeTransport::new("two"))];
-        let keys_a = test_keys(&database_a);
-        for id in ["first", "second"] {
-            write_snippet(&database_a, id);
-            push_pending_events(&database_a, &keys_a, &both).await.unwrap();
-        }
-        let keys_b = test_keys(&database_b);
-        trust(&database_b, &keys_a);
-        let outcome = pull_from_transports(&database_b, &keys_b, &both).await.unwrap();
-        assert_eq!(outcome.applied_events, 2);
-        assert_eq!(outcome.failed_transports, 0);
-        assert_eq!(progress_row(&database_b, &keys_a), (2, 2));
-        assert_eq!(pull_from_transports(&database_b, &keys_b, &both).await.unwrap().applied_events, 0);
-    }
-
-    #[tokio::test]
-    async fn a_stale_head_naming_already_applied_events_changes_nothing() {
-        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
-        let shared = fake("shared");
-        let keys_a = test_keys(&database_a);
-        write_snippet(&database_a, "note");
-        push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
-        update_snippet(&database_a, "note", "second name");
-        push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
-        let keys_b = test_keys(&database_b);
-        trust(&database_b, &keys_a);
-        pull_from_transports(&database_b, &keys_b, &shared).await.unwrap();
-
-        // A lagging connector still holds A's first event and a head that
-        // names it. B already has it, so nothing is fetched or re-applied,
-        // and no conflict appears.
-        let lagging = fake("lagging");
-        let first_index = own_chunk_index_cid(&database_a, 1);
-        lagging[0].publish_head(&signed_head_for(&keys_a, 1, Some(first_index))).await.unwrap();
-        let outcome = pull_from_transports(&database_b, &keys_b, &lagging).await.unwrap();
-        assert_eq!(outcome.failed_transports, 0);
-        assert_eq!(outcome.applied_events, 0);
-        assert!(database_b.list_frontier_conflicts().unwrap().is_empty());
-        assert_eq!(stored_snippet_name(&database_b, "note").as_deref(), Some("second name"));
-    }
-
-    #[tokio::test]
-    async fn a_head_whose_feed_skips_or_reorders_events_applies_nothing() {
-        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
-        let shared = fake("shared");
-        let keys_a = test_keys(&database_a);
-        for id in ["first", "second"] {
-            write_snippet(&database_a, id);
-            push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
-        }
-        // A head claiming a third event while naming the second.
-        let forged = fake("forged");
-        for cid in [own_chunk_index_cid(&database_a, 2)] {
-            let bytes = shared[0].get_object(&TransportCid(cid.clone())).await.unwrap();
-            forged[0].put_object(&TransportCid(cid.clone()), &bytes).await.unwrap();
-            let index: ChunkIndex = serde_json::from_slice(&bytes).unwrap();
-            for chunk in index.chunk_cids {
-                let chunk_bytes = shared[0].get_object(&TransportCid(chunk.clone())).await.unwrap();
-                forged[0].put_object(&TransportCid(chunk), &chunk_bytes).await.unwrap();
-            }
-        }
-        forged[0].publish_head(&signed_head_for(&keys_a, 3, Some(own_chunk_index_cid(&database_a, 2)))).await.unwrap();
-
-        let keys_b = test_keys(&database_b);
-        trust(&database_b, &keys_a);
-        let outcome = pull_from_transports(&database_b, &keys_b, &forged).await.unwrap();
-        assert_eq!(outcome.failed_transports, 1);
-        assert_eq!(outcome.applied_events, 0);
-        assert_eq!(progress_row(&database_b, &keys_a), (0, 0));
-        assert_eq!(stored_object_count(&database_b), 0);
-    }
-
-    async fn published_head(transports: &[Arc<dyn SyncTransport>], keys: &LocalKeys) -> Option<SignedDeviceHead> {
-        transports[0]
-            .resolve_heads(&[HeadLocator { device_id: keys.device_id, remote_id: None }])
-            .await
-            .unwrap()
-            .into_iter()
-            .next()
-    }
-
-    #[tokio::test]
-    async fn an_unchanged_head_is_republished_only_when_the_heartbeat_is_due() {
-        let database = Database::open_memory();
-        let shared = fake("shared");
-        let keys = test_keys(&database);
-        let start = 1_800_000_000_000;
-        crate::sync_policy::set_test_clock(Some(start));
-
-        // Published even with nothing written yet.
-        push_pending_events(&database, &keys, &shared).await.unwrap();
-        let head = published_head(&shared, &keys).await.unwrap();
-        assert_eq!(head.head.published_at_ms, start);
-        assert_eq!((head.head.contiguous_sequence, head.head.latest_event_cid.clone()), (0, None));
-
-        crate::sync_policy::set_test_clock(Some(start + crate::sync_policy::HEAD_HEARTBEAT_MS - 1));
-        push_pending_events(&database, &keys, &shared).await.unwrap();
-        assert_eq!(published_head(&shared, &keys).await.unwrap().head.published_at_ms, start);
-
-        let due = start + crate::sync_policy::HEAD_HEARTBEAT_MS;
-        crate::sync_policy::set_test_clock(Some(due));
-        push_pending_events(&database, &keys, &shared).await.unwrap();
-        assert_eq!(published_head(&shared, &keys).await.unwrap().head.published_at_ms, due);
-
-        // A change is published at once.
-        crate::sync_policy::set_test_clock(Some(due + 1));
-        write_snippet(&database, "note");
-        push_pending_events(&database, &keys, &shared).await.unwrap();
-        let head = published_head(&shared, &keys).await.unwrap().head;
-        assert_eq!(head.published_at_ms, due + 1);
-        assert_eq!(head.contiguous_sequence, 1);
-        assert_eq!(head.ack, vec![threestrands_sync_envelope::SequenceEntry { device_id: keys.device_id, sequence: 1 }]);
-        crate::sync_policy::set_test_clock(None);
-    }
-
-    #[tokio::test]
-    async fn a_pull_records_each_peers_ack_and_publication_time() {
-        let (database_a, database_b) = (Database::open_memory(), Database::open_memory());
-        let shared = fake("shared");
-        crate::sync_policy::set_test_clock(Some(1_800_000_000_000));
-        let keys_a = test_keys(&database_a);
-        write_snippet(&database_a, "note");
-        push_pending_events(&database_a, &keys_a, &shared).await.unwrap();
-
-        crate::sync_policy::set_test_clock(Some(1_800_000_060_000));
-        let keys_b = test_keys(&database_b);
-        trust(&database_b, &keys_a);
-        pull_from_transports(&database_b, &keys_b, &shared).await.unwrap();
-        let (published, seen, ack): (i64, i64, String) = database_b
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT last_head_published_at_ms, last_head_seen_at_ms, ack_json FROM sync_device_progress WHERE device_id=?1",
-                params![encode_id(keys_a.device_id.as_bytes())],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!((published, seen), (1_800_000_000_000, 1_800_000_060_000));
-        assert_eq!(ack, format!("[[\"{}\",1]]", encode_id(keys_a.device_id.as_bytes())));
-        crate::sync_policy::set_test_clock(None);
-    }
-
-    #[tokio::test]
-    async fn pull_skips_a_head_from_an_untrusted_device() {
-        let database_a = Database::open_memory();
-        let database_b = Database::open_memory();
-
-        database_b
-            .record_replicated_write(EntityType::Snippet, "b-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("b-1", "From B"))
-            .unwrap();
-        let keys_b = test_keys(&database_b);
-        let shared: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new("shared"));
-        let transports = vec![shared];
-        push_pending_events(&database_b, &keys_b, &transports).await.unwrap();
-
-        // A never calls trust_device_public_key for B this time.
-        let keys_a = test_keys(&database_a);
-        let outcome = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
-        assert_eq!(outcome.applied_events, 0);
-
-        let missing = database_a
-            .connection()
-            .unwrap()
-            .query_row("SELECT COUNT(*) FROM snippets WHERE id='b-1'", [], |row| row.get::<_, i64>(0))
-            .unwrap();
-        assert_eq!(missing, 0);
-    }
-
-    #[tokio::test]
-    async fn repair_delivers_a_pulled_object_to_a_second_transport() {
-        let database_a = Database::open_memory();
-        let database_b = Database::open_memory();
-
-        database_b
-            .record_replicated_write(EntityType::Snippet, "b-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("b-1", "From B"))
-            .unwrap();
-        let keys_b = test_keys(&database_b);
-
-        let transport_x: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new("x"));
-        let transport_y: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new("y"));
-
-        // B only pushes to transport X.
-        push_pending_events(&database_b, &keys_b, std::slice::from_ref(&transport_x)).await.unwrap();
-
-        let keys_a = test_keys(&database_a);
-        database_a.trust_device_public_key(keys_b.device_id.as_bytes(), &keys_b.signing_key.verifying_key()).unwrap();
-
-        // A knows about both transports and pulls from X.
-        let outcome = pull_from_transports(&database_a, &keys_a, &[transport_x.clone(), transport_y.clone()]).await.unwrap();
-        assert_eq!(outcome.applied_events, 1);
-
-        // Repair queued delivery to Y even though A never pushed anything
-        // of its own.
-        let (pending_y, _, _) = database_a.delivery_counts("y").unwrap();
-        assert!(pending_y > 0);
-
-        push_pending_events(&database_a, &keys_a, &[transport_x, transport_y]).await.unwrap();
-        let (pending_y_after, delivered_y, _) = database_a.delivery_counts("y").unwrap();
-        assert_eq!(pending_y_after, 0);
-        assert!(delivered_y > 0);
-    }
-
-    #[tokio::test]
-    async fn one_failed_transport_never_blocks_pull_from_a_healthy_one() {
-        let database_a = Database::open_memory();
-        let database_b = Database::open_memory();
-
-        database_b
-            .record_replicated_write(EntityType::Snippet, "b-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("b-1", "From B"))
-            .unwrap();
-        let keys_b = test_keys(&database_b);
-
-        let healthy: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new("healthy"));
-        let failing_fake = FakeTransport::new("failing");
-        failing_fake.set_authentication_failure(true);
-        let failing: Arc<dyn SyncTransport> = Arc::new(failing_fake);
-
-        push_pending_events(&database_b, &keys_b, std::slice::from_ref(&healthy)).await.unwrap();
-
-        let keys_a = test_keys(&database_a);
-        database_a.trust_device_public_key(keys_b.device_id.as_bytes(), &keys_b.signing_key.verifying_key()).unwrap();
-
-        let outcome = pull_from_transports(&database_a, &keys_a, &[failing, healthy]).await.unwrap();
-        assert_eq!(outcome.failed_transports, 1);
-        assert_eq!(outcome.applied_events, 1);
     }
 
     #[test]
@@ -4040,20 +3252,28 @@ mod reconciliation_tests {
         database.connection().unwrap().query_row(sql, [], |row| row.get(0)).unwrap()
     }
 
-    /// Fills `database` with a group as a protocol-1 build left it (in the
-    /// columns the upgrade reads), marks the schema as the version before
-    /// the upgrade, and runs the migration again.
-    fn upgrade_from_a_protocol_1_group(database: &Database, enrolled: bool) {
+    fn table_exists(database: &Database, table: &str) -> bool {
+        database
+            .connection()
+            .unwrap()
+            .query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)", [table], |row| row.get(0))
+            .unwrap()
+    }
+
+    /// Puts back the tables a protocol-2 build kept (in the columns the
+    /// upgrade reads), fills them with a group, marks the schema as the
+    /// version before the upgrade, and runs the migration again.
+    fn upgrade_from_a_protocol_2_group(database: &Database, enrolled: bool) {
         database
             .connection()
             .unwrap()
             .execute_batch(
-                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at)
-                   VALUES ('e1',3,'d1',1,1,'sealed','2026-09-01T00:00:00Z');
-                 INSERT INTO sync_operations(operation_id,event_id,entity_type,entity_id,field,value,winner_stamp)
-                   VALUES ('o1','e1','snippet','s1','name','\"n\"',X'00');
-                 INSERT INTO sync_field_frontier VALUES ('snippet','s1','name','o1');
-                 INSERT INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES ('c1','e1','operations',0,1,X'00');
+                "CREATE TABLE sync_events (event_id TEXT PRIMARY KEY, device_id TEXT, device_sequence INTEGER, state TEXT);
+                 CREATE TABLE sync_operations (operation_id TEXT PRIMARY KEY, event_id TEXT, entity_id TEXT, field TEXT, value TEXT);
+                 CREATE TABLE sync_field_frontier (entity_id TEXT, field TEXT, operation_id TEXT);
+                 CREATE TABLE sync_device_progress (device_id TEXT PRIMARY KEY);
+                 INSERT INTO sync_events VALUES ('e1','d1',1,'sealed');
+                 INSERT INTO sync_operations VALUES ('o1','e1','s1','name','\"n\"');
                  INSERT INTO sync_devices(device_id,status,is_self) VALUES ('d1','active',1);
                  INSERT INTO sync_device_labels VALUES ('d1','Laptop');",
             )
@@ -4069,19 +3289,22 @@ mod reconciliation_tests {
                 .unwrap();
         }
         let mut connection = database.connection().unwrap();
-        connection.pragma_update(None, "user_version", 34).unwrap();
+        connection.pragma_update(None, "user_version", 35).unwrap();
         crate::schema::migrate(&mut connection).unwrap();
     }
 
     #[test]
-    fn upgrading_leaves_a_protocol_1_group_but_keeps_local_data_connectors_and_the_beta() {
+    fn upgrading_leaves_a_protocol_2_group_but_keeps_local_data_connectors_and_the_beta() {
         let database = Database::open_memory();
         database.set_beta_features_enabled(true).unwrap();
         let snippet = database.create_snippet("Signature", "Best, Alex").unwrap();
         database.add_folder_transport("folder-1", &std::env::temp_dir()).unwrap();
-        upgrade_from_a_protocol_1_group(&database, true);
+        upgrade_from_a_protocol_2_group(&database, true);
 
-        for table in ["sync_events", "sync_operations", "sync_field_frontier", "sync_objects", "sync_devices", "sync_device_labels", "sync_epoch_history"] {
+        for table in ["sync_events", "sync_operations", "sync_field_frontier", "sync_device_progress"] {
+            assert!(!table_exists(&database, table), "{table} should be gone");
+        }
+        for table in ["sync_values", "sync_context", "sync_devices", "sync_device_labels", "sync_epoch_history"] {
             assert_eq!(count(&database, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table} should be empty");
         }
         assert_eq!(count(&database, "SELECT active_epoch FROM sync_spaces"), 0);
@@ -4095,12 +3318,12 @@ mod reconciliation_tests {
         database.dismiss_protocol_reset_notice().unwrap();
         assert!(!database.protocol_reset_notice().unwrap());
 
-        // The next sync re-records local data for the next group.
+        // The next sync re-records local data into the replica.
         assert!(database.reconcile_replicated_sync_backlog().unwrap() >= 1);
         let recorded: i64 = database
             .connection()
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1 AND field='_entity'", [&snippet.id], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1 AND field='_entity'", [&snippet.id], |row| row.get(0))
             .unwrap();
         assert_eq!(recorded, 1);
     }
@@ -4108,36 +3331,21 @@ mod reconciliation_tests {
     #[test]
     fn upgrading_a_device_that_never_joined_a_group_says_nothing() {
         let database = Database::open_memory();
-        upgrade_from_a_protocol_1_group(&database, false);
+        upgrade_from_a_protocol_2_group(&database, false);
         assert!(!database.protocol_reset_notice().unwrap());
         assert_eq!(database.pending_keychain_cleanup().unwrap(), None);
-        assert_eq!(count(&database, "SELECT COUNT(*) FROM sync_events"), 0);
+        assert!(!table_exists(&database, "sync_events"));
     }
 
     #[test]
-    fn an_operation_belongs_to_exactly_one_event_or_snapshot() {
+    fn a_fresh_database_has_the_replica_tables_and_no_event_log() {
         let database = Database::open_memory();
-        let insert = |event: Option<&str>, snapshot: Option<&str>| {
-            database.connection().unwrap().execute(
-                "INSERT INTO sync_operations(operation_id,event_id,snapshot_id,entity_type,entity_id,field,winner_stamp)
-                 VALUES (lower(hex(randomblob(16))),?1,?2,'snippet','s1','name',X'00')",
-                params![event, snapshot],
-            )
-        };
-        assert!(insert(Some("e1"), None).is_ok());
-        assert!(insert(None, Some("snap-1")).is_ok());
-        assert!(insert(None, None).is_err());
-        assert!(insert(Some("e1"), Some("snap-1")).is_err());
-        // Removing an event row never removes its operations.
-        database
-            .connection()
-            .unwrap()
-            .execute_batch(
-                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at) VALUES ('e1',0,'d1',1,1,'sealed','x');
-                 DELETE FROM sync_events WHERE event_id='e1';",
-            )
-            .unwrap();
-        assert_eq!(count(&database, "SELECT COUNT(*) FROM sync_operations WHERE event_id='e1'"), 1);
+        for table in ["sync_values", "sync_context", "sync_local_state", "sync_remote_states", "sync_objects", "sync_retired_objects"] {
+            assert!(table_exists(&database, table), "{table} should exist");
+        }
+        for table in ["sync_events", "sync_operations", "sync_operation_parents", "sync_field_frontier", "sync_device_progress"] {
+            assert!(!table_exists(&database, table), "{table} should not exist");
+        }
     }
 
     #[test]
@@ -4148,7 +3356,7 @@ mod reconciliation_tests {
         let snippet = database.create_snippet("Signature", "Best, Alex").unwrap();
         let connection = database.connection().unwrap();
         let before: i64 = connection
-            .query_row("SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
             .unwrap();
         assert_eq!(before, 0);
         drop(connection);
@@ -4159,7 +3367,7 @@ mod reconciliation_tests {
         let connection = database.connection().unwrap();
         let existence: String = connection
             .query_row(
-                "SELECT value FROM sync_operations WHERE entity_id=?1 AND field='_entity'",
+                "SELECT value FROM sync_values WHERE entity_id=?1 AND field='_entity'",
                 [&snippet.id],
                 |row| row.get(0),
             )
@@ -4167,7 +3375,7 @@ mod reconciliation_tests {
         assert_eq!(existence, "true");
         let name: String = connection
             .query_row(
-                "SELECT value FROM sync_operations WHERE entity_id=?1 AND field='name'",
+                "SELECT value FROM sync_values WHERE entity_id=?1 AND field='name'",
                 [&snippet.id],
                 |row| row.get(0),
             )
@@ -4188,7 +3396,7 @@ mod reconciliation_tests {
 
         let connection = database.connection().unwrap();
         let before: i64 = connection
-            .query_row("SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
             .unwrap();
         drop(connection);
 
@@ -4198,7 +3406,7 @@ mod reconciliation_tests {
 
         let connection = database.connection().unwrap();
         let after: i64 = connection
-            .query_row("SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
             .unwrap();
         assert_eq!(before, after, "reconciling an already-recorded entity must not create duplicate operations");
     }
@@ -4225,7 +3433,7 @@ mod reconciliation_tests {
             .connection()
             .unwrap()
             .query_row(
-                "SELECT COUNT(*) FROM sync_operations WHERE entity_type=?1 AND entity_id='mail'",
+                "SELECT COUNT(*) FROM sync_values WHERE entity_type=?1 AND entity_id='mail'",
                 [EntityType::Retention.as_str()],
                 |row| row.get(0),
             )
@@ -4253,7 +3461,7 @@ mod reconciliation_tests {
             .connection()
             .unwrap()
             .query_row(
-                "SELECT value FROM sync_operations WHERE entity_type=?1 AND entity_id='mail' AND field='days'",
+                "SELECT value FROM sync_values WHERE entity_type=?1 AND entity_id='mail' AND field='days'",
                 [EntityType::Retention.as_str()],
                 |row| row.get(0),
             )
@@ -4271,59 +3479,16 @@ mod frontier_conflict_tests {
         names.iter().map(|name| name.to_string()).collect()
     }
 
-    /// Forces a genuine two-way conflict on `field`: both operations name
-    /// the same current frontier as their parent, exactly as two devices
-    /// that each branched before seeing the other's write would. This must
-    /// go through the general `apply_remote_operation` (explicit parents),
-    /// not `apply_field_operation` (which always reads the frontier at
-    /// call time, so two sequential calls can never actually collide).
+    /// Forces a genuine two-way conflict on `field`: two other devices each
+    /// start from this replica, rewrite the field before hearing from the
+    /// other, and this replica merges both.
     fn force_conflict(database: &Database, entity_id: &str, field: &str, value_a: Value, value_b: Value) {
-        let parent: String = database
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT operation_id FROM sync_field_frontier WHERE entity_type=?1 AND entity_id=?2 AND field=?3",
-                params![EntityType::Snippet.as_str(), entity_id, field],
-                |row| row.get(0),
-            )
-            .unwrap();
-
-        let mut connection = database.connection().unwrap();
-        let tx = connection.transaction().unwrap();
-        for (sequence, value) in [(1i64, value_a), (2i64, value_b)] {
-            let device_id = random_id();
-            let event_id = random_id();
-            let operation_id = random_id();
-            let event_id_hex = encode_id(&event_id);
-            // sync_operations.event_id has a foreign key into sync_events,
-            // so a fake remote event needs a (fake but present) row there
-            // too, exactly as a real pulled event would have inserted one.
-            tx.execute(
-                "INSERT INTO sync_events(event_id,epoch,device_id,device_sequence,lamport,state,created_at)
-                 VALUES (?1,0,?2,?3,10,'sealed',?4)",
-                params![event_id_hex, encode_id(&device_id), sequence, Utc::now().to_rfc3339()],
-            )
-            .unwrap();
-            let stamp = WinnerStamp {
-                lamport: 10,
-                device_id,
-                event_id,
-                operation_id,
-            };
-            Database::apply_remote_operation(
-                &tx,
-                EntityType::Snippet,
-                entity_id,
-                field,
-                Some(&value),
-                &event_id_hex,
-                &encode_id(&operation_id),
-                std::slice::from_ref(&parent),
-                &stamp,
-            )
-            .unwrap();
+        let base = database.load_replica_state().unwrap();
+        for value in [value_a, value_b] {
+            let mut remote = base.clone();
+            remote.write(random_id(), 10, EntityType::Snippet, entity_id, [(field.to_string(), Some(value))]);
+            database.merge_replica_state(&remote).unwrap();
         }
-        tx.commit().unwrap();
     }
 
     #[test]
@@ -4370,16 +3535,16 @@ mod frontier_conflict_tests {
 
         force_conflict(&database, "s1", "name", json!("Same"), json!("Same"));
 
-        let frontier_size: i64 = database
+        let values: i64 = database
             .connection()
             .unwrap()
             .query_row(
-                "SELECT COUNT(*) FROM sync_field_frontier WHERE entity_type='snippet' AND entity_id='s1' AND field='name'",
+                "SELECT COUNT(*) FROM sync_values WHERE entity_type='snippet' AND entity_id='s1' AND field='name'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(frontier_size, 2, "both concurrent writes stay in the frontier");
+        assert_eq!(values, 2, "both concurrent writes stay in the field");
         assert!(!database
             .list_frontier_conflicts()
             .unwrap()
@@ -4388,7 +3553,7 @@ mod frontier_conflict_tests {
     }
 
     #[test]
-    fn resolving_names_the_whole_frontier_as_parents_and_collapses_it() {
+    fn resolving_replaces_every_value_in_the_field_with_the_chosen_one() {
         let database = Database::open_memory();
         database
             .record_replicated_write(
@@ -4406,57 +3571,26 @@ mod frontier_conflict_tests {
             .into_iter()
             .find(|conflict| conflict.entity_id == "s1" && conflict.field == "name")
             .unwrap();
-        let chosen = conflict
-            .candidates
-            .iter()
-            .find(|candidate| candidate.value == Some(json!("From B")))
-            .unwrap();
-        let losing_operation_id = conflict
-            .candidates
-            .iter()
-            .find(|candidate| candidate.value == Some(json!("From A")))
-            .unwrap()
-            .operation_id
-            .clone();
+        let chosen = conflict.candidates.iter().find(|candidate| candidate.value == Some(json!("From B"))).unwrap();
+        database.resolve_frontier_conflict(EntityType::Snippet, "s1", "name", &chosen.operation_id).unwrap();
 
-        database
-            .resolve_frontier_conflict(EntityType::Snippet, "s1", "name", &chosen.operation_id)
-            .unwrap();
-
-        // The conflict is gone: exactly one frontier member remains.
-        let remaining = database.list_frontier_conflicts().unwrap();
-        assert!(!remaining.iter().any(|c| c.entity_id == "s1" && c.field == "name"));
-
-        let resolution_operation_id: String = database
+        // One value is left, the chosen one, written by this device (so it
+        // supersedes both candidates on every replica that merges it).
+        assert!(database.list_frontier_conflicts().unwrap().is_empty());
+        let rows: Vec<(String, Option<String>)> = {
+            let connection = database.connection().unwrap();
+            let mut statement = connection
+                .prepare("SELECT device_id, value FROM sync_values WHERE entity_type='snippet' AND entity_id='s1' AND field='name'")
+                .unwrap();
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap();
+            rows
+        };
+        let self_device: String = database
             .connection()
             .unwrap()
-            .query_row(
-                "SELECT operation_id FROM sync_field_frontier WHERE entity_type='snippet' AND entity_id='s1' AND field='name'",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT device_id FROM sync_devices WHERE is_self=1", [], |row| row.get(0))
             .unwrap();
-        // The new operation's parents are the entire prior frontier — both
-        // the chosen and the losing candidate — not just the chosen one.
-        let parent_count: i64 = database
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM sync_operation_parents WHERE operation_id=?1",
-                params![resolution_operation_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(parent_count, 2);
-        let has_losing_parent: bool = database
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_operation_parents WHERE operation_id=?1 AND parent_operation_id=?2)",
-                params![resolution_operation_id, losing_operation_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(has_losing_parent);
+        assert_eq!(rows, vec![(self_device, Some("\"From B\"".to_string()))]);
+        assert!(database.resolve_frontier_conflict(EntityType::Snippet, "s1", "name", &chosen.operation_id).is_err(), "a stale choice is refused");
     }
 }

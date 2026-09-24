@@ -110,7 +110,7 @@ pub fn verify_object(
 }
 
 /// Signs arbitrary canonical bytes under a caller-chosen fixed domain,
-/// separate from the event-signature domain. Used for protocol objects that
+/// separate from the sealed-object signature domains. Used for protocol objects that
 /// are not [`crate::SyncEvent`]s but still need a device signature over
 /// their canonical DAG-CBOR encoding, such as a signed device head.
 pub fn sign_bytes(signing_key: &SigningKey, domain: &[u8], canonical_body: &[u8]) -> [u8; 64] {

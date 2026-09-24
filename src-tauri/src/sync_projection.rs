@@ -270,7 +270,7 @@ impl Database {
     pub fn synced_preferences_recorded(&self) -> Result<bool, String> {
         self.with_connection(|connection| {
             Ok(connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_operations WHERE entity_type='preferences' AND entity_id='portable')",
+                "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable')",
                 [],
                 |row| row.get(0),
             )?)
@@ -293,7 +293,7 @@ mod tests {
         db.connection()
             .unwrap()
             .query_row(
-                "SELECT COUNT(*) FROM sync_operations WHERE entity_id=?1",
+                "SELECT COUNT(*) FROM sync_values WHERE entity_id=?1",
                 [entity_id],
                 |row| row.get(0),
             )
@@ -316,11 +316,11 @@ mod tests {
 
         db.record_local_entity_write(EntityType::Snippet, "one", json!({"name": "n", "body": "b"}), None)
             .unwrap();
-        // Existence marker plus one operation per field.
+        // The existence marker plus one value per field.
         assert_eq!(operation_count(&db, "one"), 3);
 
-        // An update to an already-recorded entity replicates only its
-        // changed fields, independent of any account sign-in.
+        // An update to an already-recorded entity replaces only its changed
+        // fields' values, independent of any account sign-in.
         db.record_local_entity_write(
             EntityType::Snippet,
             "one",
@@ -328,10 +328,18 @@ mod tests {
             Some(BTreeSet::from(["name".to_string()])),
         )
         .unwrap();
-        assert_eq!(operation_count(&db, "one"), 4);
+        assert_eq!(operation_count(&db, "one"), 3);
+        let counters: Vec<(String, i64)> = {
+            let connection = db.connection().unwrap();
+            let mut statement = connection.prepare("SELECT field, counter FROM sync_values WHERE entity_id='one' ORDER BY field").unwrap();
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap();
+            rows
+        };
+        assert_eq!(counters, vec![("_entity".to_string(), 1), ("body".to_string(), 1), ("name".to_string(), 2)]);
 
+        // A deletion removes every value.
         db.record_local_entity_deletion(EntityType::Snippet, "one").unwrap();
-        assert_eq!(operation_count(&db, "one"), 5);
+        assert_eq!(operation_count(&db, "one"), 0);
     }
 
     #[test]

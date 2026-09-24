@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 pub const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
     Task,

@@ -1,6 +1,6 @@
 //! `sync-envelope`: a pure byte-format crate for ThreeStrands replicated
-//! sync. It has no network or provider concepts. Given key material and a
-//! [`SyncEvent`], it produces exact, content-addressable, chunked,
+//! sync. It has no network or provider concepts. Given key material and an
+//! object (a [`ReplicaSnapshot`], above all), it produces exact, content-addressable, chunked,
 //! compressed, padded, authenticated-encrypted bytes; given those bytes and
 //! key material, it reverses the process and verifies every authenticator
 //! along the way.
@@ -25,13 +25,13 @@ mod ids;
 mod join_code;
 pub mod limits;
 mod recovery;
+mod snapshot;
 mod vector;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 pub use cid::compute_cid;
 pub use crypto::{seal_to_x25519, try_open_sealed_box};
@@ -57,116 +57,31 @@ pub use join_code::{
     SignedInvitationRedemption, INVITE_SECRET_LEN, JOIN_CODE_PREFIX, JOIN_CODE_VERSION,
 };
 pub use header::{CipherSuite, ObjectKind};
-pub use ids::{DeviceId, EventId, OperationId, RequestId, Signature};
+pub use ids::{DeviceId, RequestId, Signature};
 pub use recovery::{
     check_recovery_phrase, generate_recovery_seed, recovery_ed25519_signing_key, recovery_phrase_from_seed,
     recovery_seed_from_phrase, recovery_x25519_secret, RecoveryPhraseCheck, RECOVERY_PHRASE_WORDS, RECOVERY_SEED_LEN,
 };
 pub use threestrands_sync_protocol::EntityType;
+pub use snapshot::{
+    message_id_for_snapshot, open_snapshot, seal_snapshot, seal_snapshot_with_nonces, validate_snapshot, ReplicaSnapshot,
+    SnapshotField, SnapshotValue, PROTOCOL_VERSION,
+};
 pub use vector::{validate_sequence_vector, SequenceEntry};
 pub use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 
 use header::{build_aad, EnvelopeHeader, HEADER_LEN, MESSAGE_ID_LEN, NONCE_LEN, TAG_LEN};
 
-/// One field-level operation inside a [`SyncEvent`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FieldOperation {
-    pub operation_id: OperationId,
-    pub entity_type: EntityType,
-    pub entity_id: String,
-    pub field: String,
-    pub value: Option<Value>,
-    pub parents: Vec<OperationId>,
-}
-
-/// The only event protocol version this crate seals or opens. Version 2
-/// added `causal_vector` and moved every sealed object to per-kind
-/// signature domains; version 1 events are refused, not migrated (sync
-/// groups created before it must be recreated).
-pub const PROTOCOL_VERSION: u16 = 2;
-
 /// The exact bytes of the protocol marker: an ordinary content-addressed
-/// object every protocol-version-2 group stores on each of its connectors.
+/// object every protocol-version-3 group stores on each of its connectors.
 /// Its presence is how a device tells a group it can join from one created
-/// by an earlier, incompatible build — the key rotation objects both kinds
-/// of group publish look alike.
-pub const PROTOCOL_MARKER: &[u8] = b"threestrands-sync protocol 2\n";
+/// by an earlier, incompatible build — the key rotation objects every
+/// version publishes look alike.
+pub const PROTOCOL_MARKER: &[u8] = b"threestrands-sync protocol 3\n";
 
 /// The CID of [`PROTOCOL_MARKER`].
 pub fn protocol_marker_cid() -> String {
     compute_cid(PROTOCOL_MARKER)
-}
-
-/// A [`SyncEvent`] before it has been signed.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct UnsignedSyncEvent {
-    pub event_id: EventId,
-    pub protocol_version: u16,
-    pub key_epoch: u32,
-    pub device_id: DeviceId,
-    pub device_sequence: u64,
-    /// CIDv1 of the previous event on this device's append-only feed.
-    pub previous_device_event: Option<String>,
-    pub lamport: u64,
-    /// Display only; never used for causality or ordering.
-    pub created_at_ms: i64,
-    /// How far along every other device's feed the author had applied when
-    /// sealing this event. Every operation's parents come from events inside
-    /// this vector (or earlier on the author's own feed), so a reader that
-    /// has applied at least this much has everything this event depends on.
-    pub causal_vector: Vec<SequenceEntry>,
-    pub operations: Vec<FieldOperation>,
-}
-
-/// One logical, signed sync event: an [`UnsignedSyncEvent`] plus its
-/// author's signature.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SyncEvent {
-    pub event_id: EventId,
-    pub protocol_version: u16,
-    pub key_epoch: u32,
-    pub device_id: DeviceId,
-    pub device_sequence: u64,
-    pub previous_device_event: Option<String>,
-    pub lamport: u64,
-    pub created_at_ms: i64,
-    pub causal_vector: Vec<SequenceEntry>,
-    pub operations: Vec<FieldOperation>,
-    pub device_signature: Signature,
-}
-
-impl SyncEvent {
-    fn from_signed(unsigned: UnsignedSyncEvent, device_signature: Signature) -> Self {
-        SyncEvent {
-            event_id: unsigned.event_id,
-            protocol_version: unsigned.protocol_version,
-            key_epoch: unsigned.key_epoch,
-            device_id: unsigned.device_id,
-            device_sequence: unsigned.device_sequence,
-            previous_device_event: unsigned.previous_device_event,
-            lamport: unsigned.lamport,
-            created_at_ms: unsigned.created_at_ms,
-            causal_vector: unsigned.causal_vector,
-            operations: unsigned.operations,
-            device_signature,
-        }
-    }
-
-    /// The fields that are signed: everything except the signature itself.
-    pub fn unsigned(&self) -> UnsignedSyncEvent {
-        UnsignedSyncEvent {
-            event_id: self.event_id,
-            protocol_version: self.protocol_version,
-            key_epoch: self.key_epoch,
-            device_id: self.device_id,
-            device_sequence: self.device_sequence,
-            previous_device_event: self.previous_device_event.clone(),
-            lamport: self.lamport,
-            created_at_ms: self.created_at_ms,
-            causal_vector: self.causal_vector.clone(),
-            operations: self.operations.clone(),
-        }
-    }
 }
 
 /// What every sealed object's plaintext body is: the canonical body and
@@ -179,7 +94,7 @@ struct SignedObject<T> {
 }
 
 /// The signature domain for one kind of sealed object. Distinct per kind,
-/// so a signed snapshot can never verify as a signed event, or the reverse,
+/// so a signed snapshot can never verify as a signed control object, or the reverse,
 /// even though both travel in the same envelope format.
 fn object_signature_domain(kind: ObjectKind) -> &'static [u8] {
     match kind {
@@ -190,55 +105,7 @@ fn object_signature_domain(kind: ObjectKind) -> &'static [u8] {
     }
 }
 
-/// Validates every hard limit in [`limits`] against a candidate event's
-/// operations. Called both before sealing and after opening, so a
-/// corrupted-but-decryptable message still cannot smuggle an
-/// out-of-contract event past a caller.
-pub fn validate_event_operations(operations: &[FieldOperation]) -> Result<(), EnvelopeError> {
-    if operations.is_empty() || operations.len() > limits::MAX_OPERATIONS_PER_EVENT {
-        return Err(EnvelopeError::LimitExceeded("operation count"));
-    }
-
-    let mut entities: HashSet<&str> = HashSet::new();
-    let mut fields_per_entity: HashMap<&str, HashSet<&str>> = HashMap::new();
-
-    for operation in operations {
-        if operation.entity_id.is_empty() || operation.entity_id.len() > limits::MAX_ENTITY_ID_BYTES
-        {
-            return Err(EnvelopeError::LimitExceeded("entity id length"));
-        }
-        if operation.field.is_empty() || operation.field.len() > limits::MAX_FIELD_NAME_BYTES {
-            return Err(EnvelopeError::LimitExceeded("field name length"));
-        }
-        if operation.parents.len() > limits::MAX_PARENTS_PER_OPERATION {
-            return Err(EnvelopeError::LimitExceeded("parent count"));
-        }
-        if let Some(value) = &operation.value {
-            let size = serde_json::to_vec(value)
-                .map(|bytes| bytes.len())
-                .unwrap_or(usize::MAX);
-            if size > limits::MAX_VALUE_BYTES {
-                return Err(EnvelopeError::LimitExceeded("value size"));
-            }
-        }
-
-        entities.insert(operation.entity_id.as_str());
-        let fields = fields_per_entity
-            .entry(operation.entity_id.as_str())
-            .or_default();
-        fields.insert(operation.field.as_str());
-        if fields.len() > limits::MAX_FIELDS_PER_ENTITY_PER_EVENT {
-            return Err(EnvelopeError::LimitExceeded("fields per entity"));
-        }
-    }
-
-    if entities.len() > limits::MAX_ENTITIES_PER_EVENT {
-        return Err(EnvelopeError::LimitExceeded("entity count"));
-    }
-    Ok(())
-}
-
-/// Key material and framing needed to seal one event. Deliberately does not
+/// Key material and framing needed to seal one object. Deliberately does not
 /// know how `k_epoch` or `signing_key` are stored, sealed to other devices,
 /// or rotated; that is the key hierarchy's responsibility.
 pub struct SealParams<'a> {
@@ -257,7 +124,7 @@ pub struct OpenParams<'a> {
     pub verifying_key: &'a VerifyingKey,
 }
 
-/// The result of sealing one event: its stable message id and the exact
+/// The result of sealing one object: its stable message id and the exact
 /// wire bytes of every chunk, in order.
 pub struct SealedMessage {
     pub message_id: [u8; MESSAGE_ID_LEN],
@@ -270,28 +137,11 @@ impl SealedMessage {
         self.chunks.iter().map(|bytes| compute_cid(bytes)).collect()
     }
 
-    /// The CID that `previous_device_event` should reference when a later
-    /// event on this device names this one as its predecessor: the first
-    /// chunk's CID, which is stable regardless of how many chunks follow.
+    /// The first chunk's CID: a stable name for the whole message,
+    /// regardless of how many chunks follow.
     pub fn head_cid(&self) -> Option<String> {
         self.chunks.first().map(|bytes| compute_cid(bytes))
     }
-}
-
-/// Derives this event's stable message id from its event id alone, so
-/// resealing the same event (for example after a crash between the local
-/// commit and the encrypted upload) reproduces the same header and AAD
-/// bytes rather than a fresh random value.
-pub fn message_id_for_event(event_id: &EventId) -> [u8; MESSAGE_ID_LEN] {
-    use sha2::{Digest, Sha256};
-    const DOMAIN: &[u8] = b"threestrands/sync-envelope/message-id/v1";
-    let mut hasher = Sha256::new();
-    hasher.update(DOMAIN);
-    hasher.update(event_id.as_bytes());
-    let digest = hasher.finalize();
-    let mut id = [0u8; MESSAGE_ID_LEN];
-    id.copy_from_slice(&digest[..MESSAGE_ID_LEN]);
-    id
 }
 
 /// Signs `body` and seals it as one chunked, encrypted object of
@@ -353,7 +203,7 @@ where
 }
 
 /// The key epoch a sealed chunk claims in its header, so a caller holding
-/// several epochs' keys can pick the one to pass to [`open_message`]. The
+/// several epochs' keys can pick the one to pass to [`open_snapshot`]. The
 /// header is authenticated only once the chunk is opened with that key; a
 /// forged epoch here can only select a key that then fails to open it.
 pub fn message_key_epoch(chunk: &[u8]) -> Result<u32, EnvelopeError> {
@@ -455,55 +305,6 @@ where
     Ok((signed.body, signed.signature, message_id))
 }
 
-/// Seals `unsigned` into a signed [`SyncEvent`] and its encrypted, chunked
-/// wire bytes, drawing chunk nonces from `next_nonce` in order.
-///
-/// Use this variant (instead of [`seal_event`]) when a caller must persist
-/// the exact nonces used before committing, and retry with the same nonces
-/// after a crash, rather than re-encrypting with fresh random bytes for an
-/// event id that was already committed locally.
-pub fn seal_event_with_nonces<F>(
-    unsigned: UnsignedSyncEvent,
-    params: &SealParams,
-    next_nonce: F,
-) -> Result<(SyncEvent, SealedMessage), EnvelopeError>
-where
-    F: FnMut() -> [u8; NONCE_LEN],
-{
-    if params.object_kind != ObjectKind::Operations {
-        return Err(EnvelopeError::UnexpectedObjectKind);
-    }
-    validate_event_operations(&unsigned.operations)?;
-    validate_event_envelope(&unsigned)?;
-    let message_id = message_id_for_event(&unsigned.event_id);
-    let (signature, sealed) = seal_object(&unsigned, message_id, params, next_nonce)?;
-    Ok((SyncEvent::from_signed(unsigned, signature), sealed))
-}
-
-/// Seals `unsigned` using fresh random nonces. See
-/// [`seal_event_with_nonces`] for the crash-safe, explicit-nonce variant.
-pub fn seal_event(
-    unsigned: UnsignedSyncEvent,
-    params: &SealParams,
-) -> Result<(SyncEvent, SealedMessage), EnvelopeError> {
-    seal_event_with_nonces(unsigned, params, crypto::random_nonce)
-}
-
-/// Opens one event's complete chunk set (in any order): everything
-/// [`open_object`] checks, plus the event's own contract — protocol
-/// version, every hard limit, CID links, causal vector, and that the
-/// message id is the one derived from the event id.
-pub fn open_message(chunks: &[Vec<u8>], params: &OpenParams) -> Result<SyncEvent, EnvelopeError> {
-    let (unsigned, signature, message_id) =
-        open_object::<UnsignedSyncEvent>(chunks, params, ObjectKind::Operations)?;
-    if message_id != message_id_for_event(&unsigned.event_id) {
-        return Err(EnvelopeError::Malformed);
-    }
-    validate_event_envelope(&unsigned)?;
-    validate_event_operations(&unsigned.operations)?;
-    Ok(SyncEvent::from_signed(unsigned, signature))
-}
-
 fn canonical_dag_cbor<T: Serialize>(value: &T) -> Result<Vec<u8>, EnvelopeError> {
     // DAG-CBOR is IPLD's canonical CBOR profile: RFC 8949 core
     // deterministic encoding plus a specified map-key sort order, enforced
@@ -531,19 +332,6 @@ fn validate_cid_reference(cid: &str) -> Result<(), EnvelopeError> {
         return Err(EnvelopeError::InvalidCidReference);
     }
     Ok(())
-}
-
-/// Validates everything about an event beyond its operations — protocol
-/// version, CID links, and causal vector — at both seal and open time, so
-/// an out-of-contract event can never be signed or accepted.
-fn validate_event_envelope(event: &UnsignedSyncEvent) -> Result<(), EnvelopeError> {
-    if event.protocol_version != PROTOCOL_VERSION {
-        return Err(EnvelopeError::UnsupportedProtocolVersion);
-    }
-    if let Some(previous) = &event.previous_device_event {
-        validate_cid_reference(previous)?;
-    }
-    validate_sequence_vector(&event.causal_vector, Some(&event.device_id))
 }
 
 #[cfg(test)]

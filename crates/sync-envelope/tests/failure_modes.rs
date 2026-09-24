@@ -8,31 +8,26 @@ use rand::rngs::OsRng;
 use serde_json::json;
 use threestrands_sync_envelope::header::{HEADER_LEN, NONCE_LEN};
 use threestrands_sync_envelope::{
-    open_message, seal_event, DeviceId, EntityType, EnvelopeError, EventId, FieldOperation,
-    ObjectKind, OpenParams, OperationId, SealParams, UnsignedSyncEvent,
+    open_snapshot, seal_snapshot, DeviceId, EntityType, EnvelopeError, ObjectKind, OpenParams, ReplicaSnapshot,
+    SealParams, SequenceEntry, SnapshotField, SnapshotValue, PROTOCOL_VERSION,
 };
 
 #[path = "support/mod.rs"]
 mod support;
 
-fn event(operation_value: &str) -> UnsignedSyncEvent {
-    UnsignedSyncEvent {
-        event_id: EventId::from_bytes([1u8; 16]),
-        protocol_version: threestrands_sync_envelope::PROTOCOL_VERSION,
-        key_epoch: 5,
-        device_id: DeviceId::from_bytes([2u8; 16]),
-        device_sequence: 1,
-        previous_device_event: None,
-        lamport: 1,
+fn snapshot(value: &str) -> ReplicaSnapshot {
+    let device_id = DeviceId::from_bytes([2u8; 16]);
+    ReplicaSnapshot {
+        protocol_version: PROTOCOL_VERSION,
+        device_id,
+        state_sequence: 1,
         created_at_ms: 0,
-        causal_vector: vec![],
-        operations: vec![FieldOperation {
-            operation_id: OperationId::from_bytes([3u8; 16]),
+        context: vec![SequenceEntry { device_id, sequence: 1 }],
+        fields: vec![SnapshotField {
             entity_type: EntityType::Task,
             entity_id: "task-1".to_string(),
             field: "title".to_string(),
-            value: Some(json!(operation_value)),
-            parents: vec![],
+            values: vec![SnapshotValue { device_id, counter: 1, lamport: 1, value: Some(json!(value)) }],
         }],
     }
 }
@@ -50,13 +45,13 @@ fn sealed_fixture() -> Fixture {
     let k_epoch = [4u8; 32];
     let sync_space_id: &[u8] = b"fixture-space";
     let key_epoch = 5;
-    let (_, sealed) = seal_event(
-        event("hello"),
+    let sealed = seal_snapshot(
+        snapshot("hello"),
         &SealParams {
             sync_space_id,
             k_epoch: &k_epoch,
             key_epoch,
-            object_kind: ObjectKind::Operations,
+            object_kind: ObjectKind::Snapshot,
             signing_key: &signing_key,
         },
     )
@@ -72,7 +67,7 @@ fn sealed_fixture() -> Fixture {
 
 fn open(fixture: &Fixture, chunks: &[Vec<u8>]) -> Result<(), EnvelopeError> {
     let verifying_key = fixture.signing_key.verifying_key();
-    open_message(
+    open_snapshot(
         chunks,
         &OpenParams {
             sync_space_id: fixture.sync_space_id,
@@ -88,7 +83,7 @@ fn open(fixture: &Fixture, chunks: &[Vec<u8>]) -> Result<(), EnvelopeError> {
 fn wrong_sync_space_fails_closed() {
     let fixture = sealed_fixture();
     let verifying_key = fixture.signing_key.verifying_key();
-    let result = open_message(
+    let result = open_snapshot(
         &fixture.chunks,
         &OpenParams {
             sync_space_id: b"a-different-space",
@@ -104,7 +99,7 @@ fn wrong_sync_space_fails_closed() {
 fn wrong_epoch_fails_closed() {
     let fixture = sealed_fixture();
     let verifying_key = fixture.signing_key.verifying_key();
-    let result = open_message(
+    let result = open_snapshot(
         &fixture.chunks,
         &OpenParams {
             sync_space_id: fixture.sync_space_id,
@@ -122,7 +117,7 @@ fn wrong_key_fails_closed() {
     let verifying_key = fixture.signing_key.verifying_key();
     let mut wrong_key = fixture.k_epoch;
     wrong_key[0] ^= 0xFF;
-    let result = open_message(
+    let result = open_snapshot(
         &fixture.chunks,
         &OpenParams {
             sync_space_id: fixture.sync_space_id,
@@ -138,7 +133,7 @@ fn wrong_key_fails_closed() {
 fn wrong_signature_key_fails_closed() {
     let fixture = sealed_fixture();
     let other_verifying_key = SigningKey::generate(&mut OsRng).verifying_key();
-    let result = open_message(
+    let result = open_snapshot(
         &fixture.chunks,
         &OpenParams {
             sync_space_id: fixture.sync_space_id,
@@ -208,21 +203,21 @@ fn duplicate_chunk_indices_fail_closed() {
 
 #[test]
 fn cross_message_chunk_substitution_at_a_shared_index_fails_closed() {
-    // Both messages happen to use the same event id (so the same message
-    // id) and both fit in one chunk, so the substituted chunk collides on
+    // Both messages happen to have the same author and sequence (so the
+    // same message id) and both fit in one chunk, so the substituted chunk collides on
     // chunk_index too: the duplicate-index check fires first. See
     // `rejects_cross_message_chunk_substitution` in `chunk.rs` for the
     // narrower case where two chunks disagree only on their authenticated
     // message hash.
     let fixture = sealed_fixture();
     let signing_key = SigningKey::generate(&mut OsRng);
-    let (_, other_sealed) = seal_event(
-        event("a different message"),
+    let other_sealed = seal_snapshot(
+        snapshot("a different message"),
         &SealParams {
             sync_space_id: fixture.sync_space_id,
             k_epoch: &fixture.k_epoch,
             key_epoch: fixture.key_epoch,
-            object_kind: ObjectKind::Operations,
+            object_kind: ObjectKind::Snapshot,
             signing_key: &signing_key,
         },
     )
@@ -238,8 +233,8 @@ fn cross_message_chunk_substitution_at_a_shared_index_fails_closed() {
 
 #[test]
 fn cross_message_chunk_substitution_at_a_distinct_index_fails_closed() {
-    // Two different sealed messages that share an event id (hence message
-    // id) and chunk count, but not content: splicing one message's chunk
+    // Two different sealed messages that share an author and sequence (hence
+    // message id) and chunk count, but not content: splicing one message's chunk
     // into another's set at a non-colliding index must still be rejected,
     // via the authenticated message hash rather than index collision.
     let signing_key = SigningKey::generate(&mut OsRng);
@@ -250,17 +245,17 @@ fn cross_message_chunk_substitution_at_a_distinct_index_fails_closed() {
         sync_space_id,
         k_epoch: &k_epoch,
         key_epoch,
-        object_kind: ObjectKind::Operations,
+        object_kind: ObjectKind::Snapshot,
         signing_key: &signing_key,
     };
 
-    let mut event_a = event("a");
-    support::add_bulk_operations_seeded(&mut event_a, 20, 60_000, 1);
-    let (_, sealed_a) = seal_event(event_a, &params).unwrap();
+    let mut snapshot_a = snapshot("a");
+    support::add_bulk_fields_seeded(&mut snapshot_a, 20, 60_000, 1);
+    let sealed_a = seal_snapshot(snapshot_a, &params).unwrap();
 
-    let mut event_b = event("b");
-    support::add_bulk_operations_seeded(&mut event_b, 20, 60_000, 2);
-    let (_, sealed_b) = seal_event(event_b, &params).unwrap();
+    let mut snapshot_b = snapshot("b");
+    support::add_bulk_fields_seeded(&mut snapshot_b, 20, 60_000, 2);
+    let sealed_b = seal_snapshot(snapshot_b, &params).unwrap();
 
     assert_eq!(sealed_a.chunks.len(), sealed_b.chunks.len());
     assert!(sealed_a.chunks.len() > 1);
@@ -270,7 +265,7 @@ fn cross_message_chunk_substitution_at_a_distinct_index_fails_closed() {
     spliced[last] = sealed_b.chunks[last].clone();
 
     let verifying_key = signing_key.verifying_key();
-    let result = open_message(
+    let result = open_snapshot(
         &spliced,
         &OpenParams {
             sync_space_id,
@@ -284,8 +279,8 @@ fn cross_message_chunk_substitution_at_a_distinct_index_fails_closed() {
 
 #[test]
 fn inconsistent_chunk_counts_fail_closed() {
-    // Two distinct seals that happen to share an event id (so they share a
-    // message id) but disagree wildly on size, and therefore chunk count.
+    // Two distinct seals that happen to share an author and sequence (so they
+    // share a message id) but disagree wildly on size, and therefore chunk count.
     // Splicing a chunk from one into the other must never be accepted.
     let signing_key = SigningKey::generate(&mut OsRng);
     let k_epoch = [4u8; 32];
@@ -295,15 +290,15 @@ fn inconsistent_chunk_counts_fail_closed() {
         sync_space_id,
         k_epoch: &k_epoch,
         key_epoch,
-        object_kind: ObjectKind::Operations,
+        object_kind: ObjectKind::Snapshot,
         signing_key: &signing_key,
     };
 
-    let (_, small_sealed) = seal_event(event("small"), &params).unwrap();
+    let small_sealed = seal_snapshot(snapshot("small"), &params).unwrap();
 
-    let mut big_event = event("placeholder");
-    support::add_bulk_operations(&mut big_event, 20, 60_000);
-    let (_, big_sealed) = seal_event(big_event, &params).unwrap();
+    let mut big_snapshot = snapshot("placeholder");
+    support::add_bulk_fields(&mut big_snapshot, 20, 60_000);
+    let big_sealed = seal_snapshot(big_snapshot, &params).unwrap();
 
     assert_eq!(small_sealed.chunks.len(), 1);
     assert!(big_sealed.chunks.len() > 1);
@@ -312,7 +307,7 @@ fn inconsistent_chunk_counts_fail_closed() {
     spliced.push(big_sealed.chunks[0].clone());
 
     let verifying_key = signing_key.verifying_key();
-    let result = open_message(
+    let result = open_snapshot(
         &spliced,
         &OpenParams {
             sync_space_id,
@@ -331,16 +326,16 @@ fn incomplete_chunk_set_never_applies() {
     let sync_space_id: &[u8] = b"fixture-space";
     let key_epoch = 5;
 
-    let mut big_event = event("placeholder");
-    support::add_bulk_operations(&mut big_event, 20, 60_000);
+    let mut big_snapshot = snapshot("placeholder");
+    support::add_bulk_fields(&mut big_snapshot, 20, 60_000);
 
-    let (_, sealed) = seal_event(
-        big_event,
+    let sealed = seal_snapshot(
+        big_snapshot,
         &SealParams {
             sync_space_id,
             k_epoch: &k_epoch,
             key_epoch,
-            object_kind: ObjectKind::Operations,
+            object_kind: ObjectKind::Snapshot,
             signing_key: &signing_key,
         },
     )
@@ -349,7 +344,7 @@ fn incomplete_chunk_set_never_applies() {
 
     let verifying_key = signing_key.verifying_key();
     let incomplete = &sealed.chunks[..sealed.chunks.len() - 1];
-    let result = open_message(
+    let result = open_snapshot(
         incomplete,
         &OpenParams {
             sync_space_id,

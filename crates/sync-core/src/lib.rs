@@ -1,5 +1,10 @@
-//! `sync-core`: the pure operation graph / multi-value register at the
-//! heart of ThreeStrands replicated sync.
+//! `sync-core`: the pure merge logic of ThreeStrands replicated sync.
+//!
+//! [`state::ReplicaState`] is what devices actually replicate: each
+//! device's whole replica as one mergeable state (see that module). The
+//! operation graph below is the reference model it is checked against:
+//! the same semantics stated as an explicit history of writes and the
+//! writes each one replaced.
 //!
 //! This crate has no knowledge of envelopes, transports, or SQLite. It
 //! implements a single idea: for one field on one entity, every applied
@@ -25,6 +30,9 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
+
+pub mod state;
+pub use state::{Dot, FieldKey, ReplicaState, Resolution, StateError, StateValue};
 
 pub use threestrands_sync_protocol::EntityType;
 
@@ -73,7 +81,7 @@ pub enum ApplyOutcome {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-struct FieldKey {
+struct GraphFieldKey {
     entity_type: EntityType,
     entity_id: String,
     field: String,
@@ -94,7 +102,7 @@ struct FieldState {
 #[derive(Default)]
 pub struct OperationGraph {
     operations: HashMap<OperationId, Operation>,
-    fields: HashMap<FieldKey, FieldState>,
+    fields: HashMap<GraphFieldKey, FieldState>,
 }
 
 impl OperationGraph {
@@ -114,7 +122,7 @@ impl OperationGraph {
             return ApplyOutcome::Duplicate;
         }
 
-        let key = FieldKey {
+        let key = GraphFieldKey {
             entity_type: operation.entity_type,
             entity_id: operation.entity_id.clone(),
             field: operation.field.clone(),
@@ -143,7 +151,7 @@ impl OperationGraph {
         entity_id: &str,
         field: &str,
     ) -> Vec<OperationId> {
-        let key = FieldKey {
+        let key = GraphFieldKey {
             entity_type,
             entity_id: entity_id.to_string(),
             field: field.to_string(),

@@ -305,7 +305,8 @@ impl Database {
         let mut statement = connection
             .prepare(
                 "SELECT d.device_id, d.status, d.is_self, l.label,
-                        (SELECT p.last_event_at FROM sync_device_progress p WHERE p.device_id = d.device_id),
+                        CASE WHEN d.is_self = 1 THEN (SELECT last_change_at FROM sync_local_state WHERE id = 1)
+                             ELSE (SELECT r.merged_at FROM sync_remote_states r WHERE r.device_id = d.device_id) END,
                         EXISTS(SELECT 1 FROM replicated_sync_invitation_redemptions r
                                WHERE r.device_id = d.device_id AND r.state IN ('admitted','observed'))
                         OR (d.is_self = 1 AND EXISTS(SELECT 1 FROM replicated_sync_invitations i WHERE i.direction='incoming'))
@@ -347,8 +348,8 @@ impl Database {
         let field = format!("deviceName:{device_id_hex}");
         let (label, preferences_exist, already_recorded): (Option<String>, bool, bool) = self.connection()?.query_row(
             "SELECT l.label,
-                    EXISTS(SELECT 1 FROM sync_operations WHERE entity_type='preferences' AND entity_id='portable'),
-                    EXISTS(SELECT 1 FROM sync_operations WHERE entity_type='preferences' AND entity_id='portable' AND field=?1)
+                    EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable'),
+                    EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable' AND field=?1)
              FROM sync_device_labels l WHERE l.device_id=?2",
             params![field, device_id_hex],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -415,7 +416,7 @@ impl Database {
         let fields = BTreeSet::from([field.clone()]);
         let payload = serde_json::json!({ (field): if label.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(label) } });
         let preferences_exist: bool = self.connection()?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sync_operations WHERE entity_type='preferences' AND entity_id='portable')",
+            "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable')",
             [],
             |row| row.get(0),
         ).map_err(display)?;
@@ -448,11 +449,9 @@ impl Database {
             .map_err(display)?;
         tx.execute_batch(
             "DELETE FROM sync_deliveries;
-             DELETE FROM sync_field_frontier;
-             DELETE FROM sync_operation_parents;
-             DELETE FROM sync_operations;
+             DELETE FROM sync_values;
+             DELETE FROM sync_context;
              DELETE FROM sync_objects;
-             DELETE FROM sync_events;
              DELETE FROM sync_epoch_history;
              DELETE FROM replicated_sync_enrollment_requests;
              DELETE FROM replicated_sync_invitation_redemptions;
@@ -460,7 +459,9 @@ impl Database {
              DELETE FROM sync_control_objects_seen;
              DELETE FROM sync_device_labels;
              DELETE FROM sync_devices;
-             DELETE FROM sync_device_progress;
+             DELETE FROM sync_remote_states;
+             DELETE FROM sync_local_state;
+             DELETE FROM sync_retired_objects;
              DELETE FROM sync_head_publications;",
         )
         .map_err(display)?;
@@ -570,7 +571,7 @@ async fn publish_control_object(database: &Database, transports: &[Arc<dyn SyncT
     database
         .connection()?
         .execute(
-            "INSERT OR IGNORE INTO sync_objects(cid,event_id,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,NULL,'control',0,1,?2)",
+            "INSERT OR IGNORE INTO sync_objects(cid,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,'control',0,1,?2)",
             params![cid, bytes],
         )
         .map_err(display)?;
@@ -926,7 +927,7 @@ pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity
                 match try_apply_control_object(database, identity, epoch_keys, &locator.cid.0, &bytes)? {
                     ControlObject::Applied => database.mark_control_object_seen(&locator.cid.0, "control")?,
                     // Not recognized as a control object at all (most
-                    // objects are ordinary sealed events) — still mark
+                    // objects are sealed snapshots) — still mark
                     // seen so we never re-fetch it.
                     ControlObject::NotControl => database.mark_control_object_seen(&locator.cid.0, "other")?,
                     // A join-code redemption whose invitation hasn't
@@ -961,6 +962,11 @@ fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoc
         return Ok(ControlObject::Applied);
     }
     if let Ok(signed) = decode_signed_enrollment_grant(bytes) {
+        match apply_key_share(database, identity, epoch_keys, &signed, cid)? {
+            KeyShare::Applied => return Ok(ControlObject::Applied),
+            KeyShare::UnknownSender => return Ok(ControlObject::RetryLater),
+            KeyShare::Other => {}
+        }
         apply_incoming_grant(database, identity, epoch_keys, signed)?;
         return Ok(ControlObject::Applied);
     }
@@ -1172,6 +1178,152 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
         )
         .map_err(display)?;
     Ok(())
+}
+
+// ============================== Key catch-up ==============================
+
+/// What a received grant turned out to be, as a key share.
+enum KeyShare {
+    /// A key share for this device from a trusted member: applied (or, from
+    /// a revoked member or with a bad signature, deliberately ignored).
+    Applied,
+    /// Sealed to this device by a member it hasn't heard of yet: retry once
+    /// the announcement that introduces that member arrives.
+    UnknownSender,
+    /// An ordinary enrollment grant, or not addressed to this device.
+    Other,
+}
+
+/// A key share is a grant an enrolled member publishes to an enrolled
+/// peer it sees lagging behind on key epochs (see
+/// [`share_keys_with_lagging_peers`]): the sender's current and earlier
+/// epoch keys, sealed to that peer. It needs no human confirmation, for
+/// the same reason a rotation doesn't: it comes from a device this one
+/// already trusts, and only hands over keys the group already uses. That
+/// catches a device up when a rotation was never sealed to it — because the
+/// rotating device hadn't heard of it yet, or because it joined by recovery
+/// phrase before that rotation reached its connector.
+fn apply_key_share(
+    database: &Database,
+    identity: &DeviceIdentity,
+    epoch_keys: &dyn EpochKeyStore,
+    signed: &SignedEnrollmentGrant,
+    cid: &str,
+) -> Result<KeyShare, String> {
+    let grant = &signed.grant;
+    if grant.signed_by_recovery {
+        return Ok(KeyShare::Other);
+    }
+    let enrolled: bool = database
+        .connection()?
+        .query_row("SELECT EXISTS(SELECT 1 FROM sync_epoch_history)", [], |row| row.get(0))
+        .map_err(display)?;
+    let answers_our_request: bool = database
+        .connection()?
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='outgoing' AND status IN ('pending','rejected','staged'))",
+            params![encode_id(grant.request_id.as_bytes())],
+            |row| row.get(0),
+        )
+        .map_err(display)?;
+    if !enrolled || answers_our_request {
+        return Ok(KeyShare::Other);
+    }
+    let Some(current) = try_open_sealed_box(&identity.x25519_secret, &grant.sealed_epoch_key) else {
+        return Ok(KeyShare::Other);
+    };
+    let sender: Option<(String, Option<Vec<u8>>)> = database
+        .connection()?
+        .query_row(
+            "SELECT status, public_key FROM sync_devices WHERE device_id=?1",
+            params![encode_id(grant.approver_device_id.as_bytes())],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(display)?;
+    let Some((status, public_key)) = sender else {
+        return Ok(KeyShare::UnknownSender);
+    };
+    let verified = status == "active"
+        && public_key
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
+            .is_some_and(|key| verify_enrollment_grant(&key, signed).is_ok());
+    let Ok(current): Result<[u8; 32], _> = current.try_into() else {
+        return Ok(KeyShare::Applied);
+    };
+    let Some(earlier) = open_earlier_epoch_keys(&identity.x25519_secret, &grant.earlier_epoch_keys) else {
+        return Ok(KeyShare::Applied);
+    };
+    if !verified {
+        return Ok(KeyShare::Applied);
+    }
+    database.adopt_roster(&grant.roster)?;
+    epoch_keys.store(grant.key_epoch, &current)?;
+    database.record_epoch_activation(grant.key_epoch, cid)?;
+    store_earlier_epoch_keys(database, epoch_keys, &earlier, cid)?;
+    database.advance_active_epoch(grant.key_epoch)?;
+    Ok(KeyShare::Applied)
+}
+
+/// Publishes a key share to every trusted, active peer whose latest head
+/// says it is on an older key epoch than this device, once per peer per
+/// epoch. A peer that is merely slow to apply a rotation gets a copy of
+/// keys it would have received anyway; one the rotation was never sealed to
+/// gets the only copy. See [`apply_key_share`].
+pub(crate) async fn share_keys_with_lagging_peers(
+    database: &Database,
+    keys: &LocalKeys,
+    transports: &[Arc<dyn SyncTransport>],
+) -> Result<usize, String> {
+    let lagging: Vec<(String, Vec<u8>)> = {
+        let connection = database.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT d.device_id, d.x25519_public FROM sync_remote_states r
+                 JOIN sync_devices d ON d.device_id = r.device_id
+                 WHERE d.status = 'active' AND d.is_self = 0 AND d.x25519_public IS NOT NULL
+                   AND r.last_head_epoch < ?1 AND (r.keys_shared_epoch IS NULL OR r.keys_shared_epoch < ?1)",
+            )
+            .map_err(display)?;
+        let rows = statement
+            .query_map(params![keys.key_epoch], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(display)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(display)?;
+        rows
+    };
+    if lagging.is_empty() {
+        return Ok(0);
+    }
+    let (recovery_ed25519, recovery_x25519) = database
+        .recovery_public_keys()?
+        .ok_or_else(|| "No recovery keys on record for this sync group".to_string())?;
+    let roster = database.full_roster_snapshot()?;
+    for (device_id, x25519_public) in &lagging {
+        let recipient: [u8; 32] = x25519_public.as_slice().try_into().map_err(|_| "Invalid peer X25519 key".to_string())?;
+        let share = EnrollmentGrant {
+            request_id: RequestId::from_bytes(random_id()),
+            approver_device_id: keys.device_id,
+            signed_by_recovery: false,
+            key_epoch: keys.key_epoch,
+            sealed_epoch_key: ByteBuf::from(seal_to_x25519(&recipient, &keys.k_epoch)),
+            roster: roster.clone(),
+            recovery_ed25519_public: ByteBuf::from(recovery_ed25519.to_vec()),
+            recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
+            created_at_ms: now_ms(),
+            earlier_epoch_keys: seal_earlier_epoch_keys(keys, &recipient)?,
+        };
+        let signed = sign_enrollment_grant(&keys.signing_key, share).map_err(display)?;
+        let bytes = encode_signed_enrollment_grant(&signed).map_err(display)?;
+        let cid = publish_control_object(database, transports, &bytes).await?;
+        database.mark_control_object_seen(&cid, "key_share")?;
+        database
+            .connection()?
+            .execute("UPDATE sync_remote_states SET keys_shared_epoch=?2 WHERE device_id=?1", params![device_id, keys.key_epoch])
+            .map_err(display)?;
+    }
+    Ok(lagging.len())
 }
 
 /// Existing members honor rejections only from a currently trusted active
@@ -1684,7 +1836,7 @@ mod tests {
     use threestrands_sync_protocol::EntityType;
     use threestrands_sync_transport::fake::FakeTransport;
 
-    use crate::replicated_sync::{pull_from_transports, push_pending_events};
+    use crate::replicated_sync::{pull_from_transports, push_local_state};
 
     fn fake_transports(name: &str) -> Vec<Arc<dyn SyncTransport>> {
         let transport: Arc<dyn SyncTransport> = Arc::new(FakeTransport::new(name));
@@ -1917,10 +2069,10 @@ mod tests {
             .record_replicated_write(EntityType::Snippet, "c-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("c-1", "From C over S3"))
             .unwrap();
         let keys_c = local_keys_for(&database_c, &identity_c, &epoch_keys_c);
-        push_pending_events(&database_c, &keys_c, &transports_c).await.unwrap();
+        push_local_state(&database_c, &keys_c, &transports_c).await.unwrap();
         let keys_a = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
         let outcome = pull_from_transports(&database_a, &keys_a, &transports_a).await.unwrap();
-        assert_eq!(outcome.applied_events, 1);
+        assert_eq!(outcome.merged_states, 1);
         let name: String = database_a.connection().unwrap().query_row("SELECT name FROM snippets WHERE id='c-1'", [], |row| row.get(0)).unwrap();
         assert_eq!(name, "From C over S3");
     }
@@ -1995,11 +2147,11 @@ mod tests {
             .record_replicated_write(EntityType::Snippet, "b-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("b-1", "From B"))
             .unwrap();
         let keys_b = local_keys_for(&database_b, &identity_b, &epoch_keys_b);
-        push_pending_events(&database_b, &keys_b, &transports).await.unwrap();
+        push_local_state(&database_b, &keys_b, &transports).await.unwrap();
 
         let keys_a_after = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
         let outcome = pull_from_transports(&database_a, &keys_a_after, &transports).await.unwrap();
-        assert_eq!(outcome.applied_events, 1);
+        assert_eq!(outcome.merged_states, 1);
         let snippet_name: String = database_a.connection().unwrap().query_row("SELECT name FROM snippets WHERE id='b-1'", [], |row| row.get(0)).unwrap();
         assert_eq!(snippet_name, "From B");
     }
@@ -2049,10 +2201,10 @@ mod tests {
             .record_replicated_write(EntityType::Snippet, "after-revoke", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("after-revoke", "Should not sync"))
             .unwrap();
         let keys_b_after = local_keys_for(&database_b, &identity_b, &epoch_keys_b);
-        push_pending_events(&database_b, &keys_b_after, &transports).await.unwrap();
+        push_local_state(&database_b, &keys_b_after, &transports).await.unwrap();
         let keys_a_after_revoke = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
         let outcome = pull_from_transports(&database_a, &keys_a_after_revoke, &transports).await.unwrap();
-        assert_eq!(outcome.applied_events, 0);
+        assert_eq!(outcome.merged_states, 0);
         let exists: Option<String> = database_a
             .connection()
             .unwrap()
@@ -2122,7 +2274,7 @@ mod tests {
         }
 
         async fn push(&self, transports: &[Arc<dyn SyncTransport>]) {
-            push_pending_events(&self.database, &self.keys(), transports).await.unwrap();
+            push_local_state(&self.database, &self.keys(), transports).await.unwrap();
         }
 
         async fn pull(&self, transports: &[Arc<dyn SyncTransport>]) -> crate::replicated_sync::PullOutcome {
@@ -2187,7 +2339,7 @@ mod tests {
         }
         let outcome = b.pull(&transports).await;
         assert_eq!(outcome.failed_transports, 0);
-        assert_eq!(outcome.applied_events, 2);
+        assert_eq!(outcome.merged_states, 1);
         assert_eq!(b.snippet("epoch-0").as_deref(), Some("epoch-0"));
         assert_eq!(b.snippet("epoch-2").as_deref(), Some("epoch-2"));
     }
@@ -2323,9 +2475,103 @@ mod tests {
         assert_eq!(c.active_epoch(), 1);
         let outcome = c.pull(&transports).await;
         assert_eq!(outcome.failed_transports, 0);
-        assert_eq!(outcome.applied_events, 2);
+        assert_eq!(outcome.merged_states, 1);
         assert_eq!(c.snippet("before-rotation").as_deref(), Some("before-rotation"));
         assert_eq!(c.snippet("after-rotation").as_deref(), Some("after-rotation"));
+    }
+
+    #[tokio::test]
+    async fn a_member_a_rotation_was_never_sealed_to_catches_up_from_a_peer() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        let c = Member::new();
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await.unwrap();
+
+        // A rotates before hearing that C joined, so the new key isn't
+        // sealed to C, and writes under it.
+        a.rotate(&transports).await;
+        a.write_snippet("after-rotation");
+        a.push(&transports).await;
+        c.sweep(&transports).await;
+        assert_eq!(c.active_epoch(), 0);
+        assert!(c.epoch_keys.get(1).is_none());
+        c.push(&transports).await;
+        assert_eq!(c.pull(&transports).await.failed_transports, 1, "C can't open A's snapshot yet");
+
+        // A learns of C, sees C's head still on epoch 0, and shares its keys.
+        a.sweep(&transports).await;
+        a.pull(&transports).await;
+        assert_eq!(share_keys_with_lagging_peers(&a.database, &a.keys(), &transports).await.unwrap(), 1);
+        assert_eq!(share_keys_with_lagging_peers(&a.database, &a.keys(), &transports).await.unwrap(), 0, "once per epoch");
+
+        c.sweep(&transports).await;
+        assert_eq!(c.active_epoch(), 1);
+        assert_eq!(c.epoch_keys.get(1), a.epoch_keys.get(1));
+        let outcome = c.pull(&transports).await;
+        assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 0));
+        assert_eq!(c.snippet("after-rotation").as_deref(), Some("after-rotation"));
+    }
+
+    #[tokio::test]
+    async fn a_key_share_from_a_revoked_or_unknown_member_is_not_applied() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        let c = Member::new();
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await.unwrap();
+        a.sweep(&transports).await;
+        a.rotate(&transports).await;
+        // A share signed by a stranger, sealed to C, carrying a made-up key.
+        let stranger = threestrands_sync_envelope::SigningKey::generate(&mut rand::rngs::OsRng);
+        let c_x25519 = x25519_public_bytes(&c.identity.x25519_secret);
+        let (recovery_ed25519, recovery_x25519) = a.database.recovery_public_keys().unwrap().unwrap();
+        let forged = sign_enrollment_grant(
+            &stranger,
+            EnrollmentGrant {
+                request_id: RequestId::from_bytes(random_id()),
+                approver_device_id: threestrands_sync_envelope::DeviceId::from_bytes([0x5a; 16]),
+                signed_by_recovery: false,
+                key_epoch: 7,
+                sealed_epoch_key: ByteBuf::from(seal_to_x25519(&c_x25519, &[0x42; 32])),
+                roster: vec![],
+                recovery_ed25519_public: ByteBuf::from(recovery_ed25519.to_vec()),
+                recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
+                created_at_ms: now_ms(),
+                earlier_epoch_keys: vec![],
+            },
+        )
+        .unwrap();
+        publish_to_all(&transports, &encode_signed_enrollment_grant(&forged).unwrap()).await;
+        c.sweep(&transports).await;
+        assert!(c.epoch_keys.get(7).is_none());
+        assert_eq!(c.active_epoch(), 1, "the real rotation still applies");
+
+        // A share from a member C has since revoked is ignored too.
+        let shared_before_revocation = {
+            let keys = a.keys();
+            let recipient = c_x25519;
+            sign_enrollment_grant(
+                &a.identity.signing_key,
+                EnrollmentGrant {
+                    request_id: RequestId::from_bytes(random_id()),
+                    approver_device_id: a.identity.device_id,
+                    signed_by_recovery: false,
+                    key_epoch: 9,
+                    sealed_epoch_key: ByteBuf::from(seal_to_x25519(&recipient, &[0x43; 32])),
+                    roster: vec![],
+                    recovery_ed25519_public: ByteBuf::from(recovery_ed25519.to_vec()),
+                    recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
+                    created_at_ms: now_ms(),
+                    earlier_epoch_keys: seal_earlier_epoch_keys(&keys, &recipient).unwrap(),
+                },
+            )
+            .unwrap()
+        };
+        c.database.revoke_device(a.identity.device_id.as_bytes()).unwrap();
+        publish_to_all(&transports, &encode_signed_enrollment_grant(&shared_before_revocation).unwrap()).await;
+        c.sweep(&transports).await;
+        assert!(c.epoch_keys.get(9).is_none());
     }
 
     #[tokio::test]
@@ -2559,7 +2805,7 @@ mod tests {
             .connection()
             .unwrap()
             .execute(
-                "INSERT INTO sync_device_progress(device_id, applied_sequence, last_event_at) VALUES (?1, 2, '2026-09-21T10:00:00+00:00')",
+                "INSERT INTO sync_remote_states(device_id, state_sequence, merged_at) VALUES (?1, 2, '2026-09-21T10:00:00+00:00')",
                 params![peer],
             )
             .unwrap();
@@ -2607,7 +2853,9 @@ mod tests {
         assert!(database_b.recovery_public_keys().unwrap().is_none());
         assert!(database_b.beta_features_enabled().unwrap());
         let count = |sql: &str| -> i64 { database_b.connection().unwrap().query_row(sql, [], |row| row.get(0)).unwrap() };
-        assert_eq!(count("SELECT COUNT(*) FROM sync_events"), 0);
+        for table in ["sync_values", "sync_context", "sync_remote_states", "sync_local_state", "sync_objects"] {
+            assert_eq!(count(&format!("SELECT COUNT(*) FROM {table}")), 0, "{table} should be empty");
+        }
         assert_eq!(count("SELECT COUNT(*) FROM sync_epoch_history"), 0);
         assert_eq!(count("SELECT COUNT(*) FROM replicated_sync_enrollment_requests"), 0);
         assert_eq!(count("SELECT COUNT(*) FROM sync_device_labels"), 0);
@@ -2780,7 +3028,7 @@ mod tests {
             a.database
                 .record_replicated_write(EntityType::Snippet, "a-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("a-1", "Before B"))
                 .unwrap();
-            push_pending_events(&a.database, &a.keys(), &a.transports().await).await.unwrap();
+            push_local_state(&a.database, &a.keys(), &a.transports().await).await.unwrap();
 
             let now = now_ms();
             let code = create(&a, now).await;
@@ -2839,7 +3087,7 @@ mod tests {
             b.database
                 .record_replicated_write(EntityType::Snippet, "b-1", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("b-1", "From B"))
                 .unwrap();
-            push_pending_events(&b.database, &b.keys(), &b.transports().await).await.unwrap();
+            push_local_state(&b.database, &b.keys(), &b.transports().await).await.unwrap();
             pull_from_transports(&a.database, &a.keys(), &a.transports().await).await.unwrap();
             pull_from_transports(&c.database, &c.keys(), &c.transports().await).await.unwrap();
             assert_eq!(snippet_name(&a.database, "b-1").as_deref(), Some("From B"));
@@ -2853,7 +3101,7 @@ mod tests {
             a.database
                 .record_replicated_write(EntityType::Snippet, "old", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("old", "Old"))
                 .unwrap();
-            push_pending_events(&a.database, &a.keys(), &a.transports().await).await.unwrap();
+            push_local_state(&a.database, &a.keys(), &a.transports().await).await.unwrap();
 
             // A first join code admits B, which rotates the epoch.
             let now = now_ms();
@@ -2865,7 +3113,7 @@ mod tests {
             a.database
                 .record_replicated_write(EntityType::Snippet, "new", &fields(&["id", "name", "body", "createdAt"]), &snippet_payload("new", "New"))
                 .unwrap();
-            push_pending_events(&a.database, &a.keys(), &a.transports().await).await.unwrap();
+            push_local_state(&a.database, &a.keys(), &a.transports().await).await.unwrap();
 
             // D joins with a second code, under the rotated epoch.
             let d = Device::new();

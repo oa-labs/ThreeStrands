@@ -1,9 +1,5 @@
-//! Per-device sequence vectors: a compact "how far along each device's
-//! append-only feed" summary. A device head carries one as its `ack` (its
-//! causally closed progress), and every event carries one as its
-//! `causal_vector` (how much of every other device's feed its author had
-//! applied when sealing it), so readers can tell which events an event may
-//! depend on without walking operation parents.
+//! Per-device sequence vectors: for each device, the highest write counter
+//! seen from it. A replica snapshot carries one as its causal context.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +7,7 @@ use crate::error::EnvelopeError;
 use crate::ids::DeviceId;
 use crate::limits::MAX_SEQUENCE_VECTOR_ENTRIES;
 
-/// One device's position in a sequence vector: every event `1..=sequence`
+/// One device's position in a sequence vector: every write `1..=sequence`
 /// from `device_id`. A device absent from a vector is at sequence 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SequenceEntry {
@@ -21,19 +17,15 @@ pub struct SequenceEntry {
 
 /// A vector must list distinct devices in ascending id order, each at a
 /// sequence of at least 1 (zero is expressed by omission), within
-/// [`MAX_SEQUENCE_VECTOR_ENTRIES`], and never name `excluded` (an event's
-/// own author, whose position its `device_sequence` already states). One
-/// canonical form per vector keeps signatures and comparisons unambiguous.
-pub fn validate_sequence_vector(entries: &[SequenceEntry], excluded: Option<&DeviceId>) -> Result<(), EnvelopeError> {
+/// [`MAX_SEQUENCE_VECTOR_ENTRIES`]. One canonical form per vector keeps
+/// signatures and comparisons unambiguous.
+pub fn validate_sequence_vector(entries: &[SequenceEntry]) -> Result<(), EnvelopeError> {
     if entries.len() > MAX_SEQUENCE_VECTOR_ENTRIES {
         return Err(EnvelopeError::LimitExceeded("sequence vector size"));
     }
     let mut previous: Option<&DeviceId> = None;
     for entry in entries {
-        if entry.sequence == 0
-            || previous.is_some_and(|previous| entry.device_id <= *previous)
-            || excluded.is_some_and(|excluded| entry.device_id == *excluded)
-        {
+        if entry.sequence == 0 || previous.is_some_and(|previous| entry.device_id <= *previous) {
             return Err(EnvelopeError::LimitExceeded("sequence vector order"));
         }
         previous = Some(&entry.device_id);
@@ -51,18 +43,15 @@ mod tests {
 
     #[test]
     fn accepts_the_canonical_form() {
-        assert!(validate_sequence_vector(&[], None).is_ok());
-        assert!(validate_sequence_vector(&[entry(1, 3), entry(2, 1)], None).is_ok());
+        assert!(validate_sequence_vector(&[]).is_ok());
+        assert!(validate_sequence_vector(&[entry(1, 3), entry(2, 1)]).is_ok());
     }
 
     #[test]
-    fn rejects_disorder_duplicates_zero_and_the_excluded_device() {
-        assert!(validate_sequence_vector(&[entry(2, 1), entry(1, 1)], None).is_err());
-        assert!(validate_sequence_vector(&[entry(1, 1), entry(1, 2)], None).is_err());
-        assert!(validate_sequence_vector(&[entry(1, 0)], None).is_err());
-        let author = DeviceId::from_bytes([1; 16]);
-        assert!(validate_sequence_vector(&[entry(1, 1)], Some(&author)).is_err());
-        assert!(validate_sequence_vector(&[entry(2, 1)], Some(&author)).is_ok());
+    fn rejects_disorder_duplicates_and_zero() {
+        assert!(validate_sequence_vector(&[entry(2, 1), entry(1, 1)]).is_err());
+        assert!(validate_sequence_vector(&[entry(1, 1), entry(1, 2)]).is_err());
+        assert!(validate_sequence_vector(&[entry(1, 0)]).is_err());
     }
 
     #[test]
@@ -76,10 +65,10 @@ mod tests {
                 })
                 .collect()
         };
-        assert!(validate_sequence_vector(&vector(MAX_SEQUENCE_VECTOR_ENTRIES - 1), None).is_ok());
-        assert!(validate_sequence_vector(&vector(MAX_SEQUENCE_VECTOR_ENTRIES), None).is_ok());
+        assert!(validate_sequence_vector(&vector(MAX_SEQUENCE_VECTOR_ENTRIES - 1)).is_ok());
+        assert!(validate_sequence_vector(&vector(MAX_SEQUENCE_VECTOR_ENTRIES)).is_ok());
         assert!(matches!(
-            validate_sequence_vector(&vector(MAX_SEQUENCE_VECTOR_ENTRIES + 1), None),
+            validate_sequence_vector(&vector(MAX_SEQUENCE_VECTOR_ENTRIES + 1)),
             Err(EnvelopeError::LimitExceeded("sequence vector size"))
         ));
     }

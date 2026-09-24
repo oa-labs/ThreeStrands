@@ -1280,11 +1280,9 @@ mod transport_tests {
             sync_space_id: b"space".to_vec(),
             device_id: DeviceId::from_bytes(device),
             epoch: 1,
-            contiguous_sequence: sequence,
-            latest_event_cid: None,
+            state_sequence: sequence,
+            state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
             published_at_ms: 0,
-            ack: vec![],
-            snapshot_cid: None,
         };
         sign_device_head(signing_key, head).unwrap()
     }
@@ -1475,7 +1473,7 @@ mod transport_tests {
         ];
         let heads = transport.resolve_heads(&known).await.unwrap();
         assert_eq!(heads.len(), 1);
-        assert_eq!(heads[0].head.contiguous_sequence, 5);
+        assert_eq!(heads[0].head.state_sequence, 5);
     }
 
     #[tokio::test]
@@ -1667,6 +1665,6 @@ mod transport_tests {
             .await
             .unwrap();
         assert_eq!(heads.len(), 1);
-        assert_eq!(heads[0].head.contiguous_sequence, 3);
+        assert_eq!(heads[0].head.state_sequence, 3);
     }
 }

@@ -4,28 +4,27 @@
 //!
 //! Each seed produces a schedule of rounds. In a round every online device
 //! may write, edit, or delete snippets through the app's own mutations, then
-//! sync. Between rounds devices go offline (briefly, or for weeks), new
+//! sync. Between rounds devices go offline (briefly, or for months), new
 //! devices join, the group's keys rotate, and the transport drops, delays,
 //! or reorders what it returns. After the schedule, every device comes back
-//! and syncs until quiet, and the run is checked against an oracle: the
-//! union of every device's operations fed through `threestrands_sync_core`.
+//! and syncs until nothing changes.
 //!
-//! Checked after every round: each device's progress is at most what it
-//! applied, and causally closed. Checked at the end: every device has the
-//! oracle's exact frontier for every field (so the same values *and* the
-//! same unresolved conflicts), the oracle's winning snippet rows, every
-//! other device's whole feed applied, and progress equal to applied.
+//! The oracle is independent of the replica code: the harness records every
+//! write and deletion as it happens, with the values it replaced, and feeds
+//! that history to the reference `threestrands_sync_core::OperationGraph`.
+//! At the end every device must hold exactly the values the graph says
+//! survive (so the same values *and* the same unresolved conflicts), show
+//! the graph's winning snippet rows, and have an identical replica state.
 //!
 //! A failure names its seed; pin it in `pinned_seeds_stay_green` once
 //! fixed.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use rusqlite::params;
-use threestrands_sync_core::{OperationGraph, WinnerStamp};
+use threestrands_sync_core::{Dot, FieldKey, Operation, OperationGraph, OperationId, WinnerStamp};
 use threestrands_sync_protocol::EntityType;
 use threestrands_sync_transport::fake::FakeTransport;
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport};
@@ -33,7 +32,7 @@ use threestrands_sync_transport::{Cid as TransportCid, SyncTransport};
 use crate::db::Database;
 use crate::enrollment::test_support::{local_keys_for, test_identity, FakeEpochKeyStore};
 use crate::enrollment::{begin_genesis, join_with_recovery_phrase, rotate_epoch, run_enrollment_sweep};
-use crate::replicated_sync::{decode_id, encode_id, pull_from_transports, push_pending_events, DeviceIdentity};
+use crate::replicated_sync::{encode_id, pull_from_transports, push_local_state, DeviceIdentity};
 
 const HOUR_MS: i64 = 60 * 60 * 1000;
 const DAY_MS: i64 = 24 * HOUR_MS;
@@ -79,6 +78,11 @@ struct Sim {
     now: i64,
     round: usize,
     names: usize,
+    /// Every write and deletion so far, as the reference graph sees it.
+    history: OperationGraph,
+    /// The graph's deletion markers: they stay in its frontier but stand
+    /// for "no value".
+    markers: BTreeSet<OperationId>,
 }
 
 impl Sim {
@@ -100,6 +104,8 @@ impl Sim {
             now: 1_800_000_000_000,
             round: 0,
             names: 0,
+            history: OperationGraph::new(),
+            markers: BTreeSet::new(),
         };
         if sim.rng.gen_bool(0.5) {
             sim.transport.enable_scan_reordering();
@@ -130,7 +136,10 @@ impl Sim {
         }
     }
 
-    async fn sync(&self, index: usize) {
+    /// Sweeps, pushes, and pulls one device. Returns a summary when it
+    /// sealed a new snapshot, merged a peer's, or hit a failure, so healing
+    /// knows when to stop and can say what kept happening.
+    async fn sync(&self, index: usize) -> Option<String> {
         let device = &self.devices[index];
         let transports = &self.transports;
         if let Err(error) = run_enrollment_sweep(&device.database, &device.identity, &device.epoch_keys, transports).await {
@@ -140,13 +149,20 @@ impl Sim {
             }
         }
         let keys = local_keys_for(&device.database, &device.identity, &device.epoch_keys);
-        if let Err(error) = push_pending_events(&device.database, &keys, transports).await {
-            self.fail(format!("{} push: {error}", device.name));
+        let pushed = push_local_state(&device.database, &keys, transports)
+            .await
+            .unwrap_or_else(|error| self.fail(format!("{} push: {error}", device.name)));
+        let pulled = pull_from_transports(&device.database, &keys, transports)
+            .await
+            .unwrap_or_else(|error| self.fail(format!("{} pull: {error}", device.name)));
+        let shared = crate::enrollment::share_keys_with_lagging_peers(&device.database, &keys, transports)
+            .await
+            .unwrap_or_else(|error| self.fail(format!("{} key share: {error}", device.name)));
+        if let Err(error) = device.database.load_replica_state() {
+            self.fail(format!("{}'s replica is malformed: {error}", device.name));
         }
-        if let Err(error) = pull_from_transports(&device.database, &keys, transports).await {
-            self.fail(format!("{} pull: {error}", device.name));
-        }
-        check_progress_is_closed(self, device);
+        let busy = pushed.sealed_snapshot || pushed.failed > 0 || pulled.merged_states > 0 || pulled.failed_transports > 0 || shared > 0;
+        busy.then(|| format!("{}: {pushed:?} {pulled:?} shared keys with {shared}", device.name))
     }
 
     fn write(&mut self, index: usize) {
@@ -155,59 +171,102 @@ impl Sim {
         self.names += 1;
         let name = format!("name {}", self.names);
         let database = &self.devices[index].database;
-        let result = if ids.is_empty() || roll < 4 {
-            database.create_snippet(&name, "body").map_err(String::from).and_then(|snippet| {
-                database.record_local_entity_write(
-                    EntityType::Snippet,
-                    &snippet.id,
-                    serde_json::to_value(&snippet).unwrap(),
-                    None,
-                )
-            })
+        let (entity_id, result) = if ids.is_empty() || roll < 4 {
+            match database.create_snippet(&name, "body") {
+                Ok(snippet) => {
+                    let result = database.record_local_entity_write(
+                        EntityType::Snippet,
+                        &snippet.id,
+                        serde_json::to_value(&snippet).unwrap(),
+                        None,
+                    );
+                    (snippet.id, result)
+                }
+                Err(error) => self.fail(format!("create: {error}")),
+            }
         } else {
-            let id = &ids[self.rng.gen_range(0..ids.len())];
+            let id = ids[self.rng.gen_range(0..ids.len())].clone();
+            let before = entity_values(database, &id);
             if roll < 8 {
-                database.update_snippet(id, &name, "edited").map_err(String::from).and_then(|snippet| {
+                let result = database.update_snippet(&id, &name, "edited").map_err(String::from).and_then(|snippet| {
                     database.record_local_entity_write(
                         EntityType::Snippet,
-                        id,
+                        &id,
                         serde_json::to_value(&snippet).unwrap(),
                         Some(BTreeSet::from(["name".to_string(), "body".to_string()])),
                     )
-                })
-            } else {
-                database
-                    .delete_snippet(id)
-                    .map_err(String::from)
-                    .and_then(|_| database.record_local_entity_deletion(EntityType::Snippet, id))
+                });
+                self.record_write(index, &id, &before);
+                return self.check_write(index, result);
             }
+            let result = database
+                .delete_snippet(&id)
+                .map_err(String::from)
+                .and_then(|_| database.record_local_entity_deletion(EntityType::Snippet, &id));
+            self.record_deletion(&before);
+            return self.check_write(index, result);
         };
+        self.record_write(index, &entity_id, &BTreeMap::new());
+        self.check_write(index, result);
+    }
+
+    fn check_write(&self, index: usize, result: Result<(), String>) {
         if let Err(error) = result {
             self.fail(format!("{} write: {error}", self.devices[index].name));
         }
     }
 
-    /// Rotates from a device that is on the newest epoch and already knows
-    /// every member, so no two rotations ever claim the same epoch and every
-    /// member gets the new key. (Rotating concurrently, or before hearing of
-    /// a new member, is a known gap outside this harness.)
+    /// Adds a write just made on device `index` to the history: one
+    /// operation per field it wrote, naming as parents the values that field
+    /// held on that device just before (`before`).
+    fn record_write(&mut self, index: usize, entity_id: &str, before: &BTreeMap<FieldKey, Vec<(Dot, u64)>>) {
+        let device = &self.devices[index];
+        let state = device.database.load_replica_state().unwrap();
+        let own = *device.identity.device_id.as_bytes();
+        let counter = state.context().get(&own).copied().unwrap_or(0);
+        for (key, values) in state.fields().iter().filter(|(key, _)| key.entity_id == entity_id) {
+            let Some(written) = values.iter().find(|value| value.dot == Dot { device_id: own, counter }) else { continue };
+            let parents = before.get(key).map(|dots| dots.iter().map(|(dot, _)| operation_id(*dot, key)).collect()).unwrap_or_default();
+            self.history.apply(Operation {
+                operation_id: operation_id(written.dot, key),
+                entity_type: key.entity_type,
+                entity_id: key.entity_id.clone(),
+                field: key.field.clone(),
+                value: written.value.clone(),
+                parents,
+                stamp: stamp(written.dot, written.lamport),
+            });
+        }
+    }
+
+    /// Adds a deletion to the history: a marker on every field the entity
+    /// held, replacing those values.
+    fn record_deletion(&mut self, before: &BTreeMap<FieldKey, Vec<(Dot, u64)>>) {
+        for (key, dots) in before {
+            let mut marker = [0xffu8; 16];
+            marker[..8].copy_from_slice(&(self.markers.len() as u64 + 1).to_be_bytes());
+            self.markers.insert(marker);
+            self.history.apply(Operation {
+                operation_id: marker,
+                entity_type: key.entity_type,
+                entity_id: key.entity_id.clone(),
+                field: key.field.clone(),
+                value: None,
+                parents: dots.iter().map(|(dot, _)| operation_id(*dot, key)).collect(),
+                stamp: WinnerStamp { lamport: 0, device_id: [0u8; 16], event_id: [0u8; 16], operation_id: marker },
+            });
+        }
+    }
+
+    /// Rotates from a device that is on the newest epoch, so no two
+    /// rotations ever claim the same epoch (concurrent rotations are a
+    /// known gap outside this harness). The rotating device may not have
+    /// heard of every member yet; key catch-up covers the ones its rotation
+    /// isn't sealed to.
     async fn maybe_rotate(&mut self) {
         let newest = self.devices.iter().map(SimDevice::active_epoch).max().unwrap();
-        let members: BTreeSet<String> = self.devices.iter().map(SimDevice::device_id_hex).collect();
         let candidates: Vec<usize> = (0..self.devices.len())
-            .filter(|&index| {
-                let device = &self.devices[index];
-                device.offline_until <= self.round
-                    && device.active_epoch() == newest
-                    && device
-                        .database
-                        .known_device_roster()
-                        .unwrap()
-                        .iter()
-                        .map(|(id, _)| encode_id(id.as_bytes()))
-                        .collect::<BTreeSet<_>>()
-                        .is_superset(&members)
-            })
+            .filter(|&index| self.devices[index].offline_until <= self.round && self.devices[index].active_epoch() == newest)
             .collect();
         if candidates.is_empty() {
             return;
@@ -253,9 +312,9 @@ impl Sim {
                     continue;
                 }
                 1 => {
-                    // Weeks away: past the 30-day horizon Step 3 compacts at.
+                    // Months away.
                     self.devices[index].offline_until = self.round + 8;
-                    self.now += 5 * DAY_MS;
+                    self.now += 20 * DAY_MS;
                     continue;
                 }
                 2..=3 => {}
@@ -278,29 +337,37 @@ impl Sim {
             order.swap(position, self.rng.gen_range(0..=position));
         }
         for index in order {
-            self.sync(index).await;
+            let _ = self.sync(index).await;
         }
     }
 
-    /// Brings every device back and syncs until nothing changes. Clearing
-    /// `retry_at` stands in for the time delivery backoff would wait.
+    /// Brings every device back and syncs until a whole round changes
+    /// nothing. Clearing `retry_at` stands in for the time delivery backoff
+    /// would wait.
     async fn heal(&mut self) {
         for device in &mut self.devices {
             device.offline_until = 0;
         }
-        for _ in 0..6 {
+        let mut last_activity = Vec::new();
+        for attempt in 0..20 {
             self.round += 1;
             self.now += HOUR_MS;
             crate::sync_policy::set_test_clock(Some(self.now));
+            let mut activity = Vec::new();
             for index in 0..self.devices.len() {
                 self.devices[index].database.connection().unwrap().execute("UPDATE sync_deliveries SET retry_at=NULL", []).unwrap();
-                self.sync(index).await;
+                activity.extend(self.sync(index).await);
             }
+            if activity.is_empty() && attempt > 0 {
+                return;
+            }
+            last_activity = activity;
         }
+        self.fail(format!("devices kept changing after every device came back: {last_activity:?}"));
     }
 
     /// How `device_id_hex`'s own objects stand: deliveries by state, and
-    /// how many of its event objects the transport can't return.
+    /// which of its snapshot objects the transport can't return.
     fn delivery_summary(&self, device_id_hex: &str) -> String {
         let Some(device) = self.devices.iter().find(|device| device.device_id_hex() == device_id_hex) else {
             return "not a simulated device".to_string();
@@ -311,77 +378,75 @@ impl Sim {
                 connection.prepare("SELECT state, COUNT(*), MAX(last_error) FROM sync_deliveries GROUP BY state").unwrap();
             let states: Vec<(String, i64, Option<String>)> =
                 statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
-            let mut statement = connection.prepare("SELECT cid FROM sync_objects WHERE event_id IS NOT NULL").unwrap();
+            let mut statement = connection.prepare("SELECT cid FROM sync_objects WHERE state_sequence IS NOT NULL").unwrap();
             let cids: Vec<String> = statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
             (states, cids)
         };
-        let missing: Vec<String> = cids
+        let missing: Vec<&String> = cids
             .iter()
             .filter(|cid| (0..4).all(|_| futures_lite_block_on(self.transport.get_object(&TransportCid((*cid).clone()))).is_err()))
-            .map(|cid| {
-                let connection = device.database.connection().unwrap();
-                let described: (String, Option<String>, Option<i64>, Option<String>) = connection
-                    .query_row(
-                        "SELECT so.object_kind, se.device_id, se.device_sequence, se.state FROM sync_objects so
-                         LEFT JOIN sync_events se ON se.event_id = so.event_id WHERE so.cid=?1",
-                        params![cid],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                    )
-                    .unwrap();
-                let delivery: Vec<(String, i64)> = {
-                    let mut statement = connection.prepare("SELECT state, attempts FROM sync_deliveries WHERE cid=?1").unwrap();
-                    let rows = statement.query_map(params![cid], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap();
-                    rows
-                };
-                format!("{cid} {described:?} {delivery:?}")
-            })
             .collect();
-        format!("{states:?}, unreadable {} of {} event objects: {missing:?}", missing.len(), cids.len())
+        format!("{states:?}, unreadable {} of {} snapshot objects: {missing:?}", missing.len(), cids.len())
     }
 
     fn check_convergence(&self) {
-        let oracle = Oracle::from_devices(&self.devices);
-        let own_sequences: HashMap<String, i64> =
-            self.devices.iter().map(|device| (device.device_id_hex(), sealed_count(device))).collect();
+        let states: Vec<_> = self.devices.iter().map(|device| device.database.load_replica_state().unwrap()).collect();
+        let mut keys: BTreeSet<FieldKey> = states.iter().flat_map(|state| state.fields().keys().cloned()).collect();
         for device in &self.devices {
-            let frontier = frontier_of(&device.database);
-            if frontier != oracle.frontier {
-                let missing: Vec<_> = oracle
-                    .frontier
-                    .iter()
-                    .filter(|(key, ids)| frontier.get(*key) != Some(ids))
-                    .take(3)
-                    .map(|(key, ids)| (key.clone(), ids.clone(), frontier.get(key).cloned()))
-                    .collect();
-                let progress: Vec<(String, i64, (i64, i64))> = own_sequences
-                    .iter()
-                    .map(|(other, sealed)| (other.clone(), *sealed, progress_of(&device.database, other)))
-                    .collect();
-                let lagging: Vec<String> = progress
-                    .iter()
-                    .filter(|(_, sealed, (applied, _))| applied < sealed)
-                    .map(|(other, _, _)| format!("{other}: {}", self.delivery_summary(other)))
-                    .collect();
-                self.fail(format!(
-                    "{} disagrees with the oracle's frontier, e.g. (field, oracle, device) {missing:?}; (device, sealed, (applied, progress)) {progress:?}; lagging deliveries {lagging:?}",
-                    device.name
-                ));
+            for id in device.snippet_ids() {
+                keys.insert(FieldKey { entity_type: EntityType::Snippet, entity_id: id, field: "name".to_string() });
             }
-            let snippets = snippet_rows(&device.database);
-            if snippets != oracle.snippets {
-                self.fail(format!("{} materialized {snippets:?}, oracle {:?}", device.name, oracle.snippets));
-            }
-            for (other, sealed) in &own_sequences {
-                let (applied, progress) = progress_of(&device.database, other);
-                if applied != *sealed || progress != applied {
+        }
+        let mut expected_snippets: BTreeMap<String, (String, String)> = BTreeMap::new();
+        let mut snippet_ids: BTreeSet<String> = BTreeSet::new();
+        for key in &keys {
+            let expected: BTreeSet<OperationId> = self.surviving(key).iter().map(|operation| operation.operation_id).collect();
+            for (device, state) in self.devices.iter().zip(&states) {
+                let actual: BTreeSet<OperationId> = state.values(key).iter().map(|value| operation_id(value.dot, key)).collect();
+                if actual != expected {
+                    let lagging: Vec<String> = self.devices.iter().map(|other| format!("{}: {}", other.name, self.delivery_summary(&other.device_id_hex()))).collect();
                     self.fail(format!(
-                        "{} has applied {applied} (progress {progress}) of {other}'s {sealed} events; {other}'s deliveries: {}",
+                        "{} holds {} values for {key:?} where the history leaves {}; deliveries {lagging:?}",
                         device.name,
-                        self.delivery_summary(other)
+                        actual.len(),
+                        expected.len()
                     ));
                 }
             }
+            if key.entity_type == EntityType::Snippet {
+                snippet_ids.insert(key.entity_id.clone());
+            }
         }
+        for id in snippet_ids {
+            let winner = |field: &str| -> Option<serde_json::Value> {
+                let key = FieldKey { entity_type: EntityType::Snippet, entity_id: id.clone(), field: field.to_string() };
+                self.surviving(&key).into_iter().max_by_key(|operation| operation.stamp).and_then(|operation| operation.value)
+            };
+            if winner("_entity") == Some(serde_json::json!(true)) {
+                let text = |field: &str| winner(field).and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default();
+                expected_snippets.insert(id.clone(), (text("name"), text("body")));
+            }
+        }
+        for (device, state) in self.devices.iter().zip(&states) {
+            if state != &states[0] {
+                self.fail(format!("{}'s replica differs from {}'s", device.name, self.devices[0].name));
+            }
+            let snippets = snippet_rows(&device.database);
+            if snippets != expected_snippets {
+                self.fail(format!("{} shows {snippets:?}, the history says {expected_snippets:?}", device.name));
+            }
+        }
+    }
+
+    /// The operations the history leaves standing for a field: its frontier
+    /// without deletion markers.
+    fn surviving(&self, key: &FieldKey) -> Vec<Operation> {
+        self.history
+            .frontier(key.entity_type, &key.entity_id, &key.field)
+            .into_iter()
+            .filter(|id| !self.markers.contains(id))
+            .map(|id| self.history.operation(&id).unwrap().clone())
+            .collect()
     }
 }
 
@@ -410,82 +475,37 @@ fn new_device(name: &str) -> SimDevice {
     SimDevice { name: name.to_string(), database, identity, epoch_keys: FakeEpochKeyStore::default(), offline_until: 0 }
 }
 
-fn sealed_count(device: &SimDevice) -> i64 {
-    device
-        .database
-        .connection()
-        .unwrap()
-        .query_row(
-            "SELECT COUNT(*) FROM sync_events WHERE device_id=?1 AND state='sealed'",
-            params![device.device_id_hex()],
-            |row| row.get(0),
-        )
-        .unwrap()
-}
-
-fn progress_of(database: &Database, device_id_hex: &str) -> (i64, i64) {
+/// The values a device holds for one entity, by field.
+fn entity_values(database: &Database, entity_id: &str) -> BTreeMap<FieldKey, Vec<(Dot, u64)>> {
     database
-        .connection()
+        .load_replica_state()
         .unwrap()
-        .query_row(
-            "SELECT applied_sequence, progress_sequence FROM sync_device_progress WHERE device_id=?1",
-            params![device_id_hex],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap_or((0, 0))
+        .fields()
+        .iter()
+        .filter(|(key, _)| key.entity_id == entity_id)
+        .map(|(key, values)| (key.clone(), values.iter().map(|value| (value.dot, value.lamport)).collect()))
+        .collect()
 }
 
-/// Progress never exceeds applied, and every device's progress prefix ends
-/// in an event whose causal vector the progress vector covers.
-fn check_progress_is_closed(sim: &Sim, device: &SimDevice) {
-    let connection = device.database.connection().unwrap();
-    let rows: Vec<(String, i64, i64)> = {
-        let mut statement = connection.prepare("SELECT device_id, applied_sequence, progress_sequence FROM sync_device_progress").unwrap();
-        let rows = statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        rows
-    };
-    let progress: HashMap<String, i64> = rows.iter().map(|(id, _, progress)| (id.clone(), *progress)).collect();
-    for (id, applied, sequence) in &rows {
-        if sequence > applied {
-            sim.fail(format!("{} claims progress {sequence} past applied {applied} for {id}", device.name));
-        }
-        if *sequence == 0 {
-            continue;
-        }
-        let vector: String = connection
-            .query_row(
-                "SELECT causal_vector FROM sync_events WHERE device_id=?1 AND device_sequence=?2",
-                params![id, sequence],
-                |row| row.get(0),
-            )
-            .unwrap_or_else(|error| sim.fail(format!("{} lacks the causal vector of {id}:{sequence}: {error}", device.name)));
-        let needs: Vec<(String, i64)> = serde_json::from_str(&vector).unwrap();
-        for (dependency, needed) in needs {
-            if progress.get(&dependency).copied().unwrap_or(0) < needed {
-                sim.fail(format!("{}'s progress {id}:{sequence} isn't closed: needs {dependency}:{needed}", device.name));
-            }
-        }
-    }
+/// The reference graph's id for one field's value from one write.
+fn operation_id(dot: Dot, key: &FieldKey) -> OperationId {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(dot.device_id);
+    hasher.update(dot.counter.to_be_bytes());
+    hasher.update(key.entity_type.as_str());
+    hasher.update([0]);
+    hasher.update(&key.entity_id);
+    hasher.update([0]);
+    hasher.update(&key.field);
+    hasher.finalize()[..16].try_into().unwrap()
 }
 
-type FieldKey = (String, String, String);
-
-fn frontier_of(database: &Database) -> BTreeMap<FieldKey, BTreeSet<String>> {
-    let connection = database.connection().unwrap();
-    let mut statement = connection.prepare("SELECT entity_type, entity_id, field, operation_id FROM sync_field_frontier").unwrap();
-    let mut frontier: BTreeMap<FieldKey, BTreeSet<String>> = BTreeMap::new();
-    for row in statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)))
-        .unwrap()
-    {
-        let (entity_type, entity_id, field, operation_id) = row.unwrap();
-        frontier.entry((entity_type, entity_id, field)).or_default().insert(operation_id);
-    }
-    frontier
+/// Orders like the replica's working-value rule: `(lamport, device, counter)`.
+fn stamp(dot: Dot, lamport: u64) -> WinnerStamp {
+    let mut counter = [0u8; 16];
+    counter[8..].copy_from_slice(&dot.counter.to_be_bytes());
+    WinnerStamp { lamport, device_id: dot.device_id, event_id: [0u8; 16], operation_id: counter }
 }
 
 fn snippet_rows(database: &Database) -> BTreeMap<String, (String, String)> {
@@ -497,100 +517,6 @@ fn snippet_rows(database: &Database) -> BTreeMap<String, (String, String)> {
         .collect::<Result<BTreeMap<_, _>, _>>()
         .unwrap();
     rows
-}
-
-/// What every device should converge to: the union of every device's
-/// recorded operations, fed through the pure operation graph.
-struct Oracle {
-    frontier: BTreeMap<FieldKey, BTreeSet<String>>,
-    snippets: BTreeMap<String, (String, String)>,
-}
-
-impl Oracle {
-    fn from_devices(devices: &[SimDevice]) -> Self {
-        let mut graph = OperationGraph::new();
-        let mut fields: BTreeSet<FieldKey> = BTreeSet::new();
-        for device in devices {
-            let connection = device.database.connection().unwrap();
-            let mut statement = connection
-                .prepare("SELECT operation_id, entity_type, entity_id, field, value, winner_stamp FROM sync_operations")
-                .unwrap();
-            let operations = statement
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, Option<String>>(4)?,
-                        row.get::<_, Vec<u8>>(5)?,
-                    ))
-                })
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            for (operation_id, entity_type, entity_id, field, value, stamp) in operations {
-                let parents: Vec<[u8; 16]> = {
-                    let mut statement =
-                        connection.prepare("SELECT parent_operation_id FROM sync_operation_parents WHERE operation_id=?1").unwrap();
-                    let parents = statement
-                        .query_map(params![operation_id], |row| row.get::<_, String>(0))
-                        .unwrap()
-                        .map(|parent| decode_id(&parent.unwrap()).unwrap())
-                        .collect();
-                    parents
-                };
-                fields.insert((entity_type.clone(), entity_id.clone(), field.clone()));
-                graph.apply(threestrands_sync_core::Operation {
-                    operation_id: decode_id(&operation_id).unwrap(),
-                    entity_type: entity_type.parse().unwrap(),
-                    entity_id,
-                    field,
-                    value: value.map(|json| serde_json::from_str(&json).unwrap()),
-                    parents,
-                    stamp: decode_stamp(&stamp),
-                });
-            }
-        }
-
-        let mut frontier = BTreeMap::new();
-        for (entity_type, entity_id, field) in &fields {
-            let ids: BTreeSet<String> = graph
-                .frontier(entity_type.parse().unwrap(), entity_id, field)
-                .iter()
-                .map(encode_id)
-                .collect();
-            frontier.insert((entity_type.clone(), entity_id.clone(), field.clone()), ids);
-        }
-
-        let mut snippets = BTreeMap::new();
-        let snippet_ids: BTreeSet<&String> =
-            fields.iter().filter(|(entity_type, _, _)| entity_type == "snippet").map(|(_, id, _)| id).collect();
-        for id in snippet_ids {
-            if graph.entity_exists(EntityType::Snippet, id) != Some(true) {
-                continue;
-            }
-            let winner = |field: &str| -> String {
-                graph
-                    .resolve_field(EntityType::Snippet, id, field)
-                    .and_then(|resolution| resolution.winner.value.clone())
-                    .and_then(|value| value.as_str().map(str::to_string))
-                    .unwrap_or_default()
-            };
-            snippets.insert(id.clone(), (winner("name"), winner("body")));
-        }
-        Oracle { frontier, snippets }
-    }
-}
-
-fn decode_stamp(bytes: &[u8]) -> WinnerStamp {
-    let array = |range: std::ops::Range<usize>| -> [u8; 16] { bytes[range].try_into().unwrap() };
-    WinnerStamp {
-        lamport: u64::from_be_bytes(bytes[0..8].try_into().unwrap()),
-        device_id: array(8..24),
-        event_id: array(24..40),
-        operation_id: array(40..56),
-    }
 }
 
 async fn run_seed(seed: u64, rounds: usize) {
@@ -621,15 +547,15 @@ async fn seeded_schedules_converge_to_the_oracle() {
 /// Seeds that once failed, kept as regression cases. Operation ids are
 /// random, so a seed replays its schedule but not always the exact object
 /// order that exposed the bug; each still exercises that scenario.
-/// - 5, 10: a rotation scanned before its initiator's announcement was
-///   dropped, leaving devices without that epoch's key.
+/// - 5, 10: a rotation scanned before its initiator's announcement.
 /// - 15, 30, 33: joins refused or interrupted while objects were delayed.
-/// - 81: a recovery join that missed a delayed rotation joined without its
-///   key for good.
-/// - 278: a rotation published during an outage never reached storage.
+/// - 81: a recovery join while a rotation was still on its way.
+/// - 136: a device that joined without an epoch's key, which only key
+///   catch-up from a peer can repair.
+/// - 278: a rotation published during an outage.
 #[tokio::test]
 async fn pinned_seeds_stay_green() {
-    for seed in [5, 10, 15, 30, 33, 81, 278] {
+    for seed in [5, 10, 15, 30, 33, 81, 136, 278] {
         run_seed(seed, 18).await;
     }
 }

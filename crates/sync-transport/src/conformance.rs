@@ -98,11 +98,9 @@ pub async fn resolve_heads_round_trips_a_published_head(transport: &dyn SyncTran
         sync_space_id: b"conformance-space".to_vec(),
         device_id,
         epoch: 1,
-        contiguous_sequence: 3,
-        latest_event_cid: None,
+        state_sequence: 3,
+        state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
         published_at_ms: 0,
-        ack: vec![],
-        snapshot_cid: None,
     };
     let signed = sign_device_head(&signing_key, head).unwrap();
     transport.publish_head(&signed).await.unwrap();

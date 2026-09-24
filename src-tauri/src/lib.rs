@@ -26,10 +26,10 @@ mod sync;
 mod sync_connectors;
 mod sync_folder;
 mod sync_policy;
-mod sync_progress;
 #[cfg(test)]
 mod sync_sim;
 mod sync_projection;
+mod sync_state;
 mod system_fonts;
 mod transfer;
 #[path = "unsubscribe.rs"]

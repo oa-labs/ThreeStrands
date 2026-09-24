@@ -36,7 +36,7 @@ pub enum EnvelopeError {
     MessageHashMismatch,
     #[error("envelope body is malformed")]
     Malformed,
-    #[error("event exceeds a hard protocol limit: {0}")]
+    #[error("object exceeds a hard protocol limit: {0}")]
     LimitExceeded(&'static str),
     #[error("failed to encode the canonical body")]
     EncodingFailed,

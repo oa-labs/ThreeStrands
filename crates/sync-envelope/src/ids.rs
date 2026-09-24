@@ -88,9 +88,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fixed_bytes_id!(EventId, 16);
 fixed_bytes_id!(DeviceId, 16);
-fixed_bytes_id!(OperationId, 16);
 fixed_bytes_id!(RequestId, 16);
 fixed_bytes_id!(Signature, 64);
 
@@ -100,18 +98,18 @@ mod tests {
 
     #[test]
     fn round_trips_through_cbor_as_a_byte_string() {
-        let id = OperationId([9u8; 16]);
+        let id = DeviceId([9u8; 16]);
         let buf = crate::canonical_dag_cbor(&id).unwrap();
         // CBOR byte string major type (0x40..0x5b) with length 16 -> 0x50.
         assert_eq!(buf[0], 0x50);
-        let back: OperationId = crate::decode_canonical_dag_cbor(&buf).unwrap();
+        let back: DeviceId = crate::decode_canonical_dag_cbor(&buf).unwrap();
         assert_eq!(back, id);
     }
 
     #[test]
     fn rejects_the_wrong_length() {
         let buf = crate::canonical_dag_cbor(&serde_bytes::ByteBuf::from(vec![1u8; 8])).unwrap();
-        let result: Result<OperationId, _> = crate::decode_canonical_dag_cbor(&buf);
+        let result: Result<DeviceId, _> = crate::decode_canonical_dag_cbor(&buf);
         assert!(result.is_err());
     }
 }

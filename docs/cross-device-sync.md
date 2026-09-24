@@ -133,8 +133,8 @@ versions. A code made by a newer version asks for this app to be updated.
 
 ### Groups from earlier test versions
 
-Version 0.29.0 changed the sync format, and it can't read or join a group made
-by an earlier test version. When it upgrades a device that belonged to such a
+Versions 0.29.0 and 0.30.0 each changed the sync format, and neither can read
+or join a group made by an earlier test version. When it upgrades a device that belonged to such a
 group, the device leaves it:
 - Local data, connectors and the beta toggle stay.
 - Settings shows a one-time notice explaining the reset.
@@ -150,8 +150,26 @@ hasn't finished syncing a new group can look the same for a moment, so the
 message also suggests waiting for the sync app and trying again.
 
 For the same reason, a recovery-phrase join waits if the group's key changes
-haven't all reached the connector yet. Joining without every one of them would
-leave part of the history permanently unreadable.
+haven't all reached the connector yet. A device that still ends up missing a
+key, for example because a key change happened just before it joined, gets it
+from another device the next time both sync.
+
+## How devices stay in step
+
+Each device keeps one encrypted copy of its synchronized data on every
+connector, and replaces it whenever that data changes. To catch up, a device
+reads each other device's latest copy and merges it with its own. Nothing else
+accumulates: however long a device has been away, it catches up by reading the
+other devices' current copies. A connector holds about one copy per device,
+plus the group's key changes and join records.
+
+- **Edits on two devices at once** to the same field both stay until you pick
+  one under **Resolve Conflicts**. Until then, every device shows the same
+  one.
+- **Deleted items** are removed from the copies. An old copy on a device that
+  was away doesn't bring them back.
+- **Editing an item on one device while it is deleted on another** keeps it
+  deleted.
 
 ## Data boundary
 

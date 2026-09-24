@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 35;
+pub(crate) const LATEST_VERSION: i64 = 36;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -158,6 +158,15 @@ fn has_column(transaction: &rusqlite::Transaction<'_>, table: &str, column: &str
 
 fn json<T: serde::Serialize>(value: &T) -> Result<String, String> {
     serde_json::to_string(value).map_err(error)
+}
+
+fn table_exists_in(tx: &rusqlite::Transaction, table: &str) -> Result<bool, String> {
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+        [table],
+        |row| row.get(0),
+    )
+    .map_err(error)
 }
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
@@ -887,9 +896,10 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         let was_enrolled: bool = tx
             .query_row("SELECT EXISTS(SELECT 1 FROM sync_epoch_history)", [], |row| row.get(0))
             .map_err(error)?;
-        let had_graph: bool = tx
-            .query_row("SELECT EXISTS(SELECT 1 FROM sync_events)", [], |row| row.get(0))
-            .map_err(error)?;
+        let had_graph: bool = table_exists_in(&tx, "sync_events")?
+            && tx
+                .query_row("SELECT EXISTS(SELECT 1 FROM sync_events)", [], |row| row.get(0))
+                .map_err(error)?;
         let highest_epoch: i64 = tx
             .query_row(
                 "SELECT MAX(COALESCE((SELECT MAX(key_epoch) FROM sync_epoch_history), 0),
@@ -997,6 +1007,135 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
         tx.pragma_update(None, "user_version", 35).map_err(error)?;
     }
+    if version < 36 {
+        // Replicated-sync protocol version 3: devices replicate whole replica
+        // states instead of an event log. A device in a version 2 group
+        // leaves it, exactly as version 35 left version 1 groups: local
+        // data, connectors, and the beta toggle stay, the user is told once,
+        // and the sync loop forgets the old keys.
+        let was_enrolled: bool = tx
+            .query_row("SELECT EXISTS(SELECT 1 FROM sync_epoch_history)", [], |row| row.get(0))
+            .map_err(error)?;
+        let had_graph: bool = table_exists_in(&tx, "sync_events")?
+            && tx
+                .query_row("SELECT EXISTS(SELECT 1 FROM sync_events)", [], |row| row.get(0))
+                .map_err(error)?;
+        let highest_epoch: i64 = tx
+            .query_row(
+                "SELECT MAX(COALESCE((SELECT MAX(key_epoch) FROM sync_epoch_history), 0),
+                            COALESCE((SELECT MAX(active_epoch) FROM sync_spaces), 0))",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(error)?;
+        if was_enrolled {
+            tx.execute(
+                "INSERT OR REPLACE INTO sync_pending_keychain_cleanup(id, highest_epoch) VALUES (1, ?1)",
+                [highest_epoch],
+            )
+            .map_err(error)?;
+            tx.execute(
+                "INSERT OR IGNORE INTO sync_notices(kind, created_at) VALUES ('protocol_reset', datetime('now'))",
+                [],
+            )
+            .map_err(error)?;
+        }
+        if was_enrolled || had_graph {
+            tx.execute_batch(
+                "DELETE FROM sync_deliveries;
+                 DELETE FROM sync_epoch_history;
+                 DELETE FROM replicated_sync_enrollment_requests;
+                 DELETE FROM replicated_sync_invitation_redemptions;
+                 DELETE FROM replicated_sync_invitations;
+                 DELETE FROM sync_control_objects_seen;
+                 DELETE FROM sync_device_labels;
+                 DELETE FROM sync_devices;
+                 DELETE FROM sync_head_publications;
+                 UPDATE sync_spaces SET active_epoch=0, lamport=0, recovery_public_key=NULL, recovery_x25519_public=NULL, last_error=NULL;",
+            )
+            .map_err(error)?;
+        }
+        tx.execute_batch(
+            "DROP INDEX IF EXISTS sync_operations_entity;
+             DROP INDEX IF EXISTS sync_operations_event;
+             DROP INDEX IF EXISTS sync_operation_parents_by_parent;
+             DROP TABLE IF EXISTS sync_operations;
+             DROP TABLE IF EXISTS sync_operation_parents;
+             DROP TABLE IF EXISTS sync_field_frontier;
+             DROP TABLE IF EXISTS sync_events;
+             DROP TABLE IF EXISTS sync_device_progress;",
+        )
+        .map_err(error)?;
+        // `sync_objects` is rebuilt only while it still has the event-log
+        // shape, so running this again never drops this device's current
+        // snapshot objects. The replica tables below are likewise only ever
+        // created, never replaced: losing `sync_context` would let this
+        // device reuse write counters its peers have already seen.
+        if has_column(&tx, "sync_objects", "event_id")? {
+            tx.execute("DROP TABLE sync_objects", []).map_err(error)?;
+        }
+        tx.execute_batch(
+            "-- Every surviving value of every field: one row per write that
+             -- still holds the field (several while it's in conflict).
+             CREATE TABLE IF NOT EXISTS sync_values (
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                field TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                counter INTEGER NOT NULL,
+                lamport INTEGER NOT NULL,
+                value TEXT,
+                PRIMARY KEY(entity_type, entity_id, field, device_id, counter)
+            );
+            -- The causal context: the highest write counter seen from each
+            -- device, this one included.
+            CREATE TABLE IF NOT EXISTS sync_context (
+                device_id TEXT PRIMARY KEY,
+                counter INTEGER NOT NULL
+            );
+            -- Whether the replica changed since the last sealed snapshot.
+            CREATE TABLE IF NOT EXISTS sync_local_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                dirty INTEGER NOT NULL DEFAULT 1,
+                state_sequence INTEGER NOT NULL DEFAULT 0,
+                sealed_epoch INTEGER,
+                last_change_at TEXT
+            );
+            -- The latest snapshot merged from each peer, its latest head,
+            -- and the newest epoch whose keys this device has shared with it
+            -- (see `enrollment::share_keys_with_lagging_peers`).
+            CREATE TABLE IF NOT EXISTS sync_remote_states (
+                device_id TEXT PRIMARY KEY,
+                state_sequence INTEGER NOT NULL DEFAULT 0,
+                merged_at TEXT,
+                last_head_published_at_ms INTEGER,
+                last_head_seen_at_ms INTEGER,
+                last_head_epoch INTEGER,
+                keys_shared_epoch INTEGER
+            );
+            -- Objects this device keeps on its connectors: its current
+            -- snapshot's chunks and index (`state_sequence` set), the
+            -- protocol marker, and control objects.
+            CREATE TABLE IF NOT EXISTS sync_objects (
+                cid TEXT PRIMARY KEY,
+                object_kind TEXT NOT NULL,
+                state_sequence INTEGER,
+                chunk_index INTEGER NOT NULL,
+                chunk_count INTEGER NOT NULL,
+                bytes BLOB NOT NULL
+            );
+            -- This device's superseded snapshot objects, deleted from each
+            -- connector once that connector's head names a newer snapshot.
+            CREATE TABLE IF NOT EXISTS sync_retired_objects (
+                cid TEXT NOT NULL,
+                transport_instance_id TEXT NOT NULL,
+                state_sequence INTEGER NOT NULL,
+                PRIMARY KEY(cid, transport_instance_id)
+            );",
+        )
+        .map_err(error)?;
+        tx.pragma_update(None, "user_version", 36).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1094,13 +1233,15 @@ mod tests {
         for table in [
             "sync_spaces",
             "sync_devices",
-            "sync_events",
             "sync_objects",
-            "sync_operations",
-            "sync_operation_parents",
-            "sync_field_frontier",
             "sync_transports",
             "sync_deliveries",
+            // v36 replaced v27's event-log tables with the replica's.
+            "sync_values",
+            "sync_context",
+            "sync_local_state",
+            "sync_remote_states",
+            "sync_retired_objects",
         ] {
             connection
                 .execute(&format!("SELECT * FROM {table}"), [])

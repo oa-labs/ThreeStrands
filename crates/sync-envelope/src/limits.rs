@@ -19,19 +19,15 @@ pub const MAX_DECOMPRESSED_BYTES: usize = 32 * 1024 * 1024;
 /// per-field limits but chunks itself into an unreasonable total.
 pub const MAX_REASSEMBLED_BYTES: usize = MAX_COMPRESSED_BYTES + 4_096;
 
-/// Maximum number of [`crate::FieldOperation`] entries in a single event.
-pub const MAX_OPERATIONS_PER_EVENT: usize = 2_000;
+/// Most fields one replica snapshot may hold. A snapshot is a device's
+/// whole synchronized state (tasks, snippets, preferences, and so on), so
+/// this bounds how large that state can grow; the message size limits
+/// above bound it in bytes too.
+pub const MAX_SNAPSHOT_FIELDS: usize = 250_000;
 
-/// Maximum number of distinct entities named across the operations of one
-/// event.
-pub const MAX_ENTITIES_PER_EVENT: usize = 500;
-
-/// Maximum number of distinct fields touched on a single entity within one
-/// event.
-pub const MAX_FIELDS_PER_ENTITY_PER_EVENT: usize = 200;
-
-/// Maximum number of parent operation ids a single operation may declare.
-pub const MAX_PARENTS_PER_OPERATION: usize = 64;
+/// Most values one field may hold at once: one, plus every concurrent value
+/// still in conflict with it.
+pub const MAX_VALUES_PER_FIELD: usize = 64;
 
 /// Maximum byte length of an entity id.
 pub const MAX_ENTITY_ID_BYTES: usize = 320;
@@ -39,7 +35,7 @@ pub const MAX_ENTITY_ID_BYTES: usize = 320;
 /// Maximum byte length of a field name.
 pub const MAX_FIELD_NAME_BYTES: usize = 200;
 
-/// Maximum serialized byte length of a single operation's value.
+/// Maximum serialized byte length of a single field value.
 pub const MAX_VALUE_BYTES: usize = 64 * 1024;
 
 /// Maximum number of chunks a single logical message may be split into.
@@ -54,9 +50,8 @@ pub const MAX_CHUNK_PLAINTEXT_BYTES: usize = 256 * 1024;
 /// content length from anyone observing object sizes in a transport.
 pub const PADDING_BUCKETS: &[usize] = &[4_096, 16_384, 65_536, MAX_CHUNK_PLAINTEXT_BYTES];
 
-/// Most devices one sequence vector (a head's `ack`, an event's
-/// `causal_vector`) may name. Far above any real sync group; bounds the work
-/// a hostile head or event can cause.
+/// Most devices one snapshot's causal context may name. Far above any real
+/// sync group; bounds the work a hostile snapshot can cause.
 pub const MAX_SEQUENCE_VECTOR_ENTRIES: usize = 1_024;
 
 /// Most earlier-epoch keys one enrollment grant or invitation may carry.

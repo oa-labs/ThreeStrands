@@ -1,16 +1,15 @@
 //! Signed device heads: the portable discovery primitive transports use to
-//! find a device's latest event without enumerating a transport's full
-//! object store. Each device publishes only its own head.
+//! find a device's latest replica snapshot without enumerating a
+//! transport's full object store. Each device publishes only its own head.
 
 use serde::{Deserialize, Serialize};
 
 use crate::crypto;
 use crate::error::EnvelopeError;
 use crate::ids::{DeviceId, Signature};
-use crate::vector::{validate_sequence_vector, SequenceEntry};
 use crate::{canonical_dag_cbor, decode_canonical_dag_cbor, validate_cid_reference, SigningKey, VerifyingKey};
 
-const HEAD_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/device-head-signature/v2";
+const HEAD_SIGNATURE_DOMAIN: &[u8] = b"threestrands/sync-envelope/device-head-signature/v3";
 
 /// The fields of a device head that get signed. `sync_space_id` is opaque
 /// bytes (not necessarily UTF-8) so it can be a random identifier rather
@@ -20,25 +19,18 @@ pub struct DeviceHead {
     #[serde(with = "serde_bytes")]
     pub sync_space_id: Vec<u8>,
     pub device_id: DeviceId,
+    /// The key epoch this device is on.
     pub epoch: u32,
-    /// The greatest device-sequence number contiguously known for this
-    /// device: every event 1..=this has been accepted, with no gaps.
-    pub contiguous_sequence: u64,
-    /// CIDv1 of this device's latest published event (its head chunk; see
-    /// `SealedMessage::head_cid`). `None` for a brand new device with no
-    /// events yet.
-    pub latest_event_cid: Option<String>,
+    /// The sequence of the snapshot `state_cid` names; 0 before this device
+    /// has published one.
+    pub state_sequence: u64,
+    /// The chunk-index CID of this device's latest snapshot on this
+    /// transport, or `None` before it has published one.
+    pub state_cid: Option<String>,
     /// The signing device's wall-clock time when it published this head.
     /// Only for telling how recently a device synced; never used for
     /// ordering or causality.
     pub published_at_ms: i64,
-    /// This device's causally closed progress through every device's feed,
-    /// including its own: the events it has applied along with everything
-    /// they depend on. See [`crate::SequenceEntry`].
-    pub ack: Vec<SequenceEntry>,
-    /// The chunk-index CID of the latest snapshot this device published,
-    /// if any.
-    pub snapshot_cid: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -47,13 +39,16 @@ pub struct SignedDeviceHead {
     pub signature: Signature,
 }
 
-/// Every link must be a CIDv1 and the ack a canonical sequence vector,
-/// checked on signing, verifying, and decoding alike.
+/// The snapshot link must be a CIDv1, and present exactly when a snapshot
+/// sequence is, checked on signing, verifying, and decoding alike.
 fn validate_head(head: &DeviceHead) -> Result<(), EnvelopeError> {
-    for cid in [&head.latest_event_cid, &head.snapshot_cid].into_iter().flatten() {
+    if let Some(cid) = &head.state_cid {
         validate_cid_reference(cid)?;
     }
-    validate_sequence_vector(&head.ack, None)
+    if head.state_cid.is_some() != (head.state_sequence > 0) {
+        return Err(EnvelopeError::Malformed);
+    }
+    Ok(())
 }
 
 pub fn sign_device_head(
@@ -110,14 +105,9 @@ mod tests {
             sync_space_id: b"space".to_vec(),
             device_id: DeviceId::from_bytes([7u8; 16]),
             epoch: 2,
-            contiguous_sequence: 9,
-            latest_event_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
+            state_sequence: 9,
+            state_cid: Some("bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e".to_string()),
             published_at_ms: 1_700_000_000_000,
-            ack: vec![
-                SequenceEntry { device_id: DeviceId::from_bytes([3u8; 16]), sequence: 4 },
-                SequenceEntry { device_id: DeviceId::from_bytes([7u8; 16]), sequence: 9 },
-            ],
-            snapshot_cid: Some("bafkreihyp2mdkcvn2et4tbcjqsirtmpevqgemx5ab2ac5oioyzmfkwlhlu".to_string()),
         }
     }
 
@@ -142,36 +132,43 @@ mod tests {
     fn rejects_a_tampered_head() {
         let signing_key = SigningKey::generate(&mut OsRng);
         let mut signed = sign_device_head(&signing_key, sample_head()).unwrap();
-        signed.head.contiguous_sequence += 1;
+        signed.head.state_sequence += 1;
         assert!(verify_device_head(&signing_key.verifying_key(), &signed).is_err());
     }
 
     #[test]
-    fn the_signature_covers_the_ack_publication_time_and_snapshot() {
+    fn the_signature_covers_the_snapshot_and_publication_time() {
         let signing_key = SigningKey::generate(&mut OsRng);
         let signed = sign_device_head(&signing_key, sample_head()).unwrap();
         let verifying_key = signing_key.verifying_key();
 
-        let mut ack = signed.clone();
-        ack.head.ack[0].sequence += 1;
-        assert!(verify_device_head(&verifying_key, &ack).is_err());
+        let mut sequence = signed.clone();
+        sequence.head.state_sequence += 1;
+        assert!(verify_device_head(&verifying_key, &sequence).is_err());
         let mut published = signed.clone();
         published.head.published_at_ms += 1;
         assert!(verify_device_head(&verifying_key, &published).is_err());
         let mut snapshot = signed;
-        snapshot.head.snapshot_cid = None;
+        snapshot.head.state_cid = Some("bafkreihyp2mdkcvn2et4tbcjqsirtmpevqgemx5ab2ac5oioyzmfkwlhlu".to_string());
         assert!(verify_device_head(&verifying_key, &snapshot).is_err());
     }
 
     #[test]
-    fn a_malformed_ack_or_snapshot_link_is_refused() {
+    fn a_malformed_snapshot_link_is_refused() {
         let signing_key = SigningKey::generate(&mut OsRng);
-        let mut unordered = sample_head();
-        unordered.ack.reverse();
-        assert!(sign_device_head(&signing_key, unordered).is_err());
         let mut bad_link = sample_head();
-        bad_link.snapshot_cid = Some("not-a-cid".to_string());
+        bad_link.state_cid = Some("not-a-cid".to_string());
         assert!(sign_device_head(&signing_key, bad_link).is_err());
+        let mut link_without_sequence = sample_head();
+        link_without_sequence.state_sequence = 0;
+        assert!(sign_device_head(&signing_key, link_without_sequence).is_err());
+        let mut sequence_without_link = sample_head();
+        sequence_without_link.state_cid = None;
+        assert!(sign_device_head(&signing_key, sequence_without_link).is_err());
+        let mut fresh = sample_head();
+        fresh.state_sequence = 0;
+        fresh.state_cid = None;
+        assert!(sign_device_head(&signing_key, fresh).is_ok());
     }
 
     #[test]
