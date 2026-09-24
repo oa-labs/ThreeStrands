@@ -1676,6 +1676,8 @@ form.split-inbox-add select {
 .account-card-heading { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .account-card-heading strong { overflow: hidden; font-size: calc(13px * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
 .account-card-email { overflow: hidden; color: var(--muted); font-size: calc(12px * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
+.device-roster-id { display: flex; min-width: 0; gap: 5px; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
+.device-roster-id code { min-width: 0; overflow-wrap: anywhere; user-select: all; }
 .account-card-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding-top: 10px; border-top: 1px solid var(--border); }
 .account-sender-name { display: flex; align-items: center; gap: 6px; }
 .account-sender-name input { width: min(220px, 100%); min-width: 0; font-size: calc(13px * var(--font-scale)); }

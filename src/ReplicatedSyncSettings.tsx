@@ -103,7 +103,7 @@ export function syncOverview(transports: readonly ReplicatedSyncTransportStatus[
 }
 
 export function deviceDisplayName(device: DeviceRosterEntry): string {
-  return device.label || (device.isSelf ? "This device" : "Unnamed device");
+  return device.label || (device.isSelf ? "This device" : "Unlabeled device");
 }
 
 /** What to tell someone typing a recovery phrase. The word still being
@@ -778,7 +778,6 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
     device.status === "revoked" ? "Revoked" : "Active",
     device.joinedWithJoinCode ? "Joined with a join code" : null,
     device.lastChangeAt ? `Last change ${new Date(device.lastChangeAt).toLocaleString()}` : "No changes yet",
-    `ID ${device.deviceId.slice(0, 8)}`,
   ].filter(Boolean).join(" · ");
 
   return (
@@ -787,6 +786,7 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
         <div className="account-card-identity">
           <strong>{deviceDisplayName(device)}</strong>
           <span className="account-card-email">{details}</span>
+          <span className="device-roster-id"><span>ID</span><code>{device.deviceId}</code></span>
         </div>
         {renaming ? null : (
           <button type="button" className="account-action-button" disabled={busy} onClick={() => { setName(device.label ?? ""); setRenaming(true); }}>
@@ -893,6 +893,9 @@ function EnrolledOverview({
       ) : null}
 
       <Disclosure summary={`Devices (${deviceRoster.length})`} open>
+        <p className="accounts-footnote">
+          This lists trusted device identities, not necessarily separate machines. An older identity can remain after a device leaves and rejoins with a new ID. Compare the full IDs across your devices, and revoke any you don’t recognize.
+        </p>
         <JoinCodeNotices notices={joinNotices} operation={operation} />
         <ul className="accounts-list" aria-label="Devices">
           {deviceRoster.map((device) => <DeviceCard key={device.deviceId} device={device} operation={operation} />)}

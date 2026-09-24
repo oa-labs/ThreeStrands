@@ -316,8 +316,8 @@ describe("enrolled overview", () => {
     expect(screen.getByRole("button", { name: "Add a device" })).toBeEnabled();
     const devices = within(screen.getByRole("list", { name: "Devices" })).getAllByRole("listitem");
     expect(devices[0]).toHaveTextContent("This device");
-    expect(devices[1]).toHaveTextContent("Unnamed device");
-    expect(devices[1]).toHaveTextContent("ID device-o");
+    expect(devices[1]).toHaveTextContent("Unlabeled device");
+    expect(within(devices[1]!).getByText("device-other")).toBeInTheDocument();
     expect(within(devices[1]!).getByRole("button", { name: "Revoke…" })).toBeInTheDocument();
   });
 
@@ -520,6 +520,7 @@ describe("device names and activity", () => {
     render(<ReplicatedSyncSettings />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Name" }));
+    expect(screen.getByText("device-self")).toBeInTheDocument();
     const input = screen.getByRole("textbox", { name: /Name \(shared with your other devices\)/ });
     expect(input).toHaveAttribute("maxLength", String(sync.MAX_DEVICE_LABEL_CHARS));
     fireEvent.change(input, { target: { value: "Desk" } });
