@@ -98,6 +98,140 @@
   --shadow: #20203826;
 }
 
+/* Accent color themes. Each accent re-tints the purple-hued tokens from the
+   blocks above while leaving the neutral surface, text, and state colors
+   alone. The plain [data-accent] block supplies the dark-mode values; the
+   [data-accent][data-theme="light"] block overrides them in light mode. The
+   default "purple" needs no blocks — it is what :root already defines. */
+
+:root[data-accent="blue"] {
+  --accent: #4d8ef5;
+  --message-active: #3568c8;
+  --link: #9cc3fb;
+  --focus-glow: #3b76d833;
+  --quote-border: #5f7396;
+  --primary: #2b3c62;
+  --primary-border: #47679f;
+  --selected: #232d3c;
+}
+:root[data-accent="blue"][data-theme="light"] {
+  --accent: #1a73e8;
+  --message-active: #3568c8;
+  --link: #2a5cc2;
+  --focus-glow: #1a73e833;
+  --quote-border: #a3b3d1;
+  --primary: #dde8fb;
+  --primary-border: #a2b9e6;
+  --selected: #e1e9fb;
+}
+
+:root[data-accent="teal"] {
+  --accent: #1a9cb4;
+  --message-active: #147d92;
+  --link: #7fd4e4;
+  --focus-glow: #1d9cb433;
+  --quote-border: #5e8289;
+  --primary: #173f4b;
+  --primary-border: #2c7484;
+  --selected: #1d2d31;
+}
+:root[data-accent="teal"][data-theme="light"] {
+  --accent: #0e7490;
+  --message-active: #147d92;
+  --link: #0c6478;
+  --focus-glow: #0e749033;
+  --quote-border: #9cbcc3;
+  --primary: #d6eff3;
+  --primary-border: #90c5cf;
+  --selected: #dcf0f3;
+}
+
+:root[data-accent="green"] {
+  --accent: #2ea156;
+  --message-active: #267f49;
+  --link: #8fd8ab;
+  --focus-glow: #2f9e5733;
+  --quote-border: #63816e;
+  --primary: #234c36;
+  --primary-border: #3b8259;
+  --selected: #20302a;
+}
+:root[data-accent="green"][data-theme="light"] {
+  --accent: #188038;
+  --message-active: #267f49;
+  --link: #156a3a;
+  --focus-glow: #18803833;
+  --quote-border: #a1c2ae;
+  --primary: #dcf2e3;
+  --primary-border: #9bd1b5;
+  --selected: #dff3e6;
+}
+
+:root[data-accent="amber"] {
+  --accent: #e3b341;
+  --accent-contrast: #241c07;
+  --message-active: #9d7420;
+  --link: #f0cd7f;
+  --focus-glow: #d9a44133;
+  --quote-border: #8a7d5f;
+  --primary: #55410f;
+  --primary-border: #8d6d24;
+  --selected: #2f2a1c;
+}
+:root[data-accent="amber"][data-theme="light"] {
+  --accent: #896500;
+  --accent-contrast: #fff;
+  --message-active: #9d7420;
+  --link: #74550a;
+  --focus-glow: #89650033;
+  --quote-border: #c8b68f;
+  --primary: #f6ecd2;
+  --primary-border: #d4b97e;
+  --selected: #f5edd8;
+}
+
+:root[data-accent="rose"] {
+  --accent: #e25b4d;
+  --message-active: #ad463a;
+  --link: #f5a196;
+  --focus-glow: #e25b4d33;
+  --quote-border: #8a645e;
+  --primary: #572b24;
+  --primary-border: #945049;
+  --selected: #322321;
+}
+:root[data-accent="rose"][data-theme="light"] {
+  --accent: #c5221f;
+  --message-active: #ad463a;
+  --link: #a1332c;
+  --focus-glow: #c5221f33;
+  --quote-border: #cda4a0;
+  --primary: #fbe3e1;
+  --primary-border: #e6aba6;
+  --selected: #fae6e4;
+}
+
+:root[data-accent="graphite"] {
+  --accent: #8a8a94;
+  --message-active: #5d5d67;
+  --link: #b6b6c0;
+  --focus-glow: #8a8a9433;
+  --quote-border: #6e6e78;
+  --primary: #3d3d46;
+  --primary-border: #6b6b74;
+  --selected: #2b2b32;
+}
+:root[data-accent="graphite"][data-theme="light"] {
+  --accent: #5f6368;
+  --message-active: #5d5d67;
+  --link: #4a4a53;
+  --focus-glow: #5f636833;
+  --quote-border: #b3b3bd;
+  --primary: #e8e8ec;
+  --primary-border: #b4b4be;
+  --selected: #e9e9ef;
+}
+
 :root {
   font-family: var(--font-family);
   color: var(--text);
@@ -1830,6 +1964,16 @@ form.split-inbox-add select {
 .settings-row { display: flex; align-items: center; gap: 10px; }
 .settings-radio-row { display: flex; gap: 16px; font-size: var(--type-ui); }
 .settings-radio-row label, .settings-checkbox { display: flex; align-items: center; gap: 7px; font-size: var(--type-ui); }
+/* Swatches preview each accent choice in its own color, independent of the
+   accent currently applied to the document. */
+.accent-swatch { flex-shrink: 0; width: 13px; height: 13px; border-radius: var(--radius-circle); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22); }
+.accent-swatch[data-accent="purple"] { background: #8078ff; }
+.accent-swatch[data-accent="blue"] { background: #4d8ef5; }
+.accent-swatch[data-accent="teal"] { background: #1a9cb4; }
+.accent-swatch[data-accent="green"] { background: #2ea156; }
+.accent-swatch[data-accent="amber"] { background: #e3b341; }
+.accent-swatch[data-accent="rose"] { background: #e25b4d; }
+.accent-swatch[data-accent="graphite"] { background: #8a8a94; }
 .settings-switch { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; font-size: var(--type-ui); cursor: pointer; }
 .settings-switch input { position: relative; width: 34px; height: 20px; flex: 0 0 34px; margin: 0; appearance: none; border: 1px solid var(--border-strong); border-radius: var(--radius-pill); background: var(--input); cursor: pointer; transition: background .15s ease, border-color .15s ease; }
 .settings-switch input::after { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: var(--radius-circle); background: var(--muted); content: ""; transition: transform .15s ease, background .15s ease; }

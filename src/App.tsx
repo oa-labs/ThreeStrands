@@ -207,6 +207,7 @@ export function App() {
     effectiveTheme: effectiveThemeValue,
     setTheme,
     toggleTheme,
+    setAccent,
     fontScale,
     setFontScale,
     adjustFontScale,
@@ -1156,6 +1157,7 @@ export function App() {
 
   const applyImportedSettings = useCallback(async ({ preferences: imported }: SettingsImportResult) => {
     setTheme(imported.theme);
+    setAccent(imported.accent);
     setFontScale(imported.fontScale);
     setFontFamily(imported.fontFamily);
     setAutoReadDelaySeconds(imported.autoReadDelaySeconds);
@@ -1169,7 +1171,7 @@ export function App() {
     ]);
     refreshAiAvailability();
     setSettingsSection("accounts");
-  }, [refreshAccounts, refreshAiAvailability, refreshSplitInboxes, setActiveAccountId, setAuthStatus, setAutoReadDelaySeconds, setAvailabilityPreferences, setFontFamily, setFontScale, setLoadRemoteImages, setTheme]);
+  }, [refreshAccounts, refreshAiAvailability, refreshSplitInboxes, setActiveAccountId, setAccent, setAuthStatus, setAutoReadDelaySeconds, setAvailabilityPreferences, setFontFamily, setFontScale, setLoadRemoteImages, setTheme]);
 
   const openToday = useCallback(() => {
     if (rightWorkspace === "calendar") {

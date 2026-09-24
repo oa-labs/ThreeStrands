@@ -19,6 +19,12 @@ import {
   type FontFamily,
 } from "./settings";
 import {
+  applyAccent,
+  readAccent,
+  saveAccent,
+  type Accent,
+} from "./accent";
+import {
   applyTheme,
   effectiveTheme,
   readTheme,
@@ -36,6 +42,7 @@ import { pullSyncedPreferences, queuePortablePreferences } from "./syncedPrefere
  */
 export function useAppPreferences() {
   const [theme, setThemeState] = useState(readTheme);
+  const [accent, setAccentState] = useState(readAccent);
   const [fontScale, setFontScaleState] = useState(readFontScale);
   const [fontFamily, setFontFamilyState] = useState(readFontFamily);
   const [autoReadDelaySeconds, setAutoReadDelayState] = useState(readAutoReadDelaySeconds);
@@ -69,6 +76,7 @@ export function useAppPreferences() {
   }, []);
 
   useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => applyAccent(accent), [accent]);
   useEffect(() => applyFontScale(fontScale), [fontScale]);
   useEffect(() => applyFontFamily(fontFamily), [fontFamily]);
   useEffect(() => {
@@ -83,13 +91,15 @@ export function useAppPreferences() {
   const setTheme = useCallback((next: Theme) => {
     saveTheme(next);
     setThemeState(next);
-    queuePortablePreferences();
+  }, []);
+  const setAccent = useCallback((next: Accent) => {
+    saveAccent(next);
+    setAccentState(next);
   }, []);
   const toggleTheme = useCallback(() => {
     setThemeState((current) => {
       const next = effectiveTheme(current) === "dark" ? "light" : "dark";
       saveTheme(next);
-      queuePortablePreferences();
       return next;
     });
   }, []);
@@ -123,6 +133,8 @@ export function useAppPreferences() {
     effectiveTheme: effectiveTheme(theme),
     setTheme,
     toggleTheme,
+    accent,
+    setAccent,
     fontScale,
     setFontScale,
     adjustFontScale,

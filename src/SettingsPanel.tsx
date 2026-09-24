@@ -48,6 +48,7 @@ import {
   MAX_FONT_SCALE,
   MIN_FONT_SCALE,
 } from "./fontScale";
+import { ACCENTS, type Accent } from "./accent";
 import type { Theme } from "./theme";
 import {
   DEFAULT_FONT_FAMILY,
@@ -232,7 +233,7 @@ type SettingsSectionDefinition = {
 const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Integrations", "System"];
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
-  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and reads.", keywords: "theme light dark font size family" },
+  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and reads.", keywords: "theme light dark accent color font size family" },
   { id: "reading", label: "Reading", group: "General", description: "Control what happens when you open a conversation.", keywords: "mark read delay conversation" },
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail sender name color reconnect disconnect" },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection" },
@@ -255,6 +256,8 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
 export type SettingsPreferences = {
   theme: Theme;
   setTheme(theme: Theme): void;
+  accent: Accent;
+  setAccent(accent: Accent): void;
   fontScale: number;
   setFontScale(value: number): void;
   fontFamily: FontFamily;
@@ -442,6 +445,8 @@ export function Settings({
             <AppearanceSettings
               theme={preferences.theme}
               onThemeChange={preferences.setTheme}
+              accent={preferences.accent}
+              onAccentChange={preferences.setAccent}
               fontScale={preferences.fontScale}
               onFontScaleChange={preferences.setFontScale}
               fontFamily={preferences.fontFamily}
@@ -533,6 +538,8 @@ export function Settings({
 function AppearanceSettings({
   theme,
   onThemeChange,
+  accent,
+  onAccentChange,
   fontScale,
   onFontScaleChange,
   fontFamily,
@@ -540,6 +547,8 @@ function AppearanceSettings({
 }: {
   theme: Theme;
   onThemeChange(theme: Theme): void;
+  accent: Accent;
+  onAccentChange(accent: Accent): void;
   fontScale: number;
   onFontScaleChange(value: number): void;
   fontFamily: FontFamily;
@@ -609,6 +618,10 @@ function AppearanceSettings({
     { value: "light", label: "Light" },
     { value: "dark", label: "Dark" },
   ];
+  const accentOptions: { value: Accent; label: string }[] = ACCENTS.map((value) => ({
+    value,
+    label: value.charAt(0).toLocaleUpperCase() + value.slice(1),
+  }));
   return (
     <section className="settings-section" aria-label="Appearance">
       <h3>Theme</h3>
@@ -621,6 +634,23 @@ function AppearanceSettings({
               checked={theme === option.value}
               onChange={() => onThemeChange(option.value)}
             />
+            {option.label}
+          </label>
+        ))}
+      </div>
+
+      <h3>Accent Color</h3>
+      <p className="settings-hint">Used for highlights, selection, and buttons throughout the app.</p>
+      <div className="settings-radio-row" role="radiogroup" aria-label="Accent color">
+        {accentOptions.map((option) => (
+          <label key={option.value}>
+            <input
+              type="radio"
+              name="accent"
+              checked={accent === option.value}
+              onChange={() => onAccentChange(option.value)}
+            />
+            <span className="accent-swatch" data-accent={option.value} aria-hidden="true" />
             {option.label}
           </label>
         ))}

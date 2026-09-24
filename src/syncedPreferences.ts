@@ -7,8 +7,8 @@ function isDesktop(): boolean {
 
 /**
  * Records this device's portable preferences for cross-device sync. The
- * backend ignores the call unless replicated sync is active. Device
- * navigation never leaves the device.
+ * backend ignores the call unless replicated sync is active. Appearance and
+ * device navigation stay on this device.
  */
 export function queuePortablePreferences(): void {
   if (!isDesktop()) return;
@@ -18,15 +18,30 @@ export function queuePortablePreferences(): void {
 /** Queues the current portable preference record and waits for native storage. */
 export async function queuePortablePreferencesAndWait(): Promise<void> {
   if (!isDesktop()) return;
-  const { selectedAccountId: _deviceNavigation, ...preferences } = readExportablePreferences();
+  const {
+    selectedAccountId: _deviceNavigation,
+    theme: _deviceTheme,
+    accent: _deviceAccent,
+    ...preferences
+  } = readExportablePreferences();
   await invoke("update_synced_preferences", { preferences });
 }
 
 /** Applies portable preferences synchronized from another device, if any. */
 export async function pullSyncedPreferences(): Promise<boolean> {
   if (!isDesktop()) return false;
-  const preferences = await invoke<Omit<ExportablePreferences, "selectedAccountId"> | null>("synced_preferences");
+  // Older replicas may still contain theme, accent, and selectedAccountId.
+  // Keep all three local even when reading a preference record produced
+  // before this change.
+  const preferences = await invoke<Partial<ExportablePreferences> | null>("synced_preferences");
   if (!preferences) return false;
-  applyExportablePreferences({ ...preferences, selectedAccountId: readExportablePreferences().selectedAccountId });
+  const local = readExportablePreferences();
+  applyExportablePreferences({
+    ...local,
+    ...preferences,
+    theme: local.theme,
+    accent: local.accent,
+    selectedAccountId: local.selectedAccountId,
+  });
   return true;
 }

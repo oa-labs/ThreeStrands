@@ -13,6 +13,7 @@ describe("exportable preferences", () => {
   it("round-trips the complete allowlisted settings shape", () => {
     const preferences: ExportablePreferences = {
       theme: "dark",
+      accent: "teal",
       fontScale: 120,
       fontFamily: "Georgia",
       autoReadDelaySeconds: 8,

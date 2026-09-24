@@ -38,6 +38,7 @@ describe("settings import navigation", () => {
     vi.mocked(importSettings).mockResolvedValue({
       preferences: {
         theme: "dark",
+        accent: "rose",
         fontScale: 110,
         fontFamily: "Georgia",
         autoReadDelaySeconds: 8,
@@ -86,6 +87,7 @@ describe("settings import navigation", () => {
     );
     expect(importSettings).toHaveBeenCalledWith("password123");
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(document.documentElement).toHaveAttribute("data-accent", "rose");
   });
 });
 

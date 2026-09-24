@@ -5,6 +5,7 @@ import { useAppPreferences } from "./useAppPreferences";
 afterEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
+  document.documentElement.removeAttribute("data-accent");
   document.documentElement.style.removeProperty("--font-scale");
 });
 
@@ -13,18 +14,22 @@ describe("useAppPreferences", () => {
     const { result } = renderHook(() => useAppPreferences());
 
     act(() => result.current.setTheme("dark"));
+    act(() => result.current.setAccent("green"));
     act(() => result.current.setFontScale(140));
     act(() => result.current.setFontFamily("system"));
     act(() => result.current.setAutoReadDelaySeconds(10));
     act(() => result.current.setLoadRemoteImages(true));
 
     expect(result.current.theme).toBe("dark");
+    expect(result.current.accent).toBe("green");
     expect(result.current.fontScale).toBe(140);
     expect(result.current.fontFamily).toBe("system");
     expect(result.current.autoReadDelaySeconds).toBe(10);
     expect(result.current.loadRemoteImages).toBe(true);
     expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.dataset.accent).toBe("green");
     expect(document.documentElement.style.getPropertyValue("--font-scale")).toBe("1.4");
+    expect(localStorage.getItem("threestrands.accent")).toBe("green");
   });
 
   it("adjusts font scale through the shared bounds", () => {

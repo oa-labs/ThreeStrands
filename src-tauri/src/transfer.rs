@@ -48,6 +48,10 @@ pub struct AiFeaturePreferences {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TransferPreferences {
     pub theme: String,
+    // Added after version 2 shipped; exports produced before the accent
+    // picker existed omit the field and default to the brand purple.
+    #[serde(default = "default_accent")]
+    pub accent: String,
     pub font_scale: i64,
     pub font_family: String,
     pub auto_read_delay_seconds: i64,
@@ -59,6 +63,10 @@ pub struct TransferPreferences {
     pub ai_features: AiFeaturePreferences,
     #[serde(default = "default_availability_preferences")]
     pub availability_preferences: AvailabilityPreferences,
+}
+
+fn default_accent() -> String {
+    "purple".to_string()
 }
 
 fn default_availability_preferences() -> AvailabilityPreferences {
@@ -80,6 +88,12 @@ impl TransferPreferences {
     fn validate(&self) -> Result<(), String> {
         if !matches!(self.theme.as_str(), "light" | "dark" | "system") {
             return Err("The transfer contains an invalid theme".to_string());
+        }
+        if !matches!(
+            self.accent.as_str(),
+            "purple" | "blue" | "teal" | "green" | "amber" | "rose" | "graphite"
+        ) {
+            return Err("The transfer contains an invalid accent color".to_string());
         }
         if !(80..=140).contains(&self.font_scale) {
             return Err("The transfer contains an invalid font scale".to_string());
@@ -486,6 +500,7 @@ mod tests {
             exported_at: "2026-03-06T00:00:00Z".to_string(),
             preferences: TransferPreferences {
                 theme: "dark".to_string(),
+                accent: "rose".to_string(),
                 font_scale: 110,
                 font_family: "system".to_string(),
                 auto_read_delay_seconds: 2,
@@ -552,6 +567,28 @@ mod tests {
         assert_eq!(decoded.preferences.availability_preferences.default_duration_minutes, 30);
         assert!(!decoded.preferences.ai_features.action_extraction);
         decoded.validate().unwrap();
+    }
+
+    #[test]
+    fn an_export_from_before_the_accent_field_existed_defaults_to_purple() {
+        let mut serialized = serde_json::to_value(payload()).unwrap();
+        serialized["preferences"]
+            .as_object_mut()
+            .unwrap()
+            .remove("accent");
+        let decoded: TransferPayload = serde_json::from_value(serialized).unwrap();
+        assert_eq!(decoded.preferences.accent, "purple");
+        decoded.validate().unwrap();
+    }
+
+    #[test]
+    fn preferences_reject_unknown_accent_color() {
+        let mut candidate = payload();
+        candidate.preferences.accent = "neon".to_string();
+        assert_eq!(
+            candidate.validate().unwrap_err(),
+            "The transfer contains an invalid accent color"
+        );
     }
 
     #[test]

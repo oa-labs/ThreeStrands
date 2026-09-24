@@ -11,6 +11,7 @@ import {
   type AiFeatureFlags,
   type AiProvider,
 } from "./aiSettings";
+import { readAccent, saveAccent, type Accent } from "./accent";
 import { readFontScale, saveFontScale } from "./fontScale";
 import {
   readAutoReadDelaySeconds,
@@ -35,6 +36,7 @@ import type { AvailabilityPreferences } from "./domain";
  */
 export type ExportablePreferences = {
   theme: Theme;
+  accent: Accent;
   fontScale: number;
   fontFamily: string;
   autoReadDelaySeconds: number;
@@ -56,6 +58,7 @@ export type SettingsImportResult = {
 export function readExportablePreferences(): ExportablePreferences {
   return {
     theme: readTheme(),
+    accent: readAccent(),
     fontScale: readFontScale(),
     fontFamily: readFontFamily(),
     autoReadDelaySeconds: readAutoReadDelaySeconds(),
@@ -71,6 +74,7 @@ export function readExportablePreferences(): ExportablePreferences {
 
 export function applyExportablePreferences(preferences: ExportablePreferences): void {
   saveTheme(preferences.theme);
+  saveAccent(preferences.accent);
   saveFontScale(preferences.fontScale);
   saveFontFamily(preferences.fontFamily);
   saveAutoReadDelaySeconds(preferences.autoReadDelaySeconds);
