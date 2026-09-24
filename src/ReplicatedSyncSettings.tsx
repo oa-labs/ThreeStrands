@@ -304,19 +304,26 @@ export function ReplicatedSyncSettings() {
       {sectionStatus}
 
       {enrolled ? (
-        <EnrolledOverview
-          deviceCount={enrolled.deviceCount}
-          awaitingAdmissionFrom={enrolled.awaitingAdmissionFrom ?? null}
-          transports={transports}
-          pendingRequests={pendingRequests}
-          deviceRoster={deviceRoster}
-          joinCodes={joinCodes}
-          joinNotices={joinNotices}
-          operation={operation}
-          refresh={refresh}
-          connectors={connectors}
-          betaToggle={betaToggle}
-        />
+        <>
+          {enrolled.historyHandoffWarning ? (
+            <div className="sync-overview sync-overview-attention" role="status" aria-label="Sync history capacity">
+              This group has used {enrolled.historyHandoffWarning.used.toLocaleString()} of {enrolled.historyHandoffWarning.limit.toLocaleString()} historical key slots. At the limit, new devices can’t receive the full sync history. Consider starting a new group before adding more devices.
+            </div>
+          ) : null}
+          <EnrolledOverview
+            deviceCount={enrolled.deviceCount}
+            awaitingAdmissionFrom={enrolled.awaitingAdmissionFrom ?? null}
+            transports={transports}
+            pendingRequests={pendingRequests}
+            deviceRoster={deviceRoster}
+            joinCodes={joinCodes}
+            joinNotices={joinNotices}
+            operation={operation}
+            refresh={refresh}
+            connectors={connectors}
+            betaToggle={betaToggle}
+          />
+        </>
       ) : (
         <SetupScreen
           step={currentSetupStep(enrollmentStatus, transports.length)}

@@ -1967,8 +1967,11 @@ impl ReplicatedSync {
         F: Fn(&tauri::AppHandle) + Send + Sync + 'static,
     {
         tauri::async_runtime::spawn(async move {
+            let mut interval = tokio::time::interval(SYNC_INTERVAL);
             loop {
-                tokio::time::sleep(SYNC_INTERVAL).await;
+                // `interval` ticks immediately once, so a device catches up
+                // on startup instead of waiting for the first 30-second tick.
+                interval.tick().await;
                 match self.sync_once().await {
                     Ok(()) => on_synced(&handle),
                     Err(error) => log::warn!(target: "replicated_sync", "periodic sync failed: {error}"),

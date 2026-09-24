@@ -321,6 +321,21 @@ describe("enrolled overview", () => {
     expect(within(devices[1]!).getByRole("button", { name: "Revoke…" })).toBeInTheDocument();
   });
 
+  it("warns when the group approaches its historical key handoff limit", async () => {
+    setUp({
+      status: {
+        ...enrolled,
+        historyHandoffWarning: { used: 820, limit: 1024 },
+      },
+    });
+    render(<ReplicatedSyncSettings />);
+
+    expect(await screen.findByRole("status", { name: "Sync history capacity" }))
+      .toHaveTextContent("This group has used 820 of 1,024 historical key slots");
+    expect(screen.getByRole("status", { name: "Sync history capacity" }))
+      .toHaveTextContent("new devices can’t receive the full sync history");
+  });
+
   it("opens connectors when one needs attention", async () => {
     setUp({ status: enrolled, transports: [{ ...folder, health: "unavailable: folder missing" }] });
     render(<ReplicatedSyncSettings />);

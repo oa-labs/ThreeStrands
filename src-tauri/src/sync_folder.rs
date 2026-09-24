@@ -20,8 +20,10 @@
 //!
 //! Every write goes to a same-directory unpredictable temporary name,
 //! fsyncs, then atomically renames to its final name, so a reader never
-//! observes a valid filename with partial bytes. Every read verifies the
-//! file's bytes hash to the filename that named it before returning them.
+//! observes a valid filename with partial bytes. Writes verify that the
+//! requested CID matches the bytes, including an existing object before
+//! returning idempotent success. Every read also verifies the file's bytes
+//! hash to the filename that named it before returning them.
 
 use std::path::{Path, PathBuf};
 
@@ -160,17 +162,29 @@ impl SyncTransport for SyncFolderTransport {
         if bytes.len() as u64 > MAX_OBJECT_BYTES {
             return Err(TransportError::Permanent("object exceeds the folder adapter's size limit".to_string()));
         }
+        if compute_cid(bytes) != cid.0 {
+            return Err(TransportError::Permanent(
+                "object bytes do not match the requested CID".to_string(),
+            ));
+        }
         let path = self.object_path(cid)?;
         let dir = path.parent().expect("object_path always has objects/<shard> as its parent");
         tokio::fs::create_dir_all(dir).await.map_err(io_error)?;
-        if tokio::fs::symlink_metadata(&path).await.is_ok() {
-            // put_object is idempotent by CID: the existing file already
-            // has these exact bytes (or something is very wrong with the
-            // corpus, which get_object's own hash check will catch).
-            return Ok(ObjectLocator {
-                cid: cid.clone(),
-                remote_id: Some(path.display().to_string()),
-            });
+        match tokio::fs::symlink_metadata(&path).await {
+            Ok(_) => {
+                let existing = read_regular_file(&path).await?;
+                if existing.len() as u64 > MAX_OBJECT_BYTES || compute_cid(&existing) != cid.0 || existing != bytes {
+                    return Err(TransportError::Corruption(
+                        "existing object bytes do not match the requested CID".to_string(),
+                    ));
+                }
+                return Ok(ObjectLocator {
+                    cid: cid.clone(),
+                    remote_id: Some(path.display().to_string()),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error(error)),
         }
         atomic_write(dir, &path, bytes).await?;
         Ok(ObjectLocator {
@@ -489,6 +503,22 @@ mod tests {
         let result = transport.get_object(&cid).await;
         assert_eq!(result, Err(TransportError::Corruption(
             "stored object bytes do not match its filename CID".to_string()
+        )));
+        let result = transport.put_object(&cid, &bytes).await;
+        assert_eq!(result, Err(TransportError::Corruption(
+            "existing object bytes do not match the requested CID".to_string()
+        )));
+    }
+
+    #[tokio::test]
+    async fn put_object_rejects_bytes_that_do_not_match_the_requested_cid() {
+        let folder = TempFolder::new();
+        let transport = open_transport(&folder, "a").await;
+        let cid = Cid::for_bytes(b"authentic bytes");
+
+        let result = transport.put_object(&cid, b"different bytes").await;
+        assert_eq!(result, Err(TransportError::Permanent(
+            "object bytes do not match the requested CID".to_string()
         )));
     }
 

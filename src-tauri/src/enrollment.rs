@@ -108,7 +108,16 @@ pub enum EnrollmentStatus {
         /// The inviter's name while this device, having joined with a join
         /// code, waits for the inviter to finish admitting it.
         awaiting_admission_from: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        history_handoff_warning: Option<HistoryHandoffWarning>,
     },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryHandoffWarning {
+    pub used: usize,
+    pub limit: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -216,10 +225,24 @@ impl Database {
             let device_count: i64 = connection
                 .query_row("SELECT COUNT(*) FROM sync_devices WHERE status='active'", [], |row| row.get(0))
                 .map_err(display)?;
+            let history_handoff_keys_used: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sync_epoch_history WHERE key_epoch < ?1",
+                    [active_epoch],
+                    |row| row.get(0),
+                )
+                .map_err(display)?;
+            let history_handoff_keys_used = history_handoff_keys_used as usize;
+            let history_handoff_warning = (history_handoff_keys_used >= MAX_EARLIER_EPOCH_KEYS - MAX_EARLIER_EPOCH_KEYS / 5)
+                .then_some(HistoryHandoffWarning {
+                    used: history_handoff_keys_used,
+                    limit: MAX_EARLIER_EPOCH_KEYS,
+                });
             drop(connection);
             return Ok(EnrollmentStatus::Enrolled {
                 device_count: device_count as usize,
                 awaiting_admission_from: self.awaiting_admission_from()?,
+                history_handoff_warning,
             });
         }
 
@@ -1887,12 +1910,25 @@ mod tests {
                 serde_json::json!({ "state": "rejected", "requestId": "request-3", "fingerprint": "AAAA-CCCC" }),
             ),
             (
-                EnrollmentStatus::Enrolled { device_count: 2, awaiting_admission_from: None },
+                EnrollmentStatus::Enrolled { device_count: 2, awaiting_admission_from: None, history_handoff_warning: None },
                 serde_json::json!({ "state": "enrolled", "deviceCount": 2, "awaitingAdmissionFrom": null }),
             ),
             (
-                EnrollmentStatus::Enrolled { device_count: 1, awaiting_admission_from: Some("Work laptop".to_string()) },
+                EnrollmentStatus::Enrolled { device_count: 1, awaiting_admission_from: Some("Work laptop".to_string()), history_handoff_warning: None },
                 serde_json::json!({ "state": "enrolled", "deviceCount": 1, "awaitingAdmissionFrom": "Work laptop" }),
+            ),
+            (
+                EnrollmentStatus::Enrolled {
+                    device_count: 1,
+                    awaiting_admission_from: None,
+                    history_handoff_warning: Some(HistoryHandoffWarning { used: 820, limit: MAX_EARLIER_EPOCH_KEYS }),
+                },
+                serde_json::json!({
+                    "state": "enrolled",
+                    "deviceCount": 1,
+                    "awaitingAdmissionFrom": null,
+                    "historyHandoffWarning": { "used": 820, "limit": MAX_EARLIER_EPOCH_KEYS }
+                }),
             ),
         ];
 
@@ -1925,6 +1961,46 @@ mod tests {
         match database.enrollment_status().unwrap() {
             EnrollmentStatus::Enrolled { device_count, .. } => assert_eq!(device_count, 1),
             other => panic!("expected Enrolled, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn enrollment_status_warns_as_history_handoff_capacity_approaches_its_limit() {
+        let database = Database::open_memory();
+        let identity = test_identity(&database);
+        let epoch_keys = FakeEpochKeyStore::default();
+        begin_genesis(&database, &identity, &epoch_keys, &fake_transports("history-limit"), false)
+            .await
+            .unwrap();
+
+        {
+            let connection = database.connection().unwrap();
+            for epoch in 1..=820 {
+                connection
+                    .execute(
+                        "INSERT INTO sync_epoch_history(key_epoch, activated_at) VALUES (?1, 'now')",
+                        [epoch],
+                    )
+                    .unwrap();
+            }
+            connection.execute("UPDATE sync_spaces SET active_epoch=819", []).unwrap();
+        }
+        assert!(matches!(
+            database.enrollment_status().unwrap(),
+            EnrollmentStatus::Enrolled { history_handoff_warning: None, .. }
+        ));
+
+        database
+            .connection()
+            .unwrap()
+            .execute("UPDATE sync_spaces SET active_epoch=820", [])
+            .unwrap();
+        match database.enrollment_status().unwrap() {
+            EnrollmentStatus::Enrolled { history_handoff_warning: Some(warning), .. } => {
+                assert_eq!(warning.used, 820);
+                assert_eq!(warning.limit, MAX_EARLIER_EPOCH_KEYS);
+            }
+            other => panic!("expected history handoff warning, got {other:?}"),
         }
     }
 

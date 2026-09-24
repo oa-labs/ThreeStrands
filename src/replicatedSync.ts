@@ -151,6 +151,8 @@ export type EnrollmentStatus =
       /** The inviter's name while this device, having joined with a join
        * code, waits for that device to finish admitting it. */
       awaitingAdmissionFrom?: string | null;
+      /** Present when the group is nearing its historical-key handoff limit. */
+      historyHandoffWarning?: { used: number; limit: number } | null;
     };
 
 export type IncomingEnrollmentRequest = {
@@ -417,9 +419,10 @@ export async function replicatedSyncConflicts(): Promise<FrontierConflict[]> {
   return isDesktop() ? invoke("replicated_sync_conflicts") : [];
 }
 
-/** Resolves a field conflict: an ordinary local write naming the entire
- * current frontier as parents and carrying the chosen candidate's value —
- * see `Database::resolve_frontier_conflict` on the Rust side. */
+/** Resolves a field conflict with an ordinary local write of the chosen
+ * candidate's value. The replica's current causal context makes that write
+ * supersede the conflicting frontier — see `Database::resolve_frontier_conflict`
+ * on the Rust side. */
 export async function replicatedSyncResolveConflict(
   conflict: FrontierConflict,
   chosen: FrontierCandidate,
