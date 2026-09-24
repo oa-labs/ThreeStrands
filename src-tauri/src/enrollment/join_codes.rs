@@ -39,8 +39,8 @@ use threestrands_sync_envelope::{
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use super::{
-    default_device_name, open_earlier_epoch_keys, protocol_marker_missing, roster_entry_verifying_key, seal_earlier_epoch_keys,
-    store_earlier_epoch_keys, EnrollmentStatus, EpochKeyStore, LEGACY_SPACE_REFUSAL, MAX_DEVICE_LABEL_CHARS,
+    default_device_name, open_earlier_epoch_keys, protocol_marker_missing, require_not_started, roster_entry_verifying_key,
+    seal_earlier_epoch_keys, store_earlier_epoch_keys, EpochKeyStore, LEGACY_SPACE_REFUSAL, MAX_DEVICE_LABEL_CHARS,
 };
 use crate::db::Database;
 use crate::error_text::display;
@@ -580,9 +580,7 @@ pub(crate) async fn join_with_code(
     now_ms: i64,
 ) -> Result<(), String> {
     let code = decode_join_code(text).map_err(|error| error.to_string())?;
-    if !matches!(database.enrollment_status()?, EnrollmentStatus::NotStarted) {
-        return Err("This device already belongs to a sync group or is joining one. Leave it first, then use the join code.".to_string());
-    }
+    require_not_started(database)?;
     if now_ms > code.expires_at_ms {
         return Err("This join code expired. Ask for a new one.".to_string());
     }

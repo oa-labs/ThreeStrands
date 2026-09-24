@@ -809,6 +809,7 @@ pub async fn begin_genesis(
     transports: &[Arc<dyn SyncTransport>],
     allow_existing_space: bool,
 ) -> Result<String, String> {
+    require_not_started(database)?;
     match inspect_sync_space(transports).await {
         SyncSpacePresence::Legacy => return Err(LEGACY_SPACE_REFUSAL.to_string()),
         SyncSpacePresence::Existing if !allow_existing_space => return Err(EXISTING_SPACE_REFUSAL.to_string()),
@@ -1663,6 +1664,7 @@ pub async fn rotate_epoch(
 /// first. Only rotations that verify against their own initiator count, so
 /// arbitrary bytes that happen to decode can't steer the choice.
 pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, phrase: &str, transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
+    require_not_started(database)?;
     refuse_legacy_space(transports).await?;
     database.set_beta_features_enabled(true)?;
     let seed = recovery_seed_from_phrase(phrase)?;
@@ -1749,6 +1751,13 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
     let announcement_bytes = encode_signed_enrollment_grant(&signed_announcement).map_err(display)?;
     let announcement_cid = publish_control_object(database, transports, &announcement_bytes).await?;
     database.mark_control_object_seen(&announcement_cid, "enrollment_grant")?;
+    Ok(())
+}
+
+pub(super) fn require_not_started(database: &Database) -> Result<(), String> {
+    if !matches!(database.enrollment_status()?, EnrollmentStatus::NotStarted) {
+        return Err("This device already belongs to a sync group or is joining one. Leave it first before starting or joining another sync group.".to_string());
+    }
     Ok(())
 }
 
@@ -2755,6 +2764,161 @@ mod tests {
         let phrase = begin_genesis(&database_b, &identity_b, &epoch_keys_b, &transports, true).await.unwrap();
         assert_eq!(phrase.split_whitespace().count(), 24);
         assert!(matches!(database_b.enrollment_status().unwrap(), EnrollmentStatus::Enrolled { device_count: 1, .. }));
+    }
+
+    #[tokio::test]
+    async fn genesis_and_recovery_join_refuse_devices_already_in_a_sync_group() {
+        let existing = Member::new();
+        let existing_transports = fake_transports("existing-group");
+        begin_genesis(
+            &existing.database,
+            &existing.identity,
+            &existing.epoch_keys,
+            &existing_transports,
+            false,
+        )
+        .await
+        .unwrap();
+        existing.database.set_beta_features_enabled(false).unwrap();
+        existing
+            .database
+            .record_replicated_write(
+                EntityType::Snippet,
+                "old-group-snippet",
+                &BTreeSet::from(["id".to_string(), "name".to_string(), "body".to_string()]),
+                &serde_json::json!({ "id": "old-group-snippet", "name": "Private note", "body": "Keep in this group" }),
+            )
+            .unwrap();
+
+        let new_group = Member::new();
+        let new_group_transports = fake_transports("new-group");
+        let new_group_phrase = begin_genesis(
+            &new_group.database,
+            &new_group.identity,
+            &new_group.epoch_keys,
+            &new_group_transports,
+            false,
+        )
+        .await
+        .unwrap();
+        let new_group_objects_before = new_group_transports[0].scan(None).await.unwrap().unwrap().objects.len();
+        let sync_values_before: i64 = existing
+            .database
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0))
+            .unwrap();
+        let sync_context_before: i64 = existing
+            .database
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sync_context", [], |row| row.get(0))
+            .unwrap();
+        let active_epoch_before: i64 = existing
+            .database
+            .connection()
+            .unwrap()
+            .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
+            .unwrap();
+        let sync_local_state_before: (bool, i64, i64, Option<i64>) = existing
+            .database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT dirty, generation, state_sequence, sealed_epoch FROM sync_local_state WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        let recovery_keys_before: (Option<Vec<u8>>, Option<Vec<u8>>) = existing
+            .database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT recovery_public_key, recovery_x25519_public FROM sync_spaces WHERE id=?1",
+                params![SPACE_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let roster_before: Vec<String> = existing
+            .database
+            .connection()
+            .unwrap()
+            .prepare("SELECT device_id FROM sync_devices ORDER BY device_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let epoch_key_before = existing.epoch_keys.get(0).unwrap();
+
+        let refused = begin_genesis(
+            &existing.database,
+            &existing.identity,
+            &existing.epoch_keys,
+            &new_group_transports,
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(refused.contains("already belongs"), "{refused}");
+        let refused = join_with_recovery_phrase(
+            &existing.database,
+            &existing.identity,
+            &existing.epoch_keys,
+            &new_group_phrase,
+            &new_group_transports,
+        )
+        .await
+        .unwrap_err();
+        assert!(refused.contains("already belongs"), "{refused}");
+
+        assert!(matches!(existing.database.enrollment_status().unwrap(), EnrollmentStatus::Enrolled { .. }));
+        assert!(!existing.database.beta_features_enabled().unwrap());
+        assert_eq!(existing.epoch_keys.get(0), Some(epoch_key_before));
+        assert_eq!(existing.database.resolve_field_winner(EntityType::Snippet, "old-group-snippet", "name").unwrap(), Some(serde_json::json!("Private note")));
+        let connection = existing.database.connection().unwrap();
+        let sync_values_after: i64 = connection
+            .query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0))
+            .unwrap();
+        let sync_context_after: i64 = connection
+            .query_row("SELECT COUNT(*) FROM sync_context", [], |row| row.get(0))
+            .unwrap();
+        let active_epoch_after: i64 = connection
+            .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
+            .unwrap();
+        let sync_local_state_after: (bool, i64, i64, Option<i64>) = connection
+            .query_row(
+                "SELECT dirty, generation, state_sequence, sealed_epoch FROM sync_local_state WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        let recovery_keys_after: (Option<Vec<u8>>, Option<Vec<u8>>) = connection
+            .query_row(
+                "SELECT recovery_public_key, recovery_x25519_public FROM sync_spaces WHERE id=?1",
+                params![SPACE_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let roster_after: Vec<String> = connection
+            .prepare("SELECT device_id FROM sync_devices ORDER BY device_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+
+        assert_eq!(sync_values_after, sync_values_before);
+        assert_eq!(sync_context_after, sync_context_before);
+        assert_eq!(active_epoch_after, active_epoch_before);
+        assert_eq!(sync_local_state_after, sync_local_state_before);
+        assert_eq!(recovery_keys_after, recovery_keys_before);
+        assert_eq!(roster_after, roster_before);
+        assert_eq!(
+            new_group_transports[0].scan(None).await.unwrap().unwrap().objects.len(),
+            new_group_objects_before
+        );
     }
 
     /// A and B enrolled into one space through peer approval.
