@@ -611,7 +611,7 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
   });
 
-  it("switches directly and cyclically between mail and task views with number keys", async () => {
+  it("switches directly between mail and task views while 0 has no effect", async () => {
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
 
@@ -626,12 +626,13 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "0" });
-    expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
-
-    fireEvent.keyDown(window, { key: "0" });
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "1" });
+    expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "0" });
     expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
   });

@@ -80,7 +80,6 @@ function noopContext(): CommandContext {
     openTasksView: () => {},
     openContactsView: () => {},
     openCalendarView: () => {},
-    cyclePrimaryView: () => {},
     openActions: () => {},
     newTask: () => {},
     increaseFontSize: () => {},
@@ -142,12 +141,12 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.keys).toEqual(["Shift+e"]);
   });
 
-  it("registers direct and cycling primary-view shortcuts", () => {
+  it("registers direct primary-view shortcuts without a shortcut for 0", () => {
     expect(commands.find((command) => command.id === "view.mail")?.keys).toEqual(["1"]);
     expect(commands.find((command) => command.id === "view.calendar")?.keys).toEqual(["2"]);
     expect(commands.find((command) => command.id === "view.tasks")?.keys).toEqual(["3"]);
     expect(commands.find((command) => command.id === "view.contacts")?.keys).toEqual(["4"]);
-    expect(commands.find((command) => command.id === "view.cycle")?.keys).toEqual(["0"]);
+    expect(commands.some((command) => command.keys.includes("0"))).toBe(false);
   });
 
   it("routes the Contacts shortcut to the address book outside the composer", async () => {

@@ -170,10 +170,21 @@ describe("TaskSidebar", () => {
 
   it("shows the account email and a task count in the header, like the mail inbox header", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onCheckSchedule={vi.fn()} onNewTask={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
     expect(screen.getByText("you@example.com", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add task" })).toBeInTheDocument();
+  });
+
+  it("retains Check schedule in the Actions sidebar", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    const onCheckSchedule = vi.fn();
+    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} onCheckSchedule={onCheckSchedule} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
+    expect(onCheckSchedule).toHaveBeenCalledTimes(1);
   });
 
   it("hides the close control and ignores Escape in the workspace variant, like the contacts manager", async () => {

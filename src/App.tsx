@@ -1529,11 +1529,6 @@ export function App() {
     void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
   }, [refreshCalendarAccounts, refreshCalendarOptions]);
 
-  const cyclePrimaryView = useCallback(() => {
-    if (rightWorkspace === "tasks") goToInboxTab();
-    else setRightWorkspace("tasks");
-  }, [goToInboxTab, rightWorkspace]);
-
   const goToSplitTab = useCallback((id: string) => goToTab(id), [goToTab]);
 
   // Cycles through Inbox + every split inbox tab, in the order the tab bar
@@ -1748,7 +1743,6 @@ export function App() {
     openTasksView,
     openContactsView,
     openCalendarView,
-    cyclePrimaryView,
     openActions,
     newTask,
     increaseFontSize: () => adjustFontScale(1),
@@ -1758,7 +1752,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)

@@ -77,7 +77,6 @@ export type CommandContext = {
   openTasksView(): void;
   openContactsView(): void;
   openCalendarView(): void;
-  cyclePrimaryView(): void;
   openActions(): void;
   newTask(): void;
   increaseFontSize(): void;
@@ -417,14 +416,6 @@ export const commands: Command[] = [
     group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.openContactsView),
-  },
-  {
-    id: "view.cycle",
-    title: "Cycle Mail and Task Views",
-    keys: ["0"],
-    group: "Navigation",
-    enabled: (context) => !context.composerActive,
-    run: (context) => complete(context.cyclePrimaryView),
   },
   {
     id: "tasks.open",
