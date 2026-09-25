@@ -1735,9 +1735,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-timeline > button span,.contact-sidebar-history > button { min-width:0; }
 .contact-timeline > button span { display:grid; gap:4px; }
 .contact-timeline small,.contact-sidebar-history small { color:var(--muted); font-size:var(--type-xs); }
-.contact-links,.contact-sidebar-links { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 18px; }
-.contact-links button,.contact-sidebar-links button { display:grid; gap:3px; max-width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--accent); background:var(--background); text-align:left; cursor:pointer; }
-.contact-links span { max-width:280px; overflow:hidden; color:var(--muted); font-size:var(--type-xs); text-overflow:ellipsis; white-space:nowrap; }
+.contact-sidebar-links { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 18px; }
+.contact-sidebar-links button { display:grid; gap:3px; max-width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--accent); background:var(--background); text-align:left; cursor:pointer; }
 .contacts-status,.contacts-empty { padding:12px; color:var(--muted); font-size:var(--type-sm); }
 .contacts-error { color:var(--danger,#b54747); font-size:var(--type-sm); }
 .contacts-empty-state { min-height:320px; display:grid; place-content:center; justify-items:center; gap:8px; color:var(--muted); }
