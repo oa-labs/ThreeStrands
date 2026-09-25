@@ -446,13 +446,34 @@ pub struct ContactProfile {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactRecord {
-    pub id:String,
-    pub display_name:Option<String>, pub role:Option<String>, pub company:Option<String>,
-    pub location:Option<String>, pub bio:Option<String>, pub notes:Option<String>,
-    pub links:Vec<String>, pub photo_data:Option<String>, pub favorite:bool, pub addresses:Vec<String>,
+    pub id: String,
+    pub display_name: Option<String>,
+    pub role: Option<String>,
+    pub company: Option<String>,
+    pub location: Option<String>,
+    pub bio: Option<String>,
+    pub notes: Option<String>,
+    pub links: Vec<String>,
+    pub photo_data: Option<String>,
+    pub favorite: bool,
+    pub addresses: Vec<String>,
 }
 impl From<&ContactProfile> for ContactRecord {
-    fn from(c:&ContactProfile)->Self{Self{id:c.id.clone(),display_name:c.display_name.clone(),role:c.role.clone(),company:c.company.clone(),location:c.location.clone(),bio:c.bio.clone(),notes:c.notes.clone(),links:c.links.clone(),photo_data:c.photo_data.clone(),favorite:c.favorite,addresses:c.addresses.clone()}}
+    fn from(c: &ContactProfile) -> Self {
+        Self {
+            id: c.id.clone(),
+            display_name: c.display_name.clone(),
+            role: c.role.clone(),
+            company: c.company.clone(),
+            location: c.location.clone(),
+            bio: c.bio.clone(),
+            notes: c.notes.clone(),
+            links: c.links.clone(),
+            photo_data: c.photo_data.clone(),
+            favorite: c.favorite,
+            addresses: c.addresses.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -488,7 +509,7 @@ pub struct ContactFieldSuggestion {
     pub field: String,
     pub value: String,
     pub source_message_id: String,
-    pub source_thread_id:String,
+    pub source_thread_id: String,
     pub excerpt: String,
 }
 

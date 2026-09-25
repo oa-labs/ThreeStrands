@@ -870,37 +870,68 @@ fn list_contact_suggestions(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ContactSuggestion>, String> {
-    database_result(state.database.list_contact_suggestions(&account_id, &query, limit.unwrap_or(8)))
+    database_result(state.database.list_contact_suggestions(
+        &account_id,
+        &query,
+        limit.unwrap_or(8),
+    ))
 }
 
 #[tauri::command]
-fn list_contact_profiles(query:String,limit:Option<usize>,state:State<'_,AppState>)->Result<Vec<ContactProfile>,String>{
-    database_result(state.database.list_contact_profiles(&query,limit.unwrap_or(500)))
+fn list_contact_profiles(
+    query: String,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ContactProfile>, String> {
+    database_result(
+        state
+            .database
+            .list_contact_profiles(&query, limit.unwrap_or(500)),
+    )
 }
 
 #[tauri::command]
-fn get_contact_profile(id:String,state:State<'_,AppState>)->Result<Option<ContactProfile>,String>{
+fn get_contact_profile(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<ContactProfile>, String> {
     database_result(state.database.get_contact_profile(&id))
 }
 
 #[tauri::command]
-fn save_contact_profile(request:SaveContactRequest,state:State<'_,AppState>)->Result<ContactProfile,String>{
-    let profile=state.database.save_contact_profile(&request)?;
-    record_synced_value(&state,threestrands_sync_protocol::EntityType::Contact,&profile.id,&ContactRecord::from(&profile),None)?;
+fn save_contact_profile(
+    request: SaveContactRequest,
+    state: State<'_, AppState>,
+) -> Result<ContactProfile, String> {
+    let profile = state.database.save_contact_profile(&request)?;
+    record_synced_value(
+        &state,
+        threestrands_sync_protocol::EntityType::Contact,
+        &profile.id,
+        &ContactRecord::from(&profile),
+        None,
+    )?;
     Ok(profile)
 }
 
 #[tauri::command]
-fn delete_contact_profile(id:String,state:State<'_,AppState>)->Result<(),String>{
+fn delete_contact_profile(id: String, state: State<'_, AppState>) -> Result<(), String> {
     state.database.delete_contact_profile(&id)?;
-    state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::Contact,&id)?;
+    state
+        .database
+        .record_local_entity_deletion(threestrands_sync_protocol::EntityType::Contact, &id)?;
     kick_replicated_sync(&state);
     Ok(())
 }
 
 #[tauri::command]
-fn contact_timeline(id:String,offset:usize,limit:usize,state:State<'_,AppState>)->Result<Vec<ContactTimelineItem>,String>{
-    database_result(state.database.contact_timeline(&id,offset,limit))
+fn contact_timeline(
+    id: String,
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<Vec<ContactTimelineItem>, String> {
+    database_result(state.database.contact_timeline(&id, offset, limit))
 }
 
 #[tauri::command]
@@ -910,9 +941,29 @@ fn pin_contact(
     display_name: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    database_result(state.database.pin_contact(&account_id, &email, display_name.as_deref()))?;
-    if let Some(profile)=state.database.list_contact_profiles(&email,100)?.into_iter().find(|profile|profile.addresses.iter().any(|address|address.eq_ignore_ascii_case(&email))) {
-        record_synced_value(&state,threestrands_sync_protocol::EntityType::Contact,&profile.id,&ContactRecord::from(&profile),None)?;
+    database_result(
+        state
+            .database
+            .pin_contact(&account_id, &email, display_name.as_deref()),
+    )?;
+    if let Some(profile) = state
+        .database
+        .list_contact_profiles(&email, 100)?
+        .into_iter()
+        .find(|profile| {
+            profile
+                .addresses
+                .iter()
+                .any(|address| address.eq_ignore_ascii_case(&email))
+        })
+    {
+        record_synced_value(
+            &state,
+            threestrands_sync_protocol::EntityType::Contact,
+            &profile.id,
+            &ContactRecord::from(&profile),
+            None,
+        )?;
     }
     Ok(())
 }
@@ -924,8 +975,26 @@ fn unpin_contact(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     database_result(state.database.unpin_contact(&account_id, &email))?;
-    if let Some(profile)=state.database.list_contact_profiles(&email,100)?.into_iter().find(|profile|profile.addresses.iter().any(|address|address.eq_ignore_ascii_case(&email))) {
-        if !profile.id.starts_with("derived:") {record_synced_value(&state,threestrands_sync_protocol::EntityType::Contact,&profile.id,&ContactRecord::from(&profile),None)?;}
+    if let Some(profile) = state
+        .database
+        .list_contact_profiles(&email, 100)?
+        .into_iter()
+        .find(|profile| {
+            profile
+                .addresses
+                .iter()
+                .any(|address| address.eq_ignore_ascii_case(&email))
+        })
+    {
+        if !profile.id.starts_with("derived:") {
+            record_synced_value(
+                &state,
+                threestrands_sync_protocol::EntityType::Contact,
+                &profile.id,
+                &ContactRecord::from(&profile),
+                None,
+            )?;
+        }
     }
     Ok(())
 }
@@ -2335,23 +2404,67 @@ async fn ai_analyze_thread(
 }
 
 #[tauri::command]
-async fn ai_enrich_contact(id:String,provider:ai::AiProvider,model:String,endpoint:Option<String>,state:State<'_,AppState>)->Result<Vec<ContactFieldSuggestion>,String>{
-    let profile=state.database.get_contact_profile(&id)?.ok_or_else(||"Contact could not be found".to_string())?;
-    let timeline=state.database.contact_timeline(&id,0,12)?;
-    let addresses=profile.addresses.iter().map(|value|value.to_ascii_lowercase()).collect::<HashSet<_>>();
-    let mut messages=Vec::new();
+async fn ai_enrich_contact(
+    id: String,
+    provider: ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ContactFieldSuggestion>, String> {
+    let profile = state
+        .database
+        .get_contact_profile(&id)?
+        .ok_or_else(|| "Contact could not be found".to_string())?;
+    let timeline = state.database.contact_timeline(&id, 0, 12)?;
+    let addresses = profile
+        .addresses
+        .iter()
+        .map(|value| value.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let mut messages = Vec::new();
     for item in timeline {
-        let detail=state.database.get_thread(&item.thread_id)?;
-        for message in detail.messages.into_iter().rev(){
-            if messages.len()>=12{break}
-            let sender_matches=crate::correspondence::addresses(&message.sender).unwrap_or_default().iter().any(|(_,email)|addresses.contains(&email.to_ascii_lowercase()));
-            let recipient_matches=message.recipients.iter().any(|raw|crate::correspondence::addresses(raw).unwrap_or_default().iter().any(|(_,email)|addresses.contains(&email.to_ascii_lowercase())));
-            if sender_matches||recipient_matches {messages.push(ai::ContactMessageInput{id:message.id,thread_id:item.thread_id.clone(),sender:message.sender,sent_at:message.sent_at,subject:detail.thread.subject.clone(),body_text:message.body_text});}
+        let detail = state.database.get_thread(&item.thread_id)?;
+        for message in detail.messages.into_iter().rev() {
+            if messages.len() >= 12 {
+                break;
+            }
+            let sender_matches = crate::correspondence::addresses(&message.sender)
+                .unwrap_or_default()
+                .iter()
+                .any(|(_, email)| addresses.contains(&email.to_ascii_lowercase()));
+            let recipient_matches = message.recipients.iter().any(|raw| {
+                crate::correspondence::addresses(raw)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|(_, email)| addresses.contains(&email.to_ascii_lowercase()))
+            });
+            if sender_matches || recipient_matches {
+                messages.push(ai::ContactMessageInput {
+                    id: message.id,
+                    thread_id: item.thread_id.clone(),
+                    sender: message.sender,
+                    sent_at: message.sent_at,
+                    subject: detail.thread.subject.clone(),
+                    body_text: message.body_text,
+                });
+            }
         }
-        if messages.len()>=12{break}
+        if messages.len() >= 12 {
+            break;
+        }
     }
-    let api_key=ai::get_key()?.ok_or_else(||"No AI API key configured".to_string())?;
-    ai::enrich_contact(ai::ContactEnrichmentRequest{provider,model,endpoint,addresses:profile.addresses,messages},&api_key).await
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
+    ai::enrich_contact(
+        ai::ContactEnrichmentRequest {
+            provider,
+            model,
+            endpoint,
+            addresses: profile.addresses,
+            messages,
+        },
+        &api_key,
+    )
+    .await
 }
 
 #[tauri::command]
