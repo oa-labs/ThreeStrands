@@ -66,6 +66,61 @@ describe("ContactsWorkspace",()=>{
     expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button",{name:"Use suggestion"}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({company:"Acme"})));
+    expect(screen.getByRole("button",{name:/Jane Doe/})).toHaveAttribute("aria-pressed","true");
+  });
+
+  it("stays on a mail-derived person when accepting suggestions saves their profile",async()=>{
+    localStorage.setItem("threestrands.settings.ai.provider","openai");
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
+    const derived={...jane,id:"derived:jane@example.com"};
+    const saved={...jane,id:"contact:saved-jane",company:"Acme"};
+    let didSave=false;
+    vi.mocked(mailClient.listContactProfiles).mockImplementation(async()=>didSave?[favoriteContact,saved]:[favoriteContact,derived]);
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===saved.id?saved:derived);
+    vi.mocked(mailClient.saveContactProfile).mockImplementation(async request=>{didSave=true;return {...saved,...request,id:saved.id};});
+    vi.mocked(mailClient.enrichContact).mockResolvedValue([
+      {field:"company",value:"Acme",sourceMessageId:"m1",sourceThreadId:"thread-1",excerpt:"I work at Acme."},
+      {field:"location",value:"Boston",sourceMessageId:"m2",sourceThreadId:"thread-2",excerpt:"I live in Boston."},
+    ]);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} initialContactId={derived.id}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    await screen.findByText("I live in Boston.");
+
+    fireEvent.click(screen.getAllByRole("button",{name:"Use suggestion"})[0]);
+
+    await waitFor(()=>expect(screen.getByRole("button",{name:/Jane Doe/})).toHaveAttribute("aria-pressed","true"));
+    await waitFor(()=>expect(mailClient.getContactProfile).toHaveBeenCalledWith(saved.id));
+    expect(screen.getByDisplayValue("Jane Doe")).toBeInTheDocument();
+    expect(screen.getByLabelText("Company")).toHaveValue("Acme");
+    expect(screen.getByText("I live in Boston.")).toBeInTheDocument();
+    expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:derived.id,company:"Acme"}));
+
+    fireEvent.click(screen.getByRole("button",{name:"Use suggestion"}));
+    await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:saved.id,company:"Acme",location:"Boston"})));
+    expect(screen.getByDisplayValue("Jane Doe")).toBeInTheDocument();
+  });
+
+  it("keeps an edited contact open when a suggestion removes them from the search results",async()=>{
+    localStorage.setItem("threestrands.settings.ai.provider","openai");
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
+    let applied=false;
+    vi.mocked(mailClient.listContactProfiles).mockImplementation(async()=>applied?[favoriteContact]:[jane,favoriteContact]);
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===favoriteContact.id?favoriteContact:jane);
+    vi.mocked(mailClient.saveContactProfile).mockImplementation(async request=>{applied=true;return {...jane,...request,id:jane.id};});
+    vi.mocked(mailClient.enrichContact).mockResolvedValue([{field:"role",value:"CEO",sourceMessageId:"m1",sourceThreadId:"thread-1",excerpt:"I am the CEO."}]);
+    render(<ContactsWorkspace onOpenThread={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.change(screen.getByRole("textbox",{name:"Search contacts"}),{target:{value:"Founder"}});
+    await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("Founder",500));
+    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    await screen.findByText("I am the CEO.");
+
+    fireEvent.click(screen.getByRole("button",{name:"Use suggestion"}));
+
+    await waitFor(()=>expect(screen.getByDisplayValue("CEO")).toBeInTheDocument());
+    expect(screen.getByDisplayValue("Jane Doe")).toBeInTheDocument();
+    expect(screen.getByRole("textbox",{name:"Search contacts"})).toHaveValue("Founder");
   });
 
   it("confirms deletion of a saved profile",async()=>{
