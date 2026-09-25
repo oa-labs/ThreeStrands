@@ -717,6 +717,8 @@ describe("keyboard-first task and action workspaces", () => {
       fireEvent.keyDown(window, { key: "e" });
       await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-roadmap", "completed"));
 
+      fireEvent.click(within(workspace).getByRole("button", { name: "Completed" }));
+      await waitFor(() => expect(workspace.querySelector("#task-task-roadmap")).toHaveAttribute("aria-current", "true"));
       fireEvent.keyDown(window, { key: "Enter" });
       const dialog = await screen.findByRole("dialog", { name: "Edit Task" });
       fireEvent.change(within(dialog).getByRole("combobox", { name: "Due" }), { target: { value: "date" } });

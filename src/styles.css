@@ -1614,60 +1614,49 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 }
 .tasks-workspace .tasks-sidebar-header { min-height: 82px; padding-left: 22px; padding-right: clamp(24px, 5vw, 72px); }
 .tasks-workspace-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(240px, var(--inbox-width, 400px)) minmax(0, 1fr); }
-.tasks-workspace .tasks-list { border-right: 1px solid var(--border); padding: 20px 16px 40px; }
+.tasks-list-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+.task-view-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 14px; border-bottom: 1px solid var(--border); }
+.task-view-nav button { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--secondary); font: inherit; font-size: var(--type-sm); text-align: left; cursor: pointer; }
+.task-view-nav button:hover { background: var(--hover); color: var(--text); }
+.task-view-nav button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); color: var(--text); font-weight: 650; }
+.task-view-count { color: var(--muted); font-size: var(--type-xs); }
+.tasks-workspace .tasks-list { padding: 20px 16px 40px; }
 .tasks-workspace .tasks-list section + section { margin-top: 28px; }
 .tasks-workspace .task-card { min-height: 66px; margin: 7px 0; border-radius: var(--radius-md); }
 .tasks-workspace .task-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .tasks-workspace .task-card-main { padding: 12px 14px; }
 .tasks-workspace .task-card-main strong { font-size: var(--type-ui); }
-.tasks-workspace .task-card-main span { font-size: var(--type-caption); }
-.task-detail { min-width: 0; overflow-y: auto; padding: clamp(28px, 5vw, 68px); background: var(--surface); }
+.task-detail { min-width: 0; overflow-y: auto; padding: clamp(24px, 4vw, 56px); background: var(--surface); }
 .task-detail > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
-.task-detail h2 { margin: 5px 0 0; font-size: var(--type-display); font-weight: 600; overflow-wrap: anywhere; }
+.task-detail-heading { min-width: 0; flex: 1; }
+.task-detail-title-row { display: flex; align-items: flex-start; gap: 12px; margin-top: 10px; }
+.task-detail h2 { min-width: 0; margin: 0; font-size: var(--type-display); font-weight: 600; overflow-wrap: anywhere; }
+.task-detail-title-button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: text; overflow-wrap: anywhere; }
+.task-detail-title-button:hover { color: var(--accent); }
+.task-detail-complete { flex: 0 0 auto; display: grid; place-items: center; width: 30px; height: 30px; margin-top: 3px; border: 1px solid var(--border-strong); border-radius: 50%; background: var(--background); color: var(--muted); cursor: pointer; }
+.task-detail-complete:hover { border-color: var(--accent); color: var(--accent); }
 .task-detail-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 2px; }
 .task-detail-actions .action-button kbd { display: none; }
-.task-detail dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 28px; margin: 26px 0; }
-.task-detail dl > div { min-width: 0; }
-.task-detail dt, .task-detail-notes h3 { margin: 0 0 5px; color: var(--muted); font-size: var(--type-xs); letter-spacing: .08em; text-transform: uppercase; }
-.task-detail dd { margin: 0; color: var(--secondary); font-size: var(--type-ui); overflow-wrap: anywhere; }
-.task-status-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 9px;
-  border-radius: var(--radius-pill);
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  font-size: var(--type-caption);
-  font-weight: 650;
-  text-transform: capitalize;
-  white-space: nowrap;
-}
-.task-status-pill.task-status-completed { color: var(--success); background: color-mix(in srgb, var(--success) 15%, transparent); }
-.task-status-pill.task-status-cancelled { color: var(--muted); background: var(--hover); }
-.task-detail-notes { margin-top: 28px; }
-.task-detail-notes p { margin: 0; color: var(--secondary); font-size: var(--type-ui); line-height: 1.55; white-space: pre-wrap; }
-.task-detail-evidence {
-  display: block;
-  width: 100%;
-  margin: 0;
-  padding: 6px 10px 6px 14px;
-  border: 0;
-  border-left: 2px solid var(--border-strong);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: transparent;
-  color: var(--secondary);
-  font: inherit;
-  font-size: var(--type-ui);
-  line-height: 1.55;
-  white-space: pre-wrap;
-  text-align: left;
-  cursor: pointer;
-}
-.task-detail-evidence:hover, .task-detail-evidence:focus-visible {
-  border-left-color: var(--accent);
-  background: var(--hover);
-  color: var(--text);
-}
+.task-detail-description, .task-detail-schedule { margin-top: 28px; }
+.task-detail-description h3, .task-detail-schedule h3, .task-detail-source h3 { margin: 0 0 10px; color: var(--muted); font-size: var(--type-xs); letter-spacing: .08em; text-transform: uppercase; }
+.task-detail-description-button, .task-detail-due-button { display: block; width: 100%; padding: 7px 9px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--secondary); font: inherit; font-size: var(--type-ui); line-height: 1.5; text-align: left; white-space: pre-wrap; cursor: text; }
+.task-detail-description-button:hover, .task-detail-due-button:hover { border-color: var(--border); background: var(--hover); color: var(--text); }
+.task-detail-schedule p { margin: 9px 0 0; color: var(--muted); font-size: var(--type-sm); }
+.task-inline-title { min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.task-inline-title input { min-width: 180px; flex: 1; font: inherit; font-size: var(--type-heading); }
+.task-detail-description form, .task-detail-schedule form { display: grid; gap: 9px; }
+.task-detail-description textarea { width: 100%; min-height: 120px; resize: vertical; }
+.task-detail-schedule select, .task-detail-schedule input { width: min(100%, 280px); }
+.task-detail-description textarea, .task-detail-schedule select, .task-detail-schedule input, .task-inline-title input { padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); }
+.task-inline-actions { display: flex; gap: 7px; }
+.task-inline-actions button, .task-inline-title button { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; cursor: pointer; }
+.task-inline-actions button:disabled, .task-inline-title button:disabled { opacity: .5; cursor: default; }
+.task-detail-source { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--border); }
+.task-detail-source p { margin: 0 0 9px; color: var(--muted); font-size: var(--type-sm); overflow-wrap: anywhere; }
+.task-detail-source > button { display: inline-flex; align-items: center; gap: 7px; padding: 6px 0; border: 0; background: transparent; color: var(--link); font: inherit; font-size: var(--type-sm); cursor: pointer; }
+.task-detail-source details { margin-top: 10px; color: var(--muted); font-size: var(--type-sm); }
+.task-detail-source summary { cursor: pointer; }
+.task-detail-source blockquote { margin: 9px 0 0; padding-left: 12px; border-left: 2px solid var(--border-strong); color: var(--secondary); line-height: 1.5; white-space: pre-wrap; }
 .task-detail-shortcuts { margin: 42px 0 0; color: var(--muted); font-size: var(--type-sm); }
 .contacts-workspace { grid-column:2; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:var(--background); }
 .contacts-header { min-height:82px; display:flex; align-items:center; justify-content:space-between; padding:14px 28px; border-bottom:1px solid var(--border); }

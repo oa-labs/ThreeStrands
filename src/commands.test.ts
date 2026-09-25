@@ -117,7 +117,7 @@ describe("command registry", () => {
     });
 
     for (const focusedPane of ["mail", "tasks"] as const) {
-      for (const selectedTaskStatus of ["open", "completed"] as const) {
+      for (const selectedTaskStatus of ["open", "completed", "cancelled"] as const) {
         for (const selectedArchived of [false, true]) {
           for (const mailbox of ["inbox", "drafts"] as const) {
             for (const composerActive of [false, true]) {
@@ -139,6 +139,7 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "tasks.editSelected")?.keys).toEqual(["Enter"]);
     expect(commands.find((command) => command.id === "tasks.completeSelected")?.keys).toEqual(["e"]);
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.keys).toEqual(["Shift+e"]);
+    expect(commands.find((command) => command.id === "tasks.reopenSelected")?.enabled({ ...taskContext, selectedTaskStatus: "cancelled" })).toBe(true);
   });
 
   it("registers direct primary-view shortcuts without a shortcut for 0", () => {

@@ -211,7 +211,7 @@ export const commands: Command[] = [
     title: "Reopen Selected Task",
     keys: ["Shift+e"],
     group: "Triage",
-    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus === "completed" && !context.composerActive,
+    enabled: (context) => context.focusedPane === "tasks" && (context.selectedTaskStatus === "completed" || context.selectedTaskStatus === "cancelled") && !context.composerActive,
     run: (context) => complete(context.reopenSelectedTask),
   },
   {

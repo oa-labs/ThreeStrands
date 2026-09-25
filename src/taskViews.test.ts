@@ -1,0 +1,41 @@
+import { describe, expect, it } from "vitest";
+import type { ThreadTask } from "./domain";
+import { taskMatchesView, taskViewForAll } from "./taskViews";
+
+const now = new Date(2026, 8, 25, 12, 0);
+const task = (overrides: Partial<ThreadTask> = {}): ThreadTask => ({
+  id: "task-1", accountId: "me@example.com", threadId: null, subjectSnapshot: null,
+  title: "Plan launch", kind: "action", dueKind: "none", dueValue: null,
+  status: "open", createdAt: "2026-09-20T10:00:00Z", updatedAt: "2026-09-20T10:00:00Z",
+  ...overrides,
+});
+
+describe("task workspace views", () => {
+  it("keeps date-only tasks due today out of Overdue until the next day", () => {
+    expect(taskViewForAll(task({ dueKind: "date", dueValue: "2026-09-24" }), now)).toBe("Overdue");
+    expect(taskViewForAll(task({ dueKind: "date", dueValue: "2026-09-25" }), now)).toBe("Today");
+    expect(taskViewForAll(task({ dueKind: "date", dueValue: "2026-09-26" }), now)).toBe("Upcoming");
+  });
+
+  it("treats a passed due time as Overdue while a later time today remains Today", () => {
+    const earlier = new Date(2026, 8, 25, 11, 59).toISOString();
+    const later = new Date(2026, 8, 25, 12, 1).toISOString();
+    expect(taskViewForAll(task({ dueKind: "datetime", dueValue: earlier }), now)).toBe("Overdue");
+    expect(taskViewForAll(task({ dueKind: "datetime", dueValue: later }), now)).toBe("Today");
+  });
+
+  it("includes due waiting tasks in both the dated view and Waiting, but only once in All", () => {
+    const waiting = task({ kind: "waiting_for", dueKind: "date", dueValue: "2026-09-24" });
+    expect(taskViewForAll(waiting, now)).toBe("Overdue");
+    expect(taskMatchesView(waiting, "Overdue", now)).toBe(true);
+    expect(taskMatchesView(waiting, "Waiting", now)).toBe(true);
+    expect(taskViewForAll(task({ kind: "waiting_for" }), now)).toBe("Waiting");
+    expect(taskViewForAll(task(), now)).toBe("Anytime");
+  });
+
+  it("keeps completed work separate from active views", () => {
+    const completed = task({ status: "completed" });
+    expect(taskMatchesView(completed, "All", now)).toBe(false);
+    expect(taskMatchesView(completed, "Completed", now)).toBe(true);
+  });
+});
