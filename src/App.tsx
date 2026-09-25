@@ -444,6 +444,7 @@ export function App() {
   }, [activeAccountId, splitInboxesLoaded, accountSplitInboxes]);
   const threadsRequest = useRef(0);
   const detailRequest = useRef(0);
+  const contextOpenedThreadRef = useRef<string | null>(null);
   const triageSessionRef = useRef<TriageSession | null>(null);
   const triageCloseTimerRef = useRef<number | null>(null);
   const loadingMore = useRef(false);
@@ -505,7 +506,7 @@ export function App() {
       refreshUnreadCounts();
       refreshMailboxUnreadCounts();
       setSelectedId((current) =>
-        current && page.threads.some((thread) => thread.id === current)
+        current && (page.threads.some((thread) => thread.id === current) || contextOpenedThreadRef.current === current)
           ? current
           : (page.threads[0]?.id ?? null),
       );
@@ -1069,7 +1070,10 @@ export function App() {
     () => new Map(accounts.map((account) => [account.email, account.color] as const)),
     [accounts],
   );
-  const selectThread = useCallback((id: string) => setSelectedId(id), []);
+  const selectThread = useCallback((id: string) => {
+    contextOpenedThreadRef.current = null;
+    setSelectedId(id);
+  }, []);
   const toggleChecked = useCallback((id: string) => {
     setCheckedIds((current) => {
       const next = new Set(current);
@@ -1231,16 +1235,41 @@ export function App() {
   }, [accounts, activeAccountId, rightWorkspace, selectedId, setNotice, visibleDetail]);
 
   const openTaskThread = useCallback((threadId: string) => {
-    setRightWorkspace(null);
-    setSelectedId(threadId);
-    if (!threads.some((thread) => thread.id === threadId)) {
-      setDetailLoading(true);
-      void mailClient.getThread(threadId)
-        .then(setDetail)
-        .catch((reason: unknown) => setNotice({ message: errorMessage(reason) }))
-        .finally(() => setDetailLoading(false));
+    const openThread = (thread: Thread, loadedDetail?: ThreadDetail) => {
+      const targetMailbox: MailboxKind = thread.trashed ? "trash" : thread.archived ? "allMail" : "inbox";
+      const targetAccountId = activeAccountId === null ? null : thread.accountId;
+      if (targetAccountId !== activeAccountId) {
+        saveSelectedMailboxForAccount(activeAccountId, mailbox === "split" ? "inbox" : mailbox);
+        setActiveAccountId(targetAccountId);
+      }
+      setRightWorkspace(null);
+      correspondence.context.openInbox();
+      setQuery("");
+      setSearchOpen(false);
+      setMailbox(targetMailbox);
+      setActiveSplitInboxId(null);
+      saveSelectedMailboxForAccount(targetAccountId, targetMailbox);
+      contextOpenedThreadRef.current = thread.id;
+      setSelectedId(thread.id);
+      if (loadedDetail) setDetail(loadedDetail);
+    };
+
+    const existing = threads.find((thread) => thread.id === threadId);
+    if (existing) {
+      openThread(existing);
+      return;
     }
-  }, [setNotice, threads]);
+
+    contextOpenedThreadRef.current = threadId;
+    setDetailLoading(true);
+    void mailClient.getThread(threadId)
+      .then((thread) => openThread(thread.thread, thread))
+      .catch((reason: unknown) => {
+        if (contextOpenedThreadRef.current === threadId) contextOpenedThreadRef.current = null;
+        setNotice({ message: errorMessage(reason) });
+      })
+      .finally(() => setDetailLoading(false));
+  }, [activeAccountId, correspondence.context, mailbox, setActiveAccountId, setNotice, threads]);
 
   const draftAvailabilityReply = useCallback((candidates: AvailabilityCandidate[]) => {
     if (candidates.length === 0) return;
@@ -1473,6 +1502,7 @@ export function App() {
   // Switches to the Inbox tab (`null`) or a split inbox tab and remembers the
   // choice for the active account.
   const goToTab = useCallback((splitInboxId: string | null) => {
+    contextOpenedThreadRef.current = null;
     setRightWorkspace(null);
     correspondence.context.openInbox();
     setMailbox(splitInboxId ? "split" : "inbox");
@@ -1519,6 +1549,7 @@ export function App() {
   // search; Drafts and Outbox list local items rather than threads, so they
   // also drop the open conversation.
   const openFolder = useCallback((folder: "allMail" | "trash" | "drafts" | "outbox") => {
+    contextOpenedThreadRef.current = null;
     setRightWorkspace(null);
     if (folder === "drafts") correspondence.context.openDrafts();
     else if (folder === "outbox") correspondence.context.openOutbox();
@@ -1534,6 +1565,7 @@ export function App() {
   }, [correspondence.context, activeAccountId]);
   const switchAccount = useCallback((accountId: string | null) => {
     if (accountId === activeAccountId) return;
+    contextOpenedThreadRef.current = null;
     const currentMailbox = mailbox === "split" ? "inbox" : mailbox;
     saveSelectedMailboxForAccount(activeAccountId, currentMailbox);
     const nextMailbox = readSelectedMailboxForAccount(accountId) ?? "inbox";
@@ -2002,7 +2034,10 @@ export function App() {
               <input
                 ref={searchRef}
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  contextOpenedThreadRef.current = null;
+                  setQuery(event.target.value);
+                }}
                 placeholder="Search mail"
                 aria-label="Search Mail"
                 data-mailbox-tab-shortcut

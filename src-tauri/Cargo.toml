@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.35.5"
+version = "0.35.6"
 description = "A local-first, keyboard-driven email client"
 authors = ["ThreeStrands contributors"]
 edition = "2021"

@@ -3,10 +3,53 @@ import { afterEach, expect, it, vi } from "vitest";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
 import type { OutboxItem } from "./correspondence";
+import type { ContactProfile, ContactTimelineItem } from "./domain";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+it("opens archived contact timeline email in All Mail and keeps it selected after refresh", async () => {
+  localStorage.removeItem("threestrands.settings.selectedMailboxByAccount");
+  await mailClient.mutateThread({ kind: "archive", threadId: "roadmap", value: true });
+  const contact: ContactProfile = {
+    id: "contact:team@example.com", displayName: "Product Team", role: null, company: null,
+    location: null, bio: null, notes: null, links: [], photoData: null, favorite: false,
+    addresses: ["team@example.com"], sentCount: 1, receivedCount: 1, lastInteractedAt: null,
+  };
+  const timelineItem: ContactTimelineItem = {
+    threadId: "roadmap", accountId: "demo@example.com", subject: "Phase 1: read and triage",
+    snippet: "The first vertical slice includes local search and optimistic actions.",
+    sentAt: "2026-03-05T14:15:00Z", labels: [],
+  };
+  vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([contact]);
+  vi.spyOn(mailClient, "getContactProfile").mockResolvedValue(contact);
+  vi.spyOn(mailClient, "contactTimeline").mockResolvedValue([timelineItem]);
+  const listAllMail = mailClient.listAllMailPage.bind(mailClient);
+  vi.spyOn(mailClient, "listAllMailPage").mockImplementation(async (accountId, offset, limit) => {
+    const page = await listAllMail(accountId, offset, limit);
+    return { ...page, threads: page.threads.filter((thread) => thread.id !== "roadmap") };
+  });
+
+  try {
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+    fireEvent.click(screen.getByRole("button", { name: "Contacts" }));
+    await screen.findByDisplayValue("Product Team");
+    fireEvent.click(screen.getByRole("button", { name: /Phase 1: read and triage/ }));
+
+    expect(await screen.findByRole("listbox", { name: "All Mail" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Phase 1: read and triage" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh mail" }));
+
+    expect(await screen.findByRole("heading", { name: "Phase 1: read and triage" })).toBeInTheDocument();
+    expect(screen.getByRole("listbox", { name: "All Mail" })).toBeInTheDocument();
+  } finally {
+    await mailClient.mutateThread({ kind: "archive", threadId: "roadmap", value: false });
+    localStorage.removeItem("threestrands.settings.selectedMailboxByAccount");
+  }
 });
 
 it("formats today's mail with the time of day and older mail with the date", () => {
