@@ -20,6 +20,8 @@ afterEach(() => {
 
 describe("Superhuman formatting shortcuts", () => {
   it("registers every formatting combo from the Superhuman shortcut sheet", () => {
+    // Fixed-Width is an addition beyond the Superhuman sheet: Superhuman has
+    // no fixed-width face at all, so the key is ours to choose.
     expect(formattingShortcuts.map(({ title, key }) => [title, key])).toEqual([
       ["Bold", "Mod+b"],
       ["Italics", "Mod+i"],
@@ -27,6 +29,7 @@ describe("Superhuman formatting shortcuts", () => {
       ["Hyperlink", "Mod+k"],
       ["Color", "Mod+Shift+c"],
       ["Strikethrough", "Mod+Shift+x"],
+      ["Fixed-Width", "Mod+Shift+m"],
       ["Numbered List", "Mod+Shift+7"],
       ["Bulleted List", "Mod+Shift+8"],
       ["Quote", "Mod+Shift+9"],
@@ -119,6 +122,95 @@ it("converts plain drafts and sanitizes rich compose HTML", () => {
   expect(plainTextToHtml("Hello\nworld")).toBe("Hello<br>world");
   expect(sanitizeComposeHtml('<b>Hi</b><script>alert(1)</script><a href="javascript:alert(1)">bad</a>'))
     .toBe("<b>Hi</b><a>bad</a>");
+});
+
+describe("fixed-width selection", () => {
+  const fixedWidth = formattingShortcuts.find(({ id }) => id === "format.fixedWidth")!;
+
+  it("matches ⌘⇧M regardless of the shifted key's case", () => {
+    expect(formattingShortcutFor(event("M", { metaKey: true, shiftKey: true }))?.title).toBe("Fixed-Width");
+    expect(formattingShortcutFor(event("m", { metaKey: true, shiftKey: true }))?.title).toBe("Fixed-Width");
+    expect(formattingShortcutFor(event("m", { metaKey: true }))?.title).not.toBe("Fixed-Width");
+  });
+
+  it("applies the monospace face via fontName", () => {
+    const editor = document.createElement("div");
+    document.body.append(editor);
+    const execute = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execute });
+
+    expect(applyFormattingShortcut(editor, fixedWidth)).toBe(true);
+    expect(execute).toHaveBeenCalledWith("fontName", false, "monospace");
+  });
+
+  it("strips an inline fixed-width span when the selection is already fixed-width", () => {
+    const editor = document.createElement("div");
+    editor.innerHTML = '<p>plain <span style="font-family: monospace">code</span></p>';
+    document.body.append(editor);
+    const execute = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execute });
+    const text = editor.querySelector("span")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(applyFormattingShortcut(editor, fixedWidth)).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(editor.innerHTML).toBe("<p>plain code</p>");
+  });
+
+  it("toggles off a legacy <font face> marking while keeping its color", () => {
+    const editor = document.createElement("div");
+    editor.innerHTML = '<font face="monospace" color="#2563eb">code</font>';
+    document.body.append(editor);
+    const execute = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execute });
+    const text = editor.querySelector("font")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(applyFormattingShortcut(editor, fixedWidth)).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(editor.innerHTML).toBe('<font color="#2563eb">code</font>');
+  });
+});
+
+it("normalizes fixed-width compose HTML through the shared font-family policy", () => {
+  // WebKit's fontName output is normalized to inline style, which the
+  // message reader already renders, so the marking survives sending.
+  const face = document.createElement("div");
+  face.innerHTML = sanitizeComposeHtml('<font face="monospace">x</font>');
+  expect(face.firstElementChild?.tagName).toBe("SPAN");
+  expect((face.firstElementChild as HTMLElement).style.fontFamily).toBe("monospace");
+  expect(face.querySelector("font")).toBeNull();
+
+  // A valid family alongside the still-supported margin-left.
+  const styled = document.createElement("div");
+  styled.innerHTML = sanitizeComposeHtml('<span style="margin-left: 24px; font-family: monospace">x</span>');
+  expect((styled.firstElementChild as HTMLElement).style.fontFamily).toBe("monospace");
+  expect((styled.firstElementChild as HTMLElement).style.marginLeft).toBe("24px");
+});
+
+it("strips hostile font families from compose HTML without losing content", () => {
+  const face = document.createElement("div");
+  face.innerHTML = sanitizeComposeHtml('<font face="monospace; background:url(https://tracker.invalid/x)">x</font>');
+  expect(face.firstElementChild?.tagName).toBe("SPAN");
+  expect(face.firstElementChild?.getAttribute("style")).toBeNull();
+  expect(face.textContent).toBe("x");
+
+  const styled = document.createElement("div");
+  styled.innerHTML = sanitizeComposeHtml('<span style="font-family: expression(alert(1)); font-family: monospace">x</span>');
+  const style = styled.firstElementChild?.getAttribute("style") ?? "";
+  expect(style).not.toContain("expression");
+  expect(style).toContain("font-family");
+  expect(styled.textContent).toBe("x");
 });
 
 it("keeps safe pasted images and strips compose-only image controls", () => {

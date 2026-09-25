@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 import { matchesShortcut } from "./commands";
+import { sanitizeCssDeclaration } from "./emailRenderingPolicy";
 import { LINKIFY_PATTERN, linkHrefFor, trimTrailingPunctuation } from "./linkify";
 
 export type FormattingShortcut = {
@@ -19,6 +20,7 @@ export const formattingShortcuts: FormattingShortcut[] = [
   { id: "format.link", title: "Hyperlink", key: "Mod+k", command: "createLink", prompt: "link" },
   { id: "format.color", title: "Color", key: "Mod+Shift+c", command: "foreColor", prompt: "color" },
   { id: "format.strike", title: "Strikethrough", key: "Mod+Shift+x", command: "strikeThrough" },
+  { id: "format.fixedWidth", title: "Fixed-Width", key: "Mod+Shift+m", command: "fontName", value: "monospace" },
   { id: "format.numbers", title: "Numbered List", key: "Mod+Shift+7", command: "insertOrderedList" },
   { id: "format.bullets", title: "Bulleted List", key: "Mod+Shift+8", command: "insertUnorderedList" },
   { id: "format.quote", title: "Quote", key: "Mod+Shift+9", command: "formatBlock", value: "blockquote" },
@@ -86,6 +88,58 @@ export function applyAsteriskListShortcut(editor: HTMLElement): boolean {
   return true;
 }
 
+/**
+ * The composer's fixed-width face, applied with `fontName` and removed by the
+ * same shortcut again — WebKit's `fontName` implementation never toggles off
+ * on its own, so the undo path is ours to provide.
+ */
+const fixedWidthFamily = "monospace";
+
+function isFixedWidthMarked(element: Element): boolean {
+  if (element instanceof HTMLFontElement) {
+    const face = element.getAttribute("face");
+    return face !== null && sanitizeCssDeclaration("font-family", face) === fixedWidthFamily;
+  }
+  return element instanceof HTMLElement
+    && sanitizeCssDeclaration("font-family", element.style.fontFamily) === fixedWidthFamily;
+}
+
+function fixedWidthAnchorElement(editor: HTMLElement): Element | null {
+  const node = window.getSelection()?.anchorNode;
+  const element = node instanceof Element ? node : node?.parentElement;
+  return element && editor.contains(element) ? element : null;
+}
+
+/** True when the selection's anchor sits in text explicitly marked fixed-width. */
+export function selectionIsFixedWidth(editor: HTMLElement): boolean {
+  let element = fixedWidthAnchorElement(editor);
+  while (element && element !== editor) {
+    if (isFixedWidthMarked(element)) return true;
+    element = element.parentElement;
+  }
+  return false;
+}
+
+function stripFixedWidth(editor: HTMLElement): void {
+  let element = fixedWidthAnchorElement(editor);
+  while (element && element !== editor) {
+    const parent = element.parentElement;
+    if (isFixedWidthMarked(element)) {
+      if (element instanceof HTMLFontElement) element.removeAttribute("face");
+      else if (element instanceof HTMLElement) {
+        element.style.removeProperty("font-family");
+        if (element.getAttribute("style") === "") element.removeAttribute("style");
+      }
+      // A span that carried only the fixed-width family was structure we
+      // added; unwrap it so repeated toggles don't nest empty spans.
+      if (element instanceof HTMLSpanElement && !element.attributes.length) {
+        element.replaceWith(...element.childNodes);
+      }
+    }
+    element = parent;
+  }
+}
+
 export function applyFormattingShortcut(
   editor: HTMLElement,
   shortcut: FormattingShortcut,
@@ -105,6 +159,10 @@ export function applyFormattingShortcut(
   }
 
   editor.focus();
+  if (shortcut.command === "fontName" && selectionIsFixedWidth(editor)) {
+    stripFixedWidth(editor);
+    return true;
+  }
   document.execCommand(shortcut.command, false, value);
   return true;
 }
@@ -144,18 +202,38 @@ export function linkifyPlainText(text: string): string {
 export function sanitizeComposeHtml(html: string): string {
   const clean = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: ["a", "b", "blockquote", "br", "div", "em", "font", "i", "img", "li", "ol", "p", "span", "strike", "strong", "u", "ul"],
-    ALLOWED_ATTR: ["alt", "color", "href", "src", "style", "width"],
+    ALLOWED_ATTR: ["alt", "color", "face", "href", "src", "style", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
   });
   const container = document.createElement("div");
   container.innerHTML = clean;
+  // Legacy <font face> is the older HTML spelling of font-family, and what
+  // WebKit's `fontName` produces live. Normalize every face through the
+  // shared CSS policy: valid families move to inline style (which the reader
+  // already renders), invalid ones are dropped while the element's content
+  // and other attributes survive.
+  container.querySelectorAll("font[face]").forEach((font) => {
+    const family = sanitizeCssDeclaration("font-family", font.getAttribute("face") ?? "");
+    const span = document.createElement("span");
+    if (family) span.style.fontFamily = family;
+    for (const attribute of Array.from(font.attributes)) {
+      if (attribute.name !== "face") span.setAttribute(attribute.name, attribute.value);
+    }
+    while (font.firstChild) span.append(font.firstChild);
+    font.replaceWith(span);
+  });
   container.querySelectorAll<HTMLElement>("[style]").forEach((element) => {
     const margin = element.style.marginLeft;
+    const family = element.style.fontFamily;
     element.removeAttribute("style");
     if (/^\d+(\.\d+)?px$/.test(margin)) {
       element.style.marginLeft = `${Math.min(parseFloat(margin), 320)}px`;
     }
+    // A font family cannot fetch resources, execute code, or escape the
+    // compose surface; the shared policy grammar bounds what counts as one.
+    const safeFamily = sanitizeCssDeclaration("font-family", family);
+    if (safeFamily) element.style.fontFamily = safeFamily;
   });
   container.querySelectorAll<HTMLAnchorElement>("a").forEach((link) => {
     if (!/^(https?:\/\/|mailto:|tel:)/i.test(link.getAttribute("href") ?? "")) {
