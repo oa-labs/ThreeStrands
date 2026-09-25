@@ -1847,6 +1847,11 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               onChange={(event) => updateFeature("actionExtraction", event.target.checked)}
             />
           </label>
+          <label className="settings-switch">
+            <span>Contact Enrichment</span>
+            <input type="checkbox" checked={features.contactEnrichment} onChange={(event) => updateFeature("contactEnrichment", event.target.checked)} />
+          </label>
+          <p className="settings-hint">When requested, a small set of local emails is sent to your selected AI provider for reviewable contact suggestions.</p>
         </>
       ) : null}
     </section>

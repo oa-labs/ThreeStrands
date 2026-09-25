@@ -67,7 +67,7 @@ describe("synced preferences data boundary", () => {
       aiProvider: "none",
       aiModel: "",
       aiEndpoint: "",
-      aiFeatures: { draftAssist: false, summarize: false, actionExtraction: false },
+      aiFeatures: { draftAssist: false, summarize: false, actionExtraction: false, contactEnrichment: false },
       availabilityPreferences: {
         timeZone: "UTC",
         workingWindows: [],

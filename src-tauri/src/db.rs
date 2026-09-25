@@ -15,7 +15,7 @@ use crate::models::{
     ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
     UnsubscribeMethod, UnsubscribeTarget,
 };
-use crate::transfer::{TransferAccount, TransferSnippet, TransferSplitInbox};
+use crate::transfer::{TransferAccount, TransferSnippet, TransferSplitInbox, TransferContact};
 
 mod accounts;
 mod calendar_accounts;
@@ -426,11 +426,13 @@ impl Database {
             run_quick_check(&connection)?;
         }
         seed_if_empty(&connection)?;
-        Ok(Self {
+        let database=Self {
             connection: Mutex::new(connection),
             path: Some(path.to_path_buf()),
             replicated_sync_projecting: AtomicBool::new(false),
-        })
+        };
+        if version_before_migration<39 { database.rebuild_contact_interactions().map_err(|error|OpenError::Other(error.to_string()))?; }
+        Ok(database)
     }
 
     #[cfg(test)]
@@ -442,11 +444,13 @@ impl Database {
         crate::schema::migrate(&mut connection).unwrap();
         ensure_query_indexes(&connection).unwrap();
         seed_if_empty(&connection).unwrap();
-        Self {
+        let database=Self {
             connection: Mutex::new(connection),
             path: None,
             replicated_sync_projecting: AtomicBool::new(false),
-        }
+        };
+        database.rebuild_contact_interactions().unwrap();
+        database
     }
 
     pub(crate) fn connection(&self) -> DbResult<MutexGuard<'_, Connection>> {
@@ -821,10 +825,8 @@ impl Database {
         query: &str,
         limit: usize,
     ) -> DbResult<Vec<ContactSuggestion>> {
-        let limit = limit.clamp(1, 50);
+        let limit = limit.clamp(1, 5_000);
         self.with_connection(|connection| {
-            let account_email = account_id.to_ascii_lowercase();
-
             struct Agg {
                 display_name: Option<String>,
                 sent_count: i64,
@@ -834,88 +836,21 @@ impl Database {
             }
             let mut by_email: HashMap<String, Agg> = HashMap::new();
 
-            let mut statement = connection
-                .prepare(
-                    "SELECT m.sender, m.recipients_json, m.sent_at, m.unsubscribe_json
-                     FROM messages m JOIN threads t ON t.id = m.thread_id
-                     WHERE t.account_id = ?1
-                     ORDER BY m.sent_at DESC
-                     LIMIT 20000",
-                )?;
-            let rows = statement
-                .query_map(params![account_id], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                    ))
-                })?;
-
+            let mut statement = connection.prepare(
+                "SELECT i.email,
+                    (SELECT recent.display_name FROM contact_interactions recent
+                     WHERE recent.account_id=i.account_id AND recent.email=i.email
+                       AND recent.display_name IS NOT NULL AND recent.display_name<>''
+                     ORDER BY recent.sent_at DESC,recent.message_id DESC LIMIT 1),
+                    SUM(i.direction='sent'), SUM(i.direction='received'), MAX(i.sent_at)
+                 FROM contact_interactions i WHERE i.account_id=?1 GROUP BY i.account_id,i.email",
+            )?;
+            let rows = statement.query_map(params![account_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
+            })?;
             for row in rows {
-                let (sender, recipients_json, sent_at, unsubscribe_json) =
-                    row?;
-                // Best-effort: a message with an address this parser rejects
-                // just contributes nothing to suggestions rather than failing
-                // the whole ranking.
-                let Some((sender_name, sender_email)) = crate::correspondence::addresses(&sender)
-                    .ok()
-                    .and_then(|parsed| parsed.into_iter().next())
-                else {
-                    continue;
-                };
-                let sender_email = sender_email.to_ascii_lowercase();
-                if sender_email == account_email {
-                    let Ok(recipients) = serde_json::from_str::<Vec<String>>(&recipients_json) else {
-                        continue;
-                    };
-                    for raw in recipients {
-                        let Some((name, email)) = crate::correspondence::addresses(&raw)
-                            .ok()
-                            .and_then(|parsed| parsed.into_iter().next())
-                        else {
-                            continue;
-                        };
-                        let email = email.to_ascii_lowercase();
-                        if email.is_empty() || email == account_email {
-                            continue;
-                        }
-                        let entry = by_email.entry(email).or_insert_with(|| Agg {
-                            display_name: None,
-                            sent_count: 0,
-                            received_count: 0,
-                            last_interacted_at: sent_at.clone(),
-                            pinned: false,
-                        });
-                        entry.sent_count += 1;
-                        if entry.display_name.is_none() && !name.is_empty() {
-                            entry.display_name = Some(name);
-                        }
-                        if sent_at > entry.last_interacted_at {
-                            entry.last_interacted_at = sent_at.clone();
-                        }
-                    }
-                } else if !sender_email.is_empty() && unsubscribe_json.is_none() {
-                    // A List-Unsubscribe/one-click header marks bulk/automated
-                    // mail (newsletters, notifications) — never a real
-                    // correspondent, so it must not seed or bump a suggestion.
-                    // Doesn't affect an entry already earned by being sent to,
-                    // or a manually pinned contact.
-                    let entry = by_email.entry(sender_email).or_insert_with(|| Agg {
-                        display_name: None,
-                        sent_count: 0,
-                        received_count: 0,
-                        last_interacted_at: sent_at.clone(),
-                        pinned: false,
-                    });
-                    entry.received_count += 1;
-                    if entry.display_name.is_none() && !sender_name.is_empty() {
-                        entry.display_name = Some(sender_name);
-                    }
-                    if sent_at > entry.last_interacted_at {
-                        entry.last_interacted_at = sent_at.clone();
-                    }
-                }
+                let (email,display_name,sent_count,received_count,last_interacted_at)=row?;
+                by_email.insert(email,Agg{display_name,sent_count,received_count,last_interacted_at,pinned:false});
             }
 
             let mut pinned_statement = connection
@@ -944,6 +879,10 @@ impl Database {
                     entry.display_name = display_name;
                 }
             }
+
+            let mut profile_statement=connection.prepare("SELECT a.email,c.display_name,c.favorite,c.updated_at FROM contact_addresses a JOIN contacts c ON c.id=a.contact_id")?;
+            let profile_rows=profile_statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,bool>(2)?,row.get::<_,String>(3)?)))?;
+            for row in profile_rows {let(email,name,favorite,updated)=row?;let email=email.to_ascii_lowercase();let entry=by_email.entry(email).or_insert_with(||Agg{display_name:name.clone(),sent_count:0,received_count:0,last_interacted_at:updated,pinned:false});if entry.display_name.is_none(){entry.display_name=name;}entry.pinned|=favorite;}
 
             let needle = query.trim().to_ascii_lowercase();
             let mut suggestions: Vec<ContactSuggestion> = by_email
@@ -1476,7 +1415,7 @@ impl Database {
     pub fn finish_sync(&self, account_id: &str, cursor: &str) -> DbResult<()> {
         let now = Utc::now().to_rfc3339();
         self.with_transaction(|transaction| {
-            transaction
+                transaction
                 .execute(
                     "UPDATE sync_state SET cursor = ?1, last_successful_sync = ?2, last_error = NULL
                      WHERE account_id = ?3",
@@ -1959,6 +1898,7 @@ impl Database {
                         serde_json::to_string(&message.attachments).map_err(serialization_error)?,
                     ],
                 )?;
+            contacts::index_contact_message(transaction, account_id, &thread_id, message)?;
         }
         transaction
             .execute(
@@ -2178,6 +2118,7 @@ impl Database {
         accounts: &[TransferAccount],
         split_inboxes: &[TransferSplitInbox],
         snippets: &[TransferSnippet],
+        contacts: &[TransferContact],
         retention_days: Option<i64>,
     ) -> DbResult<()> {
         self.with_transaction(|transaction| {
@@ -2236,6 +2177,12 @@ impl Database {
                         "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, ?3, ?4)",
                         params![snippet.id, snippet.name, snippet.body, snippet.created_at],
                     )?;
+            }
+
+            transaction.execute("DELETE FROM contacts", [])?;
+            for contact in contacts {
+                transaction.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339()])?;
+                for email in &contact.addresses { transaction.execute("INSERT INTO contact_addresses(contact_id,email) VALUES(?1,?2)",params![contact.id,email])?; }
             }
 
             match retention_days {
@@ -2805,6 +2752,7 @@ fn serialization_error(error: serde_json::Error) -> DatabaseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::SaveContactRequest;
     use crate::transfer::{TransferAccount, TransferSplitInbox};
 
     fn database() -> Database {
@@ -2927,6 +2875,7 @@ mod tests {
                     body: "Body".to_string(),
                     created_at: "2026-03-06T00:00:00Z".to_string(),
                 }],
+                &[],
                 Some(90),
             )
             .unwrap();
@@ -3198,7 +3147,23 @@ mod tests {
     }
 
     #[test]
-    fn pinned_contacts_outrank_history_and_survive_without_any_messages() {
+    fn compose_contact_name_uses_the_most_recent_nonempty_message_name() {
+        let database=database();
+        for (id,date,name) in [
+            ("name-old","2026-01-01T00:00:00Z","Zoe Earlier"),
+            ("name-new","2026-02-01T00:00:00Z","Amy Later"),
+        ] {
+            let mut sent=message(id,&format!("{id}-thread"),date,"body");
+            sent.from="you@example.com".into();
+            sent.to=vec![format!("{name} <person@example.com>")];
+            database.upsert_thread("you@example.com",&[sent]).unwrap();
+        }
+        let suggestions=database.list_contact_suggestions("you@example.com","person",10).unwrap();
+        assert_eq!(suggestions[0].display_name.as_deref(),Some("Amy Later"));
+    }
+
+    #[test]
+    fn pinned_contacts_migrate_to_profiles_and_unpin_removes_favorite_rank() {
         let database = database();
         let mut sent = message(
             "sent-message",
@@ -3235,8 +3200,98 @@ mod tests {
         let after_unpin = database
             .list_contact_suggestions("you@example.com", "", 10)
             .unwrap();
-        assert_eq!(after_unpin.len(), 1);
+        assert_eq!(after_unpin.len(), 2);
         assert_eq!(after_unpin[0].email, "frequent@example.com");
+        assert_eq!(after_unpin[1].email, "pinned@example.com");
+        assert!(!after_unpin[1].pinned);
+    }
+
+    #[test]
+    fn saved_contact_search_links_addresses_and_enforces_unique_ownership() {
+        let database=database();
+        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane Rivera".into()),role:Some("Founder".into()),company:Some("Acme Labs".into()),location:Some("Boston".into()),bio:None,notes:Some("Met at launch".into()),links:vec!["https://social.invalid/jane".into()],photo_data:None,favorite:true,addresses:vec!["jane@example.com".into(),"j.rivera@example.com".into()]}).unwrap();
+        assert_eq!(database.list_contact_profiles("Acme",20).unwrap()[0].id,saved.id);
+        assert_eq!(database.list_contact_profiles("social.invalid",20).unwrap()[0].id,saved.id);
+        assert_eq!(saved.addresses.len(),2);
+        let duplicate=database.save_contact_profile(&SaveContactRequest{id:Some("another".into()),display_name:Some("Other".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into()]});
+        assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn saved_contact_enumeration_is_not_limited_by_derived_contact_results() {
+        let database=database();
+        database.with_transaction(|tx|{
+            for index in 0..5_005 {
+                let id=format!("saved-contact-{index}");
+                tx.execute("INSERT INTO contacts(id,display_name,links_json,favorite,updated_at) VALUES(?1,?2,'[]',0,'2026-01-01T00:00:00Z')",params![id,format!("Saved {index}")])?;
+                tx.execute("INSERT INTO contact_addresses(contact_id,email) VALUES(?1,?2)",params![id,format!("saved{index}@example.com")])?;
+            }
+            Ok(())
+        }).unwrap();
+        let saved=database.list_saved_contact_profiles().unwrap();
+        assert_eq!(saved.len(),5_005);
+        assert!(saved.iter().all(|contact|!contact.id.starts_with("derived:")));
+    }
+
+    #[test]
+    fn reusing_a_removed_address_cannot_overwrite_the_previous_profile_id() {
+        let database=database();
+        let original=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Original person".into()),role:None,company:None,location:None,bio:None,notes:Some("Keep this profile".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["x@x.example".into()]}).unwrap();
+        let moved=database.save_contact_profile(&SaveContactRequest{id:Some(original.id.clone()),display_name:Some("Original person".into()),role:None,company:None,location:None,bio:None,notes:Some("Keep this profile".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["y@y.example".into()]}).unwrap();
+        assert_eq!(moved.id,original.id);
+
+        let reused=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("New person".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["x@x.example".into()]}).unwrap();
+        assert_ne!(reused.id,original.id);
+        let preserved=database.get_contact_profile(&original.id).unwrap().unwrap();
+        assert_eq!(preserved.display_name.as_deref(),Some("Original person"));
+        assert_eq!(preserved.notes.as_deref(),Some("Keep this profile"));
+        assert_eq!(preserved.addresses,vec!["y@y.example"]);
+
+        let pin_email="pinned@x.example";
+        let pinned=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Moved from pin".into()),role:None,company:None,location:None,bio:None,notes:Some("Preserve me too".into()),links:vec![],photo_data:None,favorite:false,addresses:vec![pin_email.into()]}).unwrap();
+        database.save_contact_profile(&SaveContactRequest{id:Some(pinned.id.clone()),display_name:Some("Moved from pin".into()),role:None,company:None,location:None,bio:None,notes:Some("Preserve me too".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["moved@x.example".into()]}).unwrap();
+        database.pin_contact("you@example.com",pin_email,None).unwrap();
+        let preserved_pin=database.get_contact_profile(&pinned.id).unwrap().unwrap();
+        assert_eq!(preserved_pin.notes.as_deref(),Some("Preserve me too"));
+        assert_eq!(preserved_pin.addresses,vec!["moved@x.example"]);
+        let newly_pinned=database.list_contact_profiles(pin_email,10).unwrap();
+        assert_eq!(newly_pinned.len(),1);
+        assert_ne!(newly_pinned[0].id,pinned.id);
+        assert!(newly_pinned[0].favorite);
+    }
+
+    #[test]
+    fn contact_list_uses_sent_to_history_and_timeline_combines_accounts() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        let mut sent=message("contact-one","thread-one","2026-09-20T12:00:00Z","hello");
+        sent.from="you@example.com".into();sent.to=vec!["Jane <jane@example.com>".into()];
+        database.upsert_thread("you@example.com",&[sent]).unwrap();
+        let mut received=message("contact-two","thread-two","2026-09-21T12:00:00Z","reply");
+        received.from="Jane <jane@example.com>".into();received.to=vec!["you@example.com".into()];
+        database.upsert_thread("other@example.com",&[received]).unwrap();
+        let derived=database.list_contact_profiles("jane",20).unwrap().into_iter().find(|item|item.id=="derived:jane@example.com").unwrap();
+        assert_eq!(derived.sent_count,1);
+        let saved=database.save_contact_profile(&SaveContactRequest{id:Some(derived.id),display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into()]}).unwrap();
+        let timeline=database.contact_timeline(&saved.id,0,10).unwrap();
+        assert_eq!(timeline.len(),2);
+        assert!(timeline.iter().any(|item|item.account_id=="you@example.com"));
+        assert!(timeline.iter().any(|item|item.account_id=="other@example.com"));
+    }
+
+    #[test]
+    fn removing_an_account_clears_its_local_contact_interactions_but_keeps_saved_profile() {
+        let database=database();
+        let mut sent=message("contact-account-remove","contact-account-remove-thread","2026-09-22T12:00:00Z","hello");
+        sent.from="you@example.com".into();sent.to=vec!["Sam <sam@example.com>".into()];
+        database.upsert_thread("you@example.com",&[sent]).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Sam".into()),role:None,company:None,location:None,bio:None,notes:Some("Keep this note".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["sam@example.com".into()]}).unwrap();
+        assert_eq!(database.contact_timeline(&saved.id,0,10).unwrap().len(),1);
+        database.remove_account("you@example.com").unwrap();
+        assert!(database.contact_timeline(&saved.id,0,10).unwrap().is_empty());
+        let remaining=database.get_contact_profile(&saved.id).unwrap().unwrap();
+        assert_eq!(remaining.notes.as_deref(),Some("Keep this note"));
+        assert_eq!(remaining.sent_count,0);
     }
 
     #[test]

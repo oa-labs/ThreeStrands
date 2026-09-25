@@ -4,6 +4,7 @@ import {
   CalendarDays,
   CheckSquare,
   Check,
+  ContactRound,
   ChevronDown,
   ChevronUp,
   Command as CommandIcon,
@@ -87,6 +88,8 @@ import { CalendarSidebar } from "./CalendarSidebar";
 import { CalendarWeekView } from "./CalendarWeekView";
 import { formatAvailabilityText } from "./actionDrafting";
 import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
+import { ContactsWorkspace } from "./ContactsWorkspace";
+import { ContactSidebar } from "./ContactSidebar";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
@@ -139,7 +142,7 @@ import { Settings, type MailAccountSettings, type SettingsSection } from "./Sett
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
-type RightWorkspace = "actions" | "calendar" | "tasks" | "week" | null;
+type RightWorkspace = "actions" | "calendar" | "contact" | "contacts" | "tasks" | "week" | null;
 type TaskEditorState =
   | { kind: "new"; thread: ThreadDetail }
   | { kind: "standalone"; accountId: string }
@@ -1487,6 +1490,9 @@ export function App() {
     setRightWorkspace("tasks");
   }, []);
 
+  const openContactsView = useCallback(() => setRightWorkspace(current => current === "contacts" ? null : "contacts"), []);
+  const toggleContactPane = useCallback(() => setRightWorkspace(current => current === "contact" ? null : "contact"), []);
+
   const openCalendarView = useCallback(() => {
     setRightWorkspace("week");
     void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
@@ -1800,7 +1806,7 @@ export function App() {
   };
 
   return (
-    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -1831,6 +1837,7 @@ export function App() {
               <CheckSquare size={19} />
             </button>
           </HoverTooltip>
+          <HoverTooltip title="Contacts"><button className={`nav-button ${rightWorkspace === "contacts" ? "active" : ""}`} aria-label="Contacts" onClick={openContactsView}><ContactRound size={19}/></button></HoverTooltip>
           <HoverTooltip title="Refresh mail"><button className="nav-button" aria-label="Refresh mail" onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={19} className={syncStatus?.state === "syncing" ? "spin" : ""} />
           </button></HoverTooltip>
@@ -1852,7 +1859,7 @@ export function App() {
         </div>
       </nav>
 
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" ? <>
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <>
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
         <InboxResizeHandle {...inboxSize} />
         <header className="thread-header">
@@ -2101,6 +2108,7 @@ export function App() {
                 </div>
               </div>
               <div className="reader-actions">
+                <HoverTooltip label="Contact details" placement="bottom"><ActionButton label="Contact details" onClick={toggleContactPane}><ContactRound size={17}/></ActionButton></HoverTooltip>
                 <HoverTooltip label="Actions" shortcut="Shift+A" placement="bottom">
                   <ActionButton label="Actions" shortcut="Shift+A" onClick={openActions}>
                     <Sparkles size={17} />
@@ -2550,6 +2558,8 @@ export function App() {
           }}
         />
       ) : null}
+      {rightWorkspace === "contact" ? <ContactSidebar detail={visibleDetail} accounts={accounts} onClose={() => setRightWorkspace(null)} onOpenThread={openTaskThread} /> : null}
+      {rightWorkspace === "contacts" ? <ContactsWorkspace onOpenThread={openTaskThread} /> : null}
       {rightWorkspace === "tasks" ? (
         <>
           <TaskSidebar

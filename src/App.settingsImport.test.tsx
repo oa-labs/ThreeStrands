@@ -51,6 +51,7 @@ describe("settings import navigation", () => {
           draftAssist: false,
           summarize: false,
           actionExtraction: false,
+          contactEnrichment: false,
         },
         availabilityPreferences: {
           timeZone: "UTC",
@@ -61,6 +62,7 @@ describe("settings import navigation", () => {
       },
       accountCount: 2,
       splitInboxCount: 1,
+      contactCount: 0,
     });
 
     render(<App />);

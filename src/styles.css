@@ -257,6 +257,7 @@ button { color: inherit; }
   grid-template-columns: 58px var(--inbox-width, 400px) minmax(0, 1fr) minmax(320px, 360px);
 }
 .app-shell.tasks-open { grid-template-columns: 58px minmax(0, 1fr) minmax(320px, 360px); }
+.app-shell.contacts-open { grid-template-columns: 58px minmax(0, 1fr); }
 .app-shell.week-open { grid-template-columns: 58px minmax(0, 1fr); }
 
 .sidebar {
@@ -1665,6 +1666,79 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   color: var(--text);
 }
 .task-detail-shortcuts { margin: 42px 0 0; color: var(--muted); font-size: var(--type-sm); }
+.contacts-workspace { grid-column:2; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:var(--background); }
+.contacts-header { min-height:82px; display:flex; align-items:center; justify-content:space-between; padding:14px 28px; border-bottom:1px solid var(--border); }
+.contacts-header h1 { margin:3px 0 0; font-size:var(--type-heading); font-weight:600; }
+.contacts-workspace-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(260px,340px) minmax(0,1fr); }
+.contacts-list-panel { min-height:0; overflow:auto; padding:16px 12px; border-right:1px solid var(--border); }
+.contacts-search { height:38px; display:flex; align-items:center; gap:8px; margin:0 4px 14px; padding:0 10px; border:1px solid var(--border); border-radius:var(--radius-md); color:var(--muted); background:var(--surface); }
+.contacts-search input { min-width:0; flex:1; border:0; outline:0; color:var(--text); background:transparent; font:inherit; }
+.contacts-search kbd { font-size:var(--type-xs); }
+.contacts-list { display:grid; gap:3px; }
+.contact-list-item { min-width:0; display:flex; align-items:center; gap:11px; padding:10px; border:1px solid transparent; border-radius:var(--radius-md); color:var(--secondary); background:transparent; text-align:left; cursor:pointer; }
+.contact-list-item:hover { background:var(--hover); }
+.contact-list-item.selected { border-color:color-mix(in srgb,var(--accent) 45%,transparent); background:color-mix(in srgb,var(--accent) 8%,var(--surface)); }
+.contact-list-item > svg { margin-left:auto; color:var(--accent); }
+.contact-list-copy { min-width:0; flex:1; display:grid; gap:3px; }
+.contact-list-copy strong,.contact-list-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.contact-list-copy strong { color:var(--text); font-size:var(--type-ui); font-weight:550; }
+.contact-list-copy small { color:var(--muted); font-size:var(--type-sm); }
+.contact-avatar { position:relative; flex:0 0 auto; display:grid; place-items:center; overflow:hidden; border-radius:50%; color:var(--accent); background:color-mix(in srgb,var(--accent) 13%,var(--surface)); font-weight:600; }
+.contact-avatar img { width:100%; height:100%; object-fit:cover; }
+.contact-avatar.small { width:38px; height:38px; font-size:var(--type-ui); }
+.contact-avatar.medium { width:76px; height:76px; font-size:26px; }
+.contact-avatar.large { width:96px; height:96px; font-size:32px; }
+.contact-avatar.large input { position:absolute; inset:0; opacity:0; cursor:pointer; }
+.contact-profile-panel { min-width:0; min-height:0; overflow:auto; padding:clamp(24px,4vw,56px); background:var(--surface); }
+.contact-profile-top { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding-bottom:23px; border-bottom:1px solid var(--border); }
+.contact-identity { display:flex; align-items:center; gap:24px; min-width:0; }
+.contact-identity > div { display:grid; gap:8px; min-width:0; }
+.contact-identity input:not([type=file]) { min-width:0; padding:4px 0; border:0; color:var(--secondary); background:transparent; font:inherit; }
+.contact-identity .contact-name-input { color:var(--text)!important; font-size:var(--type-display)!important; font-weight:600!important; }
+.contact-profile-actions { display:flex; gap:6px; }
+.contact-profile-actions button,.contact-sidebar header button { display:grid; place-items:center; width:34px; height:34px; border:0; border-radius:var(--radius-sm); color:var(--muted); background:transparent; cursor:pointer; }
+.contact-profile-actions button:hover,.contact-sidebar header button:hover { color:var(--text); background:var(--hover); }
+.contact-editor-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 24px; margin:26px 0; }
+.contact-editor-grid label { min-width:0; display:grid; gap:6px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.05em; text-transform:uppercase; }
+.contact-editor-grid label.wide { grid-column:1/-1; }
+.contact-editor-grid input,.contact-editor-grid textarea,.contact-participant-picker select { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; letter-spacing:normal; text-transform:none; resize:vertical; }
+.contact-save-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 0; border-top:1px solid var(--border); color:var(--muted); font-size:var(--type-sm); }
+.contact-save-row > div { display:flex; align-items:center; gap:9px; }
+.contact-primary-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:34px; padding:0 12px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); color:var(--text); background:var(--hover); font:inherit; cursor:pointer; }
+.contact-primary-button:hover { border-color:var(--accent); }
+.contact-primary-button:disabled { opacity:.55; cursor:wait; }
+.contact-enrichment,.contact-timeline { margin-top:26px; }
+.contact-enrichment > header,.contact-enrichment > header > div { display:flex; align-items:center; gap:8px; }
+.contact-enrichment > header { justify-content:space-between; }
+.contact-enrichment > header button,.contact-enrichment article button { display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
+.contact-enrichment article { display:flex; justify-content:space-between; gap:14px; margin-top:10px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-md); }
+.contact-enrichment article > div { display:grid; gap:5px; }
+.contact-enrichment article span,.contact-enrichment article small { color:var(--muted); font-size:var(--type-xs); }
+.contact-enrichment blockquote { margin:4px 0 0; color:var(--secondary); font-size:var(--type-sm); }
+.contact-suggestion-source { width:max-content; padding:0; border:0; color:var(--accent); background:transparent; font:inherit; font-size:var(--type-xs); text-decoration:underline; cursor:pointer; }
+.contact-timeline h2 { font-size:var(--type-ui); font-weight:600; }
+.contact-timeline > button,.contact-sidebar-history > button { width:100%; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 9px; border:0; border-bottom:1px solid var(--border); color:var(--text); background:transparent; text-align:left; cursor:pointer; }
+.contact-timeline > button span,.contact-sidebar-history > button { min-width:0; }
+.contact-timeline > button span { display:grid; gap:4px; }
+.contact-timeline small,.contact-sidebar-history small { color:var(--muted); font-size:var(--type-xs); }
+.contact-links,.contact-sidebar-links { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 18px; }
+.contact-links button,.contact-sidebar-links button { display:grid; gap:3px; max-width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--accent); background:var(--background); text-align:left; cursor:pointer; }
+.contact-links span { max-width:280px; overflow:hidden; color:var(--muted); font-size:var(--type-xs); text-overflow:ellipsis; white-space:nowrap; }
+.contacts-status,.contacts-empty { padding:12px; color:var(--muted); font-size:var(--type-sm); }
+.contacts-error { color:var(--danger,#b54747); font-size:var(--type-sm); }
+.contacts-empty-state { min-height:320px; display:grid; place-content:center; justify-items:center; gap:8px; color:var(--muted); }
+.contact-sidebar { grid-column:4; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:auto; padding:14px 16px; border-left:1px solid var(--border); background:var(--surface); }
+.contact-sidebar > header { display:flex; justify-content:space-between; align-items:center; min-height:32px; }
+.contact-participant-picker { display:grid; gap:6px; margin:14px 0; color:var(--muted); font-size:var(--type-xs); }
+.contact-sidebar-identity { display:grid; justify-items:center; gap:8px; padding:22px 0 16px; text-align:center; }
+.contact-sidebar-identity h2 { margin:4px 0 0; color:var(--text); font-size:var(--type-heading); font-weight:600; overflow-wrap:anywhere; }
+.contact-sidebar-identity a { display:flex; align-items:center; gap:6px; color:var(--secondary); text-decoration:none; overflow-wrap:anywhere; }
+.contact-sidebar-identity p,.contact-sidebar-bio,.contact-sidebar-notes p { margin:0; color:var(--muted); line-height:1.5; }
+.contact-sidebar-bio { padding:12px 0; color:var(--secondary); }
+.contact-sidebar-notes,.contact-sidebar-history { margin-top:16px; }
+.contact-sidebar-notes h3,.contact-sidebar-history h3 { margin:0 0 8px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.06em; text-transform:uppercase; }
+.contact-sidebar-history > button { display:grid; gap:4px; }
+.contact-sidebar-save,.contact-sidebar-favorite { display:flex; align-items:center; justify-content:center; gap:7px; margin-top:16px; padding:9px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
 .tasks-sidebar-header {
   min-height: 90px;
   display: flex;
@@ -1698,6 +1772,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   .app-shell.tasks-open {
     grid-template-columns: 58px minmax(0, 1fr);
   }
+  .app-shell.contacts-open { grid-template-columns:58px minmax(0,1fr); }
   .calendar-week { grid-template-columns: minmax(0, 1fr); }
   .calendar-week-side { display: none; }
   .calendar-sidebar {
@@ -1707,6 +1782,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
     width: min(360px, calc(100vw - 58px));
     box-shadow: -12px 0 36px var(--shadow);
   }
+  .contact-sidebar { position:fixed; inset:0 0 0 auto; z-index:var(--z-drawer); width:min(360px,calc(100vw - 58px)); box-shadow:-12px 0 36px var(--shadow); }
   .tasks-sidebar {
     position: fixed;
     inset: 0 0 0 auto;

@@ -15,6 +15,7 @@ export type AiFeatureFlags = {
   draftAssist: boolean;
   summarize: boolean;
   actionExtraction: boolean;
+  contactEnrichment: boolean;
 };
 
 export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] =
@@ -24,6 +25,7 @@ export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
   draftAssist: false,
   summarize: false,
   actionExtraction: false,
+  contactEnrichment: false,
 };
 
 export const AI_MODEL_PLACEHOLDERS = Object.fromEntries(
@@ -133,6 +135,7 @@ export function readAiFeatures(): AiFeatureFlags {
         draftAssist: saved.draftAssist === true,
         summarize: saved.summarize === true,
         actionExtraction: saved.actionExtraction === true,
+        contactEnrichment: saved.contactEnrichment === true,
       };
     }
   } catch {

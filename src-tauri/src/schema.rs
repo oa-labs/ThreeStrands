@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 37;
+pub(crate) const LATEST_VERSION: i64 = 40;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1145,6 +1145,70 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         }
         tx.pragma_update(None, "user_version", 37).map_err(error)?;
     }
+    if version < 38 {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS contacts (
+                id TEXT PRIMARY KEY,
+                display_name TEXT,
+                role TEXT,
+                company TEXT,
+                location TEXT,
+                bio TEXT,
+                notes TEXT,
+                links_json TEXT NOT NULL DEFAULT '[]',
+                photo_data TEXT,
+                favorite INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS contact_addresses (
+                contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+                email TEXT NOT NULL UNIQUE,
+                PRIMARY KEY(contact_id, email)
+            );
+            CREATE INDEX IF NOT EXISTS contacts_favorite_updated ON contacts(favorite, updated_at DESC);
+            CREATE TEMP TABLE legacy_contact_map(email TEXT PRIMARY KEY, contact_id TEXT NOT NULL);
+            INSERT INTO legacy_contact_map(email,contact_id)
+            SELECT lower(email), 'legacy:' || lower(hex(randomblob(16))) FROM pinned_contacts GROUP BY lower(email);
+            INSERT OR IGNORE INTO contacts(id, display_name, role, company, location, bio, notes,
+                links_json, photo_data, favorite, updated_at)
+            SELECT map.contact_id, max(p.display_name), NULL, NULL, NULL, NULL, NULL,
+                '[]', NULL, 1, max(p.pinned_at) FROM pinned_contacts p JOIN legacy_contact_map map ON map.email=lower(p.email) GROUP BY map.contact_id;
+            INSERT OR IGNORE INTO contact_addresses(contact_id, email)
+            SELECT map.contact_id, map.email FROM legacy_contact_map map;
+            DROP TABLE legacy_contact_map;
+            PRAGMA user_version=38;",
+        ).map_err(error)?;
+    }
+    if version < 39 {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS contact_interactions (
+                message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                account_id TEXT NOT NULL,
+                email TEXT NOT NULL,
+                display_name TEXT,
+                direction TEXT NOT NULL CHECK(direction IN ('sent','received')),
+                sent_at TEXT NOT NULL,
+                PRIMARY KEY(message_id,email,direction)
+            );
+            CREATE INDEX IF NOT EXISTS contact_interactions_account_email_time ON contact_interactions(account_id,email,sent_at DESC);
+            CREATE INDEX IF NOT EXISTS contact_interactions_email_time ON contact_interactions(email,sent_at DESC);
+            CREATE INDEX IF NOT EXISTS contact_interactions_thread ON contact_interactions(thread_id,sent_at DESC);
+            PRAGMA user_version=39;",
+        ).map_err(error)?;
+    }
+    if version < 40 {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pending_entity_materializations (
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(entity_type, entity_id)
+            );
+            PRAGMA user_version=40;",
+        ).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1251,6 +1315,7 @@ mod tests {
             "sync_local_state",
             "sync_remote_states",
             "sync_retired_objects",
+            "pending_entity_materializations",
         ] {
             connection
                 .execute(&format!("SELECT * FROM {table}"), [])
@@ -1263,6 +1328,19 @@ mod tests {
             .query_row("SELECT generation FROM sync_local_state WHERE id=1", [], |row| row.get(0))
             .unwrap();
         assert_eq!(generation, 0);
+    }
+
+    #[test]
+    fn v38_migrates_legacy_pinned_contacts_into_profiles() {
+        let mut connection=unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute("INSERT INTO pinned_contacts(account_id,email,display_name,pinned_at) VALUES('you@example.com','jane@example.com','Jane Doe','2026-01-01T00:00:00Z')",[]).unwrap();
+        connection.pragma_update(None,"user_version",37).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let name:String=connection.query_row("SELECT c.display_name FROM contacts c JOIN contact_addresses a ON a.contact_id=c.id WHERE a.email='jane@example.com'",[],|row|row.get(0)).unwrap();
+        let email:String=connection.query_row("SELECT email FROM contact_addresses WHERE email='jane@example.com'",[],|row|row.get(0)).unwrap();
+        assert_eq!(name,"Jane Doe");
+        assert_eq!(email,"jane@example.com");
     }
 
     #[test]

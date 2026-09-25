@@ -15,6 +15,7 @@ use keyring::Entry;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use threestrands_sync_protocol::EntityType;
+use crate::models::ContactRecord;
 
 use crate::{
     db::{Database, DbResult},
@@ -80,6 +81,7 @@ impl Database {
                 EntityType::Task => self.delete_synced_row("DELETE FROM tasks WHERE id=?1", entity_id)?,
                 EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
+                EntityType::Contact => self.delete_contact_profile(entity_id)?,
                 EntityType::MailAccount => {
                     clear_provider_credential("app.threestrands.mail", entity_id)?;
                     if self.get_account(entity_id)?.is_some() {
@@ -105,6 +107,7 @@ impl Database {
                 EntityType::SplitInbox => {
                     self.upsert_synced_split(serde_json::from_value(payload.clone()).map_err(display)?)?
                 }
+                EntityType::Contact => self.upsert_synced_contact(payload)?,
                 EntityType::MailAccount => self.upsert_synced_account(payload)?,
                 EntityType::CalendarAccount => self.upsert_synced_calendar(payload)?,
                 EntityType::CalendarSelection => self.upsert_synced_calendar_selection(payload)?,
@@ -165,6 +168,15 @@ impl Database {
             )?;
             Ok(())
         })
+    }
+
+    fn upsert_synced_contact(&self, value: &Value) -> DbResult<()> {
+        let item: ContactRecord = serde_json::from_value(value.clone()).map_err(display)?;
+        self.save_contact_profile(&crate::models::SaveContactRequest {
+            id:Some(item.id),display_name:item.display_name,role:item.role,company:item.company,
+            location:item.location,bio:item.bio,notes:item.notes,links:item.links,
+            photo_data:item.photo_data,favorite:item.favorite,addresses:item.addresses,
+        }).map(|_|())
     }
 
     fn upsert_synced_snippet(&self, item: Snippet) -> DbResult<()> {

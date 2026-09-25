@@ -195,6 +195,9 @@ impl Database {
                 repaired += 1;
             }
         }
+        for contact in self.list_saved_contact_profiles()? {
+            repaired += usize::from(self.reconcile_one_entity(EntityType::Contact, &contact.id, serde_json::to_value(crate::models::ContactRecord::from(&contact)).map_err(display)?)?);
+        }
         for split in self.list_split_inboxes()? {
             if self.reconcile_one_entity(EntityType::SplitInbox, &split.id, serde_json::to_value(&split).map_err(display)?)? {
                 repaired += 1;
@@ -1132,7 +1135,12 @@ async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &
 
 impl Database {
     pub(crate) fn materialize_touched_entities(&self, touched: &[(EntityType, String)]) -> Result<(), String> {
+        // A merged snapshot is acknowledged even when an individual local
+        // projection cannot yet be applied. Keep those entities durable and
+        // retry them on every pull cycle, even when the peer has no newer
+        // snapshot to send.
         let mut pending: Vec<(EntityType, String)> = touched.to_vec();
+        pending.extend(self.pending_entity_materializations()?);
         pending.sort_by(|a, b| a.1.cmp(&b.1));
         pending.dedup();
         if pending.is_empty() {
@@ -1142,12 +1150,27 @@ impl Database {
             // Two passes: a dependency that materializes within this same
             // batch (e.g. a calendar account and its selection arriving
             // together) becomes ready on the second pass.
+            let mut failed_this_batch = Vec::<(EntityType, String)>::new();
             for _ in 0..2 {
                 let mut still_pending = Vec::new();
                 for (entity_type, entity_id) in &pending {
-                    match self.materialize_one_entity(*entity_type, entity_id)? {
-                        ProjectionReadiness::Ready => {}
-                        ProjectionReadiness::Pending { .. } => still_pending.push((*entity_type, entity_id.clone())),
+                    let key=(*entity_type,entity_id.clone());
+                    if failed_this_batch.contains(&key) {
+                        still_pending.push(key);
+                        continue;
+                    }
+                    match self.materialize_one_entity(*entity_type, entity_id) {
+                        Ok(ProjectionReadiness::Ready) => self.clear_pending_entity_materialization(*entity_type,entity_id)?,
+                        Ok(ProjectionReadiness::Pending { reason }) => {
+                            self.remember_pending_entity_materialization(*entity_type,entity_id,&reason)?;
+                            still_pending.push(key);
+                        }
+                        Err(error) => {
+                            log::warn!(target:"replicated_sync", "materializing remote {} {} failed; queued for retry: {error}",entity_type.as_str(),entity_id);
+                            self.remember_pending_entity_materialization(*entity_type,entity_id,&error)?;
+                            failed_this_batch.push(key.clone());
+                            still_pending.push(key);
+                        }
                     }
                 }
                 let done = still_pending.len() == pending.len();
@@ -1158,6 +1181,35 @@ impl Database {
             }
             Ok(())
         })
+    }
+
+    fn pending_entity_materializations(&self)->Result<Vec<(EntityType,String)>,String>{
+        let rows=self.with_connection(|connection|{
+            let mut statement=connection.prepare("SELECT entity_type,entity_id FROM pending_entity_materializations ORDER BY updated_at")?;
+            let rows=statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?;
+            rows.collect::<Result<Vec<_>,_>>().map_err(Into::into)
+        }).map_err(display)?;
+        Ok(rows.into_iter().filter_map(|(kind,id)|{
+            serde_json::from_value::<EntityType>(Value::String(kind.clone())).ok().map(|entity_type|(entity_type,id)).or_else(||{
+                log::warn!(target:"replicated_sync", "ignoring pending materialization for unknown entity type {kind}");
+                None
+            })
+        }).collect())
+    }
+
+    fn remember_pending_entity_materialization(&self,entity_type:EntityType,entity_id:&str,reason:&str)->Result<(),String>{
+        let reason=reason.chars().take(2_000).collect::<String>();
+        self.with_connection(|connection|{
+            connection.execute("INSERT INTO pending_entity_materializations(entity_type,entity_id,reason,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(entity_type,entity_id) DO UPDATE SET reason=excluded.reason,updated_at=excluded.updated_at",params![entity_type.as_str(),entity_id,reason,Utc::now().to_rfc3339()])?;
+            Ok(())
+        }).map_err(display)
+    }
+
+    fn clear_pending_entity_materialization(&self,entity_type:EntityType,entity_id:&str)->Result<(),String>{
+        self.with_connection(|connection|{
+            connection.execute("DELETE FROM pending_entity_materializations WHERE entity_type=?1 AND entity_id=?2",params![entity_type.as_str(),entity_id])?;
+            Ok(())
+        }).map_err(display)
     }
 
     fn materialize_one_entity(&self, entity_type: EntityType, entity_id: &str) -> Result<ProjectionReadiness, String> {
@@ -1302,6 +1354,11 @@ pub async fn pull_from_transports(
             }
         }
     }
+
+    // Retry projections left pending by an earlier merged snapshot. This is
+    // independent of head sequence so an unchanged peer can still converge
+    // after a local ownership conflict is resolved.
+    database.materialize_touched_entities(&[])?;
 
     let instance_ids: Vec<TransportInstanceId> = transports.iter().map(|transport| transport.instance_id()).collect();
     database.enqueue_repair_deliveries(&instance_ids)?;
@@ -2173,6 +2230,47 @@ mod replicator_tests {
 
     fn snippet_payload(id: &str, name: &str) -> Value {
         serde_json::json!({"id": id, "name": name, "body": "body", "createdAt": "2026-01-01T00:00:00Z"})
+    }
+
+    #[test]
+    fn conflicted_contact_does_not_block_other_entities_and_is_retried_later() {
+        let db=Database::open_memory();
+        let owner=db.save_contact_profile(&crate::models::SaveContactRequest{
+            id:Some("local-owner".into()),display_name:Some("Local owner".into()),role:None,company:None,
+            location:None,bio:None,notes:Some("Keep local profile".into()),links:vec![],photo_data:None,
+            favorite:false,addresses:vec!["shared@example.com".into()],
+        }).unwrap();
+        let contact=json!({"id":"remote-contact","displayName":"Remote person","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["shared@example.com"]});
+        db.record_replicated_write(
+            EntityType::Contact,"remote-contact",
+            &fields(&["id","displayName","role","company","location","bio","notes","links","photoData","favorite","addresses"]),
+            &contact,
+        ).unwrap();
+        db.record_replicated_write(
+            EntityType::Snippet,"remote-snippet",
+            &fields(&["id","name","body","createdAt"]),
+            &snippet_payload("remote-snippet","Materialized despite contact conflict"),
+        ).unwrap();
+
+        db.materialize_touched_entities(&[(EntityType::Contact,"remote-contact".into()),(EntityType::Snippet,"remote-snippet".into())]).unwrap();
+        let snippet:Option<String>=db.connection().unwrap().query_row("SELECT name FROM snippets WHERE id='remote-snippet'",[],|row|row.get(0)).unwrap();
+        assert_eq!(snippet.as_deref(),Some("Materialized despite contact conflict"));
+        let queued:i64=db.connection().unwrap().query_row("SELECT COUNT(*) FROM pending_entity_materializations WHERE entity_type='contact' AND entity_id='remote-contact'",[],|row|row.get(0)).unwrap();
+        assert_eq!(queued,1);
+        assert!(db.get_contact_profile("remote-contact").unwrap().is_none());
+
+        db.save_contact_profile(&crate::models::SaveContactRequest{
+            id:Some(owner.id),display_name:Some("Local owner".into()),role:None,company:None,
+            location:None,bio:None,notes:Some("Keep local profile".into()),links:vec![],photo_data:None,
+            favorite:false,addresses:vec!["owner@example.com".into()],
+        }).unwrap();
+        // No newer remote snapshot is needed; pending projection state is
+        // retried even when this call has no newly touched entities.
+        db.materialize_touched_entities(&[]).unwrap();
+        let queued:i64=db.connection().unwrap().query_row("SELECT COUNT(*) FROM pending_entity_materializations WHERE entity_type='contact' AND entity_id='remote-contact'",[],|row|row.get(0)).unwrap();
+        assert_eq!(queued,0);
+        let remote=db.get_contact_profile("remote-contact").unwrap().unwrap();
+        assert_eq!(remote.addresses,vec!["shared@example.com"]);
     }
 
     /// Synthetic key material matching whatever device id

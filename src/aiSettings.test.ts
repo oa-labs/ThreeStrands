@@ -78,6 +78,11 @@ describe("AI provider preferences", () => {
     saveAiFeatures({ ...DEFAULT_AI_FEATURES, summarize: true });
     expect(readAiFeatures()).toEqual({ ...DEFAULT_AI_FEATURES, summarize: true });
   });
+
+  it("keeps contact enrichment disabled when restoring older feature settings",()=>{
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({draftAssist:true,summarize:false,actionExtraction:true}));
+    expect(readAiFeatures().contactEnrichment).toBe(false);
+  });
 });
 
 describe("AI API key storage (non-Tauri fallback)", () => {

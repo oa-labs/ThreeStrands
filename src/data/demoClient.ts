@@ -9,6 +9,9 @@ import type {
   CalendarAccount,
   CalendarOption,
   ContactSuggestion,
+  ContactProfile,
+  ContactTimelineItem,
+  SaveContactRequest,
   CreateTaskRequest,
   Label,
   ReplyAssistContext,
@@ -139,6 +142,7 @@ let contacts: ContactSuggestion[] = [
   { email: "product@example.com", displayName: "Product Team", sentCount: 4, receivedCount: 9, lastInteractedAt: "2026-03-05T14:15:00Z", pinned: false },
   { email: "alex@example.com", displayName: "Alex Rivera", sentCount: 1, receivedCount: 1, lastInteractedAt: "2026-02-20T09:00:00Z", pinned: false },
 ];
+let savedContactProfiles: ContactProfile[] = [];
 
 const status: SyncStatus = {
   state: "idle",
@@ -484,6 +488,49 @@ export const demoClient: MailClient = {
     );
     return structuredClone(matches.slice(0, limit));
   },
+  async listContactProfiles(query = "", limit = 500) {
+    const byEmail = new Map<string, ContactProfile>();
+    for (const item of contacts.filter((contact) => contact.sentCount > 0 || contact.pinned)) {
+      const email = item.email.toLocaleLowerCase();
+      if (savedContactProfiles.some((profile) => profile.addresses.includes(email))) continue;
+      byEmail.set(email, { id: `derived:${email}`, displayName: item.displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: item.pinned, addresses: [email], sentCount: item.sentCount, receivedCount: item.receivedCount, lastInteractedAt: item.lastInteractedAt });
+    }
+    const values = [...savedContactProfiles, ...byEmail.values()];
+    const needle = query.trim().toLocaleLowerCase();
+    return structuredClone(values.filter((profile) => !needle || `${profile.displayName ?? ""} ${profile.addresses.join(" ")} ${profile.company ?? ""} ${profile.role ?? ""} ${profile.location ?? ""} ${profile.bio ?? ""} ${profile.notes ?? ""}`.toLocaleLowerCase().includes(needle))
+      .sort((a,b) => Number(b.favorite)-Number(a.favorite) || (b.lastInteractedAt ?? "").localeCompare(a.lastInteractedAt ?? "") || (a.displayName ?? a.addresses[0]).localeCompare(b.displayName ?? b.addresses[0])).slice(0,limit));
+  },
+  async getContactProfile(id) {
+    const saved = savedContactProfiles.find((profile) => profile.id === id);
+    if (saved) return structuredClone(saved);
+    const email = id.startsWith("derived:") ? id.slice(8) : id;
+    const suggestion = contacts.find((contact) => contact.email === email);
+    return suggestion ? { id: `derived:${email}`, displayName: suggestion.displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: suggestion.pinned, addresses: [email], sentCount: suggestion.sentCount, receivedCount: suggestion.receivedCount, lastInteractedAt: suggestion.lastInteractedAt } : null;
+  },
+  async saveContactProfile(request: SaveContactRequest) {
+    const addresses = request.addresses.map((address) => address.trim().toLocaleLowerCase());
+    const id = request.id && !request.id.startsWith("derived:") ? request.id : `contact:${addresses[0]}`;
+    if (addresses.some((address) => savedContactProfiles.some((profile) => profile.id !== id && profile.addresses.includes(address)))) throw new Error("That address already belongs to another saved contact.");
+    const previous = savedContactProfiles.find((profile) => profile.id === id);
+    const candidate = { ...request, id, addresses, sentCount: previous?.sentCount ?? 0, receivedCount: previous?.receivedCount ?? 0, lastInteractedAt: previous?.lastInteractedAt ?? null };
+    savedContactProfiles = [...savedContactProfiles.filter((profile) => profile.id !== id), candidate];
+    return structuredClone(candidate);
+  },
+  async deleteContactProfile(id) { savedContactProfiles = savedContactProfiles.filter((profile) => profile.id !== id); },
+  async contactTimeline(id, offset = 0, limit = 30): Promise<ContactTimelineItem[]> {
+    const profile = await demoClient.getContactProfile(id);
+    if (!profile) return [];
+    const target = new Set(profile.addresses.map((address) => address.toLocaleLowerCase()));
+    const items: ContactTimelineItem[] = [];
+    for (const thread of threads) {
+      const detail = await demoClient.getThread(thread.id);
+      const matched = detail.messages.some((message) => [message.sender, ...message.recipients].some((raw) => target.has(parseAddress(raw).email.toLocaleLowerCase())));
+      if (matched) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, snippet: thread.snippet, sentAt: thread.lastMessageAt, labels: thread.labels });
+    }
+    items.sort((a,b) => b.sentAt.localeCompare(a.sentAt));
+    return structuredClone(items.slice(offset, offset + limit));
+  },
+  async enrichContact() { return []; },
   async pinContact(_accountId, email, displayName) {
     const normalized = email.trim().toLocaleLowerCase();
     const existing = contacts.find((contact) => contact.email === normalized);

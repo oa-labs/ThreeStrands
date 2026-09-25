@@ -26,6 +26,7 @@ describe("exportable preferences", () => {
         draftAssist: true,
         summarize: false,
         actionExtraction: false,
+        contactEnrichment: false,
       },
       availabilityPreferences: {
         timeZone: "America/New_York",

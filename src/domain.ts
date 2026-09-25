@@ -235,6 +235,35 @@ export type ContactSuggestion = {
   pinned: boolean;
 };
 
+export type ContactProfile = {
+  id: string;
+  displayName: string | null;
+  role: string | null;
+  company: string | null;
+  location: string | null;
+  bio: string | null;
+  notes: string | null;
+  links: string[];
+  photoData: string | null;
+  favorite: boolean;
+  addresses: string[];
+  sentCount: number;
+  receivedCount: number;
+  lastInteractedAt: string | null;
+};
+
+export type ContactTimelineItem = {
+  threadId: string;
+  accountId: string;
+  subject: string;
+  snippet: string;
+  sentAt: string;
+  labels: string[];
+};
+
+export type SaveContactRequest = Omit<ContactProfile, "sentCount" | "receivedCount" | "lastInteractedAt" | "id"> & { id: string | null };
+export type ContactFieldSuggestion = { field: "displayName" | "role" | "company" | "location" | "bio" | "link"; value: string; sourceMessageId: string; sourceThreadId: string; excerpt: string };
+
 export type ThreadPage = {
   threads: Thread[];
   hasMore: boolean;

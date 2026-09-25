@@ -15,11 +15,11 @@ use crate::{
     correspondence::validate_retention_days,
     db::Database,
     error_text::display,
-    models::{is_known_account_provider, Account, AvailabilityPreferences, Snippet, SplitInbox},
+    models::{is_known_account_provider, Account, AvailabilityPreferences, Snippet, SplitInbox, ContactProfile},
 };
 
 const FORMAT: &str = "dispatch-settings";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const EXTENSION: &str = "dispatch-settings";
 const ARGON_MEMORY_KIB: u32 = 19_456;
 const ARGON_ITERATIONS: u32 = 2;
@@ -27,7 +27,9 @@ const ARGON_PARALLELISM: u32 = 1;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
 const KEY_LEN: usize = 32;
-const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+// 1 GiB accommodates the JSON and encryption base64 overhead of 5,000
+// contacts with maximum-sized photos and bounded profile fields.
+const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_TEXT_LENGTH: usize = 2_048;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -37,6 +39,8 @@ pub struct AiFeaturePreferences {
     pub summarize: bool,
     #[serde(default)]
     pub action_extraction: bool,
+    #[serde(default)]
+    pub contact_enrichment: bool,
     // Version 1 exports originally included this flag. Keep emitting and
     // accepting it so transfers remain compatible across app updates even
     // though the webview no longer exposes the feature.
@@ -194,6 +198,18 @@ impl From<Snippet> for TransferSnippet {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TransferContact {
+    pub id:String,
+    pub display_name:Option<String>, pub role:Option<String>, pub company:Option<String>,
+    pub location:Option<String>, pub bio:Option<String>, pub notes:Option<String>,
+    pub links:Vec<String>, pub photo_data:Option<String>, pub favorite:bool, pub addresses:Vec<String>,
+}
+impl From<ContactProfile> for TransferContact {
+    fn from(c:ContactProfile)->Self { Self{id:c.id,display_name:c.display_name,role:c.role,company:c.company,location:c.location,bio:c.bio,notes:c.notes,links:c.links,photo_data:c.photo_data,favorite:c.favorite,addresses:c.addresses} }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TransferPayload {
@@ -204,6 +220,8 @@ struct TransferPayload {
     split_inboxes: Vec<TransferSplitInbox>,
     #[serde(default)]
     snippets: Vec<TransferSnippet>,
+    #[serde(default)]
+    contacts: Vec<TransferContact>,
     retention_days: Option<i64>,
 }
 
@@ -287,6 +305,19 @@ impl TransferPayload {
                 return Err("The transfer contains an invalid Snippet body".to_string());
             }
         }
+        let mut contact_ids=HashSet::new();
+        let mut addresses=HashSet::new();
+        for contact in &self.contacts {
+            validate_required_text("contact id",&contact.id,128)?;
+            if !contact_ids.insert(&contact.id) || contact.addresses.is_empty() || contact.addresses.len()>100 {return Err("The transfer contains an invalid contact".into())}
+            for email in &contact.addresses {validate_required_text("contact email",email,320)?; if !email.contains('@') || !addresses.insert(email.to_ascii_lowercase()){return Err("The transfer contains a duplicate or invalid contact address".into())}}
+            for (name,value,max) in [("display name",&contact.display_name,200),("role",&contact.role,200),("company",&contact.company,200),("location",&contact.location,200),("bio",&contact.bio,4000),("notes",&contact.notes,8000)] {if let Some(value)=value {validate_required_text(name,value,max)?;}}
+            if contact.links.len()>20 || contact.links.iter().any(|link| {
+                if link.len()>2048 { return true; }
+                match url::Url::parse(link) { Ok(url)=>url.scheme()!="https"||url.host_str().is_none(), Err(_)=>true }
+            }){return Err("The transfer contains an invalid contact link".into())}
+            if let Some(photo)=&contact.photo_data {use base64::{engine::general_purpose::STANDARD,Engine};let bytes=STANDARD.decode(photo).map_err(|_|"The transfer contains an invalid contact photo")?;crate::image_format::validate_contact_photo(&bytes)?;}
+        }
         Ok(())
     }
 }
@@ -310,6 +341,7 @@ pub struct ImportResult {
     pub account_count: usize,
     pub split_inbox_count: usize,
     pub snippet_count: usize,
+    pub contact_count: usize,
 }
 
 pub fn export(
@@ -334,6 +366,7 @@ pub fn export(
         .into_iter()
         .map(TransferSnippet::from)
         .collect();
+    let contacts=database.list_saved_contact_profiles()?.into_iter().map(TransferContact::from).collect();
     let payload = TransferPayload {
         version: VERSION,
         exported_at: Utc::now().to_rfc3339(),
@@ -341,9 +374,11 @@ pub fn export(
         accounts,
         split_inboxes,
         snippets,
+        contacts,
         retention_days: database.retention_days()?,
     };
     let encoded = encrypt(&payload, password)?;
+    validate_export_size(encoded.len() as u64)?;
     let Some(path) = rfd::FileDialog::new()
         .set_title("Export ThreeStrands settings")
         .add_filter("ThreeStrands settings", &[EXTENSION])
@@ -356,6 +391,10 @@ pub fn export(
     };
     fs::write(&path, encoded).map_err(|error| format!("Could not write the export: {error}"))?;
     Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+fn validate_export_size(size:u64)->Result<(),String>{
+    if size>MAX_FILE_BYTES {Err("The settings export exceeds the maximum supported file size".to_string())} else {Ok(())}
 }
 
 pub fn import(database: &Database, password: &str) -> Result<Option<ImportResult>, String> {
@@ -373,6 +412,7 @@ pub fn import(database: &Database, password: &str) -> Result<Option<ImportResult
         &payload.accounts,
         &payload.split_inboxes,
         &payload.snippets,
+        &payload.contacts,
         payload.retention_days,
     )?;
     Ok(Some(ImportResult {
@@ -380,6 +420,7 @@ pub fn import(database: &Database, password: &str) -> Result<Option<ImportResult
         account_count: payload.accounts.len(),
         split_inbox_count: payload.split_inboxes.len(),
         snippet_count: payload.snippets.len(),
+        contact_count: payload.contacts.len(),
     }))
 }
 
@@ -494,6 +535,13 @@ fn validate_required_text(label: &str, value: &str, max_length: usize) -> Result
 mod tests {
     use super::*;
 
+    #[test]
+    fn export_size_validation_matches_the_import_limit() {
+        assert!(validate_export_size(0).is_ok());
+        assert!(validate_export_size(MAX_FILE_BYTES).is_ok());
+        assert!(validate_export_size(MAX_FILE_BYTES+1).is_err());
+    }
+
     fn payload() -> TransferPayload {
         TransferPayload {
             version: VERSION,
@@ -513,6 +561,7 @@ mod tests {
                     draft_assist: false,
                     summarize: false,
                     action_extraction: false,
+                    contact_enrichment: false,
                     classify: false,
                 },
                 availability_preferences: default_availability_preferences(),
@@ -526,6 +575,7 @@ mod tests {
             }],
             split_inboxes: vec![],
             snippets: vec![],
+            contacts: vec![],
             retention_days: Some(90),
         }
     }
@@ -541,12 +591,12 @@ mod tests {
     }
 
     #[test]
-    fn current_envelope_uses_v2() {
+    fn current_envelope_uses_v3() {
         let encoded = encrypt(&payload(), "correct horse").unwrap();
         let envelope: EncryptedEnvelope = serde_json::from_slice(&encoded).unwrap();
 
         assert_eq!(envelope.format, "dispatch-settings");
-        assert_eq!(envelope.version, 2);
+        assert_eq!(envelope.version, 3);
         assert_eq!(
             decrypt(&encoded, "correct horse").unwrap().accounts[0].email,
             "person@example.com"
@@ -567,6 +617,18 @@ mod tests {
         assert_eq!(decoded.preferences.availability_preferences.default_duration_minutes, 30);
         assert!(!decoded.preferences.ai_features.action_extraction);
         decoded.validate().unwrap();
+    }
+
+    #[test]
+    fn version_two_export_imports_with_empty_contacts_and_disabled_contact_ai() {
+        let mut legacy=serde_json::to_value(payload()).unwrap();
+        legacy["version"]=serde_json::json!(2);
+        legacy.as_object_mut().unwrap().remove("contacts");
+        legacy["preferences"]["aiFeatures"].as_object_mut().unwrap().remove("contactEnrichment");
+        let decoded:TransferPayload=serde_json::from_value(legacy).unwrap();
+        decoded.validate().unwrap();
+        assert!(decoded.contacts.is_empty());
+        assert!(!decoded.preferences.ai_features.contact_enrichment);
     }
 
     #[test]

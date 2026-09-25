@@ -20,6 +20,7 @@ pub enum EntityType {
     CalendarSelection,
     Preferences,
     Retention,
+    Contact,
 }
 
 impl EntityType {
@@ -33,6 +34,7 @@ impl EntityType {
             Self::CalendarSelection => "calendar_selection",
             Self::Preferences => "preferences",
             Self::Retention => "retention",
+            Self::Contact => "contact",
         }
     }
 
@@ -86,6 +88,24 @@ impl EntityType {
             Self::Retention => {
                 if !matches!(object.get("days"), Some(Value::Null) | Some(Value::Number(_))) {
                     return Err("Retention days must be a number or null".to_string());
+                }
+            }
+            Self::Contact => {
+                required_string(object, "id", 128)?;
+                optional_string(object, "displayName", 200)?;
+                optional_string(object, "role", 200)?;
+                optional_string(object, "company", 200)?;
+                optional_string(object, "location", 200)?;
+                optional_string(object, "bio", 4_000)?;
+                optional_string(object, "notes", 8_000)?;
+                optional_string(object, "photoData", 90_000)?;
+                let addresses = object.get("addresses").and_then(Value::as_array).ok_or_else(|| "addresses must be an array".to_string())?;
+                if addresses.is_empty() || addresses.len() > 100 || addresses.iter().any(|value| value.as_str().is_none_or(|email| email.len() > 320 || !email.contains('@'))) {
+                    return Err("addresses are invalid".to_string());
+                }
+                let links = object.get("links").and_then(Value::as_array).ok_or_else(|| "links must be an array".to_string())?;
+                if links.len() > 20 || links.iter().any(|value| value.as_str().is_none_or(|link| link.len() > 2_048 || !link.starts_with("https://"))) {
+                    return Err("links are invalid".to_string());
                 }
             }
         }
@@ -193,5 +213,17 @@ mod tests {
         assert!(EntityType::Task.validate_payload(&valid).is_ok());
         let invalid = json!({ "title": "x", "kind": "action", "dueKind": "none", "status": "lost" });
         assert!(EntityType::Task.validate_payload(&invalid).is_err());
+    }
+
+    #[test]
+    fn validates_contact_sync_payload_and_bounded_photo() {
+        let valid=json!({"id":"contact:jane@example.com","displayName":"Jane","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["jane@example.com"],"sentCount":0,"receivedCount":0,"lastInteractedAt":null});
+        assert!(EntityType::Contact.validate_payload(&valid).is_ok());
+        let mut invalid=valid.clone();
+        invalid["addresses"]=json!([]);
+        assert!(EntityType::Contact.validate_payload(&invalid).is_err());
+        invalid=valid;
+        invalid["photoData"]=json!("x".repeat(90_001));
+        assert!(EntityType::Contact.validate_payload(&invalid).is_err());
     }
 }

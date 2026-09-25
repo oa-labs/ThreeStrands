@@ -424,6 +424,74 @@ pub struct ContactSuggestion {
     pub pinned: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactProfile {
+    pub id: String,
+    pub display_name: Option<String>,
+    pub role: Option<String>,
+    pub company: Option<String>,
+    pub location: Option<String>,
+    pub bio: Option<String>,
+    pub notes: Option<String>,
+    pub links: Vec<String>,
+    pub photo_data: Option<String>,
+    pub favorite: bool,
+    pub addresses: Vec<String>,
+    pub sent_count: i64,
+    pub received_count: i64,
+    pub last_interacted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactRecord {
+    pub id:String,
+    pub display_name:Option<String>, pub role:Option<String>, pub company:Option<String>,
+    pub location:Option<String>, pub bio:Option<String>, pub notes:Option<String>,
+    pub links:Vec<String>, pub photo_data:Option<String>, pub favorite:bool, pub addresses:Vec<String>,
+}
+impl From<&ContactProfile> for ContactRecord {
+    fn from(c:&ContactProfile)->Self{Self{id:c.id.clone(),display_name:c.display_name.clone(),role:c.role.clone(),company:c.company.clone(),location:c.location.clone(),bio:c.bio.clone(),notes:c.notes.clone(),links:c.links.clone(),photo_data:c.photo_data.clone(),favorite:c.favorite,addresses:c.addresses.clone()}}
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactTimelineItem {
+    pub thread_id: String,
+    pub account_id: String,
+    pub subject: String,
+    pub snippet: String,
+    pub sent_at: String,
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveContactRequest {
+    pub id: Option<String>,
+    pub display_name: Option<String>,
+    pub role: Option<String>,
+    pub company: Option<String>,
+    pub location: Option<String>,
+    pub bio: Option<String>,
+    pub notes: Option<String>,
+    pub links: Vec<String>,
+    pub photo_data: Option<String>,
+    pub favorite: bool,
+    pub addresses: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactFieldSuggestion {
+    pub field: String,
+    pub value: String,
+    pub source_message_id: String,
+    pub source_thread_id:String,
+    pub excerpt: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SummaryResult {
