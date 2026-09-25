@@ -176,6 +176,29 @@ describe("TaskSidebar", () => {
     expect(screen.getByText("you@example.com", { exact: false })).toBeInTheDocument();
   });
 
+  it("hides the close control and ignores Escape in the workspace variant, like the contacts manager", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    const onClose = vi.fn();
+    render(<TaskSidebar variant="workspace" onClose={onClose} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Close Tasks" })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("shows a close control and dismisses on Escape in the sidebar variant", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    const onClose = vi.fn();
+    render(<TaskSidebar onClose={onClose} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Close Tasks" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
   it("renders a status pill and a clickable evidence quote in the task detail pane", async () => {
     const task: ThreadTask = {
       id: "task-1",

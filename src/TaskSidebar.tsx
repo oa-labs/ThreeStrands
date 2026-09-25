@@ -111,7 +111,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [error, setError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const taskCards = useRef(new Map<string, HTMLElement>());
-  useEscapeDismiss(onClose);
+  useEscapeDismiss(onClose, variant !== "workspace");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -234,7 +234,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {analysis ? <HoverTooltip title={analysisActionLabel}><button type="button" aria-label={analysisActionLabel} onClick={analysis.onAnalyze} disabled={!analysis.ready || analysis.loading}><Sparkles size={17} /></button></HoverTooltip> : null}
           {onCheckSchedule ? <HoverTooltip title="Check schedule"><button type="button" aria-label="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button></HoverTooltip> : null}
           {onNewTask && (variant === "workspace" || currentThread) ? <HoverTooltip title="Add task"><button type="button" aria-label="Add task" onClick={onNewTask}><Plus size={17} /></button></HoverTooltip> : null}
-          <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>
+          {variant === "workspace" ? null : <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>}
         </div>
       </header>
       {error ? <p className="form-error tasks-error" role="alert">{error}</p> : null}
