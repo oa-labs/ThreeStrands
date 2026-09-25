@@ -653,6 +653,16 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument();
   });
 
+  it("opens the Contacts Address Book with 4", async () => {
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    fireEvent.keyDown(window, { key: "4" });
+
+    expect(await screen.findByRole("heading", { name: "Contacts" })).toBeInTheDocument();
+    expect(screen.getByText("Address book")).toBeInTheDocument();
+  });
+
   it("keeps the weekly calendar out of the sidebar and retains today's schedule", async () => {
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });

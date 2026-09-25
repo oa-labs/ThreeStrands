@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
@@ -7,6 +7,8 @@ import { mailClient } from "./data/client";
 vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn()}}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:"Founder",company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:3,receivedCount:2,lastInteractedAt:"2026-09-20T00:00:00Z"};
+const favoriteContact:ContactProfile={...jane,id:"contact:favorite@example.com",displayName:"Favorite Person",favorite:true,addresses:["favorite@example.com"],lastInteractedAt:"2026-09-10T00:00:00Z"};
+const newerContact:ContactProfile={...jane,id:"contact:newer@example.com",displayName:"Newer Person",addresses:["newer@example.com"],lastInteractedAt:"2026-09-24T00:00:00Z"};
 
 describe("ContactsWorkspace",()=>{
   beforeEach(()=>{
@@ -31,6 +33,17 @@ describe("ContactsWorkspace",()=>{
     fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Acme"}});
     fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({company:"Acme",addresses:["jane@example.com"]})));
+  });
+
+  it("groups favorites first and sorts each group by recent activity",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,favoriteContact,newerContact]);
+    render(<ContactsWorkspace onOpenThread={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const favorites=screen.getByRole("region",{name:"Favorites"});
+    const recent=screen.getByRole("region",{name:"Recent contacts"});
+    expect(within(favorites).getAllByRole("button").map(button=>button.querySelector(".contact-list-copy strong")?.textContent)).toEqual(["Favorite Person"]);
+    expect(within(recent).getAllByRole("button").map(button=>button.querySelector(".contact-list-copy strong")?.textContent)).toEqual(["Newer Person","Jane Doe"]);
+    expect(screen.getByText("Favorites first · then recent activity")).toBeInTheDocument();
   });
 
   it("requires explicit use of each AI suggestion before saving it",async()=>{

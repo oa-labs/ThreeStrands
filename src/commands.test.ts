@@ -78,6 +78,7 @@ function noopContext(): CommandContext {
     openTasks: () => {},
     openMailView: () => {},
     openTasksView: () => {},
+    openContactsView: () => {},
     openCalendarView: () => {},
     cyclePrimaryView: () => {},
     openActions: () => {},
@@ -145,7 +146,17 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "view.mail")?.keys).toEqual(["1"]);
     expect(commands.find((command) => command.id === "view.calendar")?.keys).toEqual(["2"]);
     expect(commands.find((command) => command.id === "view.tasks")?.keys).toEqual(["3"]);
+    expect(commands.find((command) => command.id === "view.contacts")?.keys).toEqual(["4"]);
     expect(commands.find((command) => command.id === "view.cycle")?.keys).toEqual(["0"]);
+  });
+
+  it("routes the Contacts shortcut to the address book outside the composer", async () => {
+    const command = commands.find((candidate) => candidate.id === "view.contacts");
+    const openContactsView = vi.fn();
+    expect(command?.enabled(noopContext())).toBe(true);
+    expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(false);
+    await command?.run({ ...noopContext(), openContactsView });
+    expect(openContactsView).toHaveBeenCalledTimes(1);
   });
 
   it("matches shortcuts case-insensitively", () => {

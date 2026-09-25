@@ -1674,7 +1674,11 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contacts-search { height:38px; display:flex; align-items:center; gap:8px; margin:0 4px 14px; padding:0 10px; border:1px solid var(--border); border-radius:var(--radius-md); color:var(--muted); background:var(--surface); }
 .contacts-search input { min-width:0; flex:1; border:0; outline:0; color:var(--text); background:transparent; font:inherit; }
 .contacts-search kbd { font-size:var(--type-xs); }
+.contacts-sort-hint { margin:0 8px 14px; color:var(--muted); font-size:var(--type-xs); }
 .contacts-list { display:grid; gap:3px; }
+.contact-list-group { display:grid; gap:3px; }
+.contact-list-group + .contact-list-group { margin-top:14px; }
+.contact-list-group h2 { margin:4px 8px 5px; color:var(--muted); font-size:var(--type-xs); font-weight:650; letter-spacing:.06em; text-transform:uppercase; }
 .contact-list-item { min-width:0; display:flex; align-items:center; gap:11px; padding:10px; border:1px solid transparent; border-radius:var(--radius-md); color:var(--secondary); background:transparent; text-align:left; cursor:pointer; }
 .contact-list-item:hover { background:var(--hover); }
 .contact-list-item.selected { border-color:color-mix(in srgb,var(--accent) 45%,transparent); background:color-mix(in srgb,var(--accent) 8%,var(--surface)); }

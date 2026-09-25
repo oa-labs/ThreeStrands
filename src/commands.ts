@@ -75,6 +75,7 @@ export type CommandContext = {
   openTasks(): void;
   openMailView(): void;
   openTasksView(): void;
+  openContactsView(): void;
   openCalendarView(): void;
   cyclePrimaryView(): void;
   openActions(): void;
@@ -408,6 +409,14 @@ export const commands: Command[] = [
     group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.openTasksView),
+  },
+  {
+    id: "view.contacts",
+    title: "Go to Contacts Address Book",
+    keys: ["4"],
+    group: "Navigation",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(context.openContactsView),
   },
   {
     id: "view.cycle",

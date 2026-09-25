@@ -28,7 +28,7 @@ function cancel(id: string, recover = false) {
   const restored = { ...item.draft, revision: item.draft.revision + 1 };
   store.drafts.push(restored); write(store); return restored;
 }
-export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDetail>, defaultAccount: () => string): CorrespondenceClient {
+export function demoCorrespondence(getSourceThread: (messageId: string) => Promise<ThreadDetail>, defaultAccount: () => string): CorrespondenceClient {
   return {
     async senderIdentity() { return defaultAccount(); },
     async createDraft(mode, sourceId, account) {
@@ -37,7 +37,7 @@ export function demoCorrespondence(getSource: (id: string) => Promise<ThreadDeta
       if (existing) return existing;
       const d: Draft = { id: crypto.randomUUID(), revision: 0, account: account ?? defaultAccount(), mode, sourceId: sourceId ?? null, threadId: null, replyId: null, references: [], to: "", cc: "", bcc: "", subject: "", body: "", followUpTaskId: null, attachments: [], updatedAt: Date.now() };
       if (sourceId) {
-        const detail = await getSource(sourceId.replace(/-message$/, ""));
+        const detail = await getSourceThread(sourceId);
         // Reply/replyAll/forward always send from the thread's owning account, never the "new message" default.
         if (mode !== "new") d.account = account ?? detail.thread.accountId;
         const message = detail.messages.find((m) => m.id === sourceId)!;

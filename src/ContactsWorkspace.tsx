@@ -35,14 +35,14 @@ export function ContactsWorkspace({onOpenThread}:{onOpenThread(id:string):void})
   const loadOlder=async()=>{if(!selectedId)return;try{const next=await mailClient.contactTimeline(selectedId,timeline.length,20);setTimeline(current=>[...current,...next]);setTimelineHasMore(next.length===20);}catch(reason){setError(errorMessage(reason));}};
   const avatar=photoUrl(draft.photoData);const initial=(draft.displayName||draft.addresses[0]||"?").trim().slice(0,1).toLocaleUpperCase();
   const linksText=useMemo(()=>draft.links.join("\n"),[draft.links]);
+  const orderedProfiles=useMemo(()=>[...profiles].sort((a,b)=>Number(b.favorite)-Number(a.favorite)||Date.parse(b.lastInteractedAt??"")-Date.parse(a.lastInteractedAt??"")||(a.displayName||a.addresses[0]||"").localeCompare(b.displayName||b.addresses[0]||"",undefined,{sensitivity:"base"})),[profiles]);
+  const favoriteProfiles=orderedProfiles.filter(item=>item.favorite);const recentProfiles=orderedProfiles.filter(item=>!item.favorite);
   return <section className="contacts-workspace" aria-label="Contacts">
     <header className="contacts-header"><div><span className="eyebrow">Address book</span><h1>Contacts</h1></div><button type="button" className="contact-primary-button" onClick={startNew}><Plus size={16}/>New contact</button></header>
     <div className="contacts-workspace-body">
-      <aside className="contacts-list-panel" aria-label="Contact list"><label className="contacts-search"><Search size={16}/><input ref={searchRef} aria-label="Search contacts" placeholder="Search contacts" value={query} onChange={event=>setQuery(event.target.value)}/><kbd>/</kbd></label>
+      <aside className="contacts-list-panel" aria-label="Contact list"><label className="contacts-search"><Search size={16}/><input ref={searchRef} aria-label="Search contacts" placeholder="Search contacts" value={query} onChange={event=>setQuery(event.target.value)}/><kbd>/</kbd></label><p className="contacts-sort-hint">Favorites first · then recent activity</p>
         {loading?<p className="contacts-status">Loading contacts…</p>:null}{error?<p className="contacts-error" role="alert">{error}</p>:null}
-        <div className="contacts-list">{profiles.map(item=><button key={item.id} type="button" className={`contact-list-item${selectedId===item.id&&!adding?" selected":""}`} aria-pressed={selectedId===item.id&&!adding} onClick={()=>{setAdding(false);setSelectedId(item.id);}}>
-          <span className="contact-avatar small">{photoUrl(item.photoData)?<img src={photoUrl(item.photoData)!} alt=""/>:<span>{(item.displayName||item.addresses[0]||"?").slice(0,1).toLocaleUpperCase()}</span>}</span><span className="contact-list-copy"><strong>{item.displayName||item.addresses[0]}</strong><small>{item.company||item.addresses[0]}</small></span>{item.favorite?<Heart size={14} fill="currentColor"/>:null}
-        </button>)}</div>
+        <div className="contacts-list">{favoriteProfiles.length?<section className="contact-list-group" aria-label="Favorites"><h2>Favorites</h2>{favoriteProfiles.map(item=><ContactListItem key={item.id} item={item} selected={selectedId===item.id&&!adding} onSelect={()=>{setAdding(false);setSelectedId(item.id);}}/>)}</section>:null}{recentProfiles.length?<section className="contact-list-group" aria-label="Recent contacts"><h2>Recent</h2>{recentProfiles.map(item=><ContactListItem key={item.id} item={item} selected={selectedId===item.id&&!adding} onSelect={()=>{setAdding(false);setSelectedId(item.id);}}/>)}</section>:null}</div>
         {!loading&&profiles.length===0?<p className="contacts-empty">No contacts found. People you email will appear here.</p>:null}
       </aside>
       <section className="contact-profile-panel" aria-label="Contact details">
@@ -58,4 +58,11 @@ export function ContactsWorkspace({onOpenThread}:{onOpenThread(id:string):void})
       </section>
     </div>
   </section>;
+}
+
+function ContactListItem({item,selected,onSelect}:{item:ContactProfile;selected:boolean;onSelect():void}){
+  const avatar=photoUrl(item.photoData);
+  return <button type="button" className={`contact-list-item${selected?" selected":""}`} aria-pressed={selected} onClick={onSelect}>
+    <span className="contact-avatar small">{avatar?<img src={avatar} alt=""/>:<span>{(item.displayName||item.addresses[0]||"?").slice(0,1).toLocaleUpperCase()}</span>}</span><span className="contact-list-copy"><strong>{item.displayName||item.addresses[0]}</strong><small>{item.company||item.addresses[0]}</small></span>{item.favorite?<Heart size={14} fill="currentColor"/>:null}
+  </button>;
 }

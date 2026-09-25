@@ -30,6 +30,7 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   openTasks: vi.fn(),
   openMailView: vi.fn(),
   openTasksView: vi.fn(),
+  openContactsView: vi.fn(),
   openCalendarView: vi.fn(),
   cyclePrimaryView: vi.fn(),
   openActions: vi.fn(),

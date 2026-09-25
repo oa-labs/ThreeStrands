@@ -52,6 +52,23 @@ Linux release packages are built in the repository's reproducible Ubuntu
 devcontainer. It produces x86-64 Debian, RPM, and AppImage artifacts whether
 the host is Linux or Apple Silicon. See the [Linux build guide](docs/linux-builds.md).
 
+### Marketing screenshots
+
+The browser preview can run against a fictional showcase mailbox instead of
+the test fixtures. It has two accounts, multi-message threads, calendar,
+tasks, and contacts, and every address is on a reserved `.example` domain:
+
+```sh
+VITE_DEMO_DATASET=showcase pnpm dev  # explore it by hand
+pnpm screenshots                     # capture every scene, light and dark
+```
+
+`pnpm screenshots` writes 2x PNGs to `artifacts/screenshots/<theme>/` with the
+clock frozen to a Tuesday morning. Set `SCREENSHOT_DIR` or `SCREENSHOT_NOW` to
+override either. Scenes live in `tests/screenshots/marketing.spec.ts` and the
+data lives in `src/data/showcaseDataset.ts`. Keep `src/data/demoDataset.ts`
+unchanged, because the test suites depend on it.
+
 To connect Gmail, enable the Gmail API in a Google Cloud project, create an
 OAuth client of type **Desktop app**, and launch the native client with its
 client ID and client-secret value:

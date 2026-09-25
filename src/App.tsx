@@ -1714,6 +1714,7 @@ export function App() {
     openTasks,
     openMailView,
     openTasksView,
+    openContactsView,
     openCalendarView,
     cyclePrimaryView,
     openActions,
@@ -1725,7 +1726,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, cyclePrimaryView, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
