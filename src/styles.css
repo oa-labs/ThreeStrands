@@ -1613,7 +1613,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   background: var(--background);
 }
 .tasks-workspace .tasks-sidebar-header { min-height: 82px; padding-left: 22px; padding-right: clamp(24px, 5vw, 72px); }
-.tasks-workspace-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(300px, 38%) minmax(0, 1fr); }
+.tasks-workspace-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(240px, var(--inbox-width, 400px)) minmax(0, 1fr); }
 .tasks-workspace .tasks-list { border-right: 1px solid var(--border); padding: 20px 16px 40px; }
 .tasks-workspace .tasks-list section + section { margin-top: 28px; }
 .tasks-workspace .task-card { min-height: 66px; margin: 7px 0; border-radius: var(--radius-md); }
@@ -1672,7 +1672,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contacts-workspace { grid-column:2; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:var(--background); }
 .contacts-header { min-height:82px; display:flex; align-items:center; justify-content:space-between; padding:14px 28px; border-bottom:1px solid var(--border); }
 .contacts-header h1 { margin:3px 0 0; font-size:var(--type-heading); font-weight:600; }
-.contacts-workspace-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(260px,340px) minmax(0,1fr); }
+.contacts-workspace-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(240px, var(--inbox-width, 400px)) minmax(0,1fr); }
 .contacts-list-panel { min-height:0; overflow:auto; padding:16px 12px; border-right:1px solid var(--border); }
 .contacts-search { height:38px; display:flex; align-items:center; gap:8px; margin:0 4px 14px; padding:0 10px; border:1px solid var(--border); border-radius:var(--radius-md); color:var(--muted); background:var(--surface); }
 .contacts-search input { min-width:0; flex:1; border:0; outline:0; color:var(--text); background:transparent; font:inherit; }
