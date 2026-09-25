@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { pullSyncedPreferences, queuePortablePreferences } from "./syncedPreferences";
+import { pullSyncedPreferences, queuePortablePreferences, queuePortablePreferencesAndWait } from "./syncedPreferences";
 import { DEFAULT_AI_FEATURES, readAiFeatures, saveAiFeatures } from "./aiSettings";
 
 describe("synced preferences data boundary", () => {
@@ -99,6 +99,16 @@ describe("synced preferences data boundary", () => {
     expect(localStorage.getItem("threestrands.fontScale")).toBe("120");
   });
 
+  it("keeps contact enrichment on when an older replica omits that feature", async () => {
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, contactEnrichment: true });
+    vi.mocked(invoke).mockResolvedValue({
+      aiFeatures: { draftAssist: false, summarize: true, actionExtraction: false },
+    });
+
+    expect(await pullSyncedPreferences()).toBe(true);
+    expect(readAiFeatures()).toMatchObject({ summarize: true, contactEnrichment: true });
+  });
+
   it("preserves a feature setting changed while a synced preference read is in flight", async () => {
     let resolvePreferences!: (value: unknown) => void;
     vi.mocked(invoke).mockImplementation(() => new Promise((resolve) => { resolvePreferences = resolve; }));
@@ -113,5 +123,56 @@ describe("synced preferences data boundary", () => {
     expect(await pulling).toBe(true);
     expect(readAiFeatures().contactEnrichment).toBe(true);
     expect(localStorage.getItem("threestrands.fontScale")).toBe("120");
+  });
+
+  it("waits for a queued feature change before reading synced preferences", async () => {
+    let resolveWrite!: () => void;
+    let stored: unknown = { aiFeatures: { ...DEFAULT_AI_FEATURES } };
+    vi.mocked(invoke).mockImplementation((command, args) => {
+      if (command === "update_synced_preferences") {
+        return new Promise<void>((resolve) => {
+          resolveWrite = () => { stored = (args as { preferences: unknown }).preferences; resolve(); };
+        });
+      }
+      if (command === "synced_preferences") return Promise.resolve(stored);
+      return Promise.resolve(undefined);
+    });
+
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, contactEnrichment: true });
+    const queued = queuePortablePreferencesAndWait();
+    const pulling = pullSyncedPreferences();
+    expect(invoke).not.toHaveBeenCalledWith("synced_preferences");
+
+    resolveWrite();
+    await queued;
+    expect(await pulling).toBe(true);
+    expect(readAiFeatures().contactEnrichment).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("synced_preferences");
+  });
+
+  it("writes rapid feature changes in the order they were queued", async () => {
+    let resolveFirst!: () => void;
+    let writeCount = 0;
+    vi.mocked(invoke).mockImplementation((command) => {
+      if (command !== "update_synced_preferences") return Promise.resolve(null);
+      writeCount++;
+      if (writeCount === 1) {
+        return new Promise<void>((resolve) => { resolveFirst = resolve; });
+      }
+      return Promise.resolve();
+    });
+
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, contactEnrichment: true });
+    const first = queuePortablePreferencesAndWait();
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, contactEnrichment: false });
+    const second = queuePortablePreferencesAndWait();
+    expect(vi.mocked(invoke).mock.calls.filter(([name]) => name === "update_synced_preferences")).toHaveLength(1);
+
+    resolveFirst();
+    await Promise.all([first, second]);
+    const writes = vi.mocked(invoke).mock.calls.filter(([name]) => name === "update_synced_preferences");
+    expect(writes).toHaveLength(2);
+    expect((writes[0][1] as { preferences: { aiFeatures: { contactEnrichment: boolean } } }).preferences.aiFeatures.contactEnrichment).toBe(true);
+    expect((writes[1][1] as { preferences: { aiFeatures: { contactEnrichment: boolean } } }).preferences.aiFeatures.contactEnrichment).toBe(false);
   });
 });

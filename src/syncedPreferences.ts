@@ -5,6 +5,8 @@ function isDesktop(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+const pendingWrites = new Set<Promise<void>>();
+
 /**
  * Records this device's portable preferences for cross-device sync. The
  * backend ignores the call unless replicated sync is active. Appearance and
@@ -24,12 +26,26 @@ export async function queuePortablePreferencesAndWait(): Promise<void> {
     accent: _deviceAccent,
     ...preferences
   } = readExportablePreferences();
-  await invoke("update_synced_preferences", { preferences });
+  const earlierWrites = [...pendingWrites];
+  const write = (async () => {
+    // Keep rapid setting changes in the order the user made them.
+    if (earlierWrites.length) await Promise.allSettled(earlierWrites);
+    await invoke<void>("update_synced_preferences", { preferences });
+  })();
+  pendingWrites.add(write);
+  try {
+    await write;
+  } finally {
+    pendingWrites.delete(write);
+  }
 }
 
 /** Applies portable preferences synchronized from another device, if any. */
 export async function pullSyncedPreferences(): Promise<boolean> {
   if (!isDesktop()) return false;
+  // A status event can arrive while a settings change is still being written.
+  // Read after that write, so the pull cannot restore the previous value.
+  while (pendingWrites.size) await Promise.allSettled([...pendingWrites]);
   const beforePull = readExportablePreferences();
   // Older replicas may still contain theme, accent, and selectedAccountId.
   // Keep all three local even when reading a preference record produced
@@ -49,6 +65,11 @@ export async function pullSyncedPreferences(): Promise<boolean> {
     accent: local.accent,
     selectedAccountId: local.selectedAccountId,
   };
+  // Older devices may send an aiFeatures object without newer flags. An
+  // omitted flag carries no change, so retain its value on this device.
+  if (preferences.aiFeatures) {
+    merged.aiFeatures = { ...local.aiFeatures, ...preferences.aiFeatures };
+  }
   for (const key of changedDuringPull) Object.assign(merged, { [key]: local[key] });
   applyExportablePreferences(merged);
   return true;

@@ -1647,11 +1647,12 @@ function AccountColorInput({
   );
 }
 
-function AiProviderSettings({ onChange }: { onChange?: () => void }) {
+export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const [provider, setProvider] = useState(readAiProvider);
   const [model, setModel] = useState(readAiModel);
   const [endpoint, setEndpoint] = useState(readAiEndpoint);
   const [features, setFeatures] = useState<AiFeatureFlags>(readAiFeatures);
+  const featuresRef = useRef(features);
   const [keyConfigured, setKeyConfigured] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1664,11 +1665,10 @@ function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   }, []);
 
   const updateFeature = (flag: keyof AiFeatureFlags, value: boolean) => {
-    setFeatures((current) => {
-      const next = { ...current, [flag]: value };
-      saveAiFeatures(next);
-      return next;
-    });
+    const next = { ...featuresRef.current, [flag]: value };
+    featuresRef.current = next;
+    saveAiFeatures(next);
+    setFeatures(next);
     onChange?.();
   };
 
