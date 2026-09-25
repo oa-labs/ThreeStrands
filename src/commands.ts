@@ -3,7 +3,7 @@ import type { SplitInbox } from "./domain";
 
 export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox" | "split";
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
-export type FocusedPane = "mail" | "tasks";
+export type FocusedPane = "mail" | "tasks" | "contacts";
 
 export type CommandContext = {
   interactionScope: InteractionScope;

@@ -229,4 +229,29 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(screen.getByRole("button",{name:"Confirm"}));
     await waitFor(()=>expect(mailClient.deleteContactProfile).toHaveBeenCalledWith(jane.id));
   });
+
+  it("moves the selection through the ordered contact list with arrow keys",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,favoriteContact,newerContact]);
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===favoriteContact.id?favoriteContact:id===newerContact.id?newerContact:jane);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+
+    fireEvent.keyDown(window,{key:"ArrowUp"});
+    await screen.findByDisplayValue("Newer Person");
+    expect(screen.getByRole("button",{name:/Newer Person/})).toHaveAttribute("aria-pressed","true");
+
+    fireEvent.keyDown(window,{key:"ArrowUp"});
+    await screen.findByDisplayValue("Favorite Person");
+
+    fireEvent.keyDown(window,{key:"ArrowUp"});
+    expect(screen.getByDisplayValue("Favorite Person")).toBeInTheDocument();
+
+    fireEvent.keyDown(window,{key:"ArrowDown"});
+    await screen.findByDisplayValue("Newer Person");
+
+    const search=screen.getByRole("textbox",{name:"Search contacts"});
+    search.focus();
+    fireEvent.keyDown(search,{key:"ArrowDown"});
+    expect(screen.getByDisplayValue("Newer Person")).toBeInTheDocument();
+  });
 });

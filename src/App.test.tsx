@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountSwitcher, App, NOTICE_TIMEOUT_MS } from "./App";
 import { mailClient } from "./data/client";
+import type { ThreadTask } from "./domain";
 import { FOREGROUND_DEBOUNCE_MS, FOREGROUND_IDLE_MS } from "./foregroundRefresh";
 
 const demoThreadIds = ["welcome", "roadmap", "privacy"];
@@ -612,18 +613,37 @@ describe("keyboard-first task and action workspaces", () => {
   });
 
   it("switches directly between mail and task views while 0 has no effect", async () => {
+    let taskStore: ThreadTask[] = [];
+    const listTasks = vi.spyOn(mailClient, "listTasks").mockImplementation(async () => taskStore);
+    const createTask = vi.spyOn(mailClient, "createTask").mockImplementation(async (request) => {
+      const task = {
+      id: "task-title-first", accountId: "demo@example.com", threadId: null, sourceMessageId: null,
+      subjectSnapshot: null, title: request.title, notes: null, kind: "action", dueKind: "none",
+      dueValue: null, timeZone: null, repeatIntervalDays: null, status: "open", completionSource: null,
+      evidenceText: null, waitAfter: null, createdAt: "2026-09-19T10:00:00Z", updatedAt: "2026-09-19T10:00:00Z", completedAt: null,
+      } satisfies ThreadTask;
+      taskStore = [task];
+      return task;
+    });
+    try {
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
 
     fireEvent.keyDown(window, { key: "3" });
-    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
+    const workspace = screen.getByRole("region", { name: "Tasks" });
+    expect(workspace).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "d" });
-    const taskDialog = await screen.findByRole("dialog", { name: "Add Task" });
-    expect(within(taskDialog).getByRole("textbox", { name: "Task" })).toHaveValue("");
-    expect(within(taskDialog).queryByText(/^From:/)).not.toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
+    const titleField = await within(workspace).findByRole("textbox", { name: "Task title" });
+    expect(titleField).toHaveValue("");
+    fireEvent.change(titleField, { target: { value: "Prepare launch notes" } });
+    const quickAdd = workspace.querySelector(".task-quick-add")!;
+    fireEvent.click(within(quickAdd).getByRole("button", { name: "Add task" }));
+    await waitFor(() => expect(createTask).toHaveBeenCalledWith({
+      accountId: "demo@example.com", threadId: null, subjectSnapshot: null, title: "Prepare launch notes", kind: "action",
+    }));
+    expect(await within(workspace).findByRole("heading", { name: "Prepare launch notes" })).toBeInTheDocument();
+    expect(within(workspace).getByRole("button", { name: "Add task" })).not.toHaveAttribute("title");
 
     fireEvent.keyDown(window, { key: "0" });
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
@@ -635,6 +655,10 @@ describe("keyboard-first task and action workspaces", () => {
     fireEvent.keyDown(window, { key: "0" });
     expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
+    } finally {
+      listTasks.mockRestore();
+      createTask.mockRestore();
+    }
   });
 
   it("opens the week calendar view with 2 and returns to mail with 1", async () => {
@@ -690,12 +714,18 @@ describe("keyboard-first task and action workspaces", () => {
       },
     ];
     const listTasks = vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
-    const setStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (id) => ({
-      ...tasks.find((task) => task.id === id)!, status: "completed", completionSource: "user",
-    }));
-    const updateTask = vi.spyOn(mailClient, "updateTask").mockImplementation(async (request) => ({
-      ...tasks.find((task) => task.id === request.id)!, ...request,
-    }));
+    let taskStore = [...tasks];
+    listTasks.mockImplementation(async () => taskStore);
+    const setStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (id) => {
+      const updated = { ...taskStore.find((task) => task.id === id)!, status: "completed" as const, completionSource: "user" as const };
+      taskStore = taskStore.map((task) => task.id === id ? updated : task);
+      return updated;
+    });
+    const updateTask = vi.spyOn(mailClient, "updateTask").mockImplementation(async (request) => {
+      const updated = { ...taskStore.find((task) => task.id === request.id)!, ...request };
+      taskStore = taskStore.map((task) => task.id === request.id ? updated : task);
+      return updated;
+    });
 
     try {
       const { container } = render(<App />);
@@ -720,10 +750,14 @@ describe("keyboard-first task and action workspaces", () => {
       fireEvent.click(within(workspace).getByRole("button", { name: "Completed" }));
       await waitFor(() => expect(workspace.querySelector("#task-task-roadmap")).toHaveAttribute("aria-current", "true"));
       fireEvent.keyDown(window, { key: "Enter" });
-      const dialog = await screen.findByRole("dialog", { name: "Edit Task" });
-      fireEvent.change(within(dialog).getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
-      fireEvent.change(within(dialog).getByLabelText("Due Date"), { target: { value: "2026-09-30" } });
-      fireEvent.click(within(dialog).getByRole("button", { name: "Save Task" }));
+      const details = within(screen.getByRole("region", { name: "Task details" }));
+      const titleField = await details.findByRole("textbox", { name: "Task title" });
+      fireEvent.change(titleField, { target: { value: "Review the project roadmap" } });
+      fireEvent.click(details.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(updateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "task-roadmap", title: "Review the project roadmap" })));
+      fireEvent.click(details.getByRole("button", { name: "Add a due date" }));
+      fireEvent.change(details.getByLabelText("Due date"), { target: { value: "2026-09-30" } });
+      fireEvent.click(details.getByRole("button", { name: "Save" }));
       await waitFor(() => expect(updateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "task-roadmap", dueKind: "date", dueValue: "2026-09-30" })));
 
       fireEvent.keyDown(window, { key: "o" });

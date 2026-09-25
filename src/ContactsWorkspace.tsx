@@ -25,6 +25,7 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null}:{
   const [query,setQuery]=useState("");const [profiles,setProfiles]=useState<ContactProfile[]>([]);const [selectedId,setSelectedId]=useState<string|null>(null);const [profile,setProfile]=useState<ContactProfile|null>(null);
   const [timeline,setTimeline]=useState<ContactTimelineItem[]>([]);const [timelineHasMore,setTimelineHasMore]=useState(false);const [draft,setDraft]=useState<SaveContactRequest>(empty());const [loading,setLoading]=useState(true);const [busy,setBusy]=useState(false);const [error,setError]=useState<string|null>(null);const [adding,setAdding]=useState(false);const [confirmDelete,setConfirmDelete]=useState(false);const [suggestions,setSuggestions]=useState<ContactFieldSuggestion[]>([]);const [enriching,setEnriching]=useState(false);const [moreEmailsAvailable,setMoreEmailsAvailable]=useState(false);const [emailsReviewed,setEmailsReviewed]=useState(0);
   const searchRef=useRef<HTMLInputElement>(null);
+  const selectedItemRef=useRef<HTMLButtonElement|null>(null);
   const requestedContactId=useRef(initialContactId);
   const preserveSuggestionsForId=useRef<string|null>(null);
   const preserveDraftForId=useRef<string|null>(null);
@@ -55,12 +56,14 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null}:{
   const linksText=useMemo(()=>draft.links.join("\n"),[draft.links]);
   const orderedProfiles=useMemo(()=>[...profiles].sort((a,b)=>Number(b.favorite)-Number(a.favorite)||Date.parse(b.lastInteractedAt??"")-Date.parse(a.lastInteractedAt??"")||(a.displayName||a.addresses[0]||"").localeCompare(b.displayName||b.addresses[0]||"",undefined,{sensitivity:"base"})),[profiles]);
   const favoriteProfiles=orderedProfiles.filter(item=>item.favorite);const recentProfiles=orderedProfiles.filter(item=>!item.favorite);
+  useEffect(()=>{const onKey=(event:KeyboardEvent)=>{if(event.key!=="ArrowDown"&&event.key!=="ArrowUp")return;if(event.metaKey||event.ctrlKey||event.altKey)return;const target=event.target;if(target instanceof HTMLElement&&(target.isContentEditable||["INPUT","TEXTAREA","SELECT"].includes(target.tagName)))return;if(!orderedProfiles.length)return;event.preventDefault();const currentIndex=orderedProfiles.findIndex(item=>item.id===selectedId);const nextIndex=event.key==="ArrowDown"?Math.min(orderedProfiles.length-1,currentIndex+1):Math.max(0,currentIndex===-1?0:currentIndex-1);const next=orderedProfiles[nextIndex];if(!next)return;setAdding(false);setSelectedId(next.id);};window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);},[orderedProfiles,selectedId]);
+  useEffect(()=>{selectedItemRef.current?.scrollIntoView?.({block:"nearest"});},[selectedId]);
   return <section className="contacts-workspace" aria-label="Contacts">
     <header className="contacts-header"><div><span className="eyebrow">Address book</span><h1>Contacts</h1></div><button type="button" className="contact-primary-button" onClick={startNew}><Plus size={16}/>New contact</button></header>
     <div className="contacts-workspace-body">
       <aside className="contacts-list-panel" aria-label="Contact list"><label className="contacts-search"><Search size={16}/><input ref={searchRef} aria-label="Search contacts" placeholder="Search contacts" value={query} onChange={event=>setQuery(event.target.value)}/><kbd>/</kbd></label><p className="contacts-sort-hint">Favorites first · then recent activity</p>
         {loading?<p className="contacts-status">Loading contacts…</p>:null}{error?<p className="contacts-error" role="alert">{error}</p>:null}
-        <div className="contacts-list">{favoriteProfiles.length?<section className="contact-list-group" aria-label="Favorites"><h2>Favorites</h2>{favoriteProfiles.map(item=><ContactListItem key={item.id} item={item} selected={selectedId===item.id&&!adding} onSelect={()=>{setAdding(false);setSelectedId(item.id);}}/>)}</section>:null}{recentProfiles.length?<section className="contact-list-group" aria-label="Recent contacts"><h2>Recent</h2>{recentProfiles.map(item=><ContactListItem key={item.id} item={item} selected={selectedId===item.id&&!adding} onSelect={()=>{setAdding(false);setSelectedId(item.id);}}/>)}</section>:null}</div>
+        <div className="contacts-list">{favoriteProfiles.length?<section className="contact-list-group" aria-label="Favorites"><h2>Favorites</h2>{favoriteProfiles.map(item=><ContactListItem key={item.id} item={item} selected={selectedId===item.id&&!adding} itemRef={selectedId===item.id&&!adding?selectedItemRef:undefined} onSelect={()=>{setAdding(false);setSelectedId(item.id);}}/>)}</section>:null}{recentProfiles.length?<section className="contact-list-group" aria-label="Recent contacts"><h2>Recent</h2>{recentProfiles.map(item=><ContactListItem key={item.id} item={item} selected={selectedId===item.id&&!adding} itemRef={selectedId===item.id&&!adding?selectedItemRef:undefined} onSelect={()=>{setAdding(false);setSelectedId(item.id);}}/>)}</section>:null}</div>
         {!loading&&profiles.length===0?<p className="contacts-empty">No contacts found. People you email will appear here.</p>:null}
       </aside>
       <section className="contact-profile-panel" aria-label="Contact details">
@@ -77,9 +80,9 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null}:{
   </section>;
 }
 
-function ContactListItem({item,selected,onSelect}:{item:ContactProfile;selected:boolean;onSelect():void}){
+function ContactListItem({item,selected,itemRef,onSelect}:{item:ContactProfile;selected:boolean;itemRef?:{current:HTMLButtonElement|null};onSelect():void}){
   const avatar=photoUrl(item.photoData);
-  return <button type="button" className={`contact-list-item${selected?" selected":""}`} aria-pressed={selected} onClick={onSelect}>
+  return <button ref={itemRef} type="button" className={`contact-list-item${selected?" selected":""}`} aria-pressed={selected} onClick={onSelect}>
     <span className="contact-avatar small">{avatar?<img src={avatar} alt=""/>:<span>{(item.displayName||item.addresses[0]||"?").slice(0,1).toLocaleUpperCase()}</span>}</span><span className="contact-list-copy"><strong>{item.displayName||item.addresses[0]}</strong><small>{item.company||item.addresses[0]}</small></span>{item.favorite?<Heart size={14} fill="currentColor"/>:null}
   </button>;
 }

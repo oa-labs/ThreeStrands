@@ -987,15 +987,15 @@ kbd {
 }
 .calendar-event {
   display: flex;
-  gap: 16px;
-  padding: 18px;
+  gap: 18px;
+  padding: 22px;
 }
 .calendar-event + .calendar-event { border-top: 1px solid var(--border); }
 .calendar-event-cancelled .calendar-event-details h4 { text-decoration: line-through; }
 .calendar-date-tile {
   display: flex;
-  flex: 0 0 52px;
-  height: 58px;
+  flex: 0 0 56px;
+  height: 62px;
   flex-direction: column;
   align-items: center;
   overflow: hidden;
@@ -1005,25 +1005,25 @@ kbd {
 }
 .calendar-date-tile strong {
   align-self: stretch;
-  padding: 3px 2px;
+  padding: 4px 2px;
   background: var(--accent);
   color: #fff;
   font-size: var(--type-xs);
   letter-spacing: .08em;
   text-align: center;
 }
-.calendar-date-tile span { padding-top: 5px; color: var(--text); font-size: var(--type-heading); font-weight: 650; }
+.calendar-date-tile span { padding-top: 6px; color: var(--text); font-size: var(--type-heading); font-weight: 650; }
 .calendar-event-details { min-width: 0; }
 .calendar-event-heading { display: flex; align-items: baseline; gap: 9px; }
-.calendar-event-details h4 { margin: 0 0 5px; color: var(--text); font-size: var(--type-reading); }
+.calendar-event-details h4 { margin: 0 0 8px; color: var(--text); font-size: var(--type-reading); line-height: 1.3; }
 .calendar-event-details p {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  margin: 4px 0 0;
+  gap: 7px;
+  margin: 7px 0 0;
   color: var(--secondary);
   font-size: var(--type-caption);
-  line-height: 1.45;
+  line-height: 1.5;
 }
 .calendar-event-details p svg { flex: 0 0 auto; margin-top: 1px; color: var(--muted); }
 .calendar-event-details .calendar-when { color: var(--text); }
@@ -1044,13 +1044,13 @@ kbd {
   font-weight: 650;
   text-transform: uppercase;
 }
-.calendar-card-more { margin: 0; padding: 0 18px 12px; color: var(--muted); font-size: var(--type-sm); }
+.calendar-card-more { margin: 0; padding: 0 22px 14px; color: var(--muted); font-size: var(--type-sm); }
 .calendar-card-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 38px;
-  padding: 5px 7px 5px 14px;
+  min-height: 42px;
+  padding: 6px 8px 6px 16px;
   border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: var(--type-sm);
@@ -1620,6 +1620,13 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .task-view-nav button:hover { background: var(--hover); color: var(--text); }
 .task-view-nav button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); color: var(--text); font-weight: 650; }
 .task-view-count { color: var(--muted); font-size: var(--type-xs); }
+.task-quick-add { display: grid; gap: 9px; margin: 14px; padding: 13px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); }
+.task-quick-add label { color: var(--muted); font-size: var(--type-xs); letter-spacing: .08em; text-transform: uppercase; }
+.task-quick-add input { min-width: 0; width: 100%; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; }
+.task-quick-add > div { display: flex; gap: 8px; }
+.task-quick-add button { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; cursor: pointer; }
+.task-quick-add button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.task-quick-add button:disabled { opacity: .5; cursor: default; }
 .tasks-workspace .tasks-list { padding: 20px 16px 40px; }
 .tasks-workspace .tasks-list section + section { margin-top: 28px; }
 .tasks-workspace .task-card { min-height: 66px; margin: 7px 0; border-radius: var(--radius-md); }
@@ -1657,7 +1664,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .task-detail-source details { margin-top: 10px; color: var(--muted); font-size: var(--type-sm); }
 .task-detail-source summary { cursor: pointer; }
 .task-detail-source blockquote { margin: 9px 0 0; padding-left: 12px; border-left: 2px solid var(--border-strong); color: var(--secondary); line-height: 1.5; white-space: pre-wrap; }
-.task-detail-shortcuts { margin: 42px 0 0; color: var(--muted); font-size: var(--type-sm); }
 .contacts-workspace { grid-column:2; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:var(--background); }
 .contacts-header { min-height:82px; display:flex; align-items:center; justify-content:space-between; padding:14px 28px; border-bottom:1px solid var(--border); }
 .contacts-header h1 { margin:3px 0 0; font-size:var(--type-heading); font-weight:600; }

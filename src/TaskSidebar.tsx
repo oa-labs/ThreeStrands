@@ -58,6 +58,7 @@ function describeAnalysisError(message: string): { summary: string; retryable: b
 }
 
 export type TaskWorkspaceHandle = {
+  startNew(): void;
   selectNext(): void;
   selectPrevious(): void;
   openSelected(): void;
@@ -94,6 +95,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   analysis?: ThreadActionAnalysis;
   onDraftFollowUp?(task: ThreadTask): void;
   onNewTask?(): void;
+  onCreateTask?(title: string): Promise<ThreadTask>;
   onEditTask?(task: ThreadTask): void;
   onSelectedTaskChange?(task: ThreadTask | null): void;
   refreshKey?: number;
@@ -109,6 +111,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   analysis,
   onDraftFollowUp,
   onNewTask,
+  onCreateTask,
   onEditTask,
   onSelectedTaskChange,
   refreshKey = 0,
@@ -126,7 +129,11 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [dueKindDraft, setDueKindDraft] = useState<TaskDueKind>("date");
   const [dueValueDraft, setDueValueDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [addingTask, setAddingTask] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [creatingTask, setCreatingTask] = useState(false);
   const taskCards = useRef(new Map<string, HTMLElement>());
+  const newTaskInput = useRef<HTMLInputElement>(null);
   useEscapeDismiss(onClose, variant !== "workspace");
 
   const load = useCallback(async () => {
@@ -212,7 +219,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     }
   };
 
-  const startEditing = (field: "title" | "description" | "due") => {
+  const startEditing = useCallback((field: "title" | "description" | "due") => {
     if (!selectedTask) return;
     setError(null);
     setTitleDraft(selectedTask.title);
@@ -220,6 +227,34 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     setDueKindDraft(selectedTask.dueKind === "none" ? "date" : selectedTask.dueKind);
     setDueValueDraft(selectedTask.dueKind === "datetime" ? dateTimeInputValue(selectedTask.dueValue) : selectedTask.dueValue ?? "");
     setEditing(field);
+  }, [selectedTask]);
+
+  const startNew = useCallback(() => {
+    setView("All");
+    setError(null);
+    setNewTaskTitle("");
+    setAddingTask(true);
+    newTaskInput.current?.focus();
+  }, []);
+
+  const createTask = async () => {
+    const title = newTaskTitle.trim();
+    if (!onCreateTask || !title || creatingTask) return;
+    setCreatingTask(true);
+    setError(null);
+    try {
+      const created = await onCreateTask(title);
+      setTasks((current) => [created, ...current]);
+      setView("All");
+      setSelectedTaskId(created.id);
+      setAddingTask(false);
+      setNewTaskTitle("");
+      onTasksChanged?.();
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setCreatingTask(false);
+    }
   };
 
   const moveSelection = useCallback((direction: -1 | 1) => {
@@ -230,15 +265,16 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   }, [orderedTasks, selectedTaskId]);
 
   useImperativeHandle(ref, () => ({
+    startNew,
     selectNext: () => moveSelection(1),
     selectPrevious: () => moveSelection(-1),
     openSelected: () => {
       if (selectedTask?.threadId) onOpenThread(selectedTask.threadId);
     },
-    editSelected: () => { if (selectedTask) onEditTask?.(selectedTask); },
+    editSelected: () => { if (selectedTask) startEditing("title"); },
     completeSelected: () => { if (selectedTask?.status === "open") void setStatus(selectedTask, "completed"); },
     reopenSelected: () => { if (selectedTask && selectedTask.status !== "open") void setStatus(selectedTask, "open"); },
-  }), [moveSelection, onEditTask, onOpenThread, selectedTask, setStatus]);
+  }), [moveSelection, onOpenThread, selectedTask, setStatus, startEditing, startNew]);
 
   const taskList = <div className="tasks-list">
     {displayedGroups.map((group) => (
@@ -290,7 +326,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         <div className="tasks-sidebar-header-actions">
           {analysis ? <HoverTooltip title={analysisActionLabel}><button type="button" aria-label={analysisActionLabel} onClick={analysis.onAnalyze} disabled={!analysis.ready || analysis.loading}><Sparkles size={17} /></button></HoverTooltip> : null}
           {variant === "sidebar" && onCheckSchedule ? <HoverTooltip title="Check schedule"><button type="button" aria-label="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button></HoverTooltip> : null}
-          {onNewTask && (variant === "workspace" || currentThread) ? <HoverTooltip title="Add task"><button type="button" className={variant === "workspace" ? "task-add-button" : undefined} aria-label="Add task" onClick={onNewTask}><Plus size={17} />{variant === "workspace" ? "Add task" : null}</button></HoverTooltip> : null}
+          {variant === "workspace" && onCreateTask ? <button type="button" className="task-add-button" onClick={startNew}><Plus size={17} />Add task</button> : null}
+          {variant === "sidebar" && onNewTask && currentThread ? <HoverTooltip title="Add task"><button type="button" aria-label="Add task" onClick={onNewTask}><Plus size={17} /></button></HoverTooltip> : null}
           {variant === "workspace" ? null : <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>}
         </div>
       </header>
@@ -334,7 +371,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         </section>
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
-      {!loading && tasks.length === 0 ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
+      {!loading && tasks.length === 0 && !addingTask ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
       {variant === "workspace" ? <div className="tasks-workspace-body">
         <div className="tasks-list-pane">
           <nav className="task-view-nav" aria-label="Task views">
@@ -342,6 +379,11 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               <span>{name}</span><span className="task-view-count" aria-hidden="true">{tasks.filter((task) => taskMatchesView(task, name, now)).length}</span>
             </button>)}
           </nav>
+          {addingTask ? <form className="task-quick-add" data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); void createTask(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!creatingTask) setAddingTask(false); } }}>
+            <label htmlFor="quick-add-task-title">Task title</label>
+            <input id="quick-add-task-title" ref={newTaskInput} autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="What needs doing?" maxLength={240} />
+            <div><button type="submit" disabled={creatingTask || !newTaskTitle.trim()}>{creatingTask ? "Adding…" : "Add task"}</button><button type="button" disabled={creatingTask} onClick={() => setAddingTask(false)}>Cancel</button></div>
+          </form> : null}
           {!loading && tasks.length > 0 && displayedGroups.length === 0 ? <p className="tasks-status">{view === "All" ? "No open tasks. Add a task or view completed work." : `No tasks in ${view.toLowerCase()}.`}</p> : null}
           {taskList}
         </div>
@@ -361,8 +403,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
                 </div>
               </div>
               <div className="task-detail-actions">
-                {onEditTask ? <HoverTooltip label="Edit" shortcut="Enter" placement="bottom">
-                  <ActionButton label="Edit" shortcut="Enter" onClick={() => onEditTask(selectedTask)}><Pencil size={17} /></ActionButton>
+                {onEditTask ? <HoverTooltip label="Task options" placement="bottom">
+                  <ActionButton label="Task Options" onClick={() => onEditTask(selectedTask)}><Pencil size={17} /></ActionButton>
                 </HoverTooltip> : null}
               </div>
             </header>
@@ -388,7 +430,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               <button type="button" onClick={() => onOpenThread(selectedTask.threadId!)}><MessageSquare size={16} /> Open conversation</button>
               {selectedTask.evidenceText ? <details><summary>Source excerpt</summary><blockquote>{selectedTask.evidenceText}</blockquote></details> : null}
             </section> : null}
-            <p className="task-detail-shortcuts"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> edit · {selectedTask.status !== "open" ? <><kbd>Shift+e</kbd> reopen</> : <><kbd>e</kbd> complete</>}{selectedTask.threadId ? <> · <kbd>o</kbd> open conversation</> : null}</p>
           </> : <p className="tasks-status">Select a task to see its details.</p>}
         </section>
       </div> : taskList}

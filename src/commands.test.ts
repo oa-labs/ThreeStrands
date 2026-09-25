@@ -116,7 +116,7 @@ describe("command registry", () => {
       "#": ["draft.discard", "thread.trash"],
     });
 
-    for (const focusedPane of ["mail", "tasks"] as const) {
+    for (const focusedPane of ["mail", "tasks", "contacts"] as const) {
       for (const selectedTaskStatus of ["open", "completed", "cancelled"] as const) {
         for (const selectedArchived of [false, true]) {
           for (const mailbox of ["inbox", "drafts"] as const) {
@@ -140,6 +140,14 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "tasks.completeSelected")?.keys).toEqual(["e"]);
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.keys).toEqual(["Shift+e"]);
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.enabled({ ...taskContext, selectedTaskStatus: "cancelled" })).toBe(true);
+  });
+
+  it("disables mail and task arrow-key navigation while the Contacts pane is focused", () => {
+    const contactsContext = { ...noopContext(), focusedPane: "contacts" as const };
+    expect(commands.find((command) => command.id === "thread.next")?.enabled(contactsContext)).toBe(false);
+    expect(commands.find((command) => command.id === "thread.previous")?.enabled(contactsContext)).toBe(false);
+    expect(commands.find((command) => command.id === "tasks.next")?.enabled(contactsContext)).toBe(false);
+    expect(commands.find((command) => command.id === "tasks.previous")?.enabled(contactsContext)).toBe(false);
   });
 
   it("registers direct primary-view shortcuts without a shortcut for 0", () => {

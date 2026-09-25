@@ -187,7 +187,7 @@ describe("TaskSidebar", () => {
 
   it("shows the account email and a task count in the header, like the mail inbox header", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onCheckSchedule={vi.fn()} onNewTask={vi.fn()} />);
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onCheckSchedule={vi.fn()} onCreateTask={vi.fn(async (title) => workspaceTask("created", { title }))} />);
 
     await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
     expect(screen.getByText("you@example.com", { exact: false })).toBeInTheDocument();
@@ -196,6 +196,26 @@ describe("TaskSidebar", () => {
     expect(addTask).toHaveClass("task-add-button");
     expect(addTask).toHaveTextContent("Add task");
     expect(addTask.querySelector("svg")).not.toBeNull();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("creates a task from its title first and opens it in the detail pane", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    const created = workspaceTask("new-task", { title: "Call the contractor" });
+    const onCreateTask = vi.fn().mockResolvedValue(created);
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
+    const form = screen.getByRole("textbox", { name: "Task title" }).closest("form");
+    expect(form).not.toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Task title" }), { target: { value: "  Call the contractor  " } });
+    fireEvent.click(within(form!).getByRole("button", { name: "Add task" }));
+
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Call the contractor"));
+    expect(await screen.findByRole("heading", { name: "Call the contractor" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add a description" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add a due date" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("filters the task list by date, waiting status, and completion without repeating email subjects", async () => {
@@ -376,13 +396,13 @@ describe("TaskSidebar", () => {
     const onEditTask = vi.fn();
     render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={onOpenThread} onEditTask={onEditTask} />);
 
-    const edit = await screen.findByRole("button", { name: "Edit (Enter)" });
+    const edit = await screen.findByRole("button", { name: "Task Options" });
     const done = within(screen.getByRole("region", { name: "Task details" })).getByRole("button", { name: "Complete Set up the website" });
     const open = screen.getByRole("button", { name: "Open conversation" });
     expect(edit).toHaveClass("action-button");
     expect(done.querySelector("svg")).not.toBeNull();
     const tooltips = screen.getAllByRole("tooltip", { hidden: true }).map((tooltip) => tooltip.textContent);
-    expect(tooltips).toEqual(["EditEnter"]);
+    expect(tooltips).toEqual(["Task options"]);
 
     fireEvent.click(edit);
     expect(onEditTask).toHaveBeenCalledWith(task);

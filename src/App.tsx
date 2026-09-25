@@ -145,7 +145,6 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 type RightWorkspace = "actions" | "calendar" | "contacts" | "tasks" | "week" | null;
 type TaskEditorState =
   | { kind: "new"; thread: ThreadDetail }
-  | { kind: "standalone"; accountId: string }
   | { kind: "edit"; task: ThreadTask }
   | { kind: "proposal"; thread: ThreadDetail; index: number; proposal: TaskProposal; intent: "edit" | "accept" };
 type MeetingEditorState = { index: number; proposal: MeetingProposal };
@@ -1214,9 +1213,7 @@ export function App() {
 
   const newTask = useCallback(() => {
     if (rightWorkspace === "tasks") {
-      const accountId = activeAccountId ?? accounts[0]?.email;
-      if (accountId) setTaskEditor({ kind: "standalone", accountId });
-      else setNotice({ message: "Connect an account before adding a task" });
+      taskWorkspaceRef.current?.startNew();
       return;
     }
     if (visibleDetail) {
@@ -1233,7 +1230,13 @@ export function App() {
       .catch((reason: unknown) => {
         setNotice({ message: errorMessage(reason) });
       });
-  }, [accounts, activeAccountId, rightWorkspace, selectedId, setNotice, visibleDetail]);
+  }, [rightWorkspace, selectedId, setNotice, visibleDetail]);
+
+  const createWorkspaceTask = useCallback(async (title: string) => {
+    const accountId = activeAccountId ?? accounts[0]?.email;
+    if (!accountId) throw new Error("Connect an account before adding a task");
+    return mailClient.createTask({ accountId, threadId: null, subjectSnapshot: null, title, kind: "action" });
+  }, [accounts, activeAccountId]);
 
   const openTaskThread = useCallback((threadId: string) => {
     const openThread = (thread: Thread, loadedDetail?: ThreadDetail) => {
@@ -1448,21 +1451,17 @@ export function App() {
       return;
     }
 
-    const sourceMessage = taskEditor.kind === "standalone"
-      ? null
-      : taskEditor.kind === "proposal"
+    const sourceMessage = taskEditor.kind === "proposal"
       ? taskEditor.proposal.evidence.sourceMessageId
       : taskEditor.thread.messages.at(-1)?.id ?? null;
-    const evidenceText = taskEditor.kind === "standalone"
-      ? null
-      : taskEditor.kind === "proposal"
+    const evidenceText = taskEditor.kind === "proposal"
       ? taskEditor.proposal.evidence.excerpt
       : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000) ?? null;
     await mailClient.createTask({
-      accountId: taskEditor.kind === "standalone" ? taskEditor.accountId : taskEditor.thread.thread.accountId,
-      threadId: taskEditor.kind === "standalone" ? null : taskEditor.thread.thread.id,
+      accountId: taskEditor.thread.thread.accountId,
+      threadId: taskEditor.thread.thread.id,
       sourceMessageId: sourceMessage,
-      subjectSnapshot: taskEditor.kind === "standalone" ? null : taskEditor.thread.thread.subject,
+      subjectSnapshot: taskEditor.thread.thread.subject,
       ...values,
       evidenceText,
     });
@@ -1589,7 +1588,7 @@ export function App() {
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
     interactionScope,
-    focusedPane: rightWorkspace === "tasks" ? "tasks" : "mail",
+    focusedPane: rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
     compose: () => {
       setRightWorkspace(null);
       correspondence.context.compose();
@@ -2595,6 +2594,7 @@ export function App() {
             {...taskListProps}
             ref={taskWorkspaceRef}
             variant="workspace"
+            onCreateTask={createWorkspaceTask}
             onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
             onSelectedTaskChange={(task) => {
               setSelectedTaskStatus(task?.status ?? null);
@@ -2636,13 +2636,13 @@ export function App() {
       {taskEditor ? (
         <TaskEditorDialog
           initial={taskEditor.kind === "proposal" ? taskEditor.proposal : taskEditor.kind === "edit" ? taskEditor.task : {
-            title: taskEditor.kind === "standalone" ? "" : taskEditor.thread.thread.subject,
+            title: taskEditor.thread.thread.subject,
             kind: "action",
             dueKind: "none",
             timeZone: availabilityPreferences.timeZone,
           }}
-          sourceSubject={taskEditor.kind === "standalone" ? null : taskEditor.kind === "edit" ? taskEditor.task.subjectSnapshot : taskEditor.thread.thread.subject}
-          evidence={taskEditor.kind === "standalone" ? null : taskEditor.kind === "proposal" ? taskEditor.proposal.evidence.excerpt : taskEditor.kind === "edit" ? taskEditor.task.evidenceText : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000)}
+          sourceSubject={taskEditor.kind === "edit" ? taskEditor.task.subjectSnapshot : taskEditor.thread.thread.subject}
+          evidence={taskEditor.kind === "proposal" ? taskEditor.proposal.evidence.excerpt : taskEditor.kind === "edit" ? taskEditor.task.evidenceText : taskEditor.thread.messages.at(-1)?.bodyText.slice(0, 1000)}
           submitLabel={taskEditor.kind === "proposal" && taskEditor.intent === "edit" ? "Save Proposal" : taskEditor.kind === "edit" ? "Save Task" : "Add Task"}
           onClose={() => setTaskEditor(null)}
           onSubmit={submitTaskEditor}
