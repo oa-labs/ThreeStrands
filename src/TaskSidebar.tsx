@@ -233,7 +233,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         <div className="tasks-sidebar-header-actions">
           {analysis ? <HoverTooltip title={analysisActionLabel}><button type="button" aria-label={analysisActionLabel} onClick={analysis.onAnalyze} disabled={!analysis.ready || analysis.loading}><Sparkles size={17} /></button></HoverTooltip> : null}
           {variant === "sidebar" && onCheckSchedule ? <HoverTooltip title="Check schedule"><button type="button" aria-label="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button></HoverTooltip> : null}
-          {onNewTask && (variant === "workspace" || currentThread) ? <HoverTooltip title="Add task"><button type="button" aria-label="Add task" onClick={onNewTask}><Plus size={17} /></button></HoverTooltip> : null}
+          {onNewTask && (variant === "workspace" || currentThread) ? <HoverTooltip title="Add task"><button type="button" className={variant === "workspace" ? "task-add-button" : undefined} aria-label="Add task" onClick={onNewTask}><Plus size={17} />{variant === "workspace" ? "Add task" : null}</button></HoverTooltip> : null}
           {variant === "workspace" ? null : <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>}
         </div>
       </header>

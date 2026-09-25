@@ -63,6 +63,7 @@ describe("TaskSidebar", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
     expect(onNewTask).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Add task" }).textContent).toBe("");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
@@ -175,7 +176,10 @@ describe("TaskSidebar", () => {
     await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
     expect(screen.getByText("you@example.com", { exact: false })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add task" })).toBeInTheDocument();
+    const addTask = screen.getByRole("button", { name: "Add task" });
+    expect(addTask).toHaveClass("task-add-button");
+    expect(addTask).toHaveTextContent("Add task");
+    expect(addTask.querySelector("svg")).not.toBeNull();
   });
 
   it("retains Check schedule in the Actions sidebar", async () => {
