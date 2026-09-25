@@ -1719,14 +1719,17 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-enrichment > header,.contact-enrichment > header > div { display:flex; align-items:center; gap:8px; }
 .contact-enrichment > header { justify-content:space-between; }
 .contact-enrichment > header button,.contact-enrichment article button { display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
-.contact-enrichment article { display:flex; justify-content:space-between; gap:14px; margin-top:10px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-md); }
-.contact-enrichment article > div { display:grid; gap:5px; }
-.contact-enrichment article span,.contact-enrichment article small { color:var(--muted); font-size:var(--type-xs); }
-.contact-enrichment blockquote { margin:4px 0 0; color:var(--secondary); font-size:var(--type-sm); }
+.contact-enrichment article { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:8px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-md); }
+.contact-enrichment article > div { display:grid; gap:3px; }
+.contact-suggestion-field { color:var(--muted); font-size:var(--type-xs); text-transform:uppercase; letter-spacing:.04em; }
+.contact-suggestion-evidence { display:grid; gap:1px; margin:3px 0 0; padding-left:8px; border-left:2px solid var(--border); }
+.contact-suggestion-evidence > span { color:var(--muted); font-size:var(--type-xs); text-transform:uppercase; letter-spacing:.04em; }
+.contact-enrichment blockquote { margin:0; color:var(--secondary); font-size:var(--type-sm); font-style:italic; }
 .contact-enrichment-progress { margin:10px 0 0; color:var(--muted); font-size:var(--type-xs); }
 .contact-enrichment-more { margin-top:10px; padding:7px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
 .contact-enrichment-more:disabled { opacity:.55; cursor:wait; }
 .contact-suggestion-source { width:max-content; padding:0; border:0; color:var(--accent); background:transparent; font:inherit; font-size:var(--type-xs); text-decoration:underline; cursor:pointer; }
+.contact-suggestion-apply { flex-shrink:0; }
 .contact-timeline h2 { font-size:var(--type-ui); font-weight:600; }
 .contact-timeline > button,.contact-sidebar-history > button { width:100%; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 9px; border:0; border-bottom:1px solid var(--border); color:var(--text); background:transparent; text-align:left; cursor:pointer; }
 .contact-timeline > button span,.contact-sidebar-history > button { min-width:0; }

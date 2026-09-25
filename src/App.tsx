@@ -2594,7 +2594,7 @@ export function App() {
         />
       ) : null}
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <ContactSidebar detail={visibleDetail} accounts={accounts} onOpenThread={openTaskThread} onOpenContact={openContactInAddressBook} /> : null}
-      {rightWorkspace === "contacts" ? <ContactsWorkspace onOpenThread={openTaskThread} initialContactId={contactAddressBookTarget} /> : null}
+      {rightWorkspace === "contacts" ? <ContactsWorkspace onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /> : null}
       {rightWorkspace === "tasks" ? (
         <>
           <TaskSidebar
