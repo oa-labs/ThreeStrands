@@ -69,6 +69,21 @@ override either. Scenes live in `tests/screenshots/marketing.spec.ts` and the
 data lives in `src/data/showcaseDataset.ts`. Keep `src/data/demoDataset.ts`
 unchanged, because the test suites depend on it.
 
+### Website
+
+The marketing site is a single static page in `site/`, built with Vite and no
+framework. It self-hosts its fonts and makes no third-party requests.
+
+```sh
+pnpm site:dev     # local preview at http://localhost:1423
+pnpm test:site    # build it, then run its Playwright checks
+pnpm site:images  # after `pnpm screenshots`: refresh the committed AVIF/WebP set
+pnpm site:og      # re-render the social card (site/public/og.png)
+```
+
+`.github/workflows/site.yml` deploys to GitHub Pages when `site/` changes on
+`master`.
+
 To connect Gmail, enable the Gmail API in a Google Cloud project, create an
 OAuth client of type **Desktop app**, and launch the native client with its
 client ID and client-secret value:

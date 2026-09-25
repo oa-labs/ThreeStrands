@@ -10,6 +10,7 @@ export default defineConfig([
     "coverage/",
     ".delta/",
     "dist/",
+    "site/dist/",
     "node_modules/",
     "playwright-report/",
     "src-tauri/gen/",

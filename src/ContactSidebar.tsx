@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookUser, Heart, Mail } from "lucide-react";
+import { BookUser, Check, Copy, Heart, Mail } from "lucide-react";
 import { mailClient } from "./data/client";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
@@ -36,8 +36,11 @@ export function ContactSidebar({ detail, accounts, onOpenThread }: {
   const [profile, setProfile] = useState<ContactProfile | null>(null);
   const [timeline, setTimeline] = useState<ContactTimelineItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [emailCopied, setEmailCopied] = useState(false);
+  const [emailCopyFailed, setEmailCopyFailed] = useState(false);
 
-  useEffect(() => { setEmail(preferred); }, [preferred, detail?.thread.id]);
+  useEffect(() => { setEmail(preferred); setEmailCopied(false); setEmailCopyFailed(false); }, [preferred, detail?.thread.id]);
+  useEffect(() => { setEmailCopied(false); setEmailCopyFailed(false); }, [email]);
   useEffect(() => {
     if (!email) { setProfile(null); setTimeline([]); return; }
     let active = true;
@@ -76,6 +79,15 @@ export function ContactSidebar({ detail, accounts, onOpenThread }: {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
+  const copyEmail = async () => {
+    setEmailCopyFailed(false);
+    try {
+      await navigator.clipboard.writeText(email);
+      setEmailCopied(true);
+    } catch {
+      setEmailCopyFailed(true);
+    }
+  };
 
   return (
     <aside className="contact-sidebar" aria-label="Contact details">
@@ -94,7 +106,13 @@ export function ContactSidebar({ detail, accounts, onOpenThread }: {
               {profile?.photoData ? <img src={`data:image/jpeg;base64,${profile.photoData}`} alt="" /> : <span>{(profile?.displayName || selected?.name || email).slice(0, 1).toLocaleUpperCase()}</span>}
             </div>
             <h2>{profile?.displayName || selected?.name || email}</h2>
-            <a href={`mailto:${email}`}><Mail size={14} />{email}</a>
+            <div className="contact-sidebar-email-row">
+              <a href={`mailto:${email}`}><Mail size={14} /><span>{email}</span></a>
+              <button type="button" className="contact-sidebar-email-copy" aria-label={emailCopied ? "Copied email address" : "Copy email address"} onClick={() => void copyEmail()}>
+                {emailCopied ? <Check size={14} /> : <Copy size={14} />}
+              </button>
+            </div>
+            {emailCopyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}
             {profile?.role || profile?.company ? <p>{[profile.role, profile.company].filter(Boolean).join(" · ")}</p> : null}
             {profile?.location ? <p>{profile.location}</p> : null}
           </div>

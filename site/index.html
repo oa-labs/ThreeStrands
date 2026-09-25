@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ThreeStrands — Keyboard-First, Local-First Email for Gmail</title>
+    <meta name="description" content="ThreeStrands is an open-source, keyboard-first desktop email client for Gmail. Mail, tasks, and your calendar in one fast workflow — with no account and no backend." />
+    <meta name="theme-color" content="#1f1b5c" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="ThreeStrands — Email at the Speed of Your Keyboard" />
+    <meta property="og:description" content="An open-source, keyboard-first, local-first email client for Gmail. No account, no backend, no middleman." />
+    <meta property="og:url" content="%SITE_URL%" />
+    <meta property="og:image" content="%OG_IMAGE%" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>document.documentElement.classList.add("js");</script>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to Content</a>
+
+    <header class="nav" data-nav>
+      <div class="nav-inner">
+        <a class="brand" href="#top" aria-label="ThreeStrands home">
+          <svg class="brand-mark" viewBox="80 80 864 864" aria-hidden="true" focusable="false">
+            <rect x="80" y="80" width="864" height="864" rx="196" fill="#333183" />
+            <g fill="none" stroke-linecap="round" transform="translate(80 80) scale(.84375)">
+              <circle cx="512" cy="512" r="372" stroke="#f3eae9" stroke-width="48" />
+              <circle cx="512" cy="512" r="322" stroke="#f3eae9" stroke-width="28" />
+              <path d="M 340 380 Q 426 286 512 380 T 684 380" stroke="#9f8bcb" stroke-width="42" />
+              <path d="M 340 512 Q 426 418 512 512 T 684 512" stroke="#f3eae9" stroke-width="42" />
+              <path d="M 340 644 Q 426 550 512 644 T 684 644" stroke="#fdad81" stroke-width="42" />
+            </g>
+          </svg>
+          <span class="brand-name">ThreeStrands</span>
+        </a>
+        <nav class="nav-links" aria-label="Sections">
+          <a href="#features">Features</a>
+          <a href="#privacy">Privacy</a>
+          <a href="#roadmap">Roadmap</a>
+        </nav>
+        <a class="button button-small button-glow" href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener" data-download>
+          <ts-icon name="github"></ts-icon>Download
+        </a>
+      </div>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <!-- Hero ------------------------------------------------------------ -->
+      <section class="hero dusk" id="top" aria-labelledby="hero-title">
+        <div class="hero-sky" aria-hidden="true">
+          <svg class="hero-rings" viewBox="0 0 800 800" focusable="false">
+            <circle cx="400" cy="400" r="372" />
+            <circle cx="400" cy="400" r="322" class="thin" />
+          </svg>
+          <svg class="hero-strands" viewBox="0 0 2400 300" preserveAspectRatio="none" focusable="false">
+            <path class="strand strand-mail" d="M0 90 q60 -46 120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0" />
+            <path class="strand strand-tasks" d="M0 150 q60 -46 120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0" />
+            <path class="strand strand-schedule" d="M0 210 q60 -46 120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0 t120 0" />
+          </svg>
+        </div>
+
+        <div class="hero-copy container">
+          <p class="badge"><span class="badge-dot" aria-hidden="true"></span>v%APP_VERSION% · Early Release</p>
+          <h1 id="hero-title" class="display">Email at the Speed of <em>Your Keyboard</em></h1>
+          <p class="lead">
+            ThreeStrands is a keyboard-first, local-first desktop email client for Gmail.
+            Your mail lives on your computer — no ThreeStrands account, no backend, no middleman.
+          </p>
+          <div class="cta-row">
+            <a class="button button-primary" href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener" data-download>
+              <ts-icon name="github"></ts-icon>Download on GitHub
+            </a>
+            <a class="button button-ghost" href="https://github.com/oa-labs/dispatch" rel="noopener">View Source<ts-icon name="arrow-right"></ts-icon></a>
+          </div>
+          <p class="fine-print">Open source · Gmail today · Built with Rust and Tauri</p>
+        </div>
+
+        <div class="hero-stage container">
+          <div class="keycap-float" aria-hidden="true">
+            <kbd class="keycap float-1">j</kbd>
+            <kbd class="keycap float-2">k</kbd>
+            <kbd class="keycap float-3">e</kbd>
+            <kbd class="keycap keycap-wide float-4" data-mod-key>⌘K</kbd>
+          </div>
+          <figure class="window window-hero" data-hero-window data-theme-shot="dark">
+            <div class="window-bar" aria-hidden="true">
+              <span class="light red"></span><span class="light amber"></span><span class="light green"></span>
+              <span class="window-title">ThreeStrands</span>
+            </div>
+            <div class="window-body">
+              <ts-shot scene="inbox" theme="dark" eager class="hero-shot" data-variant="dark" sizes="(min-width: 1240px) 1160px, 94vw" alt="The ThreeStrands inbox: a merged list of conversations beside an open thread about a Q4 launch plan."></ts-shot>
+              <ts-shot scene="inbox" theme="light" class="hero-shot" data-variant="light" sizes="(min-width: 1240px) 1160px, 94vw" alt=""></ts-shot>
+            </div>
+            <figcaption class="sr-only">The ThreeStrands inbox, shown with a fictional sample mailbox.</figcaption>
+          </figure>
+          <div class="theme-switch" role="group" aria-label="Screenshot theme" data-theme-switch hidden>
+            <button type="button" aria-pressed="true" data-value="dark"><ts-icon name="moon"></ts-icon>Dark</button>
+            <button type="button" aria-pressed="false" data-value="light"><ts-icon name="sun"></ts-icon>Light</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Three strands ---------------------------------------------------- -->
+      <section class="strands-section" aria-labelledby="strands-title">
+        <div class="bridge" aria-hidden="true">
+          <svg viewBox="0 0 1200 360" preserveAspectRatio="none" focusable="false">
+            <defs>
+              <linearGradient id="ink-strand" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#f3eae9" />
+                <stop offset="1" stop-color="var(--strand-tasks-ink)" />
+              </linearGradient>
+            </defs>
+            <path class="draw strand-mail" pathLength="1" d="M570 0 C570 140 200 150 200 360" />
+            <path class="draw strand-tasks" pathLength="1" stroke="url(#ink-strand)" d="M600 0 C640 90 560 180 600 270 S600 330 600 360" />
+            <path class="draw strand-schedule" pathLength="1" d="M630 0 C630 140 1000 150 1000 360" />
+          </svg>
+        </div>
+        <div class="container">
+          <header class="section-head centered">
+            <p class="eyebrow">Three Strands, One Workflow</p>
+            <h2 id="strands-title" class="display-2">Mail, Tasks, and Your Calendar — Woven Together</h2>
+            <p class="section-lead">
+              Most email clients stop at the message. ThreeStrands keeps the follow-up and the schedule
+              right beside the conversation, so nothing slips between apps.
+            </p>
+          </header>
+          <div class="strand-columns">
+            <article class="strand-card" style="--strand: var(--strand-mail); --strand-ink: var(--strand-mail-ink)">
+              <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
+              <p class="strand-label">Mail</p>
+              <h3>A Calm, Fast Inbox</h3>
+              <p>Merge every Gmail account into one view, split high-volume mail into its own tabs, and triage in batches with undo.</p>
+            </article>
+            <article class="strand-card" style="--strand: var(--strand-tasks-ink); --strand-ink: var(--strand-tasks-ink)">
+              <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
+              <p class="strand-label">Tasks</p>
+              <h3>Follow-Ups That Close Themselves</h3>
+              <p>Turn any conversation into an action, follow-up, or waiting-for task. When the reply arrives, the task can complete on its own.</p>
+            </article>
+            <article class="strand-card" style="--strand: var(--strand-schedule); --strand-ink: var(--strand-schedule-ink)">
+              <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
+              <p class="strand-label">Schedule</p>
+              <h3>Your Day, Beside Your Mail</h3>
+              <p>See today or the whole week from Google Calendar, find free time against your working hours, and drop it straight into a reply.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- Keyboard --------------------------------------------------------- -->
+      <section class="keyboard paper" aria-labelledby="keyboard-title">
+        <div class="container keyboard-grid">
+          <div class="keyboard-copy">
+            <p class="eyebrow">Keyboard-First</p>
+            <h2 id="keyboard-title" class="display-2">Hands on the Keys. Inbox Under Control.</h2>
+            <p class="section-lead">
+              Every common action has a shortcut, and single keys work whenever you're reading.
+              Try it — press the keys, or tap them.
+            </p>
+            <ul class="mode-list">
+              <li><strong>Reading</strong> Single-letter shortcuts, with no text fields in the way.</li>
+              <li><strong>Typing</strong> Compose, search with <kbd>/</kbd>, and the command palette.</li>
+              <li><strong>Brief Forms</strong> Create or edit anything in a focused dialog, then submit with <kbd data-mod-enter>⌘↩</kbd>.</li>
+            </ul>
+          </div>
+
+          <div class="demo" data-demo>
+            <div class="demo-keys" role="group" aria-label="Try a shortcut">
+              <button type="button" class="keycap" data-key="j" aria-label="j: Next conversation">j</button>
+              <button type="button" class="keycap" data-key="k" aria-label="k: Previous conversation">k</button>
+              <button type="button" class="keycap" data-key="e" aria-label="e: Archive">e</button>
+              <button type="button" class="keycap" data-key="s" aria-label="s: Star">s</button>
+              <button type="button" class="keycap keycap-wide" data-key="mod+k" aria-label="⌘K: Command palette" data-mod-key>⌘K</button>
+            </div>
+            <div class="demo-inbox" aria-hidden="true">
+              <ol class="demo-list" data-demo-list>
+                <li data-subject="Q4 launch plan — final review"><span class="dot"></span><b>Priya Natarajan</b><span>Q4 launch plan — final review</span></li>
+                <li data-subject="Design crit: onboarding flow v3"><span class="dot"></span><b>Theo Alvarez</b><span>Design crit: onboarding flow v3</span></li>
+                <li data-subject="Can we move our 1:1?"><span class="dot"></span><b>Daniel Kim</b><span>Can we move our 1:1?</span></li>
+                <li data-subject="Dinner Saturday?"><span class="dot"></span><b>Lena Ortiz</b><span>Dinner Saturday?</span></li>
+                <li data-subject="Your weekly metrics digest"><span class="dot read"></span><b>Pulse Weekly</b><span>Your weekly metrics digest</span></li>
+              </ol>
+              <div class="demo-palette" data-demo-palette hidden>
+                <span class="demo-palette-input">Type a command</span>
+                <span>Archive Conversation <kbd>e</kbd></span>
+                <span>Go to Calendar View <kbd>2</kbd></span>
+                <span>New Message <kbd>c</kbd></span>
+              </div>
+            </div>
+            <p class="demo-caption" role="status" aria-live="polite" data-demo-caption>Press <kbd>j</kbd> to move down the inbox.</p>
+          </div>
+        </div>
+
+        <figure class="container palette-figure">
+          <div class="window window-flat">
+            <div class="window-bar" aria-hidden="true"><span class="light red"></span><span class="light amber"></span><span class="light green"></span><span class="window-title">Command Palette</span></div>
+            <div class="window-body">
+              <ts-shot scene="command-palette" sizes="(min-width: 1240px) 1100px, 94vw" alt="The ThreeStrands command palette open over the inbox, listing searchable commands with their shortcuts."></ts-shot>
+            </div>
+          </div>
+          <figcaption>Forget a shortcut? <kbd data-mod-key>⌘K</kbd> finds any command.</figcaption>
+        </figure>
+      </section>
+
+      <!-- Tour ------------------------------------------------------------- -->
+      <section class="tour paper" id="features" aria-labelledby="tour-title">
+        <div class="container">
+          <header class="section-head">
+            <p class="eyebrow">A Closer Look</p>
+            <h2 id="tour-title" class="display-2">Everything Where You Need It</h2>
+          </header>
+          <div class="tour-grid">
+            <ol class="tour-steps" data-tour-steps>
+              <li class="tour-step" data-step="inbox">
+                <p class="step-count">01</p>
+                <h3>One Inbox for Every Account</h3>
+                <p>Read and triage multiple Gmail accounts in one merged view, or focus on one. Archive, star, label, and process conversations in batches, with undo for every reversible action.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="inbox" sizes="92vw" alt="The merged inbox with conversations from a work and a personal account."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="split-inbox">
+                <p class="step-count">02</p>
+                <h3>Split Inboxes</h3>
+                <p>Route high-volume senders into their own tabs by domain, label, or address pattern. The main inbox stays focused on people.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="split-inbox" sizes="92vw" alt="A Notifications split inbox tab holding automated build and pull request mail."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="reply">
+                <p class="step-count">03</p>
+                <h3>Compose Without Friction</h3>
+                <p>Rich text, attachments, and reusable snippets. Every send gets a ten-second undo window, and a durable outbox survives restarts.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="reply" sizes="92vw" alt="An inline reply being written beneath the conversation it answers."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="tasks">
+                <p class="step-count">04</p>
+                <h3>Tasks Tied to Conversations</h3>
+                <p>Actions, follow-ups, and waiting-fors with due dates and repeats. Linked tasks can complete when a new reply lands.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="tasks" sizes="92vw" alt="The Tasks view listing open actions, follow-ups, and waiting-for items linked to conversations."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="today-schedule">
+                <p class="step-count">05</p>
+                <h3>Today's Schedule at a Glance</h3>
+                <p>Press <kbd>T</kbd> to see your day beside your inbox. Check free times against your calendars and working hours, then put them in a reply.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="today-schedule" sizes="92vw" alt="Today's schedule shown in a sidebar next to the inbox."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="calendar-week">
+                <p class="step-count">06</p>
+                <h3>Plan the Week</h3>
+                <p>A full week view across the calendars you choose, without leaving your mail.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="calendar-week" sizes="92vw" alt="A week calendar view with meetings, focus time, and an all-day launch event."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="contacts">
+                <p class="step-count">07</p>
+                <h3>People, in Context</h3>
+                <p>Contacts built from your real correspondence, with notes and a timeline of recent conversations.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="contacts" sizes="92vw" alt="A contact profile with role, company, notes, and a list of recent emails."></ts-shot></div></div>
+              </li>
+            </ol>
+            <div class="tour-stage" aria-hidden="true">
+              <div class="window window-tour">
+                <div class="window-bar"><span class="light red"></span><span class="light amber"></span><span class="light green"></span><span class="window-title">ThreeStrands</span></div>
+                <div class="window-body tour-frames" data-tour-frames>
+                  <ts-shot scene="inbox" data-scene="inbox" data-active="" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="split-inbox" data-scene="split-inbox" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="reply" data-scene="reply" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="tasks" data-scene="tasks" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="today-schedule" data-scene="today-schedule" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="calendar-week" data-scene="calendar-week" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="contacts" data-scene="contacts" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                </div>
+              </div>
+              <div class="tour-progress" data-tour-progress><span></span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Privacy ---------------------------------------------------------- -->
+      <section class="privacy paper" id="privacy" aria-labelledby="privacy-title">
+        <div class="container">
+          <header class="section-head centered">
+            <p class="eyebrow">Local-First</p>
+            <h2 id="privacy-title" class="display-2">Sealed on Your Device</h2>
+            <p class="section-lead">
+              ThreeStrands talks to Gmail directly. There's no ThreeStrands account to create and no
+              ThreeStrands server in the middle — so there's nothing of yours for us to store, scan, or lose.
+            </p>
+          </header>
+
+          <div class="flow" role="img" aria-label="Diagram: ThreeStrands on your computer connects directly to Gmail. There are no ThreeStrands servers in between.">
+            <div class="flow-node">
+              <ts-icon name="laptop"></ts-icon>
+              <strong>Your Computer</strong>
+              <span>ThreeStrands + a local SQLite cache</span>
+            </div>
+            <div class="flow-link"><span class="flow-wire"></span><span class="flow-pulse"></span></div>
+            <div class="flow-node">
+              <ts-icon name="mail"></ts-icon>
+              <strong>Gmail</strong>
+              <span>Google's API, over TLS</span>
+            </div>
+            <div class="flow-none">
+              <ts-icon name="server-off"></ts-icon>
+              <span><s>ThreeStrands Servers</s> There are none.</span>
+            </div>
+          </div>
+
+          <div class="privacy-grid">
+            <figure class="privacy-shot">
+              <div class="window window-flat">
+                <div class="window-bar" aria-hidden="true"><span class="light red"></span><span class="light amber"></span><span class="light green"></span><span class="window-title">Sandboxed Reader</span></div>
+                <div class="window-body">
+                  <ts-shot scene="html-email" sizes="(min-width: 1000px) 560px, 92vw" alt="A flight confirmation email with tables and styling, rendered inside ThreeStrands' sandboxed reader."></ts-shot>
+                </div>
+              </div>
+              <figcaption>Rich HTML mail renders faithfully — inside a locked-down sandbox, with remote images behind a proxy until you allow them.</figcaption>
+            </figure>
+            <ul class="stamps">
+              <li class="stamp" style="--stamp: var(--strand-mail-ink)">
+                <div class="stamp-inner">
+                  <ts-icon name="wifi-off"></ts-icon>
+                  <h3>Works Offline</h3>
+                  <p>Mail is cached in SQLite for instant search and reading. Changes and sends queue locally and resume when you reconnect.</p>
+                </div>
+              </li>
+              <li class="stamp" style="--stamp: var(--strand-schedule-ink)">
+                <div class="stamp-inner">
+                  <ts-icon name="key-round"></ts-icon>
+                  <h3>Keys in Your Keychain</h3>
+                  <p>OAuth credentials live in your operating system's credential store — never in a plain file, never in someone else's cloud.</p>
+                </div>
+              </li>
+              <li class="stamp" style="--stamp: var(--strand-tasks-ink)">
+                <div class="stamp-inner">
+                  <ts-icon name="file-lock-2"></ts-icon>
+                  <h3>Encrypted Settings Export</h3>
+                  <p>Move preferences to a new machine with a password-encrypted file. Mail, drafts, and credentials stay behind.</p>
+                </div>
+              </li>
+              <li class="stamp" style="--stamp: var(--strand-mail-ink)">
+                <div class="stamp-inner">
+                  <ts-icon name="folder-sync"></ts-icon>
+                  <h3>Encrypted Sync <span class="tag">Beta</span></h3>
+                  <p>Replicate tasks, snippets, and Split Inboxes end to end through storage you choose: a shared folder, an S3-compatible bucket, or IPFS.</p>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI --------------------------------------------------------------- -->
+      <section class="ai paper" aria-labelledby="ai-title">
+        <div class="container ai-grid">
+          <div>
+            <p class="eyebrow">Optional AI</p>
+            <h2 id="ai-title" class="display-2">A Proposal, <em>Never</em> a Mutation</h2>
+            <p class="section-lead">
+              Bring your own API key for thread summaries, drafting help, and suggested tasks or meetings.
+              AI suggests; you decide. Nothing is created or sent until you review it — with the evidence right there.
+            </p>
+            <ul class="check-list">
+              <li><ts-icon name="key-round"></ts-icon>Your provider, your key.</li>
+              <li><ts-icon name="shield-check"></ts-icon>Only the thread you ask about is sent.</li>
+              <li><ts-icon name="lock"></ts-icon>Off until you add a key.</li>
+            </ul>
+          </div>
+          <figure class="proposal" aria-labelledby="proposal-caption">
+            <div class="proposal-card">
+              <p class="proposal-kicker"><ts-icon name="sparkles"></ts-icon>Suggested Task</p>
+              <p class="proposal-title">Send Marcus pricing for 35 seats</p>
+              <p class="proposal-meta">Due Friday · From “Contract renewal — Brightwater Co-op”</p>
+              <blockquote class="proposal-evidence">“Could you send over updated pricing for 35 seats on an annual plan?”</blockquote>
+              <div class="proposal-actions" aria-hidden="true">
+                <span class="fake-button primary">Review &amp; Add</span>
+                <span class="fake-button">Dismiss</span>
+              </div>
+            </div>
+            <figcaption id="proposal-caption">An AI suggestion waits for review, quoting the sentence it came from.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- Details ---------------------------------------------------------- -->
+      <section class="details paper" aria-labelledby="details-title">
+        <div class="container">
+          <header class="section-head centered">
+            <p class="eyebrow">Considered Throughout</p>
+            <h2 id="details-title" class="display-2">The Details Add Up</h2>
+          </header>
+          <ul class="detail-grid">
+            <li><ts-icon name="undo-2"></ts-icon><h3>Undo Send</h3><p>Ten seconds to change your mind, on every message.</p></li>
+            <li><ts-icon name="send"></ts-icon><h3>Durable Outbox</h3><p>Queued mail survives restarts and flaky connections.</p></li>
+            <li><ts-icon name="list-checks"></ts-icon><h3>Batch Triage</h3><p>Select many, act once, and undo if you need to.</p></li>
+            <li><ts-icon name="search"></ts-icon><h3>Local + Gmail Search</h3><p>Instant local results that reach back into Gmail for older mail.</p></li>
+            <li><ts-icon name="users"></ts-icon><h3>Multiple Accounts</h3><p>Every Gmail account in one merged inbox, color-coded.</p></li>
+            <li><ts-icon name="scroll-text"></ts-icon><h3>Snippets</h3><p>Reusable replies, a keystroke away.</p></li>
+            <li><ts-icon name="mail-x"></ts-icon><h3>Unsubscribe</h3><p>Leave a mailing list in one step, with a confirmation first.</p></li>
+            <li><ts-icon name="database-backup"></ts-icon><h3>Self-Healing Cache</h3><p>Automatic backups and startup recovery keep your local data safe.</p></li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Roadmap ---------------------------------------------------------- -->
+      <section class="roadmap paper" id="roadmap" aria-labelledby="roadmap-title">
+        <div class="container">
+          <header class="section-head">
+            <p class="eyebrow">Roadmap</p>
+            <h2 id="roadmap-title" class="display-2">Where It's Going</h2>
+            <p class="section-lead">Directions for unfinished work — not dated commitments. Everything above ships today; everything here is next.</p>
+          </header>
+          <ol class="roadmap-list">
+            <li><h3>Snooze and Scheduled Sending</h3><p>Put a conversation aside until a chosen time, and queue a message for later delivery.</p></li>
+            <li><h3>A Fuller Address Book</h3><p>Browse, add, and edit contacts anywhere, building on today's history-based suggestions.</p></li>
+            <li><h3>Smarter Inbox Rules</h3><p>Inspectable, user-controlled classification beyond domain, label, and address rules.</p></li>
+            <li><h3>Calendar Planning</h3><p>Go from checking availability to creating events, always after explicit review.</p></li>
+            <li><h3>More Mail Providers</h3><p>Microsoft 365, then IMAP and SMTP. Gmail is the only provider today.</p></li>
+            <li><h3>More Ways to Stay in Sync</h3><p>A more mature encrypted sync, with smoother onboarding and recovery across devices.</p></li>
+            <li><h3>Shared and Mobile Workflows</h3><p>A mobile companion and shared conversations or drafts, where demand justifies them.</p></li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- Final CTA -------------------------------------------------------- -->
+      <section class="finale dusk" aria-labelledby="finale-title">
+        <div class="container finale-inner">
+          <svg class="finale-mark" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+            <g fill="none" stroke-linecap="round">
+              <circle class="draw" pathLength="1" cx="512" cy="512" r="372" stroke="#f3eae9" stroke-width="40" />
+              <circle class="draw" pathLength="1" cx="512" cy="512" r="322" stroke="#f3eae9" stroke-width="22" />
+              <path class="draw" pathLength="1" d="M 340 380 Q 426 286 512 380 T 684 380" stroke="#9f8bcb" stroke-width="42" />
+              <path class="draw" pathLength="1" d="M 340 512 Q 426 418 512 512 T 684 512" stroke="#f3eae9" stroke-width="42" />
+              <path class="draw" pathLength="1" d="M 340 644 Q 426 550 512 644 T 684 644" stroke="#fdad81" stroke-width="42" />
+            </g>
+          </svg>
+          <h2 id="finale-title" class="display">Take Back <em>Your Inbox</em></h2>
+          <p class="lead">Open source, keyboard-first, and running entirely on your computer.</p>
+          <div class="cta-row centered">
+            <a class="button button-primary" href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener" data-download>
+              <ts-icon name="github"></ts-icon>Download on GitHub
+            </a>
+            <a class="button button-ghost" href="https://github.com/oa-labs/dispatch" rel="noopener">View Source<ts-icon name="arrow-right"></ts-icon></a>
+          </div>
+          <p class="fine-print">Gmail is the only supported mail provider today. Builds are published on GitHub Releases.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer dusk">
+      <div class="container footer-inner">
+        <p class="footer-brand"><span class="brand-name">ThreeStrands</span> <span>v%APP_VERSION%</span></p>
+        <nav aria-label="Project">
+          <a href="https://github.com/oa-labs/dispatch" rel="noopener">GitHub</a>
+          <a href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener">Releases</a>
+          <a href="https://github.com/oa-labs/dispatch#readme" rel="noopener">README</a>
+        </nav>
+        <p class="footer-note">© 2026 OpenArc LLC. Screenshots show a fictional sample mailbox.</p>
+      </div>
+    </footer>
+  </body>
+</html>

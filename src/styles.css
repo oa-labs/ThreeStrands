@@ -1740,7 +1740,13 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-participant-picker { display:grid; gap:6px; margin:14px 0; color:var(--muted); font-size:var(--type-xs); }
 .contact-sidebar-identity { display:grid; justify-items:center; gap:8px; padding:22px 0 16px; text-align:center; }
 .contact-sidebar-identity h2 { margin:4px 0 0; color:var(--text); font-size:var(--type-heading); font-weight:600; overflow-wrap:anywhere; }
-.contact-sidebar-identity a { display:flex; align-items:center; gap:6px; color:var(--secondary); text-decoration:none; overflow-wrap:anywhere; }
+.contact-sidebar-email-row { display:flex; align-items:center; justify-content:center; gap:3px; width:100%; min-width:0; }
+.contact-sidebar-email-row a { min-width:0; display:flex; align-items:center; gap:6px; color:var(--secondary); text-decoration:none; }
+.contact-sidebar-email-row a span { min-width:0; overflow-wrap:anywhere; }
+.contact-sidebar-email-copy { display:grid; flex:0 0 auto; place-items:center; width:24px; height:24px; padding:0; border:0; border-radius:var(--radius-xs); color:var(--muted); background:transparent; opacity:0; cursor:pointer; }
+.contact-sidebar-email-row:hover .contact-sidebar-email-copy,.contact-sidebar-email-row:focus-within .contact-sidebar-email-copy { opacity:1; }
+.contact-sidebar-email-copy:hover { color:var(--text); background:var(--hover); }
+.contact-sidebar-copy-status { color:var(--muted); font-size:var(--type-xs); }
 .contact-sidebar-identity p,.contact-sidebar-bio,.contact-sidebar-notes p { margin:0; color:var(--muted); line-height:1.5; }
 .contact-sidebar-bio { padding:12px 0; color:var(--secondary); }
 .contact-sidebar-notes,.contact-sidebar-history { margin-top:16px; }
@@ -1804,6 +1810,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
     width: min(360px, calc(100vw - 58px));
     box-shadow: -12px 0 36px var(--shadow);
   }
+}
+@media (hover: none) {
+  .contact-sidebar-email-copy { opacity:1; }
 }
 
 .modal-backdrop {

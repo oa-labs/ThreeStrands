@@ -36,4 +36,19 @@ describe("ContactSidebar",()=>{
     expect(await screen.findByRole("alert")).toHaveTextContent("Address belongs to another contact");
     expect(screen.getByRole("button",{name:"Add favorite"})).toBeInTheDocument();
   });
+
+  it("copies the selected participant email from the contact pane",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    const writeText=vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator,"clipboard",{value:{writeText},configurable:true});
+    render(<ContactSidebar detail={detail} accounts={[account]} onOpenThread={vi.fn()}/>);
+    await screen.findByRole("heading",{name:"Bob Lee"});
+
+    fireEvent.click(screen.getByRole("button",{name:"Copy email address"}));
+
+    expect(writeText).toHaveBeenCalledWith("bob@example.com");
+    expect(await screen.findByRole("button",{name:"Copied email address"})).toBeInTheDocument();
+  });
 });

@@ -1,0 +1,138 @@
+<!doctype html>
+<!-- 1200×630 social card, rendered to public/og.png by scripts/render-og.mjs. Not deployed. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ThreeStrands social card</title>
+    <script type="module" src="/src/og.ts"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+      }
+
+      body {
+        position: relative;
+        color: #f3eae9;
+        font-family: "Inter Variable", sans-serif;
+        background:
+          radial-gradient(700px 420px at 20% -10%, rgb(78 72 170 / 0.85), transparent 65%),
+          radial-gradient(520px 380px at 100% 100%, rgb(253 173 129 / 0.22), transparent 65%),
+          linear-gradient(160deg, #161330 0%, #1f1b5c 70%);
+      }
+
+      .rings {
+        position: absolute;
+        left: -170px;
+        top: -170px;
+        width: 620px;
+        fill: none;
+        stroke: rgb(243 234 233 / 0.08);
+      }
+
+      .strands {
+        position: absolute;
+        left: 0;
+        bottom: 56px;
+        width: 1200px;
+        height: 120px;
+        fill: none;
+        stroke-width: 3;
+        stroke-linecap: round;
+        opacity: 0.7;
+      }
+
+      .copy {
+        position: absolute;
+        left: 72px;
+        top: 76px;
+        width: 560px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-family: "Fraunces Variable", serif;
+        font-variation-settings: "opsz" 48, "SOFT" 100;
+        font-weight: 600;
+        font-size: 30px;
+      }
+
+      .brand img {
+        width: 58px;
+        height: 58px;
+      }
+
+      h1 {
+        margin: 40px 0 0;
+        font-family: "Fraunces Variable", serif;
+        font-variation-settings: "opsz" 144, "SOFT" 100;
+        font-weight: 540;
+        font-size: 74px;
+        line-height: 1;
+        letter-spacing: -0.02em;
+      }
+
+      h1 em {
+        font-style: italic;
+        font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1;
+        background: linear-gradient(95deg, #c4b5f0, #f3eae9 45%, #fdad81);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      p {
+        margin: 26px 0 0;
+        font-size: 24px;
+        color: #c8c1df;
+      }
+
+      .shot {
+        position: absolute;
+        left: 660px;
+        top: 92px;
+        width: 760px;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid rgb(255 255 255 / 0.12);
+        box-shadow:
+          0 50px 100px -30px rgb(6 4 26 / 0.95),
+          0 0 90px -20px rgb(159 139 203 / 0.5);
+        transform: perspective(1600px) rotateY(-16deg) rotateX(6deg);
+        transform-origin: 0 50%;
+      }
+
+      .shot img {
+        display: block;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <svg class="rings" viewBox="0 0 800 800" aria-hidden="true">
+      <circle cx="400" cy="400" r="372" stroke-width="12" />
+      <circle cx="400" cy="400" r="322" stroke-width="6" />
+    </svg>
+    <svg class="strands" viewBox="0 0 1200 120" preserveAspectRatio="none" aria-hidden="true">
+      <path stroke="#9f8bcb" d="M0 30 q50 -38 100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0" />
+      <path stroke="#f3eae9" d="M0 60 q50 -38 100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0" />
+      <path stroke="#fdad81" d="M0 90 q50 -38 100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0" />
+    </svg>
+    <div class="copy">
+      <div class="brand">
+        <img src="/favicon.svg" width="58" height="58" alt="" />
+        ThreeStrands
+      </div>
+      <h1>Email at the Speed of <em>Your Keyboard</em></h1>
+      <p>Keyboard-first, local-first email for Gmail.</p>
+    </div>
+    <div class="shot">
+      <img src="/src/assets/screenshots/dark/inbox-1440.webp" alt="" />
+    </div>
+  </body>
+</html>

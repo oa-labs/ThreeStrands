@@ -1,7 +1,7 @@
 {
   "name": "threestrands",
   "private": true,
-  "version": "0.35.7",
+  "version": "0.35.8",
   "packageManager": "pnpm@12.4.1",
   "type": "module",
   "scripts": {
@@ -13,6 +13,11 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "screenshots": "playwright test --config playwright.screenshots.config.ts",
+    "site:dev": "vite --config site/vite.config.ts",
+    "site:build": "tsc --noEmit -p site && vite build --config site/vite.config.ts",
+    "site:images": "node site/scripts/optimize-screenshots.mjs",
+    "site:og": "node site/scripts/render-og.mjs",
+    "test:site": "tsc --noEmit -p site && playwright test --config playwright.site.config.ts",
     "build:linux": "./scripts/build-linux.sh",
     "tauri": "node scripts/tauri.mjs"
   },
