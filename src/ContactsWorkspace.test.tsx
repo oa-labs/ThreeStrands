@@ -46,6 +46,15 @@ describe("ContactsWorkspace",()=>{
     expect(screen.getByText("Favorites first · then recent activity")).toBeInTheDocument();
   });
 
+  it("selects the contact opened from the conversation pane",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,favoriteContact]);
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===favoriteContact.id?favoriteContact:jane);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} initialContactId={favoriteContact.id}/>);
+    await screen.findByDisplayValue("Favorite Person");
+    const target=screen.getByRole("button",{name:/Favorite Person/});
+    expect(target).toHaveAttribute("aria-pressed","true");
+  });
+
   it("requires explicit use of each AI suggestion before saving it",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));

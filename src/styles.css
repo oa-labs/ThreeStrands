@@ -1739,10 +1739,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-sidebar > header { display:flex; align-items:center; min-height:32px; }
 .contact-participant-picker { display:grid; gap:6px; margin:14px 0; color:var(--muted); font-size:var(--type-xs); }
 .contact-sidebar-identity { display:grid; justify-items:center; gap:8px; padding:22px 0 16px; text-align:center; }
-.contact-sidebar-identity h2 { margin:4px 0 0; color:var(--text); font-size:var(--type-heading); font-weight:600; overflow-wrap:anywhere; }
+.contact-sidebar-identity h2 { margin:4px 0 0; color:var(--text); font-size:calc(var(--type-heading) - 2px); font-weight:600; overflow-wrap:anywhere; }
 .contact-sidebar-email-row { display:flex; align-items:center; justify-content:center; gap:3px; width:100%; min-width:0; }
-.contact-sidebar-email-row a { min-width:0; display:flex; align-items:center; gap:6px; color:var(--secondary); text-decoration:none; }
-.contact-sidebar-email-row a span { min-width:0; overflow-wrap:anywhere; }
+.contact-sidebar-email-row a { min-width:0; display:flex; align-items:center; gap:6px; color:var(--secondary); font-size:var(--type-ui); text-decoration:none; }
+.contact-sidebar-email-row a span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .contact-sidebar-email-copy { display:grid; flex:0 0 auto; place-items:center; width:24px; height:24px; padding:0; border:0; border-radius:var(--radius-xs); color:var(--muted); background:transparent; opacity:0; cursor:pointer; }
 .contact-sidebar-email-row:hover .contact-sidebar-email-copy,.contact-sidebar-email-row:focus-within .contact-sidebar-email-copy { opacity:1; }
 .contact-sidebar-email-copy:hover { color:var(--text); background:var(--hover); }
@@ -1753,7 +1753,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-sidebar-notes h3,.contact-sidebar-history h3 { margin:0 0 8px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.06em; text-transform:uppercase; }
 .contact-sidebar-history > button { display:grid; gap:4px; }
 .contact-sidebar-history > button strong { color:var(--secondary); font-size:var(--type-ui); font-weight:500; line-height:1.35; }
-.contact-sidebar-save,.contact-sidebar-favorite { display:flex; align-items:center; justify-content:center; gap:7px; margin-top:16px; padding:9px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
+.contact-sidebar-save,.contact-sidebar-favorite,.contact-sidebar-manage { display:flex; align-items:center; justify-content:center; gap:7px; margin-top:16px; padding:9px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
 .tasks-sidebar-header {
   min-height: 90px;
   display: flex;

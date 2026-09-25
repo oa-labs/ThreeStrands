@@ -306,6 +306,7 @@ export function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(null);
+  const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
   const taskWorkspaceRef = useRef<TaskWorkspaceHandle>(null);
   const [selectedTaskStatus, setSelectedTaskStatus] = useState<ThreadTask["status"] | null>(null);
   const [selectedTaskHasThread, setSelectedTaskHasThread] = useState(false);
@@ -1520,7 +1521,8 @@ export function App() {
     setRightWorkspace("tasks");
   }, []);
 
-  const openContactsView = useCallback(() => setRightWorkspace(current => current === "contacts" ? null : "contacts"), []);
+  const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
+  const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setRightWorkspace("contacts"); }, []);
   const openCalendarView = useCallback(() => {
     setRightWorkspace("week");
     void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
@@ -2591,8 +2593,8 @@ export function App() {
           }}
         />
       ) : null}
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <ContactSidebar detail={visibleDetail} accounts={accounts} onOpenThread={openTaskThread} /> : null}
-      {rightWorkspace === "contacts" ? <ContactsWorkspace onOpenThread={openTaskThread} /> : null}
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <ContactSidebar detail={visibleDetail} accounts={accounts} onOpenThread={openTaskThread} onOpenContact={openContactInAddressBook} /> : null}
+      {rightWorkspace === "contacts" ? <ContactsWorkspace onOpenThread={openTaskThread} initialContactId={contactAddressBookTarget} /> : null}
       {rightWorkspace === "tasks" ? (
         <>
           <TaskSidebar

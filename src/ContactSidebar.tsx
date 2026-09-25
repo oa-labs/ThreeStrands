@@ -5,10 +5,11 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { parseAddress, splitAddressList } from "./emailAddress";
 
-export function ContactSidebar({ detail, accounts, onOpenThread }: {
+export function ContactSidebar({ detail, accounts, onOpenThread, onOpenContact }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   onOpenThread(id: string): void;
+  onOpenContact(id: string): void;
 }) {
   const own = new Set(accounts.map((account) => account.email.toLocaleLowerCase()));
   const participants = useMemo(() => {
@@ -133,6 +134,9 @@ export function ContactSidebar({ detail, accounts, onOpenThread }: {
               <button className="contact-sidebar-favorite" type="button" onClick={() => void toggleFavorite()}>
                 <Heart size={15} fill={profile.favorite ? "currentColor" : "none"} />
                 {profile.favorite ? "Remove favorite" : "Add favorite"}
+              </button>
+              <button className="contact-sidebar-manage" type="button" onClick={() => onOpenContact(profile.id)}>
+                <BookUser size={15} />Open in Contacts
               </button>
             </>
           ) : (
