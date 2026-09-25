@@ -30,18 +30,26 @@ export async function queuePortablePreferencesAndWait(): Promise<void> {
 /** Applies portable preferences synchronized from another device, if any. */
 export async function pullSyncedPreferences(): Promise<boolean> {
   if (!isDesktop()) return false;
+  const beforePull = readExportablePreferences();
   // Older replicas may still contain theme, accent, and selectedAccountId.
   // Keep all three local even when reading a preference record produced
   // before this change.
   const preferences = await invoke<Partial<ExportablePreferences> | null>("synced_preferences");
   if (!preferences) return false;
   const local = readExportablePreferences();
-  applyExportablePreferences({
+  // A settings edit can happen while the native read is in flight. Preserve
+  // those newer local values instead of applying the snapshot that started
+  // before the edit (for example, turning Contact Enrichment back off).
+  const changedDuringPull = (Object.keys(beforePull) as (keyof ExportablePreferences)[])
+    .filter((key) => JSON.stringify(beforePull[key]) !== JSON.stringify(local[key]));
+  const merged: ExportablePreferences = {
     ...local,
     ...preferences,
     theme: local.theme,
     accent: local.accent,
     selectedAccountId: local.selectedAccountId,
-  });
+  };
+  for (const key of changedDuringPull) Object.assign(merged, { [key]: local[key] });
+  applyExportablePreferences(merged);
   return true;
 }

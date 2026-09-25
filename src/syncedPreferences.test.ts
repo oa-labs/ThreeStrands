@@ -4,6 +4,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 import { invoke } from "@tauri-apps/api/core";
 import { pullSyncedPreferences, queuePortablePreferences } from "./syncedPreferences";
+import { DEFAULT_AI_FEATURES, readAiFeatures, saveAiFeatures } from "./aiSettings";
 
 describe("synced preferences data boundary", () => {
   beforeEach(() => {
@@ -95,6 +96,22 @@ describe("synced preferences data boundary", () => {
     expect(await pullSyncedPreferences()).toBe(true);
     expect(localStorage.getItem("threestrands.theme")).toBe("light");
     expect(localStorage.getItem("threestrands.accent")).toBe("graphite");
+    expect(localStorage.getItem("threestrands.fontScale")).toBe("120");
+  });
+
+  it("preserves a feature setting changed while a synced preference read is in flight", async () => {
+    let resolvePreferences!: (value: unknown) => void;
+    vi.mocked(invoke).mockImplementation(() => new Promise((resolve) => { resolvePreferences = resolve; }));
+
+    const pulling = pullSyncedPreferences();
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, contactEnrichment: true });
+    resolvePreferences({
+      fontScale: 120,
+      aiFeatures: { ...DEFAULT_AI_FEATURES, contactEnrichment: false },
+    });
+
+    expect(await pulling).toBe(true);
+    expect(readAiFeatures().contactEnrichment).toBe(true);
     expect(localStorage.getItem("threestrands.fontScale")).toBe("120");
   });
 });
