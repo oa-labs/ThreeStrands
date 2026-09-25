@@ -1851,7 +1851,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             <span>Contact Enrichment</span>
             <input type="checkbox" checked={features.contactEnrichment} onChange={(event) => updateFeature("contactEnrichment", event.target.checked)} />
           </label>
-          <p className="settings-hint">When requested, a small set of local emails is sent to your selected AI provider for reviewable contact suggestions.</p>
+          <p className="settings-hint">Contact enrichment starts with three local emails. If they yield no supported suggestions, it checks up to nine more. You can choose to search more emails when the first three yield suggestions.</p>
         </>
       ) : null}
     </section>

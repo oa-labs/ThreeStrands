@@ -480,7 +480,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       items.sort((a,b) => b.sentAt.localeCompare(a.sentAt));
       return structuredClone(items.slice(offset, offset + limit));
     },
-    async enrichContact() { return []; },
+    async enrichContact() { return { suggestions: [], messagesReviewed: 0, hasMore: false }; },
     async pinContact(_accountId, email, displayName) {
       const normalized = email.trim().toLocaleLowerCase();
       const existing = contacts.find((contact) => contact.email === normalized);

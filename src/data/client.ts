@@ -16,7 +16,7 @@ import type {
   ContactProfile,
   ContactTimelineItem,
   SaveContactRequest,
-  ContactFieldSuggestion,
+  ContactEnrichmentResult,
   CreateTaskRequest,
   Label,
   MailboxUnreadCounts,
@@ -103,7 +103,7 @@ export interface MailClient extends CorrespondenceClient {
   saveContactProfile(request: SaveContactRequest): Promise<ContactProfile>;
   deleteContactProfile(id: string): Promise<void>;
   contactTimeline(id: string, offset?: number, limit?: number): Promise<ContactTimelineItem[]>;
-  enrichContact(id: string, provider: AiProvider, model: string, endpoint: string | null): Promise<ContactFieldSuggestion[]>;
+  enrichContact(id: string, provider: AiProvider, model: string, endpoint: string | null, searchMore?: boolean): Promise<ContactEnrichmentResult>;
   pinContact(accountId: string, email: string, displayName: string | null): Promise<void>;
   unpinContact(accountId: string, email: string): Promise<void>;
   unsubscribe(messageId: string): Promise<UnsubscribeResult>;
@@ -200,7 +200,7 @@ const tauriClient: MailClient = {
   saveContactProfile: (request) => complete("save_contact_profile", { request }),
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
   contactTimeline: (id, offset = 0, limit = 30) => read("contact_timeline", { id, offset, limit }),
-  enrichContact: (id, provider, model, endpoint) => complete("ai_enrich_contact", { id, provider, model, endpoint }),
+  enrichContact: (id, provider, model, endpoint, searchMore = false) => complete("ai_enrich_contact", { id, provider, model, endpoint, searchMore }),
   pinContact: (accountId, email, displayName) => complete("pin_contact", { accountId, email, displayName }),
   unpinContact: (accountId, email) => complete("unpin_contact", { accountId, email }),
   unsubscribe: (messageId) => complete("unsubscribe", { messageId }),

@@ -1723,6 +1723,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-enrichment article > div { display:grid; gap:5px; }
 .contact-enrichment article span,.contact-enrichment article small { color:var(--muted); font-size:var(--type-xs); }
 .contact-enrichment blockquote { margin:4px 0 0; color:var(--secondary); font-size:var(--type-sm); }
+.contact-enrichment-progress { margin:10px 0 0; color:var(--muted); font-size:var(--type-xs); }
+.contact-enrichment-more { margin-top:10px; padding:7px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
+.contact-enrichment-more:disabled { opacity:.55; cursor:wait; }
 .contact-suggestion-source { width:max-content; padding:0; border:0; color:var(--accent); background:transparent; font:inherit; font-size:var(--type-xs); text-decoration:underline; cursor:pointer; }
 .contact-timeline h2 { font-size:var(--type-ui); font-weight:600; }
 .contact-timeline > button,.contact-sidebar-history > button { width:100%; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 9px; border:0; border-bottom:1px solid var(--border); color:var(--text); background:transparent; text-align:left; cursor:pointer; }

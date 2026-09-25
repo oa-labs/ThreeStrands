@@ -42,7 +42,7 @@ use auth::{AccountAuth, GoogleAuthConfig};
 use chrono::Utc;
 use db::Database;
 use models::{
-    ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, ContactFieldSuggestion, CreateLabelRequest,
+    ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
@@ -2409,13 +2409,16 @@ async fn ai_enrich_contact(
     provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
+    search_more: Option<bool>,
     state: State<'_, AppState>,
-) -> Result<Vec<ContactFieldSuggestion>, String> {
+) -> Result<ai::ContactEnrichmentResult, String> {
     let profile = state
         .database
         .get_contact_profile(&id)?
         .ok_or_else(|| "Contact could not be found".to_string())?;
-    let timeline = state.database.contact_timeline(&id, 0, 12)?;
+    // Inspect more conversations locally so the first provider batch can
+    // favor messages that the contact opened, even if those are less recent.
+    let timeline = state.database.contact_timeline(&id, 0, 30)?;
     let addresses = profile
         .addresses
         .iter()
@@ -2424,10 +2427,7 @@ async fn ai_enrich_contact(
     let mut messages = Vec::new();
     for item in timeline {
         let detail = state.database.get_thread(&item.thread_id)?;
-        for message in detail.messages.into_iter().rev() {
-            if messages.len() >= 12 {
-                break;
-            }
+        for (index, message) in detail.messages.into_iter().enumerate() {
             let sender_matches = crate::correspondence::addresses(&message.sender)
                 .unwrap_or_default()
                 .iter()
@@ -2446,11 +2446,10 @@ async fn ai_enrich_contact(
                     sent_at: message.sent_at,
                     subject: detail.thread.subject.clone(),
                     body_text: message.body_text,
+                    from_contact: sender_matches,
+                    is_thread_starter: index == 0,
                 });
             }
-        }
-        if messages.len() >= 12 {
-            break;
         }
     }
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
@@ -2459,8 +2458,9 @@ async fn ai_enrich_contact(
             provider,
             model,
             endpoint,
-            addresses: profile.addresses,
+            profile,
             messages,
+            search_more: search_more.unwrap_or(false),
         },
         &api_key,
     )
