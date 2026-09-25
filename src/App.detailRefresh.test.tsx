@@ -10,6 +10,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("keeps contact context visible while reading email and Actions", async () => {
+  render(<App />);
+
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  expect(screen.getByRole("complementary", { name: "Contact details" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Contact details" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Close contact pane" })).not.toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "A", shiftKey: true });
+  expect(screen.getByRole("complementary", { name: "Contact details" })).toBeInTheDocument();
+  expect(screen.getByRole("complementary", { name: "Actions" })).toBeInTheDocument();
+});
+
 it("opens archived contact timeline email in All Mail and keeps it selected after refresh", async () => {
   localStorage.removeItem("threestrands.settings.selectedMailboxByAccount");
   await mailClient.mutateThread({ kind: "archive", threadId: "roadmap", value: true });

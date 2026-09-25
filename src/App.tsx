@@ -142,7 +142,7 @@ import { Settings, type MailAccountSettings, type SettingsSection } from "./Sett
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
-type RightWorkspace = "actions" | "calendar" | "contact" | "contacts" | "tasks" | "week" | null;
+type RightWorkspace = "actions" | "calendar" | "contacts" | "tasks" | "week" | null;
 type TaskEditorState =
   | { kind: "new"; thread: ThreadDetail }
   | { kind: "standalone"; accountId: string }
@@ -1521,8 +1521,6 @@ export function App() {
   }, []);
 
   const openContactsView = useCallback(() => setRightWorkspace(current => current === "contacts" ? null : "contacts"), []);
-  const toggleContactPane = useCallback(() => setRightWorkspace(current => current === "contact" ? null : "contact"), []);
-
   const openCalendarView = useCallback(() => {
     setRightWorkspace("week");
     void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
@@ -1839,7 +1837,7 @@ export function App() {
   };
 
   return (
-    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}${rightWorkspace === "actions" || rightWorkspace === "calendar" ? " mail-context-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -2144,7 +2142,6 @@ export function App() {
                 </div>
               </div>
               <div className="reader-actions">
-                <HoverTooltip label="Contact details" placement="bottom"><ActionButton label="Contact details" onClick={toggleContactPane}><ContactRound size={17}/></ActionButton></HoverTooltip>
                 <HoverTooltip label="Actions" shortcut="Shift+A" placement="bottom">
                   <ActionButton label="Actions" shortcut="Shift+A" onClick={openActions}>
                     <Sparkles size={17} />
@@ -2594,7 +2591,7 @@ export function App() {
           }}
         />
       ) : null}
-      {rightWorkspace === "contact" ? <ContactSidebar detail={visibleDetail} accounts={accounts} onClose={() => setRightWorkspace(null)} onOpenThread={openTaskThread} /> : null}
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <ContactSidebar detail={visibleDetail} accounts={accounts} onOpenThread={openTaskThread} /> : null}
       {rightWorkspace === "contacts" ? <ContactsWorkspace onOpenThread={openTaskThread} /> : null}
       {rightWorkspace === "tasks" ? (
         <>

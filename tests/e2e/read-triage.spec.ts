@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const threadOptions = (page: import("@playwright/test").Page) => page.getByRole("listbox").getByRole("option");
+
 test("processes the inbox from the keyboard", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
@@ -13,7 +15,7 @@ test("processes the inbox from the keyboard", async ({ page }) => {
   await page.keyboard.press("e");
   await expect(page.getByRole("status")).toContainText("Conversation archived");
   await expect(page.getByRole("heading", { name: "2 conversations" })).toBeVisible();
-  await expect(page.getByRole("option", { selected: true })).toContainText("Your inbox stays local");
+  await expect(page.getByRole("listbox").getByRole("option", { selected: true })).toContainText("Your inbox stays local");
   await expect(page.getByRole("heading", { name: "Your inbox stays local" })).toBeVisible();
 
   await expect(page.getByRole("status")).toBeHidden({ timeout: 10_000 });
@@ -74,7 +76,7 @@ test("searches and opens the command palette", async ({ page }) => {
   const search = page.getByRole("textbox", { name: "Search Mail" });
   await expect(search).toBeFocused();
   await search.fill("SQLite");
-  await expect(page.getByRole("option")).toHaveCount(1);
+  await expect(threadOptions(page)).toHaveCount(1);
   await expect(page.getByRole("heading", { name: "Your inbox stays local" })).toBeVisible();
 
   await page.keyboard.press("ControlOrMeta+k");
@@ -91,11 +93,11 @@ test("dismisses search with Escape", async ({ page }) => {
   await page.keyboard.press("/");
   const search = page.getByRole("textbox", { name: "Search Mail" });
   await search.fill("SQLite");
-  await expect(page.getByRole("option")).toHaveCount(1);
+  await expect(threadOptions(page)).toHaveCount(1);
 
   await page.keyboard.press("Escape");
   await expect(search).toHaveCount(0);
-  await expect(page.getByRole("option")).toHaveCount(3);
+  await expect(threadOptions(page)).toHaveCount(3);
 });
 
 test("changes the app font size with desktop shortcuts and restores it", async ({ page }) => {
@@ -385,7 +387,7 @@ test("marks an unread conversation read after the configured delay", async ({ pa
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
-  const welcome = page.getByRole("option").filter({ hasText: "Welcome to ThreeStrands" });
+  const welcome = threadOptions(page).filter({ hasText: "Welcome to ThreeStrands" });
   await expect(welcome.locator(".unread-dot")).toHaveClass(/visible/);
 
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
@@ -440,33 +442,33 @@ test("archived and trashed threads move between Inbox, All Mail, and Trash", asy
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
   const roadmap = /Phase 1: read and triage/;
 
-  await page.getByRole("option", { name: roadmap }).click();
+  await page.getByRole("listbox").getByRole("option", { name: roadmap }).click();
   await page.keyboard.press("e");
   await expect(page.getByRole("heading", { name: "2 conversations" })).toBeVisible();
 
   // Archived, so it's gone from Inbox but still shows in All Mail.
   await page.keyboard.press("g");
   await page.keyboard.press("a");
-  await expect(page.getByRole("option", { name: roadmap })).toBeVisible();
+  await expect(page.getByRole("listbox").getByRole("option", { name: roadmap })).toBeVisible();
 
   // Trash it from All Mail; it leaves All Mail and lands in Trash.
-  await page.getByRole("option", { name: roadmap }).click();
+  await page.getByRole("listbox").getByRole("option", { name: roadmap }).click();
   await page.keyboard.press("#");
-  await expect(page.getByRole("option", { name: roadmap })).not.toBeVisible();
+  await expect(page.getByRole("listbox").getByRole("option", { name: roadmap })).not.toBeVisible();
 
   await page.keyboard.press("g");
   await page.keyboard.press("t");
-  await expect(page.getByRole("option", { name: roadmap })).toBeVisible();
+  await expect(page.getByRole("listbox").getByRole("option", { name: roadmap })).toBeVisible();
 
   // Restoring from Trash returns it to the Inbox.
-  await page.getByRole("option", { name: roadmap }).click();
+  await page.getByRole("listbox").getByRole("option", { name: roadmap }).click();
   await page.getByRole("button", { name: "Restore" }).click();
-  await expect(page.getByRole("option", { name: roadmap })).not.toBeVisible();
+  await expect(page.getByRole("listbox").getByRole("option", { name: roadmap })).not.toBeVisible();
 
   await page.keyboard.press("g");
   await page.keyboard.press("i");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
-  await expect(page.getByRole("option", { name: roadmap })).toBeVisible();
+  await expect(page.getByRole("listbox").getByRole("option", { name: roadmap })).toBeVisible();
 });
 
 test("shows folder labels and shortcuts in the header menu", async ({ page }) => {
@@ -538,7 +540,7 @@ test("wraps batch actions and shows their help at the minimum inbox width", asyn
   await page.keyboard.press("Home");
   await expect(divider).toHaveAttribute("aria-valuenow", "280");
 
-  const selectedThread = page.getByRole("option", { selected: true });
+  const selectedThread = page.getByRole("listbox").getByRole("option", { selected: true });
   await selectedThread.focus();
   await page.keyboard.press("x");
 

@@ -1,18 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookUser, Heart, Mail, X } from "lucide-react";
+import { BookUser, Heart, Mail } from "lucide-react";
 import { mailClient } from "./data/client";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { parseAddress, splitAddressList } from "./emailAddress";
-import { useEscapeDismiss } from "./useEscapeDismiss";
 
-export function ContactSidebar({ detail, accounts, onClose, onOpenThread }: {
+export function ContactSidebar({ detail, accounts, onOpenThread }: {
   detail: ThreadDetail | null;
   accounts: Account[];
-  onClose(): void;
   onOpenThread(id: string): void;
 }) {
-  useEscapeDismiss(onClose);
   const own = new Set(accounts.map((account) => account.email.toLocaleLowerCase()));
   const participants = useMemo(() => {
     if (!detail) return [];
@@ -82,7 +79,7 @@ export function ContactSidebar({ detail, accounts, onClose, onOpenThread }: {
 
   return (
     <aside className="contact-sidebar" aria-label="Contact details">
-      <header><strong>Contact</strong><button type="button" aria-label="Close contact pane" onClick={onClose}><X size={16} /></button></header>
+      <header><strong>Contact</strong></header>
       {participants.length > 1 ? (
         <label className="contact-participant-picker">Conversation participant
           <select aria-label="Conversation participant" value={email} onChange={(event) => setEmail(event.target.value)}>

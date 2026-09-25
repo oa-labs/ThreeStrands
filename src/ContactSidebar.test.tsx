@@ -17,7 +17,7 @@ describe("ContactSidebar",()=>{
     vi.mocked(mailClient.listContactProfiles).mockImplementation(async query=>query?.includes("jane")?[jane]:[bob]);
     vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
-    render(<ContactSidebar detail={detail} accounts={[account]} onClose={vi.fn()} onOpenThread={vi.fn()}/>);
+    render(<ContactSidebar detail={detail} accounts={[account]} onOpenThread={vi.fn()}/>);
     await screen.findByRole("heading",{name:"Bob Lee"});
     const picker=screen.getByRole("combobox",{name:"Conversation participant"});
     fireEvent.change(picker,{target:{value:"jane@example.com"}});
@@ -30,7 +30,7 @@ describe("ContactSidebar",()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     vi.mocked(mailClient.saveContactProfile).mockRejectedValue(new Error("Address belongs to another contact"));
-    render(<ContactSidebar detail={detail} accounts={[account]} onClose={vi.fn()} onOpenThread={vi.fn()}/>);
+    render(<ContactSidebar detail={detail} accounts={[account]} onOpenThread={vi.fn()}/>);
     await screen.findByRole("heading",{name:"Bob Lee"});
     fireEvent.click(screen.getByRole("button",{name:"Add favorite"}));
     expect(await screen.findByRole("alert")).toHaveTextContent("Address belongs to another contact");
