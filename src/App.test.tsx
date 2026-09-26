@@ -637,7 +637,7 @@ describe("keyboard-first task and action workspaces", () => {
     const titleField = await within(workspace).findByRole("textbox", { name: "Task title" });
     expect(titleField).toHaveValue("");
     fireEvent.change(titleField, { target: { value: "Prepare launch notes" } });
-    const quickAdd = workspace.querySelector(".task-quick-add")!;
+    const quickAdd = workspace.querySelector<HTMLElement>(".task-quick-add")!;
     fireEvent.click(within(quickAdd).getByRole("button", { name: "Add task" }));
     await waitFor(() => expect(createTask).toHaveBeenCalledWith({
       accountId: "demo@example.com", threadId: null, subjectSnapshot: null, title: "Prepare launch notes", kind: "action",
@@ -714,7 +714,7 @@ describe("keyboard-first task and action workspaces", () => {
       },
     ];
     const listTasks = vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
-    let taskStore = [...tasks];
+    let taskStore: ThreadTask[] = [...tasks];
     listTasks.mockImplementation(async () => taskStore);
     const setStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (id) => {
       const updated = { ...taskStore.find((task) => task.id === id)!, status: "completed" as const, completionSource: "user" as const };
