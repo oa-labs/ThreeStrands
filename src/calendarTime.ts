@@ -64,6 +64,17 @@ export function listSupportedTimeZones(): string[] {
   }
 }
 
+/**
+ * Carries the entered date across a date/date-time input switch instead of
+ * discarding it: a `date` value truncates to its first 10 characters, and a
+ * bare date gains a default time when switching to `datetime`.
+ */
+export function convertDueInputValue(value: string, toKind: "date" | "datetime"): string {
+  if (!value) return "";
+  if (toKind === "date") return value.slice(0, 10);
+  return value.length > 10 ? value : `${value}T09:00`;
+}
+
 export function formatEventTime(event: ScheduleEvent): string {
   if (event.allDay) return "All day";
   const formatter = new Intl.DateTimeFormat(undefined, {

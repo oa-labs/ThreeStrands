@@ -193,6 +193,73 @@ describe("TaskSidebar", () => {
     }));
   });
 
+  it("preserves the entered date when switching the inline due editor between date and date-and-time", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("plan", { title: "Plan launch" })]);
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add a due date" }));
+    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2030-10-01" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Due type" }), { target: { value: "datetime" } });
+    expect(screen.getByLabelText("Due date and time")).toHaveValue("2030-10-01T09:00");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Due type" }), { target: { value: "date" } });
+    expect(screen.getByLabelText("Due date")).toHaveValue("2030-10-01");
+  });
+
+  it("hides completed tasks older than a few days from the compact sidebar list", async () => {
+    const stale = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const recent = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
+    const tasks = [
+      workspaceTask("stale", { status: "completed", completedAt: stale }),
+      workspaceTask("recent", { status: "completed", completedAt: recent }),
+    ];
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
+    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    await screen.findByRole("heading", { name: "Completed" });
+    expect(screen.getByText("recent")).toBeInTheDocument();
+    expect(screen.queryByText("stale")).not.toBeInTheDocument();
+  });
+
+  it("shows the selected task visually in the compact sidebar variant too", async () => {
+    const tasks = [workspaceTask("task-1", { title: "First" }), workspaceTask("task-2", { title: "Second" })];
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
+    const { container } = render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByText("Second"));
+    expect(container.querySelector("#task-task-2")).toHaveClass("selected");
+    expect(container.querySelector("#task-task-2")).toHaveAttribute("aria-current", "true");
+    expect(container.querySelector("#task-task-1")).not.toHaveClass("selected");
+  });
+
+  it("lets the user dismiss the error banner", async () => {
+    vi.spyOn(mailClient, "listTasks").mockRejectedValue(new Error("Could not load tasks"));
+    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not load tasks");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss error" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the quick-add row open after creating a task for batch entry", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    const onCreateTask = vi.fn()
+      .mockResolvedValueOnce(workspaceTask("task-1", { title: "First" }))
+      .mockResolvedValueOnce(workspaceTask("task-2", { title: "Second" }));
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
+    const input = screen.getByRole("textbox", { name: "Task title" });
+    fireEvent.change(input, { target: { value: "First" } });
+    fireEvent.click(within(input.closest("form")!).getByRole("button", { name: "Add task" }));
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("First"));
+
+    expect(screen.getByRole("textbox", { name: "Task title" })).toHaveValue("");
+    fireEvent.change(screen.getByRole("textbox", { name: "Task title" }), { target: { value: "Second" } });
+    fireEvent.click(within(screen.getByRole("textbox", { name: "Task title" }).closest("form")!).getByRole("button", { name: "Add task" }));
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Second"));
+  });
+
   it("offers a follow-up draft for a due follow-up task", async () => {
     const task: ThreadTask = {
       id: "follow-up-1",

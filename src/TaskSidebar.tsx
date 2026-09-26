@@ -3,7 +3,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask, UpdateTaskRequest, TaskDueKind } from "./domain";
 import { mailClient } from "./data/client";
 import { ActionButton, HoverTooltip } from "./AppChrome";
-import { isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
+import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
 import { dueView, TASK_VIEWS, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
@@ -47,6 +47,13 @@ function dateTimeInputValue(value: string | null | undefined): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.slice(0, 16);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+const COMPLETED_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+
+function isStaleCompleted(task: ThreadTask): boolean {
+  if (task.status !== "completed" || !task.completedAt) return false;
+  return Date.now() - new Date(task.completedAt).getTime() > COMPLETED_RETENTION_MS;
 }
 
 function isDue(task: ThreadTask): boolean {
@@ -181,6 +188,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const grouped = useMemo(() => {
     const groups = new Map<string, ThreadTask[]>();
     for (const task of tasks) {
+      if (isStaleCompleted(task)) continue;
       const group = taskGroup(task);
       const current = groups.get(group) ?? [];
       current.push(task);
@@ -284,9 +292,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       setTasks((current) => [created, ...current]);
       setView("All");
       setSelectedTaskId(created.id);
-      setAddingTask(false);
       setNewTaskTitle("");
       onTasksChanged?.();
+      newTaskInput.current?.focus();
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -321,8 +329,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           <article
             id={`task-${task.id}`}
             ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }}
-            className={`task-card task-${task.status}${variant === "workspace" && selectedTaskId === task.id ? " selected" : ""}`}
-            aria-current={variant === "workspace" && selectedTaskId === task.id ? "true" : undefined}
+            className={`task-card task-${task.status}${selectedTaskId === task.id ? " selected" : ""}`}
+            aria-current={selectedTaskId === task.id ? "true" : undefined}
             key={task.id}
           >
             <button type="button" className="task-card-main" onClick={() => variant === "workspace" || !task.threadId ? setSelectedTaskId(task.id) : onOpenThread(task.threadId)}>
@@ -368,7 +376,10 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {variant === "workspace" ? null : <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>}
         </div>
       </header>
-      {error ? <p className="form-error tasks-error" role="alert">{error}</p> : null}
+      {error ? <p className="form-error tasks-error" role="alert">
+        <span>{error}</span>
+        <button type="button" aria-label="Dismiss error" onClick={() => setError(null)}><X size={13} /></button>
+      </p> : null}
       <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
       {completionToast ? (
         <div className="toast task-complete-toast" role="status">
@@ -475,7 +486,11 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
                   timeZone: dueKindDraft === "datetime" ? (trimmedZone || Intl.DateTimeFormat().resolvedOptions().timeZone) : null,
                 });
               }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(null); } }}>
-                <select aria-label="Due type" value={dueKindDraft} onChange={(event) => { setDueKindDraft(event.target.value as TaskDueKind); setDueValueDraft(""); }}><option value="date">Date</option><option value="datetime">Date and time</option></select>
+                <select aria-label="Due type" value={dueKindDraft} onChange={(event) => {
+                  const nextKind = event.target.value as "date" | "datetime";
+                  setDueKindDraft(nextKind);
+                  setDueValueDraft((current) => convertDueInputValue(current, nextKind));
+                }}><option value="date">Date</option><option value="datetime">Date and time</option></select>
                 <input aria-label={dueKindDraft === "datetime" ? "Due date and time" : "Due date"} type={dueKindDraft === "datetime" ? "datetime-local" : "date"} value={dueValueDraft} onChange={(event) => setDueValueDraft(event.target.value)} required />
                 {dueKindDraft === "datetime" ? <input
                   list="task-detail-timezones"

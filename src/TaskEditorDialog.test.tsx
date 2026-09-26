@@ -54,6 +54,24 @@ describe("TaskEditorDialog", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ timeZone: "America/New_York" })));
   });
 
+  it("preserves the entered date when switching between due date and due date-and-time", async () => {
+    render(
+      <TaskEditorDialog
+        initial={{ title: "Plan launch", kind: "action", dueKind: "none" }}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
+    fireEvent.change(screen.getByLabelText("Due Date"), { target: { value: "2026-09-25" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Due" }), { target: { value: "datetime" } });
+    expect(screen.getByLabelText("Due Date and Time")).toHaveValue("2026-09-25T09:00");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
+    expect(screen.getByLabelText("Due Date")).toHaveValue("2026-09-25");
+  });
+
   it("preserves entered values when submission fails", async () => {
     render(
       <TaskEditorDialog

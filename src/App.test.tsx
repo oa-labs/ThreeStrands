@@ -643,7 +643,7 @@ describe("keyboard-first task and action workspaces", () => {
       accountId: "demo@example.com", threadId: null, subjectSnapshot: null, title: "Prepare launch notes", kind: "action",
     }));
     expect(await within(workspace).findByRole("heading", { name: "Prepare launch notes" })).toBeInTheDocument();
-    expect(within(workspace).getByRole("button", { name: "Add task" })).not.toHaveAttribute("title");
+    expect(workspace.querySelector(".task-add-button")).not.toHaveAttribute("title");
 
     fireEvent.keyDown(window, { key: "0" });
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();

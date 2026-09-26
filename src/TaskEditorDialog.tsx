@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
-import { isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
+import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import type { TaskDueKind, TaskKind } from "./domain";
 import { errorMessage } from "./errors";
 
@@ -104,7 +104,11 @@ export function TaskEditorDialog({
         {sourceSubject ? <p className="modal-form-context">From: {sourceSubject}</p> : null}
         <label><span>Task</span><input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs doing?" /></label>
         <label><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as TaskKind)}><option value="action">Action</option><option value="follow_up">Follow up</option><option value="waiting_for">Waiting for reply</option></select></label>
-        <label><span>Due</span><select value={dueKind} onChange={(event) => { setDueKind(event.target.value as TaskDueKind); setDueValue(""); }}><option value="none">No due date</option><option value="date">Date</option><option value="datetime">Date and time</option></select></label>
+        <label><span>Due</span><select value={dueKind} onChange={(event) => {
+          const nextKind = event.target.value as TaskDueKind;
+          setDueKind(nextKind);
+          setDueValue((current) => nextKind === "none" ? "" : convertDueInputValue(current, nextKind));
+        }}><option value="none">No due date</option><option value="date">Date</option><option value="datetime">Date and time</option></select></label>
         {dueKind !== "none" ? <label><span>{dueKind === "date" ? "Due Date" : "Due Date and Time"}</span><input type={dueKind === "date" ? "date" : "datetime-local"} value={dueValue} onChange={(event) => setDueValue(event.target.value)} required /></label> : null}
         {dueKind !== "none" ? <label>
           <span>Timezone</span>
