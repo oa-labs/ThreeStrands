@@ -1,8 +1,28 @@
-import type { ThreadTask } from "./domain";
+import type { TaskStatus, ThreadTask } from "./domain";
 
 export const TASK_VIEWS = ["All", "Overdue", "Today", "Upcoming", "Anytime", "Waiting", "Completed"] as const;
 export type TaskView = typeof TASK_VIEWS[number];
 type OpenTaskView = Exclude<TaskView, "All" | "Completed">;
+
+export function isActiveTaskStatus(status: TaskStatus): boolean {
+  return status === "open" || status === "in_progress";
+}
+
+export const TASK_BOARD_COLUMNS = ["To Do", "In Progress", "Done"] as const;
+export type TaskBoardColumn = typeof TASK_BOARD_COLUMNS[number];
+
+export function taskBoardColumn(status: TaskStatus): TaskBoardColumn {
+  if (status === "open") return "To Do";
+  return status === "in_progress" ? "In Progress" : "Done";
+}
+
+const COLUMN_STATUS: Record<TaskBoardColumn, TaskStatus> = { "To Do": "open", "In Progress": "in_progress", Done: "completed" };
+
+/** The status a task takes when moved one board column left or right, or null at the edge. */
+export function adjacentTaskStatus(status: TaskStatus, direction: -1 | 1): TaskStatus | null {
+  const column = TASK_BOARD_COLUMNS[TASK_BOARD_COLUMNS.indexOf(taskBoardColumn(status)) + direction];
+  return column ? COLUMN_STATUS[column] : null;
+}
 
 function localDateKey(date: Date): string {
   const year = date.getFullYear();
@@ -25,15 +45,15 @@ export function dueView(task: ThreadTask, now: Date): "Overdue" | "Today" | "Upc
 }
 
 export function taskViewForAll(task: ThreadTask, now: Date): OpenTaskView | "Completed" {
-  if (task.status !== "open") return "Completed";
+  if (!isActiveTaskStatus(task.status)) return "Completed";
   const due = dueView(task, now);
   if (due) return due;
   return task.kind === "waiting_for" ? "Waiting" : "Anytime";
 }
 
 export function taskMatchesView(task: ThreadTask, view: TaskView, now: Date): boolean {
-  if (view === "Completed") return task.status !== "open";
-  if (task.status !== "open") return false;
+  if (view === "Completed") return !isActiveTaskStatus(task.status);
+  if (!isActiveTaskStatus(task.status)) return false;
   if (view === "All") return true;
   if (view === "Waiting") return task.kind === "waiting_for";
   if (view === "Anytime") return !dueView(task, now) && task.kind !== "waiting_for";

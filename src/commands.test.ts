@@ -50,6 +50,10 @@ function noopContext(): CommandContext {
     completeSelectedTask: () => {},
     reopenSelectedTask: () => {},
     selectedTaskStatus: null,
+    moveSelectedTask: () => {},
+    selectAdjacentTaskColumn: () => {},
+    toggleTaskLayout: () => {},
+    taskBoardActive: false,
     selectedTaskHasThread: false,
     selectNextMessage: () => {},
     selectPreviousMessage: () => {},
@@ -114,14 +118,16 @@ describe("command registry", () => {
       "shift+e": ["tasks.reopenSelected", "thread.unarchive"],
       o: ["tasks.openSelected", "thread.toggleOlderMessages"],
       "#": ["draft.discard", "thread.trash"],
+      arrowright: ["tasks.nextColumn", "message.next"],
+      arrowleft: ["tasks.previousColumn", "message.previous"],
     });
 
     for (const focusedPane of ["mail", "tasks", "contacts"] as const) {
-      for (const selectedTaskStatus of ["open", "completed", "cancelled"] as const) {
-        for (const selectedArchived of [false, true]) {
+      for (const selectedTaskStatus of ["open", "in_progress", "completed", "cancelled"] as const) {
+        for (const [selectedArchived, taskBoardActive] of [[false, false], [true, false], [false, true], [true, true]] as const) {
           for (const mailbox of ["inbox", "drafts"] as const) {
             for (const composerActive of [false, true]) {
-              const context = { ...noopContext(), focusedPane, selectedId: "thread-1", selectedArchived, selectedTaskStatus, mailbox, composerActive };
+              const context = { ...noopContext(), focusedPane, selectedId: "thread-1", selectedArchived, taskBoardActive, selectedTaskStatus, mailbox, composerActive };
               for (const ids of [...owners.values()].filter((candidateIds) => candidateIds.length > 1)) {
                 expect(ids.filter((id) => commands.find((command) => command.id === id)?.enabled(context)).length).toBeLessThanOrEqual(1);
               }
@@ -140,6 +146,27 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "tasks.completeSelected")?.keys).toEqual(["e"]);
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.keys).toEqual(["Shift+e"]);
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.enabled({ ...taskContext, selectedTaskStatus: "cancelled" })).toBe(true);
+  });
+
+  it("moves the selected task between board columns and only navigates columns on the board", () => {
+    const enabled = (id: string, context: ReturnType<typeof noopContext>) => commands.find((command) => command.id === id)?.enabled(context);
+    const taskContext = { ...noopContext(), focusedPane: "tasks" as const };
+    expect(commands.find((command) => command.id === "tasks.moveForward")?.keys).toEqual(["]", "Shift+ArrowRight"]);
+    expect(commands.find((command) => command.id === "tasks.moveBack")?.keys).toEqual(["[", "Shift+ArrowLeft"]);
+    expect(enabled("tasks.moveForward", { ...taskContext, selectedTaskStatus: "open" })).toBe(true);
+    expect(enabled("tasks.moveBack", { ...taskContext, selectedTaskStatus: "open" })).toBe(false);
+    expect(enabled("tasks.moveForward", { ...taskContext, selectedTaskStatus: "completed" })).toBe(false);
+    expect(enabled("tasks.moveBack", { ...taskContext, selectedTaskStatus: "completed" })).toBe(true);
+    expect(enabled("tasks.completeSelected", { ...taskContext, selectedTaskStatus: "in_progress" })).toBe(true);
+    expect(enabled("tasks.reopenSelected", { ...taskContext, selectedTaskStatus: "in_progress" })).toBe(false);
+    expect(enabled("tasks.moveForward", { ...noopContext(), selectedTaskStatus: "open" })).toBe(false);
+    expect(enabled("tasks.nextColumn", taskContext)).toBe(false);
+    expect(enabled("tasks.nextColumn", { ...taskContext, taskBoardActive: true })).toBe(true);
+    expect(enabled("tasks.toggleLayout", taskContext)).toBe(true);
+
+    const moveSelectedTask = vi.fn();
+    void commands.find((command) => command.id === "tasks.moveBack")?.run({ ...taskContext, moveSelectedTask });
+    expect(moveSelectedTask).toHaveBeenCalledWith(-1);
   });
 
   it("disables mail and task arrow-key navigation while the Contacts pane is focused", () => {

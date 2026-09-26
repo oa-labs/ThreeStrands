@@ -4,12 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, hasWorkingHoursOnDate, scheduleRequestFor } from "./CalendarSidebar";
 import { mailClient } from "./data/client";
+import { clearScheduleCache } from "./calendarScheduleCache";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 describe("calendar sidebar", () => {
   afterEach(() => {
     cleanup();
+    clearScheduleCache();
     vi.restoreAllMocks();
     vi.mocked(openUrl).mockClear();
     localStorage.removeItem(CALENDAR_SCROLL_TOP_KEY);

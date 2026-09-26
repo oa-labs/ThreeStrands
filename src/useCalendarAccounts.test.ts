@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption } from "./domain";
 import { useCalendarAccounts } from "./useCalendarAccounts";
+import { clearScheduleCache, readScheduleCache, refreshScheduleCache } from "./calendarScheduleCache";
 
 const work: CalendarAccount = { email: "work@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" };
 const home: CalendarAccount = { email: "home@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" };
@@ -12,7 +13,13 @@ function calendar(id: string, accountId: string, selected = true): CalendarOptio
 }
 
 describe("useCalendarAccounts", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    clearScheduleCache();
+    vi.restoreAllMocks();
+  });
+
+  const request = { timeMin: "2026-09-20T00:00:00Z", timeMax: "2026-09-27T00:00:00Z", timeZone: "UTC" };
+  const seedCache = () => refreshScheduleCache(request, async () => ({ events: [], errors: [] }));
 
   async function renderWithCalendars(accounts: CalendarAccount[], onLastAccountRemoved = vi.fn()) {
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue(accounts);
@@ -28,6 +35,7 @@ describe("useCalendarAccounts", () => {
 
   it("drops a removed account's calendars without signalling while others remain", async () => {
     const { result, onLastAccountRemoved } = await renderWithCalendars([work, home]);
+    await seedCache();
     vi.spyOn(mailClient, "removeCalendarAccount").mockResolvedValue();
     vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue([home]);
 
@@ -36,6 +44,7 @@ describe("useCalendarAccounts", () => {
     expect(result.current.accounts).toEqual([home]);
     expect(result.current.calendars.map((option) => option.id)).toEqual(["home-main"]);
     expect(onLastAccountRemoved).not.toHaveBeenCalled();
+    expect(readScheduleCache(request)).toBeUndefined();
   });
 
   it("signals once the last calendar account is removed", async () => {
@@ -51,15 +60,30 @@ describe("useCalendarAccounts", () => {
 
   it("replaces only the updated account's calendars when selection changes", async () => {
     const { result } = await renderWithCalendars([work, home]);
+    await seedCache();
     vi.spyOn(mailClient, "setCalendarSelection").mockResolvedValue([calendar("work-main", work.email, false)]);
 
     await act(async () => { await result.current.setSelection(work.email, []); });
 
     expect(mailClient.setCalendarSelection).toHaveBeenCalledWith(work.email, []);
+    expect(readScheduleCache(request)).toBeUndefined();
     expect(result.current.calendars).toEqual([
       calendar("home-main", home.email),
       calendar("work-main", work.email, false),
     ]);
+  });
+
+  it("keeps the cache on unchanged refreshes and clears it for externally changed selections", async () => {
+    const { result } = await renderWithCalendars([work]);
+    await seedCache();
+    await act(async () => {
+      await result.current.refreshAccounts();
+      await result.current.refreshCalendars();
+    });
+    expect(readScheduleCache(request)).toBeDefined();
+    vi.mocked(mailClient.listCalendarOptions).mockResolvedValue([calendar("work-main", work.email, false)]);
+    await act(async () => { await result.current.refreshCalendars(); });
+    expect(readScheduleCache(request)).toBeUndefined();
   });
 
   it("records calendar listing failures and clears them after a successful refresh", async () => {

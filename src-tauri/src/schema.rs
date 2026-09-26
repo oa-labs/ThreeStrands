@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 40;
+pub(crate) const LATEST_VERSION: i64 = 41;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1209,6 +1209,43 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             PRAGMA user_version=40;",
         ).map_err(error)?;
     }
+    if version < 41 {
+        // SQLite cannot alter a CHECK constraint, so rebuild the table to admit
+        // the board's in-progress column.
+        tx.execute_batch(
+            "DROP INDEX tasks_status_due;
+            DROP INDEX tasks_account_status;
+            DROP INDEX tasks_thread;
+            ALTER TABLE tasks RENAME TO tasks_v40;
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                thread_id TEXT,
+                source_message_id TEXT,
+                subject_snapshot TEXT,
+                title TEXT NOT NULL,
+                notes TEXT,
+                kind TEXT NOT NULL CHECK(kind IN ('action', 'follow_up', 'waiting_for')),
+                due_kind TEXT NOT NULL CHECK(due_kind IN ('none', 'date', 'datetime')),
+                due_value TEXT,
+                time_zone TEXT,
+                repeat_interval_days INTEGER,
+                status TEXT NOT NULL CHECK(status IN ('open', 'in_progress', 'completed', 'cancelled')),
+                completion_source TEXT CHECK(completion_source IS NULL OR completion_source IN ('user', 'reply', 'external')),
+                evidence_text TEXT,
+                wait_after TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT
+            );
+            INSERT INTO tasks SELECT * FROM tasks_v40;
+            DROP TABLE tasks_v40;
+            CREATE INDEX tasks_status_due ON tasks(status, due_value, updated_at);
+            CREATE INDEX tasks_account_status ON tasks(account_id, status, updated_at);
+            CREATE INDEX tasks_thread ON tasks(thread_id, status);
+            PRAGMA user_version=41;",
+        ).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1537,5 +1574,52 @@ mod tests {
                 [],
             )
             .unwrap();
+    }
+
+    #[test]
+    fn v41_task_migration_preserves_tasks_and_admits_in_progress() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP INDEX tasks_status_due;
+             DROP INDEX tasks_account_status;
+             DROP INDEX tasks_thread;
+             DROP TABLE tasks;
+             CREATE TABLE tasks (
+                id TEXT PRIMARY KEY, account_id TEXT NOT NULL, thread_id TEXT,
+                source_message_id TEXT, subject_snapshot TEXT, title TEXT NOT NULL,
+                notes TEXT, kind TEXT NOT NULL, due_kind TEXT NOT NULL, due_value TEXT,
+                time_zone TEXT, repeat_interval_days INTEGER,
+                status TEXT NOT NULL CHECK(status IN ('open', 'completed', 'cancelled')),
+                completion_source TEXT, evidence_text TEXT, wait_after TEXT,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT
+             );
+             CREATE INDEX tasks_status_due ON tasks(status, due_value, updated_at);
+             CREATE INDEX tasks_account_status ON tasks(account_id, status, updated_at);
+             CREATE INDEX tasks_thread ON tasks(thread_id, status);
+             INSERT INTO tasks(id, account_id, thread_id, subject_snapshot, title, kind,
+                due_kind, status, created_at, updated_at, completed_at)
+             VALUES ('done', 'you@gmail.com', NULL, NULL, 'Finished task',
+                'action', 'none', 'completed', '2026-09-20T00:00:00Z', '2026-09-20T00:00:00Z',
+                '2026-09-21T00:00:00Z');
+             PRAGMA user_version=40;",
+            )
+            .unwrap();
+
+        super::migrate(&mut connection).unwrap();
+
+        let preserved: (String, String) = connection
+            .query_row("SELECT status, completed_at FROM tasks WHERE id='done'", [], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap();
+        assert_eq!(preserved, ("completed".into(), "2026-09-21T00:00:00Z".into()));
+        connection
+            .execute("UPDATE tasks SET status='in_progress', completed_at=NULL WHERE id='done'", [])
+            .unwrap();
+        assert!(connection
+            .execute("UPDATE tasks SET status='blocked' WHERE id='done'", [])
+            .is_err());
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
     }
 }

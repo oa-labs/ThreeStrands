@@ -115,7 +115,7 @@ export type ProposedTimeCheck = {
 };
 
 export type TaskKind = "action" | "follow_up" | "waiting_for";
-export type TaskStatus = "open" | "completed" | "cancelled";
+export type TaskStatus = "open" | "in_progress" | "completed" | "cancelled";
 export type TaskDueKind = "none" | "date" | "datetime";
 
 export type ThreadTask = {

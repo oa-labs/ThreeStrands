@@ -1,4 +1,5 @@
 import { demoCorrespondence } from "./demoCorrespondence";
+import { isActiveTaskStatus } from "../taskViews";
 import type { MailClient } from "./client";
 import { DEMO_ACCOUNT_ID, defaultDemoDataset, type DemoDataset } from "./demoDataset";
 import { buildShowcaseDataset } from "./showcaseDataset";
@@ -739,7 +740,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const next = {
         ...current,
         status,
-        completionSource: status === "open" ? null : source,
+        completionSource: isActiveTaskStatus(status) ? null : source,
         completedAt: status === "completed" ? new Date().toISOString() : null,
         updatedAt: new Date().toISOString(),
       } satisfies ThreadTask;
@@ -749,8 +750,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async recordFollowUp(id) {
       const current = tasks.find((task) => task.id === id);
       if (!current) throw new Error("Task not found");
-      if (current.status !== "open" || current.kind !== "follow_up" || !current.repeatIntervalDays) {
-        throw new Error("Only open repeating follow-up tasks can be recorded");
+      if (!isActiveTaskStatus(current.status) || current.kind !== "follow_up" || !current.repeatIntervalDays) {
+        throw new Error("Only active repeating follow-up tasks can be recorded");
       }
       const nextDue = current.dueValue ? new Date(current.dueValue) : new Date();
       if (current.dueKind === "date") {

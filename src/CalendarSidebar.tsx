@@ -18,6 +18,7 @@ import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
+import { useCalendarSchedule } from "./useCalendarSchedule";
 
 export const CALENDAR_SCROLL_TOP_KEY = "threestrands.calendar.scrollTop";
 const DEFAULT_CALENDAR_SCROLL_TOP = 7 * HOUR_HEIGHT;
@@ -221,9 +222,6 @@ export function CalendarSidebar({
   embedded?: boolean;
 }) {
   const [date, setDate] = useState(() => startOfLocalDay(new Date()));
-  const [events, setEvents] = useState<ScheduleEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
   const [availability, setAvailability] = useState<AvailabilityResult | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
@@ -245,34 +243,8 @@ export function CalendarSidebar({
     setAvailabilityDialogOpen(false);
   }, [canCheckAvailability]);
 
-  const load = useCallback(async (target: Date) => {
-    setSelectedEvent(null);
-    setLoading(true);
-    setError(null);
-    const request = scheduleRequestFor(target);
-    try {
-      const result = await mailClient.listScheduleEvents(
-        request.timeMin,
-        request.timeMax,
-        request.timeZone,
-      );
-      setEvents(result.events);
-      if (result.errors.length > 0) {
-        console.error("Calendar schedule load failed:", result.errors);
-        setError("Calendar schedule load failed");
-      }
-    } catch (reason) {
-      setEvents([]);
-      console.error("Calendar schedule load failed:", reason);
-      setError("Calendar schedule load failed");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load(date);
-  }, [date, load]);
+  const { events, loading, error, reload } = useCalendarSchedule(scheduleRequestFor(date));
+  useEffect(() => { setSelectedEvent(null); }, [date]);
 
   useEffect(() => {
     if (gridRef.current) gridRef.current.scrollTop = readCalendarScrollTop();
@@ -423,7 +395,7 @@ export function CalendarSidebar({
         <div className="calendar-error-notice" role="alert">
           <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>
           <div>
-            <button type="button" onClick={() => void load(date)}>
+            <button type="button" onClick={reload}>
               <RefreshCw size={14} /> Try Again
             </button>
             <button type="button" onClick={onOpenSettings}>Calendar Accounts</button>

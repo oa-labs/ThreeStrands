@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CalendarWeekView, monthGridDays } from "./CalendarWeekView";
 import { mailClient } from "./data/client";
+import { clearScheduleCache } from "./calendarScheduleCache";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
 
 const accounts: CalendarAccount[] = [
@@ -36,6 +37,7 @@ describe("CalendarWeekView", () => {
 
   afterEach(() => {
     cleanup();
+    clearScheduleCache();
     vi.useRealTimers();
     vi.restoreAllMocks();
     localStorage.clear();
@@ -49,16 +51,16 @@ describe("CalendarWeekView", () => {
     }
   });
 
-  it("requests exactly the visible week and reloads when navigating", async () => {
+  it("requests the visible week, preloads neighbors, and refreshes when navigating", async () => {
     const listScheduleEvents = vi.mocked(mailClient.listScheduleEvents);
     renderWeek();
-    await waitFor(() => expect(listScheduleEvents).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(listScheduleEvents).toHaveBeenCalledTimes(3));
     expect(new Date(listScheduleEvents.mock.calls[0][0])).toEqual(new Date(2026, 8, 20));
     expect(new Date(listScheduleEvents.mock.calls[0][1])).toEqual(new Date(2026, 8, 27));
 
     fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
-    await waitFor(() => expect(listScheduleEvents).toHaveBeenCalledTimes(2));
-    expect(new Date(listScheduleEvents.mock.calls[1][0])).toEqual(new Date(2026, 8, 27));
+    await waitFor(() => expect(listScheduleEvents).toHaveBeenCalledTimes(5));
+    expect(new Date(listScheduleEvents.mock.calls[3][0])).toEqual(new Date(2026, 8, 27));
     await screen.findByText("Sun 27");
 
     fireEvent.click(screen.getByRole("button", { name: "Previous week (-)" }));
@@ -76,6 +78,28 @@ describe("CalendarWeekView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
     await screen.findByText("Sun 20");
+  });
+
+  it("renders preloaded events while refreshing a newly displayed week", async () => {
+    const nextStart = new Date(2026, 8, 27).toISOString();
+    const preloaded = event("preloaded", "2026-09-28T09:00:00", "2026-09-28T10:00:00", "Cached planning");
+    let nextCalls = 0;
+    let resolve!: (value: { events: ScheduleEvent[]; errors: string[] }) => void;
+    const refresh = new Promise<{ events: ScheduleEvent[]; errors: string[] }>((done) => { resolve = done; });
+    vi.mocked(mailClient.listScheduleEvents).mockImplementation((start) => {
+      if (start !== nextStart) return Promise.resolve({ events: [], errors: [] });
+      nextCalls += 1;
+      return nextCalls === 1 ? Promise.resolve({ events: [preloaded], errors: [] }) : refresh;
+    });
+    renderWeek();
+    await waitFor(() => expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(3));
+    // Let the speculative request finish before navigating.
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
+    expect(screen.getByRole("button", { name: /Cached planning/ })).toBeInTheDocument();
+    expect(screen.queryByText("Loading schedule…")).not.toBeInTheDocument();
+    await act(async () => { resolve({ events: [], errors: [] }); });
+    expect(screen.queryByRole("button", { name: /Cached planning/ })).not.toBeInTheDocument();
   });
 
   it("ignores week navigation keys while typing in a field", async () => {

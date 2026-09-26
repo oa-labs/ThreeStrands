@@ -1,5 +1,6 @@
 import type { MessageFilterKind } from "./messageFilters";
-import type { SplitInbox } from "./domain";
+import type { SplitInbox, TaskStatus } from "./domain";
+import { adjacentTaskStatus, isActiveTaskStatus } from "./taskViews";
 
 export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox" | "split";
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
@@ -46,7 +47,11 @@ export type CommandContext = {
   editSelectedTask(): void;
   completeSelectedTask(): void;
   reopenSelectedTask(): void;
-  selectedTaskStatus: "open" | "completed" | "cancelled" | null;
+  moveSelectedTask(direction: -1 | 1): void;
+  selectAdjacentTaskColumn(direction: -1 | 1): void;
+  toggleTaskLayout(): void;
+  taskBoardActive: boolean;
+  selectedTaskStatus: TaskStatus | null;
   selectedTaskHasThread: boolean;
   selectNextMessage(): void;
   selectPreviousMessage(): void;
@@ -203,7 +208,7 @@ export const commands: Command[] = [
     title: "Complete Selected Task",
     keys: ["e"],
     group: "Triage",
-    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus === "open" && !context.composerActive,
+    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus !== null && isActiveTaskStatus(context.selectedTaskStatus) && !context.composerActive,
     run: (context) => complete(context.completeSelectedTask),
   },
   {
@@ -213,6 +218,46 @@ export const commands: Command[] = [
     group: "Triage",
     enabled: (context) => context.focusedPane === "tasks" && (context.selectedTaskStatus === "completed" || context.selectedTaskStatus === "cancelled") && !context.composerActive,
     run: (context) => complete(context.reopenSelectedTask),
+  },
+  {
+    id: "tasks.moveForward",
+    title: "Move Task to Next Column",
+    keys: ["]", "Shift+ArrowRight"],
+    group: "Triage",
+    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus !== null && adjacentTaskStatus(context.selectedTaskStatus, 1) !== null && !context.composerActive,
+    run: (context) => complete(() => context.moveSelectedTask(1)),
+  },
+  {
+    id: "tasks.moveBack",
+    title: "Move Task to Previous Column",
+    keys: ["[", "Shift+ArrowLeft"],
+    group: "Triage",
+    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus !== null && adjacentTaskStatus(context.selectedTaskStatus, -1) !== null && !context.composerActive,
+    run: (context) => complete(() => context.moveSelectedTask(-1)),
+  },
+  {
+    id: "tasks.nextColumn",
+    title: "Next Board Column",
+    keys: ["ArrowRight"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && context.taskBoardActive && !context.composerActive,
+    run: (context) => complete(() => context.selectAdjacentTaskColumn(1)),
+  },
+  {
+    id: "tasks.previousColumn",
+    title: "Previous Board Column",
+    keys: ["ArrowLeft"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && context.taskBoardActive && !context.composerActive,
+    run: (context) => complete(() => context.selectAdjacentTaskColumn(-1)),
+  },
+  {
+    id: "tasks.toggleLayout",
+    title: "Toggle Task Board",
+    keys: ["v"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
+    run: (context) => complete(context.toggleTaskLayout),
   },
   {
     id: "message.next",

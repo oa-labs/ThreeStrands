@@ -39,6 +39,10 @@ fn validate_task_fields(
     Ok(())
 }
 
+fn is_active_status(status: &str) -> bool {
+    matches!(status, "open" | "in_progress")
+}
+
 fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadTask> {
     Ok(ThreadTask {
         id: row.get(0)?,
@@ -95,7 +99,7 @@ impl Database {
             if status.is_some() {
                 sql.push_str(if account_id.is_some() { " AND status = ?2" } else { " AND status = ?1" });
             }
-            sql.push_str(" ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END,
+            sql.push_str(" ORDER BY CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END,
                           CASE WHEN due_value IS NULL THEN 1 ELSE 0 END,
                           due_value ASC, updated_at DESC");
             let mut statement = connection.prepare(&sql)?;
@@ -222,7 +226,7 @@ impl Database {
     }
 
     pub fn set_task_status(&self, id: &str, status: &str, source: &str) -> DbResult<ThreadTask> {
-        if !matches!(status, "open" | "completed" | "cancelled") {
+        if !matches!(status, "open" | "in_progress" | "completed" | "cancelled") {
             return Err("Unknown task status".into());
         }
         if !matches!(source, "user" | "reply" | "external") {
@@ -230,7 +234,7 @@ impl Database {
         }
         let now = Utc::now().to_rfc3339();
         let completed_at = (status == "completed").then_some(now.as_str());
-        let completion_source = if status == "open" { None } else { Some(source) };
+        let completion_source = if is_active_status(status) { None } else { Some(source) };
         self.with_connection(|connection| {
             connection
                 .execute(
@@ -245,11 +249,11 @@ impl Database {
         self.with_connection(|connection| {
             let current =
                 task_by_id(connection, id)?.ok_or_else(|| "Task not found".to_string())?;
-            if current.status != "open"
+            if !is_active_status(&current.status)
                 || current.kind != "follow_up"
                 || current.repeat_interval_days.is_none()
             {
-                return Err("Only open repeating follow-up tasks can be recorded".into());
+                return Err("Only active repeating follow-up tasks can be recorded".into());
             }
             let interval = current.repeat_interval_days.unwrap_or_default() as i64;
             let due_value = current
@@ -288,7 +292,7 @@ impl Database {
             let now = Utc::now().to_rfc3339();
             connection
                 .execute(
-                    "UPDATE tasks SET due_value=?1, wait_after=(SELECT last_received_at FROM threads WHERE threads.id=tasks.thread_id), completion_source=NULL, completed_at=NULL, updated_at=?2 WHERE id=?3 AND status='open'",
+                    "UPDATE tasks SET due_value=?1, wait_after=(SELECT last_received_at FROM threads WHERE threads.id=tasks.thread_id), completion_source=NULL, completed_at=NULL, updated_at=?2 WHERE id=?3 AND status IN ('open', 'in_progress')",
                     params![next_due, now, id],
                 )?;
             Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?)
@@ -301,7 +305,7 @@ impl Database {
             let changed = connection
                 .execute(
                     "UPDATE tasks SET status='completed', completion_source='reply', completed_at=?1, updated_at=?1
-                     WHERE status='open' AND kind IN ('waiting_for', 'follow_up')
+                     WHERE status IN ('open', 'in_progress') AND kind IN ('waiting_for', 'follow_up')
                        AND wait_after IS NOT NULL
                        AND EXISTS (
                          SELECT 1 FROM threads
@@ -374,6 +378,49 @@ mod tests {
         assert_eq!(database.reconcile_waiting_tasks().unwrap(), 1);
         let completed = database.list_tasks(None, Some("completed")).unwrap();
         assert_eq!(completed[0].completion_source.as_deref(), Some("reply"));
+    }
+
+    #[test]
+    fn in_progress_tasks_stay_active_and_complete_on_reply() {
+        let database = database_with_thread();
+        let task = database
+            .create_task(&CreateTaskRequest {
+                account_id: "account@example.com".into(),
+                thread_id: Some("account:thread".into()),
+                source_message_id: None,
+                subject_snapshot: Some("Planning".into()),
+                title: "Waiting on the contract".into(),
+                notes: None,
+                kind: "waiting_for".into(),
+                due_kind: "none".into(),
+                due_value: None,
+                time_zone: None,
+                repeat_interval_days: None,
+                evidence_text: None,
+            })
+            .unwrap();
+
+        let started = database.set_task_status(&task.id, "in_progress", "user").unwrap();
+        assert_eq!(started.status, "in_progress");
+        assert_eq!(started.completion_source, None);
+        assert_eq!(started.completed_at, None);
+        assert!(database.set_task_status(&task.id, "blocked", "user").is_err());
+
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE threads SET last_received_at='2026-09-20T10:00:00Z' WHERE id='account:thread'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(database.reconcile_waiting_tasks().unwrap(), 1);
+        let completed = database.list_tasks(None, Some("completed")).unwrap();
+        assert_eq!(completed[0].completion_source.as_deref(), Some("reply"));
+
+        let reopened = database.set_task_status(&task.id, "open", "user").unwrap();
+        assert_eq!(reopened.completion_source, None);
+        assert_eq!(reopened.completed_at, None);
     }
 
     #[test]

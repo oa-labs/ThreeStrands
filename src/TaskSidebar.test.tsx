@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TaskSidebar, type ThreadActionAnalysis } from "./TaskSidebar";
+import { TaskSidebar, type TaskWorkspaceHandle, type ThreadActionAnalysis } from "./TaskSidebar";
 import { mailClient } from "./data/client";
 import type { ActionProposal, ThreadDetail, ThreadTask } from "./domain";
 
@@ -70,6 +71,7 @@ describe("TaskSidebar", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    localStorage.clear();
   });
 
   it("keeps task creation out of the read-only sidebar", async () => {
@@ -376,6 +378,7 @@ describe("TaskSidebar", () => {
     const { container } = render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
 
     const views = await screen.findByRole("navigation", { name: "Task views" });
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     await waitFor(() => expect(container.querySelectorAll(".task-card")).toHaveLength(5));
     expect(container.querySelector(".tasks-list-pane")).not.toHaveTextContent("Old email subject");
     expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
@@ -388,6 +391,91 @@ describe("TaskSidebar", () => {
     }
     fireEvent.click(within(views).getByRole("button", { name: "Overdue" }));
     expect(container.querySelector(".task-card")).toHaveAttribute("id", "task-overdue");
+  });
+
+  it("opens the workspace as a three-column board by status and remembers the list layout", async () => {
+    const tasks = [
+      workspaceTask("todo", { title: "Draft agenda" }),
+      workspaceTask("doing", { title: "Write proposal", status: "in_progress" }),
+      workspaceTask("done", { title: "Book venue", status: "completed", completedAt: new Date().toISOString() }),
+      workspaceTask("stale", { title: "Old errand", status: "completed", completedAt: "2020-01-01T00:00:00Z" }),
+    ];
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
+    const onLayoutChange = vi.fn();
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onLayoutChange={onLayoutChange} />);
+
+    const todo = await screen.findByRole("region", { name: "To Do" });
+    const doing = screen.getByRole("region", { name: "In Progress" });
+    const done = screen.getByRole("region", { name: "Done" });
+    await waitFor(() => expect(todo).toHaveTextContent("Draft agenda"));
+    expect(doing).toHaveTextContent("Write proposal");
+    expect(done).toHaveTextContent("Book venue");
+    expect(done).not.toHaveTextContent("Old errand");
+    expect(screen.getByRole("button", { name: "Board" })).toHaveAttribute("aria-pressed", "true");
+    expect(onLayoutChange).toHaveBeenLastCalledWith("board");
+    expect(within(todo).queryByRole("button", { name: /Move Draft agenda to To Do/ })).not.toBeInTheDocument();
+    expect(within(done).queryByRole("button", { name: /Move Book venue to Done/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(onLayoutChange).toHaveBeenLastCalledWith("list");
+    expect(screen.queryByRole("region", { name: "To Do" })).not.toBeInTheDocument();
+    expect(screen.getByText("In progress")).toBeInTheDocument();
+    expect(localStorage.getItem("threestrands.tasks.layout")).toBe("list");
+
+    cleanup();
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("moves cards between columns with buttons and keyboard handles, and undo restores the prior column", async () => {
+    let current = workspaceTask("plan", { title: "Plan launch" });
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([current]);
+    const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (_id, status) => {
+      current = { ...current, status };
+      return current;
+    });
+    const ref = createRef<TaskWorkspaceHandle>();
+    render(<TaskSidebar ref={ref} variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Move Plan launch to In Progress" }));
+    await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("plan", "in_progress"));
+    expect(await within(screen.getByRole("region", { name: "In Progress" })).findByText("Plan launch")).toBeInTheDocument();
+    expect(screen.getByText("Started: Plan launch")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Task details" })).toHaveTextContent("In progress");
+
+    act(() => ref.current?.moveSelected(1));
+    await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("plan", "completed"));
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("plan", "in_progress"));
+
+    act(() => ref.current?.moveSelected(-1));
+    await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("plan", "open"));
+    expect(await screen.findByText("Moved to To Do: Plan launch")).toBeInTheDocument();
+    const calls = setTaskStatus.mock.calls.length;
+    act(() => ref.current?.moveSelected(-1));
+    expect(setTaskStatus).toHaveBeenCalledTimes(calls);
+  });
+
+  it("jumps between non-empty board columns while keeping the row position", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([
+      workspaceTask("todo-1"), workspaceTask("todo-2"),
+      workspaceTask("done-1", { status: "completed", completedAt: new Date().toISOString() }),
+    ]);
+    const ref = createRef<TaskWorkspaceHandle>();
+    const { container } = render(<TaskSidebar ref={ref} variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    const selected = () => container.querySelector(".task-card.selected")?.id;
+
+    await waitFor(() => expect(selected()).toBe("task-todo-1"));
+    act(() => ref.current?.selectNext());
+    expect(selected()).toBe("task-todo-2");
+    act(() => ref.current?.selectAdjacentColumn(1));
+    expect(selected()).toBe("task-done-1");
+    act(() => ref.current?.selectAdjacentColumn(1));
+    expect(selected()).toBe("task-done-1");
+    act(() => ref.current?.selectAdjacentColumn(-1));
+    expect(selected()).toBe("task-todo-1");
+    act(() => ref.current?.toggleLayout());
+    expect(screen.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("edits the task title, description, and due date in the detail pane", async () => {

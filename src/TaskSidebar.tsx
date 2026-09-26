@@ -1,12 +1,25 @@
-import { Check, Clock3, MessageSquare, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, MessageSquare, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask, UpdateTaskRequest, TaskDueKind } from "./domain";
+import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask, UpdateTaskRequest, TaskDueKind, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
 import { ActionButton, HoverTooltip } from "./AppChrome";
 import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
-import { dueView, TASK_VIEWS, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
+import { adjacentTaskStatus, dueView, isActiveTaskStatus, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
+
+export type TaskLayout = "board" | "list";
+const TASK_LAYOUT_KEY = "threestrands.tasks.layout";
+
+function readTaskLayout(): TaskLayout {
+  try {
+    return localStorage.getItem(TASK_LAYOUT_KEY) === "list" ? "list" : "board";
+  } catch {
+    return "board";
+  }
+}
+
+const STATUS_LABELS: Record<TaskStatus, string> = { open: "To Do", in_progress: "In Progress", completed: "Done", cancelled: "Done" };
 
 function taskGroup(task: ThreadTask): string {
   if (task.status === "completed") return "Completed";
@@ -16,7 +29,7 @@ function taskGroup(task: ThreadTask): string {
 }
 
 function isOverdue(task: ThreadTask): boolean {
-  return task.status === "open" && dueView(task, new Date()) === "Overdue";
+  return isActiveTaskStatus(task.status) && dueView(task, new Date()) === "Overdue";
 }
 
 function formatRelativeDate(date: Date, now: Date = new Date()): string {
@@ -57,7 +70,7 @@ function isStaleCompleted(task: ThreadTask): boolean {
 }
 
 function isDue(task: ThreadTask): boolean {
-  if (task.status !== "open" || !task.dueValue) return false;
+  if (!isActiveTaskStatus(task.status) || !task.dueValue) return false;
   const due = task.dueKind === "date" ? new Date(`${task.dueValue}T23:59:59`) : new Date(task.dueValue);
   return due.getTime() <= Date.now();
 }
@@ -83,6 +96,9 @@ export type TaskWorkspaceHandle = {
   editSelected(): void;
   completeSelected(): void;
   reopenSelected(): void;
+  moveSelected(direction: -1 | 1): void;
+  selectAdjacentColumn(direction: -1 | 1): void;
+  toggleLayout(): void;
 };
 
 /**
@@ -116,6 +132,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onCreateTask?(title: string): Promise<ThreadTask>;
   onEditTask?(task: ThreadTask): void;
   onSelectedTaskChange?(task: ThreadTask | null): void;
+  onLayoutChange?(layout: TaskLayout): void;
   refreshKey?: number;
   title?: string;
 }>(function TaskSidebar({
@@ -132,6 +149,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onCreateTask,
   onEditTask,
   onSelectedTaskChange,
+  onLayoutChange,
   refreshKey = 0,
   title = "Tasks",
 }, ref) {
@@ -141,6 +159,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [error, setError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [view, setView] = useState<TaskView>("All");
+  const [layout, setLayout] = useState<TaskLayout>(readTaskLayout);
+  const board = variant === "workspace" && layout === "board";
   const [editing, setEditing] = useState<"title" | "description" | "due" | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [descriptionDraft, setDescriptionDraft] = useState("");
@@ -200,10 +220,14 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   }, [tasks]);
   const workspaceGroups = useMemo(() => TASK_VIEWS.filter((name) => name !== "All")
     .map((name) => ({ name, tasks: tasks.filter((task) =>
-      view === "All" ? taskViewForAll(task, now) === name && task.status === "open" : name === view && taskMatchesView(task, view, now),
+      view === "All" ? taskViewForAll(task, now) === name && isActiveTaskStatus(task.status) : name === view && taskMatchesView(task, view, now),
     ) }))
     .filter((group) => group.tasks.length > 0), [now, tasks, view]);
-  const displayedGroups = variant === "workspace" ? workspaceGroups : grouped;
+  const boardColumns = useMemo(() => TASK_BOARD_COLUMNS.map((name) => ({ name, tasks: tasks.filter((task) =>
+    taskBoardColumn(task.status) === name
+    && (view === "All" ? !isStaleCompleted(task) : taskMatchesView(task, view, now)),
+  ) })), [now, tasks, view]);
+  const displayedGroups = board ? boardColumns : variant === "workspace" ? workspaceGroups : grouped;
   const orderedTasks = useMemo(() => displayedGroups.flatMap((group) => group.tasks), [displayedGroups]);
   const selectedTask = orderedTasks.find((task) => task.id === selectedTaskId) ?? null;
 
@@ -224,12 +248,26 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   }, [selectedTaskId, variant]);
 
   useEffect(() => { onSelectedTaskChange?.(selectedTask); }, [onSelectedTaskChange, selectedTask]);
+  useEffect(() => { if (variant === "workspace") onLayoutChange?.(layout); }, [layout, onLayoutChange, variant]);
 
-  const setStatus = useCallback(async (task: ThreadTask, status: "open" | "completed") => {
+  const changeLayout = useCallback((next: TaskLayout) => {
+    setLayout(next);
     try {
+      localStorage.setItem(TASK_LAYOUT_KEY, next);
+    } catch {
+      // The chosen layout still applies for this session.
+    }
+  }, []);
+
+  const setStatus = useCallback(async (task: ThreadTask, status: TaskStatus) => {
+    try {
+      const previous = tasks.find((candidate) => candidate.id === task.id)?.status ?? task.status;
       const updated = await mailClient.setTaskStatus(task.id, status);
       setTasks((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
-      setAnnouncement(`${status === "completed" ? "Completed" : "Reopened"}: ${updated.title}`);
+      const verb = status === "completed" ? "Completed"
+        : status === "in_progress" ? "Started"
+          : isActiveTaskStatus(previous) ? "Moved to To Do" : "Reopened";
+      setAnnouncement(`${verb}: ${updated.title}`);
       clearCompletionToast();
       if (status === "completed") {
         setCompletionToast(task);
@@ -244,7 +282,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     } catch (reason) {
       setError(errorMessage(reason));
     }
-  }, [clearCompletionToast, onTasksChanged]);
+  }, [clearCompletionToast, onTasksChanged, tasks]);
 
   const saveTask = async (request: Omit<UpdateTaskRequest, "id">) => {
     if (!selectedTask || saving) return;
@@ -317,35 +355,71 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       if (selectedTask?.threadId) onOpenThread(selectedTask.threadId);
     },
     editSelected: () => { if (selectedTask) startEditing("title"); },
-    completeSelected: () => { if (selectedTask?.status === "open") void setStatus(selectedTask, "completed"); },
-    reopenSelected: () => { if (selectedTask && selectedTask.status !== "open") void setStatus(selectedTask, "open"); },
-  }), [moveSelection, onOpenThread, selectedTask, setStatus, startEditing, startNew]);
+    completeSelected: () => { if (selectedTask && isActiveTaskStatus(selectedTask.status)) void setStatus(selectedTask, "completed"); },
+    reopenSelected: () => { if (selectedTask && !isActiveTaskStatus(selectedTask.status)) void setStatus(selectedTask, "open"); },
+    moveSelected: (direction) => {
+      const next = selectedTask ? adjacentTaskStatus(selectedTask.status, direction) : null;
+      if (selectedTask && next) void setStatus(selectedTask, next);
+    },
+    selectAdjacentColumn: (direction) => {
+      if (!board) return;
+      const from = selectedTask ? TASK_BOARD_COLUMNS.indexOf(taskBoardColumn(selectedTask.status)) : 0;
+      const row = selectedTask ? boardColumns[from].tasks.indexOf(selectedTask) : 0;
+      for (let index = from + direction; index >= 0 && index < boardColumns.length; index += direction) {
+        const target = boardColumns[index].tasks;
+        if (target.length > 0) {
+          setSelectedTaskId(target[Math.min(row, target.length - 1)].id);
+          return;
+        }
+      }
+    },
+    toggleLayout: () => { if (variant === "workspace") changeLayout(layout === "board" ? "list" : "board"); },
+  }), [board, boardColumns, changeLayout, layout, moveSelection, onOpenThread, selectedTask, setStatus, startEditing, startNew, variant]);
 
-  const taskList = <div className="tasks-list">
+  const renderCard = (task: ThreadTask) => {
+    const active = isActiveTaskStatus(task.status);
+    const back = board ? adjacentTaskStatus(task.status, -1) : null;
+    const forward = board ? adjacentTaskStatus(task.status, 1) : null;
+    return <article
+      id={`task-${task.id}`}
+      ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }}
+      className={`task-card task-${task.status}${selectedTaskId === task.id ? " selected" : ""}`}
+      aria-current={selectedTaskId === task.id ? "true" : undefined}
+      key={task.id}
+    >
+      <button type="button" className="task-card-main" onClick={() => variant === "workspace" || !task.threadId ? setSelectedTaskId(task.id) : onOpenThread(task.threadId)}>
+        <strong>{task.title}</strong>
+        {variant === "sidebar" && task.subjectSnapshot ? <span>{task.subjectSnapshot}</span> : null}
+        {!board && task.status === "in_progress" ? <span className="task-progress-badge">In progress</span> : null}
+        {formatDue(task) ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {formatDue(task)}</small> : null}
+      </button>
+      {board ? <div className="task-board-moves">
+        {back ? <button type="button" className="task-status-button" aria-label={`Move ${task.title} to ${STATUS_LABELS[back]}`} onClick={() => void setStatus(task, back)}><ChevronLeft size={15} /></button> : null}
+        {forward ? <button type="button" className="task-status-button" aria-label={`Move ${task.title} to ${STATUS_LABELS[forward]}`} onClick={() => void setStatus(task, forward)}><ChevronRight size={15} /></button> : null}
+      </div> : <button type="button" className="task-status-button" aria-label={active ? `Complete ${task.title}` : `Reopen ${task.title}`} onClick={() => void setStatus(task, active ? "completed" : "open")}>
+        {active ? <Check size={15} /> : <RotateCcw size={15} />}
+      </button>}
+      {onDraftFollowUp && task.threadId && task.kind === "follow_up" && isDue(task) ? (
+        <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button>
+      ) : null}
+    </article>;
+  };
+
+  const taskList = board ? <div className="task-board">
+    {boardColumns.map((column) => {
+      const headingId = `task-column-${column.name.replace(/\s/g, "-")}`;
+      return <section key={column.name} className="task-board-column" aria-labelledby={headingId}>
+        <header><h3 id={headingId}>{column.name}</h3><span className="task-view-count">{column.tasks.length}</span></header>
+        <div className="task-board-cards">
+          {column.tasks.length > 0 ? column.tasks.map(renderCard) : <p className="task-board-empty">No tasks</p>}
+        </div>
+      </section>;
+    })}
+  </div> : <div className="tasks-list">
     {displayedGroups.map((group) => (
       <section key={group.name} aria-labelledby={`task-group-${group.name.replace(/\s/g, "-")}`}>
         <h3 id={`task-group-${group.name.replace(/\s/g, "-")}`}>{group.name}</h3>
-        {group.tasks.map((task) => (
-          <article
-            id={`task-${task.id}`}
-            ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }}
-            className={`task-card task-${task.status}${selectedTaskId === task.id ? " selected" : ""}`}
-            aria-current={selectedTaskId === task.id ? "true" : undefined}
-            key={task.id}
-          >
-            <button type="button" className="task-card-main" onClick={() => variant === "workspace" || !task.threadId ? setSelectedTaskId(task.id) : onOpenThread(task.threadId)}>
-              <strong>{task.title}</strong>
-              {variant === "sidebar" && task.subjectSnapshot ? <span>{task.subjectSnapshot}</span> : null}
-              {formatDue(task) ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {formatDue(task)}</small> : null}
-            </button>
-            <button type="button" className="task-status-button" aria-label={task.status !== "open" ? `Reopen ${task.title}` : `Complete ${task.title}`} onClick={() => void setStatus(task, task.status !== "open" ? "open" : "completed")}>
-              {task.status !== "open" ? <RotateCcw size={15} /> : <Check size={15} />}
-            </button>
-            {onDraftFollowUp && task.threadId && task.kind === "follow_up" && isDue(task) ? (
-              <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button>
-            ) : null}
-          </article>
-        ))}
+        {group.tasks.map(renderCard)}
       </section>
     ))}
   </div>;
@@ -371,6 +445,10 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         <div className="tasks-sidebar-header-actions">
           {analysis ? <HoverTooltip title={analysisActionLabel}><button type="button" aria-label={analysisActionLabel} onClick={analysis.onAnalyze} disabled={!analysis.ready || analysis.loading}><Sparkles size={17} /></button></HoverTooltip> : null}
           {variant === "sidebar" && onCheckSchedule ? <HoverTooltip title="Check schedule"><button type="button" aria-label="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button></HoverTooltip> : null}
+          {variant === "workspace" ? <div className="task-layout-toggle" role="group" aria-label="Task layout">
+            <button type="button" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={15} />List</button>
+            <button type="button" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={15} />Board</button>
+          </div> : null}
           {variant === "workspace" && onCreateTask ? <button type="button" className="task-add-button" onClick={startNew}><Plus size={17} />Add task</button> : null}
           {variant === "sidebar" && onNewTask && currentThread ? <HoverTooltip title="Add task"><button type="button" aria-label="Add task" onClick={onNewTask}><Plus size={17} /></button></HoverTooltip> : null}
           {variant === "workspace" ? null : <button type="button" aria-label="Close Tasks" onClick={onClose}><X size={18} /></button>}
@@ -384,7 +462,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       {completionToast ? (
         <div className="toast task-complete-toast" role="status">
           Completed &ldquo;{completionToast.title}&rdquo;
-          <button type="button" onClick={() => void setStatus(completionToast, "open")}>Undo</button>
+          <button type="button" onClick={() => void setStatus(completionToast, isActiveTaskStatus(completionToast.status) ? completionToast.status : "open")}>Undo</button>
         </div>
       ) : null}
       {analysis ? (
@@ -427,8 +505,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
       {!loading && tasks.length === 0 && !addingTask ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
-      {variant === "workspace" ? <div className="tasks-workspace-body">
-        <div className="tasks-list-pane">
+      {variant === "workspace" ? <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`}>
+        <div className={board ? "tasks-board-pane" : "tasks-list-pane"}>
           <nav className="task-view-nav" aria-label="Task views">
             {TASK_VIEWS.map((name) => <button key={name} type="button" aria-pressed={view === name} onClick={() => setView(name)}>
               <span>{name}</span><span className="task-view-count" aria-hidden="true">{tasks.filter((task) => taskMatchesView(task, name, now)).length}</span>
@@ -439,17 +517,17 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             <input id="quick-add-task-title" ref={newTaskInput} autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="What needs doing?" maxLength={240} />
             <div><button type="submit" disabled={creatingTask || !newTaskTitle.trim()}>{creatingTask ? "Adding…" : "Add task"}</button><button type="button" disabled={creatingTask} onClick={() => setAddingTask(false)}>Cancel</button></div>
           </form> : null}
-          {!loading && tasks.length > 0 && displayedGroups.length === 0 ? <p className="tasks-status">{view === "All" ? "No open tasks. Add a task or view completed work." : `No tasks in ${view.toLowerCase()}.`}</p> : null}
+          {!board && !loading && tasks.length > 0 && displayedGroups.length === 0 ? <p className="tasks-status">{view === "All" ? "No open tasks. Add a task or view completed work." : `No tasks in ${view.toLowerCase()}.`}</p> : null}
           {taskList}
         </div>
         <section className="task-detail" aria-label="Task details">
           {selectedTask ? <>
             <header>
               <div className="task-detail-heading">
-                <span className="eyebrow">{selectedTask.kind.replace("_", " ")}</span>
+                <span className="eyebrow">{selectedTask.kind.replace("_", " ")}{selectedTask.status === "in_progress" ? " · In progress" : ""}</span>
                 <div className="task-detail-title-row">
-                  <button type="button" className="task-detail-complete" aria-label={selectedTask.status !== "open" ? `Reopen ${selectedTask.title}` : `Complete ${selectedTask.title}`} onClick={() => void setStatus(selectedTask, selectedTask.status !== "open" ? "open" : "completed")}>
-                    {selectedTask.status !== "open" ? <RotateCcw size={20} /> : <Check size={20} />}
+                  <button type="button" className="task-detail-complete" aria-label={isActiveTaskStatus(selectedTask.status) ? `Complete ${selectedTask.title}` : `Reopen ${selectedTask.title}`} onClick={() => void setStatus(selectedTask, isActiveTaskStatus(selectedTask.status) ? "completed" : "open")}>
+                    {isActiveTaskStatus(selectedTask.status) ? <Check size={20} /> : <RotateCcw size={20} />}
                   </button>
                   {editing === "title" ? <form className="task-inline-title" data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); if (titleDraft.trim()) void saveTask({ title: titleDraft.trim() }); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(null); } }}>
                     <input autoFocus aria-label="Task title" value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} maxLength={240} />

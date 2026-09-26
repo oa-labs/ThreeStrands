@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ThreadTask } from "./domain";
-import { taskMatchesView, taskViewForAll } from "./taskViews";
+import { adjacentTaskStatus, taskBoardColumn, taskMatchesView, taskViewForAll } from "./taskViews";
 
 const now = new Date(2026, 8, 25, 12, 0);
 const task = (overrides: Partial<ThreadTask> = {}): ThreadTask => ({
@@ -37,5 +37,31 @@ describe("task workspace views", () => {
     const completed = task({ status: "completed" });
     expect(taskMatchesView(completed, "All", now)).toBe(false);
     expect(taskMatchesView(completed, "Completed", now)).toBe(true);
+  });
+
+  it("treats in-progress tasks as active work in every open view", () => {
+    const started = task({ status: "in_progress", dueKind: "date", dueValue: "2026-09-25" });
+    expect(taskMatchesView(started, "All", now)).toBe(true);
+    expect(taskMatchesView(started, "Today", now)).toBe(true);
+    expect(taskMatchesView(started, "Completed", now)).toBe(false);
+    expect(taskViewForAll(started, now)).toBe("Today");
+  });
+});
+
+describe("task board columns", () => {
+  it("places each status in exactly one column", () => {
+    expect(taskBoardColumn("open")).toBe("To Do");
+    expect(taskBoardColumn("in_progress")).toBe("In Progress");
+    expect(taskBoardColumn("completed")).toBe("Done");
+    expect(taskBoardColumn("cancelled")).toBe("Done");
+  });
+
+  it("moves one column at a time and stops at the edges", () => {
+    expect(adjacentTaskStatus("open", 1)).toBe("in_progress");
+    expect(adjacentTaskStatus("in_progress", 1)).toBe("completed");
+    expect(adjacentTaskStatus("completed", 1)).toBeNull();
+    expect(adjacentTaskStatus("cancelled", -1)).toBe("in_progress");
+    expect(adjacentTaskStatus("in_progress", -1)).toBe("open");
+    expect(adjacentTaskStatus("open", -1)).toBeNull();
   });
 });

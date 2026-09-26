@@ -16,7 +16,7 @@ import {
   timeZoneLabel,
 } from "./calendarTime";
 import { isEditableTarget } from "./commands";
-import { mailClient } from "./data/client";
+import { useCalendarSchedule } from "./useCalendarSchedule";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
@@ -193,9 +193,6 @@ export function CalendarWeekView({
 }) {
   const [anchor, setAnchor] = useState(() => startOfLocalDay(new Date()));
   const [month, setMonth] = useState(() => startOfLocalDay(new Date()));
-  const [events, setEvents] = useState<ScheduleEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
   const [now, setNow] = useState(() => new Date());
   const gridRef = useRef<HTMLDivElement>(null);
@@ -204,34 +201,13 @@ export function CalendarWeekView({
   const days = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(weekStart, index)), [weekStart]);
   const today = startOfLocalDay(now);
 
-  const load = useCallback(async (start: Date) => {
-    setSelectedEvent(null);
-    setLoading(true);
-    setError(null);
-    const end = addDays(start, 7);
-    try {
-      const result = await mailClient.listScheduleEvents(
-        start.toISOString(),
-        end.toISOString(),
-        Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-      );
-      setEvents(result.events);
-      if (result.errors.length > 0) {
-        console.error("Calendar week load failed:", result.errors);
-        setError("Calendar schedule load failed");
-      }
-    } catch (reason) {
-      setEvents([]);
-      console.error("Calendar week load failed:", reason);
-      setError("Calendar schedule load failed");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { events, loading, error, reload } = useCalendarSchedule({
+    timeMin: weekStart.toISOString(),
+    timeMax: addDays(weekStart, 7).toISOString(),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  }, true);
 
-  useEffect(() => {
-    void load(weekStart);
-  }, [load, weekStart]);
+  useEffect(() => { setSelectedEvent(null); }, [weekStart]);
 
   useEffect(() => {
     if (gridRef.current) gridRef.current.scrollTop = readWeekScrollTop();
@@ -303,7 +279,7 @@ export function CalendarWeekView({
           <div className="calendar-error-notice" role="alert">
             <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>
             <div>
-              <button type="button" onClick={() => void load(weekStart)}>Try Again</button>
+              <button type="button" onClick={reload}>Try Again</button>
               <button type="button" onClick={onOpenSettings}>Calendar Accounts</button>
             </div>
           </div>

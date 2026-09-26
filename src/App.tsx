@@ -87,7 +87,8 @@ import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachm
 import { CalendarSidebar } from "./CalendarSidebar";
 import { CalendarWeekView } from "./CalendarWeekView";
 import { formatAvailabilityText } from "./actionDrafting";
-import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
+import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSidebar";
+import { isActiveTaskStatus } from "./taskViews";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { ContactSidebar } from "./ContactSidebar";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
@@ -308,6 +309,7 @@ export function App() {
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
   const taskWorkspaceRef = useRef<TaskWorkspaceHandle>(null);
   const [selectedTaskStatus, setSelectedTaskStatus] = useState<ThreadTask["status"] | null>(null);
+  const [taskLayout, setTaskLayout] = useState<TaskLayout | null>(null);
   const [selectedTaskHasThread, setSelectedTaskHasThread] = useState(false);
   const [taskEditor, setTaskEditor] = useState<TaskEditorState | null>(null);
   const [meetingEditor, setMeetingEditor] = useState<MeetingEditorState | null>(null);
@@ -326,8 +328,8 @@ export function App() {
   const [taskRevision, setTaskRevision] = useState(0);
   const refreshTaskIndicators = useCallback(async () => {
     try {
-      const tasks = await mailClient.listTasks(activeAccountId ?? undefined, "open");
-      setOpenTaskThreadIds(new Set(tasks.flatMap((task) => task.threadId ? [task.threadId] : [])));
+      const tasks = await mailClient.listTasks(activeAccountId ?? undefined);
+      setOpenTaskThreadIds(new Set(tasks.flatMap((task) => task.threadId && isActiveTaskStatus(task.status) ? [task.threadId] : [])));
     } catch {
       // Task indicators are supplemental; mail remains usable if unavailable.
     }
@@ -1632,6 +1634,10 @@ export function App() {
     editSelectedTask: () => taskWorkspaceRef.current?.editSelected(),
     completeSelectedTask: () => taskWorkspaceRef.current?.completeSelected(),
     reopenSelectedTask: () => taskWorkspaceRef.current?.reopenSelected(),
+    moveSelectedTask: (direction) => taskWorkspaceRef.current?.moveSelected(direction),
+    selectAdjacentTaskColumn: (direction) => taskWorkspaceRef.current?.selectAdjacentColumn(direction),
+    toggleTaskLayout: () => taskWorkspaceRef.current?.toggleLayout(),
+    taskBoardActive: rightWorkspace === "tasks" && taskLayout === "board",
     selectedTaskStatus,
     selectedTaskHasThread,
     archiveSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: true }),
@@ -1751,7 +1757,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -2596,6 +2602,7 @@ export function App() {
             variant="workspace"
             onCreateTask={createWorkspaceTask}
             onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
+            onLayoutChange={setTaskLayout}
             onSelectedTaskChange={(task) => {
               setSelectedTaskStatus(task?.status ?? null);
               setSelectedTaskHasThread(Boolean(task?.threadId));
