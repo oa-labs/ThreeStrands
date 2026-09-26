@@ -971,8 +971,9 @@ kbd {
   outline-offset: -2px;
 }
 .calendar-card {
-  flex: 1 1 430px;
-  max-width: 620px;
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
