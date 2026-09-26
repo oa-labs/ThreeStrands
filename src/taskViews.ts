@@ -11,7 +11,7 @@ function localDateKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function dueView(task: ThreadTask, now: Date): "Overdue" | "Today" | "Upcoming" | null {
+export function dueView(task: ThreadTask, now: Date): "Overdue" | "Today" | "Upcoming" | null {
   if (!task.dueValue || task.dueKind === "none") return null;
   if (task.dueKind === "date") {
     const today = localDateKey(now);

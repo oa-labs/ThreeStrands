@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
+import { isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import type { TaskDueKind, TaskKind } from "./domain";
 import { errorMessage } from "./errors";
 
@@ -53,14 +54,27 @@ export function TaskEditorDialog({
     initial.dueKind === "datetime" ? dateTimeInputValue(initial.dueValue) : initial.dueValue ?? "",
   );
   const [timeZone, setTimeZone] = useState(initial.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC");
+  const [timeZoneError, setTimeZoneError] = useState<string | null>(null);
+  const timeZones = useMemo(() => listSupportedTimeZones(), []);
   const [repeatIntervalDays, setRepeatIntervalDays] = useState(initial.repeatIntervalDays?.toString() ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
 
+  const validateTimeZone = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (!trimmed || isValidTimeZone(trimmed)) {
+      setTimeZoneError(null);
+      return true;
+    }
+    setTimeZoneError("Choose a valid timezone, such as America/New_York.");
+    return false;
+  };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!title.trim() || busy) return;
+    if (dueKind !== "none" && !validateTimeZone(timeZone)) return;
     setBusy(true);
     setError(null);
     try {
@@ -92,7 +106,21 @@ export function TaskEditorDialog({
         <label><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as TaskKind)}><option value="action">Action</option><option value="follow_up">Follow up</option><option value="waiting_for">Waiting for reply</option></select></label>
         <label><span>Due</span><select value={dueKind} onChange={(event) => { setDueKind(event.target.value as TaskDueKind); setDueValue(""); }}><option value="none">No due date</option><option value="date">Date</option><option value="datetime">Date and time</option></select></label>
         {dueKind !== "none" ? <label><span>{dueKind === "date" ? "Due Date" : "Due Date and Time"}</span><input type={dueKind === "date" ? "date" : "datetime-local"} value={dueValue} onChange={(event) => setDueValue(event.target.value)} required /></label> : null}
-        {dueKind !== "none" ? <label><span>Timezone</span><input value={timeZone} onChange={(event) => setTimeZone(event.target.value)} placeholder="America/New_York" /></label> : null}
+        {dueKind !== "none" ? <label>
+          <span>Timezone</span>
+          <input
+            list="task-editor-timezones"
+            value={timeZone}
+            aria-invalid={timeZoneError ? "true" : undefined}
+            onChange={(event) => { setTimeZone(event.target.value); setTimeZoneError(null); }}
+            onBlur={(event) => validateTimeZone(event.target.value)}
+            placeholder="America/New_York"
+          />
+          <datalist id="task-editor-timezones">
+            {timeZones.map((zone) => <option key={zone} value={zone} />)}
+          </datalist>
+        </label> : null}
+        {timeZoneError ? <p className="form-error" role="alert">{timeZoneError}</p> : null}
         {kind === "follow_up" ? <label><span>Repeat Every (Days)</span><input type="number" min="1" max="3650" value={repeatIntervalDays} onChange={(event) => setRepeatIntervalDays(event.target.value)} placeholder="Optional" /></label> : null}
         <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional details" /></label>
         {evidence ? <div className="modal-form-evidence"><span>Evidence</span><blockquote>{evidence}</blockquote></div> : null}

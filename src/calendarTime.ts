@@ -47,6 +47,23 @@ export function hourLabel(hour: number): string {
   return `${hour > 12 ? hour - 12 : hour} ${hour >= 12 ? "pm" : "am"}`;
 }
 
+export function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function listSupportedTimeZones(): string[] {
+  try {
+    return Intl.supportedValuesOf("timeZone");
+  } catch {
+    return ["UTC"];
+  }
+}
+
 export function formatEventTime(event: ScheduleEvent): string {
   if (event.allDay) return "All day";
   const formatter = new Intl.DateTimeFormat(undefined, {

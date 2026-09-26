@@ -115,6 +115,84 @@ describe("TaskSidebar", () => {
     await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-1", "completed"));
   });
 
+  it("offers an undo toast and an aria-live announcement when completing a task", async () => {
+    const task = workspaceTask("task-1", { title: "Set up the website" });
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus")
+      .mockResolvedValueOnce({ ...task, status: "completed" })
+      .mockResolvedValueOnce({ ...task, status: "open" });
+    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Complete Set up the website" }));
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    expect(screen.getByText("Completed: Set up the website")).toBeInTheDocument();
+
+    fireEvent.click(undo);
+    await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("task-1", "open"));
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    expect(screen.getByText("Reopened: Set up the website")).toBeInTheDocument();
+  });
+
+  it("groups an overdue task separately from Today in the compact sidebar variant and colors its due label", async () => {
+    const tasks = [
+      workspaceTask("overdue", { dueKind: "date", dueValue: localDate(-14) }),
+      workspaceTask("today", { dueKind: "date", dueValue: localDate(0) }),
+    ];
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
+    const { container } = render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    await screen.findByRole("heading", { name: "Overdue" });
+    const overdueSection = screen.getByRole("heading", { name: "Overdue" }).closest("section");
+    const todaySection = screen.getByRole("heading", { name: "Today" }).closest("section");
+    expect(overdueSection?.querySelector("#task-overdue")).not.toBeNull();
+    expect(overdueSection?.querySelector("#task-today")).toBeNull();
+    expect(todaySection?.querySelector("#task-today")).not.toBeNull();
+    expect(container.querySelector("#task-overdue .task-due-overdue")).not.toBeNull();
+    expect(container.querySelector("#task-today .task-due-overdue")).toBeNull();
+  });
+
+  it("labels due dates relative to today", async () => {
+    const tasks = [
+      workspaceTask("today", { dueKind: "date", dueValue: localDate(0) }),
+      workspaceTask("tomorrow", { dueKind: "date", dueValue: localDate(1) }),
+      workspaceTask("yesterday", { dueKind: "date", dueValue: localDate(-1) }),
+    ];
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
+    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    const todayCard = (await screen.findByText("today", { selector: "strong" })).closest("article")!;
+    expect(within(todayCard).getByText("Today")).toBeInTheDocument();
+    const tomorrowCard = screen.getByText("tomorrow", { selector: "strong" }).closest("article")!;
+    expect(within(tomorrowCard).getByText("Tomorrow")).toBeInTheDocument();
+    const yesterdayCard = screen.getByText("yesterday", { selector: "strong" }).closest("article")!;
+    expect(within(yesterdayCard).getByText("Yesterday")).toBeInTheDocument();
+  });
+
+  it("lets the inline due editor set a custom timezone and rejects an invalid one", async () => {
+    let saved = workspaceTask("plan", { title: "Plan launch" });
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([saved]);
+    const updateTask = vi.spyOn(mailClient, "updateTask").mockImplementation(async (request) => {
+      saved = { ...saved, ...request };
+      return saved;
+    });
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add a due date" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Due type" }), { target: { value: "datetime" } });
+    fireEvent.change(screen.getByLabelText("Due date and time"), { target: { value: "2030-10-02T14:30" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Timezone" }), { target: { value: "America/New Yok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a valid timezone");
+    expect(updateTask).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Timezone" }), { target: { value: "Asia/Tokyo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith({
+      id: "plan", dueKind: "datetime", dueValue: new Date("2030-10-02T14:30").toISOString(), timeZone: "Asia/Tokyo",
+    }));
+  });
+
   it("offers a follow-up draft for a due follow-up task", async () => {
     const task: ThreadTask = {
       id: "follow-up-1",
@@ -273,7 +351,7 @@ describe("TaskSidebar", () => {
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", dueKind: "date", dueValue: "2030-10-01", timeZone: null }));
     expect(onTasksChanged).toHaveBeenCalledTimes(3);
 
-    fireEvent.click(screen.getByRole("button", { name: /Oct 1, 2030/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Oct 1, 2030" }));
     fireEvent.click(screen.getByRole("button", { name: "Clear date" }));
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", dueKind: "none", dueValue: null, timeZone: null }));
 

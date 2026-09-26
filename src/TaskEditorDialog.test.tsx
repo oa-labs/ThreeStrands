@@ -31,6 +31,29 @@ describe("TaskEditorDialog", () => {
     })));
   });
 
+  it("rejects an invalid timezone before submitting a dated task", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TaskEditorDialog
+        initial={{ title: "Plan launch", kind: "action", dueKind: "none" }}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
+    fireEvent.change(screen.getByLabelText("Due Date"), { target: { value: "2026-09-25" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Timezone" }), { target: { value: "America/New Yok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a valid timezone");
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Timezone" }), { target: { value: "America/New_York" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ timeZone: "America/New_York" })));
+  });
+
   it("preserves entered values when submission fails", async () => {
     render(
       <TaskEditorDialog

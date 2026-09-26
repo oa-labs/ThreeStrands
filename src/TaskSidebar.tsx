@@ -3,32 +3,43 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask, UpdateTaskRequest, TaskDueKind } from "./domain";
 import { mailClient } from "./data/client";
 import { ActionButton, HoverTooltip } from "./AppChrome";
+import { isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
-import { TASK_VIEWS, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
+import { dueView, TASK_VIEWS, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
 
 function taskGroup(task: ThreadTask): string {
   if (task.status === "completed") return "Completed";
   if (task.kind === "waiting_for") return "Waiting For";
   if (!task.dueValue) return "No Due Date";
-  const due = task.dueKind === "date" ? new Date(`${task.dueValue}T23:59:59`) : new Date(task.dueValue);
-  const now = new Date();
-  if (due.toDateString() === now.toDateString()) return "Today";
-  return due.getTime() < now.getTime() ? "Today" : "Upcoming";
+  return dueView(task, new Date()) ?? "No Due Date";
+}
+
+function isOverdue(task: ThreadTask): boolean {
+  return task.status === "open" && dueView(task, new Date()) === "Overdue";
+}
+
+function formatRelativeDate(date: Date, now: Date = new Date()): string {
+  const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(date) - startOfDay(now)) / 86_400_000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Tomorrow";
+  if (diffDays === -1) return "Yesterday";
+  const includeYear = date.getFullYear() !== now.getFullYear();
+  return date.toLocaleDateString(undefined, includeYear ? { year: "numeric", month: "short", day: "numeric" } : { month: "short", day: "numeric" });
 }
 
 function formatDue(task: ThreadTask): string | null {
   if (!task.dueValue) return null;
   const value = task.dueKind === "date" ? new Date(`${task.dueValue}T12:00:00`) : new Date(task.dueValue);
-  return value.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return formatRelativeDate(value);
 }
 
 function formatDueDetail(task: ThreadTask): string | null {
   if (!task.dueValue) return null;
   const value = task.dueKind === "date" ? new Date(`${task.dueValue}T12:00:00`) : new Date(task.dueValue);
-  return task.dueKind === "datetime"
-    ? value.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-    : value.toLocaleDateString(undefined, { dateStyle: "medium" });
+  const relative = formatRelativeDate(value);
+  return task.dueKind === "datetime" ? `${relative}, ${value.toLocaleTimeString(undefined, { timeStyle: "short" })}` : relative;
 }
 
 function dateTimeInputValue(value: string | null | undefined): string {
@@ -128,13 +139,26 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [descriptionDraft, setDescriptionDraft] = useState("");
   const [dueKindDraft, setDueKindDraft] = useState<TaskDueKind>("date");
   const [dueValueDraft, setDueValueDraft] = useState("");
+  const [timeZoneDraft, setTimeZoneDraft] = useState("");
+  const [timeZoneError, setTimeZoneError] = useState<string | null>(null);
+  const timeZones = useMemo(() => listSupportedTimeZones(), []);
   const [saving, setSaving] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [creatingTask, setCreatingTask] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+  const [completionToast, setCompletionToast] = useState<ThreadTask | null>(null);
+  const completionToastTimeout = useRef<number | null>(null);
   const taskCards = useRef(new Map<string, HTMLElement>());
   const newTaskInput = useRef<HTMLInputElement>(null);
   useEscapeDismiss(onClose, variant !== "workspace");
+
+  const clearCompletionToast = useCallback(() => {
+    if (completionToastTimeout.current === null) return;
+    window.clearTimeout(completionToastTimeout.current);
+    completionToastTimeout.current = null;
+  }, []);
+  useEffect(() => clearCompletionToast, [clearCompletionToast]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -162,7 +186,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       current.push(task);
       groups.set(group, current);
     }
-    return ["Today", "Upcoming", "Waiting For", "No Due Date", "Completed"]
+    return ["Overdue", "Today", "Upcoming", "Waiting For", "No Due Date", "Completed"]
       .map((name) => ({ name, tasks: groups.get(name) ?? [] }))
       .filter((group) => group.tasks.length > 0);
   }, [tasks]);
@@ -197,11 +221,22 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     try {
       const updated = await mailClient.setTaskStatus(task.id, status);
       setTasks((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
+      setAnnouncement(`${status === "completed" ? "Completed" : "Reopened"}: ${updated.title}`);
+      clearCompletionToast();
+      if (status === "completed") {
+        setCompletionToast(task);
+        completionToastTimeout.current = window.setTimeout(() => {
+          completionToastTimeout.current = null;
+          setCompletionToast(null);
+        }, 6000);
+      } else {
+        setCompletionToast(null);
+      }
       onTasksChanged?.();
     } catch (reason) {
       setError(errorMessage(reason));
     }
-  }, [onTasksChanged]);
+  }, [clearCompletionToast, onTasksChanged]);
 
   const saveTask = async (request: Omit<UpdateTaskRequest, "id">) => {
     if (!selectedTask || saving) return;
@@ -226,6 +261,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     setDescriptionDraft(selectedTask.notes ?? "");
     setDueKindDraft(selectedTask.dueKind === "none" ? "date" : selectedTask.dueKind);
     setDueValueDraft(selectedTask.dueKind === "datetime" ? dateTimeInputValue(selectedTask.dueValue) : selectedTask.dueValue ?? "");
+    setTimeZoneDraft(selectedTask.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC");
+    setTimeZoneError(null);
     setEditing(field);
   }, [selectedTask]);
 
@@ -291,7 +328,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             <button type="button" className="task-card-main" onClick={() => variant === "workspace" || !task.threadId ? setSelectedTaskId(task.id) : onOpenThread(task.threadId)}>
               <strong>{task.title}</strong>
               {variant === "sidebar" && task.subjectSnapshot ? <span>{task.subjectSnapshot}</span> : null}
-              {formatDue(task) ? <small><Clock3 size={12} /> {formatDue(task)}</small> : null}
+              {formatDue(task) ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {formatDue(task)}</small> : null}
             </button>
             <button type="button" className="task-status-button" aria-label={task.status !== "open" ? `Reopen ${task.title}` : `Complete ${task.title}`} onClick={() => void setStatus(task, task.status !== "open" ? "open" : "completed")}>
               {task.status !== "open" ? <RotateCcw size={15} /> : <Check size={15} />}
@@ -332,6 +369,13 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         </div>
       </header>
       {error ? <p className="form-error tasks-error" role="alert">{error}</p> : null}
+      <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
+      {completionToast ? (
+        <div className="toast task-complete-toast" role="status">
+          Completed &ldquo;{completionToast.title}&rdquo;
+          <button type="button" onClick={() => void setStatus(completionToast, "open")}>Undo</button>
+        </div>
+      ) : null}
       {analysis ? (
         <section className="action-analysis" aria-label="Thread actions">
           <div className="action-analysis-heading"><strong>Thread actions</strong>{analysis.loading ? <span role="status">Analyzing…</span> : null}</div>
@@ -417,11 +461,35 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             </section>
             <section className="task-detail-schedule" aria-label="Schedule">
               <h3>Due date</h3>
-              {editing === "due" ? <form data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); if (!dueValueDraft) return; void saveTask({ dueKind: dueKindDraft, dueValue: dueKindDraft === "datetime" ? new Date(dueValueDraft).toISOString() : dueValueDraft, timeZone: dueKindDraft === "datetime" ? Intl.DateTimeFormat().resolvedOptions().timeZone : null }); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(null); } }}>
+              {editing === "due" ? <form data-shortcut-scope="modal" onSubmit={(event) => {
+                event.preventDefault();
+                if (!dueValueDraft) return;
+                const trimmedZone = timeZoneDraft.trim();
+                if (dueKindDraft === "datetime" && trimmedZone && !isValidTimeZone(trimmedZone)) {
+                  setTimeZoneError("Choose a valid timezone, such as America/New_York.");
+                  return;
+                }
+                void saveTask({
+                  dueKind: dueKindDraft,
+                  dueValue: dueKindDraft === "datetime" ? new Date(dueValueDraft).toISOString() : dueValueDraft,
+                  timeZone: dueKindDraft === "datetime" ? (trimmedZone || Intl.DateTimeFormat().resolvedOptions().timeZone) : null,
+                });
+              }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(null); } }}>
                 <select aria-label="Due type" value={dueKindDraft} onChange={(event) => { setDueKindDraft(event.target.value as TaskDueKind); setDueValueDraft(""); }}><option value="date">Date</option><option value="datetime">Date and time</option></select>
                 <input aria-label={dueKindDraft === "datetime" ? "Due date and time" : "Due date"} type={dueKindDraft === "datetime" ? "datetime-local" : "date"} value={dueValueDraft} onChange={(event) => setDueValueDraft(event.target.value)} required />
+                {dueKindDraft === "datetime" ? <input
+                  list="task-detail-timezones"
+                  aria-label="Timezone"
+                  aria-invalid={timeZoneError ? "true" : undefined}
+                  value={timeZoneDraft}
+                  onChange={(event) => { setTimeZoneDraft(event.target.value); setTimeZoneError(null); }}
+                  onBlur={(event) => { const value = event.target.value.trim(); if (value && !isValidTimeZone(value)) setTimeZoneError("Choose a valid timezone, such as America/New_York."); }}
+                  placeholder="America/New_York"
+                /> : null}
+                <datalist id="task-detail-timezones">{timeZones.map((zone) => <option key={zone} value={zone} />)}</datalist>
+                {timeZoneError ? <p className="form-error" role="alert">{timeZoneError}</p> : null}
                 <div className="task-inline-actions"><button type="submit" disabled={saving || !dueValueDraft}>Save</button>{selectedTask.dueKind !== "none" ? <button type="button" disabled={saving} onClick={() => void saveTask({ dueKind: "none", dueValue: null, timeZone: null })}>Clear date</button> : null}<button type="button" onClick={() => setEditing(null)}>Cancel</button></div>
-              </form> : <button type="button" className="task-detail-due-button" onClick={() => startEditing("due")}>{formatDueDetail(selectedTask) ?? "Add a due date"}</button>}
+              </form> : <button type="button" className={`task-detail-due-button${isOverdue(selectedTask) ? " task-due-overdue" : ""}`} onClick={() => startEditing("due")}>{formatDueDetail(selectedTask) ?? "Add a due date"}</button>}
               {selectedTask.repeatIntervalDays ? <p>Repeats every {selectedTask.repeatIntervalDays} days</p> : null}
             </section>
             {selectedTask.threadId ? <section className="task-detail-source" aria-label="Source conversation">
