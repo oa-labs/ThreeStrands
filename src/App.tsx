@@ -1851,11 +1851,11 @@ export function App() {
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
           <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button></HoverTooltip>
-          <HoverTooltip label="Today’s schedule" shortcut="T">
+          <HoverTooltip label="Calendar" shortcut="2">
             <button
-              className={`nav-button ${rightWorkspace === "calendar" ? "active" : ""}`}
-              aria-label="Today’s Schedule (T)"
-              onClick={() => executeById("calendar.today")}
+              className={`nav-button ${rightWorkspace === "week" ? "active" : ""}`}
+              aria-label="Calendar (2)"
+              onClick={() => executeById("view.calendar")}
             >
               <CalendarDays size={19} />
             </button>

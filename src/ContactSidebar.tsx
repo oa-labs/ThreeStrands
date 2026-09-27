@@ -11,7 +11,7 @@ export function ContactSidebar({ detail, accounts, onOpenThread, onOpenContact }
   onOpenThread(id: string): void;
   onOpenContact(id: string): void;
 }) {
-  const own = new Set(accounts.map((account) => account.email.toLocaleLowerCase()));
+  const own = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
   const participants = useMemo(() => {
     if (!detail) return [];
     const byEmail = new Map<string, string>();
@@ -24,7 +24,7 @@ export function ContactSidebar({ detail, accounts, onOpenThread, onOpenContact }
       }
     }
     return [...byEmail].map(([email, name]) => ({ email, name }));
-  }, [detail, accounts]);
+  }, [detail, own]);
   const preferred = useMemo(() => {
     if (!detail) return "";
     for (const message of [...detail.messages].reverse()) {
@@ -32,7 +32,7 @@ export function ContactSidebar({ detail, accounts, onOpenThread, onOpenContact }
       if (!own.has(sender.email.toLocaleLowerCase())) return sender.email.toLocaleLowerCase();
     }
     return participants[0]?.email ?? "";
-  }, [detail, participants, accounts]);
+  }, [detail, participants, own]);
   const [email, setEmail] = useState("");
   const [profile, setProfile] = useState<ContactProfile | null>(null);
   const [timeline, setTimeline] = useState<ContactTimelineItem[]>([]);
