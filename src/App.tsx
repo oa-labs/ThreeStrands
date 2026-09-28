@@ -2595,30 +2595,18 @@ export function App() {
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <ContactSidebar detail={visibleDetail} accounts={accounts} onOpenThread={openTaskThread} onOpenContact={openContactInAddressBook} /> : null}
       {rightWorkspace === "contacts" ? <ContactsWorkspace onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /> : null}
       {rightWorkspace === "tasks" ? (
-        <>
-          <TaskSidebar
-            {...taskListProps}
-            ref={taskWorkspaceRef}
-            variant="workspace"
-            onCreateTask={createWorkspaceTask}
-            onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
-            onLayoutChange={setTaskLayout}
-            onSelectedTaskChange={(task) => {
-              setSelectedTaskStatus(task?.status ?? null);
-              setSelectedTaskHasThread(Boolean(task?.threadId));
-            }}
-          />
-          <CalendarSidebar
-            embedded
-            onClose={() => {}}
-            availabilityPreferences={availabilityPreferences}
-            onDraftAvailability={draftAvailabilityReply}
-            onOpenSettings={() => {
-              setRightWorkspace(null);
-              openSettingsAt("calendarAccounts");
-            }}
-          />
-        </>
+        <TaskSidebar
+          {...taskListProps}
+          ref={taskWorkspaceRef}
+          variant="workspace"
+          onCreateTask={createWorkspaceTask}
+          onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
+          onLayoutChange={setTaskLayout}
+          onSelectedTaskChange={(task) => {
+            setSelectedTaskStatus(task?.status ?? null);
+            setSelectedTaskHasThread(Boolean(task?.threadId));
+          }}
+        />
       ) : null}
       {rightWorkspace === "actions" ? (
         <TaskSidebar

@@ -694,7 +694,7 @@ describe("keyboard-first task and action workspaces", () => {
 
     expect(screen.queryByRole("button", { name: "Today’s Schedule (T)" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Calendar (2)" }));
-    const week = await screen.findByRole("region", { name: "Calendar week" });
+    await screen.findByRole("region", { name: "Calendar week" });
     expect(container.querySelector("main")).toHaveClass("week-open");
     expect(screen.getByRole("button", { name: "Calendar (2)" })).toHaveClass("active");
   });
@@ -739,9 +739,7 @@ describe("keyboard-first task and action workspaces", () => {
       expect(container.querySelector("main")).toHaveClass("tasks-open");
       await waitFor(() => expect(workspace.querySelector("#task-task-welcome")).toHaveAttribute("aria-current", "true"));
 
-      const calendar = await screen.findByRole("complementary", { name: "Calendar schedule" });
-      expect(calendar).toBeInTheDocument();
-      expect(within(calendar).queryByRole("button", { name: "Close calendar" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("complementary", { name: "Calendar schedule" })).not.toBeInTheDocument();
 
       fireEvent.keyDown(window, { key: "ArrowDown" });
       await waitFor(() => expect(workspace.querySelector("#task-task-roadmap")).toHaveAttribute("aria-current", "true"));

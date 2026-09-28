@@ -259,7 +259,7 @@ button { color: inherit; }
 .app-shell.mail-context-open {
   grid-template-columns: 58px minmax(240px, var(--inbox-width, 400px)) minmax(0, 1fr) minmax(280px, 320px) minmax(300px, 340px);
 }
-.app-shell.tasks-open { grid-template-columns: 58px minmax(0, 1fr) minmax(320px, 360px); }
+.app-shell.tasks-open { grid-template-columns: 58px minmax(0, 1fr); }
 .app-shell.contacts-open { grid-template-columns: 58px minmax(0, 1fr); }
 .app-shell.week-open { grid-template-columns: 58px minmax(0, 1fr); }
 
@@ -1814,9 +1814,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   }
   .app-shell.calendar-open.mail-context-open {
     grid-template-columns: 58px minmax(200px, 31vw) minmax(0, 1fr) minmax(260px, 280px);
-  }
-  .app-shell.tasks-open {
-    grid-template-columns: 58px minmax(0, 1fr);
   }
   .app-shell.contacts-open { grid-template-columns:58px minmax(0,1fr); }
   .calendar-week { grid-template-columns: minmax(0, 1fr); }
