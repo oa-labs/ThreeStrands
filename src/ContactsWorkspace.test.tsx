@@ -30,11 +30,29 @@ describe("ContactsWorkspace",()=>{
     const search=screen.getByRole("textbox",{name:"Search contacts"});
     expect(document.activeElement).toBe(search);
     fireEvent.change(search,{target:{value:"jane"}});
-    await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("jane",500));
+    await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("jane",500,undefined));
     fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Acme"}});
     fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({company:"Acme",addresses:["jane@example.com"]})));
     await waitFor(()=>expect(onSaved).toHaveBeenCalledOnce());
+  });
+
+  it("shows the selected account and scopes contacts, history, and enrichment",async()=>{
+    localStorage.setItem("threestrands.settings.ai.provider","openai");
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
+    const onOpenThread=vi.fn();
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue({...jane,sentCount:20,receivedCount:20});
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([{threadId:"work-thread",accountId:"work@example.com",subject:"Project",snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]}]);
+    render(<ContactsWorkspace accountId="work@example.com" onOpenThread={onOpenThread} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    expect(screen.getByText("· work@example.com")).toBeInTheDocument();
+    expect(mailClient.listContactProfiles).toHaveBeenCalledWith("",500,"work@example.com");
+    expect(mailClient.contactTimeline).toHaveBeenCalledWith(jane.id,0,20,"work@example.com");
+    expect(screen.getByText("3 sent · 2 received")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:/Project/}));
+    expect(onOpenThread).toHaveBeenCalledWith("work-thread");
+    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,false,"work@example.com"));
   });
 
   it("does not confirm a contact save that failed",async()=>{
@@ -157,13 +175,13 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
     await screen.findByText("I work at Acme.");
     expect(screen.getByText("3 emails reviewed")).toBeInTheDocument();
-    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,false);
+    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,false,undefined);
 
     fireEvent.click(screen.getByRole("button",{name:"Search more emails"}));
     await screen.findByText("I live in Boston.");
     expect(screen.getByText("12 emails reviewed")).toBeInTheDocument();
     expect(screen.getByText("I work at Acme.")).toBeInTheDocument();
-    expect(mailClient.enrichContact).toHaveBeenLastCalledWith(jane.id,"openai","gpt-4o",null,true);
+    expect(mailClient.enrichContact).toHaveBeenLastCalledWith(jane.id,"openai","gpt-4o",null,true,undefined);
     expect(screen.queryByRole("button",{name:"Search more emails"})).not.toBeInTheDocument();
     expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
   });
@@ -211,7 +229,7 @@ describe("ContactsWorkspace",()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
     fireEvent.change(screen.getByRole("textbox",{name:"Search contacts"}),{target:{value:"Founder"}});
-    await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("Founder",500));
+    await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("Founder",500,undefined));
     fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
     await screen.findByText("I am the CEO.");
 

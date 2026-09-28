@@ -51,14 +51,33 @@ describe("calendar time helpers", () => {
     ], day);
     expect(overlapping.map((entry) => entry.lane)).toEqual([0, 1, 2]);
     expect(overlapping.every((entry) => entry.lanes === 3)).toBe(true);
+    expect(overlapping.map((entry) => entry.span)).toEqual([1, 1, 1]);
 
     const sequential = layOutDayEvents([
       timedEvent("a", "2026-09-22T09:00:00", "2026-09-22T10:00:00"),
       timedEvent("b", "2026-09-22T11:00:00", "2026-09-22T12:00:00"),
     ], day);
-    expect(sequential.map((entry) => ({ lane: entry.lane, lanes: entry.lanes }))).toEqual([
-      { lane: 0, lanes: 1 },
-      { lane: 0, lanes: 1 },
+    expect(sequential.map((entry) => ({ lane: entry.lane, lanes: entry.lanes, span: entry.span }))).toEqual([
+      { lane: 0, lanes: 1, span: 1 },
+      { lane: 0, lanes: 1, span: 1 },
+    ]);
+  });
+
+  it("lets an event fill lanes that are free throughout its time range", () => {
+    const day = new Date(2026, 8, 22);
+    const placed = layOutDayEvents([
+      timedEvent("long", "2026-09-22T09:00:00", "2026-09-22T11:00:00"),
+      timedEvent("early", "2026-09-22T09:00:00", "2026-09-22T09:30:00"),
+      timedEvent("middle", "2026-09-22T09:30:00", "2026-09-22T10:30:00"),
+      timedEvent("third", "2026-09-22T10:00:00", "2026-09-22T10:15:00"),
+      timedEvent("late", "2026-09-22T10:30:00", "2026-09-22T11:00:00"),
+    ], day);
+    expect(placed.map(({ event, lane, lanes, span }) => ({ id: event.id, lane, lanes, span }))).toEqual([
+      { id: "long", lane: 0, lanes: 3, span: 1 },
+      { id: "early", lane: 1, lanes: 3, span: 2 },
+      { id: "middle", lane: 1, lanes: 3, span: 1 },
+      { id: "third", lane: 2, lanes: 3, span: 1 },
+      { id: "late", lane: 1, lanes: 3, span: 2 },
     ]);
   });
 

@@ -153,16 +153,31 @@ impl Database {
         query: &str,
         limit: usize,
     ) -> DbResult<Vec<ContactProfile>> {
+        self.list_contact_profiles_for_account(query, limit, None)
+    }
+
+    pub fn list_contact_profiles_for_account(
+        &self,
+        query: &str,
+        limit: usize,
+        account_id: Option<&str>,
+    ) -> DbResult<Vec<ContactProfile>> {
         let needle = query.trim().to_ascii_lowercase();
         let limit = limit.clamp(1, MAX_CONTACTS);
         let saved = self.with_connection(|connection| {
+            // A saved profile is shared across accounts. In a scoped view it
+            // appears where it has mail history; profiles with no history stay
+            // available everywhere. Filter before LIMIT to avoid hiding rows.
             let mut statement = connection.prepare(
                 "SELECT c.id,c.display_name,c.role,c.company,c.location,c.bio,c.notes,c.links_json,
                         c.photo_data,c.favorite,c.updated_at
                  FROM contacts c
-                 WHERE ?2='' OR lower(coalesce(c.display_name,'') || ' ' || coalesce(c.role,'') || ' ' || coalesce(c.company,'') || ' ' || coalesce(c.location,'') || ' ' || coalesce(c.bio,'') || ' ' || coalesce(c.notes,'') || ' ' || coalesce(c.links_json,'') || ' ' || coalesce((SELECT group_concat(email,' ') FROM contact_addresses a WHERE a.contact_id=c.id),'')) LIKE '%' || ?2 || '%'
+                 WHERE (?3 IS NULL
+                   OR EXISTS(SELECT 1 FROM contact_addresses a JOIN contact_interactions ci ON ci.email=a.email WHERE a.contact_id=c.id AND ci.account_id=?3)
+                   OR NOT EXISTS(SELECT 1 FROM contact_addresses a JOIN contact_interactions ci ON ci.email=a.email WHERE a.contact_id=c.id))
+                   AND (?2='' OR lower(coalesce(c.display_name,'') || ' ' || coalesce(c.role,'') || ' ' || coalesce(c.company,'') || ' ' || coalesce(c.location,'') || ' ' || coalesce(c.bio,'') || ' ' || coalesce(c.notes,'') || ' ' || coalesce(c.links_json,'') || ' ' || coalesce((SELECT group_concat(email,' ') FROM contact_addresses a WHERE a.contact_id=c.id),'')) LIKE '%' || ?2 || '%')
                  ORDER BY c.favorite DESC,c.updated_at DESC LIMIT ?1")?;
-            let rows = statement.query_map(params![limit as i64,needle], |row| {
+            let rows = statement.query_map(params![limit as i64,needle,account_id], |row| {
                 Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,
                     row.get::<_,Option<String>>(3)?,row.get::<_,Option<String>>(4)?,row.get::<_,Option<String>>(5)?,
                     row.get::<_,Option<String>>(6)?,row.get::<_,String>(7)?,row.get::<_,Option<String>>(8)?,
@@ -171,7 +186,7 @@ impl Database {
             rows.collect::<Result<Vec<_>,_>>().map_err(Into::into)
         })?;
         let mut mail_history = Vec::new();
-        for account in self.list_accounts()? {
+        for account in self.list_accounts()?.into_iter().filter(|account| account_id.is_none_or(|selected| selected == account.email)) {
             mail_history.extend(self.list_contact_suggestions(&account.email, "", MAX_CONTACTS)?);
         }
         let mut stats = HashMap::<String, (i64, i64, Option<String>)>::new();
@@ -457,11 +472,22 @@ impl Database {
         })
     }
 
+    #[cfg(test)]
     pub fn contact_timeline(
         &self,
         id: &str,
         offset: usize,
         limit: usize,
+    ) -> DbResult<Vec<ContactTimelineItem>> {
+        self.contact_timeline_for_account(id, offset, limit, None)
+    }
+
+    pub fn contact_timeline_for_account(
+        &self,
+        id: &str,
+        offset: usize,
+        limit: usize,
+        account_id: Option<&str>,
     ) -> DbResult<Vec<ContactTimelineItem>> {
         let addresses = if id.starts_with("derived:") {
             vec![id.trim_start_matches("derived:").to_string()]
@@ -473,8 +499,9 @@ impl Database {
         }
         self.with_connection(|connection|{
             let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
-            let sql=format!("SELECT t.id,t.account_id,t.subject,t.snippet,MAX(ci.sent_at),t.labels_json FROM contact_interactions ci JOIN threads t ON t.id=ci.thread_id WHERE ci.email IN ({marks}) GROUP BY t.id ORDER BY MAX(ci.sent_at) DESC LIMIT ? OFFSET ?");
+            let sql=format!("SELECT t.id,t.account_id,t.subject,t.snippet,MAX(ci.sent_at),t.labels_json FROM contact_interactions ci JOIN threads t ON t.id=ci.thread_id WHERE ci.email IN ({marks}) AND (? IS NULL OR ci.account_id=?) GROUP BY t.id ORDER BY MAX(ci.sent_at) DESC LIMIT ? OFFSET ?");
             let mut values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
+            for _ in 0..2 { values.push(account_id.map(|id| rusqlite::types::Value::Text(id.to_string())).unwrap_or(rusqlite::types::Value::Null)); }
             values.push(rusqlite::types::Value::Integer(limit.clamp(1,100) as i64));
             values.push(rusqlite::types::Value::Integer(offset.min(i64::MAX as usize) as i64));
             let mut statement=connection.prepare(&sql)?;

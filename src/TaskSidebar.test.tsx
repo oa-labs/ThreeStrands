@@ -262,6 +262,21 @@ describe("TaskSidebar", () => {
     await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Second"));
   });
 
+  it("requires an account for a task added from All accounts", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    const onCreateTask = vi.fn().mockResolvedValue(workspaceTask("work-task", { accountId: "work@example.com" }));
+    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId={null} accountOptions={["you@example.com", "work@example.com"]} currentThread={null} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+    expect(screen.getByText("· All accounts")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
+    const form = screen.getByRole("textbox", { name: "Task title" }).closest("form")!;
+    fireEvent.change(within(form).getByRole("textbox", { name: "Task title" }), { target: { value: "Review proposal" } });
+    expect(within(form).getByRole("button", { name: "Add task" })).toBeDisabled();
+    expect(onCreateTask).not.toHaveBeenCalled();
+    fireEvent.change(within(form).getByRole("combobox", { name: "Account" }), { target: { value: "work@example.com" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Add task" }));
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Review proposal", "work@example.com"));
+  });
+
   it("offers a follow-up draft for a due follow-up task", async () => {
     const task: ThreadTask = {
       id: "follow-up-1",

@@ -46,6 +46,7 @@ describe("archive notice", () => {
   it("dismisses itself after the notice timeout", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    expect(document.querySelector(".reader-account-scope")).toHaveTextContent("demo@example.com");
 
     await archiveSelected();
     expect(await screen.findByRole("status")).toHaveTextContent("Conversation archived");
@@ -699,6 +700,26 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.getByRole("button", { name: "Calendar (2)" })).toHaveClass("active");
   });
 
+  it("sends the navbar Inbox button back to the mail view", async () => {
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    const inboxButton = screen.getByRole("button", { name: "Inbox (1)" });
+    expect(inboxButton).toHaveClass("active");
+    const navbar = screen.getByRole("navigation", { name: "Mailboxes" });
+    expect(within(navbar).getByRole("tooltip", { name: /Inbox/ })).toHaveTextContent("Inbox1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Calendar (2)" }));
+    await screen.findByRole("region", { name: "Calendar week" });
+    expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
+    expect(inboxButton).not.toHaveClass("active");
+
+    fireEvent.click(inboxButton);
+    expect(await screen.findByRole("region", { name: "Inbox" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument();
+    expect(inboxButton).toHaveClass("active");
+  });
+
   it("replaces the mail viewport and manages tasks through the focused keyboard commands", async () => {
     const tasks = [
       {
@@ -1024,18 +1045,50 @@ describe("account selection persistence", () => {
     const workAccount = screen.getByRole("radio", { name: "Work" });
     fireEvent.click(workAccount);
     expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("work@example.com");
+    expect(firstRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("work@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Tasks (3)" }));
+    expect(firstRun.container.querySelector(".tasks-sidebar-header")).toHaveTextContent("work@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Contacts" }));
+    expect(firstRun.container.querySelector(".contacts-header")).toHaveTextContent("work@example.com");
     firstRun.unmount();
 
     const secondRun = render(<App />);
     await act(async () => {});
     expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByRole("radio", { name: "All Accounts" }));
+    fireEvent.click(screen.getByRole("radio", { name: /All accounts/i }));
     expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("all");
+    expect(secondRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("All accounts");
     secondRun.unmount();
 
     render(<App />);
     await act(async () => {});
-    expect(screen.getByRole("radio", { name: "All Accounts" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: /All accounts/i })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("creates a task for the chosen account from the combined task view", async () => {
+    const [primary] = await mailClient.listAccounts();
+    vi.spyOn(mailClient, "listAccounts").mockResolvedValue([primary!, { ...primary!, email: "work@example.com", displayName: "Work", sortOrder: 1 }]);
+    const createTask = vi.spyOn(mailClient, "createTask").mockResolvedValue({
+      id: "chosen-account-task", accountId: "work@example.com", threadId: null, sourceMessageId: null,
+      subjectSnapshot: null, title: "Review plan", notes: null, kind: "action", dueKind: "none",
+      dueValue: null, timeZone: null, repeatIntervalDays: null, status: "open", completionSource: null,
+      evidenceText: null, waitAfter: null, createdAt: "2026-09-19T10:00:00Z", updatedAt: "2026-09-19T10:00:00Z", completedAt: null,
+    } satisfies ThreadTask);
+    localStorage.setItem("threestrands.settings.selectedAccountId", "all");
+    render(<App />);
+    await act(async () => {});
+    expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tasks (3)" }));
+    const workspace = screen.getByRole("region", { name: "Tasks" });
+    expect(workspace.querySelector(".tasks-sidebar-header")).toHaveTextContent("All accounts");
+    fireEvent.click(within(workspace).getByRole("button", { name: "Add task" }));
+    const form = workspace.querySelector<HTMLElement>(".task-quick-add")!;
+    fireEvent.change(within(form).getByRole("textbox", { name: "Task title" }), { target: { value: "Review plan" } });
+    expect(within(form).getByRole("button", { name: "Add task" })).toBeDisabled();
+    fireEvent.change(within(form).getByRole("combobox", { name: "Account" }), { target: { value: "work@example.com" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Add task" }));
+    await act(async () => {});
+    expect(createTask).toHaveBeenCalledWith({ accountId: "work@example.com", threadId: null, subjectSnapshot: null, title: "Review plan", kind: "action" });
   });
 
   it("shows unread inbox totals on each account and the combined account icon", async () => {

@@ -1235,9 +1235,10 @@ export function App() {
       });
   }, [rightWorkspace, selectedId, setNotice, visibleDetail]);
 
-  const createWorkspaceTask = useCallback(async (title: string) => {
-    const accountId = activeAccountId ?? accounts[0]?.email;
-    if (!accountId) throw new Error("Connect an account before adding a task");
+  const createWorkspaceTask = useCallback(async (title: string, selectedAccountId?: string) => {
+    const accountId = activeAccountId ?? selectedAccountId ?? (accounts.length === 1 ? accounts[0]?.email : undefined);
+    if (!accountId) throw new Error(accounts.length ? "Choose an account before adding a task" : "Connect an account before adding a task");
+    if (!accounts.some((account) => account.email === accountId)) throw new Error("Choose a connected account for this task");
     return mailClient.createTask({ accountId, threadId: null, subjectSnapshot: null, title, kind: "action" });
   }, [accounts, activeAccountId]);
 
@@ -1829,6 +1830,7 @@ export function App() {
   const taskListProps = {
     onClose: closeRightWorkspace,
     accountId: activeAccountId,
+    accountOptions: accounts.map((account) => account.email),
     currentThread: visibleDetail,
     onOpenThread: openTaskThread,
     onTasksChanged: () => void refreshTaskIndicators(),
@@ -1852,6 +1854,15 @@ export function App() {
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
           <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button></HoverTooltip>
+          <HoverTooltip label="Inbox" shortcut="1">
+            <button
+              className={`nav-button ${rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? "active" : ""}`}
+              aria-label="Inbox (1)"
+              onClick={() => executeById("view.mail")}
+            >
+              <Inbox size={19} />
+            </button>
+          </HoverTooltip>
           <HoverTooltip label="Calendar" shortcut="2">
             <button
               className={`nav-button ${rightWorkspace === "week" ? "active" : ""}`}
@@ -1974,13 +1985,16 @@ export function App() {
             <>
               <div className="thread-header-title">
                 <div>
-                  <FolderSwitcher
-                    selected={isTabbedMailbox ? "inbox" : mailbox}
-                    inboxUnreadCount={mailboxUnreadCounts.inbox}
-                    draftCount={correspondence.draftCount}
-                    outboxCount={correspondence.outboxCount}
-                    onSelect={(commandId) => executeById(commandId)}
-                  />
+                  <div className="mailbox-heading-context">
+                    <FolderSwitcher
+                      selected={isTabbedMailbox ? "inbox" : mailbox}
+                      inboxUnreadCount={mailboxUnreadCounts.inbox}
+                      draftCount={correspondence.draftCount}
+                      outboxCount={correspondence.outboxCount}
+                      onSelect={(commandId) => executeById(commandId)}
+                    />
+                    <span className="eyebrow-account">· {activeAccountId ?? "All accounts"}</span>
+                  </div>
                   <h1>
                     {mailbox === "drafts"
                       ? `${correspondence.drafts.length} drafts`
@@ -2129,6 +2143,7 @@ export function App() {
           <>
             <header className="reader-header">
               <div>
+                <span className="reader-account-scope">{visibleDetail.thread.accountId}</span>
                 {conversationSystemLabels.length > 0 ? (
                   <span className="eyebrow">{conversationSystemLabels.join(" · ")}</span>
                 ) : null}
@@ -2591,6 +2606,7 @@ export function App() {
       {rightWorkspace === "calendar" ? (
         <CalendarSidebar
           onClose={() => setRightWorkspace(null)}
+          selectedCalendarAccountIds={[...new Set(calendar.calendars.filter((option) => option.selected).map((option) => option.accountId))]}
           availabilityPreferences={availabilityPreferences}
           onDraftAvailability={draftAvailabilityReply}
           onOpenSettings={() => {
@@ -2600,7 +2616,7 @@ export function App() {
         />
       ) : null}
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <ContactSidebar detail={visibleDetail} accounts={accounts} onOpenThread={openTaskThread} onOpenContact={openContactInAddressBook} /> : null}
-      {rightWorkspace === "contacts" ? <ContactsWorkspace onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /> : null}
+      {rightWorkspace === "contacts" ? <ContactsWorkspace key={activeAccountId ?? "all"} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
           {...taskListProps}

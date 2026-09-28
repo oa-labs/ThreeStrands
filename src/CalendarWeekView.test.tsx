@@ -51,6 +51,14 @@ describe("CalendarWeekView", () => {
     }
   });
 
+  it("names every account contributing selected calendars in the header", () => {
+    const { container } = renderWeek({
+      accounts: [...accounts, { ...accounts[0], email: "work@example.com" }],
+      calendars: [...calendars, { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true }],
+    });
+    expect(container.querySelector(".calendar-week-header")).toHaveTextContent("Selected calendars · joel@example.com, work@example.com");
+  });
+
   it("requests the visible week, preloads neighbors, and refreshes when navigating", async () => {
     const listScheduleEvents = vi.mocked(mailClient.listScheduleEvents);
     renderWeek();
@@ -134,6 +142,28 @@ describe("CalendarWeekView", () => {
     fireEvent.click(standup);
     const viewer = await screen.findByRole("dialog", { name: "Standup details" });
     expect(within(viewer).getByText(/Tue, Sep 22/)).toBeInTheDocument();
+  });
+
+  it("uses free overlap space and keeps short meeting titles visible", async () => {
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({
+      events: [
+        event("long", "2026-09-22T09:00:00", "2026-09-22T11:00:00", "Long meeting"),
+        event("early", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Early review"),
+        event("middle", "2026-09-22T09:30:00", "2026-09-22T10:30:00", "Middle meeting"),
+        event("third", "2026-09-22T10:00:00", "2026-09-22T10:15:00", "Third meeting"),
+      ],
+      errors: [],
+    });
+    renderWeek();
+
+    const early = await screen.findByRole("button", { name: "Early review" });
+    const middle = screen.getByRole("button", { name: /Middle meeting/ });
+    expect(parseFloat(early.style.left)).toBeCloseTo(100 / 3);
+    expect(parseFloat(early.style.width)).toBeCloseTo(200 / 3);
+    expect(parseFloat(middle.style.width)).toBeCloseTo(100 / 3);
+    expect(early.querySelector("strong")).toHaveTextContent("Early review");
+    expect(early.querySelector("span")).toBeNull();
+    expect(early.title).toContain("9:00");
   });
 
   it("anchors event details to the time grid instead of spanning the whole screen", async () => {

@@ -213,12 +213,14 @@ export function CalendarSidebar({
   onOpenSettings,
   availabilityPreferences,
   onDraftAvailability,
+  selectedCalendarAccountIds,
   embedded = false,
 }: {
   onClose(): void;
   onOpenSettings(): void;
   availabilityPreferences: AvailabilityPreferences;
   onDraftAvailability?(candidates: AvailabilityCandidate[]): void;
+  selectedCalendarAccountIds?: string[];
   embedded?: boolean;
 }) {
   const [date, setDate] = useState(() => startOfLocalDay(new Date()));
@@ -311,12 +313,15 @@ export function CalendarSidebar({
   return (
     <aside className="calendar-sidebar" aria-label="Calendar schedule" ref={sidebarRef}>
       <header className="calendar-sidebar-header">
-        <h2>{new Intl.DateTimeFormat(undefined, {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-        }).format(date)}</h2>
-        <div>
+        <div className="calendar-sidebar-heading">
+          {selectedCalendarAccountIds ? <span className="eyebrow">Selected calendars <span className="eyebrow-account">· {selectedCalendarAccountIds.length ? selectedCalendarAccountIds.join(", ") : "None selected"}</span></span> : null}
+          <h2>{new Intl.DateTimeFormat(undefined, {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          }).format(date)}</h2>
+        </div>
+        <div className="calendar-sidebar-actions">
           <HoverTooltip title="Previous day (-)"><button type="button" aria-label="Previous day (-)" onClick={() => moveDay(-1)}>
             <ChevronLeft size={18} />
           </button></HoverTooltip>

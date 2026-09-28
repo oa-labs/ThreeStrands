@@ -140,12 +140,13 @@ export function occursOnDay(event: ScheduleEvent, day: Date): boolean {
   return new Date(event.start) < dayEnd && new Date(event.end) > dayStart;
 }
 
-export type LaidOutEvent = { event: ScheduleEvent; lane: number; lanes: number };
+export type LaidOutEvent = { event: ScheduleEvent; lane: number; lanes: number; span: number };
 
 /**
  * Side-by-side placement for events that overlap in time. Events are grouped
  * into clusters of mutual overlap; every event in a cluster shares the same
- * lane count so the columns line up.
+ * lane count so the columns line up. An event fills adjacent lanes to its right
+ * when no event in those lanes overlaps its own time range.
  */
 export function layOutDayEvents(events: ScheduleEvent[], day: Date): LaidOutEvent[] {
   const ordered = [...events].sort((left, right) => {
@@ -154,12 +155,20 @@ export function layOutDayEvents(events: ScheduleEvent[], day: Date): LaidOutEven
     return leftBounds.start - rightBounds.start || rightBounds.end - leftBounds.end;
   });
   const placed: LaidOutEvent[] = [];
-  let cluster: { entry: LaidOutEvent; end: number }[] = [];
+  let cluster: { entry: LaidOutEvent; start: number; end: number }[] = [];
   let clusterEnd = -1;
 
   const closeCluster = () => {
     const lanes = cluster.reduce((max, item) => Math.max(max, item.entry.lane + 1), 0);
-    for (const item of cluster) item.entry.lanes = lanes;
+    for (const item of cluster) {
+      item.entry.lanes = lanes;
+      for (let lane = item.entry.lane + 1; lane < lanes; lane += 1) {
+        const occupied = cluster.some((other) => other.entry.lane === lane
+          && other.start < item.end && other.end > item.start);
+        if (occupied) break;
+        item.entry.span += 1;
+      }
+    }
     cluster = [];
     clusterEnd = -1;
   };
@@ -171,8 +180,8 @@ export function layOutDayEvents(events: ScheduleEvent[], day: Date): LaidOutEven
     const taken = new Set(cluster.filter((item) => item.end > bounds.start).map((item) => item.entry.lane));
     let lane = 0;
     while (taken.has(lane)) lane += 1;
-    const entry: LaidOutEvent = { event, lane, lanes: lane + 1 };
-    cluster.push({ entry, end });
+    const entry: LaidOutEvent = { event, lane, lanes: lane + 1, span: 1 };
+    cluster.push({ entry, start: bounds.start, end });
     clusterEnd = Math.max(clusterEnd, end);
     placed.push(entry);
   }

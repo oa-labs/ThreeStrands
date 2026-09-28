@@ -439,14 +439,18 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       );
       return structuredClone(matches.slice(0, limit));
     },
-    async listContactProfiles(query = "", limit = 500) {
+    async listContactProfiles(query = "", limit = 500, accountId) {
       const byEmail = new Map<string, ContactProfile>();
       for (const item of contacts.filter((contact) => contact.sentCount > 0 || contact.pinned)) {
         const email = item.email.toLocaleLowerCase();
         if (savedContactProfiles.some((profile) => profile.addresses.includes(email))) continue;
         byEmail.set(email, { id: `derived:${email}`, displayName: item.displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: item.pinned, addresses: [email], sentCount: item.sentCount, receivedCount: item.receivedCount, lastInteractedAt: item.lastInteractedAt });
       }
-      const values = [...savedContactProfiles, ...byEmail.values()];
+      const values = [...savedContactProfiles, ...byEmail.values()].filter((profile) => {
+        if (!accountId) return true;
+        const matching = threads.filter((thread) => thread.participants.some((raw) => profile.addresses.includes(parseAddress(raw).email.toLocaleLowerCase())));
+        return matching.length === 0 || matching.some((thread) => thread.accountId === accountId);
+      });
       const needle = query.trim().toLocaleLowerCase();
       return structuredClone(values.filter((profile) => !needle || `${profile.displayName ?? ""} ${profile.addresses.join(" ")} ${profile.company ?? ""} ${profile.role ?? ""} ${profile.location ?? ""} ${profile.bio ?? ""} ${profile.notes ?? ""}`.toLocaleLowerCase().includes(needle))
         .sort((a,b) => Number(b.favorite)-Number(a.favorite) || (b.lastInteractedAt ?? "").localeCompare(a.lastInteractedAt ?? "") || (a.displayName ?? a.addresses[0]).localeCompare(b.displayName ?? b.addresses[0])).slice(0,limit));
@@ -468,12 +472,13 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       return structuredClone(candidate);
     },
     async deleteContactProfile(id) { savedContactProfiles = savedContactProfiles.filter((profile) => profile.id !== id); },
-    async contactTimeline(id, offset = 0, limit = 30): Promise<ContactTimelineItem[]> {
+    async contactTimeline(id, offset = 0, limit = 30, accountId): Promise<ContactTimelineItem[]> {
       const profile = await client.getContactProfile(id);
       if (!profile) return [];
       const target = new Set(profile.addresses.map((address) => address.toLocaleLowerCase()));
       const items: ContactTimelineItem[] = [];
       for (const thread of threads) {
+        if (accountId && thread.accountId !== accountId) continue;
         const detail = await client.getThread(thread.id);
         const matched = detail.messages.some((message) => [message.sender, ...message.recipients].some((raw) => target.has(parseAddress(raw).email.toLocaleLowerCase())));
         if (matched) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, snippet: thread.snippet, sentAt: thread.lastMessageAt, labels: thread.labels });

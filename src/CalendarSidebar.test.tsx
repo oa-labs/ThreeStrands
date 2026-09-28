@@ -139,6 +139,16 @@ describe("calendar sidebar", () => {
     return { listEvents, sidebar, dayOf };
   }
 
+  it("shows the contributing calendar accounts in the schedule header", () => {
+    const { sidebar } = renderSwipeSidebar();
+    // Standalone callers may omit scope details; App supplies them from the
+    // selected calendar list.
+    expect(within(sidebar).queryByText(/Selected calendars/)).not.toBeInTheDocument();
+    cleanup();
+    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} availabilityPreferences={{ timeZone: "America/New_York", workingWindows: [], defaultDurationMinutes: 30, slotIncrementMinutes: 15 }} selectedCalendarAccountIds={["personal@example.com", "work@example.com"]} />);
+    expect(screen.getByRole("complementary", { name: "Calendar schedule" }).querySelector(".calendar-sidebar-header")).toHaveTextContent("Selected calendars · personal@example.com, work@example.com");
+  });
+
   it("moves one day per horizontal trackpad swipe", async () => {
     const { listEvents, sidebar, dayOf } = renderSwipeSidebar();
     await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(1));

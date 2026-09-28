@@ -98,12 +98,12 @@ export interface MailClient extends CorrespondenceClient {
   listTriageSenderStats(accountId: string, limit?: number): Promise<TriageSenderStats[]>;
   /** Ranked past correspondents for compose autocomplete, built from local mail history rather than an imported address book. */
   listContactSuggestions(accountId: string, query: string, limit?: number): Promise<ContactSuggestion[]>;
-  listContactProfiles(query?: string, limit?: number): Promise<ContactProfile[]>;
+  listContactProfiles(query?: string, limit?: number, accountId?: string): Promise<ContactProfile[]>;
   getContactProfile(id: string): Promise<ContactProfile | null>;
   saveContactProfile(request: SaveContactRequest): Promise<ContactProfile>;
   deleteContactProfile(id: string): Promise<void>;
-  contactTimeline(id: string, offset?: number, limit?: number): Promise<ContactTimelineItem[]>;
-  enrichContact(id: string, provider: AiProvider, model: string, endpoint: string | null, searchMore?: boolean): Promise<ContactEnrichmentResult>;
+  contactTimeline(id: string, offset?: number, limit?: number, accountId?: string): Promise<ContactTimelineItem[]>;
+  enrichContact(id: string, provider: AiProvider, model: string, endpoint: string | null, searchMore?: boolean, accountId?: string): Promise<ContactEnrichmentResult>;
   pinContact(accountId: string, email: string, displayName: string | null): Promise<void>;
   unpinContact(accountId: string, email: string): Promise<void>;
   unsubscribe(messageId: string): Promise<UnsubscribeResult>;
@@ -195,12 +195,12 @@ const tauriClient: MailClient = {
   recordTriageEvent: (event) => complete("record_triage_event", { event }),
   listTriageSenderStats: (accountId, limit) => read("list_triage_sender_stats", { accountId, limit }),
   listContactSuggestions: (accountId, query, limit) => read("list_contact_suggestions", { accountId, query, limit }),
-  listContactProfiles: (query = "", limit = 500) => read("list_contact_profiles", { query, limit }),
+  listContactProfiles: (query = "", limit = 500, accountId) => read("list_contact_profiles", { query, limit, accountId }),
   getContactProfile: (id) => read("get_contact_profile", { id }),
   saveContactProfile: (request) => complete("save_contact_profile", { request }),
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
-  contactTimeline: (id, offset = 0, limit = 30) => read("contact_timeline", { id, offset, limit }),
-  enrichContact: (id, provider, model, endpoint, searchMore = false) => complete("ai_enrich_contact", { id, provider, model, endpoint, searchMore }),
+  contactTimeline: (id, offset = 0, limit = 30, accountId) => read("contact_timeline", { id, offset, limit, accountId }),
+  enrichContact: (id, provider, model, endpoint, searchMore = false, accountId) => complete("ai_enrich_contact", { id, provider, model, endpoint, searchMore, accountId }),
   pinContact: (accountId, email, displayName) => complete("pin_contact", { accountId, email, displayName }),
   unpinContact: (accountId, email) => complete("unpin_contact", { accountId, email }),
   unsubscribe: (messageId) => complete("unsubscribe", { messageId }),

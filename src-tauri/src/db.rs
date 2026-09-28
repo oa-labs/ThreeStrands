@@ -3264,6 +3264,7 @@ mod tests {
     fn contact_list_uses_sent_to_history_and_timeline_combines_accounts() {
         let database=database();
         database.adopt_account("you@example.com").unwrap();
+        database.adopt_account("other@example.com").unwrap();
         let mut sent=message("contact-one","thread-one","2026-09-20T12:00:00Z","hello");
         sent.from="you@example.com".into();sent.to=vec!["Jane <jane@example.com>".into()];
         database.upsert_thread("you@example.com",&[sent]).unwrap();
@@ -3277,6 +3278,29 @@ mod tests {
         assert_eq!(timeline.len(),2);
         assert!(timeline.iter().any(|item|item.account_id=="you@example.com"));
         assert!(timeline.iter().any(|item|item.account_id=="other@example.com"));
+        let you=database.list_contact_profiles_for_account("jane",20,Some("you@example.com")).unwrap();
+        let other=database.list_contact_profiles_for_account("jane",20,Some("other@example.com")).unwrap();
+        assert_eq!(you.len(),1);
+        assert_eq!(other.len(),1);
+        assert_eq!(you[0].id,other[0].id);
+        assert_eq!(you[0].sent_count,1);
+        assert_eq!(you[0].received_count,0);
+        assert_eq!(other[0].sent_count,0);
+        assert_eq!(other[0].received_count,1);
+        assert_eq!(database.contact_timeline_for_account(&saved.id,0,10,Some("you@example.com")).unwrap().len(),1);
+        assert_eq!(database.contact_timeline_for_account(&saved.id,0,10,Some("other@example.com")).unwrap().len(),1);
+
+        let mut other_only=message("contact-three","thread-three","2026-09-22T12:00:00Z","other");
+        other_only.from="Taylor <taylor@example.com>".into();other_only.to=vec!["other@example.com".into()];
+        database.upsert_thread("other@example.com",&[other_only]).unwrap();
+        database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Taylor".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["taylor@example.com".into()]}).unwrap();
+        assert!(database.list_contact_profiles_for_account("taylor",20,Some("you@example.com")).unwrap().is_empty());
+        assert_eq!(database.list_contact_profiles_for_account("taylor",20,Some("other@example.com")).unwrap().len(),1);
+        assert_eq!(database.list_contact_profiles_for_account("",1,Some("you@example.com")).unwrap()[0].id,saved.id);
+
+        let no_history=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("New friend".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["newfriend@example.com".into()]}).unwrap();
+        assert_eq!(database.list_contact_profiles_for_account("New friend",20,Some("you@example.com")).unwrap()[0].id,no_history.id);
+        assert_eq!(database.list_contact_profiles_for_account("New friend",20,Some("other@example.com")).unwrap()[0].id,no_history.id);
     }
 
     #[test]

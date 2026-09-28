@@ -881,12 +881,13 @@ fn list_contact_suggestions(
 fn list_contact_profiles(
     query: String,
     limit: Option<usize>,
+    account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ContactProfile>, String> {
     database_result(
         state
             .database
-            .list_contact_profiles(&query, limit.unwrap_or(500)),
+            .list_contact_profiles_for_account(&query, limit.unwrap_or(500), account_id.as_deref()),
     )
 }
 
@@ -929,9 +930,10 @@ fn contact_timeline(
     id: String,
     offset: usize,
     limit: usize,
+    account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ContactTimelineItem>, String> {
-    database_result(state.database.contact_timeline(&id, offset, limit))
+    database_result(state.database.contact_timeline_for_account(&id, offset, limit, account_id.as_deref()))
 }
 
 #[tauri::command]
@@ -2410,6 +2412,7 @@ async fn ai_enrich_contact(
     model: String,
     endpoint: Option<String>,
     search_more: Option<bool>,
+    account_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ai::ContactEnrichmentResult, String> {
     let profile = state
@@ -2418,7 +2421,7 @@ async fn ai_enrich_contact(
         .ok_or_else(|| "Contact could not be found".to_string())?;
     // Inspect more conversations locally so the first provider batch can
     // favor messages that the contact opened, even if those are less recent.
-    let timeline = state.database.contact_timeline(&id, 0, 30)?;
+    let timeline = state.database.contact_timeline_for_account(&id, 0, 30, account_id.as_deref())?;
     let addresses = profile
         .addresses
         .iter()

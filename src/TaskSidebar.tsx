@@ -123,6 +123,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   variant?: "sidebar" | "workspace";
   onClose(): void;
   accountId: string | null;
+  accountOptions?: string[];
   currentThread: ThreadDetail | null;
   onOpenThread(threadId: string): void;
   onTasksChanged?(): void;
@@ -130,7 +131,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   analysis?: ThreadActionAnalysis;
   onDraftFollowUp?(task: ThreadTask): void;
   onNewTask?(): void;
-  onCreateTask?(title: string): Promise<ThreadTask>;
+  onCreateTask?(title: string, accountId?: string): Promise<ThreadTask>;
   onEditTask?(task: ThreadTask): void;
   onSelectedTaskChange?(task: ThreadTask | null): void;
   onLayoutChange?(layout: TaskLayout): void;
@@ -140,6 +141,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   variant = "sidebar",
   onClose,
   accountId,
+  accountOptions = [],
   currentThread,
   onOpenThread,
   onTasksChanged,
@@ -174,6 +176,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [saving, setSaving] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskAccountId, setNewTaskAccountId] = useState("");
   const [creatingTask, setCreatingTask] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [completionToast, setCompletionToast] = useState<ThreadTask | null>(null);
@@ -318,17 +321,18 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     setView("All");
     setError(null);
     setNewTaskTitle("");
+    setNewTaskAccountId("");
     setAddingTask(true);
     newTaskInput.current?.focus();
   }, []);
 
   const createTask = async () => {
     const title = newTaskTitle.trim();
-    if (!onCreateTask || !title || creatingTask) return;
+    if (!onCreateTask || !title || creatingTask || (!accountId && accountOptions.length > 1 && !newTaskAccountId)) return;
     setCreatingTask(true);
     setError(null);
     try {
-      const created = await onCreateTask(title);
+      const created = accountId ? await onCreateTask(title) : await onCreateTask(title, newTaskAccountId || accountOptions[0]);
       setTasks((current) => [created, ...current]);
       setView("All");
       setSelectedTaskId(created.id);
@@ -439,7 +443,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           <div>
             <span className="eyebrow">
               {title}
-              {accountId ? <span className="eyebrow-account"> · {accountId}</span> : null}
+              <span className="eyebrow-account"> · {accountId ?? "All accounts"}</span>
             </span>
             <h1>{orderedTasks.length} {orderedTasks.length === 1 ? "task" : "tasks"}</h1>
           </div>
@@ -518,7 +522,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {addingTask ? <form className="task-quick-add" data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); void createTask(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!creatingTask) setAddingTask(false); } }}>
             <label htmlFor="quick-add-task-title">Task title</label>
             <input id="quick-add-task-title" ref={newTaskInput} autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="What needs doing?" maxLength={240} />
-            <div><button type="submit" disabled={creatingTask || !newTaskTitle.trim()}>{creatingTask ? "Adding…" : "Add task"}</button><button type="button" disabled={creatingTask} onClick={() => setAddingTask(false)}>Cancel</button></div>
+            {!accountId && accountOptions.length > 1 ? <><label htmlFor="quick-add-task-account">Account</label><select id="quick-add-task-account" value={newTaskAccountId} onChange={(event) => setNewTaskAccountId(event.target.value)} required><option value="">Choose an account</option>{accountOptions.map((email) => <option key={email} value={email}>{email}</option>)}</select></> : null}
+            <div><button type="submit" disabled={creatingTask || !newTaskTitle.trim() || (!accountId && accountOptions.length > 1 && !newTaskAccountId)}>{creatingTask ? "Adding…" : "Add task"}</button><button type="button" disabled={creatingTask} onClick={() => setAddingTask(false)}>Cancel</button></div>
           </form> : null}
           {!board && !loading && tasks.length > 0 && displayedGroups.length === 0 ? <p className="tasks-status">{view === "All" ? "No open tasks. Add a task or view completed work." : `No tasks in ${view.toLowerCase()}.`}</p> : null}
           {taskList}

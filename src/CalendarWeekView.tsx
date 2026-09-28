@@ -200,6 +200,7 @@ export function CalendarWeekView({
   const weekStart = useMemo(() => startOfWeek(anchor), [anchor]);
   const days = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(weekStart, index)), [weekStart]);
   const today = startOfLocalDay(now);
+  const selectedAccountEmails = [...new Set(calendars.filter((calendar) => calendar.selected).map((calendar) => calendar.accountId))];
 
   const { events, loading, error, reload } = useCalendarSchedule({
     timeMin: weekStart.toISOString(),
@@ -273,7 +274,7 @@ export function CalendarWeekView({
             <HoverTooltip title="Previous week (-)"><button type="button" aria-label="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={20} /></button></HoverTooltip>
             <HoverTooltip title="Next week (=)"><button type="button" aria-label="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={20} /></button></HoverTooltip>
           </div>
-          <h1>{monthTitle(weekStart)}</h1>
+          <div className="calendar-week-heading"><span className="eyebrow">Selected calendars <span className="eyebrow-account">· {selectedAccountEmails.length ? selectedAccountEmails.join(", ") : "None selected"}</span></span><h1>{monthTitle(weekStart)}</h1></div>
         </header>
         {error ? (
           <div className="calendar-error-notice" role="alert">
@@ -331,7 +332,7 @@ export function CalendarWeekView({
             {days.map((day, dayIndex) => (
               <div className="calendar-week-column" key={day.toDateString()}>
                 {HOURS.map((hour) => <div className="calendar-hour-line" key={hour} />)}
-                {timedByDay[dayIndex].map(({ event, lane, lanes }) => {
+                {timedByDay[dayIndex].map(({ event, lane, lanes, span }) => {
                   const start = new Date(event.start);
                   const end = new Date(event.end);
                   const dayStart = startOfLocalDay(day);
@@ -357,12 +358,12 @@ export function CalendarWeekView({
                         top: (startMinutes / 60) * HOUR_HEIGHT,
                         height,
                         left: `${(lane / lanes) * 100}%`,
-                        width: `${100 / lanes}%`,
+                        width: `${(span / lanes) * 100}%`,
                       }}
                       title={`${event.title}, ${formatEventTime(event)}`}
                     >
                       <strong>{event.title}</strong>
-                      <span>{formatEventTime(event)}</span>
+                      {durationMinutes > 30 ? <span>{formatEventTime(event)}</span> : null}
                     </button>
                   );
                 })}
