@@ -1,10 +1,11 @@
 import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, MessageSquare, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask, UpdateTaskRequest, TaskDueKind, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
 import { ActionButton, HoverTooltip } from "./AppChrome";
 import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+import { PanelResizeHandle, useTaskDetailWidth } from "./PanelResizeHandle";
 import { errorMessage } from "./errors";
 import { adjacentTaskStatus, dueView, isActiveTaskStatus, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
 
@@ -161,6 +162,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [view, setView] = useState<TaskView>("All");
   const [layout, setLayout] = useState<TaskLayout>(readTaskLayout);
   const board = variant === "workspace" && layout === "board";
+  const detailSize = useTaskDetailWidth();
   const [editing, setEditing] = useState<"title" | "description" | "due" | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [descriptionDraft, setDescriptionDraft] = useState("");
@@ -505,8 +507,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
       {!loading && tasks.length === 0 && !addingTask ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
-      {variant === "workspace" ? <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`}>
+      {variant === "workspace" ? <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`} style={board ? { "--task-detail-width": `${detailSize.width}px` } as CSSProperties : undefined}>
         <div className={board ? "tasks-board-pane" : "tasks-list-pane"}>
+          {board ? <PanelResizeHandle {...detailSize} panelSide="right" label="Resize task detail" controlsId="task-detail-panel" title="Drag to resize the task detail. Use arrow keys to adjust; double-click to reset." /> : null}
           <nav className="task-view-nav" aria-label="Task views">
             {TASK_VIEWS.map((name) => <button key={name} type="button" aria-pressed={view === name} onClick={() => setView(name)}>
               <span>{name}</span><span className="task-view-count" aria-hidden="true">{tasks.filter((task) => taskMatchesView(task, name, now)).length}</span>
@@ -520,7 +523,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {!board && !loading && tasks.length > 0 && displayedGroups.length === 0 ? <p className="tasks-status">{view === "All" ? "No open tasks. Add a task or view completed work." : `No tasks in ${view.toLowerCase()}.`}</p> : null}
           {taskList}
         </div>
-        <section className="task-detail" aria-label="Task details">
+        <section id="task-detail-panel" className="task-detail" aria-label="Task details">
           {selectedTask ? <>
             <header>
               <div className="task-detail-heading">

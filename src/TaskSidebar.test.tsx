@@ -427,6 +427,44 @@ describe("TaskSidebar", () => {
     expect(await screen.findByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("resizes the board detail panel from the divider and persists the width", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("todo", { title: "Draft agenda" })]);
+    const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    Object.defineProperty(window, "innerWidth", { value: 1600, configurable: true });
+    try {
+      const { container } = render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+      await screen.findByRole("region", { name: "To Do" });
+
+      const handle = screen.getByRole("separator", { name: "Resize task detail" });
+      expect(handle).toHaveAttribute("aria-controls", "task-detail-panel");
+      expect(handle).toHaveAttribute("aria-valuemax", "720");
+      const body = container.querySelector(".tasks-workspace-body") as HTMLElement;
+      const appliedWidth = () => body.style.getPropertyValue("--task-detail-width");
+      expect(appliedWidth()).toBe("440px");
+
+      // The detail panel sits to the right of the handle, so ArrowLeft widens it.
+      fireEvent.keyDown(handle, { key: "ArrowLeft" });
+      expect(appliedWidth()).toBe("450px");
+      fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+      expect(appliedWidth()).toBe("410px");
+      await waitFor(() => expect(localStorage.getItem("threestrands.taskDetailWidth")).toBe("410"));
+
+      cleanup();
+      const remount = render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+      expect(await screen.findByRole("region", { name: "To Do" })).toBeInTheDocument();
+      const remountedBody = remount.container.querySelector(".tasks-workspace-body") as HTMLElement;
+      expect(remountedBody.style.getPropertyValue("--task-detail-width")).toBe("410px");
+
+      fireEvent.dblClick(screen.getByRole("separator", { name: "Resize task detail" }));
+      expect(remountedBody.style.getPropertyValue("--task-detail-width")).toBe("440px");
+      await waitFor(() => expect(localStorage.getItem("threestrands.taskDetailWidth")).toBe("440"));
+    } finally {
+      cleanup();
+      if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth);
+      localStorage.removeItem("threestrands.taskDetailWidth");
+    }
+  });
+
   it("moves cards between columns with buttons and keyboard handles, and undo restores the prior column", async () => {
     let current = workspaceTask("plan", { title: "Plan launch" });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([current]);

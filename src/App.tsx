@@ -77,7 +77,7 @@ import type {
   TaskProposal,
   ThreadTask,
 } from "./domain";
-import { InboxResizeHandle, useInboxWidth } from "./InboxResizeHandle";
+import { PanelResizeHandle, useInboxWidth } from "./PanelResizeHandle";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { ThreadRow } from "./ThreadList";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
@@ -1893,7 +1893,7 @@ export function App() {
 
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <>
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
-        <InboxResizeHandle {...inboxSize} />
+        <PanelResizeHandle {...inboxSize} label="Resize Inbox" controlsId="inbox-panel" title="Drag to resize inbox. Use arrow keys to adjust; double-click to reset." />
         <header className="thread-header">
           {isThreadMailbox && checkedIds.size > 0 ? (
             <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
