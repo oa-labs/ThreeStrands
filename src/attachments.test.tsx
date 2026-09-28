@@ -47,4 +47,13 @@ describe("message attachments", () => {
     expect(open).toHaveBeenCalledWith("welcome-message", "demo-guide");
     expect(save).toHaveBeenCalledWith("welcome-message", "demo-guide");
   });
+
+  it("renders reader badge names with the extension outside the truncating span", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    const badge = await screen.findByRole("button", { name: "View threestrands-shortcuts.txt" });
+    expect(within(badge).getByText("threestrands-shortcuts")).toHaveClass("attachment-name-base");
+    expect(within(badge).getByText(".txt")).toHaveClass("attachment-name-ext");
+  });
 });

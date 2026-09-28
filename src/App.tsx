@@ -130,6 +130,7 @@ import {
   formatAttachmentSize,
   formatMailTimestamp,
   sortByRecency,
+  splitAttachmentName,
   triageNow,
 } from "./threadPresentation";
 import {
@@ -2500,7 +2501,9 @@ export function App() {
                               onError={(notice) => setNotice({ message: notice })}
                             />
                           ) : null}
-                          {downloadableAttachments.filter((attachment) => !isCalendarAttachment(attachment)).map((attachment) => (
+                          {downloadableAttachments.filter((attachment) => !isCalendarAttachment(attachment)).map((attachment) => {
+                              const attachmentName = splitAttachmentName(attachment.filename);
+                              return (
                               <div className="message-attachment" key={attachment.id}>
                                 <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button
                                   type="button"
@@ -2513,7 +2516,10 @@ export function App() {
                                   }}
                                 >
                                   <Paperclip size={14} />
-                                  <span>{attachment.filename}</span>
+                                  <span className="attachment-name">
+                                    <span className="attachment-name-base">{attachmentName.base}</span>
+                                    {attachmentName.extension ? <span className="attachment-name-ext">{attachmentName.extension}</span> : null}
+                                  </span>
                                   <small>{formatAttachmentSize(attachment.size)}</small>
                                   <ExternalLink size={13} />
                                 </button></HoverTooltip>
@@ -2530,7 +2536,8 @@ export function App() {
                                   <Download size={14} />
                                 </button>
                               </div>
-                          ))}
+                              );
+                            })}
                         </div>
                       ) : null}
                     </div>

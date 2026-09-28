@@ -4,6 +4,7 @@ import { mailClient } from "./data/client";
 import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from "./domain";
 import { errorMessage } from "./errors";
 import { HoverTooltip } from "./AppChrome";
+import { splitAttachmentName } from "./threadPresentation";
 
 export function isCalendarAttachment(attachment: MessageAttachment): boolean {
   return attachment.mimeType.split(";", 1)[0]?.trim().toLocaleLowerCase() === "text/calendar"
@@ -197,11 +198,15 @@ function StandardCalendarAttachment({
   onOpen(): void;
   onDownload(): void;
 }) {
+  const { base, extension } = splitAttachmentName(attachment.filename);
   return (
     <div className="message-attachment">
       <button type="button" className="attachment-badge" aria-label={`View ${attachment.filename}`} onClick={onOpen}>
         <CalendarDays size={14} />
-        <span>{attachment.filename}</span>
+        <span className="attachment-name">
+          <span className="attachment-name-base">{base}</span>
+          {extension ? <span className="attachment-name-ext">{extension}</span> : null}
+        </span>
         <ExternalLink size={13} />
       </button>
       <button type="button" className="attachment-download" aria-label={`Download ${attachment.filename}`} onClick={onDownload}>

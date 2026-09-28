@@ -29,6 +29,21 @@ export function formatAttachmentSize(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const attachmentExtensionPattern = /\.[a-z0-9]{1,5}$/i;
+
+/**
+ * Splits a filename so the extension can stay visible while the base name
+ * truncates. Returns no extension for dotfiles (".gitignore"), trailing dots
+ * ("invoice."), and implausible suffixes ("itinerary.backup-2026-09").
+ */
+export function splitAttachmentName(filename: string): { base: string; extension: string } {
+  const dot = filename.lastIndexOf(".");
+  if (dot <= 0) return { base: filename, extension: "" };
+  const extension = filename.slice(dot);
+  if (!attachmentExtensionPattern.test(extension)) return { base: filename, extension: "" };
+  return { base: filename.slice(0, dot), extension };
+}
+
 export function sortByRecency(threads: Thread[]): Thread[] {
   return [...threads].sort((a, b) => b.lastReceivedAt.localeCompare(a.lastReceivedAt));
 }
