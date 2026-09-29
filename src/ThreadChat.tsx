@@ -18,9 +18,9 @@ export type ChatEntry =
   };
 
 export const QUICK_QUESTIONS = [
+  "Draft a reply",
   "What do they need from me?",
   "What’s still open here?",
-  "Draft a reply",
 ] as const;
 
 /**

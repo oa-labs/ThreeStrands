@@ -1742,8 +1742,8 @@ export function App() {
   const goToInboxTab = useCallback(() => goToTab(null), [goToTab]);
 
   const openMailView = useCallback(() => {
-    goToInboxTab();
-  }, [goToInboxTab]);
+    goToTab(mailbox === "split" ? activeSplitInboxId : null);
+  }, [goToTab, mailbox, activeSplitInboxId]);
 
   const openTasksView = useCallback(() => {
     setRightWorkspace("tasks");

@@ -195,6 +195,34 @@ describe("split inbox search shortcuts", () => {
     expect(rememberedTab()).toBeNull();
   });
 
+  it("keeps the active split when returning from calendar, tasks, and contacts", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([
+      {
+        id: "work-split",
+        name: "Work",
+        matchKind: "label",
+        matchValue: "work",
+        sortOrder: 0,
+        createdAt: "2026-03-01T00:00:00Z",
+        accountId: "demo@example.com",
+      },
+    ]);
+
+    render(<App />);
+    const splitTab = await screen.findByRole("tab", { name: "Work" });
+    fireEvent.click(splitTab);
+    await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
+
+    for (const view of ["Calendar (2)", "Tasks (3)", "Contacts"]) {
+      fireEvent.click(screen.getByRole("button", { name: view }));
+      expect(screen.getByRole("button", { name: view })).toHaveClass("active");
+      fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
+      expect(screen.getByRole("tab", { name: "Work" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("button", { name: "Choose folder, current folder Inbox" })).toBeInTheDocument();
+    }
+  });
+
   it("shows when the Gmail backfill is still running", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     let finishBackfill!: () => void;
