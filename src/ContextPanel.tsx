@@ -1,0 +1,169 @@
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { Check, Copy, Heart, Mail, UserPlus } from "lucide-react";
+import { mailClient } from "./data/client";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
+import { parseAddress, splitAddressList } from "./emailAddress";
+
+/**
+ * The single right-side panel for a conversation: a compact card for the
+ * selected participant, then the AI brief and suggestions, then related
+ * tasks and recent emails with that person.
+ */
+export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, assist, tasks }: {
+  detail: ThreadDetail | null;
+  accounts: Account[];
+  onOpenThread(id: string): void;
+  onOpenContact(id: string): void;
+  assist?: ReactNode;
+  tasks?: ReactNode;
+}) {
+  const own = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
+  const participants = useMemo(() => {
+    if (!detail) return [];
+    const byEmail = new Map<string, string>();
+    for (const message of detail.messages) {
+      for (const raw of [message.sender, ...message.recipients.flatMap(splitAddressList)]) {
+        const address = parseAddress(raw);
+        if (address.email.includes("@") && !own.has(address.email.toLocaleLowerCase())) {
+          byEmail.set(address.email.toLocaleLowerCase(), address.name);
+        }
+      }
+    }
+    return [...byEmail].map(([email, name]) => ({ email, name }));
+  }, [detail, own]);
+  const preferred = useMemo(() => {
+    if (!detail) return "";
+    for (const message of [...detail.messages].reverse()) {
+      const sender = parseAddress(message.sender);
+      if (!own.has(sender.email.toLocaleLowerCase())) return sender.email.toLocaleLowerCase();
+    }
+    return participants[0]?.email ?? "";
+  }, [detail, participants, own]);
+  const [email, setEmail] = useState("");
+  const [profile, setProfile] = useState<ContactProfile | null>(null);
+  const [timeline, setTimeline] = useState<ContactTimelineItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [emailCopied, setEmailCopied] = useState(false);
+  const [emailCopyFailed, setEmailCopyFailed] = useState(false);
+  const openHintId = useId();
+
+  useEffect(() => { setEmail(preferred); setEmailCopied(false); setEmailCopyFailed(false); }, [preferred, detail?.thread.id]);
+  useEffect(() => { setEmailCopied(false); setEmailCopyFailed(false); }, [email]);
+  useEffect(() => {
+    if (!email) { setProfile(null); setTimeline([]); return; }
+    let active = true;
+    void (async () => {
+      try {
+        const found = await mailClient.listContactProfiles(email, 100);
+        const match = found.find((contact) => contact.addresses.some((address) => address.toLocaleLowerCase() === email));
+        const loaded = match ? await mailClient.getContactProfile(match.id) : null;
+        const events = await mailClient.contactTimeline(loaded?.id ?? `derived:${email}`, 0, 6);
+        if (active) { setProfile(loaded); setTimeline(events); setError(null); }
+      } catch (reason) {
+        if (active) setError(reason instanceof Error ? reason.message : String(reason));
+      }
+    })();
+    return () => { active = false; };
+  }, [email]);
+
+  const selected = participants.find((item) => item.email === email);
+  const displayName = profile?.displayName || selected?.name || email;
+  const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
+  const save = async () => {
+    try {
+      const saved = await mailClient.saveContactProfile({
+        id: null, displayName: selected?.name ?? null, role: null, company: null,
+        location: null, bio: null, notes: null, links: [], photoData: null,
+        favorite: false, addresses: [email],
+      });
+      setProfile(saved);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  const toggleFavorite = async () => {
+    if (!profile) return;
+    setError(null);
+    try {
+      const updated = await mailClient.saveContactProfile({ ...profile, favorite: !profile.favorite });
+      setProfile(updated);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+  const copyEmail = async () => {
+    setEmailCopyFailed(false);
+    try {
+      await navigator.clipboard.writeText(email);
+      setEmailCopied(true);
+    } catch {
+      setEmailCopyFailed(true);
+    }
+  };
+
+  return (
+    <aside className="context-panel" aria-label="Conversation context">
+      {participants.length > 1 ? (
+        <div className="context-participants" role="group" aria-label="Conversation participants">
+          {participants.map((item) => (
+            <button key={item.email} type="button" aria-pressed={item.email === email} title={item.email} onClick={() => setEmail(item.email)}>
+              <span className="context-participant-initial" aria-hidden="true">{(item.name || item.email).slice(0, 1).toLocaleUpperCase()}</span>
+              <span>{item.name || item.email}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {email ? (
+        <section className="context-contact" aria-label="Contact">
+          <div className="context-contact-card">
+            <div className="contact-avatar small">
+              {profile?.photoData ? <img src={`data:image/jpeg;base64,${profile.photoData}`} alt="" /> : <span>{displayName.slice(0, 1).toLocaleUpperCase()}</span>}
+            </div>
+            <div className="context-contact-text">
+              <div className="context-contact-name-row">
+                <h2>{profile
+                  ? <button type="button" className="context-contact-name" aria-describedby={openHintId} onClick={() => onOpenContact(profile.id)}>{displayName}</button>
+                  : displayName}</h2>
+                {profile ? (
+                  <button type="button" className="context-icon-button context-contact-favorite" aria-label={profile.favorite ? "Remove favorite" : "Add favorite"} aria-pressed={profile.favorite} title={profile.favorite ? "Remove favorite" : "Add favorite"} onClick={() => void toggleFavorite()}>
+                    <Heart size={15} fill={profile.favorite ? "currentColor" : "none"} />
+                  </button>
+                ) : (
+                  <button type="button" className="context-icon-button" aria-label="Save to contacts" title="Save to contacts" onClick={() => void save()}>
+                    <UserPlus size={15} />
+                  </button>
+                )}
+                <span id={openHintId} hidden>Opens in Contacts</span>
+              </div>
+              <div className="contact-sidebar-email-row">
+                <a href={`mailto:${email}`}><Mail size={13} /><span>{email}</span></a>
+                <button type="button" className="contact-sidebar-email-copy" aria-label={emailCopied ? "Copied email address" : "Copy email address"} onClick={() => void copyEmail()}>
+                  {emailCopied ? <Check size={13} /> : <Copy size={13} />}
+                </button>
+              </div>
+              {emailCopyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}
+              {profile?.role || profile?.company ? <p>{[profile.role, profile.company].filter(Boolean).join(" · ")}</p> : null}
+              {profile?.location ? <p>{profile.location}</p> : null}
+            </div>
+          </div>
+          {profile?.bio ? <p className="contact-sidebar-bio">{profile.bio}</p> : null}
+          {profile?.links.length ? <nav className="contact-sidebar-links" aria-label="Contact links">{profile.links.map((link) => <button type="button" key={link} onClick={() => void openUrl(link)}>{new URL(link).hostname}</button>)}</nav> : null}
+          {profile?.notes ? <section className="contact-sidebar-notes"><h3>Notes</h3><p>{profile.notes}</p></section> : null}
+        </section>
+      ) : <p className="contacts-status">Select a conversation participant.</p>}
+      {detail ? assist : null}
+      {detail ? tasks : null}
+      {otherEmails.length > 0 ? (
+        <section className="context-section contact-sidebar-history" aria-labelledby="context-history-heading">
+          <header className="context-section-header"><h3 id="context-history-heading">Recent emails</h3></header>
+          {otherEmails.map((item) => (
+            <button type="button" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
+              <strong>{item.subject || "(no subject)"}</strong>
+              <small>{new Date(item.sentAt).toLocaleDateString()} · {item.accountId}</small>
+            </button>
+          ))}
+        </section>
+      ) : null}
+      {error ? <p className="contacts-error" role="alert">{error}</p> : null}
+    </aside>
+  );
+}
