@@ -409,13 +409,33 @@ button { color: inherit; }
   background: var(--surface);
 }
 
-.thread-header, .reader-header {
+.reader-header {
   min-height: 90px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 20px 22px 12px;
 }
+
+/* Keep the four primary workspace titles anchored to the same top-left inset. */
+.thread-header,
+.calendar-week-header,
+.tasks-workspace .tasks-sidebar-header,
+.contacts-header {
+  min-height: 90px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 22px 12px;
+}
+.thread-header h1,
+.calendar-week-header h1,
+.tasks-workspace .tasks-sidebar-header h1,
+.contacts-header h1 { margin: 5px 0 0; }
+.thread-header > .filters-anchor,
+.calendar-week-controls,
+.tasks-workspace .tasks-sidebar-header-actions,
+.contacts-header > .contact-primary-button { align-self: center; }
 
 .thread-header-title { display: flex; align-items: center; gap: 12px; }
 .mailbox-heading-context { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: var(--type-sm); }
@@ -1360,15 +1380,11 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 }
 .calendar-week-main { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .calendar-week-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 18px;
-  padding: 18px 20px 12px;
 }
-.calendar-week-header h1 { margin: 0; font-size: var(--type-display); font-weight: 550; }
+.calendar-week-header h1 { font-size: var(--type-display); font-weight: 550; }
 .calendar-week-heading { min-width: 0; }
-.calendar-week-heading .eyebrow { margin-bottom: 4px; overflow-wrap: anywhere; }
+.calendar-week-heading .eyebrow { overflow-wrap: anywhere; }
 .calendar-week-controls { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
 .calendar-week-controls button {
   width: 32px;
@@ -1634,7 +1650,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   overflow: hidden;
   background: var(--background);
 }
-.tasks-workspace .tasks-sidebar-header { min-height: 82px; padding-left: 22px; padding-right: clamp(24px, 5vw, 72px); }
+.tasks-workspace .tasks-sidebar-header { padding-right: clamp(24px, 5vw, 72px); }
 .tasks-workspace-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(240px, var(--inbox-width, 400px)) minmax(0, 1fr); }
 .tasks-list-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
 .task-view-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 14px; border-bottom: 1px solid var(--border); }
@@ -1686,8 +1702,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .task-detail-source summary { cursor: pointer; }
 .task-detail-source blockquote { margin: 9px 0 0; padding-left: 12px; border-left: 2px solid var(--border-strong); color: var(--secondary); line-height: 1.5; white-space: pre-wrap; }
 .contacts-workspace { grid-column:2; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:var(--background); }
-.contacts-header { min-height:82px; display:flex; align-items:center; justify-content:space-between; padding:14px 28px; border-bottom:1px solid var(--border); }
-.contacts-header h1 { margin:3px 0 0; font-size:var(--type-heading); font-weight:600; }
+.contacts-header { border-bottom:1px solid var(--border); }
+.contacts-header h1 { font-size:var(--type-heading); font-weight:600; }
 .contacts-workspace-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(240px, var(--inbox-width, 400px)) minmax(0,1fr); }
 .contacts-list-panel { min-height:0; overflow:auto; padding:16px 12px; border-right:1px solid var(--border); }
 .contacts-search { height:38px; display:flex; align-items:center; gap:8px; margin:0 4px 14px; padding:0 10px; border:1px solid var(--border); border-radius:var(--radius-md); color:var(--muted); background:var(--surface); }
