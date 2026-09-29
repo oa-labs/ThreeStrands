@@ -597,20 +597,21 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument();
   });
 
-  it("keeps Actions read-only so letter shortcuts can switch workspaces", async () => {
+  it("keeps the context panel read-only after Shift+A so letter shortcuts can switch workspaces", async () => {
     render(<App />);
     await screen.findByRole("button", { name: "Archive (e)" });
 
     fireEvent.keyDown(window, { key: "A", shiftKey: true });
-    const actions = screen.getByRole("complementary", { name: "Actions" });
-    expect(within(actions).queryByRole("textbox")).not.toBeInTheDocument();
-    expect(within(actions).queryByRole("combobox")).not.toBeInTheDocument();
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    expect(within(panel).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "3" });
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Conversation" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
   });
 
   it("switches directly between mail and task views while 0 has no effect", async () => {

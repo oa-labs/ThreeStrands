@@ -275,6 +275,12 @@ export type SummaryResult = {
   generatedAt: string;
 };
 
+/** One combined request: the persisted summary and the verified suggestions. */
+export type ThreadBriefResult = {
+  summary: SummaryResult;
+  analysis: ActionAnalysis;
+};
+
 export type ProposalEvidence = {
   sourceMessageId: string;
   excerpt: string;

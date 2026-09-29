@@ -1,9 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TaskSidebar, type TaskWorkspaceHandle, type ThreadActionAnalysis } from "./TaskSidebar";
+import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { mailClient } from "./data/client";
-import type { ActionProposal, ThreadDetail, ThreadTask } from "./domain";
+import type { ThreadDetail, ThreadTask } from "./domain";
 
 const detail: ThreadDetail = {
   thread: {
@@ -37,19 +37,6 @@ const detail: ThreadDetail = {
     attachments: [],
   }],
 };
-
-function threadAnalysis(overrides: Partial<ThreadActionAnalysis> = {}): ThreadActionAnalysis {
-  return {
-    enabled: true,
-    ready: true,
-    loading: false,
-    error: null,
-    preview: null,
-    proposals: [],
-    onAnalyze: vi.fn(),
-    ...overrides,
-  };
-}
 
 function workspaceTask(id: string, overrides: Partial<ThreadTask> = {}): ThreadTask {
   return {
@@ -305,49 +292,6 @@ describe("TaskSidebar", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Draft Follow-Up" }));
     expect(draftFollowUp).toHaveBeenCalledWith(task);
-  });
-
-  it("previews typed thread proposals with evidence and confirmation actions", async () => {
-    const proposal: ActionProposal = {
-      type: "task",
-      kind: "action",
-      title: "Set up the website",
-      notes: "Complete the requested setup.",
-      dueKind: "date",
-      dueValue: "2026-09-25",
-      timeZone: "America/New_York",
-      repeatIntervalDays: null,
-      confidence: 0.86,
-      evidence: { sourceMessageId: "message-1", excerpt: "Please set up the website by Friday." },
-    };
-    const reviewProposal = vi.fn();
-    const discard = vi.fn();
-    render(
-      <TaskSidebar
-        onClose={vi.fn()}
-        accountId="you@example.com"
-        currentThread={detail}
-        onOpenThread={vi.fn()}
-        title="Actions"
-        analysis={threadAnalysis({
-          preview: '{"emailContext":{"messages":[]}}',
-          proposals: [proposal],
-          onDiscardProposal: discard,
-          onReviewProposal: reviewProposal,
-        })}
-      />,
-    );
-
-    expect(await screen.findByText("Set up the website")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("From the email"));
-    expect(screen.getByText("Please set up the website by Friday.")).toBeInTheDocument();
-    expect(screen.getByText(/^client@example\.com · /)).toBeInTheDocument();
-    expect(screen.queryByText(/confidence/i)).not.toBeInTheDocument();
-    expect(screen.queryByText("Check details")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review & Add Task" }));
-    expect(reviewProposal).toHaveBeenCalledWith(0, proposal, "accept");
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(discard).toHaveBeenCalledWith(0);
   });
 
   it("shows the account email and a task count in the header, like the mail inbox header", async () => {
@@ -734,84 +678,5 @@ describe("TaskSidebar", () => {
     expect(screen.queryByRole("button", { name: "Open conversation" })).not.toBeInTheDocument();
     expect(screen.queryByText("open conversation")).not.toBeInTheDocument();
     expect(onOpenThread).not.toHaveBeenCalled();
-  });
-
-  it("explains missing provider credentials separately from the feature flag", () => {
-    render(
-      <TaskSidebar
-        onClose={vi.fn()}
-        accountId="you@example.com"
-        currentThread={detail}
-        onOpenThread={vi.fn()}
-        title="Actions"
-        analysis={threadAnalysis({ ready: false })}
-      />,
-    );
-    expect(screen.getByText("Set up an AI provider and API key in AI settings to get suggestions for this conversation.")).toBeInTheDocument();
-    expect(screen.queryByText("Turn on Suggestions in AI settings to get meeting and task ideas from this conversation.")).not.toBeInTheDocument();
-  });
-
-  it("shows thread analysis controls only when analysis is supplied", () => {
-    const { rerender } = render(
-      <TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" />,
-    );
-    expect(screen.queryByRole("button", { name: "Get Suggestions" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Suggestions" })).not.toBeInTheDocument();
-
-    const onAnalyze = vi.fn();
-    rerender(
-      <TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ onAnalyze })} />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Get Suggestions" }));
-    expect(onAnalyze).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("region", { name: "Suggestions" })).toBeInTheDocument();
-  });
-
-  it("flags uncertain suggestions for a closer look instead of showing a confidence score", () => {
-    const proposal: ActionProposal = {
-      type: "meeting",
-      intent: "schedule",
-      title: "Website kickoff",
-      participants: [],
-      location: null,
-      rawTimeLanguage: "sometime next week",
-      normalizedStart: null,
-      normalizedEnd: null,
-      searchRangeStart: null,
-      searchRangeEnd: null,
-      durationMinutes: 30,
-      timeZone: null,
-      confidence: 0.4,
-      evidence: { sourceMessageId: "message-unknown", excerpt: "Let's meet next week." },
-    };
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ preview: "{}", proposals: [proposal] })} />);
-
-    expect(screen.getByText("Check details")).toBeInTheDocument();
-    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("From the email"));
-    expect(screen.queryByText(/message-unknown/)).not.toBeInTheDocument();
-  });
-
-  it("reports withheld suggestions instead of claiming there was nothing to do", () => {
-    const { rerender } = render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ preview: "{}", hiddenCount: 2 })} />);
-    expect(screen.getByText("2 suggestions couldn’t be matched to the email, so they were hidden.")).toBeInTheDocument();
-    expect(screen.queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
-    expect(screen.getByText("What was shared with AI")).toBeInTheDocument();
-
-    rerender(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ preview: "{}", hiddenCount: 1 })} />);
-    expect(screen.getByText("1 suggestion couldn’t be matched to the email, so it was hidden.")).toBeInTheDocument();
-
-    rerender(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ preview: "{}" })} />);
-    expect(screen.getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
-  });
-
-  it("explains unreadable provider output in plain language and keeps the details available", () => {
-    const onAnalyze = vi.fn();
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ error: "The AI provider returned malformed action proposal JSON", onAnalyze })} />);
-
-    expect(screen.getByRole("alert")).toHaveTextContent("The AI's response couldn't be read. Try again, or choose a different model in AI settings.");
-    expect(screen.getByText("The AI provider returned malformed action proposal JSON")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
-    expect(onAnalyze).toHaveBeenCalledTimes(1);
   });
 });

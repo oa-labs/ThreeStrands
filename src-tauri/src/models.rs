@@ -530,6 +530,15 @@ pub struct SummaryResult {
     pub generated_at: String,
 }
 
+/// The combined result of one brief request: the persisted summary and the
+/// verified proposals.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadBriefResult {
+    pub summary: SummaryResult,
+    pub analysis: ActionAnalysis,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplyAssistMessage {

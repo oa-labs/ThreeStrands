@@ -26,7 +26,6 @@ import {
   Search,
   Settings as SettingsIcon,
   ShieldAlert,
-  Sparkles,
   Star,
   Tag,
   Trash2,
@@ -74,6 +73,7 @@ import type {
   UnreadCounts,
   Message,
   MeetingProposal,
+  SummaryResult,
   TaskProposal,
   ThreadTask,
 } from "./domain";
@@ -91,7 +91,9 @@ import { formatAvailabilityText } from "./actionDrafting";
 import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { isActiveTaskStatus } from "./taskViews";
 import { ContactsWorkspace } from "./ContactsWorkspace";
-import { ContactSidebar } from "./ContactSidebar";
+import { ContextPanel } from "./ContextPanel";
+import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
+import { ThreadTasks } from "./ThreadTasks";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
@@ -145,7 +147,7 @@ import { Settings, type MailAccountSettings, type SettingsSection } from "./Sett
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
-type RightWorkspace = "actions" | "calendar" | "contacts" | "tasks" | "week" | null;
+type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | null;
 type TaskEditorState =
   | { kind: "new"; thread: ThreadDetail }
   | { kind: "edit"; task: ThreadTask }
@@ -360,9 +362,9 @@ export function App() {
   }, [calendar.accounts.length, refreshCalendarOptions, settingsOpen, settingsSection]);
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
+  const [aiSummaryFeatureEnabled, setAiSummaryFeatureEnabled] = useState(false);
   const [aiActionFeatureEnabled, setAiActionFeatureEnabled] = useState(false);
   const [aiActionAvailable, setAiActionAvailable] = useState(false);
-  const [summaryExpanded, setSummaryExpanded] = useState(false);
   // Keyed by thread id, not a single flag, so summarizing thread A in the
   // background doesn't show "Summarizing…" (or clear it) on thread B just
   // because B is what's currently on screen when A's request settles.
@@ -374,6 +376,7 @@ export function App() {
     const features = readAiFeatures();
     const summaryEnabled = provider !== "none" && features.summarize;
     const actionEnabled = provider !== "none" && features.actionExtraction;
+    setAiSummaryFeatureEnabled(features.summarize);
     setAiActionFeatureEnabled(features.actionExtraction);
     if (!summaryEnabled && !actionEnabled) {
       setAiSummaryAvailable(false);
@@ -727,13 +730,6 @@ export function App() {
         if (requestId === detailRequest.current) setDetailLoading(false);
       });
   }, [selectedId, selectedThreadLastMessageAt, selectedThreadSnippet, setNotice]);
-
-  useEffect(() => {
-    setSummaryExpanded(false);
-    // Pending/error state deliberately isn't reset here — it's keyed by
-    // thread id (see `summarizingRef`/`summaryErrors`) so it stays correct
-    // for whichever thread it actually belongs to when you navigate back.
-  }, [selectedId]);
 
   useEffect(() => {
     if (!visibleDetail) return;
@@ -1208,10 +1204,6 @@ export function App() {
     setRightWorkspace((current) => current === "tasks" ? null : "tasks");
   }, []);
 
-  const openActions = useCallback(() => {
-    setRightWorkspace((current) => current === "actions" ? null : "actions");
-  }, []);
-
   const openSchedule = useCallback(() => {
     setRightWorkspace("calendar");
   }, []);
@@ -1318,47 +1310,59 @@ export function App() {
    * request is already in flight doesn't fire duplicate provider calls; a
    * different thread can still summarize concurrently in the background.
    */
-  const runSummarize = useCallback(async () => {
-    if (!selected) return;
-    const threadId = selected.id;
-    if (summarizingRef.current.has(threadId)) return;
+  const applySummary = useCallback((threadId: string, result: SummaryResult) => {
+    setThreads((current) =>
+      current.map((thread) =>
+        thread.id === threadId
+          ? { ...thread, summary: result.summary, summaryGeneratedAt: result.generatedAt }
+          : thread,
+      ),
+    );
+    setDetail((current) =>
+      current && current.thread.id === threadId
+        ? {
+            ...current,
+            thread: { ...current.thread, summary: result.summary, summaryGeneratedAt: result.generatedAt },
+          }
+        : current,
+    );
+  }, []);
+
+  /** Marks a thread's summary request as in flight; false when one already is. */
+  const beginSummary = useCallback((threadId: string) => {
+    if (summarizingRef.current.has(threadId)) return false;
     summarizingRef.current.add(threadId);
     setSummarizingIds(new Set(summarizingRef.current));
-    setSummaryExpanded(true);
     setSummaryErrors((current) => {
       if (!(threadId in current)) return current;
       const next = { ...current };
       delete next[threadId];
       return next;
     });
+    return true;
+  }, []);
+
+  const endSummary = useCallback((threadId: string) => {
+    summarizingRef.current.delete(threadId);
+    setSummarizingIds(new Set(summarizingRef.current));
+  }, []);
+
+  const runSummarize = useCallback(async () => {
+    if (!selected) return;
+    const threadId = selected.id;
+    if (!beginSummary(threadId)) return;
     try {
       const { provider, model, endpoint } = readAiRequestConfig("summarizing");
-      const result = await mailClient.summarizeThread(threadId, provider, model, endpoint);
-      setThreads((current) =>
-        current.map((thread) =>
-          thread.id === threadId
-            ? { ...thread, summary: result.summary, summaryGeneratedAt: result.generatedAt }
-            : thread,
-        ),
-      );
-      setDetail((current) =>
-        current && current.thread.id === threadId
-          ? {
-              ...current,
-              thread: { ...current.thread, summary: result.summary, summaryGeneratedAt: result.generatedAt },
-            }
-          : current,
-      );
+      applySummary(threadId, await mailClient.summarizeThread(threadId, provider, model, endpoint));
     } catch (error) {
       setSummaryErrors((current) => ({
         ...current,
         [threadId]: errorMessage(error),
       }));
     } finally {
-      summarizingRef.current.delete(threadId);
-      setSummarizingIds(new Set(summarizingRef.current));
+      endSummary(threadId);
     }
-  }, [selected]);
+  }, [applySummary, beginSummary, endSummary, selected]);
 
   const [actionProposalSets, setActionProposalSets] = useState<Record<string, ActionProposal[]>>({});
   const [actionHiddenCounts, setActionHiddenCounts] = useState<Record<string, number>>({});
@@ -1418,6 +1422,55 @@ export function App() {
       setActionAnalysisLoading(false);
     }
   }, [actionAnalysisLoading, actionProposalKey, aiActionAvailable, aiActionFeatureEnabled, availabilityPreferences.timeZone, visibleDetail]);
+
+  /** Summarizes and extracts suggestions in one provider call. */
+  const runCombinedBrief = useCallback(async () => {
+    if (!visibleDetail || !actionProposalKey || actionAnalysisLoading) return;
+    const threadId = visibleDetail.thread.id;
+    const proposalKey = actionProposalKey;
+    if (!beginSummary(threadId)) return;
+    setActionAnalysisLoading(true);
+    setActionAnalysisError(null);
+    try {
+      const { provider, model, endpoint } = readAiRequestConfig("getting a brief");
+      const { summary, analysis } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
+      applySummary(threadId, summary);
+      setActionProposalSets((current) => ({ ...current, [proposalKey]: analysis.proposals }));
+      setActionHiddenCounts((current) => ({ ...current, [proposalKey]: analysis.hiddenCount }));
+    } catch (error) {
+      setSummaryErrors((current) => ({ ...current, [threadId]: errorMessage(error) }));
+    } finally {
+      endSummary(threadId);
+      setActionAnalysisLoading(false);
+    }
+  }, [actionAnalysisLoading, actionProposalKey, applySummary, availabilityPreferences.timeZone, beginSummary, endSummary, visibleDetail]);
+
+  /**
+   * Fetches whatever part of the brief is missing for the visible thread, in
+   * one provider call when both the summary and the suggestions are needed.
+   * `only` requires that part to be missing before calling the provider at
+   * all; `force` regenerates every enabled part.
+   */
+  const runBrief = useCallback(async ({ force = false, only }: { force?: boolean; only?: "summary" | "suggestions" } = {}) => {
+    if (!visibleDetail || !actionProposalKey) return;
+    const { thread } = visibleDetail;
+    const summaryFresh = Boolean(thread.summary)
+      && !(thread.summaryGeneratedAt && thread.lastMessageAt > thread.summaryGeneratedAt);
+    const needSummary = aiSummaryAvailable && (force || !summaryFresh);
+    const needSuggestions = aiActionAvailable
+      && (force || !Object.prototype.hasOwnProperty.call(actionProposalSets, actionProposalKey));
+    if (only === "summary" ? !needSummary : only === "suggestions" ? !needSuggestions : !needSummary && !needSuggestions) return;
+    if (needSummary && needSuggestions) await runCombinedBrief();
+    else if (needSummary) await runSummarize();
+    else await runAnalyzeThread();
+  }, [actionProposalKey, actionProposalSets, aiActionAvailable, aiSummaryAvailable, runAnalyzeThread, runCombinedBrief, runSummarize, visibleDetail]);
+
+  /** Shows the context panel's AI section and fetches suggestions if missing. */
+  const getSuggestions = useCallback(() => {
+    setRightWorkspace((current) => current === "calendar" ? current : null);
+    window.requestAnimationFrame(() => document.getElementById(THREAD_ASSIST_ID)?.scrollIntoView?.({ block: "nearest" }));
+    void runBrief({ only: "suggestions" });
+  }, [runBrief]);
 
   const updateActionProposal = useCallback((index: number, proposal: ActionProposal) => {
     if (!actionProposalKey) return;
@@ -1480,7 +1533,7 @@ export function App() {
     setTaskEditor(null);
     setTaskRevision((current) => current + 1);
     await refreshTaskIndicators();
-    setNotice({ message: taskEditor.kind === "proposal" ? "Task added from thread action" : "Task added" });
+    setNotice({ message: taskEditor.kind === "proposal" ? "Task added from suggestion" : "Task added" });
   }, [refreshTaskIndicators, setNotice, taskEditor, updateActionProposal]);
 
   const findTimesFromProposal = useCallback((proposal: MeetingProposal) => {
@@ -1727,12 +1780,8 @@ export function App() {
     aiSummaryAvailable,
     summarizeSelected: async () => {
       if (!selected) return {};
-      const cached = visibleDetail?.thread.id === selected.id ? visibleDetail.thread : null;
-      if (cached?.summary) {
-        setSummaryExpanded((current) => !current);
-        return {};
-      }
-      await runSummarize();
+      setRightWorkspace((current) => current === "calendar" ? current : null);
+      await runBrief({ only: "summary" });
       return {};
     },
     focusSearch: () => {
@@ -1756,7 +1805,7 @@ export function App() {
     openTasksView,
     openContactsView,
     openCalendarView,
-    openActions,
+    getSuggestions,
     newTask,
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
@@ -1765,7 +1814,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, openActions, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runSummarize, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction, visibleDetail]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -1831,8 +1880,6 @@ export function App() {
     && selectedThreads.every((thread) => thread.starred);
   const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
-  // Shared by the Tasks workspace and the Actions sidebar, which list the same
-  // tasks for the same account and differ only in their surrounding controls.
   const taskListProps = {
     onClose: closeRightWorkspace,
     accountId: activeAccountId,
@@ -1847,7 +1894,7 @@ export function App() {
   };
 
   return (
-    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}${rightWorkspace === "actions" || rightWorkspace === "calendar" ? " mail-context-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}${rightWorkspace === "calendar" ? " mail-context-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -2165,11 +2212,6 @@ export function App() {
                 </div>
               </div>
               <div className="reader-actions">
-                <HoverTooltip label="Actions" shortcut="Shift+A" placement="bottom">
-                  <ActionButton label="Actions" shortcut="Shift+A" onClick={openActions}>
-                    <Sparkles size={17} />
-                  </ActionButton>
-                </HoverTooltip>
                 <HoverTooltip label={selected?.starred ? "Unstar" : "Star"} shortcut="s" placement="bottom">
                   <ActionButton
                     label={selected?.starred ? "Unstar" : "Star"}
@@ -2237,64 +2279,6 @@ export function App() {
                 </HoverTooltip>
               </div>
             </header>
-            {visibleDetail.thread.summary || summaryPending || summaryError ? (
-              <div
-                className={`thread-summary ${summaryExpanded ? "thread-summary-expanded" : "thread-summary-collapsed"}`}
-              >
-                {summaryPending ? (
-                  <div className="thread-summary-pending">
-                    <Sparkles size={14} />
-                    <span>Summarizing…</span>
-                  </div>
-                ) : summaryError ? (
-                  <div className="thread-summary-error">
-                    <span>{summaryError}</span>
-                    <button type="button" onClick={() => void runSummarize()}>
-                      Try Again
-                    </button>
-                  </div>
-                ) : summaryExpanded && visibleDetail.thread.summary ? (
-                  <div className="thread-summary-body">
-                    <div className="thread-summary-heading">
-                      <Sparkles size={14} />
-                      <span>Summary</span>
-                    </div>
-                    <ul>
-                      {summaryLines(visibleDetail.thread.summary).map((line, index) => (
-                        <li key={index}>{line}</li>
-                      ))}
-                    </ul>
-                    {visibleDetail.thread.summaryGeneratedAt
-                    && visibleDetail.thread.lastMessageAt > visibleDetail.thread.summaryGeneratedAt ? (
-                      <p className="thread-summary-stale">New Messages since this summary.</p>
-                    ) : null}
-                    <div className="thread-summary-actions">
-                      <button type="button" onClick={() => setSummaryExpanded(false)}>
-                        <ChevronUp size={14} />
-                        Collapse Summary
-                      </button>
-                      <button type="button" onClick={() => void runSummarize()}>
-                        <RefreshCw size={13} />
-                        Regenerate
-                      </button>
-                    </div>
-                  </div>
-                ) : visibleDetail.thread.summary ? (
-                  <button
-                    type="button"
-                    className="thread-summary-pill"
-                    onClick={() => setSummaryExpanded(true)}
-                  >
-                    <Sparkles size={14} />
-                    <span className="thread-summary-preview">{summaryPreview(visibleDetail.thread.summary)}</span>
-                    <span className="thread-summary-expand">
-                      Expand Summary
-                      <ChevronDown size={14} />
-                    </span>
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
           </>
         ) : null}
         {/* Keep one message-stack host while a draft is active. A sync can
@@ -2623,7 +2607,45 @@ export function App() {
           }}
         />
       ) : null}
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <ContactSidebar detail={visibleDetail} accounts={accounts} onOpenThread={openTaskThread} onOpenContact={openContactInAddressBook} /> : null}
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? (
+        <ContextPanel
+          detail={visibleDetail}
+          accounts={accounts}
+          onOpenThread={openTaskThread}
+          onOpenContact={openContactInAddressBook}
+          assist={visibleDetail ? (
+            <ThreadAssist
+              detail={visibleDetail}
+              summary={{ enabled: aiSummaryFeatureEnabled, available: aiSummaryAvailable, pending: summaryPending }}
+              suggestions={{
+                enabled: aiActionFeatureEnabled,
+                available: aiActionAvailable,
+                requested: actionAnalysisRequested,
+                proposals: actionProposals,
+                hiddenCount: actionHiddenCount,
+                onDiscard: discardActionProposal,
+                onReview: reviewActionProposal,
+                onFindTimes: findTimesFromProposal,
+              }}
+              loading={actionAnalysisLoading}
+              error={summaryError ?? actionAnalysisError}
+              preview={actionAnalysisRequested ? actionAnalysisPreview : null}
+              onRun={(force) => void runBrief({ force })}
+              onOpenSettings={() => openSettingsAt("ai")}
+            />
+          ) : null}
+          tasks={visibleDetail ? (
+            <ThreadTasks
+              thread={visibleDetail.thread}
+              refreshKey={taskRevision}
+              onAddTask={newTask}
+              onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
+              onDraftFollowUp={(task) => void draftFollowUp(task)}
+              onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
+            />
+          ) : null}
+        />
+      ) : null}
       {rightWorkspace === "contacts" ? <ContactsWorkspace key={activeAccountId ?? "all"} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
@@ -2636,25 +2658,6 @@ export function App() {
           onSelectedTaskChange={(task) => {
             setSelectedTaskStatus(task?.status ?? null);
             setSelectedTaskHasThread(Boolean(task?.threadId));
-          }}
-        />
-      ) : null}
-      {rightWorkspace === "actions" ? (
-        <TaskSidebar
-          {...taskListProps}
-          title="Actions"
-          analysis={{
-            enabled: aiActionFeatureEnabled && Boolean(visibleDetail),
-            ready: aiActionAvailable && Boolean(visibleDetail),
-            loading: actionAnalysisLoading,
-            error: actionAnalysisError,
-            preview: actionAnalysisRequested ? actionAnalysisPreview : null,
-            proposals: actionProposals,
-            hiddenCount: actionHiddenCount,
-            onAnalyze: () => void runAnalyzeThread(),
-            onDiscardProposal: discardActionProposal,
-            onReviewProposal: reviewActionProposal,
-            onFindTimesProposal: findTimesFromProposal,
           }}
         />
       ) : null}
@@ -2906,19 +2909,6 @@ function recipientListSeparator(index: number, recipientCount: number): string {
   if (index === 0) return "";
   if (index === recipientCount - 1) return recipientCount === 2 ? " and " : ", and ";
   return ", ";
-}
-
-function summaryLines(summary: string): string[] {
-  return summary
-    .split("\n")
-    .map((line) => line.replace(/^[-•]\s*/, "").trim())
-    .filter(Boolean);
-}
-
-function summaryPreview(summary: string, maxLength = 90): string {
-  const [first] = summaryLines(summary);
-  if (!first) return "";
-  return first.length > maxLength ? `${first.slice(0, maxLength).trimEnd()}…` : first;
 }
 
 const FOLDER_OPTIONS = [

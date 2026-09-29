@@ -59,3 +59,29 @@ export function taskMatchesView(task: ThreadTask, view: TaskView, now: Date): bo
   if (view === "Anytime") return !dueView(task, now) && task.kind !== "waiting_for";
   return dueView(task, now) === view;
 }
+
+export function isOverdue(task: ThreadTask): boolean {
+  return isActiveTaskStatus(task.status) && dueView(task, new Date()) === "Overdue";
+}
+
+export function formatRelativeDate(date: Date, now: Date = new Date()): string {
+  const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(date) - startOfDay(now)) / 86_400_000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Tomorrow";
+  if (diffDays === -1) return "Yesterday";
+  const includeYear = date.getFullYear() !== now.getFullYear();
+  return date.toLocaleDateString(undefined, includeYear ? { year: "numeric", month: "short", day: "numeric" } : { month: "short", day: "numeric" });
+}
+
+export function formatDue(task: ThreadTask): string | null {
+  if (!task.dueValue) return null;
+  const value = task.dueKind === "date" ? new Date(`${task.dueValue}T12:00:00`) : new Date(task.dueValue);
+  return formatRelativeDate(value);
+}
+
+export function isDue(task: ThreadTask): boolean {
+  if (!isActiveTaskStatus(task.status) || !task.dueValue) return false;
+  const due = task.dueKind === "date" ? new Date(`${task.dueValue}T23:59:59`) : new Date(task.dueValue);
+  return due.getTime() <= Date.now();
+}

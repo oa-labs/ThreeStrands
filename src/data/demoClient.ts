@@ -22,6 +22,7 @@ import type {
   Snippet,
   SplitInbox,
   SummaryResult,
+  ThreadBriefResult,
   SyncStatus,
   Thread,
   ThreadDetail,
@@ -364,6 +365,13 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           excerpt: latest.bodyText.slice(0, 240),
         },
       }] };
+    },
+    async briefThread(threadId, userTimeZone, provider, model, endpoint): Promise<ThreadBriefResult> {
+      const [summary, analysis] = await Promise.all([
+        this.summarizeThread(threadId, provider, model, endpoint),
+        this.analyzeThread(threadId, userTimeZone, provider, model, endpoint),
+      ]);
+      return { summary, analysis };
     },
     async replyAssistContext(draftId): Promise<ReplyAssistContext> {
       const replyDraft = (await this.listDrafts()).find((candidate) => candidate.id === draftId);

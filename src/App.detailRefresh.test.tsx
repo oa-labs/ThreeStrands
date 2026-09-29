@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearAiApiKey, DEFAULT_AI_FEATURES, saveAiFeatures, saveAiProvider, setAiApiKey } from "./aiSettings";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
 import type { OutboxItem } from "./correspondence";
@@ -10,17 +11,110 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("keeps contact context visible while reading email and Actions", async () => {
+it("keeps one context panel beside the conversation, and Shift+A reveals suggestions there instead of opening a second panel", async () => {
   render(<App />);
 
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-  expect(screen.getByRole("complementary", { name: "Contact details" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Contact details" })).not.toBeInTheDocument();
+  const panel = screen.getByRole("complementary", { name: "Conversation context" });
   expect(screen.queryByRole("button", { name: "Close contact pane" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Actions (Shift+A)" })).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "A", shiftKey: true });
-  expect(screen.getByRole("complementary", { name: "Contact details" })).toBeInTheDocument();
-  expect(screen.getByRole("complementary", { name: "Actions" })).toBeInTheDocument();
+  expect(screen.getByRole("complementary", { name: "Conversation context" })).toBe(panel);
+  expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
+  expect(within(panel).getByRole("region", { name: "Brief" })).toHaveTextContent("AI briefs and suggestions are off.");
+});
+
+describe("conversation brief", () => {
+  const briefResult = {
+    summary: { summary: "- Welcome to the app.\n- Nothing is due.", generatedAt: "2099-01-01T00:00:00Z" },
+    analysis: { proposals: [], hiddenCount: 0 },
+  };
+
+  async function enableAi(features: { summarize: boolean; actionExtraction: boolean }) {
+    saveAiProvider("openai");
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, ...features });
+    await setAiApiKey("test-key");
+  }
+
+  afterEach(async () => {
+    saveAiProvider("none");
+    saveAiFeatures(DEFAULT_AI_FEATURES);
+    await clearAiApiKey();
+  });
+
+  it("gets the summary and suggestions in one request, then only calls again on refresh", async () => {
+    await enableAi({ summarize: true, actionExtraction: true });
+    const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
+    const summarizeThread = vi.spyOn(mailClient, "summarizeThread");
+    const analyzeThread = vi.spyOn(mailClient, "analyzeThread");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+    fireEvent.click(await within(panel).findByRole("button", { name: "Get Brief" }));
+
+    expect(await within(panel).findByText("Welcome to the app.")).toBeInTheDocument();
+    expect(within(panel).getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
+    expect(briefThread).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: "A", shiftKey: true });
+    fireEvent.keyDown(window, { key: "i" });
+    await waitFor(() => expect(within(panel).queryByRole("status")).not.toBeInTheDocument());
+    expect(briefThread).toHaveBeenCalledTimes(1);
+    expect(summarizeThread).not.toHaveBeenCalled();
+    expect(analyzeThread).not.toHaveBeenCalled();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Refresh brief" }));
+    await waitFor(() => expect(briefThread).toHaveBeenCalledTimes(2));
+  });
+
+  it("fetches the whole brief in one request when Shift+A finds nothing yet", async () => {
+    await enableAi({ summarize: true, actionExtraction: true });
+    const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
+    const analyzeThread = vi.spyOn(mailClient, "analyzeThread");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    await within(panel).findByRole("button", { name: "Get Brief" });
+
+    fireEvent.keyDown(window, { key: "A", shiftKey: true });
+
+    await waitFor(() => expect(briefThread).toHaveBeenCalledTimes(1));
+    expect(analyzeThread).not.toHaveBeenCalled();
+    expect(await within(panel).findByText("Welcome to the app.")).toBeInTheDocument();
+  });
+
+  it("uses the single-purpose request when only one AI feature is on", async () => {
+    await enableAi({ summarize: false, actionExtraction: true });
+    const briefThread = vi.spyOn(mailClient, "briefThread");
+    const analyzeThread = vi.spyOn(mailClient, "analyzeThread").mockResolvedValue({ proposals: [], hiddenCount: 1 });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+    fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
+
+    expect(await within(panel).findByText("1 suggestion couldn’t be matched to the email, so it was hidden.")).toBeInTheDocument();
+    expect(analyzeThread).toHaveBeenCalledTimes(1);
+    expect(briefThread).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed brief retryable in the panel", async () => {
+    await enableAi({ summarize: true, actionExtraction: true });
+    const briefThread = vi.spyOn(mailClient, "briefThread")
+      .mockRejectedValueOnce(new Error("The AI provider returned malformed thread brief JSON"))
+      .mockResolvedValueOnce(briefResult);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+    fireEvent.click(await within(panel).findByRole("button", { name: "Get Brief" }));
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("The AI's response couldn't be read.");
+    fireEvent.click(within(panel).getByRole("button", { name: "Try Again" }));
+
+    expect(await within(panel).findByText("Welcome to the app.")).toBeInTheDocument();
+    expect(briefThread).toHaveBeenCalledTimes(2);
+  });
 });
 
 it("opens archived contact timeline email in All Mail and keeps it selected after refresh", async () => {

@@ -2,14 +2,14 @@
 
 ## Keyboard-first interaction
 
-ThreeStrands is a keyboard-empowered mail client. Its normal mail, Actions,
+ThreeStrands is a keyboard-empowered mail client. Its normal mail, context panel,
 Tasks, and Calendar surfaces are reading and navigation surfaces. They must not
 silently become text-entry modes or consume printable keys that are application
 shortcuts.
 
 The application has three interaction categories:
 
-1. **Read mode** — mailbox, reader, Actions, Tasks, and Calendar. Single-letter
+1. **Read mode** — mailbox, reader, context panel, Tasks, and Calendar. Single-letter
    commands remain active, including when focus is on read-only content.
 2. **Entry mode** — compose, search, command palette, and modal forms. Printable
    keys belong to the active editor and ordinary application shortcuts are
@@ -29,7 +29,7 @@ surface.
 ## Forms and mutations
 
 Do not place text inputs, textareas, selects, date controls, or content-editable
-regions directly in the mailbox, reader, Actions, Tasks, or Calendar workspace.
+regions directly in the mailbox, reader, context panel, Tasks, or Calendar workspace.
 Open a modal form when a user needs to create or edit structured data.
 
 The deliberate exceptions are:
@@ -64,11 +64,19 @@ boundary appropriate to their risk.
 
 ## Workspaces
 
-Actions and Calendar share a mutually exclusive right-side workspace. Tasks is
-a primary navigation workspace: it replaces the mailbox and reader while
-leaving the application sidebar available. Represent the active workspace with
-one state value (`null`, `actions`, `calendar`, or `tasks`), not multiple
-booleans that must be synchronized manually.
+Mail has one right-side context panel for the open conversation. It stacks a
+compact card for the selected participant (the name opens the contact, a heart
+toggles favorite), the AI brief and suggestions, the conversation's open
+tasks, and recent emails with that person. Do not add a second always-on
+panel beside it; new conversation context belongs in this panel as a section.
+The Calendar sidebar may open beside it so meeting suggestions and candidate
+times stay visible together.
+
+Tasks, Week, and Contacts are primary navigation workspaces: they replace the
+mailbox, reader, and context panel while leaving the application sidebar
+available. Represent the active workspace with one state value (`null`,
+`calendar`, `contacts`, `tasks`, or `week`), not multiple booleans that must be
+synchronized manually.
 
 Opening a workspace must not steal focus or open a form. Workspace cards and
 candidate choices should use buttons and semantic disclosure elements. A plus,
@@ -83,7 +91,9 @@ Current primary commands are:
 - `d`: add a task linked to the selected conversation in Mail, or a blank,
   standalone task in the Tasks view;
 - `t`: toggle Calendar;
-- `Shift+A`: toggle Actions (`a` remains Reply All);
+- `Shift+A`: show the conversation's suggestions in the context panel,
+  fetching them if missing (`a` remains Reply All);
+- `i`: summarize the conversation into the context panel's brief;
 - `Cmd/Ctrl+K`: open the command palette.
 
 The focused-pane model routes `j`/`k` and Up/Down to conversations or tasks.
@@ -93,6 +103,14 @@ opens the linked conversation when one exists. Keep these commands in the centra
 registry; do not scatter competing window-level key listeners across components.
 
 ## AI actions
+
+The context panel's brief combines the thread summary and suggestions. When
+both features are enabled and both are missing, fetch them in one provider
+request; otherwise request only the missing part. A saved summary that is
+current for the newest message is never regenerated without an explicit
+refresh. Show confidence as a "Check details" flag, not a percentage, and
+count suggestions withheld by validation instead of reporting that nothing
+was found.
 
 AI output is a proposal, never a mutation. Proposal cards remain read-only.
 Editing a proposal opens a review dialog. Accepting an AI task opens a task

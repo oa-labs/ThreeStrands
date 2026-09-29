@@ -1,14 +1,13 @@
-import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, MessageSquare, Pencil, Plus, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, MessageSquare, Pencil, Plus, RotateCcw, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { ActionProposal, MeetingProposal, ThreadDetail, ThreadTask, UpdateTaskRequest, TaskDueKind, TaskStatus } from "./domain";
+import type { ThreadDetail, ThreadTask, UpdateTaskRequest, TaskDueKind, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
 import { ActionButton, HoverTooltip } from "./AppChrome";
 import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { PanelResizeHandle, useTaskDetailWidth } from "./PanelResizeHandle";
 import { errorMessage } from "./errors";
-import { parseAddress } from "./emailAddress";
-import { adjacentTaskStatus, dueView, isActiveTaskStatus, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
+import { adjacentTaskStatus, dueView, formatDue, formatRelativeDate, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
 
 export type TaskLayout = "board" | "list";
 const TASK_LAYOUT_KEY = "threestrands.tasks.layout";
@@ -28,26 +27,6 @@ function taskGroup(task: ThreadTask): string {
   if (task.kind === "waiting_for") return "Waiting For";
   if (!task.dueValue) return "No Due Date";
   return dueView(task, new Date()) ?? "No Due Date";
-}
-
-function isOverdue(task: ThreadTask): boolean {
-  return isActiveTaskStatus(task.status) && dueView(task, new Date()) === "Overdue";
-}
-
-function formatRelativeDate(date: Date, now: Date = new Date()): string {
-  const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
-  const diffDays = Math.round((startOfDay(date) - startOfDay(now)) / 86_400_000);
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Tomorrow";
-  if (diffDays === -1) return "Yesterday";
-  const includeYear = date.getFullYear() !== now.getFullYear();
-  return date.toLocaleDateString(undefined, includeYear ? { year: "numeric", month: "short", day: "numeric" } : { month: "short", day: "numeric" });
-}
-
-function formatDue(task: ThreadTask): string | null {
-  if (!task.dueValue) return null;
-  const value = task.dueKind === "date" ? new Date(`${task.dueValue}T12:00:00`) : new Date(task.dueValue);
-  return formatRelativeDate(value);
 }
 
 function formatDueDetail(task: ThreadTask): string | null {
@@ -71,25 +50,6 @@ function isStaleCompleted(task: ThreadTask): boolean {
   return Date.now() - new Date(task.completedAt).getTime() > COMPLETED_RETENTION_MS;
 }
 
-function isDue(task: ThreadTask): boolean {
-  if (!isActiveTaskStatus(task.status) || !task.dueValue) return false;
-  const due = task.dueKind === "date" ? new Date(`${task.dueValue}T23:59:59`) : new Date(task.dueValue);
-  return due.getTime() <= Date.now();
-}
-
-function describeAnalysisError(message: string): { summary: string; retryable: boolean } {
-  if (/^(the )?ai provider returned/i.test(message) || /^the ai provider (cited|included)/i.test(message)) {
-    return {
-      summary: "The AI's response couldn't be read. Try again, or choose a different model in AI settings.",
-      retryable: true,
-    };
-  }
-  if (/error sending request|timed out|connection|dns/i.test(message)) {
-    return { summary: "Couldn't reach the AI provider. Check your connection and try again.", retryable: true };
-  }
-  return { summary: message, retryable: false };
-}
-
 export type TaskWorkspaceHandle = {
   startNew(): void;
   selectNext(): void;
@@ -103,25 +63,6 @@ export type TaskWorkspaceHandle = {
   toggleLayout(): void;
 };
 
-/**
- * AI thread-action analysis for the current conversation. Supplying it adds
- * the analyze control and the proposal review list to the panel.
- */
-export type ThreadActionAnalysis = {
-  enabled: boolean;
-  ready: boolean;
-  loading: boolean;
-  error: string | null;
-  preview: string | null;
-  proposals: ActionProposal[];
-  /** Provider suggestions withheld because they failed validation. */
-  hiddenCount?: number;
-  onAnalyze(): void;
-  onDiscardProposal?(index: number): void;
-  onReviewProposal?(index: number, proposal: ActionProposal, intent: "edit" | "accept"): void;
-  onFindTimesProposal?(proposal: MeetingProposal): void;
-};
-
 export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   variant?: "sidebar" | "workspace";
   onClose(): void;
@@ -131,7 +72,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onOpenThread(threadId: string): void;
   onTasksChanged?(): void;
   onCheckSchedule?(): void;
-  analysis?: ThreadActionAnalysis;
   onDraftFollowUp?(task: ThreadTask): void;
   onNewTask?(): void;
   onCreateTask?(title: string, accountId?: string): Promise<ThreadTask>;
@@ -149,7 +89,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onOpenThread,
   onTasksChanged,
   onCheckSchedule,
-  analysis,
   onDraftFollowUp,
   onNewTask,
   onCreateTask,
@@ -433,19 +372,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     ))}
   </div>;
 
-  const analysisActionLabel = !analysis?.enabled
-    ? "Turn on Suggestions in AI settings"
-    : !analysis.ready
-      ? "Set up an AI provider in AI settings"
-      : "Get Suggestions";
-  const hiddenCount = analysis?.hiddenCount ?? 0;
-  const messageSource = (messageId: string) => {
-    const message = currentThread?.messages.find((candidate) => candidate.id === messageId);
-    if (!message) return null;
-    const sender = parseAddress(message.sender);
-    return `${sender.name || sender.email} · ${new Date(message.sentAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
-  };
-
   return (
     <section className={variant === "workspace" ? "tasks-workspace" : "tasks-sidebar"} role={variant === "sidebar" ? "complementary" : "region"} aria-label={title}>
       <header className="tasks-sidebar-header">
@@ -459,7 +385,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
-          {analysis ? <HoverTooltip title={analysisActionLabel}><button type="button" aria-label={analysisActionLabel} onClick={analysis.onAnalyze} disabled={!analysis.ready || analysis.loading}><Sparkles size={17} /></button></HoverTooltip> : null}
           {variant === "sidebar" && onCheckSchedule ? <HoverTooltip title="Check schedule"><button type="button" aria-label="Check schedule" onClick={onCheckSchedule}><Clock3 size={17} /></button></HoverTooltip> : null}
           {variant === "workspace" ? <div className="task-layout-toggle" role="group" aria-label="Task layout">
             <button type="button" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={15} />List</button>
@@ -480,46 +405,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           Completed &ldquo;{completionToast.title}&rdquo;
           <button type="button" onClick={() => void setStatus(completionToast, isActiveTaskStatus(completionToast.status) ? completionToast.status : "open")}>Undo</button>
         </div>
-      ) : null}
-      {analysis ? (
-        <section className="action-analysis" aria-label="Suggestions">
-          <div className="action-analysis-heading"><strong>Suggestions</strong>{analysis.loading ? <span role="status">Reading the conversation…</span> : null}</div>
-          {!analysis.enabled ? <p className="tasks-status">Turn on Suggestions in AI settings to get meeting and task ideas from this conversation.</p> : !analysis.ready ? <p className="tasks-status">Set up an AI provider and API key in AI settings to get suggestions for this conversation.</p> : null}
-          {analysis.error ? (() => {
-            const { summary, retryable } = describeAnalysisError(analysis.error);
-            return <div className="action-analysis-error" role="alert">
-              <p>{summary}</p>
-              <div className="action-analysis-error-actions">
-                {retryable ? <button type="button" onClick={analysis.onAnalyze}><RotateCcw size={13} /> Try Again</button> : null}
-                {retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{analysis.error}</p></details> : null}
-              </div>
-            </div>;
-          })() : null}
-          {!analysis.loading && analysis.enabled && analysis.proposals.length === 0 && hiddenCount === 0 && analysis.preview ? <p className="tasks-status">Nothing to schedule or follow up on.</p> : null}
-          {!analysis.loading && hiddenCount > 0 ? <p className="tasks-status">{hiddenCount === 1 ? "1 suggestion" : `${hiddenCount} suggestions`} couldn&rsquo;t be matched to the email, so {hiddenCount === 1 ? "it was" : "they were"} hidden.</p> : null}
-          {analysis.preview ? <details className="action-analysis-preview"><summary>What was shared with AI</summary><pre>{analysis.preview}</pre></details> : null}
-          <div className="action-proposals">
-            {analysis.proposals.map((proposal, index) => {
-              const source = messageSource(proposal.evidence.sourceMessageId);
-              const evidence = <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>;
-              const needsReview = (proposal.type === "meeting" && (!proposal.timeZone || (!proposal.normalizedStart && !proposal.searchRangeStart)))
-                || (proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone);
-              const uncertain = proposal.confidence < 0.75;
-              return <article className="action-proposal-card" key={`${proposal.type}-${index}`}>
-                <div className="action-proposal-card-header"><span className="proposal-kind">{proposal.type === "meeting" ? "Meeting" : "Task"}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
-                <strong>{proposal.title}</strong>
-                {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
-                {evidence}
-                <div className="proposal-actions">
-                  {analysis.onReviewProposal ? <button type="button" onClick={() => analysis.onReviewProposal?.(index, proposal, "edit")}><Pencil size={13} /> Edit</button> : null}
-                  {proposal.type === "task" && analysis.onReviewProposal ? <button type="button" onClick={() => analysis.onReviewProposal?.(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
-                  {proposal.type === "meeting" && analysis.onFindTimesProposal ? <button type="button" disabled={needsReview} title={needsReview ? "Edit this proposal before finding times" : undefined} onClick={() => analysis.onFindTimesProposal?.(proposal)}>Find Times</button> : null}
-                  {analysis.onDiscardProposal ? <button type="button" onClick={() => analysis.onDiscardProposal?.(index)}>Discard</button> : null}
-                </div>
-              </article>;
-            })}
-          </div>
-        </section>
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
       {!loading && tasks.length === 0 && !addingTask ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}

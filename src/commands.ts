@@ -82,7 +82,8 @@ export type CommandContext = {
   openTasksView(): void;
   openContactsView(): void;
   openCalendarView(): void;
-  openActions(): void;
+  /** Shows the conversation's AI brief and fetches suggestions if missing. */
+  getSuggestions(): void;
   newTask(): void;
   increaseFontSize(): void;
   decreaseFontSize(): void;
@@ -480,11 +481,11 @@ export const commands: Command[] = [
   },
   {
     id: "actions.open",
-    title: "Open Conversation Actions",
+    title: "Get Suggestions",
     keys: ["Shift+a", "Mod+Shift+j"],
     group: "Application",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
-    run: (context) => complete(context.openActions),
+    run: (context) => complete(context.getSuggestions),
   },
   {
     id: "mail.refresh",

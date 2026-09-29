@@ -84,7 +84,7 @@ function noopContext(): CommandContext {
     openTasksView: () => {},
     openContactsView: () => {},
     openCalendarView: () => {},
-    openActions: () => {},
+    getSuggestions: () => {},
     newTask: () => {},
     increaseFontSize: () => {},
     decreaseFontSize: () => {},
@@ -234,7 +234,7 @@ describe("command registry", () => {
     expect(newTask?.enabled({ ...noopContext(), focusedPane: "tasks", selectedId: null })).toBe(true);
   });
 
-  it("uses Shift+A for Actions without replacing reply all", () => {
+  it("uses Shift+A for Get Suggestions without replacing reply all", () => {
     expect(commands.find((command) => command.id === "actions.open")?.keys).toContain("Shift+a");
     expect(commands.find((command) => command.id === "draft.replyAll")?.keys).toEqual(["a"]);
   });

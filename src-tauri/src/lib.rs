@@ -44,7 +44,7 @@ use db::Database;
 use models::{
     ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
-    FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, Thread,
+    FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
     UpdateLabelRequest, UpdateSnippetRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
 };
@@ -2333,15 +2333,17 @@ async fn ai_summarize_thread(
     })
 }
 
-#[tauri::command]
-async fn ai_analyze_thread(
-    thread_id: String,
+/// Validates the timezone and loads the bounded analysis input shared by
+/// thread analysis and the combined brief. Returns the proposal cache key
+/// for the thread's current revision alongside the request.
+async fn thread_analysis_request(
+    thread_id: &str,
     user_time_zone: String,
     provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<ActionAnalysis, String> {
+    state: &AppState,
+) -> Result<(String, ai::AnalyzeRequest), String> {
     if user_time_zone.parse::<chrono_tz::Tz>().is_err() {
         return Err(format!("Unknown IANA timezone: {user_time_zone}"));
     }
@@ -2349,23 +2351,12 @@ async fn ai_analyze_thread(
         return Err("Timezone value is too long".to_string());
     }
     let database = state.database.clone();
-    let database_thread_id = thread_id.clone();
+    let database_thread_id = thread_id.to_string();
     let detail = run_database_task(move || database.get_thread(&database_thread_id)).await?;
     let cache_key = format!("{thread_id}\0{}", detail.thread.last_message_at);
-    {
-        let mut cache = state
-            .proposal_cache
-            .lock()
-            .map_err(|_| "AI proposal cache is unavailable".to_string())?;
-        cache.retain(|key, _| !key.starts_with(&format!("{thread_id}\0")));
-        if let Some(cached) = cache.get(&cache_key) {
-            return Ok(cached.clone());
-        }
-    }
-    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     let request = ai::AnalyzeRequest {
         provider,
-        model: model.clone(),
+        model,
         endpoint,
         subject: detail.thread.subject,
         messages: detail
@@ -2381,6 +2372,53 @@ async fn ai_analyze_thread(
         current_time: Utc::now().to_rfc3339(),
         user_time_zone,
     };
+    Ok((cache_key, request))
+}
+
+/// Replaces any cached proposals for older revisions of the thread.
+fn cache_thread_analysis(
+    state: &AppState,
+    thread_id: &str,
+    cache_key: String,
+    analysis: &ActionAnalysis,
+) -> Result<(), String> {
+    let mut cache = state
+        .proposal_cache
+        .lock()
+        .map_err(|_| "AI proposal cache is unavailable".to_string())?;
+    cache.retain(|key, _| !key.starts_with(&format!("{thread_id}\0")));
+    cache.insert(cache_key, analysis.clone());
+    Ok(())
+}
+
+#[tauri::command]
+async fn ai_analyze_thread(
+    thread_id: String,
+    user_time_zone: String,
+    provider: ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<ActionAnalysis, String> {
+    let (cache_key, request) = thread_analysis_request(
+        &thread_id,
+        user_time_zone,
+        provider,
+        model.clone(),
+        endpoint,
+        &state,
+    )
+    .await?;
+    {
+        let cache = state
+            .proposal_cache
+            .lock()
+            .map_err(|_| "AI proposal cache is unavailable".to_string())?;
+        if let Some(cached) = cache.get(&cache_key) {
+            return Ok(cached.clone());
+        }
+    }
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     log::info!(
         target: "ai_analyze_thread",
         "starting analysis for thread {thread_id} with provider {provider:?} model {model}"
@@ -2398,12 +2436,61 @@ async fn ai_analyze_thread(
         analysis.proposals.len(),
         analysis.hidden_count
     );
-    let mut cache = state
-        .proposal_cache
-        .lock()
-        .map_err(|_| "AI proposal cache is unavailable".to_string())?;
-    cache.insert(cache_key, analysis.clone());
+    cache_thread_analysis(&state, &thread_id, cache_key, &analysis)?;
     Ok(analysis)
+}
+
+/// Summarizes the thread and extracts proposals in one provider call. Always
+/// calls the provider; the summary is persisted like `ai_summarize_thread`
+/// and the proposals replace the thread's cached analysis.
+#[tauri::command]
+async fn ai_brief_thread(
+    thread_id: String,
+    user_time_zone: String,
+    provider: ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<ThreadBriefResult, String> {
+    let (cache_key, request) = thread_analysis_request(
+        &thread_id,
+        user_time_zone,
+        provider,
+        model.clone(),
+        endpoint,
+        &state,
+    )
+    .await?;
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
+    log::info!(
+        target: "ai_analyze_thread",
+        "starting brief for thread {thread_id} with provider {provider:?} model {model}"
+    );
+    let brief = match ai::brief(request, &api_key).await {
+        Ok(brief) => brief,
+        Err(error) => {
+            log::error!(target: "ai_analyze_thread", "brief failed for thread {thread_id}: {error}");
+            return Err(error);
+        }
+    };
+    log::info!(
+        target: "ai_analyze_thread",
+        "brief succeeded for thread {thread_id} with {} proposal(s), {} withheld",
+        brief.analysis.proposals.len(),
+        brief.analysis.hidden_count
+    );
+    let generated_at = Utc::now().to_rfc3339();
+    state
+        .database
+        .set_thread_summary(&thread_id, &brief.summary, &generated_at)?;
+    cache_thread_analysis(&state, &thread_id, cache_key, &brief.analysis)?;
+    Ok(ThreadBriefResult {
+        summary: SummaryResult {
+            summary: brief.summary,
+            generated_at,
+        },
+        analysis: brief.analysis,
+    })
 }
 
 #[tauri::command]
@@ -2977,6 +3064,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         ai_test_connection,
         ai_summarize_thread,
         ai_analyze_thread,
+        ai_brief_thread,
         ai_enrich_contact,
         ai_reply_assist_context,
         ai_generate_reply,

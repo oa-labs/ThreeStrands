@@ -29,6 +29,7 @@ import type {
   SplitInbox,
   SplitInboxMatchKind,
   SummaryResult,
+  ThreadBriefResult,
   SyncStatus,
   Thread,
   ThreadDetail,
@@ -81,6 +82,13 @@ export interface MailClient extends CorrespondenceClient {
     model: string,
     endpoint: string | null,
   ): Promise<ActionAnalysis>;
+  briefThread(
+    threadId: string,
+    userTimeZone: string,
+    provider: AiProvider,
+    model: string,
+    endpoint: string | null,
+  ): Promise<ThreadBriefResult>;
   replyAssistContext(draftId: string): Promise<ReplyAssistContext>;
   generateReply(
     context: ReplyAssistContext,
@@ -185,6 +193,8 @@ const tauriClient: MailClient = {
     complete("ai_summarize_thread", { threadId, provider, model, endpoint }),
   analyzeThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
+  briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
+    complete("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
   generateReply: (context, instruction, provider, model, endpoint) =>
     complete("ai_generate_reply", { context, instruction, provider, model, endpoint }),
