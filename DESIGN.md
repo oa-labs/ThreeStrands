@@ -66,8 +66,9 @@ boundary appropriate to their risk.
 
 Mail has one right-side context panel for the open conversation. It stacks a
 compact card for the selected participant (the name opens the contact, a heart
-toggles favorite), the AI brief and suggestions, the conversation's open
-tasks, and recent emails with that person. Do not add a second always-on
+toggles favorite), the AI brief and suggestions, open tasks from this
+conversation and the person's other conversations, upcoming meetings that
+include the person, and recent emails with them. Do not add a second always-on
 panel beside it; new conversation context belongs in this panel as a section.
 The Calendar sidebar may open beside it so meeting suggestions and candidate
 times stay visible together.

@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearScheduleCache } from "./calendarScheduleCache";
 import { clearAiApiKey, DEFAULT_AI_FEATURES, saveAiFeatures, saveAiProvider, setAiApiKey } from "./aiSettings";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
@@ -23,6 +24,33 @@ it("keeps one context panel beside the conversation, and Shift+A reveals suggest
   expect(screen.getByRole("complementary", { name: "Conversation context" })).toBe(panel);
   expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
   expect(within(panel).getByRole("region", { name: "Brief" })).toHaveTextContent("AI briefs and suggestions are off.");
+});
+
+it("shows the next meeting with the selected person and opens the week view on its day", async () => {
+  clearScheduleCache();
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+    { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+  ]);
+  const start = new Date(Date.now() + 26 * 60 * 60 * 1000);
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+    events: [
+      { id: "kickoff", accountId: "calendar@example.com", title: "Onboarding kickoff", allDay: false,
+        start: start.toISOString(), end: new Date(start.getTime() + 30 * 60 * 1000).toISOString(), attendees: ["hello@threestrands.local"] },
+      { id: "other", accountId: "calendar@example.com", title: "Unrelated sync", allDay: false,
+        start: start.toISOString(), end: new Date(start.getTime() + 30 * 60 * 1000).toISOString(), attendees: ["someone@example.com"] },
+    ],
+    errors: [],
+  });
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+  const meetings = await within(panel).findByRole("region", { name: "Upcoming meetings" });
+  expect(within(meetings).queryByText("Unrelated sync")).not.toBeInTheDocument();
+  fireEvent.click(within(meetings).getByRole("button", { name: /Onboarding kickoff/ }));
+
+  expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
 });
 
 describe("conversation brief", () => {

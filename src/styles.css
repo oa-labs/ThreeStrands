@@ -1629,16 +1629,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .calendar-event-viewer-details svg { margin-top: 1px; color: var(--muted); }
 .calendar-event-viewer-details a { width: fit-content; border-radius: var(--radius-sm); padding: 5px 9px; background: var(--accent); color: #fff; font-weight: 600; text-decoration: none; }
 .calendar-event-viewer-description span { max-height: 8.7em; overflow: auto; white-space: pre-wrap; }
-.tasks-sidebar {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-left: 1px solid var(--border);
-  background: var(--surface);
-}
 .tasks-workspace {
   grid-column: 2;
   min-width: 0;
@@ -1899,13 +1889,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   .calendar-week { grid-template-columns: minmax(0, 1fr); }
   .calendar-week-side { display: none; }
   .calendar-sidebar {
-    position: fixed;
-    inset: 0 0 0 auto;
-    z-index: var(--z-drawer);
-    width: min(360px, calc(100vw - 58px));
-    box-shadow: -12px 0 36px var(--shadow);
-  }
-  .tasks-sidebar {
     position: fixed;
     inset: 0 0 0 auto;
     z-index: var(--z-drawer);

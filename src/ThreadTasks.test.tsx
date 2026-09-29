@@ -72,6 +72,8 @@ describe("ThreadTasks", () => {
     expect(onEditTask).toHaveBeenCalledWith(expect.objectContaining({ id: "mine" }));
     fireEvent.click(screen.getByRole("button", { name: "Add task" }));
     expect(onAddTask).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Draft Follow-Up" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Draft Follow-Up" }));
     expect(onDraftFollowUp).toHaveBeenCalledWith(followUp);

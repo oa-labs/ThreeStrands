@@ -1882,19 +1882,6 @@ export function App() {
     && selectedThreads.every((thread) => thread.starred);
   const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
-  const taskListProps = {
-    onClose: closeRightWorkspace,
-    accountId: activeAccountId,
-    accountOptions: accounts.map((account) => account.email),
-    currentThread: visibleDetail,
-    onOpenThread: openTaskThread,
-    onTasksChanged: () => void refreshTaskIndicators(),
-    onDraftFollowUp: (task: ThreadTask) => void draftFollowUp(task),
-    onCheckSchedule: openSchedule,
-    onNewTask: newTask,
-    refreshKey: taskRevision,
-  };
-
   return (
     <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}${rightWorkspace === "calendar" ? " mail-context-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
@@ -2659,9 +2646,13 @@ export function App() {
       {rightWorkspace === "contacts" ? <ContactsWorkspace key={activeAccountId ?? "all"} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
-          {...taskListProps}
           ref={taskWorkspaceRef}
-          variant="workspace"
+          accountId={activeAccountId}
+          accountOptions={accounts.map((account) => account.email)}
+          onOpenThread={openTaskThread}
+          onTasksChanged={() => void refreshTaskIndicators()}
+          onDraftFollowUp={(task) => void draftFollowUp(task)}
+          refreshKey={taskRevision}
           onCreateTask={createWorkspaceTask}
           onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
           onLayoutChange={setTaskLayout}

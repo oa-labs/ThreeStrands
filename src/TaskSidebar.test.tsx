@@ -3,40 +3,7 @@ import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { mailClient } from "./data/client";
-import type { ThreadDetail, ThreadTask } from "./domain";
-
-const detail: ThreadDetail = {
-  thread: {
-    id: "thread-1",
-    providerThreadId: "provider-1",
-    subject: "Website setup",
-    snippet: "Please set up the website by Friday.",
-    participants: ["client@example.com"],
-    lastMessageAt: "2026-09-19T10:00:00Z",
-    lastReceivedAt: "2026-09-19T10:00:00Z",
-    unread: false,
-    starred: false,
-    archived: false,
-    trashed: false,
-    labels: ["INBOX"],
-    accountId: "you@example.com",
-    summary: null,
-    summaryGeneratedAt: null,
-    hasAttachments: false,
-  },
-  messages: [{
-    id: "message-1",
-    threadId: "thread-1",
-    sender: "client@example.com",
-    recipients: ["you@example.com"],
-    sentAt: "2026-09-19T10:00:00Z",
-    bodyHtml: "<p>Please set up the website by Friday.</p>",
-    bodyText: "Please set up the website by Friday.",
-    unread: false,
-    unsubscribe: null,
-    attachments: [],
-  }],
-};
+import type { ThreadTask } from "./domain";
 
 function workspaceTask(id: string, overrides: Partial<ThreadTask> = {}): ThreadTask {
   return {
@@ -61,16 +28,15 @@ describe("TaskSidebar", () => {
     localStorage.clear();
   });
 
-  it("keeps task creation out of the read-only sidebar", async () => {
+  it("stays read-only until Add task opens the quick-add form", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
-    const onNewTask = vi.fn();
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} onNewTask={onNewTask} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={vi.fn()} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
-    expect(onNewTask).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "Add task" }).textContent).toBe("");
+    await screen.findByText("0 tasks");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    expect(screen.getByRole("textbox", { name: "Task title" })).toBeInTheDocument();
   });
 
   it("renders tasks and lets the user complete them", async () => {
@@ -97,10 +63,11 @@ describe("TaskSidebar", () => {
     };
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
     const setStatus = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue({ ...task, status: "completed", completionSource: "user" });
-    render(<TaskSidebar onClose={vi.fn()} accountId={null} currentThread={null} onOpenThread={vi.fn()} />);
+    localStorage.setItem("threestrands.tasks.layout", "list");
+    render(<TaskSidebar accountId={null} onOpenThread={vi.fn()} />);
 
-    expect(await screen.findByText("Set up the website")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Complete Set up the website" }));
+    const card = (await screen.findByText("Set up the website", { selector: "strong" })).closest("article")!;
+    fireEvent.click(within(card).getByRole("button", { name: "Complete Set up the website" }));
     await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-1", "completed"));
   });
 
@@ -110,9 +77,11 @@ describe("TaskSidebar", () => {
     const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus")
       .mockResolvedValueOnce({ ...task, status: "completed" })
       .mockResolvedValueOnce({ ...task, status: "open" });
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    localStorage.setItem("threestrands.tasks.layout", "list");
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Complete Set up the website" }));
+    const card = (await screen.findByText("Set up the website", { selector: "strong" })).closest("article")!;
+    fireEvent.click(within(card).getByRole("button", { name: "Complete Set up the website" }));
     const undo = await screen.findByRole("button", { name: "Undo" });
     expect(screen.getByText("Completed: Set up the website")).toBeInTheDocument();
 
@@ -122,13 +91,14 @@ describe("TaskSidebar", () => {
     expect(screen.getByText("Reopened: Set up the website")).toBeInTheDocument();
   });
 
-  it("groups an overdue task separately from Today in the compact sidebar variant and colors its due label", async () => {
+  it("groups an overdue task separately from Today in the list layout and colors its due label", async () => {
     const tasks = [
       workspaceTask("overdue", { dueKind: "date", dueValue: localDate(-14) }),
       workspaceTask("today", { dueKind: "date", dueValue: localDate(0) }),
     ];
     vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
-    const { container } = render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    localStorage.setItem("threestrands.tasks.layout", "list");
+    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     await screen.findByRole("heading", { name: "Overdue" });
     const overdueSection = screen.getByRole("heading", { name: "Overdue" }).closest("section");
@@ -147,7 +117,8 @@ describe("TaskSidebar", () => {
       workspaceTask("yesterday", { dueKind: "date", dueValue: localDate(-1) }),
     ];
     vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    localStorage.setItem("threestrands.tasks.layout", "list");
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     const todayCard = (await screen.findByText("today", { selector: "strong" })).closest("article")!;
     expect(within(todayCard).getByText("Today")).toBeInTheDocument();
@@ -164,7 +135,7 @@ describe("TaskSidebar", () => {
       saved = { ...saved, ...request };
       return saved;
     });
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Add a due date" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Due type" }), { target: { value: "datetime" } });
@@ -184,7 +155,7 @@ describe("TaskSidebar", () => {
 
   it("preserves the entered date when switching the inline due editor between date and date-and-time", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("plan", { title: "Plan launch" })]);
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Add a due date" }));
     fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2030-10-01" } });
@@ -195,7 +166,7 @@ describe("TaskSidebar", () => {
     expect(screen.getByLabelText("Due date")).toHaveValue("2030-10-01");
   });
 
-  it("hides completed tasks older than a few days from the compact sidebar list", async () => {
+  it("hides completed tasks older than a few days from the board's Done column", async () => {
     const stale = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
     const recent = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
     const tasks = [
@@ -203,19 +174,20 @@ describe("TaskSidebar", () => {
       workspaceTask("recent", { status: "completed", completedAt: recent }),
     ];
     vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
-    await screen.findByRole("heading", { name: "Completed" });
-    expect(screen.getByText("recent")).toBeInTheDocument();
-    expect(screen.queryByText("stale")).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Done" });
+    expect(await screen.findByText("recent", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.queryByText("stale", { selector: "strong" })).not.toBeInTheDocument();
   });
 
-  it("shows the selected task visually in the compact sidebar variant too", async () => {
+  it("shows the selected task visually in the list layout", async () => {
     const tasks = [workspaceTask("task-1", { title: "First" }), workspaceTask("task-2", { title: "Second" })];
     vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
-    const { container } = render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    localStorage.setItem("threestrands.tasks.layout", "list");
+    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
-    fireEvent.click(await screen.findByText("Second"));
+    fireEvent.click(await screen.findByText("Second", { selector: "strong" }));
     expect(container.querySelector("#task-task-2")).toHaveClass("selected");
     expect(container.querySelector("#task-task-2")).toHaveAttribute("aria-current", "true");
     expect(container.querySelector("#task-task-1")).not.toHaveClass("selected");
@@ -223,7 +195,7 @@ describe("TaskSidebar", () => {
 
   it("lets the user dismiss the error banner", async () => {
     vi.spyOn(mailClient, "listTasks").mockRejectedValue(new Error("Could not load tasks"));
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not load tasks");
     fireEvent.click(screen.getByRole("button", { name: "Dismiss error" }));
@@ -235,7 +207,7 @@ describe("TaskSidebar", () => {
     const onCreateTask = vi.fn()
       .mockResolvedValueOnce(workspaceTask("task-1", { title: "First" }))
       .mockResolvedValueOnce(workspaceTask("task-2", { title: "Second" }));
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
     const input = screen.getByRole("textbox", { name: "Task title" });
@@ -252,7 +224,7 @@ describe("TaskSidebar", () => {
   it("requires an account for a task added from All accounts", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     const onCreateTask = vi.fn().mockResolvedValue(workspaceTask("work-task", { accountId: "work@example.com" }));
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId={null} accountOptions={["you@example.com", "work@example.com"]} currentThread={null} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+    render(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
     expect(screen.getByText("· All accounts")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
     const form = screen.getByRole("textbox", { name: "Task title" }).closest("form")!;
@@ -288,7 +260,7 @@ describe("TaskSidebar", () => {
     };
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
     const draftFollowUp = vi.fn();
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} onDraftFollowUp={draftFollowUp} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onDraftFollowUp={draftFollowUp} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Draft Follow-Up" }));
     expect(draftFollowUp).toHaveBeenCalledWith(task);
@@ -296,7 +268,7 @@ describe("TaskSidebar", () => {
 
   it("shows the account email and a task count in the header, like the mail inbox header", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onCheckSchedule={vi.fn()} onCreateTask={vi.fn(async (title) => workspaceTask("created", { title }))} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={vi.fn(async (title) => workspaceTask("created", { title }))} />);
 
     await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
     expect(screen.getByText("you@example.com", { exact: false })).toBeInTheDocument();
@@ -312,7 +284,7 @@ describe("TaskSidebar", () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     const created = workspaceTask("new-task", { title: "Call the contractor" });
     const onCreateTask = vi.fn().mockResolvedValue(created);
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
     const form = screen.getByRole("textbox", { name: "Task title" }).closest("form");
@@ -337,7 +309,7 @@ describe("TaskSidebar", () => {
       workspaceTask("completed", { status: "completed" }),
     ];
     vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
-    const { container } = render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     const views = await screen.findByRole("navigation", { name: "Task views" });
     fireEvent.click(screen.getByRole("button", { name: "List" }));
@@ -364,7 +336,7 @@ describe("TaskSidebar", () => {
     ];
     vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
     const onLayoutChange = vi.fn();
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onLayoutChange={onLayoutChange} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onLayoutChange={onLayoutChange} />);
 
     const todo = await screen.findByRole("region", { name: "To Do" });
     const doing = screen.getByRole("region", { name: "In Progress" });
@@ -385,7 +357,7 @@ describe("TaskSidebar", () => {
     expect(localStorage.getItem("threestrands.tasks.layout")).toBe("list");
 
     cleanup();
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
     expect(await screen.findByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -394,7 +366,7 @@ describe("TaskSidebar", () => {
     const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
     Object.defineProperty(window, "innerWidth", { value: 1600, configurable: true });
     try {
-      const { container } = render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+      const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
       await screen.findByRole("region", { name: "To Do" });
 
       const handle = screen.getByRole("separator", { name: "Resize task detail" });
@@ -412,7 +384,7 @@ describe("TaskSidebar", () => {
       await waitFor(() => expect(localStorage.getItem("threestrands.taskDetailWidth")).toBe("410"));
 
       cleanup();
-      const remount = render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+      const remount = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
       expect(await screen.findByRole("region", { name: "To Do" })).toBeInTheDocument();
       const remountedBody = remount.container.querySelector(".tasks-workspace-body") as HTMLElement;
       expect(remountedBody.style.getPropertyValue("--task-detail-width")).toBe("410px");
@@ -435,7 +407,7 @@ describe("TaskSidebar", () => {
       return current;
     });
     const ref = createRef<TaskWorkspaceHandle>();
-    render(<TaskSidebar ref={ref} variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Move Plan launch to In Progress" }));
     await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("plan", "in_progress"));
@@ -462,7 +434,7 @@ describe("TaskSidebar", () => {
       workspaceTask("done-1", { status: "completed", completedAt: new Date().toISOString() }),
     ]);
     const ref = createRef<TaskWorkspaceHandle>();
-    const { container } = render(<TaskSidebar ref={ref} variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    const { container } = render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
     const selected = () => container.querySelector(".task-card.selected")?.id;
 
     await waitFor(() => expect(selected()).toBe("task-todo-1"));
@@ -486,7 +458,7 @@ describe("TaskSidebar", () => {
       return saved;
     });
     const onTasksChanged = vi.fn();
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} onTasksChanged={onTasksChanged} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onTasksChanged={onTasksChanged} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit title: Plan launch" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Task title" }), { target: { value: "Plan product launch" } });
@@ -523,7 +495,7 @@ describe("TaskSidebar", () => {
   it("keeps an inline edit open when saving fails", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("plan", { title: "Plan launch" })]);
     vi.spyOn(mailClient, "updateTask").mockRejectedValue(new Error("Could not save task"));
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit title: Plan launch" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Task title" }), { target: { value: "Prepare launch" } });
@@ -533,36 +505,14 @@ describe("TaskSidebar", () => {
     expect(screen.getByRole("textbox", { name: "Task title" })).toHaveValue("Prepare launch");
   });
 
-  it("retains Check schedule in the Actions sidebar", async () => {
+  it("has no close control, like the contacts manager", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
-    const onCheckSchedule = vi.fn();
-    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} onCheckSchedule={onCheckSchedule} />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Check schedule" }));
-    expect(onCheckSchedule).toHaveBeenCalledTimes(1);
-  });
-
-  it("hides the close control and ignores Escape in the workspace variant, like the contacts manager", async () => {
-    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
-    const onClose = vi.fn();
-    render(<TaskSidebar variant="workspace" onClose={onClose} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Close Tasks" })).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it("shows a close control and dismisses on Escape in the sidebar variant", async () => {
-    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
-    const onClose = vi.fn();
-    render(<TaskSidebar onClose={onClose} accountId="you@example.com" currentThread={null} onOpenThread={vi.fn()} />);
-
-    await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Close Tasks" }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
   });
 
   it("keeps the linked email below task details with its excerpt collapsed", async () => {
@@ -589,7 +539,7 @@ describe("TaskSidebar", () => {
     };
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
     const onOpenThread = vi.fn();
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={onOpenThread} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={onOpenThread} />);
 
     await screen.findByRole("heading", { name: "Set up the website" });
     const source = screen.getByRole("region", { name: "Source conversation" });
@@ -627,7 +577,7 @@ describe("TaskSidebar", () => {
     const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue({ ...task, status: "completed", completedAt: "2026-09-19T11:00:00Z" });
     const onOpenThread = vi.fn();
     const onEditTask = vi.fn();
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={onOpenThread} onEditTask={onEditTask} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={onOpenThread} onEditTask={onEditTask} />);
 
     const edit = await screen.findByRole("button", { name: "Task Options" });
     const done = within(screen.getByRole("region", { name: "Task details" })).getByRole("button", { name: "Complete Set up the website" });
@@ -671,7 +621,7 @@ describe("TaskSidebar", () => {
     };
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
     const onOpenThread = vi.fn();
-    render(<TaskSidebar variant="workspace" onClose={vi.fn()} accountId="you@example.com" currentThread={null} onOpenThread={onOpenThread} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={onOpenThread} />);
 
     expect(await screen.findByRole("heading", { name: "Buy printer paper" })).toBeInTheDocument();
     expect(screen.queryByText("Conversation")).not.toBeInTheDocument();

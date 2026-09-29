@@ -5,6 +5,15 @@ import { App } from "./App";
 import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, hasWorkingHoursOnDate, scheduleRequestFor } from "./CalendarSidebar";
 import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
+import { UPCOMING_MEETING_DAYS } from "./ContactMeetings";
+
+/**
+ * Schedule requests for a single day, excluding the context panel's
+ * upcoming-meetings range, which also loads once a calendar is connected.
+ */
+function dayRequests(listEvents: { mock: { calls: [string, string, string][] } }) {
+  return listEvents.mock.calls.filter(([timeMin, timeMax]) => Date.parse(timeMax) - Date.parse(timeMin) < UPCOMING_MEETING_DAYS * 86_400_000);
+}
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
@@ -64,7 +73,7 @@ describe("calendar sidebar", () => {
 
     const sidebar = await screen.findByRole("complementary", { name: "Calendar schedule" });
     await waitFor(() => expect(sidebar).toHaveTextContent("Product planning"));
-    expect(listEvents).toHaveBeenCalledTimes(1);
+    expect(dayRequests(listEvents)).toHaveLength(1);
 
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() =>
@@ -107,17 +116,17 @@ describe("calendar sidebar", () => {
 
     fireEvent.keyDown(window, { key: "T" });
     await screen.findByRole("complementary", { name: "Calendar schedule" });
-    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(1));
-    const initialTimeMin = listEvents.mock.calls[0][0];
+    await waitFor(() => expect(dayRequests(listEvents)).toHaveLength(1));
+    const initialTimeMin = dayRequests(listEvents)[0][0];
 
     fireEvent.keyDown(window, { key: "-" });
-    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(2));
-    const previousTimeMin = listEvents.mock.calls[1][0];
+    await waitFor(() => expect(dayRequests(listEvents)).toHaveLength(2));
+    const previousTimeMin = dayRequests(listEvents)[1][0];
     expect(new Date(previousTimeMin).getTime()).toBeLessThan(new Date(initialTimeMin).getTime());
 
     fireEvent.keyDown(window, { key: "=" });
-    await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(3));
-    expect(listEvents.mock.calls[2][0]).toBe(initialTimeMin);
+    await waitFor(() => expect(dayRequests(listEvents)).toHaveLength(3));
+    expect(dayRequests(listEvents)[2][0]).toBe(initialTimeMin);
   });
 
   function renderSwipeSidebar() {
