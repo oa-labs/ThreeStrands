@@ -506,6 +506,31 @@ impl Database {
         })
     }
 
+    /// Maps each address that belongs to a saved contact to that contact's id.
+    /// Addresses without a saved owner are omitted.
+    pub fn contact_ids_for_addresses(
+        &self,
+        emails: &[String],
+    ) -> DbResult<std::collections::HashMap<String, String>> {
+        self.with_connection(|connection| {
+            let mut statement =
+                connection.prepare("SELECT contact_id FROM contact_addresses WHERE email=?1")?;
+            let mut owners = std::collections::HashMap::new();
+            for raw in emails {
+                let email = raw.trim().to_ascii_lowercase();
+                if email.is_empty() || owners.contains_key(&email) {
+                    continue;
+                }
+                let owner: Option<String> =
+                    statement.query_row([&email], |row| row.get(0)).optional()?;
+                if let Some(owner) = owner {
+                    owners.insert(email, owner);
+                }
+            }
+            Ok(owners)
+        })
+    }
+
     /// Resolves a saved contact id or a `derived:<email>` id to its addresses.
     pub(crate) fn contact_address_list(&self, id: &str) -> DbResult<Vec<String>> {
         if let Some(email) = id.strip_prefix("derived:") {

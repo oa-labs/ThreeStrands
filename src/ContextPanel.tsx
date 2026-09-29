@@ -4,6 +4,7 @@ import { mailClient } from "./data/client";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { parseAddress, splitAddressList } from "./emailAddress";
+import { logBackgroundFailure } from "./errors";
 
 /** The selected participant, once their contact record has been looked up. */
 export type ContextPerson = {
@@ -79,6 +80,43 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
     return () => { active = false; };
   }, [email]);
 
+  // One chip per person: addresses linked to the same saved contact share a
+  // chip, and anyone without a saved contact keeps a chip per address.
+  const participantKey = participants.map((item) => item.email).join("\n");
+  const [owners, setOwners] = useState<Record<string, string>>({});
+  // Re-resolve after the selected contact is saved or its addresses change.
+  const profileKey = profile ? `${profile.id}\n${profile.addresses.join("\n")}` : "";
+  useEffect(() => {
+    const emails = participantKey ? participantKey.split("\n") : [];
+    if (emails.length < 2) { setOwners({}); return; }
+    let active = true;
+    void (async () => {
+      try {
+        const resolved = await mailClient.resolveContactIds(emails);
+        if (active) setOwners(resolved);
+      } catch (reason) {
+        if (active) setOwners({});
+        logBackgroundFailure("Participant contact lookup")(reason);
+      }
+    })();
+    return () => { active = false; };
+  }, [participantKey, profileKey]);
+  const chips = useMemo(() => {
+    const byOwner = new Map<string, { emails: string[]; name: string }>();
+    for (const item of participants) {
+      const key = owners[item.email] ?? `address:${item.email}`;
+      const named = item.name && item.name !== item.email ? item.name : "";
+      const existing = byOwner.get(key);
+      if (existing) {
+        existing.emails.push(item.email);
+        if (!existing.name) existing.name = named;
+      } else {
+        byOwner.set(key, { emails: [item.email], name: named });
+      }
+    }
+    return [...byOwner].map(([key, chip]) => ({ key, ...chip }));
+  }, [participants, owners]);
+
   const selected = participants.find((item) => item.email === email);
   const displayName = profile?.displayName || selected?.name || email;
   const person = useMemo<ContextPerson | null>(() => {
@@ -120,12 +158,12 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
 
   return (
     <aside className="context-panel" aria-label="Conversation context">
-      {participants.length > 1 ? (
+      {chips.length > 1 ? (
         <div className="context-participants" role="group" aria-label="Conversation participants">
-          {participants.map((item) => (
-            <button key={item.email} type="button" aria-pressed={item.email === email} title={item.email} onClick={() => setEmail(item.email)}>
-              <span className="context-participant-initial" aria-hidden="true">{(item.name || item.email).slice(0, 1).toLocaleUpperCase()}</span>
-              {item.name && item.name !== item.email ? <span>{item.name}</span> : <ParticipantAddress email={item.email} />}
+          {chips.map((chip) => (
+            <button key={chip.key} type="button" aria-pressed={chip.emails.includes(email)} title={chip.emails.join(", ")} onClick={() => { if (!chip.emails.includes(email)) setEmail(chip.emails[0]); }}>
+              <span className="context-participant-initial" aria-hidden="true">{(chip.name || chip.emails[0]).slice(0, 1).toLocaleUpperCase()}</span>
+              {chip.name ? <span>{chip.name}</span> : <ParticipantAddress email={chip.emails[0]} />}
             </button>
           ))}
         </div>

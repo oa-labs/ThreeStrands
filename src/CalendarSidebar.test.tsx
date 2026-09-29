@@ -81,6 +81,25 @@ describe("calendar sidebar", () => {
     );
   });
 
+  it("opens the schedule beside the conversation context when T is pressed in Tasks", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+    ]);
+    const { container } = render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    fireEvent.keyDown(window, { key: "3" });
+    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "T" });
+
+    expect(await screen.findByRole("complementary", { name: "Calendar schedule" })).toBeInTheDocument();
+    expect(container.querySelector("main")).toHaveClass("mail-context-open");
+    expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Conversation" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Conversation context" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
+  });
+
   it("toggles the schedule sidebar closed when T is pressed again", async () => {
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
       {

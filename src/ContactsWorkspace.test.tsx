@@ -37,6 +37,27 @@ describe("ContactsWorkspace",()=>{
     await waitFor(()=>expect(onSaved).toHaveBeenCalledOnce());
   });
 
+  it("edits email addresses as removable badges",async()=>{
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const input=screen.getByRole("textbox",{name:"Email addresses"});
+    expect(screen.getByRole("button",{name:"Remove jane@example.com"})).toBeInTheDocument();
+    fireEvent.change(input,{target:{value:"jane@work.example.com"}});
+    fireEvent.keyDown(input,{key:"Enter"});
+    expect(input).toHaveValue("");
+    expect(screen.getByRole("button",{name:"Remove jane@work.example.com"})).toBeInTheDocument();
+    fireEvent.change(input,{target:{value:"JANE@example.com"}});
+    fireEvent.keyDown(input,{key:","});
+    expect(screen.getAllByRole("button",{name:/^Remove /})).toHaveLength(2);
+    fireEvent.paste(input,{clipboardData:{getData:()=>"one@example.com, two@example.com"}});
+    fireEvent.change(input,{target:{value:"typed@example.com"}});
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button",{name:"Remove jane@example.com"}));
+    fireEvent.keyDown(input,{key:"Backspace"});
+    fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
+    await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({addresses:["jane@work.example.com","one@example.com","two@example.com"]})));
+  });
+
   it("shows the selected account and scopes contacts, history, and enrichment",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));

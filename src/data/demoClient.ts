@@ -495,6 +495,15 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       return structuredClone(values.filter((profile) => !needle || `${profile.displayName ?? ""} ${profile.addresses.join(" ")} ${profile.company ?? ""} ${profile.role ?? ""} ${profile.location ?? ""} ${profile.bio ?? ""} ${profile.notes ?? ""}`.toLocaleLowerCase().includes(needle))
         .sort((a,b) => Number(b.favorite)-Number(a.favorite) || (b.lastInteractedAt ?? "").localeCompare(a.lastInteractedAt ?? "") || (a.displayName ?? a.addresses[0]).localeCompare(b.displayName ?? b.addresses[0])).slice(0,limit));
     },
+    async resolveContactIds(emails) {
+      const owners: Record<string, string> = {};
+      for (const raw of emails) {
+        const email = raw.trim().toLocaleLowerCase();
+        const owner = savedContactProfiles.find((profile) => profile.addresses.includes(email));
+        if (owner) owners[email] = owner.id;
+      }
+      return owners;
+    },
     async getContactProfile(id) {
       const saved = savedContactProfiles.find((profile) => profile.id === id);
       if (saved) return structuredClone(saved);

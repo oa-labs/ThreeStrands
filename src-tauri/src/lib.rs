@@ -888,6 +888,14 @@ fn list_contact_profiles(
 }
 
 #[tauri::command]
+fn resolve_contact_ids(
+    emails: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    database_result(state.database.contact_ids_for_addresses(&emails))
+}
+
+#[tauri::command]
 fn get_contact_profile(
     id: String,
     state: State<'_, AppState>,
@@ -3213,6 +3221,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         list_triage_sender_stats,
         list_contact_suggestions,
         list_contact_profiles,
+        resolve_contact_ids,
         get_contact_profile,
         save_contact_profile,
         delete_contact_profile,

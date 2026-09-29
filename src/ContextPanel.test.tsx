@@ -5,7 +5,7 @@ import { ContextPanel } from "./ContextPanel";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 
-vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),resolveContactIds:vi.fn(async()=>({})),contactTimeline:vi.fn(),saveContactProfile:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null};
@@ -47,6 +47,38 @@ describe("ContextPanel",()=>{
     expect(chip.querySelector(".context-participant-local")).toHaveTextContent("mjacobs");
     expect(chip.querySelector(".context-participant-domain")).toHaveTextContent("upwardprojects.com");
     expect(within(participants).getByRole("button",{name:"Bob Lee"}).querySelector(".context-participant-address")).toBeNull();
+  });
+
+  it("shows one chip per saved contact when a person writes from several addresses",async()=>{
+    const janeBoth:ContactProfile={...jane,addresses:["jane@example.com","jane@work.example.com"]};
+    vi.mocked(mailClient.listContactProfiles).mockImplementation(async query=>query?.includes("jane")?[janeBoth]:[bob]);
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?janeBoth:bob);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"jane@example.com":jane.id,"jane@work.example.com":jane.id,"bob@example.com":bob.id});
+    const twoAddresses={...detail,messages:[...detail.messages,{id:"3",sender:"Jane Doe <jane@work.example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-26T00:00:00Z"}]} as unknown as ThreadDetail;
+    renderPanel({detail:twoAddresses});
+    await screen.findByRole("heading",{name:"Jane Doe"});
+    const participants=screen.getByRole("group",{name:"Conversation participants"});
+    await waitFor(()=>expect(within(participants).getAllByRole("button")).toHaveLength(2));
+    const janeChip=within(participants).getByRole("button",{name:"Jane Doe"});
+    expect(janeChip).toHaveAttribute("aria-pressed","true");
+    expect(janeChip).toHaveAttribute("title","jane@example.com, jane@work.example.com");
+    expect(mailClient.resolveContactIds).toHaveBeenCalledWith(["jane@example.com","bob@example.com","jane@work.example.com"]);
+  });
+
+  it("keeps one chip per address when participant contacts cannot be resolved",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    vi.mocked(mailClient.resolveContactIds).mockRejectedValue(new Error("offline"));
+    const warn=vi.spyOn(console,"warn").mockImplementation(()=>undefined);
+    const error=vi.spyOn(console,"error").mockImplementation(()=>undefined);
+    renderPanel();
+    await screen.findByRole("heading",{name:"Bob Lee"});
+    const participants=screen.getByRole("group",{name:"Conversation participants"});
+    await waitFor(()=>expect(mailClient.resolveContactIds).toHaveBeenCalled());
+    expect(within(participants).getAllByRole("button")).toHaveLength(2);
+    warn.mockRestore();error.mockRestore();
   });
 
   it("toggles favorite from a heart button and shows an error when saving fails",async()=>{

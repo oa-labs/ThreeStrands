@@ -115,6 +115,8 @@ export interface MailClient extends CorrespondenceClient {
   /** Ranked past correspondents for compose autocomplete, built from local mail history rather than an imported address book. */
   listContactSuggestions(accountId: string, query: string, limit?: number): Promise<ContactSuggestion[]>;
   listContactProfiles(query?: string, limit?: number, accountId?: string): Promise<ContactProfile[]>;
+  /** Maps each address owned by a saved contact to that contact id; unowned addresses are omitted. */
+  resolveContactIds(emails: string[]): Promise<Record<string, string>>;
   getContactProfile(id: string): Promise<ContactProfile | null>;
   saveContactProfile(request: SaveContactRequest): Promise<ContactProfile>;
   deleteContactProfile(id: string): Promise<void>;
@@ -220,6 +222,7 @@ const tauriClient: MailClient = {
   listTriageSenderStats: (accountId, limit) => read("list_triage_sender_stats", { accountId, limit }),
   listContactSuggestions: (accountId, query, limit) => read("list_contact_suggestions", { accountId, query, limit }),
   listContactProfiles: (query = "", limit = 500, accountId) => read("list_contact_profiles", { query, limit, accountId }),
+  resolveContactIds: (emails) => read("resolve_contact_ids", { emails }),
   getContactProfile: (id) => read("get_contact_profile", { id }),
   saveContactProfile: (request) => complete("save_contact_profile", { request }),
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),

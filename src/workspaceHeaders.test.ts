@@ -52,8 +52,32 @@ describe("task detail heading", () => {
 
 describe("mail workspace with the calendar schedule open", () => {
   it("keeps the context panel and schedule in separate columns", () => {
-    expect(lastDeclaration(".app-shell.mail-context-open", "grid-template-columns")?.split(" minmax(")).toHaveLength(5);
+    let desktopColumns: string | undefined;
+    let scheduleColumn: string | undefined;
+    css.walkRules(".app-shell.mail-context-open", (rule) => {
+      if (rule.parent === css) rule.walkDecls("grid-template-columns", (declaration) => { desktopColumns = declaration.value; });
+    });
+    css.walkRules(".app-shell.mail-context-open > .calendar-sidebar", (rule) => {
+      if (rule.parent === css) rule.walkDecls("grid-column", (declaration) => { scheduleColumn = declaration.value; });
+    });
+    expect(desktopColumns?.split(" minmax(")).toHaveLength(5);
     expect(lastDeclaration(".context-panel", "grid-column")).toBe("4");
-    expect(lastDeclaration(".app-shell.mail-context-open > .calendar-sidebar", "grid-column")).toBe("5");
+    expect(scheduleColumn).toBe("5");
+  });
+
+  it("returns the schedule to fixed drawer positioning on narrow screens", () => {
+    let position: string | undefined;
+    let column: string | undefined;
+    css.walkAtRules("media", (media) => {
+      if (media.params !== "(max-width: 1100px)") return;
+      media.walkRules((rule) => {
+        if (rule.selector === ".calendar-sidebar") rule.walkDecls("position", (declaration) => { position = declaration.value; });
+        if (rule.selector === ".app-shell.mail-context-open > .calendar-sidebar") {
+          rule.walkDecls("grid-column", (declaration) => { column = declaration.value; });
+        }
+      });
+    });
+    expect(position).toBe("fixed");
+    expect(column).toBe("auto");
   });
 });

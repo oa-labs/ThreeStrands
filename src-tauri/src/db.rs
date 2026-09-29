@@ -3233,6 +3233,17 @@ mod tests {
     }
 
     #[test]
+    fn contact_ids_for_addresses_maps_every_linked_address_to_its_saved_owner() {
+        let database=database();
+        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane Rivera".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"j.rivera@work.example.com".into()]}).unwrap();
+        let owners=database.contact_ids_for_addresses(&["Jane@Example.com".into(),"j.rivera@work.example.com".into(),"stranger@example.com".into(),"".into()]).unwrap();
+        assert_eq!(owners.len(),2);
+        assert_eq!(owners.get("jane@example.com"),Some(&saved.id));
+        assert_eq!(owners.get("j.rivera@work.example.com"),Some(&saved.id));
+        assert!(!owners.contains_key("stranger@example.com"));
+    }
+
+    #[test]
     fn saved_contact_enumeration_is_not_limited_by_derived_contact_results() {
         let database=database();
         database.with_transaction(|tx|{
