@@ -1362,13 +1362,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .calendar-week-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 18px;
   padding: 18px 20px 12px;
 }
 .calendar-week-header h1 { margin: 0; font-size: var(--type-display); font-weight: 550; }
 .calendar-week-heading { min-width: 0; }
 .calendar-week-heading .eyebrow { margin-bottom: 4px; overflow-wrap: anywhere; }
-.calendar-week-controls { display: flex; align-items: center; gap: 4px; }
+.calendar-week-controls { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
 .calendar-week-controls button {
   width: 32px;
   height: 32px;

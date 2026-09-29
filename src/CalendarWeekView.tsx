@@ -269,12 +269,12 @@ export function CalendarWeekView({
     <section className="calendar-week" aria-label="Calendar week">
       <div className="calendar-week-main">
         <header className="calendar-week-header">
+          <div className="calendar-week-heading"><span className="eyebrow">Selected calendars <span className="eyebrow-account">· {selectedAccountEmails.length ? selectedAccountEmails.join(", ") : "None selected"}</span></span><h1>{monthTitle(weekStart)}</h1></div>
           <div className="calendar-week-controls">
             <button type="button" className="calendar-today-button" onClick={goToToday}>Today</button>
             <HoverTooltip title="Previous week (-)"><button type="button" aria-label="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={20} /></button></HoverTooltip>
             <HoverTooltip title="Next week (=)"><button type="button" aria-label="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={20} /></button></HoverTooltip>
           </div>
-          <div className="calendar-week-heading"><span className="eyebrow">Selected calendars <span className="eyebrow-account">· {selectedAccountEmails.length ? selectedAccountEmails.join(", ") : "None selected"}</span></span><h1>{monthTitle(weekStart)}</h1></div>
         </header>
         {error ? (
           <div className="calendar-error-notice" role="alert">
