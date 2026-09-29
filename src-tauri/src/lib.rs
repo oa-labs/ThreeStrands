@@ -42,7 +42,7 @@ use auth::{AccountAuth, GoogleAuthConfig};
 use chrono::Utc;
 use db::Database;
 use models::{
-    ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateLabelRequest,
+    ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
@@ -198,7 +198,7 @@ struct AppState {
     /// Explicit thread-action proposals are session-only. The cache key
     /// includes the newest message timestamp so a newly synced message can
     /// never reuse an older analysis.
-    proposal_cache: Arc<std::sync::Mutex<HashMap<String, Vec<ActionProposal>>>>,
+    proposal_cache: Arc<std::sync::Mutex<HashMap<String, ActionAnalysis>>>,
 }
 
 /// SQLite and the mutex guarding its connection are synchronous. Run database
@@ -2341,7 +2341,7 @@ async fn ai_analyze_thread(
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
-) -> Result<Vec<ActionProposal>, String> {
+) -> Result<ActionAnalysis, String> {
     if user_time_zone.parse::<chrono_tz::Tz>().is_err() {
         return Err(format!("Unknown IANA timezone: {user_time_zone}"));
     }
@@ -2385,8 +2385,8 @@ async fn ai_analyze_thread(
         target: "ai_analyze_thread",
         "starting analysis for thread {thread_id} with provider {provider:?} model {model}"
     );
-    let proposals = match ai::analyze(request, &api_key).await {
-        Ok(proposals) => proposals,
+    let analysis = match ai::analyze(request, &api_key).await {
+        Ok(analysis) => analysis,
         Err(error) => {
             log::error!(target: "ai_analyze_thread", "analysis failed for thread {thread_id}: {error}");
             return Err(error);
@@ -2394,15 +2394,16 @@ async fn ai_analyze_thread(
     };
     log::info!(
         target: "ai_analyze_thread",
-        "analysis succeeded for thread {thread_id} with {} proposal(s)",
-        proposals.len()
+        "analysis succeeded for thread {thread_id} with {} proposal(s), {} withheld",
+        analysis.proposals.len(),
+        analysis.hidden_count
     );
     let mut cache = state
         .proposal_cache
         .lock()
         .map_err(|_| "AI proposal cache is unavailable".to_string())?;
-    cache.insert(cache_key, proposals.clone());
-    Ok(proposals)
+    cache.insert(cache_key, analysis.clone());
+    Ok(analysis)
 }
 
 #[tauri::command]

@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { CalendarWeekView, monthGridDays } from "./CalendarWeekView";
+import { startOfLocalDay } from "./calendarTime";
 import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
@@ -13,7 +15,14 @@ const calendars: CalendarOption[] = [
   { id: "holidays", accountId: "joel@example.com", name: "Holidays in United States", primary: false, selected: true },
 ];
 
-function renderWeek(overrides: Partial<Parameters<typeof CalendarWeekView>[0]> = {}) {
+type WeekViewOptions = Omit<Parameters<typeof CalendarWeekView>[0], "anchor" | "onAnchorChange">;
+
+function StatefulWeekView(props: WeekViewOptions) {
+  const [anchor, setAnchor] = useState(() => startOfLocalDay(new Date()));
+  return <CalendarWeekView {...props} anchor={anchor} onAnchorChange={setAnchor} />;
+}
+
+function renderWeek(overrides: Partial<WeekViewOptions> = {}) {
   const props = {
     accounts,
     calendars,
@@ -22,7 +31,7 @@ function renderWeek(overrides: Partial<Parameters<typeof CalendarWeekView>[0]> =
     onOpenSettings: vi.fn(),
     ...overrides,
   };
-  return { ...render(<CalendarWeekView {...props} />), props };
+  return { ...render(<StatefulWeekView {...props} />), props };
 }
 
 function event(id: string, start: string, end: string, title = id): ScheduleEvent {

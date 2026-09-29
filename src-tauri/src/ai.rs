@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::error_text::display;
 use crate::models::{
-    ActionProposal, ContactFieldSuggestion, ContactProfile, ReplyAssistContext, ReplyAssistMessage,
+    ActionAnalysis, ActionProposal, ContactFieldSuggestion, ProposalEvidence, ContactProfile, ReplyAssistContext, ReplyAssistMessage,
 };
 
 const SERVICE: &str = "app.threestrands.mail";
@@ -496,10 +496,7 @@ Task: {"type":"task","kind":"action","title":"Follow up","notes":null,"dueKind":
 
 The task kind must be exactly action, follow_up, or waiting_for. The due kind must be exactly none, date, or datetime. A proposal is not an action: never call tools, book meetings, send mail, or create tasks. Include a short exact evidence excerpt for every proposal. If the date, time, timezone, or commitment is ambiguous, preserve the raw language, lower confidence, and leave the uncertain normalized fields null. A meeting's location holds a venue name or address when the email states one, otherwise null; never invent a new field for it."#;
 
-pub async fn analyze(
-    request: AnalyzeRequest,
-    api_key: &str,
-) -> Result<Vec<ActionProposal>, String> {
+pub async fn analyze(request: AnalyzeRequest, api_key: &str) -> Result<ActionAnalysis, String> {
     let bounded = action_context(&request.messages);
     let subject: String = request.subject.chars().take(MAX_BODY_CHARS).collect();
     let prompt = build_action_prompt(
@@ -674,7 +671,7 @@ fn strip_markdown_fences(content: &str) -> &str {
 fn parse_action_proposals(
     content: &str,
     messages: &[ActionMessageInput],
-) -> Result<Vec<ActionProposal>, String> {
+) -> Result<ActionAnalysis, String> {
     if content.chars().count() > MAX_ACTION_OUTPUT_CHARS {
         log::error!(
             target: "ai_analyze_thread",
@@ -705,32 +702,49 @@ fn parse_action_proposals(
         }
         value => value,
     };
-    let proposals: Vec<ActionProposal> = serde_json::from_value(value).map_err(|error| {
+    let serde_json::Value::Array(items) = value else {
         log::error!(
             target: "ai_analyze_thread",
-            "action proposal JSON failed schema validation: {error} (raw content: {content:?})"
+            "action proposal JSON is not a proposal array (raw content: {content:?})"
         );
-        "The AI provider returned action proposal JSON with an invalid schema".to_string()
-    })?;
-    if proposals.len() > MAX_ACTION_PROPOSALS {
+        return Err("The AI provider returned action proposal JSON with an invalid schema".to_string());
+    };
+    if items.len() > MAX_ACTION_PROPOSALS {
         log::error!(
             target: "ai_analyze_thread",
             "too many action proposals ({})",
-            proposals.len()
+            items.len()
         );
         return Err("The AI provider returned too many action proposals".to_string());
     }
-    for proposal in &proposals {
-        if let Err(error) = validate_action_proposal(proposal, messages) {
-            log::error!(target: "ai_analyze_thread", "action proposal failed validation: {error} (raw content: {content:?})");
-            return Err(error);
+    // Each proposal stands or falls on its own: one malformed or unverifiable
+    // item is withheld and counted rather than discarding the whole set.
+    let mut analysis = ActionAnalysis::default();
+    for item in items {
+        let mut proposal: ActionProposal = match serde_json::from_value(item) {
+            Ok(proposal) => proposal,
+            Err(error) => {
+                log::warn!(target: "ai_analyze_thread", "withheld action proposal with an invalid schema: {error}");
+                analysis.hidden_count += 1;
+                continue;
+            }
+        };
+        match validate_action_proposal(&mut proposal, messages) {
+            Ok(()) => analysis.proposals.push(proposal),
+            Err(error) => {
+                log::warn!(target: "ai_analyze_thread", "withheld action proposal: {error}");
+                analysis.hidden_count += 1;
+            }
         }
     }
-    Ok(proposals)
+    Ok(analysis)
 }
 
+/// Validates one proposal and resolves its evidence to the exact source text
+/// it quotes, so downstream review and stored tasks never carry model-altered
+/// excerpts.
 fn validate_action_proposal(
-    proposal: &ActionProposal,
+    proposal: &mut ActionProposal,
     messages: &[ActionMessageInput],
 ) -> Result<(), String> {
     let evidence = match proposal {
@@ -769,7 +783,7 @@ fn validate_action_proposal(
                     return Err("The AI provider returned an invalid meeting timestamp".to_string());
                 }
             }
-            &value.evidence
+            &mut value.evidence
         }
         ActionProposal::Task(value) => {
             if !matches!(value.kind.as_str(), "action" | "follow_up" | "waiting_for")
@@ -802,7 +816,7 @@ fn validate_action_proposal(
                     return Err("The AI provider returned an invalid task due value".to_string());
                 }
             }
-            &value.evidence
+            &mut value.evidence
         }
     };
     if evidence.source_message_id.trim().is_empty()
@@ -811,16 +825,100 @@ fn validate_action_proposal(
     {
         return Err("The AI provider returned invalid proposal evidence".to_string());
     }
-    let Some(message) = messages
-        .iter()
-        .find(|message| message.id == evidence.source_message_id)
-    else {
-        return Err("The AI provider cited a message outside the analyzed thread".to_string());
-    };
-    if !message.body_text.contains(&evidence.excerpt) {
-        return Err("The AI provider returned unverifiable proposal evidence".to_string());
+    let (message_id, excerpt) = resolve_evidence(evidence, messages)?;
+    if excerpt.chars().count() > MAX_EVIDENCE_CHARS {
+        return Err("The AI provider returned invalid proposal evidence".to_string());
     }
+    evidence.source_message_id = message_id;
+    evidence.excerpt = excerpt;
     Ok(())
+}
+
+/// Finds the analyzed message text an evidence excerpt quotes. Models often
+/// alter whitespace, typographic quotes, dashes, or reply `>` markers when
+/// quoting, and sometimes cite the wrong message ID, so matching compares
+/// normalized text: the cited message first, then the rest of the thread in
+/// order. The result is always a verbatim slice of an analyzed message body;
+/// an excerpt that does not appear anywhere in the thread is rejected.
+fn resolve_evidence(
+    evidence: &ProposalEvidence,
+    messages: &[ActionMessageInput],
+) -> Result<(String, String), String> {
+    let (needle, _) = normalize_evidence_text(&evidence.excerpt);
+    if needle.is_empty() {
+        return Err("The AI provider returned invalid proposal evidence".to_string());
+    }
+    let cited = messages
+        .iter()
+        .filter(|message| message.id == evidence.source_message_id);
+    let others = messages
+        .iter()
+        .filter(|message| message.id != evidence.source_message_id);
+    for message in cited.chain(others) {
+        if let Some(excerpt) = find_normalized(&message.body_text, &needle) {
+            return Ok((message.id.clone(), excerpt.to_string()));
+        }
+    }
+    if messages
+        .iter()
+        .all(|message| message.id != evidence.source_message_id)
+    {
+        return Err("The AI provider cited a message outside the analyzed thread".to_string());
+    }
+    Err("The AI provider returned unverifiable proposal evidence".to_string())
+}
+
+/// Returns the verbatim slice of `body` whose normalized form is `needle`.
+fn find_normalized<'a>(body: &'a str, needle: &str) -> Option<&'a str> {
+    let (haystack, spans) = normalize_evidence_text(body);
+    let byte_start = haystack.find(needle)?;
+    let start = haystack[..byte_start].chars().count();
+    let end = start + needle.chars().count() - 1;
+    Some(&body[spans[start].0..spans[end].1])
+}
+
+/// Normalizes text for evidence comparison: whitespace runs and line-leading
+/// `>` quote markers collapse to one space, typographic quotes and dashes map
+/// to ASCII, and invisible formatting characters are dropped. Returns the
+/// normalized text and, per normalized char, the byte span it came from.
+fn normalize_evidence_text(text: &str) -> (String, Vec<(usize, usize)>) {
+    let mut normalized = String::with_capacity(text.len());
+    let mut spans = Vec::with_capacity(text.len());
+    let mut pending_space: Option<(usize, usize)> = None;
+    let mut at_line_start = true;
+    for (start, character) in text.char_indices() {
+        let span = (start, start + character.len_utf8());
+        if matches!(
+            character,
+            '\u{00AD}' | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
+        ) {
+            continue;
+        }
+        if character == '\n' || character == '\r' {
+            at_line_start = true;
+            pending_space.get_or_insert(span);
+            continue;
+        }
+        if character.is_whitespace() || (at_line_start && character == '>') {
+            pending_space.get_or_insert(span);
+            continue;
+        }
+        at_line_start = false;
+        if let Some(space) = pending_space.take() {
+            if !normalized.is_empty() {
+                normalized.push(' ');
+                spans.push(space);
+            }
+        }
+        normalized.push(match character {
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{2032}' => '\'',
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' | '\u{2033}' => '"',
+            '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
+            other => other,
+        });
+        spans.push(span);
+    }
+    (normalized, spans)
 }
 
 pub async fn summarize(request: SummarizeRequest, api_key: &str) -> Result<String, String> {
@@ -1584,10 +1682,14 @@ mod tests {
             body_text: "Please send the proposal by Friday.".to_string(),
         }];
         let valid = r#"[{"type":"task","kind":"action","title":"Send the proposal","notes":null,"dueKind":"date","dueValue":"2026-09-25","timeZone":"America/New_York","repeatIntervalDays":null,"confidence":0.92,"evidence":{"sourceMessageId":"message-1","excerpt":"Please send the proposal by Friday."}}]"#;
-        assert!(parse_action_proposals(valid, &messages).is_ok());
+        let parsed = parse_action_proposals(valid, &messages).unwrap();
+        assert_eq!((parsed.proposals.len(), parsed.hidden_count), (1, 0));
         let wrapped = format!(r#"{{"proposals":{valid}}}"#);
         assert_eq!(
-            parse_action_proposals(&wrapped, &messages).unwrap().len(),
+            parse_action_proposals(&wrapped, &messages)
+                .unwrap()
+                .proposals
+                .len(),
             1
         );
         let wrapped_with_extra = format!(r#"{{"proposals":{valid},"tool":"send"}}"#);
@@ -1595,26 +1697,141 @@ mod tests {
             parse_action_proposals(&wrapped_with_extra, &messages).unwrap_err(),
             "The AI provider returned action proposal JSON with an invalid schema"
         );
+        // A proposal carrying an unknown field is withheld, never surfaced.
         let unknown = valid.replace(
             "\"confidence\":0.92",
             "\"confidence\":0.92,\"tool\":\"send\"",
         );
-        assert_eq!(
-            parse_action_proposals(&unknown, &messages).unwrap_err(),
-            "The AI provider returned action proposal JSON with an invalid schema"
-        );
+        let parsed = parse_action_proposals(&unknown, &messages).unwrap();
+        assert_eq!((parsed.proposals.len(), parsed.hidden_count), (0, 1));
+        // Evidence that appears nowhere in the thread is withheld.
         let unverifiable = valid.replace(
             "Please send the proposal by Friday.",
             "Please send secrets.",
         );
-        assert!(parse_action_proposals(&unverifiable, &messages).is_err());
+        let parsed = parse_action_proposals(&unverifiable, &messages).unwrap();
+        assert_eq!((parsed.proposals.len(), parsed.hidden_count), (0, 1));
         assert_eq!(
             parse_action_proposals("not json", &messages).unwrap_err(),
             "The AI provider returned malformed action proposal JSON"
         );
+        assert_eq!(
+            parse_action_proposals(r#"{"type":"task"}"#, &messages).unwrap_err(),
+            "The AI provider returned action proposal JSON with an invalid schema"
+        );
         assert!(
             parse_action_proposals(&"x".repeat(MAX_ACTION_OUTPUT_CHARS + 1), &messages).is_err()
         );
+    }
+
+    fn task_proposal_json(message_id: &str, excerpt: &str) -> String {
+        serde_json::json!({
+            "type": "task", "kind": "action", "title": "Send the proposal", "notes": null,
+            "dueKind": "none", "dueValue": null, "timeZone": null, "repeatIntervalDays": null,
+            "confidence": 0.9, "evidence": { "sourceMessageId": message_id, "excerpt": excerpt },
+        })
+        .to_string()
+    }
+
+    fn proposal_evidence(proposal: &ActionProposal) -> &ProposalEvidence {
+        match proposal {
+            ActionProposal::Meeting(value) => &value.evidence,
+            ActionProposal::Task(value) => &value.evidence,
+        }
+    }
+
+    #[test]
+    fn one_invalid_proposal_does_not_discard_the_verified_ones() {
+        let messages = vec![ActionMessageInput {
+            id: "message-1".to_string(),
+            sender: "client@example.com".to_string(),
+            sent_at: "2026-09-19T12:00:00Z".to_string(),
+            body_text: "Please send the proposal by Friday. Also book the room.".to_string(),
+        }];
+        let valid = task_proposal_json("message-1", "Please send the proposal by Friday.");
+        let invented = task_proposal_json("message-1", "Wire the funds today.");
+        let bad_due = valid.replace("\"dueKind\":\"none\"", "\"dueKind\":\"someday\"");
+        let content = format!("[{valid},{invented},{bad_due}]");
+        let parsed = parse_action_proposals(&content, &messages).unwrap();
+        assert_eq!((parsed.proposals.len(), parsed.hidden_count), (1, 2));
+    }
+
+    #[test]
+    fn evidence_matches_despite_whitespace_quotes_and_reply_markers() {
+        let messages = vec![
+            ActionMessageInput {
+                id: "message-1".to_string(),
+                sender: "client@example.com".to_string(),
+                sent_at: "2026-09-19T12:00:00Z".to_string(),
+                body_text: "Hi,\n\nCould you send the \u{201C}final\u{201D} proposal\nby Friday \u{2014} it\u{2019}s urgent.\u{00A0}Thanks".to_string(),
+            },
+            ActionMessageInput {
+                id: "message-2".to_string(),
+                sender: "you@example.com".to_string(),
+                sent_at: "2026-09-19T13:00:00Z".to_string(),
+                body_text: "Will do.\n\n> Please book\n>   the\u{200B} board room for Tuesday.".to_string(),
+            },
+        ];
+        let typographic = task_proposal_json(
+            "message-1",
+            "send the \"final\" proposal by Friday - it's urgent.",
+        );
+        let quoted = task_proposal_json("message-2", "Please book the board room for Tuesday.");
+        let parsed =
+            parse_action_proposals(&format!("[{typographic},{quoted}]"), &messages).unwrap();
+        assert_eq!(parsed.hidden_count, 0);
+        // Stored evidence is the verbatim source text, not the model's rewrite.
+        assert_eq!(
+            proposal_evidence(&parsed.proposals[0]).excerpt,
+            "send the \u{201C}final\u{201D} proposal\nby Friday \u{2014} it\u{2019}s urgent."
+        );
+        assert_eq!(
+            proposal_evidence(&parsed.proposals[1]).excerpt,
+            "Please book\n>   the\u{200B} board room for Tuesday."
+        );
+        // Normalization does not loosen word boundaries or letter content.
+        let altered = task_proposal_json("message-1", "send the final proposal by Friday");
+        let parsed = parse_action_proposals(&format!("[{altered}]"), &messages).unwrap();
+        assert_eq!((parsed.proposals.len(), parsed.hidden_count), (0, 1));
+    }
+
+    #[test]
+    fn misattributed_evidence_is_reassigned_only_within_the_analyzed_thread() {
+        let messages = vec![
+            ActionMessageInput {
+                id: "message-1".to_string(),
+                sender: "client@example.com".to_string(),
+                sent_at: "2026-09-19T12:00:00Z".to_string(),
+                body_text: "Please send the proposal by Friday.".to_string(),
+            },
+            ActionMessageInput {
+                id: "message-2".to_string(),
+                sender: "you@example.com".to_string(),
+                sent_at: "2026-09-19T13:00:00Z".to_string(),
+                body_text: "Will do.".to_string(),
+            },
+        ];
+        let wrong_id = task_proposal_json("message-2", "Please send the proposal by Friday.");
+        let invented_id = task_proposal_json("message-id", "Please send the proposal by Friday.");
+        let parsed =
+            parse_action_proposals(&format!("[{wrong_id},{invented_id}]"), &messages).unwrap();
+        assert_eq!(parsed.hidden_count, 0);
+        for proposal in &parsed.proposals {
+            assert_eq!(proposal_evidence(proposal).source_message_id, "message-1");
+        }
+        let evidence = ProposalEvidence {
+            source_message_id: "message-9".to_string(),
+            excerpt: "Send the payroll file.".to_string(),
+        };
+        assert_eq!(
+            resolve_evidence(&evidence, &messages).unwrap_err(),
+            "The AI provider cited a message outside the analyzed thread"
+        );
+        let evidence = ProposalEvidence {
+            source_message_id: "message-1".to_string(),
+            excerpt: " \n> ".to_string(),
+        };
+        assert!(resolve_evidence(&evidence, &messages).is_err());
     }
 
     #[test]

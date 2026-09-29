@@ -5,7 +5,7 @@ import {
 } from "../invoke";
 import type {
   Account,
-  ActionProposal,
+  ActionAnalysis,
   AuthStatus,
   AvailabilityPreferences,
   AvailabilityResult,
@@ -80,7 +80,7 @@ export interface MailClient extends CorrespondenceClient {
     provider: AiProvider,
     model: string,
     endpoint: string | null,
-  ): Promise<ActionProposal[]>;
+  ): Promise<ActionAnalysis>;
   replyAssistContext(draftId: string): Promise<ReplyAssistContext>;
   generateReply(
     context: ReplyAssistContext,

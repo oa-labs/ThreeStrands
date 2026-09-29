@@ -1301,6 +1301,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .action-proposal-card { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font-size: var(--type-caption); }
 .action-proposal-card-header { display: flex; justify-content: space-between; color: var(--muted); font-size: var(--type-xs); text-transform: uppercase; letter-spacing: .04em; }
 .proposal-kind { color: var(--accent); }
+.proposal-check { color: var(--warning); }
 .action-proposal-card p { margin: 0; color: var(--muted); }
 .proposal-evidence { color: var(--muted); font-size: var(--type-sm); }
 .proposal-evidence blockquote { margin: 5px 0; padding-left: 7px; border-left: 2px solid var(--border-strong); color: var(--text); }

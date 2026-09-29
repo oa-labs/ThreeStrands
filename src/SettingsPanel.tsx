@@ -1840,7 +1840,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             />
           </label>
           <label className="settings-switch">
-            <span>Thread Actions</span>
+            <span>Suggestions</span>
             <input
               type="checkbox"
               checked={features.actionExtraction}

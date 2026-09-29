@@ -662,7 +662,7 @@ describe("keyboard-first task and action workspaces", () => {
     }
   });
 
-  it("opens the week calendar view with 2 and returns to mail with 1", async () => {
+  it("restores the selected calendar week after switching to mail and back", async () => {
     const { container } = render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
 
@@ -674,9 +674,20 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Conversation" })).not.toBeInTheDocument();
 
+    fireEvent.click(within(week).getByRole("button", { name: "Next week (=)" }));
+    const selectedWeekStart = week.querySelector(".calendar-week-day-label")?.textContent;
+    const selectedMonth = within(week).getByRole("region", { name: "Month picker" }).querySelector("h3")?.textContent;
+    expect(selectedWeekStart).toBeTruthy();
+    expect(selectedMonth).toBeTruthy();
+
     fireEvent.keyDown(window, { key: "1" });
     expect(await screen.findByRole("region", { name: "Inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "2" });
+    const restoredWeek = await screen.findByRole("region", { name: "Calendar week" });
+    expect(restoredWeek.querySelector(".calendar-week-day-label")).toHaveTextContent(selectedWeekStart!);
+    expect(within(restoredWeek).getByRole("region", { name: "Month picker" })).toHaveTextContent(selectedMonth!);
   });
 
   it("opens the Contacts Address Book with 4", async () => {

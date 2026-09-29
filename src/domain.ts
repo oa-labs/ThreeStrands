@@ -312,6 +312,12 @@ export type TaskProposal = {
 
 export type ActionProposal = MeetingProposal | TaskProposal;
 
+/** Verified proposals plus how many the provider returned that failed validation. */
+export type ActionAnalysis = {
+  proposals: ActionProposal[];
+  hiddenCount: number;
+};
+
 export type ReplyAssistMessage = {
   sender: string;
   sentAt: string;

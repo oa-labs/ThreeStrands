@@ -6,7 +6,7 @@ import { buildShowcaseDataset } from "./showcaseDataset";
 import { parseAddress } from "../emailAddress";
 import type {
   Account,
-  ActionProposal,
+  ActionAnalysis,
   AvailabilityPreferences,
   AvailabilityResult,
   CalendarAccount,
@@ -344,12 +344,12 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       );
       return { summary, generatedAt };
     },
-    async analyzeThread(threadId): Promise<ActionProposal[]> {
+    async analyzeThread(threadId): Promise<ActionAnalysis> {
       const detail = await this.getThread(threadId);
       const latest = detail.messages.at(-1);
-      if (!latest) return [];
+      if (!latest) return { proposals: [], hiddenCount: 0 };
       await new Promise((resolve) => setTimeout(resolve, 400));
-      return [{
+      return { hiddenCount: 0, proposals: [{
         type: "task",
         kind: "action",
         title: `Review: ${detail.thread.subject}`,
@@ -363,7 +363,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           sourceMessageId: latest.id,
           excerpt: latest.bodyText.slice(0, 240),
         },
-      }];
+      }] };
     },
     async replyAssistContext(draftId): Promise<ReplyAssistContext> {
       const replyDraft = (await this.listDrafts()).find((candidate) => candidate.id === draftId);

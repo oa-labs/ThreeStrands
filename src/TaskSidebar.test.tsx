@@ -339,8 +339,11 @@ describe("TaskSidebar", () => {
     );
 
     expect(await screen.findByText("Set up the website")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Evidence"));
+    fireEvent.click(screen.getByText("From the email"));
     expect(screen.getByText("Please set up the website by Friday.")).toBeInTheDocument();
+    expect(screen.getByText(/^client@example\.com · /)).toBeInTheDocument();
+    expect(screen.queryByText(/confidence/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Check details")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Review & Add Task" }));
     expect(reviewProposal).toHaveBeenCalledWith(0, proposal, "accept");
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
@@ -744,23 +747,71 @@ describe("TaskSidebar", () => {
         analysis={threadAnalysis({ ready: false })}
       />,
     );
-    expect(screen.getByText("Configure an AI provider and API key in AI settings to analyze this conversation.")).toBeInTheDocument();
-    expect(screen.queryByText("Enable Thread actions in AI settings to analyze this conversation.")).not.toBeInTheDocument();
+    expect(screen.getByText("Set up an AI provider and API key in AI settings to get suggestions for this conversation.")).toBeInTheDocument();
+    expect(screen.queryByText("Turn on Suggestions in AI settings to get meeting and task ideas from this conversation.")).not.toBeInTheDocument();
   });
 
   it("shows thread analysis controls only when analysis is supplied", () => {
     const { rerender } = render(
       <TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" />,
     );
-    expect(screen.queryByRole("button", { name: "Analyze thread" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Thread actions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Get Suggestions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Suggestions" })).not.toBeInTheDocument();
 
     const onAnalyze = vi.fn();
     rerender(
       <TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ onAnalyze })} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Analyze thread" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get Suggestions" }));
     expect(onAnalyze).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("region", { name: "Thread actions" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Suggestions" })).toBeInTheDocument();
+  });
+
+  it("flags uncertain suggestions for a closer look instead of showing a confidence score", () => {
+    const proposal: ActionProposal = {
+      type: "meeting",
+      intent: "schedule",
+      title: "Website kickoff",
+      participants: [],
+      location: null,
+      rawTimeLanguage: "sometime next week",
+      normalizedStart: null,
+      normalizedEnd: null,
+      searchRangeStart: null,
+      searchRangeEnd: null,
+      durationMinutes: 30,
+      timeZone: null,
+      confidence: 0.4,
+      evidence: { sourceMessageId: "message-unknown", excerpt: "Let's meet next week." },
+    };
+    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ preview: "{}", proposals: [proposal] })} />);
+
+    expect(screen.getByText("Check details")).toBeInTheDocument();
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("From the email"));
+    expect(screen.queryByText(/message-unknown/)).not.toBeInTheDocument();
+  });
+
+  it("reports withheld suggestions instead of claiming there was nothing to do", () => {
+    const { rerender } = render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ preview: "{}", hiddenCount: 2 })} />);
+    expect(screen.getByText("2 suggestions couldn’t be matched to the email, so they were hidden.")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
+    expect(screen.getByText("What was shared with AI")).toBeInTheDocument();
+
+    rerender(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ preview: "{}", hiddenCount: 1 })} />);
+    expect(screen.getByText("1 suggestion couldn’t be matched to the email, so it was hidden.")).toBeInTheDocument();
+
+    rerender(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ preview: "{}" })} />);
+    expect(screen.getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
+  });
+
+  it("explains unreadable provider output in plain language and keeps the details available", () => {
+    const onAnalyze = vi.fn();
+    render(<TaskSidebar onClose={vi.fn()} accountId="you@example.com" currentThread={detail} onOpenThread={vi.fn()} title="Actions" analysis={threadAnalysis({ error: "The AI provider returned malformed action proposal JSON", onAnalyze })} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("The AI's response couldn't be read. Try again, or choose a different model in AI settings.");
+    expect(screen.getByText("The AI provider returned malformed action proposal JSON")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
+    expect(onAnalyze).toHaveBeenCalledTimes(1);
   });
 });

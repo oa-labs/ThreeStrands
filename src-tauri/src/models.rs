@@ -143,6 +143,16 @@ pub enum ActionProposal {
     Task(TaskProposal),
 }
 
+/// The verified proposals from one thread analysis. `hidden_count` counts
+/// provider proposals that were withheld because they failed schema or
+/// evidence validation; they are never shown to the user.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionAnalysis {
+    pub proposals: Vec<ActionProposal>,
+    pub hidden_count: usize,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailabilityWindow {

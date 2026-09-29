@@ -7,6 +7,7 @@ import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from ".
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { PanelResizeHandle, useTaskDetailWidth } from "./PanelResizeHandle";
 import { errorMessage } from "./errors";
+import { parseAddress } from "./emailAddress";
 import { adjacentTaskStatus, dueView, isActiveTaskStatus, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
 
 export type TaskLayout = "board" | "list";
@@ -79,7 +80,7 @@ function isDue(task: ThreadTask): boolean {
 function describeAnalysisError(message: string): { summary: string; retryable: boolean } {
   if (/^(the )?ai provider returned/i.test(message) || /^the ai provider (cited|included)/i.test(message)) {
     return {
-      summary: "The AI assistant couldn't make sense of this conversation. This sometimes happens with longer or unusual threads.",
+      summary: "The AI's response couldn't be read. Try again, or choose a different model in AI settings.",
       retryable: true,
     };
   }
@@ -113,6 +114,8 @@ export type ThreadActionAnalysis = {
   error: string | null;
   preview: string | null;
   proposals: ActionProposal[];
+  /** Provider suggestions withheld because they failed validation. */
+  hiddenCount?: number;
   onAnalyze(): void;
   onDiscardProposal?(index: number): void;
   onReviewProposal?(index: number, proposal: ActionProposal, intent: "edit" | "accept"): void;
@@ -431,10 +434,17 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   </div>;
 
   const analysisActionLabel = !analysis?.enabled
-    ? "Enable thread actions in AI settings"
+    ? "Turn on Suggestions in AI settings"
     : !analysis.ready
-      ? "Configure an AI provider and API key"
-      : "Analyze thread";
+      ? "Set up an AI provider in AI settings"
+      : "Get Suggestions";
+  const hiddenCount = analysis?.hiddenCount ?? 0;
+  const messageSource = (messageId: string) => {
+    const message = currentThread?.messages.find((candidate) => candidate.id === messageId);
+    if (!message) return null;
+    const sender = parseAddress(message.sender);
+    return `${sender.name || sender.email} · ${new Date(message.sentAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  };
 
   return (
     <section className={variant === "workspace" ? "tasks-workspace" : "tasks-sidebar"} role={variant === "sidebar" ? "complementary" : "region"} aria-label={title}>
@@ -472,9 +482,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         </div>
       ) : null}
       {analysis ? (
-        <section className="action-analysis" aria-label="Thread actions">
-          <div className="action-analysis-heading"><strong>Thread actions</strong>{analysis.loading ? <span role="status">Analyzing…</span> : null}</div>
-          {!analysis.enabled ? <p className="tasks-status">Enable Thread actions in AI settings to analyze this conversation.</p> : !analysis.ready ? <p className="tasks-status">Configure an AI provider and API key in AI settings to analyze this conversation.</p> : null}
+        <section className="action-analysis" aria-label="Suggestions">
+          <div className="action-analysis-heading"><strong>Suggestions</strong>{analysis.loading ? <span role="status">Reading the conversation…</span> : null}</div>
+          {!analysis.enabled ? <p className="tasks-status">Turn on Suggestions in AI settings to get meeting and task ideas from this conversation.</p> : !analysis.ready ? <p className="tasks-status">Set up an AI provider and API key in AI settings to get suggestions for this conversation.</p> : null}
           {analysis.error ? (() => {
             const { summary, retryable } = describeAnalysisError(analysis.error);
             return <div className="action-analysis-error" role="alert">
@@ -485,16 +495,18 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               </div>
             </div>;
           })() : null}
-          {analysis.preview ? <details className="action-analysis-preview"><summary>Exact bounded content sent</summary><pre>{analysis.preview}</pre></details> : null}
-          {!analysis.loading && analysis.enabled && analysis.proposals.length === 0 && analysis.preview ? <p className="tasks-status">No meeting or task proposals found.</p> : null}
+          {!analysis.loading && analysis.enabled && analysis.proposals.length === 0 && hiddenCount === 0 && analysis.preview ? <p className="tasks-status">Nothing to schedule or follow up on.</p> : null}
+          {!analysis.loading && hiddenCount > 0 ? <p className="tasks-status">{hiddenCount === 1 ? "1 suggestion" : `${hiddenCount} suggestions`} couldn&rsquo;t be matched to the email, so {hiddenCount === 1 ? "it was" : "they were"} hidden.</p> : null}
+          {analysis.preview ? <details className="action-analysis-preview"><summary>What was shared with AI</summary><pre>{analysis.preview}</pre></details> : null}
           <div className="action-proposals">
             {analysis.proposals.map((proposal, index) => {
-              const evidence = <details className="proposal-evidence"><summary>Evidence</summary><blockquote>{proposal.evidence.excerpt}</blockquote><small>Message {proposal.evidence.sourceMessageId}</small></details>;
+              const source = messageSource(proposal.evidence.sourceMessageId);
+              const evidence = <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>;
               const needsReview = (proposal.type === "meeting" && (!proposal.timeZone || (!proposal.normalizedStart && !proposal.searchRangeStart)))
                 || (proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone);
               const uncertain = proposal.confidence < 0.75;
               return <article className="action-proposal-card" key={`${proposal.type}-${index}`}>
-                <div className="action-proposal-card-header"><span className="proposal-kind">{proposal.type === "meeting" ? "Meeting" : "Task"}</span><span>{Math.round(proposal.confidence * 100)}% confidence{uncertain ? " · Uncertain" : ""}{needsReview ? " · Needs review" : ""}</span></div>
+                <div className="action-proposal-card-header"><span className="proposal-kind">{proposal.type === "meeting" ? "Meeting" : "Task"}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
                 <strong>{proposal.title}</strong>
                 {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
                 {evidence}

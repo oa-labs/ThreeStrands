@@ -179,20 +179,23 @@ function CalendarList({
 }
 
 export function CalendarWeekView({
+  anchor,
+  onAnchorChange,
   accounts,
   calendars,
   onToggleCalendar,
   onAddCalendarAccount,
   onOpenSettings,
 }: {
+  anchor: Date;
+  onAnchorChange(date: Date): void;
   accounts: CalendarAccount[];
   calendars: CalendarOption[];
   onToggleCalendar(accountId: string, calendarId: string, selected: boolean): void;
   onAddCalendarAccount(): void;
   onOpenSettings(): void;
 }) {
-  const [anchor, setAnchor] = useState(() => startOfLocalDay(new Date()));
-  const [month, setMonth] = useState(() => startOfLocalDay(new Date()));
+  const [month, setMonth] = useState(() => startOfLocalDay(anchor));
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
   const [now, setNow] = useState(() => new Date());
   const gridRef = useRef<HTMLDivElement>(null);
@@ -220,23 +223,22 @@ export function CalendarWeekView({
   }, []);
 
   const moveWeek = useCallback((offset: number) => {
-    setAnchor((current) => {
-      const next = addDays(current, offset * 7);
-      setMonth(next);
-      return next;
-    });
-  }, []);
+    const next = addDays(anchor, offset * 7);
+    setMonth(next);
+    onAnchorChange(next);
+  }, [anchor, onAnchorChange]);
 
   const goToToday = useCallback(() => {
     const target = startOfLocalDay(new Date());
-    setAnchor(target);
+    onAnchorChange(target);
     setMonth(target);
-  }, []);
+  }, [onAnchorChange]);
 
   const selectDate = useCallback((date: Date) => {
-    setAnchor(startOfLocalDay(date));
-    setMonth(startOfLocalDay(date));
-  }, []);
+    const target = startOfLocalDay(date);
+    onAnchorChange(target);
+    setMonth(target);
+  }, [onAnchorChange]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

@@ -86,6 +86,7 @@ import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { CalendarWeekView } from "./CalendarWeekView";
+import { startOfLocalDay } from "./calendarTime";
 import { formatAvailabilityText } from "./actionDrafting";
 import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { isActiveTaskStatus } from "./taskViews";
@@ -307,6 +308,7 @@ export function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(null);
+  const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
   const taskWorkspaceRef = useRef<TaskWorkspaceHandle>(null);
   const [selectedTaskStatus, setSelectedTaskStatus] = useState<ThreadTask["status"] | null>(null);
@@ -1359,12 +1361,14 @@ export function App() {
   }, [selected]);
 
   const [actionProposalSets, setActionProposalSets] = useState<Record<string, ActionProposal[]>>({});
+  const [actionHiddenCounts, setActionHiddenCounts] = useState<Record<string, number>>({});
   const [actionAnalysisLoading, setActionAnalysisLoading] = useState(false);
   const [actionAnalysisError, setActionAnalysisError] = useState<string | null>(null);
   const actionProposalKey = visibleDetail
     ? `${visibleDetail.thread.id}:${visibleDetail.thread.lastMessageAt}`
     : null;
   const actionProposals = actionProposalKey ? actionProposalSets[actionProposalKey] ?? [] : [];
+  const actionHiddenCount = actionProposalKey ? actionHiddenCounts[actionProposalKey] ?? 0 : 0;
   const actionAnalysisRequested = Boolean(
     actionAnalysisLoading
       || actionAnalysisError
@@ -1391,15 +1395,15 @@ export function App() {
     if (!visibleDetail || !actionProposalKey || actionAnalysisLoading) return;
     if (!aiActionAvailable) {
       setActionAnalysisError(aiActionFeatureEnabled
-        ? "Configure an AI provider and API key in Settings before analyzing a thread."
-        : "Enable Thread actions in AI settings before analyzing a thread.");
+        ? "Set up an AI provider and API key in AI settings to get suggestions."
+        : "Turn on Suggestions in AI settings to get suggestions.");
       return;
     }
     setActionAnalysisLoading(true);
     setActionAnalysisError(null);
     try {
-      const { provider, model, endpoint } = readAiRequestConfig("analyzing a thread");
-      const proposals = await mailClient.analyzeThread(
+      const { provider, model, endpoint } = readAiRequestConfig("getting suggestions");
+      const { proposals, hiddenCount } = await mailClient.analyzeThread(
         visibleDetail.thread.id,
         availabilityPreferences.timeZone,
         provider,
@@ -1407,6 +1411,7 @@ export function App() {
         endpoint,
       );
       setActionProposalSets((current) => ({ ...current, [actionProposalKey]: proposals }));
+      setActionHiddenCounts((current) => ({ ...current, [actionProposalKey]: hiddenCount }));
     } catch (reason) {
       setActionAnalysisError(errorMessage(reason));
     } finally {
@@ -1527,6 +1532,7 @@ export function App() {
   const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
   const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setRightWorkspace("contacts"); }, []);
   const openCalendarView = useCallback(() => {
+    setCalendarWeekAnchor((current) => current ?? startOfLocalDay(new Date()));
     setRightWorkspace("week");
     void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
     void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
@@ -2582,6 +2588,8 @@ export function App() {
 
       {rightWorkspace === "week" ? (
         <CalendarWeekView
+          anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
+          onAnchorChange={setCalendarWeekAnchor}
           accounts={calendar.accounts}
           calendars={calendar.calendars}
           onToggleCalendar={(accountId, calendarId, selected) => {
@@ -2642,6 +2650,7 @@ export function App() {
             error: actionAnalysisError,
             preview: actionAnalysisRequested ? actionAnalysisPreview : null,
             proposals: actionProposals,
+            hiddenCount: actionHiddenCount,
             onAnalyze: () => void runAnalyzeThread(),
             onDiscardProposal: discardActionProposal,
             onReviewProposal: reviewActionProposal,
