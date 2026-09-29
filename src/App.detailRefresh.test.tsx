@@ -158,8 +158,8 @@ describe("conversation brief", () => {
     it("sends the question with earlier turns, files its tasks under Suggested, and opens a drafted reply for review", async () => {
       await enableAi({ threadChat: true, actionExtraction: true });
       const threadChat = vi.spyOn(mailClient, "threadChat")
-        .mockResolvedValueOnce({ answer: "It introduces the shortcuts.", analysis: { proposals: [chatProposal], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [] })
-        .mockResolvedValueOnce({ answer: "Here is a reply.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: "Thanks for the tour!", sources: [], searched: [] });
+        .mockResolvedValueOnce({ answer: "It introduces the shortcuts.", analysis: { proposals: [chatProposal], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], availability: null })
+        .mockResolvedValueOnce({ answer: "Here is a reply.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: "Thanks for the tour!", sources: [], searched: [], availability: null });
       render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
@@ -195,7 +195,7 @@ describe("conversation brief", () => {
       await enableAi({ threadChat: true });
       const threadChat = vi.spyOn(mailClient, "threadChat")
         .mockRejectedValueOnce(new Error("error sending request for url"))
-        .mockResolvedValueOnce({ answer: "Answered.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [] });
+        .mockResolvedValueOnce({ answer: "Answered.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], availability: null });
       render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       const panel = screen.getByRole("complementary", { name: "Conversation context" });

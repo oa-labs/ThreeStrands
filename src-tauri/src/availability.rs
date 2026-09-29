@@ -60,6 +60,11 @@ fn local_datetime(zone: Tz, date: NaiveDate, time: NaiveTime) -> Option<DateTime
     }
 }
 
+/// Most candidates returned by one search.
+pub(crate) const MAX_CANDIDATES: usize = 20;
+
+/// Free working-hour slots in the range, earliest first. `max_per_day`
+/// spreads the result across days instead of filling it from the first one.
 pub fn find_candidates(
     range_start: &str,
     range_end: &str,
@@ -67,7 +72,12 @@ pub fn find_candidates(
     busy: &[BusyInterval],
     checked_calendar_count: usize,
     total_calendar_count: usize,
+    max_per_day: Option<usize>,
 ) -> Result<Vec<AvailabilityCandidate>, String> {
+    if max_per_day.is_some_and(|limit| !(1..=MAX_CANDIDATES).contains(&limit)) {
+        return Err(format!("Slots per day must be between 1 and {MAX_CANDIDATES}"));
+    }
+    let per_day = max_per_day.unwrap_or(MAX_CANDIDATES);
     let range_start = parse_range(range_start)?;
     let range_end = parse_range(range_end)?;
     if range_end <= range_start {
@@ -82,13 +92,14 @@ pub fn find_candidates(
     let increment = Duration::minutes(preferences.slot_increment_minutes as i64);
     let now = Utc::now();
 
-    while date <= last_date && candidates.len() < 20 {
+    while date <= last_date && candidates.len() < MAX_CANDIDATES {
         let weekday = date.weekday().num_days_from_sunday() as u8;
+        let day_start = candidates.len();
         for window in preferences.working_windows.iter().filter(|window| window.weekday == weekday) {
             let start = parse_clock(&window.start)?;
             let end = parse_clock(&window.end)?;
             let mut cursor = start;
-            while cursor + duration <= end && candidates.len() < 20 {
+            while cursor + duration <= end && candidates.len() < MAX_CANDIDATES && candidates.len() - day_start < per_day {
                 let Some(slot_start) = local_datetime(zone, date, cursor) else {
                     cursor += increment;
                     continue;
@@ -166,6 +177,7 @@ mod tests {
             &[BusyInterval { start: "2099-09-21T13:30:00Z".to_string(), end: "2099-09-21T14:30:00Z".to_string() }],
             1,
             1,
+            None,
         ).unwrap();
         assert_eq!(candidates[0].start, "2099-09-21T13:00:00+00:00");
         assert!(candidates.iter().all(|candidate| candidate.status == "verified"));
@@ -183,9 +195,40 @@ mod tests {
             &[],
             0,
             0,
+            None,
         ).unwrap();
         assert!(candidates.iter().all(|candidate| candidate.status == "unverified"));
         assert!(candidates.iter().all(|candidate| candidate.start != "2026-03-08T02:00:00-05:00"));
+    }
+
+    #[test]
+    fn a_per_day_limit_spreads_candidates_across_days() {
+        let mut preferences = preferences();
+        preferences.working_windows = (1..=5)
+            .map(|weekday| AvailabilityWindow { weekday, start: "09:00".to_string(), end: "17:00".to_string() })
+            .collect();
+        // Monday 2099-09-21 through Friday 2099-09-25, New York time.
+        let range = ("2099-09-21T04:00:00Z", "2099-09-26T04:00:00Z");
+        let busy = [BusyInterval { start: "2099-09-22T13:00:00Z".to_string(), end: "2099-09-22T15:00:00Z".to_string() }];
+        let unlimited = find_candidates(range.0, range.1, &preferences, &busy, 1, 1, None).unwrap();
+        assert_eq!(unlimited.len(), MAX_CANDIDATES);
+        // Without a limit, Monday's sixteen half-hour slots come first.
+        assert_eq!(unlimited.iter().filter(|candidate| candidate.start.starts_with("2099-09-21")).count(), 16);
+        assert_eq!(unlimited[1].start, "2099-09-21T13:30:00+00:00");
+
+        let spread = find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(1)).unwrap();
+        let starts = spread.iter().map(|candidate| candidate.start.as_str()).collect::<Vec<_>>();
+        assert_eq!(starts, vec![
+            "2099-09-21T13:00:00+00:00",
+            "2099-09-22T15:00:00+00:00",
+            "2099-09-23T13:00:00+00:00",
+            "2099-09-24T13:00:00+00:00",
+            "2099-09-25T13:00:00+00:00",
+        ]);
+        assert_eq!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(2)).unwrap().len(), 10);
+        assert_eq!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(MAX_CANDIDATES)).unwrap().len(), MAX_CANDIDATES);
+        assert!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(0)).is_err());
+        assert!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(MAX_CANDIDATES + 1)).is_err());
     }
 
     #[test]

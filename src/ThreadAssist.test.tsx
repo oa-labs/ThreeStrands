@@ -211,6 +211,40 @@ describe("ThreadAssist", () => {
     expect(onRun).toHaveBeenCalledWith(false);
   });
 
+  it("offers no copy action before a brief exists", () => {
+    render(<ThreadAssist {...props()} />);
+    expect(screen.queryByRole("button", { name: "Copy brief" })).not.toBeInTheDocument();
+  });
+
+  it("copies the brief to the clipboard and confirms it until the brief changes", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const bulleted: ThreadDetail = {
+      ...summarized,
+      thread: { ...summarized.thread, summary: "- The client needs the website.\n• Due Friday." },
+    };
+    const { rerender } = render(<ThreadAssist {...props({ detail: bulleted })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy brief" }));
+
+    expect(writeText).toHaveBeenCalledWith("- The client needs the website.\n- Due Friday.");
+    expect(await screen.findByRole("button", { name: "Copied brief" })).toBeInTheDocument();
+
+    rerender(<ThreadAssist {...props({ detail: summarized })} />);
+    expect(screen.getByRole("button", { name: "Copy brief" })).toBeInTheDocument();
+  });
+
+  it("reports when the brief cannot be copied", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("clipboard unavailable"));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<ThreadAssist {...props({ detail: summarized })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy brief" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Could not copy brief");
+    expect(screen.getByRole("button", { name: "Copy brief" })).toBeInTheDocument();
+  });
+
   it("stays read-only: no text entry or pickers in the AI section", () => {
     render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal] } })} />);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();

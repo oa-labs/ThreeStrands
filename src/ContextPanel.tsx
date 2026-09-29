@@ -161,10 +161,10 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
               {emailCopyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}
               {profile?.role || profile?.company ? <p>{[profile.role, profile.company].filter(Boolean).join(" · ")}</p> : null}
               {profile?.location ? <p>{profile.location}</p> : null}
+              {profile?.links.length ? <nav className="contact-sidebar-links" aria-label="Contact links">{profile.links.map((link) => <a key={link} href={link} onClick={(event) => { event.preventDefault(); void openUrl(link); }}>{new URL(link).hostname}</a>)}</nav> : null}
             </div>
           </div>
           {profile?.bio ? <p className="contact-sidebar-bio">{profile.bio}</p> : null}
-          {profile?.links.length ? <nav className="contact-sidebar-links" aria-label="Contact links">{profile.links.map((link) => <button type="button" key={link} onClick={() => void openUrl(link)}>{new URL(link).hostname}</button>)}</nav> : null}
           {profile?.notes ? <section className="contact-sidebar-notes"><h3>Notes</h3><p>{profile.notes}</p></section> : null}
         </section>
       ) : <p className="contacts-status">Select a conversation participant.</p>}

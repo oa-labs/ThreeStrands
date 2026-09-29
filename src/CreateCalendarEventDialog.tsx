@@ -14,6 +14,9 @@ export function CreateCalendarEventDialog({
   end,
   accounts,
   calendars,
+  initialTitle = "",
+  initialInvitees = [],
+  initialDescription = "",
   onClose,
   onCreated,
 }: {
@@ -21,6 +24,10 @@ export function CreateCalendarEventDialog({
   end: Date;
   accounts: CalendarAccount[];
   calendars: CalendarOption[];
+  /** Prefills from a meeting suggestion; the user still reviews and creates. */
+  initialTitle?: string;
+  initialInvitees?: string[];
+  initialDescription?: string;
   onClose(): void;
   onCreated(): void;
 }) {
@@ -31,11 +38,11 @@ export function CreateCalendarEventDialog({
   const [calendarKey, setCalendarKey] = useState(() => defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "");
   const selectedCalendarKey = writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === calendarKey)
     ? calendarKey : defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "";
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initialTitle);
   const [startValue, setStartValue] = useState(() => localDateTimeValue(start));
   const [endValue, setEndValue] = useState(() => localDateTimeValue(end));
-  const [invitees, setInvitees] = useState("");
-  const [description, setDescription] = useState("");
+  const [invitees, setInvitees] = useState(() => initialInvitees.join(", "));
+  const [description, setDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 

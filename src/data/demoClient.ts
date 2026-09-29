@@ -245,6 +245,14 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     return [localMidnight(event.start), localMidnight(event.end)];
   }
 
+  /** Timed events on connected calendars, as busy intervals; all-day events do not block time. */
+  function demoBusyIntervals(): [number, number][] {
+    const connected = new Set(calendarAccounts.filter((account) => account.status === "connected").map((account) => account.email));
+    return scheduleEvents
+      .filter((event) => !event.allDay && connected.has(event.accountId))
+      .map(eventRange);
+  }
+
   const client: MailClient = {
     ...demoCorrespondence(threadForMessage, () => accounts[0]?.email ?? DEMO_ACCOUNT_ID),
     async listThreads(accountId) {
@@ -373,7 +381,12 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const detail = await this.getThread(request.threadId);
       await new Promise((resolve) => setTimeout(resolve, 400));
       const wantsReply = /\b(draft|write|reply)\b/i.test(request.question);
+      const wantsTimes = /\b(free|available|availability|when can|find a time)\b/i.test(request.question);
+      const now = new Date();
       return {
+        availability: wantsTimes
+          ? { rangeStart: now.toISOString(), rangeEnd: new Date(now.getTime() + 7 * 86_400_000).toISOString(), durationMinutes: 30 }
+          : null,
         answer: `In the demo, answers come from “${detail.thread.subject}”: ${detail.thread.snippet}`,
         analysis: { proposals: [], hiddenCount: 0 },
         replyDraft: wantsReply ? "Thanks for the update. I'll take a look and get back to you soon." : null,
@@ -704,11 +717,13 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       scheduleEvents.push(created);
       return structuredClone(created);
     },
-    async findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences }): Promise<AvailabilityResult> {
+    async findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences; maxPerDay?: number }): Promise<AvailabilityResult> {
       const start = new Date(request.rangeStart);
       const end = new Date(request.rangeEnd);
       const total = calendarOptions.filter((option) => option.selected).length;
       const candidates: AvailabilityResult["candidates"] = [];
+      const perDay = new Map<string, number>();
+      const busy = demoBusyIntervals();
       const now = Date.now();
       for (let cursor = new Date(start); cursor < end && candidates.length < 20; cursor.setMinutes(cursor.getMinutes() + request.preferences.slotIncrementMinutes)) {
         const weekday = cursor.getDay();
@@ -719,6 +734,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         const minutes = cursor.getHours() * 60 + cursor.getMinutes();
         if (minutes < startHour * 60 + startMinute || minutes + request.preferences.defaultDurationMinutes > endHour * 60 + endMinute || cursor.getTime() <= now) continue;
         const slotEnd = new Date(cursor.getTime() + request.preferences.defaultDurationMinutes * 60_000);
+        if (busy.some(([busyStart, busyEnd]) => busyStart < slotEnd.getTime() && busyEnd > cursor.getTime())) continue;
+        const day = cursor.toDateString();
+        if ((perDay.get(day) ?? 0) >= (request.maxPerDay ?? 20)) continue;
+        perDay.set(day, (perDay.get(day) ?? 0) + 1);
         candidates.push({
           start: cursor.toISOString(),
           end: slotEnd.toISOString(),
@@ -727,11 +746,16 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       }
       return { candidates, checkedCalendarCount: total, totalCalendarCount: total, errors: [] };
     },
-    async checkProposedTime(_request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck> {
+    async checkProposedTime(request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck> {
       const total = calendarOptions.filter((option) => option.selected).length;
+      const start = Date.parse(request.start);
+      const end = Date.parse(request.end);
+      const conflicts = demoBusyIntervals()
+        .filter(([busyStart, busyEnd]) => busyStart < end && busyEnd > start)
+        .map(([busyStart, busyEnd]) => ({ start: new Date(busyStart).toISOString(), end: new Date(busyEnd).toISOString() }));
       return {
-        status: total > 0 ? "free" : "unverified",
-        conflicts: [],
+        status: conflicts.length > 0 ? "conflicting" : total > 0 ? "free" : "unverified",
+        conflicts,
         checkedCalendarCount: total,
         totalCalendarCount: total,
         errors: [],

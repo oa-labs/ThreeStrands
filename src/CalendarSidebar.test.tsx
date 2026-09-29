@@ -622,4 +622,45 @@ describe("calendar sidebar", () => {
     expect(end.getTime() - start.getTime()).toBeLessThanOrEqual(25 * 60 * 60 * 1000);
     expect(request.timeZone).toBeTruthy();
   });
+
+describe("calendar sidebar opened from a meeting", () => {
+  afterEach(cleanup);
+
+  it("starts on the meeting's day and checks availability at the meeting's duration", async () => {
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    const day = new Date(2099, 8, 23, 12);
+    render(<CalendarSidebar
+      onClose={vi.fn()}
+      onOpenSettings={vi.fn()}
+      availabilityPreferences={{ timeZone: "America/New_York", workingWindows: [{ weekday: 3, start: "09:00", end: "17:00" }], defaultDurationMinutes: 30, slotIncrementMinutes: 15 }}
+      initialDate={day}
+      initialDurationMinutes={45}
+    />);
+
+    const sidebar = screen.getByRole("complementary", { name: "Calendar schedule" });
+    expect(within(sidebar).getByRole("heading", { level: 2 })).toHaveTextContent(new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(day));
+    fireEvent.click(within(sidebar).getByRole("button", { name: "Check Schedule" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("combobox", { name: "Duration" })).toHaveValue("45");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check Schedule" }));
+    await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ preferences: expect.objectContaining({ defaultDurationMinutes: 45 }) })));
+  });
+
+  it("offers a meeting's unusual length as a duration choice", async () => {
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    render(<CalendarSidebar
+      onClose={vi.fn()}
+      onOpenSettings={vi.fn()}
+      availabilityPreferences={{ timeZone: "America/New_York", workingWindows: [{ weekday: 3, start: "09:00", end: "17:00" }], defaultDurationMinutes: 30, slotIncrementMinutes: 15 }}
+      initialDate={new Date(2099, 8, 23, 12)}
+      initialDurationMinutes={50}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Check Schedule" }));
+    const duration = within(await screen.findByRole("dialog")).getByRole("combobox", { name: "Duration" });
+    expect(duration).toHaveValue("50");
+    expect(within(duration).getAllByRole("option").map((option) => option.textContent)).toContain("50 minutes");
+  });
+});
+
 });

@@ -33,3 +33,8 @@ export function formatAvailabilityText(
   return `Here are some times that work for me:\n\n${lines.join("\n")}`;
 }
 
+/** Confirms one proposed time in a reply, formatted like the availability list. */
+export function formatConfirmationText(slot: Pick<AvailabilityCandidate, "start" | "end">, timeZone: string): string {
+  const [line] = formatAvailabilityText([{ ...slot, status: "verified" }], timeZone).split("\n").slice(-1);
+  return `That time works for me: ${line.replace(/^- /, "")}.`;
+}

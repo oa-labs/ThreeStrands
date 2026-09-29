@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAvailabilityText } from "./actionDrafting";
+import { formatAvailabilityText, formatConfirmationText } from "./actionDrafting";
 
 describe("formatAvailabilityText", () => {
   it("preserves every selected instant and includes the timezone label", () => {
@@ -14,5 +14,12 @@ describe("formatAvailabilityText", () => {
     expect(text).toMatch(/9:00.*9:30/);
     expect(text).toContain("(America/New_York)");
     expect(text.split("\n").filter((line) => line.startsWith("- "))).toHaveLength(2);
+  });
+});
+
+describe("formatConfirmationText", () => {
+  it("confirms one instant in the reader's timezone", () => {
+    const text = formatConfirmationText({ start: "2026-10-01T19:00:00Z", end: "2026-10-01T19:30:00Z" }, "America/New_York");
+    expect(text).toMatch(/^That time works for me: Thursday, October 1, 2026 · 3:00.*3:30.*\(America\/New_York\)\.$/);
   });
 });

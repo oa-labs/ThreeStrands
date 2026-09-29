@@ -191,6 +191,9 @@ pub struct FindAvailabilityRequest {
     pub range_start: String,
     pub range_end: String,
     pub preferences: AvailabilityPreferences,
+    /// Spreads candidates across days; `None` keeps the earliest slots.
+    #[serde(default)]
+    pub max_per_day: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -583,6 +586,16 @@ pub struct ThreadChatRequest {
     pub user_time_zone: String,
 }
 
+/// A range the chat asked the app to search for open times; the times shown
+/// always come from the user's calendar.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAvailability {
+    pub range_start: String,
+    pub range_end: String,
+    pub duration_minutes: Option<u32>,
+}
+
 /// A conversation shared with the provider while answering.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -603,6 +616,7 @@ pub struct ThreadChatReply {
     pub sources: Vec<ChatSource>,
     /// Every other conversation shared because the question searched all mail.
     pub searched: Vec<ChatSource>,
+    pub availability: Option<ChatAvailability>,
 }
 
 /// The combined result of one brief request: the persisted summary and the

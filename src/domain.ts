@@ -315,6 +315,9 @@ export type ThreadChatRequest = {
   userTimeZone: string;
 };
 
+/** A range the chat asked the app to search; times always come from the calendar. */
+export type ChatAvailability = { rangeStart: string; rangeEnd: string; durationMinutes: number | null };
+
 /** Another conversation shared with the provider while answering. */
 export type ChatSource = { threadId: string; accountId: string; subject: string; lastMessageAt: string };
 
@@ -326,6 +329,7 @@ export type ThreadChatReply = {
   sources: ChatSource[];
   /** Every other conversation shared because the question searched all mail. */
   searched: ChatSource[];
+  availability: ChatAvailability | null;
 };
 
 /** One combined request: the persisted summary and the verified suggestions. */

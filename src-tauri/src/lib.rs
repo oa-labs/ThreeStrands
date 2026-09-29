@@ -2088,6 +2088,7 @@ async fn find_availability(
         &busy,
         checked,
         total,
+        request.max_per_day,
     )?;
     Ok(models::AvailabilityResult {
         candidates,
@@ -2625,6 +2626,7 @@ async fn ai_thread_chat(
         reply_draft: answer.reply_draft,
         sources,
         searched,
+        availability: answer.availability,
     })
 }
 

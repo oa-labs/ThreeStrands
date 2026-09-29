@@ -1,6 +1,6 @@
 import { MessageSquareText, RotateCcw, Sparkles } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { ChatSource } from "./domain";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import type { ChatAvailability, ChatSource } from "./domain";
 
 export type ChatEntry =
   | { id: string; role: "user"; content: string; searchMailbox: boolean }
@@ -13,6 +13,8 @@ export type ChatEntry =
     hiddenSuggestions: number;
     sources: ChatSource[];
     searched: ChatSource[];
+    /** A range to show open times for, taken from the user's calendar. */
+    availability: ChatAvailability | null;
   };
 
 export const QUICK_QUESTIONS = [
@@ -41,6 +43,7 @@ export function ThreadChat({
   onOpenThread,
   onShowSuggestions,
   onOpenSettings,
+  renderAvailability,
 }: {
   enabled: boolean;
   available: boolean;
@@ -54,6 +57,8 @@ export function ThreadChat({
   onOpenThread(threadId: string): void;
   onShowSuggestions(): void;
   onOpenSettings(): void;
+  /** Shows open times for an answer that asked for them. */
+  renderAvailability?(availability: ChatAvailability): ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -125,6 +130,7 @@ export function ThreadChat({
       ) : (
         <div key={entry.id} className="thread-chat-answer">
           <p>{entry.content}</p>
+          {entry.availability && renderAvailability ? renderAvailability(entry.availability) : null}
           {entry.replyDraft ? <div className="thread-chat-draft">
             <pre>{entry.replyDraft}</pre>
             <button type="button" onClick={() => onUseReply(entry.replyDraft!)}>Use as Reply</button>

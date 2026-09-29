@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { ContextPanel } from "./ContextPanel";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 
 vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn()}}));
+vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null};
 const bob:ContactProfile={...jane,id:"contact:bob@example.com",displayName:"Bob Lee",addresses:["bob@example.com"]};
@@ -93,6 +95,24 @@ describe("ContextPanel",()=>{
 
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:null,displayName:"Bob Lee",addresses:["bob@example.com"]})));
     expect(await screen.findByRole("button",{name:"Add favorite"})).toBeInTheDocument();
+  });
+
+  it("shows the contact URL as a text hyperlink after the address instead of a button",async()=>{
+    const brian:ContactProfile={...bob,displayName:"Brian Anderson",role:"Vice President of IT",location:"3443 N. Central Ave., Phoenix, AZ 85012",links:["https://upwardprojects.com"]};
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([brian]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(brian);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    renderPanel();
+    await screen.findByRole("heading",{name:"Brian Anderson"});
+
+    const address=screen.getByText("3443 N. Central Ave., Phoenix, AZ 85012");
+    const link=screen.getByRole("link",{name:"upwardprojects.com"});
+    expect(link).toHaveAttribute("href","https://upwardprojects.com");
+    expect(screen.queryByRole("button",{name:"upwardprojects.com"})).not.toBeInTheDocument();
+    expect(address.compareDocumentPosition(link)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(link);
+    expect(openUrl).toHaveBeenCalledWith("https://upwardprojects.com");
   });
 
   it("lists recent emails with the participant, excluding the open conversation",async()=>{

@@ -131,7 +131,7 @@ function AvailabilityRequestDialog({
         void onSubmit(new Date(year, month - 1, day), duration);
       }}>
         <label><span>Date</span><input ref={dateRef} type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value)} required /></label>
-        <label><span>Duration</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{[15, 30, 45, 60, 90, 120].map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
+        <label><span>Duration</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{[...new Set([15, 30, 45, 60, 90, 120, durationMinutes])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={loading}>{loading ? "Checking…" : "Check Schedule"}</button></div>
       </form>
@@ -215,6 +215,8 @@ export function CalendarSidebar({
   onDraftAvailability,
   selectedCalendarAccountIds,
   embedded = false,
+  initialDate,
+  initialDurationMinutes,
 }: {
   onClose(): void;
   onOpenSettings(): void;
@@ -222,14 +224,18 @@ export function CalendarSidebar({
   onDraftAvailability?(candidates: AvailabilityCandidate[]): void;
   selectedCalendarAccountIds?: string[];
   embedded?: boolean;
+  /** Opens on this day, for example a meeting suggestion's first day. */
+  initialDate?: Date;
+  /** Starts availability checks at a meeting's duration. */
+  initialDurationMinutes?: number;
 }) {
-  const [date, setDate] = useState(() => startOfLocalDay(new Date()));
+  const [date, setDate] = useState(() => startOfLocalDay(initialDate ?? new Date()));
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
   const [availability, setAvailability] = useState<AvailabilityResult | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [selectedCandidates, setSelectedCandidates] = useState<Set<string>>(() => new Set());
-  const [durationMinutes, setDurationMinutes] = useState(availabilityPreferences.defaultDurationMinutes);
+  const [durationMinutes, setDurationMinutes] = useState(initialDurationMinutes ?? availabilityPreferences.defaultDurationMinutes);
   const [availabilityDialogOpen, setAvailabilityDialogOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);

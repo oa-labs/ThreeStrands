@@ -147,6 +147,19 @@ plain text. A chat answer's tasks and meetings join Suggested and follow the
 same review boundary, and a drafted reply opens in the composer for review
 rather than being sent.
 
+Meeting suggestions and chat answers about availability are scheduled inside
+the card, from the user's calendar and without AI. An exact time is checked
+for conflicts as soon as the card appears, naming the events it overlaps; a
+range, or a meeting with no usable time, offers the first open working-hour
+slot on each of the next few days. A missing meeting timezone defaults to the
+user's and is labelled. Candidate times are toggle buttons reached with Tab and
+chosen with Space or Enter, never with letter or number keys, which stay
+application shortcuts. Every outcome crosses a review boundary: Add to Calendar
+opens the event dialog prefilled, replies open in the composer, and More Times
+opens the Calendar sidebar on the meeting's day at its duration. The chat model
+never states availability; it can only ask the app to show open times for a
+range.
+
 AI output is a proposal, never a mutation. Proposal cards remain read-only.
 Editing a proposal opens a review dialog. Accepting an AI task opens a task
 review dialog and creates the task only after the user submits it. Meeting and

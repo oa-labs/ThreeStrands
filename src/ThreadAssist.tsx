@@ -1,4 +1,5 @@
-import { Pencil, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { Check, Copy, Pencil, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import type { ActionProposal, MeetingProposal, ThreadDetail } from "./domain";
 import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
@@ -52,8 +53,16 @@ export function summaryLines(summary: string): string[] {
     .filter(Boolean);
 }
 
+export function summaryClipboardText(summary: string): string {
+  return summaryLines(summary)
+    .map((line) => `- ${line}`)
+    .join("\n");
+}
+
 export function ThreadAssist({ detail, summary, suggestions, loading, error, preview, onRun, onOpenSettings }: ThreadAssistProps) {
   const { thread } = detail;
+  const [copiedSummary, setCopiedSummary] = useState<string | null>(null);
+  const [copyFailed, setCopyFailed] = useState(false);
   if (!summary.enabled && !suggestions.enabled) {
     return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-label="Brief">
       <p className="context-status">AI briefs and suggestions are off.</p>
@@ -69,6 +78,7 @@ export function ThreadAssist({ detail, summary, suggestions, loading, error, pre
 
   const title = summary.available ? "Brief" : "Suggestions";
   const summaryText = summary.available ? thread.summary : null;
+  const copied = Boolean(summaryText) && copiedSummary === summaryText;
   const stale = Boolean(summaryText && thread.summaryGeneratedAt && thread.lastMessageAt > thread.summaryGeneratedAt);
   const busy = loading || summary.pending;
   const generated = Boolean(summaryText) || suggestions.requested;
@@ -82,16 +92,36 @@ export function ThreadAssist({ detail, summary, suggestions, loading, error, pre
     const sender = parseAddress(message.sender);
     return `${sender.name || sender.email} · ${new Date(message.sentAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
   };
+  const copyBrief = async () => {
+    if (!summaryText) return;
+    setCopyFailed(false);
+    try {
+      await navigator.clipboard.writeText(summaryClipboardText(summaryText));
+      setCopiedSummary(summaryText);
+    } catch {
+      setCopyFailed(true);
+    }
+  };
 
   return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-labelledby="thread-assist-heading">
     <header className="context-section-header">
       <h3 id="thread-assist-heading"><Sparkles size={13} />{title}</h3>
-      {busy ? <span className="context-status" role="status">Reading the conversation…</span> : generated ? (
-        <HoverTooltip title={`Refresh ${title.toLowerCase()}`} placement="bottom">
-          <button type="button" className="context-icon-button" aria-label={`Refresh ${title.toLowerCase()}`} onClick={() => onRun(true)}><RefreshCw size={14} /></button>
-        </HoverTooltip>
-      ) : null}
+      {busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
+        <div className="context-section-header-actions">
+          {summaryText ? (
+            <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">
+              <button type="button" className="context-icon-button" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+            </HoverTooltip>
+          ) : null}
+          {generated ? (
+            <HoverTooltip title={`Refresh ${title.toLowerCase()}`} placement="bottom">
+              <button type="button" className="context-icon-button" aria-label={`Refresh ${title.toLowerCase()}`} onClick={() => onRun(true)}><RefreshCw size={14} /></button>
+            </HoverTooltip>
+          ) : null}
+        </div>
+      )}
     </header>
+    {copyFailed ? <p className="context-status" role="status">Could not copy brief</p> : null}
     {summaryText ? <ul className="thread-assist-summary">
       {summaryLines(summaryText).map((line, index) => <li key={index}>{line}</li>)}
     </ul> : null}
