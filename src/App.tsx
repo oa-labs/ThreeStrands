@@ -87,7 +87,7 @@ import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachm
 import { CalendarSidebar } from "./CalendarSidebar";
 import { CalendarWeekView } from "./CalendarWeekView";
 import { eventDate, startOfLocalDay } from "./calendarTime";
-import { formatAvailabilityText } from "./actionDrafting";
+import { formatAvailabilityText, formatConfirmationText } from "./actionDrafting";
 import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { isActiveTaskStatus } from "./taskViews";
 import { ContactsWorkspace } from "./ContactsWorkspace";
@@ -96,6 +96,10 @@ import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadA
 import { ThreadTasks } from "./ThreadTasks";
 import { ContactMeetings } from "./ContactMeetings";
 import { ThreadChat, type ChatEntry } from "./ThreadChat";
+import { MeetingScheduler, type ScheduleSlot } from "./MeetingScheduler";
+import { planChatAvailability } from "./scheduling";
+import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
+import { clearScheduleCache } from "./calendarScheduleCache";
 import { hasEmailedBefore, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
@@ -1216,7 +1220,12 @@ export function App() {
     setRightWorkspace((current) => current === "tasks" ? null : "tasks");
   }, []);
 
-  const openSchedule = useCallback(() => {
+  // Opening the Calendar sidebar from a meeting starts it on that day at the
+  // meeting's duration; the key remounts the sidebar for each request.
+  const calendarConnected = calendar.accounts.some((account) => account.status === "connected");
+  const [calendarSidebarStart, setCalendarSidebarStart] = useState<{ key: number; date: Date; durationMinutes: number } | null>(null);
+  const openCalendarAt = useCallback((date: Date, durationMinutes: number) => {
+    setCalendarSidebarStart((current) => ({ key: (current?.key ?? 0) + 1, date, durationMinutes }));
     setRightWorkspace("calendar");
   }, []);
 
@@ -1558,6 +1567,7 @@ export function App() {
         replyDraft: reply.replyDraft,
         addedSuggestions: reply.analysis.proposals.length,
         hiddenSuggestions: reply.analysis.hiddenCount,
+        availability: reply.availability,
         sources: reply.sources,
         searched: reply.searched,
       };
@@ -1651,10 +1661,52 @@ export function App() {
     setNotice({ message: taskEditor.kind === "proposal" ? "Task added from suggestion" : "Task added" });
   }, [refreshTaskIndicators, setNotice, taskEditor, updateActionProposal]);
 
-  const findTimesFromProposal = useCallback((proposal: MeetingProposal) => {
-    openSchedule();
-    setNotice({ message: proposal.rawTimeLanguage ? `Check schedule for: ${proposal.rawTimeLanguage}` : "Check schedule for this meeting" });
-  }, [openSchedule, setNotice]);
+  // Add to Calendar from a meeting suggestion or a chat answer: the event
+  // dialog opens prefilled and nothing is created until the user submits.
+  const [meetingEventDraft, setMeetingEventDraft] = useState<{
+    start: Date;
+    end: Date;
+    title: string;
+    invitees: string[];
+    description: string;
+    /** The suggestion this event comes from; it is removed once the event exists. */
+    source: { key: string; proposal: ActionProposal } | null;
+  } | null>(null);
+  const addMeetingToCalendar = useCallback((slot: ScheduleSlot, meeting: { title: string; participants: string[]; excerpt: string | null }, source: { key: string; proposal: ActionProposal } | null) => {
+    if (!visibleDetail) return;
+    const invitees = meeting.participants.filter((participant) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(participant.trim())).map((participant) => participant.trim());
+    const sender = proactiveBriefSender(visibleDetail, ownAddresses);
+    // The dialog lists writable calendars, which load lazily elsewhere.
+    void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
+    setMeetingEventDraft({
+      start: new Date(slot.start),
+      end: new Date(slot.end),
+      title: meeting.title,
+      invitees: invitees.length > 0 ? invitees : sender ? [sender] : [],
+      description: [`Scheduled from “${visibleDetail.thread.subject}”.`, meeting.excerpt ? `“${meeting.excerpt}”` : null].filter(Boolean).join("\n\n"),
+      source,
+    });
+  }, [ownAddresses, refreshCalendarOptions, visibleDetail]);
+  const meetingCreated = useCallback(() => {
+    const source = meetingEventDraft?.source;
+    if (source) {
+      setActionProposalSets((current) => ({ ...current, [source.key]: (current[source.key] ?? []).filter((proposal) => proposal !== source.proposal) }));
+    }
+    setMeetingEventDraft(null);
+    clearScheduleCache();
+    setNotice({ message: "Added to calendar" });
+  }, [meetingEventDraft, setNotice]);
+  const confirmMeetingTime = useCallback((slot: ScheduleSlot) => {
+    correspondence.replyWithText(formatConfirmationText(slot, availabilityPreferences.timeZone), visibleDetail?.messages.at(-1)?.id);
+  }, [availabilityPreferences.timeZone, correspondence, visibleDetail]);
+  const meetingScheduling = {
+    calendarConnected,
+    preferences: availabilityPreferences,
+    onReplyWithTimes: draftAvailabilityReply,
+    onConfirmTime: confirmMeetingTime,
+    onMoreTimes: openCalendarAt,
+    onOpenCalendarSettings: () => openSettingsAt("calendarAccounts"),
+  };
 
   useEffect(() => {
     selectedThreadRowRef.current?.scrollIntoView?.({ block: "nearest" });
@@ -1705,7 +1757,6 @@ export function App() {
     void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
     void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
   }, [refreshCalendarAccounts, refreshCalendarOptions]);
-  const calendarConnected = calendar.accounts.some((account) => account.status === "connected");
 
   const goToSplitTab = useCallback((id: string) => goToTab(id), [goToTab]);
 
@@ -2701,6 +2752,9 @@ export function App() {
       ) : null}
       {rightWorkspace === "calendar" ? (
         <CalendarSidebar
+          key={calendarSidebarStart?.key ?? 0}
+          initialDate={calendarSidebarStart?.date}
+          initialDurationMinutes={calendarSidebarStart?.durationMinutes}
           onClose={() => setRightWorkspace(null)}
           selectedCalendarAccountIds={[...new Set(calendar.calendars.filter((option) => option.selected).map((option) => option.accountId))]}
           availabilityPreferences={availabilityPreferences}
@@ -2729,7 +2783,14 @@ export function App() {
                 hiddenCount: actionHiddenCount,
                 onDiscard: discardActionProposal,
                 onReview: reviewActionProposal,
-                onFindTimes: findTimesFromProposal,
+              }}
+              scheduling={{
+                ...meetingScheduling,
+                onAddToCalendar: (_index, proposal, slot) => addMeetingToCalendar(
+                  slot,
+                  { title: proposal.title, participants: proposal.participants, excerpt: proposal.evidence.excerpt },
+                  actionProposalKey ? { key: actionProposalKey, proposal } : null,
+                ),
               }}
               loading={actionAnalysisLoading}
               error={summaryError ?? actionAnalysisError}
@@ -2756,6 +2817,14 @@ export function App() {
               onOpenThread={openTaskThread}
               onShowSuggestions={() => document.getElementById(THREAD_ASSIST_ID)?.scrollIntoView?.({ block: "nearest" })}
               onOpenSettings={() => openSettingsAt("ai")}
+              renderAvailability={(availability) => (
+                <MeetingScheduler
+                  key={`${availability.rangeStart}|${availability.rangeEnd}|${availability.durationMinutes}`}
+                  plan={planChatAvailability(availability, new Date(), availabilityPreferences.defaultDurationMinutes)}
+                  {...meetingScheduling}
+                  onAddToCalendar={(slot) => addMeetingToCalendar(slot, { title: visibleDetail.thread.subject, participants: [], excerpt: null }, null)}
+                />
+              )}
             />
           ) : null}
           related={(person) => visibleDetail ? <>
@@ -2799,6 +2868,19 @@ export function App() {
       ) : null}
 
       {correspondence.overlay}
+      {meetingEventDraft ? (
+        <CreateCalendarEventDialog
+          start={meetingEventDraft.start}
+          end={meetingEventDraft.end}
+          accounts={calendar.accounts}
+          calendars={calendar.calendars}
+          initialTitle={meetingEventDraft.title}
+          initialInvitees={meetingEventDraft.invitees}
+          initialDescription={meetingEventDraft.description}
+          onClose={() => setMeetingEventDraft(null)}
+          onCreated={meetingCreated}
+        />
+      ) : null}
       {taskEditor ? (
         <TaskEditorDialog
           initial={taskEditor.kind === "proposal" ? taskEditor.proposal : taskEditor.kind === "edit" ? taskEditor.task : {

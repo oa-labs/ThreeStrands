@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Check, Copy, Pencil, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
-import type { ActionProposal, MeetingProposal, ThreadDetail } from "./domain";
+import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ThreadDetail } from "./domain";
+import { MeetingScheduler, type ScheduleSlot } from "./MeetingScheduler";
+import { planMeeting } from "./scheduling";
 import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
 
@@ -22,7 +24,16 @@ export type ThreadAssistProps = {
     hiddenCount: number;
     onDiscard(index: number): void;
     onReview(index: number, proposal: ActionProposal, intent: "edit" | "accept"): void;
-    onFindTimes(proposal: MeetingProposal): void;
+  };
+  /** Calendar checks for meeting suggestions; every outcome is reviewed elsewhere. */
+  scheduling: {
+    calendarConnected: boolean;
+    preferences: AvailabilityPreferences;
+    onAddToCalendar(index: number, proposal: MeetingProposal, slot: ScheduleSlot): void;
+    onReplyWithTimes(slots: AvailabilityCandidate[]): void;
+    onConfirmTime(slot: ScheduleSlot): void;
+    onMoreTimes(day: Date, durationMinutes: number): void;
+    onOpenCalendarSettings(): void;
   };
   loading: boolean;
   error: string | null;
@@ -59,7 +70,7 @@ export function summaryClipboardText(summary: string): string {
     .join("\n");
 }
 
-export function ThreadAssist({ detail, summary, suggestions, loading, error, preview, onRun, onOpenSettings }: ThreadAssistProps) {
+export function ThreadAssist({ detail, summary, suggestions, scheduling, loading, error, preview, onRun, onOpenSettings }: ThreadAssistProps) {
   const { thread } = detail;
   const [copiedSummary, setCopiedSummary] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -145,18 +156,29 @@ export function ThreadAssist({ detail, summary, suggestions, loading, error, pre
       <div className="action-proposals">
         {suggestions.proposals.map((proposal, index) => {
           const source = messageSource(proposal.evidence.sourceMessageId);
-          const needsReview = (proposal.type === "meeting" && (!proposal.timeZone || (!proposal.normalizedStart && !proposal.searchRangeStart)))
-            || (proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone);
+          // Meetings default to the user's timezone and the next week, so only
+          // a task with an unzoned time needs review before use.
+          const needsReview = proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone;
           const uncertain = proposal.confidence < 0.75;
           return <article className="action-proposal-card" key={`${proposal.type}-${index}`}>
             <div className="action-proposal-card-header"><span className="proposal-kind">{proposal.type === "meeting" ? "Meeting" : "Task"}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
             <strong>{proposal.title}</strong>
             {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
+            {proposal.type === "meeting" ? <MeetingScheduler
+              key={[proposal.normalizedStart, proposal.normalizedEnd, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
+              plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
+              preferences={scheduling.preferences}
+              calendarConnected={scheduling.calendarConnected}
+              onAddToCalendar={(slot) => scheduling.onAddToCalendar(index, proposal, slot)}
+              onReplyWithTimes={scheduling.onReplyWithTimes}
+              onConfirmTime={scheduling.onConfirmTime}
+              onMoreTimes={scheduling.onMoreTimes}
+              onOpenCalendarSettings={scheduling.onOpenCalendarSettings}
+            /> : null}
             <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
             <div className="proposal-actions">
               <button type="button" onClick={() => suggestions.onReview(index, proposal, "edit")}><Pencil size={13} /> Edit</button>
               {proposal.type === "task" ? <button type="button" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
-              {proposal.type === "meeting" ? <button type="button" disabled={needsReview} title={needsReview ? "Edit this proposal before finding times" : undefined} onClick={() => suggestions.onFindTimes(proposal)}>Find Times</button> : null}
               <button type="button" onClick={() => suggestions.onDiscard(index)}>Discard</button>
             </div>
           </article>;

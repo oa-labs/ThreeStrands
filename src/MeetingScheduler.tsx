@@ -41,7 +41,7 @@ async function overlappingTitles(slot: ScheduleSlot): Promise<string[]> {
  * the event dialog, a reply in the composer, or the Calendar sidebar.
  */
 export function MeetingScheduler({
-  plan,
+  plan: initialPlan,
   preferences,
   calendarConnected,
   onAddToCalendar,
@@ -59,6 +59,9 @@ export function MeetingScheduler({
   onMoreTimes(day: Date, durationMinutes: number): void;
   onOpenCalendarSettings(): void;
 }) {
+  // Plans computed from "now" differ on every render; keep the one this
+  // scheduler mounted with. Callers key the scheduler by what it schedules.
+  const [plan] = useState(initialPlan);
   // "Find Other Times" replaces a conflicting exact time with a search.
   const [override, setOverride] = useState<ScheduleQuery | null>(null);
   const query = override ?? plan.query;

@@ -4,8 +4,8 @@ use serde_json::json;
 
 use crate::error_text::display;
 use crate::models::{
-    ActionAnalysis, ActionProposal, ChatAvailability, ChatTurn, ContactFieldSuggestion, ContactProfile,
-    ProposalEvidence, ReplyAssistContext, ReplyAssistMessage,
+    ActionAnalysis, ActionProposal, ChatAvailability, ChatTurn, ContactFieldSuggestion,
+    ContactProfile, ProposalEvidence, ReplyAssistContext, ReplyAssistMessage,
 };
 
 use std::sync::{Arc, RwLock};
@@ -1364,7 +1364,11 @@ fn chat_availability(value: Option<serde_json::Value>) -> Option<ChatAvailabilit
     }
     let duration_minutes = match object.get("durationMinutes") {
         None | Some(serde_json::Value::Null) => None,
-        Some(value) => Some(value.as_u64().filter(|minutes| (5..=720).contains(minutes))? as u32),
+        Some(value) => Some(
+            value
+                .as_u64()
+                .filter(|minutes| (5..=720).contains(minutes))? as u32,
+        ),
     };
     Some(ChatAvailability {
         range_start: start.to_rfc3339(),
@@ -2737,8 +2741,14 @@ mod tests {
             .availability
         };
         assert_eq!(
-            answer_with(json!({"rangeStart": "2026-10-05T09:00:00-04:00", "rangeEnd": "2026-10-09T17:00:00-04:00", "durationMinutes": 45})),
-            Some(ChatAvailability { range_start: "2026-10-05T09:00:00-04:00".into(), range_end: "2026-10-09T17:00:00-04:00".into(), duration_minutes: Some(45) })
+            answer_with(
+                json!({"rangeStart": "2026-10-05T09:00:00-04:00", "rangeEnd": "2026-10-09T17:00:00-04:00", "durationMinutes": 45})
+            ),
+            Some(ChatAvailability {
+                range_start: "2026-10-05T09:00:00-04:00".into(),
+                range_end: "2026-10-09T17:00:00-04:00".into(),
+                duration_minutes: Some(45)
+            })
         );
         assert_eq!(answer_with(json!({"rangeStart": "2026-10-05T00:00:00Z", "rangeEnd": "2026-10-06T00:00:00Z", "durationMinutes": null})).unwrap().duration_minutes, None);
         let days = |count: i64| json!({"rangeStart": "2026-10-01T00:00:00Z", "rangeEnd": (chrono::DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z").unwrap() + chrono::Duration::days(count)).to_rfc3339(), "durationMinutes": 30});

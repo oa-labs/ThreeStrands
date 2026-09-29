@@ -24,7 +24,7 @@ function props(overrides: Partial<Props> = {}): Props {
 
 const answer = (overrides: Partial<Extract<ChatEntry, { role: "assistant" }>> = {}): ChatEntry => ({
   id: "a1", role: "assistant", content: "They need the deck by Friday.", replyDraft: null,
-  addedSuggestions: 0, hiddenSuggestions: 0, sources: [], searched: [], ...overrides,
+  addedSuggestions: 0, hiddenSuggestions: 0, sources: [], searched: [], availability: null, ...overrides,
 });
 
 describe("ThreadChat", () => {

@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mailClient } from "./data/client";
 import { ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
 
@@ -54,11 +55,12 @@ const taskProposal: ActionProposal = {
   evidence: { sourceMessageId: "message-1", excerpt: "Please set up the website by Friday." },
 };
 
-function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestions">> & {
+function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestions" | "scheduling">> & {
   summary?: Partial<ThreadAssistProps["summary"]>;
   suggestions?: Partial<ThreadAssistProps["suggestions"]>;
+  scheduling?: Partial<ThreadAssistProps["scheduling"]>;
 } = {}): ThreadAssistProps {
-  const { summary, suggestions, ...rest } = overrides;
+  const { summary, suggestions, scheduling, ...rest } = overrides;
   return {
     detail,
     loading: false,
@@ -76,14 +78,23 @@ function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestio
       hiddenCount: 0,
       onDiscard: vi.fn(),
       onReview: vi.fn(),
-      onFindTimes: vi.fn(),
       ...suggestions,
+    },
+    scheduling: {
+      calendarConnected: false,
+      preferences: { timeZone: "America/New_York", workingWindows: [], defaultDurationMinutes: 30, slotIncrementMinutes: 30 },
+      onAddToCalendar: vi.fn(),
+      onReplyWithTimes: vi.fn(),
+      onConfirmTime: vi.fn(),
+      onMoreTimes: vi.fn(),
+      onOpenCalendarSettings: vi.fn(),
+      ...scheduling,
     },
   };
 }
 
 describe("ThreadAssist", () => {
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
   it("offers one Get Brief action before anything has run and refreshes everything afterwards", () => {
     const onRun = vi.fn();
@@ -161,7 +172,7 @@ describe("ThreadAssist", () => {
     expect(screen.getByText("What was shared with AI")).toBeInTheDocument();
   });
 
-  it("flags uncertain suggestions for a closer look instead of showing a confidence score", () => {
+  it("flags uncertain suggestions for a closer look and schedules an unzoned meeting in the user's time zone", async () => {
     const meeting: ActionProposal = {
       type: "meeting",
       intent: "schedule",
@@ -178,14 +189,34 @@ describe("ThreadAssist", () => {
       confidence: 0.4,
       evidence: { sourceMessageId: "message-unknown", excerpt: "Let's meet next week." },
     };
-    const onFindTimes = vi.fn();
-    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting], onFindTimes } })} />);
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting] }, scheduling: { calendarConnected: true } })} />);
 
     expect(screen.getByText("Check details")).toBeInTheDocument();
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Find Times" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Find Times" })).not.toBeInTheDocument();
+    const schedule = screen.getByRole("group", { name: "Schedule" });
+    expect(within(schedule).getByText("Using your time zone (America/New_York)")).toBeInTheDocument();
+    await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ maxPerDay: 1 })));
+    expect(await within(schedule).findByText("No open times in your working hours for this range.")).toBeInTheDocument();
     fireEvent.click(screen.getByText("From the email"));
     expect(screen.queryByText(/message-unknown/)).not.toBeInTheDocument();
+  });
+
+  it("schedules meetings only, and hands Add to Calendar the card's own suggestion", async () => {
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "schedule", title: "Budget review", participants: ["jane@example.com"], location: null,
+      rawTimeLanguage: "Thursday at 3", normalizedStart: new Date(Date.now() + 26 * 3_600_000).toISOString(), normalizedEnd: new Date(Date.now() + 26.5 * 3_600_000).toISOString(),
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: 30, timeZone: "America/New_York", confidence: 0.9,
+      evidence: { sourceMessageId: "message-1", excerpt: "Please set up the website by Friday." },
+    };
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const onAddToCalendar = vi.fn();
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal, meeting] }, scheduling: { calendarConnected: true, onAddToCalendar } })} />);
+
+    expect(screen.getAllByRole("group", { name: "Schedule" })).toHaveLength(1);
+    fireEvent.click(await screen.findByRole("button", { name: "Add to Calendar" }));
+    expect(onAddToCalendar).toHaveBeenCalledWith(1, meeting, { kind: "specific", start: new Date(meeting.normalizedStart!).toISOString(), end: new Date(meeting.normalizedEnd!).toISOString() });
   });
 
   it("reports withheld suggestions instead of claiming there was nothing to do", () => {
