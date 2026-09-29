@@ -303,6 +303,17 @@ describe("CalendarWeekView", () => {
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ calendarId: "team", title: "Team sync" })));
   });
 
+  it("keeps a clicked late-night event one hour long across midnight", async () => {
+    const { container } = renderWeek();
+    const column = container.querySelectorAll<HTMLElement>(".calendar-week-column")[2]!;
+    vi.spyOn(column, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+    fireEvent.pointerDown(column, { button: 0, pointerId: 3, clientY: 23.75 * 64 });
+    fireEvent.pointerUp(column, { button: 0, pointerId: 3, clientY: 23.75 * 64 });
+    const dialog = await screen.findByRole("dialog", { name: "New event" });
+    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-09-22T23:45");
+    expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-09-23T00:45");
+  });
+
   it("keeps the dialog open on a save error and excludes read-only calendars", async () => {
     vi.spyOn(mailClient, "createCalendarEvent").mockRejectedValue(new Error("Reconnect this calendar account"));
     renderWeek();

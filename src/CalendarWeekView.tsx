@@ -35,7 +35,7 @@ function slotAt(clientY: number, column: HTMLElement): number {
 
 function eventRangeFromSlots(day: Date, anchor: number, current: number, dragged: boolean) {
   const startMinutes = Math.min(anchor, current);
-  const endMinutes = dragged ? Math.max(anchor, current) + SLOT_MINUTES : Math.min(anchor + 60, 24 * 60);
+  const endMinutes = dragged ? Math.max(anchor, current) + SLOT_MINUTES : anchor + 60;
   const at = (minutes: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, minutes);
   return { start: at(startMinutes), end: at(endMinutes), startMinutes, endMinutes };
 }

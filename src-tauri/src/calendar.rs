@@ -61,6 +61,7 @@ struct GoogleCalendarList {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GoogleCalendarListEntry {
     id: String,
     summary: String,
@@ -757,6 +758,14 @@ mod tests {
         assert!(options[0].writable);
         assert!(!options[1].writable);
         assert_eq!(options[1].account_id, "work@example.com");
+    }
+
+    #[test]
+    fn google_calendar_access_role_controls_writable_options() {
+        let entry: GoogleCalendarListEntry = serde_json::from_value(serde_json::json!({
+            "id": "team@example.com", "summary": "Team", "accessRole": "writer"
+        })).unwrap();
+        assert!(calendar_options(vec![entry], "work@example.com")[0].writable);
     }
 
     #[test]

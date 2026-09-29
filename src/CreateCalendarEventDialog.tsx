@@ -29,6 +29,8 @@ export function CreateCalendarEventDialog({
   ), [accounts, calendars]);
   const defaultCalendar = writable.find((calendar) => calendar.primary) ?? writable[0];
   const [calendarKey, setCalendarKey] = useState(() => defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "");
+  const selectedCalendarKey = writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === calendarKey)
+    ? calendarKey : defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "";
   const [title, setTitle] = useState("");
   const [startValue, setStartValue] = useState(() => localDateTimeValue(start));
   const [endValue, setEndValue] = useState(() => localDateTimeValue(end));
@@ -40,7 +42,7 @@ export function CreateCalendarEventDialog({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    const calendar = writable.find((option) => `${option.accountId}\n${option.id}` === calendarKey);
+    const calendar = writable.find((option) => `${option.accountId}\n${option.id}` === selectedCalendarKey);
     const startsAt = new Date(startValue);
     const endsAt = new Date(endValue);
     const attendees = invitees.split(/[\s,;]+/).map((email) => email.trim()).filter(Boolean);
@@ -81,7 +83,7 @@ export function CreateCalendarEventDialog({
           <label>Ends<input type="datetime-local" value={endValue} onChange={(event) => setEndValue(event.target.value)} required /></label>
         </div>
         <label>Calendar
-          <select value={calendarKey} onChange={(event) => setCalendarKey(event.target.value)} required>
+          <select value={selectedCalendarKey} onChange={(event) => setCalendarKey(event.target.value)} required>
             {writable.length === 0 ? <option value="">No writable calendars</option> : null}
             {writable.map((calendar) => (
               <option key={`${calendar.accountId}:${calendar.id}`} value={`${calendar.accountId}\n${calendar.id}`}>
