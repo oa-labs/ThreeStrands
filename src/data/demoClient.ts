@@ -24,6 +24,7 @@ import type {
   SplitInbox,
   SummaryResult,
   ThreadBriefResult,
+  ThreadChatReply,
   SyncStatus,
   Thread,
   ThreadDetail,
@@ -52,7 +53,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   let snippets = seed.snippets;
   let contacts = seed.contacts;
   let savedContactProfiles = seed.contactProfiles;
-  const { details, messages: seededMessages, scheduleEvents } = seed;
+  const { details, messages: seededMessages } = seed;
+  const scheduleEvents = seed.scheduleEvents;
 
   const status: SyncStatus = {
     state: "idle",
@@ -367,6 +369,18 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         },
       }] };
     },
+    async threadChat(request): Promise<ThreadChatReply> {
+      const detail = await this.getThread(request.threadId);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const wantsReply = /\b(draft|write|reply)\b/i.test(request.question);
+      return {
+        answer: `In the demo, answers come from “${detail.thread.subject}”: ${detail.thread.snippet}`,
+        analysis: { proposals: [], hiddenCount: 0 },
+        replyDraft: wantsReply ? "Thanks for the update. I'll take a look and get back to you soon." : null,
+        sources: [],
+        searched: [],
+      };
+    },
     async aiUsageSummary(): Promise<AiUsageDay[]> {
       // The demo never calls a provider, so there is no usage to report.
       return [];
@@ -628,6 +642,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           name: "My calendar",
           primary: true,
           selected: true,
+          writable: true,
         },
       ];
       return structuredClone(account);
@@ -668,6 +683,26 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           .sort((a, b) => eventRange(a)[0] - eventRange(b)[0])),
         errors: [],
       };
+    },
+    async createCalendarEvent(request) {
+      const calendar = calendarOptions.find((option) => option.id === request.calendarId && option.accountId === request.accountId && option.writable);
+      if (!calendar) throw new Error("Choose a calendar where you can create events");
+      if (!calendarAccounts.some((account) => account.email === request.accountId && account.status === "connected")) {
+        throw new Error("Connect this calendar account in Settings first");
+      }
+      if (!request.title.trim() || Date.parse(request.end) <= Date.parse(request.start)) throw new Error("Enter a valid event title and time");
+      const created: ScheduleEvent = {
+        id: `${calendar.id}:demo-${crypto.randomUUID()}`,
+        accountId: request.accountId,
+        title: request.title.trim(),
+        start: request.start,
+        end: request.end,
+        allDay: false,
+        description: request.description.trim() || null,
+        attendees: request.attendees.map((email) => email.toLowerCase()),
+      };
+      scheduleEvents.push(created);
+      return structuredClone(created);
     },
     async findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences }): Promise<AvailabilityResult> {
       const start = new Date(request.rangeStart);

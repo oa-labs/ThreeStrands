@@ -35,8 +35,18 @@ Open a modal form when a user needs to create or edit structured data.
 The deliberate exceptions are:
 
 - message composition, which is an explicit writing mode;
-- mail search, entered explicitly with `/` and exited with Escape; and
-- the command palette, entered explicitly with its shortcut.
+- mail search, entered explicitly with `/` and exited with Escape;
+- the command palette, entered explicitly with its shortcut; and
+- thread chat in the context panel, entered explicitly with `q` or `Mod+J`
+  or by clicking its prompt, and exited with Escape.
+
+Thread chat follows the search pattern rather than living as an always-present
+field. In read mode it renders as a prompt button, so every single-key command
+stays available. Activating it turns the prompt into a text box inside the
+`modal` shortcut scope and moves focus there; Enter asks, Shift+Enter adds a
+line, and Escape returns focus to where it was before, keeps unsent text, and
+restores read mode. Leaving the box empty by clicking elsewhere also restores
+the prompt. Nothing in the panel may take focus on its own.
 
 Modal forms must:
 
@@ -95,6 +105,8 @@ Current primary commands are:
 - `Shift+A`: show the conversation's suggestions in the context panel,
   fetching them if missing (`a` remains Reply All);
 - `i`: summarize the conversation into the context panel's brief;
+- `q` or `Mod+J`: ask about the conversation in the context panel's thread
+  chat (`Mod+J` drafts with AI while composing);
 - `Cmd/Ctrl+K`: open the command palette.
 
 The focused-pane model routes `j`/`k` and Up/Down to conversations or tasks.
@@ -126,6 +138,14 @@ Every successful provider response records its token usage, and any cost the
 provider reports, in the local `ai_usage` table. AI settings show today's and
 the last week's totals; other providers' cost is estimated from per-model
 prices the user enters, which stay on the device.
+
+Thread chat answers from the open conversation, its open tasks, and the
+selected person's open tasks. Other mail is shared only for a question where
+the reader turns on Search all mail; that choice resets after each question,
+and the answer lists every other conversation that was shared. Answers are
+plain text. A chat answer's tasks and meetings join Suggested and follow the
+same review boundary, and a drafted reply opens in the composer for review
+rather than being sent.
 
 AI output is a proposal, never a mutation. Proposal cards remain read-only.
 Editing a proposal opens a review dialog. Accepting an AI task opens a task

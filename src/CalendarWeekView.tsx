@@ -17,6 +17,8 @@ import {
 } from "./calendarTime";
 import { isEditableTarget } from "./commands";
 import { useCalendarSchedule } from "./useCalendarSchedule";
+import { clearScheduleCache } from "./calendarScheduleCache";
+import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
@@ -24,6 +26,19 @@ const DEFAULT_WEEK_SCROLL_TOP = 7 * HOUR_HEIGHT;
 const MAX_WEEK_SCROLL_TOP = 24 * HOUR_HEIGHT;
 /** How often the "now" indicator re-renders, in milliseconds. */
 const NOW_TICK_MS = 60_000;
+const SLOT_MINUTES = 15;
+
+function slotAt(clientY: number, column: HTMLElement): number {
+  const offset = Math.max(0, Math.min(24 * HOUR_HEIGHT - 1, clientY - column.getBoundingClientRect().top));
+  return Math.floor(offset / HOUR_HEIGHT * 60 / SLOT_MINUTES) * SLOT_MINUTES;
+}
+
+function eventRangeFromSlots(day: Date, anchor: number, current: number, dragged: boolean) {
+  const startMinutes = Math.min(anchor, current);
+  const endMinutes = dragged ? Math.max(anchor, current) + SLOT_MINUTES : Math.min(anchor + 60, 24 * 60);
+  const at = (minutes: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, minutes);
+  return { start: at(startMinutes), end: at(endMinutes), startMinutes, endMinutes };
+}
 
 function readWeekScrollTop(): number {
   try {
@@ -197,6 +212,9 @@ export function CalendarWeekView({
 }) {
   const [month, setMonth] = useState(() => startOfLocalDay(anchor));
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
+  const [newEventRange, setNewEventRange] = useState<{ start: Date; end: Date } | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ dayIndex: number; startMinutes: number; endMinutes: number } | null>(null);
+  const dragRef = useRef<{ dayIndex: number; anchor: number; pointerId: number } | null>(null);
   const [now, setNow] = useState(() => new Date());
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -233,6 +251,24 @@ export function CalendarWeekView({
     onAnchorChange(target);
     setMonth(target);
   }, [onAnchorChange]);
+
+  const newEventAtAnchor = useCallback(() => {
+    const day = startOfLocalDay(anchor);
+    const minutes = isSameDay(day, now) ? Math.min(Math.ceil((now.getHours() * 60 + now.getMinutes()) / 60) * 60, 23 * 60) : 9 * 60;
+    const range = eventRangeFromSlots(day, minutes, minutes, false);
+    setNewEventRange({ start: range.start, end: range.end });
+  }, [anchor, now]);
+
+  const finishSelection = (day: Date, dayIndex: number, column: HTMLElement, clientY: number, pointerId: number) => {
+    const drag = dragRef.current;
+    if (!drag || drag.dayIndex !== dayIndex || drag.pointerId !== pointerId) return;
+    const current = slotAt(clientY, column);
+    const range = eventRangeFromSlots(day, drag.anchor, current, current !== drag.anchor);
+    dragRef.current = null;
+    setDragPreview(null);
+    setSelectedEvent(null);
+    setNewEventRange({ start: range.start, end: range.end });
+  };
 
   const selectDate = useCallback((date: Date) => {
     const target = startOfLocalDay(date);
@@ -273,6 +309,7 @@ export function CalendarWeekView({
         <header className="calendar-week-header">
           <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account">· {selectedAccountEmails.length ? selectedAccountEmails.join(", ") : "None selected"}</span></span><h1>{monthTitle(weekStart)}</h1></div>
           <div className="calendar-week-controls">
+            <button type="button" className="calendar-today-button" onClick={newEventAtAnchor}>New event</button>
             <button type="button" className="calendar-today-button" onClick={goToToday}>Today</button>
             <HoverTooltip title="Previous week (-)"><button type="button" aria-label="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={20} /></button></HoverTooltip>
             <HoverTooltip title="Next week (=)"><button type="button" aria-label="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={20} /></button></HoverTooltip>
@@ -332,8 +369,34 @@ export function CalendarWeekView({
               ))}
             </div>
             {days.map((day, dayIndex) => (
-              <div className="calendar-week-column" key={day.toDateString()}>
+              <div
+                className="calendar-week-column"
+                key={day.toDateString()}
+                aria-label={`Create event on ${new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(day)}`}
+                onPointerDown={(event) => {
+                  if (event.button !== 0 || (event.target as HTMLElement).closest("[data-calendar-event-trigger]")) return;
+                  const anchor = slotAt(event.clientY, event.currentTarget);
+                  dragRef.current = { dayIndex, anchor, pointerId: event.pointerId };
+                  setDragPreview({ dayIndex, startMinutes: anchor, endMinutes: anchor + 60 });
+                  event.currentTarget.setPointerCapture?.(event.pointerId);
+                }}
+                onPointerMove={(event) => {
+                  const drag = dragRef.current;
+                  if (!drag || drag.dayIndex !== dayIndex || drag.pointerId !== event.pointerId) return;
+                  const current = slotAt(event.clientY, event.currentTarget);
+                  const range = eventRangeFromSlots(day, drag.anchor, current, current !== drag.anchor);
+                  setDragPreview({ dayIndex, startMinutes: range.startMinutes, endMinutes: range.endMinutes });
+                }}
+                onPointerUp={(event) => finishSelection(day, dayIndex, event.currentTarget, event.clientY, event.pointerId)}
+                onPointerCancel={() => { dragRef.current = null; setDragPreview(null); }}
+              >
                 {HOURS.map((hour) => <div className="calendar-hour-line" key={hour} />)}
+                {dragPreview?.dayIndex === dayIndex ? (
+                  <div className="calendar-create-selection" aria-hidden="true" style={{
+                    top: dragPreview.startMinutes / 60 * HOUR_HEIGHT,
+                    height: (dragPreview.endMinutes - dragPreview.startMinutes) / 60 * HOUR_HEIGHT,
+                  }} />
+                ) : null}
                 {timedByDay[dayIndex].map(({ event, lane, lanes, span }) => {
                   const start = new Date(event.start);
                   const end = new Date(event.end);
@@ -383,6 +446,14 @@ export function CalendarWeekView({
           {loading ? <p className="calendar-grid-status">Loading schedule…</p> : null}
         </div>
         {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} /> : null}
+        {newEventRange ? <CreateCalendarEventDialog
+          start={newEventRange.start}
+          end={newEventRange.end}
+          accounts={accounts}
+          calendars={calendars}
+          onClose={() => setNewEventRange(null)}
+          onCreated={() => { setNewEventRange(null); clearScheduleCache(); }}
+        /> : null}
       </div>
       <aside className="calendar-week-side" aria-label="Calendar navigation">
         <MiniMonth

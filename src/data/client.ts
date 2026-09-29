@@ -13,6 +13,7 @@ import type {
   CalendarAccount,
   CalendarOption,
   CalendarPreview,
+  CreateCalendarEventRequest,
   ContactSuggestion,
   ContactProfile,
   ContactTimelineItem,
@@ -26,11 +27,14 @@ import type {
   ReplyAssistResult,
   SearchThreadsRequest,
   ScheduleResult,
+  ScheduleEvent,
   Snippet,
   SplitInbox,
   SplitInboxMatchKind,
   SummaryResult,
   ThreadBriefResult,
+  ThreadChatReply,
+  ThreadChatRequest,
   SyncStatus,
   Thread,
   ThreadDetail,
@@ -83,6 +87,7 @@ export interface MailClient extends CorrespondenceClient {
     model: string,
     endpoint: string | null,
   ): Promise<ActionAnalysis>;
+  threadChat(request: ThreadChatRequest, provider: AiProvider, model: string, endpoint: string | null): Promise<ThreadChatReply>;
   /** AI provider usage for the last `days` local days, including today. */
   aiUsageSummary(days: number): Promise<AiUsageDay[]>;
   briefThread(
@@ -142,6 +147,7 @@ export interface MailClient extends CorrespondenceClient {
   listCalendarOptions(): Promise<CalendarOption[]>;
   setCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
+  createCalendarEvent(request: CreateCalendarEventRequest): Promise<ScheduleEvent>;
   findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences }): Promise<AvailabilityResult>;
   checkProposedTime(request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck>;
   /** Lists labels for the primary account, or for the specified account when provided. */
@@ -199,6 +205,7 @@ const tauriClient: MailClient = {
   analyzeThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
   aiUsageSummary: (days) => read("ai_usage_summary", { days }),
+  threadChat: (request, provider, model, endpoint) => complete("ai_thread_chat", { request, provider, model, endpoint }),
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
@@ -244,6 +251,7 @@ const tauriClient: MailClient = {
     complete("set_calendar_selection", { accountId, calendarIds }),
   listScheduleEvents: (timeMin, timeMax, timeZone) =>
     complete("list_schedule_events", { timeMin, timeMax, timeZone }),
+  createCalendarEvent: (request) => complete("create_calendar_event", { request }),
   findAvailability: (request) => complete("find_availability", { request }),
   checkProposedTime: (request) => complete("check_proposed_time", { request }),
   listLabels: (accountId) => read("list_labels", { accountId }),

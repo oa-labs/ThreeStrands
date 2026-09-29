@@ -18,7 +18,7 @@ export type ContextPerson = {
  * selected participant, then the AI brief and suggestions, then related
  * tasks, meetings, and recent emails with that person.
  */
-export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, assist, related }: {
+export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, assist, related, chat }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   onOpenThread(id: string): void;
@@ -26,6 +26,8 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
   assist?: ReactNode;
   /** Sections about the conversation and the selected person. */
   related?(person: ContextPerson | null): ReactNode;
+  /** The question box, kept at the bottom of the panel. */
+  chat?(person: ContextPerson | null): ReactNode;
 }) {
   const own = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
   const participants = useMemo(() => {
@@ -180,6 +182,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
         </section>
       ) : null}
       {error ? <p className="contacts-error" role="alert">{error}</p> : null}
+      {detail && chat ? <div className="context-chat-dock">{chat(person)}</div> : null}
     </aside>
   );
 }

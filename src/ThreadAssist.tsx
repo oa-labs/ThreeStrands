@@ -15,6 +15,7 @@ export type ThreadAssistProps = {
   suggestions: {
     enabled: boolean;
     available: boolean;
+    /** Whether suggestions were fetched for this revision; chat may add some without it. */
     requested: boolean;
     proposals: ActionProposal[];
     hiddenCount: number;
@@ -71,7 +72,7 @@ export function ThreadAssist({ detail, summary, suggestions, loading, error, pre
   const stale = Boolean(summaryText && thread.summaryGeneratedAt && thread.lastMessageAt > thread.summaryGeneratedAt);
   const busy = loading || summary.pending;
   const generated = Boolean(summaryText) || suggestions.requested;
-  const showSuggestions = suggestions.available && suggestions.requested;
+  const showSuggestions = suggestions.available && (suggestions.requested || suggestions.proposals.length > 0);
   const missingSummary = summary.available && !summaryText;
   const missingSuggestions = suggestions.available && !suggestions.requested;
   const failure = error ? describeAnalysisError(error) : null;
@@ -109,7 +110,7 @@ export function ThreadAssist({ detail, summary, suggestions, loading, error, pre
     </div> : null}
     {showSuggestions ? <div className="thread-assist-suggestions">
       {summary.available ? <h4>Suggested</h4> : null}
-      {!busy && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
+      {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
       {!busy && suggestions.hiddenCount > 0 ? <p className="context-status">{suggestions.hiddenCount === 1 ? "1 suggestion" : `${suggestions.hiddenCount} suggestions`} couldn&rsquo;t be matched to the email, so {suggestions.hiddenCount === 1 ? "it was" : "they were"} hidden.</p> : null}
       <div className="action-proposals">
         {suggestions.proposals.map((proposal, index) => {

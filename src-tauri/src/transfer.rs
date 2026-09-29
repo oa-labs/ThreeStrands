@@ -52,6 +52,10 @@ pub struct AiFeaturePreferences {
     pub proactive_briefs: bool,
     #[serde(default)]
     pub proactive_known_senders_only: bool,
+    // Added in 0.46 under format version 3; earlier exports import with
+    // thread chat off.
+    #[serde(default)]
+    pub thread_chat: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -571,6 +575,7 @@ mod tests {
                     classify: false,
                     proactive_briefs: false,
                     proactive_known_senders_only: false,
+                    thread_chat: false,
                 },
                 availability_preferences: default_availability_preferences(),
             },
@@ -651,6 +656,22 @@ mod tests {
         assert!(decoded.preferences.ai_features.summarize);
         assert!(!decoded.preferences.ai_features.proactive_briefs);
         assert!(!decoded.preferences.ai_features.proactive_known_senders_only);
+    }
+
+    #[test]
+    fn an_export_from_before_thread_chat_imports_with_it_off() {
+        let mut legacy = serde_json::to_value(payload()).unwrap();
+        legacy["preferences"]["aiFeatures"].as_object_mut().unwrap().remove("threadChat");
+        legacy["preferences"]["aiFeatures"]["proactiveBriefs"] = serde_json::json!(true);
+        let decoded: TransferPayload = serde_json::from_value(legacy).unwrap();
+        decoded.validate().unwrap();
+        assert!(decoded.preferences.ai_features.proactive_briefs);
+        assert!(!decoded.preferences.ai_features.thread_chat);
+
+        let mut current = payload();
+        current.preferences.ai_features.thread_chat = true;
+        let round_trip = decrypt(&encrypt(&current, "correct horse").unwrap(), "correct horse").unwrap();
+        assert!(round_trip.preferences.ai_features.thread_chat);
     }
 
     #[test]

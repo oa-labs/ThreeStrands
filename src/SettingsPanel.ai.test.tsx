@@ -39,6 +39,13 @@ describe("AI provider feature settings", () => {
     expect(readAiFeatures()).toMatchObject({ draftAssist: true, contactEnrichment: true });
   });
 
+  it("saves the Thread Chat switch and explains how to enter and leave it", () => {
+    render(<AiProviderSettings />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Thread Chat" }));
+    expect(readAiFeatures().threadChat).toBe(true);
+    expect(screen.getByText(/Press q or ⌘J to ask; Escape returns to shortcuts/)).toBeInTheDocument();
+  });
+
   it("offers proactive suggestions only once a brief feature is on, and the sender filter only once proactive is on", () => {
     render(<AiProviderSettings />);
     const proactive = screen.getByRole("checkbox", { name: "Proactive Suggestions" });

@@ -54,6 +54,7 @@ describe("settings import navigation", () => {
           contactEnrichment: false,
           proactiveBriefs: false,
           proactiveKnownSendersOnly: false,
+          threadChat: false,
         },
         availabilityPreferences: {
           timeZone: "UTC",

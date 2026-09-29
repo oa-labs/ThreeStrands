@@ -51,7 +51,7 @@ describe("useCorrespondence", () => {
       mode,
       sourceId: sourceId ?? null,
     }));
-    const { result } = renderHook(() => useCorrespondence([], "message-1", "account@example.com", ...snippetArgs));
+    const { result } = renderHook(() => useCorrespondence([], "message-1", "account@example.com", ...snippetArgs, "thread-1"));
 
     await waitFor(() => expect(result.current.draftCount).toBe(1));
     act(() => result.current.context.compose());
@@ -68,7 +68,7 @@ describe("useCorrespondence", () => {
     vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
     const listOutbox = vi.spyOn(mailClient, "listOutbox").mockResolvedValue([outbox]);
     const cancelSend = vi.spyOn(mailClient, "cancelSend").mockResolvedValue(draft);
-    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs));
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
     await waitFor(() => expect(result.current.context.canUndoSend).toBe(true));
 
     act(() => result.current.context.undoSend());
@@ -82,7 +82,7 @@ describe("useCorrespondence", () => {
     vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
     let resolveRecovery!: (value: Draft) => void;
     const recoverSend = vi.spyOn(mailClient, "recoverSend").mockReturnValue(new Promise((resolve) => { resolveRecovery = resolve; }));
-    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs));
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
 
     act(() => {
       result.current.restoreFailedSend("outbox-1");

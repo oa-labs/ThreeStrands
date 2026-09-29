@@ -1107,7 +1107,7 @@ function CalendarAccountsSettings({
         <div>
           <h3>Google Calendar</h3>
           <p>
-            Calendar access is connected separately from mail and is read-only.
+            Calendar access is connected separately from mail and can create events.
             Each account gets its own Calendar consent and keychain credential.
           </p>
         </div>
@@ -1152,7 +1152,7 @@ function CalendarAccountsSettings({
                       {account.status === "needs_reauth" ? "Needs reconnect" : "Connected"}
                     </span>
                   </div>
-                  <span className="account-card-email">Read-only calendar access</span>
+                  <span className="account-card-email">Calendar events and availability</span>
                 </div>
                 <span className="accounts-list-actions">
                   {account.status === "needs_reauth" ? (
@@ -1849,6 +1849,15 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               onChange={(event) => updateFeature("actionExtraction", event.target.checked)}
             />
           </label>
+          <label className="settings-switch">
+            <span>Thread Chat</span>
+            <input
+              type="checkbox"
+              checked={features.threadChat}
+              onChange={(event) => updateFeature("threadChat", event.target.checked)}
+            />
+          </label>
+          <p className="settings-hint">Thread chat answers questions about the open conversation. Press q or ⌘J to ask; Escape returns to shortcuts. It shares other emails only for a question where you choose Search all mail.</p>
           <label className="settings-switch">
             <span>Proactive Suggestions</span>
             <input

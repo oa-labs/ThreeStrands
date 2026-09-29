@@ -84,6 +84,8 @@ export type CommandContext = {
   openCalendarView(): void;
   /** Shows the conversation's AI brief and fetches suggestions if missing. */
   getSuggestions(): void;
+  /** Shows the context panel and focuses its question box. */
+  openThreadChat(): void;
   newTask(): void;
   increaseFontSize(): void;
   decreaseFontSize(): void;
@@ -486,6 +488,14 @@ export const commands: Command[] = [
     group: "Application",
     enabled: (context) => context.selectedId !== null && !context.composerActive,
     run: (context) => complete(context.getSuggestions),
+  },
+  {
+    id: "chat.open",
+    title: "Ask About This Conversation",
+    keys: ["q", "Mod+j"],
+    group: "Application",
+    enabled: (context) => context.selectedId !== null && !context.composerActive && context.focusedPane === "mail" && isThreadMailbox(context),
+    run: (context) => complete(context.openThreadChat),
   },
   {
     id: "mail.refresh",

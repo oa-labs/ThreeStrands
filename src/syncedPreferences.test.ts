@@ -110,13 +110,13 @@ describe("synced preferences data boundary", () => {
   });
 
   it("keeps proactive suggestions as set on this device when an older replica omits them", async () => {
-    saveAiFeatures({ ...DEFAULT_AI_FEATURES, summarize: true, proactiveBriefs: true, proactiveKnownSendersOnly: true });
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, summarize: true, proactiveBriefs: true, proactiveKnownSendersOnly: true, threadChat: true });
     vi.mocked(invoke).mockResolvedValue({
       aiFeatures: { draftAssist: true, summarize: true, actionExtraction: true, contactEnrichment: false },
     });
 
     expect(await pullSyncedPreferences()).toBe(true);
-    expect(readAiFeatures()).toMatchObject({ draftAssist: true, actionExtraction: true, proactiveBriefs: true, proactiveKnownSendersOnly: true });
+    expect(readAiFeatures()).toMatchObject({ draftAssist: true, actionExtraction: true, proactiveBriefs: true, proactiveKnownSendersOnly: true, threadChat: true });
   });
 
   it("applies proactive suggestions turned off on another device", async () => {

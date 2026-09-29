@@ -28,7 +28,7 @@ const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const PROFILE_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const MAIL_SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels";
-const CALENDAR_SCOPES: &str = "openid email https://www.googleapis.com/auth/calendar.readonly";
+const CALENDAR_SCOPES: &str = "openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events";
 const OAUTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const OAUTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
@@ -70,7 +70,7 @@ struct Profile {
 ///
 /// Separated from [`GoogleAuth`] itself because a single Google Cloud OAuth
 /// client already authorizes two different flows under it — full Gmail
-/// access and read-only Calendar access — that share `auth_url`/`token_url`
+/// access and Calendar access — that share `auth_url`/`token_url`
 /// but differ in `scopes`/`profile_url`. A future non-Google provider would
 /// differ in every field instead.
 #[derive(Clone)]
@@ -876,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn calendar_authorization_is_read_only_and_separate_from_mail() {
+    fn calendar_authorization_can_create_events_and_is_separate_from_mail() {
         let config = config();
         let mail = config.account("work@example.com");
         let calendar = config.calendar_account("work@example.com");
@@ -885,6 +885,7 @@ mod tests {
         assert!(mail.endpoints.scopes.contains("gmail.modify"));
         assert_eq!(calendar.service, CALENDAR_SERVICE);
         assert!(calendar.endpoints.scopes.contains("calendar.readonly"));
+        assert!(calendar.endpoints.scopes.contains("calendar.events"));
         assert!(!calendar.endpoints.scopes.contains("gmail."));
     }
 

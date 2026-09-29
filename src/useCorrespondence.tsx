@@ -23,8 +23,10 @@ export function useCorrespondence(
   onCreateSnippet: (name: string, body: string) => Promise<Snippet>,
   onUpdateSnippet: (id: string, name: string, body: string) => Promise<Snippet>,
   onDeleteSnippet: (id: string) => Promise<void>,
+  selectedThreadId: string | null,
 ) {
   const [active, setActive] = useState<Draft | null>(null);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [activeAvailabilityText, setActiveAvailabilityText] = useState<string | null>(null);
   const [activeReplyAssistInstruction, setActiveReplyAssistInstruction] = useState<string | null>(null);
   const [activeFollowUpTaskId, setActiveFollowUpTaskId] = useState<string | null>(null);
@@ -70,15 +72,19 @@ export function useCorrespondence(
       setActiveAvailabilityText(options?.availabilityText ?? null);
       setActiveReplyAssistInstruction(options?.replyAssistInstruction ?? null);
       setActiveFollowUpTaskId(options?.followUpTaskId ?? null);
+      setActiveThreadId(mode === "new" ? null : selectedThreadId);
       setActive(d); setError("");
     }
     catch (e) { setError(String(e)); }
     finally { opening.current = false; }
-  }, [sourceId, sourceAccountId]);
+  }, [sourceId, sourceAccountId, selectedThreadId]);
+  useEffect(() => {
+    if (active && activeThreadId && selectedThreadId !== activeThreadId) editor.current?.close();
+  }, [active, activeThreadId, selectedThreadId]);
   // Called when navigating to the inline Drafts/Outbox view: makes sure
   // whatever was being edited is saved and the lists are current.
   const openList = useCallback(async () => {
-    try { await editor.current?.flush(); setActive(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); await refresh(); }
+    try { await editor.current?.flush(); setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); await refresh(); }
     catch (e) { setError(String(e)); }
   }, [refresh]);
   const undo = useCallback(async (id?: string) => {
@@ -88,6 +94,7 @@ export function useCorrespondence(
       await editor.current?.flush();
       const d = await mailClient.cancelSend(target);
       setActiveFollowUpTaskId(d.followUpTaskId ?? null);
+      setActiveThreadId(null);
       setActive(d);
       await refresh();
     }
@@ -112,7 +119,7 @@ export function useCorrespondence(
   const restoreFailedSend = useCallback((id: string) => {
     if (pendingOutboxActionsRef.current.has(id)) return;
     withOutboxActionGuard(id, () =>
-      mailClient.recoverSend(id).then((d) => { setActiveFollowUpTaskId(d.followUpTaskId ?? null); setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
+      mailClient.recoverSend(id).then((d) => { setActiveFollowUpTaskId(d.followUpTaskId ?? null); setActiveThreadId(null); setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
     );
   }, [refresh, withOutboxActionGuard]);
   const reconcileSend = useCallback((id: string) => {
@@ -138,6 +145,10 @@ export function useCorrespondence(
   const replyWithAvailability = useCallback((text: string, messageId?: string) => {
     void start("reply", messageId, { availabilityText: text });
   }, [start]);
+  /** Opens a reply with `text` as its starting body, for the user to review. */
+  const replyWithText = useCallback((text: string, messageId?: string) => {
+    void start("reply", messageId, { availabilityText: text });
+  }, [start]);
   const replyWithFollowUp = useCallback((messageId: string, instruction: string, taskId?: string) => {
     void start("reply", messageId, {
       replyAssistInstruction: instruction,
@@ -147,6 +158,7 @@ export function useCorrespondence(
   const forward = useCallback((messageId?: string) => { void start("forward", messageId); }, [start]);
   const openInbox = useCallback(() => {
     setActive(null);
+    setActiveThreadId(null);
     setActiveAvailabilityText(null);
     setActiveReplyAssistInstruction(null);
     setActiveFollowUpTaskId(null);
@@ -169,6 +181,7 @@ export function useCorrespondence(
   }), [attachFiles, closing, compose, composerActive, discardDraft, draftReplyWithAI, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
   const openDraft = useCallback((draft: Draft) => {
     setActiveFollowUpTaskId(draft.followUpTaskId ?? null);
+    setActiveThreadId(null);
     setActive(draft);
   }, []);
   const undoSendItem = useCallback((id: string) => { void undo(id); }, [undo]);
@@ -190,10 +203,11 @@ export function useCorrespondence(
       onDeleteSnippet={onDeleteSnippet}
       availabilityText={activeAvailabilityText}
       replyAssistInstruction={activeReplyAssistInstruction}
-      onClose={() => { setActive(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); void refresh(); }}
+      onClose={() => { setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); void refresh(); }}
       onQueued={(item) => {
         const followUpTaskId = activeFollowUpTaskId ?? active.followUpTaskId ?? null;
         setActive(null);
+        setActiveThreadId(null);
         setActiveAvailabilityText(null);
         setActiveReplyAssistInstruction(null);
         setActiveFollowUpTaskId(null);
@@ -211,6 +225,7 @@ export function useCorrespondence(
   return {
     context,
     replyWithAvailability,
+    replyWithText,
     replyWithFollowUp,
     drafts,
     outbox,

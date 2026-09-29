@@ -2924,6 +2924,20 @@ mod tests {
     }
 
     #[test]
+    fn chat_search_matches_any_word_and_skips_the_open_and_trashed_conversations() {
+        let database = database();
+        let words = |list: &[&str]| list.iter().map(|word| word.to_string()).collect::<Vec<_>>();
+        let found = database.chat_search_thread_ids(&words(&["keyboard", "nosuchword"]), "none", 10).unwrap();
+        assert!(found.contains(&"welcome".to_string()));
+        assert!(!database.chat_search_thread_ids(&words(&["keyboard"]), "welcome", 10).unwrap().contains(&"welcome".to_string()));
+        assert!(database.chat_search_thread_ids(&[], "none", 10).unwrap().is_empty());
+        assert!(database.chat_search_thread_ids(&words(&["keyboard\" OR \"x"]), "none", 10).unwrap().is_empty());
+        assert!(database.chat_search_thread_ids(&words(&["keyboard"]), "none", 0).unwrap().is_empty());
+        database.mutate_thread(&ThreadMutation::Trash { thread_id: "welcome".into(), value: true }).unwrap();
+        assert!(!database.chat_search_thread_ids(&words(&["keyboard"]), "none", 10).unwrap().contains(&"welcome".to_string()));
+    }
+
+    #[test]
     fn search_matches_numeric_tokens_in_archived_body_text() {
         let database = database();
         let mut archived = message(

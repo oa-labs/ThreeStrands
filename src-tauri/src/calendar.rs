@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::{
     auth::GoogleAuth,
-    models::{BusyInterval, CalendarOption, ScheduleEvent},
+    models::{BusyInterval, CalendarOption, CreateCalendarEventRequest, ScheduleEvent},
 };
 
 const MAX_EVENTS: usize = 20;
@@ -66,7 +66,26 @@ struct GoogleCalendarListEntry {
     summary: String,
     #[serde(default)]
     primary: bool,
+    #[serde(default)]
+    access_role: String,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleCreateEvent<'a> {
+    summary: &'a str,
+    description: &'a str,
+    start: GoogleCreateEventTime<'a>,
+    end: GoogleCreateEventTime<'a>,
+    attendees: Vec<GoogleCreateAttendee<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleCreateEventTime<'a> { date_time: &'a str }
+
+#[derive(Serialize)]
+struct GoogleCreateAttendee<'a> { email: &'a str }
 
 #[derive(Deserialize)]
 struct GoogleEvents {
@@ -227,8 +246,39 @@ fn calendar_options(
             name: entry.summary,
             primary: entry.primary,
             selected: false,
+            writable: matches!(entry.access_role.as_str(), "owner" | "writer"),
         })
         .collect()
+}
+
+pub async fn create_event(
+    auth: GoogleAuth,
+    request: &CreateCalendarEventRequest,
+) -> Result<ScheduleEvent, String> {
+    let url = events_url(&request.calendar_id)?
+        .ok_or_else(|| "Choose a calendar for the event".to_string())?;
+    let token = auth.access_token().await.map_err(|error| error.to_string())?;
+    let response = calendar_client()?
+        .post(url)
+        .bearer_auth(&token)
+        .query(&[("sendUpdates", "all")])
+        .json(&GoogleCreateEvent {
+            summary: request.title.trim(),
+            description: request.description.trim(),
+            start: GoogleCreateEventTime { date_time: &request.start },
+            end: GoogleCreateEventTime { date_time: &request.end },
+            attendees: request.attendees.iter().map(|email| GoogleCreateAttendee { email }).collect(),
+        })
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if response.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err("Calendar write access was denied. Reconnect this calendar account in Settings to grant event access.".into());
+    }
+    let event: GoogleEvent = checked_json(response).await?;
+    normalize_events(vec![event], &request.account_id, &request.calendar_id)
+        .into_iter().next()
+        .ok_or_else(|| "Google created an event but did not return its details. Refresh the calendar before trying again.".to_string())
 }
 
 pub async fn fetch_schedule(
@@ -689,11 +739,13 @@ mod tests {
                     id: "primary@example.com".into(),
                     summary: "My calendar".into(),
                     primary: true,
+                    access_role: "owner".into(),
                 },
                 GoogleCalendarListEntry {
                     id: "team@example.com".into(),
                     summary: "Team".into(),
                     primary: false,
+                    access_role: "reader".into(),
                 },
             ],
             "work@example.com",
@@ -702,7 +754,26 @@ mod tests {
         assert_eq!(options.len(), 2);
         assert_eq!(options[0].name, "My calendar");
         assert!(options[0].primary);
+        assert!(options[0].writable);
+        assert!(!options[1].writable);
         assert_eq!(options[1].account_id, "work@example.com");
+    }
+
+    #[test]
+    fn create_payload_preserves_times_description_and_attendees() {
+        let payload = GoogleCreateEvent {
+            summary: "Planning",
+            description: "Agenda",
+            start: GoogleCreateEventTime { date_time: "2026-09-22T09:00:00Z" },
+            end: GoogleCreateEventTime { date_time: "2026-09-22T10:00:00Z" },
+            attendees: vec![GoogleCreateAttendee { email: "guest@example.com" }],
+        };
+        assert_eq!(serde_json::to_value(payload).unwrap(), serde_json::json!({
+            "summary": "Planning", "description": "Agenda",
+            "start": { "dateTime": "2026-09-22T09:00:00Z" },
+            "end": { "dateTime": "2026-09-22T10:00:00Z" },
+            "attendees": [{ "email": "guest@example.com" }],
+        }));
     }
 
     #[test]

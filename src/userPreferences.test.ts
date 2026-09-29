@@ -29,6 +29,7 @@ describe("exportable preferences", () => {
         contactEnrichment: false,
         proactiveBriefs: false,
         proactiveKnownSendersOnly: false,
+        threadChat: false,
       },
       availabilityPreferences: {
         timeZone: "America/New_York",

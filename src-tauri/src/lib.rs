@@ -42,9 +42,9 @@ use auth::{AccountAuth, GoogleAuthConfig};
 use chrono::Utc;
 use db::Database;
 use models::{
-    ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateLabelRequest,
+    ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateCalendarEventRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
-    FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, Thread,
+    FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
     UpdateLabelRequest, UpdateSnippetRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
 };
@@ -1880,6 +1880,74 @@ async fn list_calendar_options(
     Ok(options)
 }
 
+fn validate_calendar_event_request(request: &CreateCalendarEventRequest) -> Result<(), String> {
+    if request.title.trim().is_empty() || request.title.len() > 1024 {
+        return Err("Enter an event title of at most 1024 characters".into());
+    }
+    if request.description.len() > 32_768 {
+        return Err("Event description is too long".into());
+    }
+    let start = chrono::DateTime::parse_from_rfc3339(&request.start)
+        .map_err(|_| "Enter a valid event start time".to_string())?;
+    let end = chrono::DateTime::parse_from_rfc3339(&request.end)
+        .map_err(|_| "Enter a valid event end time".to_string())?;
+    if end <= start {
+        return Err("Event end must be after its start".into());
+    }
+    if request.attendees.len() > 100 || request.attendees.iter().any(|email| {
+        email.len() > 254 || email.contains(char::is_whitespace)
+            || !email.split_once('@').is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.'))
+    }) {
+        return Err("Enter up to 100 valid attendee email addresses".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod calendar_event_request_tests {
+    use super::*;
+
+    fn request() -> CreateCalendarEventRequest {
+        CreateCalendarEventRequest {
+            account_id: "work@example.com".into(), calendar_id: "primary".into(),
+            title: "Planning".into(), start: "2026-09-22T09:00:00Z".into(),
+            end: "2026-09-22T10:00:00Z".into(), description: "Agenda".into(),
+            attendees: vec!["guest@example.com".into()],
+        }
+    }
+
+    #[test]
+    fn validates_event_times_and_invitees_before_the_network_request() {
+        assert!(validate_calendar_event_request(&request()).is_ok());
+        let mut invalid = request();
+        invalid.end = invalid.start.clone();
+        assert!(validate_calendar_event_request(&invalid).is_err());
+        invalid = request();
+        invalid.attendees = vec!["not-an-email".into()];
+        assert!(validate_calendar_event_request(&invalid).is_err());
+        invalid = request();
+        invalid.title = " ".into();
+        assert!(validate_calendar_event_request(&invalid).is_err());
+    }
+}
+
+#[tauri::command]
+async fn create_calendar_event(
+    request: CreateCalendarEventRequest,
+    state: State<'_, AppState>,
+) -> Result<ScheduleEvent, String> {
+    validate_calendar_event_request(&request)?;
+    let account = state.database.list_calendar_accounts()?.into_iter()
+        .find(|account| account.email == request.account_id && account.status == "connected")
+        .ok_or_else(|| "Connect this calendar account in Settings first".to_string())?;
+    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let options = calendar::list_calendar_options(config.calendar_account(&account.email), &account.email).await?;
+    if !options.iter().any(|option| option.id == request.calendar_id && option.writable) {
+        return Err("Choose a calendar where you can create events".into());
+    }
+    calendar::create_event(config.calendar_account(&account.email), &request).await
+}
+
 #[tauri::command]
 async fn set_calendar_selection(
     account_id: String,
@@ -2428,6 +2496,136 @@ async fn ai_analyze_thread(
     );
     cache_thread_analysis(&state, &thread_id, &revision, &analysis)?;
     Ok(analysis)
+}
+
+/// One line per open task for chat context: its title and due value.
+fn chat_task_line(task: &ThreadTask) -> String {
+    match &task.due_value {
+        Some(due) => format!("{} (due {due})", task.title),
+        None => task.title.clone(),
+    }
+}
+
+/// Answers a question about the open conversation. The context is the
+/// conversation itself, open tasks linked to it or to the selected person,
+/// and, only when `search_mailbox` is set, the best-matching other
+/// conversations from local search.
+#[tauri::command]
+async fn ai_thread_chat(
+    request: ThreadChatRequest,
+    provider: ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<ThreadChatReply, String> {
+    let question = request.question.trim().to_string();
+    if question.is_empty() {
+        return Err("Ask a question first".to_string());
+    }
+    if question.chars().count() > ai::MAX_CHAT_TURN_CHARS {
+        return Err(format!("Questions can be up to {} characters", ai::MAX_CHAT_TURN_CHARS));
+    }
+    let thread_id = request.thread_id.clone();
+    let (_revision, analysis_request) = thread_analysis_request(
+        &thread_id,
+        request.user_time_zone.clone(),
+        provider,
+        model.clone(),
+        endpoint.clone(),
+        &state,
+    )
+    .await?;
+
+    let database = state.database.clone();
+    let contact_id = request.contact_id.clone();
+    let search_terms = request.search_mailbox.then(|| ai::chat_search_terms(&question));
+    let lookup_thread_id = thread_id.clone();
+    let (open_tasks, other_threads) = run_database_task(move || {
+        let mut tasks: Vec<ThreadTask> = database
+            .list_tasks(None, None)?
+            .into_iter()
+            .filter(|task| task.thread_id.as_deref() == Some(lookup_thread_id.as_str()) && matches!(task.status.as_str(), "open" | "in_progress"))
+            .collect();
+        if let Some(contact_id) = contact_id {
+            for task in database.list_contact_tasks(&contact_id)? {
+                if !tasks.iter().any(|existing| existing.id == task.id) {
+                    tasks.push(task);
+                }
+            }
+        }
+        let mut others = Vec::new();
+        if let Some(terms) = search_terms {
+            for id in database.chat_search_thread_ids(&terms, &lookup_thread_id, ai::MAX_MAILBOX_CHAT_THREADS)? {
+                others.push(database.get_thread(&id)?);
+            }
+        }
+        Ok::<_, db::DatabaseError>((tasks, others))
+    })
+    .await?;
+
+    let searched: Vec<ChatSource> = other_threads
+        .iter()
+        .map(|detail| ChatSource {
+            thread_id: detail.thread.id.clone(),
+            account_id: detail.thread.account_id.clone(),
+            subject: detail.thread.subject.clone(),
+            last_message_at: detail.thread.last_message_at.clone(),
+        })
+        .collect();
+    let chat_request = ai::ChatRequest {
+        provider,
+        model: model.clone(),
+        endpoint,
+        question,
+        history: request.history,
+        subject: analysis_request.subject,
+        messages: analysis_request.messages,
+        open_tasks: open_tasks.iter().map(chat_task_line).collect(),
+        other_threads: other_threads
+            .into_iter()
+            .map(|detail| ai::ChatThreadInput {
+                thread_id: detail.thread.id,
+                subject: detail.thread.subject,
+                messages: detail
+                    .messages
+                    .into_iter()
+                    .map(|message| ai::ThreadMessageInput {
+                        sender: message.sender,
+                        sent_at: message.sent_at,
+                        body_text: message.body_text,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        proposals_allowed: request.include_proposals,
+        current_time: analysis_request.current_time,
+        user_time_zone: analysis_request.user_time_zone,
+    };
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
+    log::info!(
+        target: "ai_thread_chat",
+        "asking about thread {thread_id} with provider {provider:?} model {model}, {} other thread(s)",
+        searched.len()
+    );
+    let answer = match ai::chat(chat_request, &api_key).await {
+        Ok(answer) => answer,
+        Err(error) => {
+            log::error!(target: "ai_thread_chat", "chat failed for thread {thread_id}: {error}");
+            return Err(error);
+        }
+    };
+    let sources = answer
+        .source_thread_ids
+        .iter()
+        .filter_map(|id| searched.iter().find(|source| &source.thread_id == id).cloned())
+        .collect();
+    Ok(ThreadChatReply {
+        answer: answer.answer,
+        analysis: answer.analysis,
+        reply_draft: answer.reply_draft,
+        sources,
+        searched,
+    })
 }
 
 /// Most recent days of AI usage the settings screen may request.
@@ -3042,6 +3240,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         add_calendar_account,
         reconnect_calendar_account,
         list_calendar_options,
+        create_calendar_event,
         set_calendar_selection,
         remove_calendar_account,
         remove_synced_calendar_account,
@@ -3076,6 +3275,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         ai_analyze_thread,
         ai_brief_thread,
         ai_usage_summary,
+        ai_thread_chat,
         ai_enrich_contact,
         ai_reply_assist_context,
         ai_generate_reply,

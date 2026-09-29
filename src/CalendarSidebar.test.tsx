@@ -396,6 +396,7 @@ describe("calendar sidebar", () => {
         name: "Personal",
         primary: true,
         selected: true,
+        writable: true,
       },
       {
         id: "team",
@@ -403,6 +404,7 @@ describe("calendar sidebar", () => {
         name: "Team",
         primary: false,
         selected: false,
+        writable: true,
       },
     ]);
     const setSelection = vi.spyOn(mailClient, "setCalendarSelection").mockResolvedValue([
@@ -412,6 +414,7 @@ describe("calendar sidebar", () => {
         name: "Personal",
         primary: true,
         selected: false,
+        writable: true,
       },
       {
         id: "team",
@@ -419,6 +422,7 @@ describe("calendar sidebar", () => {
         name: "Team",
         primary: false,
         selected: false,
+        writable: true,
       },
     ]);
     render(<App />);

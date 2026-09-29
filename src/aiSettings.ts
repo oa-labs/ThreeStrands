@@ -20,6 +20,8 @@ export type AiFeatureFlags = {
   proactiveBriefs: boolean;
   /** Limits proactive briefs to senders the user has emailed. */
   proactiveKnownSendersOnly: boolean;
+  /** Lets the reader ask questions about the open conversation. */
+  threadChat: boolean;
 };
 
 export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] =
@@ -32,6 +34,7 @@ export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
   contactEnrichment: false,
   proactiveBriefs: false,
   proactiveKnownSendersOnly: false,
+  threadChat: false,
 };
 
 export const AI_MODEL_PLACEHOLDERS = Object.fromEntries(
@@ -145,6 +148,7 @@ export function readAiFeatures(): AiFeatureFlags {
         contactEnrichment: saved.contactEnrichment === true,
         proactiveBriefs: saved.proactiveBriefs === true,
         proactiveKnownSendersOnly: saved.proactiveKnownSendersOnly === true,
+        threadChat: saved.threadChat === true,
       };
     }
   } catch {

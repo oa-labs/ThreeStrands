@@ -132,6 +132,24 @@ describe("showcase dataset", () => {
     expect(wide.events.some((event) => event.id === "offsite")).toBe(true);
   });
 
+  it("creates a meeting on a writable calendar and includes it in the schedule", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    const calendar = (await client.listCalendarOptions()).find((option) => option.accountId === SHOWCASE_WORK_ACCOUNT && option.primary)!;
+    const start = new Date(now.getTime() + 60 * 60_000).toISOString();
+    const end = new Date(now.getTime() + 2 * 60 * 60_000).toISOString();
+    const created = await client.createCalendarEvent({
+      accountId: SHOWCASE_WORK_ACCOUNT, calendarId: calendar.id, title: "Planning",
+      start, end, description: "Agenda", attendees: ["guest@example.com"],
+    });
+    expect(created).toMatchObject({ title: "Planning", start, end, description: "Agenda", attendees: ["guest@example.com"] });
+    const schedule = await client.listScheduleEvents(start, end, "UTC");
+    expect(schedule.events).toContainEqual(created);
+    await expect(client.createCalendarEvent({
+      accountId: SHOWCASE_WORK_ACCOUNT, calendarId: "unknown", title: "Nope",
+      start, end, description: "", attendees: [],
+    })).rejects.toThrow("Choose a calendar");
+  });
+
   it("unsubscribes through the first advertised method", async () => {
     const client = createDemoClient(buildShowcaseDataset(now));
     await expect(client.unsubscribe("reader-message")).resolves.toMatchObject({ method: "oneClick" });

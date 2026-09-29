@@ -128,6 +128,92 @@ describe("conversation brief", () => {
     expect(briefThread).not.toHaveBeenCalled();
   });
 
+  describe("thread chat", () => {
+    const chatProposal = {
+      type: "task" as const, kind: "action" as const, title: "Try the command palette", notes: null,
+      dueKind: "none" as const, dueValue: null, timeZone: null, repeatIntervalDays: null, confidence: 0.9,
+      evidence: { sourceMessageId: "welcome-message", excerpt: "command palette" },
+    };
+
+    it("opens with q, keeps typed letters out of shortcuts, and returns to read mode on Escape", async () => {
+      await enableAi({ threadChat: true });
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+      expect(within(panel).queryByRole("textbox")).not.toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: "q" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      await waitFor(() => expect(input).toHaveFocus());
+      fireEvent.keyDown(input, { key: "j" });
+      fireEvent.keyDown(input, { key: "e" });
+      expect(screen.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(within(panel).queryByRole("textbox")).not.toBeInTheDocument();
+      fireEvent.keyDown(window, { key: "j" });
+      expect(await screen.findByRole("heading", { name: "Phase 1: read and triage" })).toBeInTheDocument();
+    });
+
+    it("sends the question with earlier turns, files its tasks under Suggested, and opens a drafted reply for review", async () => {
+      await enableAi({ threadChat: true, actionExtraction: true });
+      const threadChat = vi.spyOn(mailClient, "threadChat")
+        .mockResolvedValueOnce({ answer: "It introduces the shortcuts.", analysis: { proposals: [chatProposal], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [] })
+        .mockResolvedValueOnce({ answer: "Here is a reply.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: "Thanks for the tour!", sources: [], searched: [] });
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+      fireEvent.keyDown(window, { key: "q" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      fireEvent.change(input, { target: { value: "What is this about?" } });
+      fireEvent.click(within(panel).getByRole("checkbox", { name: "Search all mail" }));
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(await within(panel).findByText("It introduces the shortcuts.")).toBeInTheDocument();
+      expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({
+        threadId: "welcome", question: "What is this about?", history: [], searchMailbox: true, includeProposals: true,
+      }), "openai", expect.any(String), null);
+      const suggestions = within(panel).getByRole("region", { name: "Suggestions" });
+      expect(within(suggestions).getByText("Try the command palette")).toBeInTheDocument();
+      expect(within(suggestions).getByRole("button", { name: "Get Suggestions" })).toBeInTheDocument();
+
+      fireEvent.change(input, { target: { value: "Draft a reply" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(await within(panel).findByText("Thanks for the tour!")).toBeInTheDocument();
+      expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({
+        searchMailbox: false,
+        history: [{ role: "user", content: "What is this about?" }, { role: "assistant", content: "It introduces the shortcuts." }],
+      }), "openai", expect.any(String), null);
+
+      fireEvent.click(within(panel).getByRole("button", { name: "Use as Reply" }));
+      const editor = await screen.findByRole("textbox", { name: "Message Body" });
+      await waitFor(() => expect(editor).toHaveTextContent("Thanks for the tour!"));
+    });
+
+    it("leaves proposals out of the request when Suggestions is off and offers the question again after a failure", async () => {
+      await enableAi({ threadChat: true });
+      const threadChat = vi.spyOn(mailClient, "threadChat")
+        .mockRejectedValueOnce(new Error("error sending request for url"))
+        .mockResolvedValueOnce({ answer: "Answered.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [] });
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+      fireEvent.keyDown(window, { key: "q" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      fireEvent.change(input, { target: { value: "Anything due?" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(await within(panel).findByText("Couldn't reach the AI provider. Check your connection and try again.")).toBeInTheDocument();
+      expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({ includeProposals: false }), "openai", expect.any(String), null);
+      expect(within(panel).queryByText("Anything due?")).not.toBeInTheDocument();
+      fireEvent.click(within(panel).getByRole("button", { name: "Try Again" }));
+      expect(await within(panel).findByText("Answered.")).toBeInTheDocument();
+      expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({ question: "Anything due?", history: [] }), "openai", expect.any(String), null);
+    });
+  });
+
   describe("proactive suggestions", () => {
     const dwell = proactiveDwellMs(2);
 

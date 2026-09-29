@@ -61,6 +61,17 @@ export type CalendarOption = {
   name: string;
   primary: boolean;
   selected: boolean;
+  writable: boolean;
+};
+
+export type CreateCalendarEventRequest = {
+  accountId: string;
+  calendarId: string;
+  title: string;
+  start: string;
+  end: string;
+  description: string;
+  attendees: string[];
 };
 
 export type ScheduleEvent = {
@@ -288,6 +299,33 @@ export type AiUsageDay = {
   /** Requests whose provider reported a price; their total is `reportedCostUsd`. */
   reportedCostRequests: number;
   reportedCostUsd: number;
+};
+
+/** One earlier exchange in a thread chat. */
+export type ChatTurn = { role: "user" | "assistant"; content: string };
+
+/** A question about the open conversation; mailbox search applies to it alone. */
+export type ThreadChatRequest = {
+  threadId: string;
+  question: string;
+  history: ChatTurn[];
+  searchMailbox: boolean;
+  includeProposals: boolean;
+  contactId: string | null;
+  userTimeZone: string;
+};
+
+/** Another conversation shared with the provider while answering. */
+export type ChatSource = { threadId: string; accountId: string; subject: string; lastMessageAt: string };
+
+export type ThreadChatReply = {
+  answer: string;
+  analysis: ActionAnalysis;
+  replyDraft: string | null;
+  /** Conversations the answer says it relied on. */
+  sources: ChatSource[];
+  /** Every other conversation shared because the question searched all mail. */
+  searched: ChatSource[];
 };
 
 /** One combined request: the persisted summary and the verified suggestions. */

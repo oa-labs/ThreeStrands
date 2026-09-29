@@ -62,6 +62,24 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await expect(forward.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: Welcome to ThreeStrands");
 });
 
+test("switching conversations saves an edited reply all and shows the selected thread", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+  await page.getByTitle("Message content").contentFrame().locator("body").click();
+  await page.keyboard.press("a");
+
+  const reply = page.getByRole("dialog", { name: "Reply Message" });
+  await expect(reply.getByRole("heading", { name: "Reply All" })).toBeVisible();
+  await reply.getByRole("textbox", { name: "Message Body" }).fill("Keep this reply all draft");
+  await page.getByRole("listbox").getByRole("option", { name: /Phase 1: read and triage/ }).click();
+
+  await expect(reply).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Conversation" }).getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
+  await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
+  await page.getByRole("button", { name: /Welcome to ThreeStrands/ }).click();
+  await expect(reply.getByRole("textbox", { name: "Message Body" })).toHaveText("Keep this reply all draft");
+});
+
 test("Reply Assist opens in the viewport over a long reply and Escape returns to compose", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 600 });
   await page.goto("/");

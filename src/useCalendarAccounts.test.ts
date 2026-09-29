@@ -9,7 +9,7 @@ const work: CalendarAccount = { email: "work@example.com", connectedAt: "2026-09
 const home: CalendarAccount = { email: "home@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" };
 
 function calendar(id: string, accountId: string, selected = true): CalendarOption {
-  return { id, accountId, name: id, primary: false, selected };
+  return { id, accountId, name: id, primary: false, selected, writable: true };
 }
 
 describe("useCalendarAccounts", () => {

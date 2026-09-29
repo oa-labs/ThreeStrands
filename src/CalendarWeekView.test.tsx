@@ -11,8 +11,8 @@ const accounts: CalendarAccount[] = [
   { email: "joel@example.com", connectedAt: "2026-01-01T00:00:00Z", status: "connected" },
 ];
 const calendars: CalendarOption[] = [
-  { id: "primary", accountId: "joel@example.com", name: "joel@example.com", primary: true, selected: true },
-  { id: "holidays", accountId: "joel@example.com", name: "Holidays in United States", primary: false, selected: true },
+  { id: "primary", accountId: "joel@example.com", name: "joel@example.com", primary: true, selected: true, writable: true },
+  { id: "holidays", accountId: "joel@example.com", name: "Holidays in United States", primary: false, selected: true, writable: false },
 ];
 
 type WeekViewOptions = Omit<Parameters<typeof CalendarWeekView>[0], "anchor" | "onAnchorChange">;
@@ -63,7 +63,7 @@ describe("CalendarWeekView", () => {
   it("names every account contributing selected calendars in the header", () => {
     const { container } = renderWeek({
       accounts: [...accounts, { ...accounts[0], email: "work@example.com" }],
-      calendars: [...calendars, { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true }],
+      calendars: [...calendars, { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true, writable: true }],
     });
     expect(container.querySelector(".calendar-week-header")).toHaveTextContent("Calendar · joel@example.com, work@example.com");
   });
@@ -255,6 +255,70 @@ describe("CalendarWeekView", () => {
 
     fireEvent.click(holidays);
     expect(props.onToggleCalendar).toHaveBeenCalledWith("joel@example.com", "holidays", false);
+  });
+
+  it("opens an hour-long event from a clicked time and saves its details on the primary calendar", async () => {
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(event("created", "2026-09-22T09:15:00", "2026-09-22T10:15:00", "Planning"));
+    const { container } = renderWeek();
+    const column = container.querySelectorAll<HTMLElement>(".calendar-week-column")[2]!;
+    vi.spyOn(column, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+
+    fireEvent.pointerDown(column, { button: 0, pointerId: 1, clientY: 9.25 * 64 });
+    fireEvent.pointerUp(column, { button: 0, pointerId: 1, clientY: 9.25 * 64 });
+    const dialog = await screen.findByRole("dialog", { name: "New event" });
+    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-09-22T09:15");
+    expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-09-22T10:15");
+    expect(within(dialog).getByLabelText("Calendar")).toHaveValue("joel@example.com\nprimary");
+    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Planning" } });
+    fireEvent.change(within(dialog).getByLabelText("Invite people"), { target: { value: "Ada@Example.com, bob@example.com" } });
+    fireEvent.change(within(dialog).getByLabelText("Description"), { target: { value: "Review the plan" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith({
+      accountId: "joel@example.com", calendarId: "primary", title: "Planning",
+      start: new Date(2026, 8, 22, 9, 15).toISOString(),
+      end: new Date(2026, 8, 22, 10, 15).toISOString(),
+      attendees: ["ada@example.com", "bob@example.com"], description: "Review the plan",
+    }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument());
+  });
+
+  it("uses the dragged span and allows changing the calendar", async () => {
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(event("created", "2026-09-22T09:00:00", "2026-09-22T11:30:00"));
+    const { container } = renderWeek({
+      calendars: [...calendars, { id: "team", accountId: "joel@example.com", name: "Team", primary: false, selected: false, writable: true }],
+    });
+    const column = container.querySelectorAll<HTMLElement>(".calendar-week-column")[2]!;
+    vi.spyOn(column, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+    fireEvent.pointerDown(column, { button: 0, pointerId: 2, clientY: 9 * 64 });
+    fireEvent.pointerMove(column, { pointerId: 2, clientY: 11.25 * 64 });
+    expect(container.querySelector(".calendar-create-selection")).toHaveStyle({ top: `${9 * 64}px`, height: `${2.5 * 64}px` });
+    fireEvent.pointerUp(column, { button: 0, pointerId: 2, clientY: 11.25 * 64 });
+
+    const dialog = await screen.findByRole("dialog", { name: "New event" });
+    expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-09-22T11:30");
+    fireEvent.change(within(dialog).getByLabelText("Calendar"), { target: { value: "joel@example.com\nteam" } });
+    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Team sync" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ calendarId: "team", title: "Team sync" })));
+  });
+
+  it("keeps the dialog open on a save error and excludes read-only calendars", async () => {
+    vi.spyOn(mailClient, "createCalendarEvent").mockRejectedValue(new Error("Reconnect this calendar account"));
+    renderWeek();
+    fireEvent.click(screen.getByRole("button", { name: "New event" }));
+    const dialog = await screen.findByRole("dialog", { name: "New event" });
+    expect(within(dialog).getByRole("option", { name: /joel@example.com/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("option", { name: /Holidays/ })).not.toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Planning" } });
+    fireEvent.change(within(dialog).getByLabelText("Ends"), { target: { value: "2026-09-22T08:00" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("end time must be after");
+    expect(mailClient.createCalendarEvent).not.toHaveBeenCalled();
+    fireEvent.change(within(dialog).getByLabelText("Ends"), { target: { value: "2026-09-22T16:00" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Reconnect this calendar account");
+    expect(dialog).toBeInTheDocument();
   });
 
   it("offers recovery when the schedule cannot be loaded", async () => {

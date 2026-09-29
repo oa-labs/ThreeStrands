@@ -97,6 +97,46 @@ impl Database {
         })
     }
 
+    /// The conversations that best match any of the search words, most
+    /// relevant first, excluding the open conversation and trashed mail.
+    /// Terms must already be plain words (see `ai::chat_search_terms`).
+    pub fn chat_search_thread_ids(
+        &self,
+        terms: &[String],
+        exclude_thread_id: &str,
+        limit: usize,
+    ) -> DbResult<Vec<String>> {
+        let words: Vec<&String> = terms
+            .iter()
+            .filter(|term| !term.is_empty() && term.chars().all(char::is_alphanumeric))
+            .collect();
+        if words.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let query = words
+            .iter()
+            .map(|word| format!("\"{word}\"*"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT t.id FROM thread_search s JOIN threads t ON t.id = s.thread_id
+                 WHERE thread_search MATCH ?1 AND t.trashed = 0 AND t.id <> ?2
+                 ORDER BY rank, t.last_received_at DESC
+                 LIMIT ?3",
+            )?;
+            let rows = statement.query_map(
+                params![
+                    query,
+                    exclude_thread_id,
+                    i64::try_from(limit).unwrap_or(i64::MAX)
+                ],
+                |row| row.get(0),
+            )?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
     /// Usage rows from `since_day` (inclusive), newest first.
     pub fn ai_usage_since(&self, since_day: &str) -> DbResult<Vec<AiUsageDay>> {
         self.with_connection(|connection| {

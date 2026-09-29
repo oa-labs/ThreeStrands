@@ -85,6 +85,7 @@ function noopContext(): CommandContext {
     openContactsView: () => {},
     openCalendarView: () => {},
     getSuggestions: () => {},
+    openThreadChat: () => {},
     newTask: () => {},
     increaseFontSize: () => {},
     decreaseFontSize: () => {},
@@ -120,6 +121,7 @@ describe("command registry", () => {
       "#": ["draft.discard", "thread.trash"],
       arrowright: ["tasks.nextColumn", "message.next"],
       arrowleft: ["tasks.previousColumn", "message.previous"],
+      "mod+j": ["draft.replyAssist", "chat.open"],
     });
 
     for (const focusedPane of ["mail", "tasks", "contacts"] as const) {
@@ -232,6 +234,21 @@ describe("command registry", () => {
     await newTask?.run({ ...noopContext(), selectedId: "thread-1", newTask: start });
     expect(start).toHaveBeenCalledTimes(1);
     expect(newTask?.enabled({ ...noopContext(), focusedPane: "tasks", selectedId: null })).toBe(true);
+  });
+
+  it("opens thread chat with q or Mod+J in read mode while Mod+J keeps drafting in the composer", () => {
+    const chat = commands.find((command) => command.id === "chat.open");
+    expect(chat?.keys).toEqual(["q", "Mod+j"]);
+    const reading = { ...noopContext(), selectedId: "thread-1", focusedPane: "mail" as const, mailbox: "inbox" as const };
+    expect(chat?.enabled(reading)).toBe(true);
+    expect(chat?.enabled({ ...reading, composerActive: true })).toBe(false);
+    expect(chat?.enabled({ ...reading, selectedId: null })).toBe(false);
+    expect(chat?.enabled({ ...reading, focusedPane: "tasks" })).toBe(false);
+    const draftAssist = commands.find((command) => command.id === "draft.replyAssist");
+    expect(draftAssist?.keys).toContain("Mod+j");
+    expect(draftAssist?.enabled({ ...reading, composerActive: true })).toBe(true);
+    expect(draftAssist?.enabled(reading)).toBe(false);
+    expect(commands.filter((command) => command.keys.includes("q"))).toHaveLength(1);
   });
 
   it("uses Shift+A for Get Suggestions without replacing reply all", () => {

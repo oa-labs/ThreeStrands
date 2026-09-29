@@ -92,9 +92,10 @@ import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSi
 import { isActiveTaskStatus } from "./taskViews";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { ContextPanel } from "./ContextPanel";
-import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
+import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { ThreadTasks } from "./ThreadTasks";
 import { ContactMeetings } from "./ContactMeetings";
+import { ThreadChat, type ChatEntry } from "./ThreadChat";
 import { hasEmailedBefore, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
@@ -275,7 +276,7 @@ export function App() {
   }, []);
   useEffect(refreshUnreadCounts, [refreshUnreadCounts]);
   const snippetLibrary = useSnippets();
-  const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId, snippetLibrary.snippets, snippetLibrary.create, snippetLibrary.update, snippetLibrary.remove);
+  const correspondence = useCorrespondence(accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId, snippetLibrary.snippets, snippetLibrary.create, snippetLibrary.update, snippetLibrary.remove, selectedId);
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft
     && correspondence.activeDraft.mode !== "new"
@@ -368,6 +369,8 @@ export function App() {
   const [aiProactive, setAiProactive] = useState<{ enabled: boolean; knownSendersOnly: boolean }>({ enabled: false, knownSendersOnly: false });
   const [aiActionFeatureEnabled, setAiActionFeatureEnabled] = useState(false);
   const [aiActionAvailable, setAiActionAvailable] = useState(false);
+  const [aiChatFeatureEnabled, setAiChatFeatureEnabled] = useState(false);
+  const [aiChatAvailable, setAiChatAvailable] = useState(false);
   // Keyed by thread id, not a single flag, so summarizing thread A in the
   // background doesn't show "Summarizing…" (or clear it) on thread B just
   // because B is what's currently on screen when A's request settles.
@@ -379,22 +382,27 @@ export function App() {
     const features = readAiFeatures();
     const summaryEnabled = provider !== "none" && features.summarize;
     const actionEnabled = provider !== "none" && features.actionExtraction;
+    const chatEnabled = provider !== "none" && features.threadChat;
+    setAiChatFeatureEnabled(features.threadChat);
     setAiSummaryFeatureEnabled(features.summarize);
     setAiProactive({ enabled: features.proactiveBriefs, knownSendersOnly: features.proactiveKnownSendersOnly });
     setAiActionFeatureEnabled(features.actionExtraction);
-    if (!summaryEnabled && !actionEnabled) {
+    if (!summaryEnabled && !actionEnabled && !chatEnabled) {
       setAiSummaryAvailable(false);
       setAiActionAvailable(false);
+      setAiChatAvailable(false);
       return;
     }
     void isAiApiKeyConfigured()
       .then((configured) => {
         setAiSummaryAvailable(configured && summaryEnabled);
         setAiActionAvailable(configured && actionEnabled);
+        setAiChatAvailable(configured && chatEnabled);
       })
       .catch(() => {
         setAiSummaryAvailable(false);
         setAiActionAvailable(false);
+        setAiChatAvailable(false);
       });
   }, []);
   useEffect(() => {
@@ -1370,6 +1378,12 @@ export function App() {
 
   const [actionProposalSets, setActionProposalSets] = useState<Record<string, ActionProposal[]>>({});
   const [actionHiddenCounts, setActionHiddenCounts] = useState<Record<string, number>>({});
+  // Revisions whose suggestions were fetched. Kept apart from the proposal
+  // lists because chat can add proposals before suggestions ever ran.
+  const [actionFetchedKeys, setActionFetchedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const markSuggestionsFetched = useCallback((key: string) => {
+    setActionFetchedKeys((current) => current.has(key) ? current : new Set(current).add(key));
+  }, []);
   const [actionAnalysisLoading, setActionAnalysisLoading] = useState(false);
   const [actionAnalysisError, setActionAnalysisError] = useState<string | null>(null);
   const actionProposalKey = visibleDetail
@@ -1380,7 +1394,7 @@ export function App() {
   const actionAnalysisRequested = Boolean(
     actionAnalysisLoading
       || actionAnalysisError
-      || (actionProposalKey && Object.prototype.hasOwnProperty.call(actionProposalSets, actionProposalKey)),
+      || (actionProposalKey && actionFetchedKeys.has(actionProposalKey)),
   );
   useEffect(() => {
     setActionAnalysisError(null);
@@ -1419,13 +1433,14 @@ export function App() {
         endpoint,
       );
       setActionProposalSets((current) => ({ ...current, [actionProposalKey]: proposals }));
+      markSuggestionsFetched(actionProposalKey);
       setActionHiddenCounts((current) => ({ ...current, [actionProposalKey]: hiddenCount }));
     } catch (reason) {
       setActionAnalysisError(errorMessage(reason));
     } finally {
       setActionAnalysisLoading(false);
     }
-  }, [actionAnalysisLoading, actionProposalKey, aiActionAvailable, aiActionFeatureEnabled, availabilityPreferences.timeZone, visibleDetail]);
+  }, [markSuggestionsFetched, actionAnalysisLoading, actionProposalKey, aiActionAvailable, aiActionFeatureEnabled, availabilityPreferences.timeZone, visibleDetail]);
 
   /** Summarizes and extracts suggestions in one provider call. */
   const runCombinedBrief = useCallback(async () => {
@@ -1440,6 +1455,7 @@ export function App() {
       const { summary, analysis } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
       applySummary(threadId, summary);
       setActionProposalSets((current) => ({ ...current, [proposalKey]: analysis.proposals }));
+      markSuggestionsFetched(proposalKey);
       setActionHiddenCounts((current) => ({ ...current, [proposalKey]: analysis.hiddenCount }));
     } catch (error) {
       setSummaryErrors((current) => ({ ...current, [threadId]: errorMessage(error) }));
@@ -1447,7 +1463,7 @@ export function App() {
       endSummary(threadId);
       setActionAnalysisLoading(false);
     }
-  }, [actionAnalysisLoading, actionProposalKey, applySummary, availabilityPreferences.timeZone, beginSummary, endSummary, visibleDetail]);
+  }, [markSuggestionsFetched, actionAnalysisLoading, actionProposalKey, applySummary, availabilityPreferences.timeZone, beginSummary, endSummary, visibleDetail]);
 
   /**
    * Fetches whatever part of the brief is missing for the visible thread, in
@@ -1462,12 +1478,12 @@ export function App() {
       && !(thread.summaryGeneratedAt && thread.lastMessageAt > thread.summaryGeneratedAt);
     const needSummary = aiSummaryAvailable && (force || !summaryFresh);
     const needSuggestions = aiActionAvailable
-      && (force || !Object.prototype.hasOwnProperty.call(actionProposalSets, actionProposalKey));
+      && (force || !actionFetchedKeys.has(actionProposalKey));
     if (only === "summary" ? !needSummary : only === "suggestions" ? !needSuggestions : !needSummary && !needSuggestions) return;
     if (needSummary && needSuggestions) await runCombinedBrief();
     else if (needSummary) await runSummarize();
     else await runAnalyzeThread();
-  }, [actionProposalKey, actionProposalSets, aiActionAvailable, aiSummaryAvailable, runAnalyzeThread, runCombinedBrief, runSummarize, visibleDetail]);
+  }, [actionFetchedKeys, actionProposalKey, aiActionAvailable, aiSummaryAvailable, runAnalyzeThread, runCombinedBrief, runSummarize, visibleDetail]);
 
   // Proactive briefs: once the reader stays on a qualifying conversation for
   // the mark-read delay, fetch whatever part of the brief is missing. Each
@@ -1497,6 +1513,72 @@ export function App() {
     }, proactiveDwellMs(autoReadDelaySeconds));
     return () => { active = false; window.clearTimeout(timer); };
   }, [aiActionAvailable, aiProactive, aiSummaryAvailable, autoReadDelaySeconds, isThreadMailbox, ownAddresses, proactiveKey]);
+
+  // Thread chat, kept per conversation for the session. A failed question is
+  // removed from the transcript and offered again through Try Again.
+  const [chatByThread, setChatByThread] = useState<Record<string, ChatEntry[]>>({});
+  const [chatPendingThreads, setChatPendingThreads] = useState<ReadonlySet<string>>(() => new Set());
+  const [chatFailures, setChatFailures] = useState<Record<string, { message: string; question: string; searchMailbox: boolean }>>({});
+  const [chatFocusRequest, setChatFocusRequest] = useState(0);
+  const chatEntrySequence = useRef(0);
+  const askThread = useCallback(async (question: string, searchMailbox: boolean, contactId: string | null) => {
+    if (!visibleDetail || !actionProposalKey) return;
+    const threadId = visibleDetail.thread.id;
+    const proposalKey = actionProposalKey;
+    if (chatPendingThreads.has(threadId)) return;
+    const earlier = chatByThread[threadId] ?? [];
+    const nextId = () => `chat-${chatEntrySequence.current += 1}`;
+    const questionEntry: ChatEntry = { id: nextId(), role: "user", content: question, searchMailbox };
+    setChatByThread((current) => ({ ...current, [threadId]: [...(current[threadId] ?? []), questionEntry] }));
+    setChatPendingThreads((current) => new Set(current).add(threadId));
+    setChatFailures((current) => {
+      if (!(threadId in current)) return current;
+      const next = { ...current };
+      delete next[threadId];
+      return next;
+    });
+    try {
+      const { provider, model, endpoint } = readAiRequestConfig("asking about a conversation");
+      const reply = await mailClient.threadChat({
+        threadId,
+        question,
+        history: earlier.map((entry) => ({ role: entry.role, content: entry.content })),
+        searchMailbox,
+        includeProposals: aiActionAvailable,
+        contactId,
+        userTimeZone: availabilityPreferences.timeZone,
+      }, provider, model, endpoint);
+      if (reply.analysis.proposals.length > 0) {
+        setActionProposalSets((current) => ({ ...current, [proposalKey]: [...(current[proposalKey] ?? []), ...reply.analysis.proposals] }));
+      }
+      const answer: ChatEntry = {
+        id: nextId(),
+        role: "assistant",
+        content: reply.answer,
+        replyDraft: reply.replyDraft,
+        addedSuggestions: reply.analysis.proposals.length,
+        hiddenSuggestions: reply.analysis.hiddenCount,
+        sources: reply.sources,
+        searched: reply.searched,
+      };
+      setChatByThread((current) => ({ ...current, [threadId]: [...(current[threadId] ?? []), answer] }));
+    } catch (error) {
+      setChatByThread((current) => ({ ...current, [threadId]: (current[threadId] ?? []).filter((entry) => entry.id !== questionEntry.id) }));
+      setChatFailures((current) => ({ ...current, [threadId]: { message: describeAnalysisError(errorMessage(error)).summary, question, searchMailbox } }));
+    } finally {
+      setChatPendingThreads((current) => {
+        const next = new Set(current);
+        next.delete(threadId);
+        return next;
+      });
+    }
+  }, [actionProposalKey, aiActionAvailable, availabilityPreferences.timeZone, chatByThread, chatPendingThreads, visibleDetail]);
+
+  /** Shows the context panel and moves focus into its question box. */
+  const openThreadChat = useCallback(() => {
+    setRightWorkspace((current) => current === "calendar" ? current : null);
+    setChatFocusRequest((current) => current + 1);
+  }, []);
 
   /** Shows the context panel's AI section and fetches suggestions if missing. */
   const getSuggestions = useCallback(() => {
@@ -1840,6 +1922,7 @@ export function App() {
     openContactsView,
     openCalendarView,
     getSuggestions,
+    openThreadChat,
     newTask,
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
@@ -1848,7 +1931,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openThreadChat, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -2652,6 +2735,26 @@ export function App() {
               error={summaryError ?? actionAnalysisError}
               preview={actionAnalysisRequested ? actionAnalysisPreview : null}
               onRun={(force) => void runBrief({ force })}
+              onOpenSettings={() => openSettingsAt("ai")}
+            />
+          ) : null}
+          chat={(person) => visibleDetail ? (
+            <ThreadChat
+              key={visibleDetail.thread.id}
+              enabled={aiChatFeatureEnabled}
+              available={aiChatAvailable}
+              entries={chatByThread[visibleDetail.thread.id] ?? []}
+              pending={chatPendingThreads.has(visibleDetail.thread.id)}
+              error={chatFailures[visibleDetail.thread.id]?.message ?? null}
+              focusRequest={chatFocusRequest}
+              onAsk={(question, searchMailbox) => void askThread(question, searchMailbox, person?.contactId ?? null)}
+              onRetry={() => {
+                const failure = chatFailures[visibleDetail.thread.id];
+                if (failure) void askThread(failure.question, failure.searchMailbox, person?.contactId ?? null);
+              }}
+              onUseReply={(text) => correspondence.replyWithText(text, visibleDetail.messages.at(-1)?.id)}
+              onOpenThread={openTaskThread}
+              onShowSuggestions={() => document.getElementById(THREAD_ASSIST_ID)?.scrollIntoView?.({ block: "nearest" })}
               onOpenSettings={() => openSettingsAt("ai")}
             />
           ) : null}

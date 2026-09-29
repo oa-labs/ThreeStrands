@@ -533,9 +533,9 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
       { email: SHOWCASE_PERSONAL_ACCOUNT, connectedAt, status: "connected" },
     ],
     calendarOptions: [
-      { id: SHOWCASE_WORK_ACCOUNT, accountId: SHOWCASE_WORK_ACCOUNT, name: "Maya Chen", primary: true, selected: true },
-      { id: "launch@harborlight.example", accountId: SHOWCASE_WORK_ACCOUNT, name: "Launch", primary: false, selected: true },
-      { id: SHOWCASE_PERSONAL_ACCOUNT, accountId: SHOWCASE_PERSONAL_ACCOUNT, name: "Personal", primary: true, selected: true },
+      { id: SHOWCASE_WORK_ACCOUNT, accountId: SHOWCASE_WORK_ACCOUNT, name: "Maya Chen", primary: true, selected: true, writable: true },
+      { id: "launch@harborlight.example", accountId: SHOWCASE_WORK_ACCOUNT, name: "Launch", primary: false, selected: true, writable: true },
+      { id: SHOWCASE_PERSONAL_ACCOUNT, accountId: SHOWCASE_PERSONAL_ACCOUNT, name: "Personal", primary: true, selected: true, writable: true },
     ],
     scheduleEvents: buildSchedule(now),
   };

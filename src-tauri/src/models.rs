@@ -24,6 +24,19 @@ pub struct CalendarOption {
     pub name: String,
     pub primary: bool,
     pub selected: bool,
+    pub writable: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateCalendarEventRequest {
+    pub account_id: String,
+    pub calendar_id: String,
+    pub title: String,
+    pub start: String,
+    pub end: String,
+    pub description: String,
+    pub attendees: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -545,6 +558,51 @@ pub struct AiUsageDay {
     pub output_tokens: i64,
     pub reported_cost_requests: i64,
     pub reported_cost_usd: f64,
+}
+
+/// One earlier exchange in a thread chat, as the client kept it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChatTurn {
+    pub role: String,
+    pub content: String,
+}
+
+/// A question about the open conversation. `search_mailbox` applies to this
+/// question only; `include_proposals` reflects the Suggestions feature.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadChatRequest {
+    pub thread_id: String,
+    pub question: String,
+    #[serde(default)]
+    pub history: Vec<ChatTurn>,
+    pub search_mailbox: bool,
+    pub include_proposals: bool,
+    pub contact_id: Option<String>,
+    pub user_time_zone: String,
+}
+
+/// A conversation shared with the provider while answering.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSource {
+    pub thread_id: String,
+    pub account_id: String,
+    pub subject: String,
+    pub last_message_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadChatReply {
+    pub answer: String,
+    pub analysis: ActionAnalysis,
+    pub reply_draft: Option<String>,
+    /// Other conversations the answer says it relied on.
+    pub sources: Vec<ChatSource>,
+    /// Every other conversation shared because the question searched all mail.
+    pub searched: Vec<ChatSource>,
 }
 
 /// The combined result of one brief request: the persisted summary and the
