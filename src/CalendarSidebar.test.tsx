@@ -143,10 +143,10 @@ describe("calendar sidebar", () => {
     const { sidebar } = renderSwipeSidebar();
     // Standalone callers may omit scope details; App supplies them from the
     // selected calendar list.
-    expect(within(sidebar).queryByText(/Selected calendars/)).not.toBeInTheDocument();
+    expect(within(sidebar).queryByText(/Calendar/)).not.toBeInTheDocument();
     cleanup();
     render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} availabilityPreferences={{ timeZone: "America/New_York", workingWindows: [], defaultDurationMinutes: 30, slotIncrementMinutes: 15 }} selectedCalendarAccountIds={["personal@example.com", "work@example.com"]} />);
-    expect(screen.getByRole("complementary", { name: "Calendar schedule" }).querySelector(".calendar-sidebar-header")).toHaveTextContent("Selected calendars · personal@example.com, work@example.com");
+    expect(screen.getByRole("complementary", { name: "Calendar schedule" }).querySelector(".calendar-sidebar-header")).toHaveTextContent("Calendar · personal@example.com, work@example.com");
   });
 
   it("moves one day per horizontal trackpad swipe", async () => {

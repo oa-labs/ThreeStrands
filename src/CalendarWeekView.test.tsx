@@ -56,7 +56,7 @@ describe("CalendarWeekView", () => {
       accounts: [...accounts, { ...accounts[0], email: "work@example.com" }],
       calendars: [...calendars, { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true }],
     });
-    expect(container.querySelector(".calendar-week-header")).toHaveTextContent("Selected calendars · joel@example.com, work@example.com");
+    expect(container.querySelector(".calendar-week-header")).toHaveTextContent("Calendar · joel@example.com, work@example.com");
   });
 
   it("requests the visible week, preloads neighbors, and refreshes when navigating", async () => {

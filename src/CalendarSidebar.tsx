@@ -314,7 +314,7 @@ export function CalendarSidebar({
     <aside className="calendar-sidebar" aria-label="Calendar schedule" ref={sidebarRef}>
       <header className="calendar-sidebar-header">
         <div className="calendar-sidebar-heading">
-          {selectedCalendarAccountIds ? <span className="eyebrow">Selected calendars <span className="eyebrow-account">· {selectedCalendarAccountIds.length ? selectedCalendarAccountIds.join(", ") : "None selected"}</span></span> : null}
+          {selectedCalendarAccountIds ? <span className="eyebrow">Calendar <span className="eyebrow-account">· {selectedCalendarAccountIds.length ? selectedCalendarAccountIds.join(", ") : "None selected"}</span></span> : null}
           <h2>{new Intl.DateTimeFormat(undefined, {
             weekday: "short",
             month: "short",
