@@ -34,6 +34,21 @@ describe("ContextPanel",()=>{
     await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("jane@example.com",100));
   });
 
+  it("splits email-only participant chips into separately truncated local and domain parts",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    const bareDetail={...detail,messages:[{...detail.messages[0],sender:"mjacobs@upwardprojects.com"},detail.messages[1]]} as unknown as ThreadDetail;
+    renderPanel({detail:bareDetail});
+    await screen.findByRole("heading",{name:"Bob Lee"});
+    const participants=screen.getByRole("group",{name:"Conversation participants"});
+    const chip=within(participants).getByRole("button",{name:"mjacobs@upwardprojects.com"});
+    expect(chip).toHaveAttribute("title","mjacobs@upwardprojects.com");
+    expect(chip.querySelector(".context-participant-local")).toHaveTextContent("mjacobs");
+    expect(chip.querySelector(".context-participant-domain")).toHaveTextContent("upwardprojects.com");
+    expect(within(participants).getByRole("button",{name:"Bob Lee"}).querySelector(".context-participant-address")).toBeNull();
+  });
+
   it("toggles favorite from a heart button and shows an error when saving fails",async()=>{
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);

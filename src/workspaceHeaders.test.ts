@@ -42,3 +42,18 @@ describe("primary workspace headers", () => {
     for (const position of positions.slice(1)) expect(position).toEqual(positions[0]);
   });
 });
+
+describe("task detail heading", () => {
+  it("uses the compact heading size in both display and edit modes", () => {
+    expect(lastDeclaration(".task-detail h2", "font-size")).toBe("var(--type-heading-sm)");
+    expect(lastDeclaration(".task-inline-title input", "font-size")).toBe("var(--type-heading-sm)");
+  });
+});
+
+describe("mail workspace with the calendar schedule open", () => {
+  it("keeps the context panel and schedule in separate columns", () => {
+    expect(lastDeclaration(".app-shell.mail-context-open", "grid-template-columns")?.split(" minmax(")).toHaveLength(5);
+    expect(lastDeclaration(".context-panel", "grid-column")).toBe("4");
+    expect(lastDeclaration(".app-shell.mail-context-open > .calendar-sidebar", "grid-column")).toBe("5");
+  });
+});

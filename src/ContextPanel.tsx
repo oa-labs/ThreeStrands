@@ -125,7 +125,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
           {participants.map((item) => (
             <button key={item.email} type="button" aria-pressed={item.email === email} title={item.email} onClick={() => setEmail(item.email)}>
               <span className="context-participant-initial" aria-hidden="true">{(item.name || item.email).slice(0, 1).toLocaleUpperCase()}</span>
-              <span>{item.name || item.email}</span>
+              {item.name && item.name !== item.email ? <span>{item.name}</span> : <ParticipantAddress email={item.email} />}
             </button>
           ))}
         </div>
@@ -184,5 +184,15 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
       {error ? <p className="contacts-error" role="alert">{error}</p> : null}
       {detail && chat ? <div className="context-chat-dock">{chat(person)}</div> : null}
     </aside>
+  );
+}
+
+function ParticipantAddress({ email }: { email: string }) {
+  const at = email.lastIndexOf("@");
+  if (at <= 0) return <span>{email}</span>;
+  return (
+    <span className="context-participant-address">
+      <span className="context-participant-local">{email.slice(0, at)}</span>@<span className="context-participant-domain">{email.slice(at + 1)}</span>
+    </span>
   );
 }
