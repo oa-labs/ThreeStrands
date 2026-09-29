@@ -7,6 +7,7 @@ import { parseAddress } from "../emailAddress";
 import type {
   Account,
   ActionAnalysis,
+  AiUsageDay,
   AvailabilityPreferences,
   AvailabilityResult,
   CalendarAccount,
@@ -365,6 +366,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           excerpt: latest.bodyText.slice(0, 240),
         },
       }] };
+    },
+    async aiUsageSummary(): Promise<AiUsageDay[]> {
+      // The demo never calls a provider, so there is no usage to report.
+      return [];
     },
     async briefThread(threadId, userTimeZone, provider, model, endpoint): Promise<ThreadBriefResult> {
       const [summary, analysis] = await Promise.all([

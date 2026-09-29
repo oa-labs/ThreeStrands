@@ -8,6 +8,8 @@ use crate::models::{
     ReplyAssistContext, ReplyAssistMessage,
 };
 
+use std::sync::{Arc, RwLock};
+
 const SERVICE: &str = "app.threestrands.mail";
 const KEY: &str = "ai-provider-api-key";
 
@@ -71,6 +73,18 @@ impl AiProvider {
                 protocol: ApiProtocol::OpenAiCompatible,
                 base_url: None,
             },
+        }
+    }
+
+    /// The provider's settings identifier, as stored with usage records.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::OpenAi => "openai",
+            Self::Anthropic => "anthropic",
+            Self::OpenRouter => "openrouter",
+            Self::Fireworks => "fireworks",
+            Self::Custom => "custom",
         }
     }
 
@@ -1261,6 +1275,86 @@ struct ProviderRequest<'a> {
     temperature: f64,
 }
 
+/// One provider request that returned a successful response, whether or not
+/// its content later proved usable. Tokens are zero when the provider did not
+/// report usage; `cost_usd` is set only when the provider reported a price.
+#[derive(Debug, Clone)]
+pub struct UsageEvent {
+    pub provider: AiProvider,
+    pub model: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: Option<f64>,
+}
+
+pub type UsageRecorder = Arc<dyn Fn(&UsageEvent) + Send + Sync>;
+
+static USAGE_RECORDER: RwLock<Option<UsageRecorder>> = RwLock::new(None);
+
+/// Installs the sink that persists provider usage. The app sets this once at
+/// startup; until then usage is not recorded.
+pub fn set_usage_recorder(recorder: UsageRecorder) {
+    if let Ok(mut slot) = USAGE_RECORDER.write() {
+        *slot = Some(recorder);
+    }
+}
+
+fn record_usage(request: &ProviderRequest<'_>, body: &str) {
+    let (input_tokens, output_tokens, cost_usd) =
+        parse_usage(request.provider.descriptor().protocol, body);
+    let recorder = USAGE_RECORDER.read().ok().and_then(|slot| slot.clone());
+    if let Some(recorder) = recorder {
+        recorder(&UsageEvent {
+            provider: request.provider,
+            model: request.model.to_string(),
+            input_tokens,
+            output_tokens,
+            cost_usd,
+        });
+    }
+}
+
+/// Reads token counts, and a reported cost when present, from a successful
+/// response body. Missing or malformed usage reads as zero tokens.
+fn parse_usage(protocol: ApiProtocol, body: &str) -> (u64, u64, Option<f64>) {
+    #[derive(Deserialize, Default)]
+    struct Envelope {
+        #[serde(default)]
+        usage: Option<Usage>,
+    }
+    #[derive(Deserialize, Default)]
+    struct Usage {
+        prompt_tokens: Option<u64>,
+        completion_tokens: Option<u64>,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        cache_creation_input_tokens: Option<u64>,
+        cache_read_input_tokens: Option<u64>,
+        cost: Option<f64>,
+    }
+    let usage = serde_json::from_str::<Envelope>(body)
+        .ok()
+        .and_then(|envelope| envelope.usage)
+        .unwrap_or_default();
+    match protocol {
+        ApiProtocol::Anthropic => (
+            usage
+                .input_tokens
+                .unwrap_or(0)
+                .saturating_add(usage.cache_creation_input_tokens.unwrap_or(0))
+                .saturating_add(usage.cache_read_input_tokens.unwrap_or(0)),
+            usage.output_tokens.unwrap_or(0),
+            None,
+        ),
+        ApiProtocol::OpenAiCompatible => (
+            usage.prompt_tokens.unwrap_or(0),
+            usage.completion_tokens.unwrap_or(0),
+            usage.cost.filter(|cost| cost.is_finite() && *cost >= 0.0),
+        ),
+        ApiProtocol::Disabled => (0, 0, None),
+    }
+}
+
 async fn send_provider_request(
     base_url: &str,
     request: &ProviderRequest<'_>,
@@ -1278,6 +1372,7 @@ async fn send_provider_request(
                 .await
                 .map_err(display)?;
             let text = checked(response).await?.text().await.map_err(display)?;
+            record_usage(request, &text);
             Ok(parse_anthropic_content(&text)?)
         }
         ApiProtocol::OpenAiCompatible => {
@@ -1289,6 +1384,7 @@ async fn send_provider_request(
                 .await
                 .map_err(display)?;
             let text = checked(response).await?.text().await.map_err(display)?;
+            record_usage(request, &text);
             Ok(parse_openai_content(&text)?)
         }
         ApiProtocol::Disabled => Err("Select an AI provider in settings".to_string().into()),
@@ -1319,6 +1415,10 @@ fn openai_body(request: &ProviderRequest<'_>, schema: Option<&OutputSchema>) -> 
         if matches!(request.provider, AiProvider::OpenRouter) {
             body["provider"] = json!({"require_parameters": true});
         }
+    }
+    // OpenRouter reports each request's price only when asked.
+    if matches!(request.provider, AiProvider::OpenRouter) {
+        body["usage"] = json!({"include": true});
     }
     body
 }
@@ -1764,6 +1864,114 @@ mod tests {
             drop(calls);
             server.abort();
         }
+    }
+
+    #[test]
+    fn usage_is_read_from_each_protocol_and_tolerates_missing_fields() {
+        assert_eq!(
+            parse_usage(
+                ApiProtocol::OpenAiCompatible,
+                r#"{"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":30}}"#
+            ),
+            (120, 30, None)
+        );
+        assert_eq!(
+            parse_usage(
+                ApiProtocol::OpenAiCompatible,
+                r#"{"usage":{"prompt_tokens":5,"completion_tokens":2,"cost":0.0042}}"#
+            ),
+            (5, 2, Some(0.0042))
+        );
+        assert_eq!(
+            parse_usage(
+                ApiProtocol::OpenAiCompatible,
+                r#"{"usage":{"prompt_tokens":5,"cost":-1}}"#
+            ),
+            (5, 0, None)
+        );
+        assert_eq!(
+            parse_usage(
+                ApiProtocol::Anthropic,
+                r#"{"content":[],"usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":40,"cache_creation_input_tokens":10}}"#
+            ),
+            (150, 20, None)
+        );
+        assert_eq!(
+            parse_usage(ApiProtocol::OpenAiCompatible, r#"{"choices":[]}"#),
+            (0, 0, None)
+        );
+        assert_eq!(
+            parse_usage(ApiProtocol::OpenAiCompatible, "not json"),
+            (0, 0, None)
+        );
+    }
+
+    #[test]
+    fn only_openrouter_requests_ask_for_reported_cost() {
+        let request = |provider| ProviderRequest {
+            provider,
+            model: "m",
+            system_prompt: "s",
+            prompt: "p",
+            max_tokens: 10,
+            temperature: 0.1,
+        };
+        assert_eq!(
+            openai_body(&request(AiProvider::OpenRouter), None)["usage"],
+            json!({"include": true})
+        );
+        assert!(openai_body(&request(AiProvider::OpenAi), None)
+            .get("usage")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn usage_is_recorded_for_successful_responses_even_when_the_content_is_unusable() {
+        async fn respond() -> Json<serde_json::Value> {
+            Json(
+                json!({"choices":[{"message":{"content":"not json"}}],"usage":{"prompt_tokens":77,"completion_tokens":11}}),
+            )
+        }
+        let recorded: Arc<Mutex<Vec<UsageEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&recorded);
+        // The recorder is process-wide; keep only this test's model.
+        set_usage_recorder(Arc::new(move |event| {
+            if event.model == "usage-test-model" {
+                sink.lock().unwrap().push(event.clone());
+            }
+        }));
+        let app = Router::new().route("/chat/completions", post(respond));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let content = call_provider(
+            AiProvider::Custom,
+            "usage-test-model",
+            Some(&endpoint),
+            "system",
+            "prompt",
+            100,
+            0.1,
+            None,
+            "key",
+        )
+        .await
+        .unwrap();
+        assert!(parse_action_proposals(&content, &[]).is_err());
+        server.abort();
+
+        let events = recorded.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].provider.id(), "custom");
+        assert_eq!(
+            (
+                events[0].input_tokens,
+                events[0].output_tokens,
+                events[0].cost_usd
+            ),
+            (77, 11, None)
+        );
     }
 
     #[test]

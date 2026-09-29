@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -16,6 +16,7 @@ describe("AI provider feature settings", () => {
     vi.mocked(invoke).mockResolvedValue(false);
     saveAiProvider("openai");
   });
+  afterEach(cleanup);
 
   it("saves the latest flags before queueing them for sync", async () => {
     render(<AiProviderSettings onChange={queuePortablePreferences} />);
@@ -36,5 +37,24 @@ describe("AI provider feature settings", () => {
       }),
     });
     expect(readAiFeatures()).toMatchObject({ draftAssist: true, contactEnrichment: true });
+  });
+
+  it("offers proactive suggestions only once a brief feature is on, and the sender filter only once proactive is on", () => {
+    render(<AiProviderSettings />);
+    const proactive = screen.getByRole("checkbox", { name: "Proactive Suggestions" });
+    const knownOnly = screen.getByRole("checkbox", { name: "Only for People I’ve Emailed" });
+    expect(proactive).toBeDisabled();
+    expect(knownOnly).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Suggestions" }));
+    expect(proactive).toBeEnabled();
+    expect(knownOnly).toBeDisabled();
+
+    fireEvent.click(proactive);
+    expect(knownOnly).toBeEnabled();
+    fireEvent.click(knownOnly);
+    expect(readAiFeatures()).toMatchObject({ actionExtraction: true, proactiveBriefs: true, proactiveKnownSendersOnly: true });
+    expect(screen.getByText(/at least 3 seconds/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "AI usage" })).toBeInTheDocument();
   });
 });

@@ -95,6 +95,7 @@ import { ContextPanel } from "./ContextPanel";
 import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { ThreadTasks } from "./ThreadTasks";
 import { ContactMeetings } from "./ContactMeetings";
+import { hasEmailedBefore, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
@@ -364,6 +365,7 @@ export function App() {
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
   const [aiSummaryFeatureEnabled, setAiSummaryFeatureEnabled] = useState(false);
+  const [aiProactive, setAiProactive] = useState<{ enabled: boolean; knownSendersOnly: boolean }>({ enabled: false, knownSendersOnly: false });
   const [aiActionFeatureEnabled, setAiActionFeatureEnabled] = useState(false);
   const [aiActionAvailable, setAiActionAvailable] = useState(false);
   // Keyed by thread id, not a single flag, so summarizing thread A in the
@@ -378,6 +380,7 @@ export function App() {
     const summaryEnabled = provider !== "none" && features.summarize;
     const actionEnabled = provider !== "none" && features.actionExtraction;
     setAiSummaryFeatureEnabled(features.summarize);
+    setAiProactive({ enabled: features.proactiveBriefs, knownSendersOnly: features.proactiveKnownSendersOnly });
     setAiActionFeatureEnabled(features.actionExtraction);
     if (!summaryEnabled && !actionEnabled) {
       setAiSummaryAvailable(false);
@@ -1465,6 +1468,35 @@ export function App() {
     else if (needSummary) await runSummarize();
     else await runAnalyzeThread();
   }, [actionProposalKey, actionProposalSets, aiActionAvailable, aiSummaryAvailable, runAnalyzeThread, runCombinedBrief, runSummarize, visibleDetail]);
+
+  // Proactive briefs: once the reader stays on a qualifying conversation for
+  // the mark-read delay, fetch whatever part of the brief is missing. Each
+  // conversation revision is attempted at most once per session, so a
+  // failure is not retried automatically.
+  const runBriefRef = useRef(runBrief);
+  runBriefRef.current = runBrief;
+  const proactiveAttempted = useRef(new Set<string>());
+  const proactiveDetailRef = useRef(visibleDetail);
+  proactiveDetailRef.current = visibleDetail;
+  const proactiveKey = visibleDetail ? `${visibleDetail.thread.id}:${visibleDetail.thread.lastMessageAt}` : null;
+  const ownAddresses = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
+  useEffect(() => {
+    const detail = proactiveDetailRef.current;
+    if (!aiProactive.enabled || !(aiSummaryAvailable || aiActionAvailable) || !isThreadMailbox || !detail || !proactiveKey) return;
+    if (proactiveAttempted.current.has(proactiveKey)) return;
+    const sender = proactiveBriefSender(detail, ownAddresses);
+    if (!sender) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        if (aiProactive.knownSendersOnly && !(await hasEmailedBefore(sender).catch(() => false))) return;
+        if (!active) return;
+        proactiveAttempted.current.add(proactiveKey);
+        await runBriefRef.current();
+      })();
+    }, proactiveDwellMs(autoReadDelaySeconds));
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [aiActionAvailable, aiProactive, aiSummaryAvailable, autoReadDelaySeconds, isThreadMailbox, ownAddresses, proactiveKey]);
 
   /** Shows the context panel's AI section and fetches suggestions if missing. */
   const getSuggestions = useCallback(() => {

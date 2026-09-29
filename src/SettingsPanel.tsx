@@ -85,6 +85,8 @@ import { ReplicatedSyncSettings } from "./ReplicatedSyncSettings";
 import { PendingRecoveryPhraseDialog } from "./RecoveryPhraseDialog";
 import { moveItem, useSettingsOperation } from "./settingsOperations";
 import { errorMessage, logBackgroundFailure } from "./errors";
+import { AiUsageSummary } from "./AiUsageSummary";
+import { MIN_PROACTIVE_DWELL_SECONDS } from "./proactiveBrief";
 
 export type SettingsSection = "replicatedSync" | "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
@@ -1848,10 +1850,30 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             />
           </label>
           <label className="settings-switch">
+            <span>Proactive Suggestions</span>
+            <input
+              type="checkbox"
+              checked={features.proactiveBriefs}
+              disabled={!features.summarize && !features.actionExtraction}
+              onChange={(event) => updateFeature("proactiveBriefs", event.target.checked)}
+            />
+          </label>
+          <label className="settings-switch">
+            <span>Only for People I&rsquo;ve Emailed</span>
+            <input
+              type="checkbox"
+              checked={features.proactiveKnownSendersOnly}
+              disabled={!features.proactiveBriefs || (!features.summarize && !features.actionExtraction)}
+              onChange={(event) => updateFeature("proactiveKnownSendersOnly", event.target.checked)}
+            />
+          </label>
+          <p className="settings-hint">Proactive suggestions prepare the brief once you stay on a conversation for the mark-read delay, at least {MIN_PROACTIVE_DWELL_SECONDS} seconds. They skip mailing lists and conversations with no one else in them, and read each conversation again only when a new message arrives.</p>
+          <label className="settings-switch">
             <span>Contact Enrichment</span>
             <input type="checkbox" checked={features.contactEnrichment} onChange={(event) => updateFeature("contactEnrichment", event.target.checked)} />
           </label>
           <p className="settings-hint">Contact enrichment starts with three local emails. If they yield no supported suggestions, it checks up to nine more. You can choose to search more emails when the first three yield suggestions.</p>
+          <AiUsageSummary provider={provider} model={resolveAiModel(provider, model)} />
         </>
       ) : null}
     </section>

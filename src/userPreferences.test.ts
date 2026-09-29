@@ -27,6 +27,8 @@ describe("exportable preferences", () => {
         summarize: false,
         actionExtraction: false,
         contactEnrichment: false,
+        proactiveBriefs: false,
+        proactiveKnownSendersOnly: false,
       },
       availabilityPreferences: {
         timeZone: "America/New_York",

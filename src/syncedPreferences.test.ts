@@ -109,6 +109,24 @@ describe("synced preferences data boundary", () => {
     expect(readAiFeatures()).toMatchObject({ summarize: true, contactEnrichment: true });
   });
 
+  it("keeps proactive suggestions as set on this device when an older replica omits them", async () => {
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, summarize: true, proactiveBriefs: true, proactiveKnownSendersOnly: true });
+    vi.mocked(invoke).mockResolvedValue({
+      aiFeatures: { draftAssist: true, summarize: true, actionExtraction: true, contactEnrichment: false },
+    });
+
+    expect(await pullSyncedPreferences()).toBe(true);
+    expect(readAiFeatures()).toMatchObject({ draftAssist: true, actionExtraction: true, proactiveBriefs: true, proactiveKnownSendersOnly: true });
+  });
+
+  it("applies proactive suggestions turned off on another device", async () => {
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, proactiveBriefs: true });
+    vi.mocked(invoke).mockResolvedValue({ aiFeatures: { ...DEFAULT_AI_FEATURES, proactiveBriefs: false } });
+
+    expect(await pullSyncedPreferences()).toBe(true);
+    expect(readAiFeatures().proactiveBriefs).toBe(false);
+  });
+
   it("preserves a feature setting changed while a synced preference read is in flight", async () => {
     let resolvePreferences!: (value: unknown) => void;
     vi.mocked(invoke).mockImplementation(() => new Promise((resolve) => { resolvePreferences = resolve; }));

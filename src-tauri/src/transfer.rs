@@ -46,6 +46,12 @@ pub struct AiFeaturePreferences {
     // though the webview no longer exposes the feature.
     #[serde(default)]
     pub classify: bool,
+    // Added in 0.45 under format version 3; earlier exports omit both and
+    // import with proactive suggestions off.
+    #[serde(default)]
+    pub proactive_briefs: bool,
+    #[serde(default)]
+    pub proactive_known_senders_only: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -563,6 +569,8 @@ mod tests {
                     action_extraction: false,
                     contact_enrichment: false,
                     classify: false,
+                    proactive_briefs: false,
+                    proactive_known_senders_only: false,
                 },
                 availability_preferences: default_availability_preferences(),
             },
@@ -629,6 +637,30 @@ mod tests {
         decoded.validate().unwrap();
         assert!(decoded.contacts.is_empty());
         assert!(!decoded.preferences.ai_features.contact_enrichment);
+    }
+
+    #[test]
+    fn an_export_from_before_proactive_suggestions_imports_with_them_off() {
+        let mut legacy = serde_json::to_value(payload()).unwrap();
+        let features = legacy["preferences"]["aiFeatures"].as_object_mut().unwrap();
+        features.remove("proactiveBriefs");
+        features.remove("proactiveKnownSendersOnly");
+        features.insert("summarize".into(), serde_json::json!(true));
+        let decoded: TransferPayload = serde_json::from_value(legacy).unwrap();
+        decoded.validate().unwrap();
+        assert!(decoded.preferences.ai_features.summarize);
+        assert!(!decoded.preferences.ai_features.proactive_briefs);
+        assert!(!decoded.preferences.ai_features.proactive_known_senders_only);
+    }
+
+    #[test]
+    fn proactive_suggestion_preferences_round_trip_through_an_encrypted_export() {
+        let mut current = payload();
+        current.preferences.ai_features.proactive_briefs = true;
+        current.preferences.ai_features.proactive_known_senders_only = true;
+        let decoded = decrypt(&encrypt(&current, "correct horse").unwrap(), "correct horse").unwrap();
+        assert!(decoded.preferences.ai_features.proactive_briefs);
+        assert!(decoded.preferences.ai_features.proactive_known_senders_only);
     }
 
     #[test]

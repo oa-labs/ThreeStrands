@@ -16,6 +16,10 @@ export type AiFeatureFlags = {
   summarize: boolean;
   actionExtraction: boolean;
   contactEnrichment: boolean;
+  /** Prepares the brief after the reader stays on a conversation. */
+  proactiveBriefs: boolean;
+  /** Limits proactive briefs to senders the user has emailed. */
+  proactiveKnownSendersOnly: boolean;
 };
 
 export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] =
@@ -26,6 +30,8 @@ export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
   summarize: false,
   actionExtraction: false,
   contactEnrichment: false,
+  proactiveBriefs: false,
+  proactiveKnownSendersOnly: false,
 };
 
 export const AI_MODEL_PLACEHOLDERS = Object.fromEntries(
@@ -76,6 +82,7 @@ const PROVIDER_KEY = "threestrands.settings.ai.provider";
 const MODEL_KEY = "threestrands.settings.ai.model";
 const ENDPOINT_KEY = "threestrands.settings.ai.endpoint";
 const FEATURES_KEY = "threestrands.settings.ai.features";
+const PRICES_KEY = "threestrands.settings.ai.prices";
 
 export function readAiProvider(): AiProvider {
   try {
@@ -136,6 +143,8 @@ export function readAiFeatures(): AiFeatureFlags {
         summarize: saved.summarize === true,
         actionExtraction: saved.actionExtraction === true,
         contactEnrichment: saved.contactEnrichment === true,
+        proactiveBriefs: saved.proactiveBriefs === true,
+        proactiveKnownSendersOnly: saved.proactiveKnownSendersOnly === true,
       };
     }
   } catch {
@@ -147,6 +156,41 @@ export function readAiFeatures(): AiFeatureFlags {
 export function saveAiFeatures(value: AiFeatureFlags): void {
   try {
     localStorage.setItem(FEATURES_KEY, JSON.stringify(value));
+  } catch {
+    // Ignored; see readAiFeatures.
+  }
+}
+
+/** A model's price in US dollars per million tokens, as the user entered it. */
+export type AiModelPrice = { inputPerMillion: number; outputPerMillion: number };
+
+export const aiPriceKey = (provider: AiProvider, model: string) => `${provider}:${model}`;
+
+/**
+ * User-entered prices keyed by `aiPriceKey`. They stay on this device: they
+ * are an estimate aid, not part of the portable preference allowlist.
+ */
+export function readAiPrices(): Record<string, AiModelPrice> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PRICES_KEY) ?? "null") as Record<string, Partial<AiModelPrice>> | null;
+    if (!saved || typeof saved !== "object") return {};
+    const valid = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+    return Object.fromEntries(Object.entries(saved).flatMap(([key, price]) =>
+      price && valid(price.inputPerMillion) && valid(price.outputPerMillion)
+        ? [[key, { inputPerMillion: price.inputPerMillion, outputPerMillion: price.outputPerMillion }]]
+        : []));
+  } catch {
+    return {};
+  }
+}
+
+/** Saves or, with `null`, clears the price for one provider and model. */
+export function saveAiPrice(provider: AiProvider, model: string, price: AiModelPrice | null): void {
+  const prices = readAiPrices();
+  if (price) prices[aiPriceKey(provider, model)] = price;
+  else delete prices[aiPriceKey(provider, model)];
+  try {
+    localStorage.setItem(PRICES_KEY, JSON.stringify(prices));
   } catch {
     // Ignored; see readAiFeatures.
   }

@@ -148,8 +148,8 @@ pub enum ActionProposal {
 /// The verified proposals from one thread analysis. `hidden_count` counts
 /// provider proposals that were withheld because they failed schema or
 /// evidence validation; they are never shown to the user.
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionAnalysis {
     pub proposals: Vec<ActionProposal>,
     pub hidden_count: usize,
@@ -530,6 +530,21 @@ pub struct ContactFieldSuggestion {
 pub struct SummaryResult {
     pub summary: String,
     pub generated_at: String,
+}
+
+/// One day's AI provider usage for a provider and model. Cost is known only
+/// for requests whose provider reported it (`reported_cost_requests`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiUsageDay {
+    pub day: String,
+    pub provider: String,
+    pub model: String,
+    pub requests: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub reported_cost_requests: i64,
+    pub reported_cost_usd: f64,
 }
 
 /// The combined result of one brief request: the persisted summary and the

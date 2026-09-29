@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
-import { clearAiApiKey, DEFAULT_AI_FEATURES, saveAiFeatures, saveAiProvider, setAiApiKey } from "./aiSettings";
+import { clearAiApiKey, DEFAULT_AI_FEATURES, saveAiFeatures, saveAiProvider, setAiApiKey, type AiFeatureFlags } from "./aiSettings";
+import { proactiveDwellMs } from "./proactiveBrief";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
 import type { OutboxItem } from "./correspondence";
@@ -59,7 +60,7 @@ describe("conversation brief", () => {
     analysis: { proposals: [], hiddenCount: 0 },
   };
 
-  async function enableAi(features: { summarize: boolean; actionExtraction: boolean }) {
+  async function enableAi(features: Partial<AiFeatureFlags>) {
     saveAiProvider("openai");
     saveAiFeatures({ ...DEFAULT_AI_FEATURES, ...features });
     await setAiApiKey("test-key");
@@ -125,6 +126,74 @@ describe("conversation brief", () => {
     expect(await within(panel).findByText("1 suggestion couldn’t be matched to the email, so it was hidden.")).toBeInTheDocument();
     expect(analyzeThread).toHaveBeenCalledTimes(1);
     expect(briefThread).not.toHaveBeenCalled();
+  });
+
+  describe("proactive suggestions", () => {
+    const dwell = proactiveDwellMs(2);
+
+    async function openRoadmap() {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      fireEvent.keyDown(window, { key: "j" });
+      await screen.findByRole("heading", { name: "Phase 1: read and triage" });
+    }
+
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("prepares the brief once after the reader stays on a qualifying conversation", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      await enableAi({ summarize: true, actionExtraction: true, proactiveBriefs: true });
+      const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+      // The welcome message offers unsubscribe, so it is treated as a mailing list.
+      await vi.advanceTimersByTimeAsync(dwell + 1_000);
+      expect(briefThread).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(window, { key: "j" });
+      await screen.findByRole("heading", { name: "Phase 1: read and triage" });
+      await vi.advanceTimersByTimeAsync(dwell - 1_000);
+      expect(briefThread).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_500);
+      await waitFor(() => expect(briefThread).toHaveBeenCalledTimes(1));
+      expect(briefThread.mock.calls[0][0]).toBe("roadmap");
+      expect(await within(screen.getByRole("complementary", { name: "Conversation context" })).findByText("Welcome to the app.")).toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(dwell * 3);
+      expect(briefThread).toHaveBeenCalledTimes(1);
+    });
+
+    it("does nothing for a conversation left before the dwell elapses", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      await enableAi({ summarize: true, actionExtraction: true, proactiveBriefs: true });
+      const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
+      await openRoadmap();
+      await vi.advanceTimersByTimeAsync(dwell - 1_000);
+      fireEvent.keyDown(window, { key: "k" });
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      await vi.advanceTimersByTimeAsync(dwell * 2);
+      expect(briefThread).not.toHaveBeenCalled();
+    });
+
+    it("waits for a sender the user has emailed when that filter is on", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      await enableAi({ summarize: true, actionExtraction: true, proactiveBriefs: true, proactiveKnownSendersOnly: true });
+      const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
+      vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([]);
+      await openRoadmap();
+      await vi.advanceTimersByTimeAsync(dwell * 2);
+      expect(briefThread).not.toHaveBeenCalled();
+    });
+
+    it("stays on request only while proactive suggestions are off", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      await enableAi({ summarize: true, actionExtraction: true });
+      const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
+      await openRoadmap();
+      await vi.advanceTimersByTimeAsync(dwell * 2);
+      expect(briefThread).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps a failed brief retryable in the panel", async () => {

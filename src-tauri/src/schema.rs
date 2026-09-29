@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 41;
+pub(crate) const LATEST_VERSION: i64 = 42;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1246,6 +1246,31 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             PRAGMA user_version=41;",
         ).map_err(error)?;
     }
+    if version < 42 {
+        // Local-only AI bookkeeping: verified suggestions per thread revision,
+        // so a restart does not pay for them again, and daily provider usage
+        // for the cost display. Neither table is synced or exported.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS ai_thread_analyses (
+                thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+                last_message_at TEXT NOT NULL,
+                analysis_json TEXT NOT NULL,
+                generated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS ai_usage (
+                day TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                requests INTEGER NOT NULL,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                reported_cost_requests INTEGER NOT NULL,
+                reported_cost_usd REAL NOT NULL,
+                PRIMARY KEY (day, provider, model)
+            );
+            PRAGMA user_version=42;",
+        ).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1480,6 +1505,25 @@ mod tests {
         connection.pragma_update(None, "user_version", 30).unwrap();
         super::migrate(&mut connection).unwrap();
         assert!(table_exists(&connection, "synced_preferences"));
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, super::LATEST_VERSION);
+    }
+
+    #[test]
+    fn v42_adds_local_ai_tables_and_reruns_without_losing_usage() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        assert!(table_exists(&connection, "ai_thread_analyses"));
+        assert!(table_exists(&connection, "ai_usage"));
+        connection.execute(
+            "INSERT INTO ai_usage(day,provider,model,requests,input_tokens,output_tokens,reported_cost_requests,reported_cost_usd) VALUES ('2026-09-29','openai','gpt-4o',3,10,5,0,0)",
+            [],
+        ).unwrap();
+
+        connection.pragma_update(None, "user_version", 41).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let requests: i64 = connection.query_row("SELECT requests FROM ai_usage", [], |row| row.get(0)).unwrap();
+        assert_eq!(requests, 3);
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
         assert_eq!(version, super::LATEST_VERSION);
     }

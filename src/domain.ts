@@ -277,6 +277,19 @@ export type SummaryResult = {
   generatedAt: string;
 };
 
+/** One local day's provider usage for one provider and model. */
+export type AiUsageDay = {
+  day: string;
+  provider: string;
+  model: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Requests whose provider reported a price; their total is `reportedCostUsd`. */
+  reportedCostRequests: number;
+  reportedCostUsd: number;
+};
+
 /** One combined request: the persisted summary and the verified suggestions. */
 export type ThreadBriefResult = {
   summary: SummaryResult;

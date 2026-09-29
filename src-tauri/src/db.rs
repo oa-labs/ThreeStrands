@@ -18,6 +18,7 @@ use crate::models::{
 use crate::transfer::{TransferAccount, TransferSnippet, TransferSplitInbox, TransferContact};
 
 mod accounts;
+mod ai;
 mod calendar_accounts;
 mod contacts;
 mod snippets;

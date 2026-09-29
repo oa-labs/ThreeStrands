@@ -1299,6 +1299,15 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .action-proposal-card-header { display: flex; justify-content: space-between; color: var(--muted); font-size: var(--type-xs); text-transform: uppercase; letter-spacing: .04em; }
 .proposal-kind { color: var(--accent); }
 .proposal-check { color: var(--warning); }
+.ai-usage { display: grid; gap: 8px; margin-top: 8px; }
+.ai-usage h3 { margin: 8px 0 0; }
+.ai-usage-totals { display: grid; gap: 6px; margin: 0; }
+.ai-usage-totals div { display: flex; justify-content: space-between; gap: 12px; }
+.ai-usage-totals dt { color: var(--muted); }
+.ai-usage-totals dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+.ai-usage-prices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ai-usage-prices label { display: grid; gap: 4px; color: var(--muted); font-size: var(--type-sm); }
+.ai-usage-prices input { min-width: 0; padding: 7px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font: inherit; }
 .action-proposal-card p { margin: 0; color: var(--muted); }
 .proposal-evidence { color: var(--muted); font-size: var(--type-sm); }
 .proposal-evidence blockquote { margin: 5px 0; padding-left: 7px; border-left: 2px solid var(--border-strong); color: var(--text); }

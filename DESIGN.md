@@ -113,6 +113,20 @@ refresh. Show confidence as a "Check details" flag, not a percentage, and
 count suggestions withheld by validation instead of reporting that nothing
 was found.
 
+Proactive suggestions are opt-in. They run the same brief request after the
+reader stays on a conversation for the mark-read delay (never less than the
+minimum dwell in `src/proactiveBrief.ts`), skip mailing lists and
+conversations with no one else in them, can be limited to people the user
+has emailed, and try each conversation revision once per session. Verified
+suggestions are saved per revision, so a restart does not pay for them again.
+Proactive work only prepares proposals; it never creates, sends, or books
+anything.
+
+Every successful provider response records its token usage, and any cost the
+provider reports, in the local `ai_usage` table. AI settings show today's and
+the last week's totals; other providers' cost is estimated from per-model
+prices the user enters, which stay on the device.
+
 AI output is a proposal, never a mutation. Proposal cards remain read-only.
 Editing a proposal opens a review dialog. Accepting an AI task opens a task
 review dialog and creates the task only after the user submits it. Meeting and

@@ -6,6 +6,7 @@ import {
 import type {
   Account,
   ActionAnalysis,
+  AiUsageDay,
   AuthStatus,
   AvailabilityPreferences,
   AvailabilityResult,
@@ -82,6 +83,8 @@ export interface MailClient extends CorrespondenceClient {
     model: string,
     endpoint: string | null,
   ): Promise<ActionAnalysis>;
+  /** AI provider usage for the last `days` local days, including today. */
+  aiUsageSummary(days: number): Promise<AiUsageDay[]>;
   briefThread(
     threadId: string,
     userTimeZone: string,
@@ -195,6 +198,7 @@ const tauriClient: MailClient = {
     complete("ai_summarize_thread", { threadId, provider, model, endpoint }),
   analyzeThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
+  aiUsageSummary: (days) => read("ai_usage_summary", { days }),
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),

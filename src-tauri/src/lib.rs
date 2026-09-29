@@ -44,7 +44,7 @@ use db::Database;
 use models::{
     ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
-    FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, Thread,
+    FindAvailabilityRequest, ProposedTimeCheck, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
     UpdateLabelRequest, UpdateSnippetRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
 };
@@ -195,10 +195,6 @@ struct AppState {
     /// `Some` only when the local database had to be recovered at startup
     /// (restored from a backup, or recreated fresh) — see `open_with_recovery`.
     recovery: Option<db::RecoveryOutcome>,
-    /// Explicit thread-action proposals are session-only. The cache key
-    /// includes the newest message timestamp so a newly synced message can
-    /// never reuse an older analysis.
-    proposal_cache: Arc<std::sync::Mutex<HashMap<String, ActionAnalysis>>>,
 }
 
 /// SQLite and the mutex guarding its connection are synchronous. Run database
@@ -2339,8 +2335,8 @@ async fn ai_summarize_thread(
 }
 
 /// Validates the timezone and loads the bounded analysis input shared by
-/// thread analysis and the combined brief. Returns the proposal cache key
-/// for the thread's current revision alongside the request.
+/// thread analysis and the combined brief. Returns the thread's current
+/// revision (its newest message time), which keys saved suggestions.
 async fn thread_analysis_request(
     thread_id: &str,
     user_time_zone: String,
@@ -2358,7 +2354,7 @@ async fn thread_analysis_request(
     let database = state.database.clone();
     let database_thread_id = thread_id.to_string();
     let detail = run_database_task(move || database.get_thread(&database_thread_id)).await?;
-    let cache_key = format!("{thread_id}\0{}", detail.thread.last_message_at);
+    let revision = detail.thread.last_message_at.clone();
     let request = ai::AnalyzeRequest {
         provider,
         model,
@@ -2377,23 +2373,18 @@ async fn thread_analysis_request(
         current_time: Utc::now().to_rfc3339(),
         user_time_zone,
     };
-    Ok((cache_key, request))
+    Ok((revision, request))
 }
 
-/// Replaces any cached proposals for older revisions of the thread.
+/// Saves the suggestions for the thread's current revision, replacing any
+/// saved for an older one.
 fn cache_thread_analysis(
     state: &AppState,
     thread_id: &str,
-    cache_key: String,
+    revision: &str,
     analysis: &ActionAnalysis,
 ) -> Result<(), String> {
-    let mut cache = state
-        .proposal_cache
-        .lock()
-        .map_err(|_| "AI proposal cache is unavailable".to_string())?;
-    cache.retain(|key, _| !key.starts_with(&format!("{thread_id}\0")));
-    cache.insert(cache_key, analysis.clone());
-    Ok(())
+    database_result(state.database.save_thread_analysis(thread_id, revision, analysis, &Utc::now().to_rfc3339()))
 }
 
 #[tauri::command]
@@ -2405,7 +2396,7 @@ async fn ai_analyze_thread(
     endpoint: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ActionAnalysis, String> {
-    let (cache_key, request) = thread_analysis_request(
+    let (revision, request) = thread_analysis_request(
         &thread_id,
         user_time_zone,
         provider,
@@ -2414,14 +2405,8 @@ async fn ai_analyze_thread(
         &state,
     )
     .await?;
-    {
-        let cache = state
-            .proposal_cache
-            .lock()
-            .map_err(|_| "AI proposal cache is unavailable".to_string())?;
-        if let Some(cached) = cache.get(&cache_key) {
-            return Ok(cached.clone());
-        }
+    if let Some(saved) = state.database.thread_analysis(&thread_id, &revision)? {
+        return Ok(saved);
     }
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     log::info!(
@@ -2441,8 +2426,21 @@ async fn ai_analyze_thread(
         analysis.proposals.len(),
         analysis.hidden_count
     );
-    cache_thread_analysis(&state, &thread_id, cache_key, &analysis)?;
+    cache_thread_analysis(&state, &thread_id, &revision, &analysis)?;
     Ok(analysis)
+}
+
+/// Most recent days of AI usage the settings screen may request.
+const MAX_AI_USAGE_SUMMARY_DAYS: u32 = 31;
+
+/// AI provider usage for the last `days` local days, including today.
+#[tauri::command]
+fn ai_usage_summary(days: u32, state: State<'_, AppState>) -> Result<Vec<AiUsageDay>, String> {
+    if days == 0 || days > MAX_AI_USAGE_SUMMARY_DAYS {
+        return Err(format!("Usage can be shown for 1 to {MAX_AI_USAGE_SUMMARY_DAYS} days"));
+    }
+    let since = chrono::Local::now().date_naive() - chrono::Days::new(u64::from(days - 1));
+    database_result(state.database.ai_usage_since(&since.format("%Y-%m-%d").to_string()))
 }
 
 /// Summarizes the thread and extracts proposals in one provider call. Always
@@ -2457,7 +2455,7 @@ async fn ai_brief_thread(
     endpoint: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ThreadBriefResult, String> {
-    let (cache_key, request) = thread_analysis_request(
+    let (revision, request) = thread_analysis_request(
         &thread_id,
         user_time_zone,
         provider,
@@ -2488,7 +2486,7 @@ async fn ai_brief_thread(
     state
         .database
         .set_thread_summary(&thread_id, &brief.summary, &generated_at)?;
-    cache_thread_analysis(&state, &thread_id, cache_key, &brief.analysis)?;
+    cache_thread_analysis(&state, &thread_id, &revision, &brief.analysis)?;
     Ok(ThreadBriefResult {
         summary: SummaryResult {
             summary: brief.summary,
@@ -2750,6 +2748,13 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let (opened_database, recovery) =
         db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
     let database = Arc::new(opened_database);
+    let usage_database = database.clone();
+    ai::set_usage_recorder(Arc::new(move |event| {
+        let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+        if let Err(error) = usage_database.record_ai_usage(&day, event.provider.id(), &event.model, event.input_tokens, event.output_tokens, event.cost_usd) {
+            log::warn!(target: "ai_provider", "could not record AI usage: {error}");
+        }
+    }));
     let recovery = match recovery {
         db::RecoveryOutcome::Clean => None,
         other => Some(other),
@@ -2795,7 +2800,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         image_cache: image_proxy::ImageCache::new().map_err(std::io::Error::other)?,
         attachment_reader,
         recovery,
-        proposal_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
     });
     Ok(())
 }
@@ -3071,6 +3075,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         ai_summarize_thread,
         ai_analyze_thread,
         ai_brief_thread,
+        ai_usage_summary,
         ai_enrich_contact,
         ai_reply_assist_context,
         ai_generate_reply,

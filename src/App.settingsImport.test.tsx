@@ -52,6 +52,8 @@ describe("settings import navigation", () => {
           summarize: false,
           actionExtraction: false,
           contactEnrichment: false,
+          proactiveBriefs: false,
+          proactiveKnownSendersOnly: false,
         },
         availabilityPreferences: {
           timeZone: "UTC",
