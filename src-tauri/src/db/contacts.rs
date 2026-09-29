@@ -489,11 +489,7 @@ impl Database {
         limit: usize,
         account_id: Option<&str>,
     ) -> DbResult<Vec<ContactTimelineItem>> {
-        let addresses = if id.starts_with("derived:") {
-            vec![id.trim_start_matches("derived:").to_string()]
-        } else {
-            self.contact_addresses(id)?
-        };
+        let addresses = self.contact_address_list(id)?;
         if addresses.is_empty() {
             return Ok(Vec::new());
         }
@@ -508,6 +504,14 @@ impl Database {
             let rows=statement.query_map(rusqlite::params_from_iter(values),|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,String>(5)?)))?;
             rows.map(|row|{let(thread_id,account_id,subject,snippet,sent_at,labels)=row?;Ok(ContactTimelineItem{thread_id,account_id,subject,snippet,sent_at,labels:serde_json::from_str(&labels).unwrap_or_default()})}).collect()
         })
+    }
+
+    /// Resolves a saved contact id or a `derived:<email>` id to its addresses.
+    pub(crate) fn contact_address_list(&self, id: &str) -> DbResult<Vec<String>> {
+        if let Some(email) = id.strip_prefix("derived:") {
+            return Ok(vec![email.to_string()]);
+        }
+        self.contact_addresses(id)
     }
 
     fn contact_addresses(&self, id: &str) -> DbResult<Vec<String>> {

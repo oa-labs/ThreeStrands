@@ -86,7 +86,7 @@ import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { CalendarWeekView } from "./CalendarWeekView";
-import { startOfLocalDay } from "./calendarTime";
+import { eventDate, startOfLocalDay } from "./calendarTime";
 import { formatAvailabilityText } from "./actionDrafting";
 import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { isActiveTaskStatus } from "./taskViews";
@@ -94,6 +94,7 @@ import { ContactsWorkspace } from "./ContactsWorkspace";
 import { ContextPanel } from "./ContextPanel";
 import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { ThreadTasks } from "./ThreadTasks";
+import { ContactMeetings } from "./ContactMeetings";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
@@ -1584,12 +1585,13 @@ export function App() {
 
   const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
   const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setRightWorkspace("contacts"); }, []);
-  const openCalendarView = useCallback(() => {
-    setCalendarWeekAnchor((current) => current ?? startOfLocalDay(new Date()));
+  const openCalendarView = useCallback((day?: Date) => {
+    setCalendarWeekAnchor((current) => day ? startOfLocalDay(day) : current ?? startOfLocalDay(new Date()));
     setRightWorkspace("week");
     void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
     void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
   }, [refreshCalendarAccounts, refreshCalendarOptions]);
+  const calendarConnected = calendar.accounts.some((account) => account.status === "connected");
 
   const goToSplitTab = useCallback((id: string) => goToTab(id), [goToTab]);
 
@@ -2634,16 +2636,24 @@ export function App() {
               onOpenSettings={() => openSettingsAt("ai")}
             />
           ) : null}
-          tasks={visibleDetail ? (
+          related={(person) => visibleDetail ? <>
             <ThreadTasks
               thread={visibleDetail.thread}
+              contactId={person?.contactId ?? null}
               refreshKey={taskRevision}
               onAddTask={newTask}
               onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
               onDraftFollowUp={(task) => void draftFollowUp(task)}
               onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
             />
-          ) : null}
+            {calendarConnected && person ? (
+              <ContactMeetings
+                addresses={person.addresses}
+                timeZone={availabilityPreferences.timeZone}
+                onOpenEvent={(event) => openCalendarView(eventDate(event))}
+              />
+            ) : null}
+          </> : null}
         />
       ) : null}
       {rightWorkspace === "contacts" ? <ContactsWorkspace key={activeAccountId ?? "all"} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /> : null}

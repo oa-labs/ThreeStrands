@@ -3304,6 +3304,44 @@ mod tests {
     }
 
     #[test]
+    fn contact_tasks_span_every_conversation_with_the_person_and_only_open_work() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        database.adopt_account("other@example.com").unwrap();
+        let mut to_jane=message("jane-one","jane-thread-one","2026-09-20T12:00:00Z","hello");
+        to_jane.from="you@example.com".into();to_jane.to=vec!["Jane <jane@example.com>".into()];
+        database.upsert_thread("you@example.com",&[to_jane]).unwrap();
+        let mut from_jane_alt=message("jane-two","jane-thread-two","2026-09-21T12:00:00Z","reply");
+        from_jane_alt.from="Jane <jane@work.example.com>".into();from_jane_alt.to=vec!["other@example.com".into()];
+        database.upsert_thread("other@example.com",&[from_jane_alt]).unwrap();
+        let mut from_taylor=message("taylor-one","taylor-thread","2026-09-22T12:00:00Z","other");
+        from_taylor.from="Taylor <taylor@example.com>".into();from_taylor.to=vec!["you@example.com".into()];
+        database.upsert_thread("you@example.com",&[from_taylor]).unwrap();
+        let thread_for=|contact:&str|database.contact_timeline(contact,0,10).unwrap().into_iter().map(|item|(item.thread_id,item.account_id,item.subject)).collect::<Vec<_>>();
+        let add_task=|(thread_id,account_id,subject):&(String,String,String),title:&str|database.create_task(&crate::models::CreateTaskRequest{account_id:account_id.clone(),thread_id:Some(thread_id.clone()),source_message_id:None,subject_snapshot:Some(subject.clone()),title:title.into(),notes:None,kind:"action".into(),due_kind:"none".into(),due_value:None,time_zone:None,repeat_interval_days:None,evidence_text:None}).unwrap();
+        let jane_primary=thread_for("derived:jane@example.com");
+        let jane_work=thread_for("derived:jane@work.example.com");
+        let taylor=thread_for("derived:taylor@example.com");
+        add_task(&jane_primary[0],"Send Jane the deck");
+        let done=add_task(&jane_primary[0],"Already done");
+        database.set_task_status(&done.id,"completed","user").unwrap();
+        add_task(&jane_work[0],"Review Jane's contract");
+        add_task(&taylor[0],"Call Taylor");
+        let titles=|id:&str|{let mut titles=database.list_contact_tasks(id).unwrap().into_iter().map(|task|task.title).collect::<Vec<_>>();titles.sort();titles};
+
+        assert_eq!(titles("derived:jane@example.com"),vec!["Send Jane the deck"]);
+        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"jane@work.example.com".into()]}).unwrap();
+        assert_eq!(titles(&saved.id),vec!["Review Jane's contract","Send Jane the deck"]);
+        assert!(titles("contact:unknown").is_empty());
+
+        for index in 0..crate::db::tasks::MAX_CONTACT_TASKS {
+            add_task(&taylor[0],&format!("Taylor task {index}"));
+        }
+        assert_eq!(database.list_contact_tasks("derived:taylor@example.com").unwrap().len(),crate::db::tasks::MAX_CONTACT_TASKS);
+        assert_eq!(database.list_contact_tasks("derived:jane@example.com").unwrap().len(),1);
+    }
+
+    #[test]
     fn removing_an_account_clears_its_local_contact_interactions_but_keeps_saved_profile() {
         let database=database();
         let mut sent=message("contact-account-remove","contact-account-remove-thread","2026-09-22T12:00:00Z","hello");

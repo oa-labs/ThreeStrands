@@ -112,10 +112,25 @@ describe("ContextPanel",()=>{
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
-    renderPanel({assist:<section aria-label="Brief">brief</section>,tasks:<section aria-label="Tasks">tasks</section>});
+    renderPanel({assist:<section aria-label="Brief">brief</section>,related:()=><section aria-label="Conversation tasks">tasks</section>});
     const panel=screen.getByRole("complementary",{name:"Conversation context"});
     await within(panel).findByRole("heading",{name:"Bob Lee"});
     const regions=within(panel).getAllByRole("region").map((region)=>region.getAttribute("aria-label"));
-    expect(regions).toEqual(["Contact","Brief","Tasks"]);
+    expect(regions).toEqual(["Contact","Brief","Conversation tasks"]);
+  });
+
+  it("hands related sections the selected person once their contact record is known",async()=>{
+    const bobWork={...bob,addresses:["bob@example.com","bob@work.example.com"]};
+    vi.mocked(mailClient.listContactProfiles).mockImplementation(async query=>query?.includes("bob")?[bobWork]:[]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bobWork);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    const related=vi.fn(()=>null);
+    renderPanel({related});
+
+    expect(related).toHaveBeenCalledWith(null);
+    await waitFor(()=>expect(related).toHaveBeenLastCalledWith({contactId:bob.id,email:"bob@example.com",addresses:["bob@example.com","bob@work.example.com"]}));
+
+    fireEvent.click(within(screen.getByRole("group",{name:"Conversation participants"})).getByRole("button",{name:"Jane Doe"}));
+    await waitFor(()=>expect(related).toHaveBeenLastCalledWith({contactId:"derived:jane@example.com",email:"jane@example.com",addresses:["jane@example.com"]}));
   });
 });

@@ -77,6 +77,31 @@ describe("ThreadTasks", () => {
     expect(onDraftFollowUp).toHaveBeenCalledWith(followUp);
   });
 
+  it("adds open tasks from the person's other conversations, labelled with their subject", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task("mine")]);
+    const listContactTasks = vi.spyOn(mailClient, "listContactTasks").mockResolvedValue([
+      task("mine"),
+      task("elsewhere", { threadId: "thread-2", subjectSnapshot: "Budget review" }),
+      task("elsewhere-done", { threadId: "thread-3", status: "completed" }),
+    ]);
+    renderTasks({ contactId: "contact:jane" });
+
+    expect(await screen.findByText("Task elsewhere")).toBeInTheDocument();
+    expect(screen.getByText("Budget review")).toBeInTheDocument();
+    expect(screen.getAllByText("Task mine")).toHaveLength(1);
+    expect(screen.queryByText("Task elsewhere-done")).not.toBeInTheDocument();
+    expect(screen.queryByText("Website setup")).not.toBeInTheDocument();
+    expect(listContactTasks).toHaveBeenCalledWith("contact:jane");
+  });
+
+  it("does not look up person tasks before the person is known", async () => {
+    const listTasks = vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    const listContactTasks = vi.spyOn(mailClient, "listContactTasks");
+    renderTasks({ contactId: null });
+    await waitFor(() => expect(listTasks).toHaveBeenCalled());
+    expect(listContactTasks).not.toHaveBeenCalled();
+  });
+
   it("reloads when the task revision changes", async () => {
     const listTasks = vi.spyOn(mailClient, "listTasks").mockResolvedValueOnce([]).mockResolvedValueOnce([task("added")]);
     const { rerender, onAddTask, onEditTask, onDraftFollowUp, onTasksChanged } = renderTasks();

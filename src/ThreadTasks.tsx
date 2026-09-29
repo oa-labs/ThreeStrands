@@ -6,9 +6,13 @@ import { HoverTooltip } from "./AppChrome";
 import { errorMessage } from "./errors";
 import { formatDue, isActiveTaskStatus, isDue, isOverdue } from "./taskViews";
 
-/** Open tasks linked to the conversation, shown in the context panel. */
-export function ThreadTasks({ thread, refreshKey, onAddTask, onEditTask, onDraftFollowUp, onTasksChanged }: {
+/**
+ * Open tasks linked to the conversation, followed by open tasks from other
+ * conversations with the selected person (`contactId`, when known).
+ */
+export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, onEditTask, onDraftFollowUp, onTasksChanged }: {
   thread: Thread;
+  contactId?: string | null;
   refreshKey: number;
   onAddTask(): void;
   onEditTask(task: ThreadTask): void;
@@ -21,15 +25,20 @@ export function ThreadTasks({ thread, refreshKey, onAddTask, onEditTask, onDraft
 
   useEffect(() => {
     let active = true;
-    mailClient.listTasks(thread.accountId)
-      .then((all) => {
+    Promise.all([
+      mailClient.listTasks(thread.accountId),
+      contactId ? mailClient.listContactTasks(contactId) : Promise.resolve([]),
+    ])
+      .then(([accountTasks, contactTasks]) => {
         if (!active) return;
-        setTasks(all.filter((task) => task.threadId === thread.id && isActiveTaskStatus(task.status)));
+        const here = accountTasks.filter((task) => task.threadId === thread.id && isActiveTaskStatus(task.status));
+        const elsewhere = contactTasks.filter((task) => task.threadId !== thread.id && isActiveTaskStatus(task.status));
+        setTasks([...here, ...elsewhere]);
         setError(null);
       })
       .catch((reason: unknown) => { if (active) setError(errorMessage(reason)); });
     return () => { active = false; };
-  }, [refreshKey, thread.accountId, thread.id]);
+  }, [contactId, refreshKey, thread.accountId, thread.id]);
 
   const complete = async (task: ThreadTask) => {
     try {
@@ -55,6 +64,7 @@ export function ThreadTasks({ thread, refreshKey, onAddTask, onEditTask, onDraft
         <button type="button" className="task-status-button" aria-label={`Complete ${task.title}`} onClick={() => void complete(task)}><Check size={15} /></button>
         <button type="button" className="context-task-main" onClick={() => onEditTask(task)}>
           <strong>{task.title}</strong>
+          {task.threadId !== thread.id && task.subjectSnapshot ? <span className="context-task-source">{task.subjectSnapshot}</span> : null}
           {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
         </button>
         {task.kind === "follow_up" && isDue(task) ? <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button> : null}

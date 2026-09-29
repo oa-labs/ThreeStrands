@@ -111,6 +111,8 @@ export interface MailClient extends CorrespondenceClient {
   saveContactProfile(request: SaveContactRequest): Promise<ContactProfile>;
   deleteContactProfile(id: string): Promise<void>;
   contactTimeline(id: string, offset?: number, limit?: number, accountId?: string): Promise<ContactTimelineItem[]>;
+  /** Open tasks from any conversation with the contact (a saved id or `derived:<email>`). */
+  listContactTasks(id: string): Promise<ThreadTask[]>;
   enrichContact(id: string, provider: AiProvider, model: string, endpoint: string | null, searchMore?: boolean, accountId?: string): Promise<ContactEnrichmentResult>;
   pinContact(accountId: string, email: string, displayName: string | null): Promise<void>;
   unpinContact(accountId: string, email: string): Promise<void>;
@@ -210,6 +212,7 @@ const tauriClient: MailClient = {
   saveContactProfile: (request) => complete("save_contact_profile", { request }),
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
   contactTimeline: (id, offset = 0, limit = 30, accountId) => read("contact_timeline", { id, offset, limit, accountId }),
+  listContactTasks: (id) => read("list_contact_tasks", { id }),
   enrichContact: (id, provider, model, endpoint, searchMore = false, accountId) => complete("ai_enrich_contact", { id, provider, model, endpoint, searchMore, accountId }),
   pinContact: (accountId, email, displayName) => complete("pin_contact", { accountId, email, displayName }),
   unpinContact: (accountId, email) => complete("unpin_contact", { accountId, email }),

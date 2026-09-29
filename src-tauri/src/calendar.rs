@@ -18,6 +18,9 @@ const CALENDAR_LIST_URL: &str = "https://www.googleapis.com/calendar/v3/users/me
 const CALENDARS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/";
 const FREEBUSY_URL: &str = "https://www.googleapis.com/calendar/v3/freeBusy";
 const MAX_SCHEDULE_EVENTS: usize = 250;
+/// Bounds the attendee addresses kept per event; Google may list hundreds on
+/// large meetings and the client only matches them against contacts.
+const MAX_EVENT_ATTENDEES: usize = 100;
 // Calendar IDs are untrusted path data. Encode every reserved URI character so
 // IDs containing `@`, `#`, or `/` remain exactly one path segment.
 const CALENDAR_ID_ENCODE_SET: &AsciiSet = &CONTROLS
@@ -124,6 +127,39 @@ struct GoogleEvent {
     conference_data: Option<GoogleConferenceData>,
     start: GoogleEventTime,
     end: GoogleEventTime,
+    #[serde(default)]
+    attendees: Vec<GoogleAttendee>,
+    organizer: Option<GoogleAttendee>,
+}
+
+#[derive(Deserialize)]
+struct GoogleAttendee {
+    email: Option<String>,
+    #[serde(rename = "self", default)]
+    is_self: bool,
+    #[serde(default)]
+    resource: bool,
+}
+
+/// The lowercased addresses of the other people on an event: the organizer
+/// and attendees, excluding the calendar owner and rooms or other resources.
+fn event_people(organizer: Option<GoogleAttendee>, attendees: Vec<GoogleAttendee>) -> Vec<String> {
+    let mut people: Vec<String> = Vec::new();
+    for person in organizer.into_iter().chain(attendees) {
+        if person.is_self || person.resource {
+            continue;
+        }
+        let Some(email) = person.email.map(|email| email.trim().to_ascii_lowercase()) else {
+            continue;
+        };
+        if email.contains('@') && !people.contains(&email) {
+            people.push(email);
+            if people.len() == MAX_EVENT_ATTENDEES {
+                break;
+            }
+        }
+    }
+    people
 }
 
 #[derive(Deserialize)]
@@ -344,6 +380,7 @@ fn normalize_events(
                 all_day,
                 location: event.location.filter(|value| !value.trim().is_empty()),
                 description: event.description.filter(|value| !value.trim().is_empty()),
+                attendees: event_people(event.organizer, event.attendees),
                 conference_url: event.hangout_link.or_else(|| {
                     event.conference_data.and_then(|conference| {
                         conference.entry_points.into_iter().find_map(|entry| {
@@ -569,6 +606,13 @@ mod tests {
                         date: None,
                         date_time: Some("2026-09-18T10:00:00-07:00".into()),
                     },
+                    attendees: vec![
+                        GoogleAttendee { email: Some("me@example.com".into()), is_self: true, resource: false },
+                        GoogleAttendee { email: Some("Jane@Example.com".into()), is_self: false, resource: false },
+                        GoogleAttendee { email: Some("room-4b@resource.example.com".into()), is_self: false, resource: true },
+                        GoogleAttendee { email: None, is_self: false, resource: false },
+                    ],
+                    organizer: Some(GoogleAttendee { email: Some("jane@example.com".into()), is_self: false, resource: false }),
                 },
                 GoogleEvent {
                     id: "all-day".into(),
@@ -586,6 +630,8 @@ mod tests {
                         date: Some("2026-09-19".into()),
                         date_time: None,
                     },
+                    attendees: Vec::new(),
+                    organizer: None,
                 },
             ],
             "work@example.com",
@@ -602,8 +648,37 @@ mod tests {
             events[0].conference_url.as_deref(),
             Some("https://meet.google.com/abc-defg-hij")
         );
+        assert_eq!(events[0].attendees, vec!["jane@example.com"]);
         assert_eq!(events[1].title, "Untitled event");
         assert!(events[1].all_day);
+        assert!(events[1].attendees.is_empty());
+    }
+
+    #[test]
+    fn reads_event_people_from_google_json_and_bounds_them() {
+        let event: GoogleEvent = serde_json::from_value(serde_json::json!({
+            "id": "e1",
+            "start": {"dateTime": "2026-09-18T09:30:00Z"},
+            "end": {"dateTime": "2026-09-18T10:00:00Z"},
+            "organizer": {"email": "me@example.com", "self": true},
+            "attendees": [{"email": "bob@example.com", "responseStatus": "accepted"}, {"email": "not-an-address"}],
+        }))
+        .unwrap();
+        assert_eq!(event_people(event.organizer, event.attendees), vec!["bob@example.com"]);
+        let without_people: GoogleEvent = serde_json::from_value(serde_json::json!({
+            "id": "e2", "start": {"date": "2026-09-18"}, "end": {"date": "2026-09-19"},
+        }))
+        .unwrap();
+        assert!(event_people(without_people.organizer, without_people.attendees).is_empty());
+
+        let attendees = |count: usize| {
+            (0..count)
+                .map(|index| GoogleAttendee { email: Some(format!("person{index}@example.com")), is_self: false, resource: false })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(event_people(None, attendees(MAX_EVENT_ATTENDEES - 1)).len(), MAX_EVENT_ATTENDEES - 1);
+        assert_eq!(event_people(None, attendees(MAX_EVENT_ATTENDEES)).len(), MAX_EVENT_ATTENDEES);
+        assert_eq!(event_people(None, attendees(MAX_EVENT_ATTENDEES + 1)).len(), MAX_EVENT_ATTENDEES);
     }
 
     #[test]

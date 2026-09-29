@@ -937,6 +937,11 @@ fn contact_timeline(
 }
 
 #[tauri::command]
+fn list_contact_tasks(id: String, state: State<'_, AppState>) -> Result<Vec<ThreadTask>, String> {
+    database_result(state.database.list_contact_tasks(&id))
+}
+
+#[tauri::command]
 fn pin_contact(
     account_id: String,
     email: String,
@@ -3008,6 +3013,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         save_contact_profile,
         delete_contact_profile,
         contact_timeline,
+        list_contact_tasks,
         pin_contact,
         unpin_contact,
         unsubscribe,

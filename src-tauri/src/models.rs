@@ -38,6 +38,8 @@ pub struct ScheduleEvent {
     pub location: Option<String>,
     pub description: Option<String>,
     pub conference_url: Option<String>,
+    /// Lowercased addresses of the other people on the event.
+    pub attendees: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

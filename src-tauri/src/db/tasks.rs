@@ -9,6 +9,8 @@ use crate::models::{CreateTaskRequest, ThreadTask, UpdateTaskRequest};
 const MAX_TITLE: usize = 240;
 const MAX_NOTES: usize = 8_000;
 const MAX_EVIDENCE: usize = 4_000;
+/// Bounds the open tasks returned for one person's conversations.
+pub(crate) const MAX_CONTACT_TASKS: usize = 50;
 
 fn validate_task_fields(
     title: &str,
@@ -109,6 +111,31 @@ impl Database {
                 (None, Some(status)) => statement.query_map(params![status], task_from_row),
                 (None, None) => statement.query_map([], task_from_row),
             }?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// Open tasks linked to any conversation that includes one of the
+    /// contact's addresses. `id` is a saved contact id or `derived:<email>`.
+    pub fn list_contact_tasks(&self, id: &str) -> DbResult<Vec<ThreadTask>> {
+        let addresses = self.contact_address_list(id)?;
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.with_connection(|connection| {
+            let marks = vec!["?"; addresses.len()].join(",");
+            let sql = format!(
+                "{} WHERE status IN ('open', 'in_progress')
+                   AND thread_id IN (SELECT thread_id FROM contact_interactions WHERE email IN ({marks}))
+                 ORDER BY CASE WHEN due_value IS NULL THEN 1 ELSE 0 END, due_value ASC, updated_at DESC
+                 LIMIT {MAX_CONTACT_TASKS}",
+                select_sql()
+            );
+            let mut statement = connection.prepare(&sql)?;
+            let rows = statement.query_map(
+                rusqlite::params_from_iter(addresses.iter().map(|email| email.to_ascii_lowercase())),
+                task_from_row,
+            )?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
     }

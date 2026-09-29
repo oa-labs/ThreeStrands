@@ -5,18 +5,27 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { parseAddress, splitAddressList } from "./emailAddress";
 
+/** The selected participant, once their contact record has been looked up. */
+export type ContextPerson = {
+  /** A saved contact id, or `derived:<email>` for someone not yet saved. */
+  contactId: string;
+  email: string;
+  addresses: string[];
+};
+
 /**
  * The single right-side panel for a conversation: a compact card for the
  * selected participant, then the AI brief and suggestions, then related
- * tasks and recent emails with that person.
+ * tasks, meetings, and recent emails with that person.
  */
-export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, assist, tasks }: {
+export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, assist, related }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   onOpenThread(id: string): void;
   onOpenContact(id: string): void;
   assist?: ReactNode;
-  tasks?: ReactNode;
+  /** Sections about the conversation and the selected person. */
+  related?(person: ContextPerson | null): ReactNode;
 }) {
   const own = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
   const participants = useMemo(() => {
@@ -43,6 +52,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
   const [email, setEmail] = useState("");
   const [profile, setProfile] = useState<ContactProfile | null>(null);
   const [timeline, setTimeline] = useState<ContactTimelineItem[]>([]);
+  const [loadedEmail, setLoadedEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [emailCopied, setEmailCopied] = useState(false);
   const [emailCopyFailed, setEmailCopyFailed] = useState(false);
@@ -51,7 +61,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
   useEffect(() => { setEmail(preferred); setEmailCopied(false); setEmailCopyFailed(false); }, [preferred, detail?.thread.id]);
   useEffect(() => { setEmailCopied(false); setEmailCopyFailed(false); }, [email]);
   useEffect(() => {
-    if (!email) { setProfile(null); setTimeline([]); return; }
+    if (!email) { setProfile(null); setTimeline([]); setLoadedEmail(""); return; }
     let active = true;
     void (async () => {
       try {
@@ -59,7 +69,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
         const match = found.find((contact) => contact.addresses.some((address) => address.toLocaleLowerCase() === email));
         const loaded = match ? await mailClient.getContactProfile(match.id) : null;
         const events = await mailClient.contactTimeline(loaded?.id ?? `derived:${email}`, 0, 6);
-        if (active) { setProfile(loaded); setTimeline(events); setError(null); }
+        if (active) { setProfile(loaded); setTimeline(events); setLoadedEmail(email); setError(null); }
       } catch (reason) {
         if (active) setError(reason instanceof Error ? reason.message : String(reason));
       }
@@ -69,6 +79,12 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
 
   const selected = participants.find((item) => item.email === email);
   const displayName = profile?.displayName || selected?.name || email;
+  const person = useMemo<ContextPerson | null>(() => {
+    if (!email || loadedEmail !== email) return null;
+    return profile
+      ? { contactId: profile.id, email, addresses: profile.addresses }
+      : { contactId: `derived:${email}`, email, addresses: [email] };
+  }, [email, loadedEmail, profile]);
   const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
   const save = async () => {
     try {
@@ -151,7 +167,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
         </section>
       ) : <p className="contacts-status">Select a conversation participant.</p>}
       {detail ? assist : null}
-      {detail ? tasks : null}
+      {detail && related ? related(person) : null}
       {otherEmails.length > 0 ? (
         <section className="context-section contact-sidebar-history" aria-labelledby="context-history-heading">
           <header className="context-section-header"><h3 id="context-history-heading">Recent emails</h3></header>

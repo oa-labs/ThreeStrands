@@ -73,6 +73,8 @@ export type ScheduleEvent = {
   location?: string | null;
   description?: string | null;
   conferenceUrl?: string | null;
+  /** Lowercased addresses of the other people on the event, when known. */
+  attendees?: string[];
 };
 
 export type ScheduleResult = {

@@ -480,6 +480,11 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       return structuredClone(candidate);
     },
     async deleteContactProfile(id) { savedContactProfiles = savedContactProfiles.filter((profile) => profile.id !== id); },
+    async listContactTasks(id): Promise<ThreadTask[]> {
+      const threadIds = new Set((await this.contactTimeline(id, 0, 100)).map((item) => item.threadId));
+      const tasks = await this.listTasks();
+      return tasks.filter((task) => task.threadId && threadIds.has(task.threadId) && (task.status === "open" || task.status === "in_progress"));
+    },
     async contactTimeline(id, offset = 0, limit = 30, accountId): Promise<ContactTimelineItem[]> {
       const profile = await client.getContactProfile(id);
       if (!profile) return [];
