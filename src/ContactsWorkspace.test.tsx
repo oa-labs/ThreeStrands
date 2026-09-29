@@ -58,6 +58,19 @@ describe("ContactsWorkspace",()=>{
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({addresses:["jane@work.example.com","one@example.com","two@example.com"]})));
   });
 
+  it("copies an address from its badge and reports clipboard failures",async()=>{
+    const writeText=vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
+    Object.defineProperty(navigator,"clipboard",{value:{writeText},configurable:true});
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(screen.getByRole("button",{name:"Copy jane@example.com"}));
+    expect(await screen.findByRole("button",{name:"Copied jane@example.com"})).toBeInTheDocument();
+    expect(writeText).toHaveBeenCalledWith("jane@example.com");
+    fireEvent.click(screen.getByRole("button",{name:"Copied jane@example.com"}));
+    expect(await screen.findByRole("status")).toHaveTextContent("Could not copy email address");
+    expect(screen.getByRole("button",{name:"Copy jane@example.com"})).toBeInTheDocument();
+  });
+
   it("shows the selected account and scopes contacts, history, and enrichment",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
