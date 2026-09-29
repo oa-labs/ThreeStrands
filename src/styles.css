@@ -1751,7 +1751,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-avatar.medium { width:76px; height:76px; font-size:26px; }
 .contact-avatar.large { width:96px; height:96px; font-size:32px; }
 .contact-avatar.large input { position:absolute; inset:0; opacity:0; cursor:pointer; }
-.contact-profile-panel { min-width:0; min-height:0; overflow:auto; padding:clamp(24px,4vw,56px); background:var(--surface); }
+.contact-profile-panel { min-width:0; min-height:0; overflow:auto; padding:24px clamp(24px,4vw,56px) clamp(24px,4vw,56px); background:var(--surface); }
 .contact-profile-top { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding-bottom:23px; border-bottom:1px solid var(--border); }
 .contact-identity { display:flex; align-items:center; gap:24px; min-width:0; }
 .contact-identity > div { display:grid; gap:8px; min-width:0; }
