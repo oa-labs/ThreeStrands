@@ -14,6 +14,8 @@ import {
   timeZoneLabel,
 } from "./calendarTime";
 import { calendarDescriptionText } from "./calendarDescription";
+import { responseLabel } from "./calendarResponse";
+import { clearScheduleCache } from "./calendarScheduleCache";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
@@ -158,9 +160,25 @@ export function hasWorkingHoursOnDate(
   return preferences.workingWindows.some((window) => window.weekday === date.getDay());
 }
 
-export function EventViewer({ event, onDismiss }: { event: ScheduleEvent; onDismiss(): void }) {
+export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEvent; onDismiss(): void; onUpdated(event: ScheduleEvent): void }) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const conferenceUrl = safeWebUrl(event.conferenceUrl);
+  const [responsePending, setResponsePending] = useState(false);
+  const [responseError, setResponseError] = useState<string | null>(null);
+  const label = responseLabel(event);
+  const respond = async (status: "accepted" | "declined" | "tentative") => {
+    setResponsePending(true);
+    setResponseError(null);
+    try {
+      const updated = await mailClient.updateCalendarResponse(event, status);
+      onUpdated(updated);
+      clearScheduleCache();
+    } catch (error) {
+      setResponseError(errorMessage(error));
+    } finally {
+      setResponsePending(false);
+    }
+  };
   useEscapeDismiss(onDismiss);
 
   useEffect(() => {
@@ -203,6 +221,15 @@ export function EventViewer({ event, onDismiss }: { event: ScheduleEvent; onDism
         ) : null}
         {event.location ? <p><MapPin size={17} /><span>{event.location}</span></p> : null}
         <p><CalendarDays size={17} /><span>{event.accountId}</span></p>
+        {label ? <div className="calendar-event-response">
+          <span>Your response: <strong>{label}</strong></span>
+          {event.canRespond ? <div className="calendar-response-actions" role="group" aria-label="Going?">
+            {([ ["accepted", "Yes"], ["declined", "No"], ["tentative", "Maybe"] ] as const).map(([status, title]) => (
+              <button key={status} type="button" aria-pressed={event.responseStatus === status} disabled={responsePending} onClick={() => void respond(status)}>{title}</button>
+            ))}
+          </div> : null}
+          {responseError ? <p role="alert">{responseError}</p> : null}
+        </div> : null}
         {event.description ? <p className="calendar-event-viewer-description"><AlignLeft size={17} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
     </div>
@@ -353,6 +380,7 @@ export function CalendarSidebar({
                   type="button"
                   key={eventKey}
                   data-calendar-event-trigger
+                  data-response-status={event.responseStatus ?? undefined}
                   aria-expanded={selectedEvent === event}
                   aria-controls={selectedEvent === event ? "calendar-event-viewer" : undefined}
                   onClick={() => setSelectedEvent((current) => current === event ? null : event)}
@@ -458,6 +486,7 @@ export function CalendarSidebar({
                   className={className}
                   key={`${event.accountId}:${event.id}`}
                   data-calendar-event-trigger
+                  data-response-status={event.responseStatus ?? undefined}
                   aria-expanded={selectedEvent === event}
                   aria-controls={selectedEvent === event ? "calendar-event-viewer" : undefined}
                   onClick={() => setSelectedEvent((current) => current === event ? null : event)}
@@ -465,7 +494,7 @@ export function CalendarSidebar({
                     top: (start / 60) * HOUR_HEIGHT,
                     height: duration,
                   }}
-                  title={`${event.title}, ${formatEventTime(event)}`}
+                  title={`${event.title}, ${formatEventTime(event)}${responseLabel(event) ? `, ${responseLabel(event)}` : ""}`}
                 >
                   <strong>{event.title}</strong>
                   <span>{formatEventTime(event)}</span>
@@ -479,7 +508,7 @@ export function CalendarSidebar({
           ) : null}
         </div>
       </div>
-      {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} /> : null}
+      {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} onUpdated={setSelectedEvent} /> : null}
     </aside>
   );
 }

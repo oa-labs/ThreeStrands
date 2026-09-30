@@ -18,6 +18,7 @@ import {
 import { isEditableTarget } from "./commands";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import { clearScheduleCache } from "./calendarScheduleCache";
+import { responseLabel } from "./calendarResponse";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
 
@@ -361,6 +362,7 @@ export function CalendarWeekView({
                     type="button"
                     key={`${event.accountId}:${event.id}`}
                     data-calendar-event-trigger
+                    data-response-status={event.responseStatus ?? undefined}
                     aria-expanded={sameEvent(selectedEvent, event)}
                     onClick={() => setSelectedEvent((current) => sameEvent(current, event) ? null : event)}
                   >
@@ -432,6 +434,7 @@ export function CalendarWeekView({
                       className={className}
                       key={`${event.accountId}:${event.id}`}
                       data-calendar-event-trigger
+                      data-response-status={event.responseStatus ?? undefined}
                       aria-expanded={sameEvent(selectedEvent, event)}
                       onClick={() => setSelectedEvent((current) => sameEvent(current, event) ? null : event)}
                       style={{
@@ -440,7 +443,7 @@ export function CalendarWeekView({
                         left: `${(lane / lanes) * 100}%`,
                         width: `${(span / lanes) * 100}%`,
                       }}
-                      title={`${event.title}, ${formatEventTime(event)}`}
+                      title={`${event.title}, ${formatEventTime(event)}${responseLabel(event) ? `, ${responseLabel(event)}` : ""}`}
                     >
                       <strong>{event.title}</strong>
                       {durationMinutes > 30 ? <span>{formatEventTime(event)}</span> : null}
@@ -460,7 +463,7 @@ export function CalendarWeekView({
           </div>
           {loading ? <p className="calendar-grid-status">Loading schedule…</p> : null}
         </div>
-        {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} /> : null}
+        {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} onUpdated={setSelectedEvent} /> : null}
         {newEventRange ? <CreateCalendarEventDialog
           start={newEventRange.start}
           end={newEventRange.end}

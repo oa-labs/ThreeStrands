@@ -171,6 +171,36 @@ describe("CalendarWeekView", () => {
     expect(screen.queryByRole("dialog", { name: "Operations team meeting details" })).not.toBeInTheDocument();
   });
 
+  it("shows RSVP styling and changes one response through the event popup", async () => {
+    const invited = { ...event("primary:invited", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Team sync"), calendarId: "primary", responseStatus: "needsAction" as const, canRespond: true };
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [invited], errors: [] });
+    const update = vi.spyOn(mailClient, "updateCalendarResponse").mockResolvedValue({ ...invited, responseStatus: "accepted" });
+    renderWeek();
+    const button = await screen.findByRole("button", { name: "Team sync" });
+    expect(button).toHaveAttribute("data-response-status", "needsAction");
+    fireEvent.click(button);
+    const dialog = screen.getByRole("dialog", { name: "Team sync details" });
+    expect(dialog).toHaveTextContent("Awaiting response");
+    const going = within(dialog).getByRole("group", { name: "Going?" });
+    expect(within(going).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(within(going).getByRole("button", { name: "Yes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(invited, "accepted"));
+    await waitFor(() => expect(dialog).toHaveTextContent("Going"));
+    expect(within(going).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps the prior RSVP and reports a failed change", async () => {
+    const invited = { ...event("primary:invited", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Review"), calendarId: "primary", responseStatus: "tentative" as const, canRespond: true };
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [invited], errors: [] });
+    vi.spyOn(mailClient, "updateCalendarResponse").mockRejectedValue(new Error("Calendar unavailable"));
+    renderWeek();
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    const dialog = screen.getByRole("dialog", { name: "Review details" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "No" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Calendar unavailable");
+    expect(within(dialog).getByRole("button", { name: "Maybe" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("uses free overlap space and keeps short meeting titles visible", async () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({
       events: [

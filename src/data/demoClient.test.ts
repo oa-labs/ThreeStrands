@@ -162,6 +162,19 @@ describe("showcase dataset", () => {
     })).rejects.toThrow("Choose a calendar");
   });
 
+  it("updates the response to a demo invitation and rejects events without an RSVP", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    const start = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+    const end = new Date(now.getTime() + 14 * 86_400_000).toISOString();
+    const schedule = await client.listScheduleEvents(start, end, "UTC");
+    const invitation = schedule.events.find((event) => event.id === "crit")!;
+    expect(invitation.responseStatus).toBe("needsAction");
+    expect((await client.updateCalendarResponse(invitation, "declined")).responseStatus).toBe("declined");
+    expect((await client.listScheduleEvents(start, end, "UTC")).events.find((event) => event.id === "crit")?.responseStatus).toBe("declined");
+    await expect(client.updateCalendarResponse(schedule.events.find((event) => event.id === "focus-1")!, "accepted"))
+      .rejects.toThrow("no RSVP");
+  });
+
   it("unsubscribes through the first advertised method", async () => {
     const client = createDemoClient(buildShowcaseDataset(now));
     await expect(client.unsubscribe("reader-message")).resolves.toMatchObject({ method: "oneClick" });

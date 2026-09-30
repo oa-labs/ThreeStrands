@@ -155,10 +155,38 @@ struct GoogleEvent {
 #[derive(Deserialize)]
 struct GoogleAttendee {
     email: Option<String>,
+    #[serde(rename = "responseStatus")]
+    response_status: Option<String>,
     #[serde(rename = "self", default)]
     is_self: bool,
     #[serde(default)]
     resource: bool,
+}
+
+fn self_response(attendees: &[GoogleAttendee], account_id: &str) -> (Option<String>, bool) {
+    // `self` identifies this calendar's copy; a shared calendar's owner can
+    // differ from the connected user whose RSVP the app is showing.
+    let Some(attendee) = attendees.iter().find(|attendee| {
+        attendee.is_self && attendee.email.as_deref().is_some_and(|email| email.eq_ignore_ascii_case(account_id))
+    }) else {
+        return (None, false);
+    };
+    let status = attendee.response_status.as_deref().filter(|status| matches!(*status, "accepted" | "declined" | "tentative" | "needsAction"));
+    (status.map(str::to_string), attendee.email.is_some())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResponsePatch<'a> {
+    attendees_omitted: bool,
+    attendees: Vec<ResponseAttendee<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResponseAttendee<'a> {
+    email: &'a str,
+    response_status: &'a str,
 }
 
 /// The lowercased addresses of the other people on an event: the organizer
@@ -395,6 +423,57 @@ fn events_url(calendar_id: &str) -> Result<Option<url::Url>, String> {
         .map_err(|error| error.to_string())
 }
 
+fn event_url(calendar_id: &str, event_id: &str) -> Result<url::Url, String> {
+    let mut url = events_url(calendar_id)?
+        .ok_or_else(|| "Choose a calendar for the event".to_string())?;
+    if event_id.trim().is_empty() {
+        return Err("Choose an event to respond to".into());
+    }
+    url.path_segments_mut()
+        .map_err(|_| "Invalid calendar event URL".to_string())?
+        .push(event_id);
+    Ok(url)
+}
+
+pub async fn update_response(
+    auth: GoogleAuth,
+    account_id: &str,
+    calendar_id: &str,
+    schedule_id: &str,
+    response_status: &str,
+) -> Result<ScheduleEvent, String> {
+    if !matches!(response_status, "accepted" | "declined" | "tentative") {
+        return Err("Choose Yes, No, or Maybe".into());
+    }
+    let event_id = schedule_id.strip_prefix(&format!("{calendar_id}:"))
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "Event does not belong to this calendar".to_string())?;
+    let url = event_url(calendar_id, event_id)?;
+    let token = auth.access_token().await.map_err(|error| error.to_string())?;
+    let client = calendar_client()?;
+    let current: GoogleEvent = checked_json(client.get(url.clone()).bearer_auth(&token).send().await.map_err(|error| error.to_string())?).await?;
+    let email = current.attendees.iter().find(|attendee| {
+        attendee.is_self && attendee.email.as_deref().is_some_and(|email| email.eq_ignore_ascii_case(account_id))
+    })
+        .and_then(|attendee| attendee.email.as_deref())
+        .ok_or_else(|| "This event has no RSVP for your calendar".to_string())?;
+    let response = client.patch(url).bearer_auth(&token)
+        .json(&ResponsePatch {
+            attendees_omitted: true,
+            attendees: vec![ResponseAttendee { email, response_status }],
+        })
+        .send().await.map_err(|error| error.to_string())?;
+    if response.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err("Calendar write access was denied. Reconnect this calendar account in Settings to grant event access.".into());
+    }
+    let event: GoogleEvent = checked_json(response).await?;
+    let mut updated = normalize_events(vec![event], account_id, calendar_id).into_iter().next()
+        .ok_or_else(|| "Google changed the response but did not return event details. Refresh the calendar.".to_string())?;
+    updated.response_status = Some(response_status.to_string());
+    updated.can_respond = true;
+    Ok(updated)
+}
+
 async fn checked_json<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, String> {
@@ -419,9 +498,11 @@ fn normalize_events(
             let all_day = event.start.date_time.is_none();
             let start = event.start.date_time.or(event.start.date)?;
             let end = event.end.date_time.or(event.end.date)?;
+            let (response_status, can_respond) = self_response(&event.attendees, account_id);
             Some(ScheduleEvent {
                 id: format!("{calendar_id}:{}", event.id),
                 account_id: account_id.to_string(),
+                calendar_id: calendar_id.to_string(),
                 title: event
                     .summary
                     .filter(|title| !title.trim().is_empty())
@@ -432,6 +513,8 @@ fn normalize_events(
                 location: event.location.filter(|value| !value.trim().is_empty()),
                 description: event.description.filter(|value| !value.trim().is_empty()),
                 attendees: event_people(event.organizer, event.attendees),
+                response_status,
+                can_respond,
                 conference_url: event.hangout_link.or_else(|| {
                     event.conference_data.and_then(|conference| {
                         conference.entry_points.into_iter().find_map(|entry| {
@@ -658,12 +741,12 @@ mod tests {
                         date_time: Some("2026-09-18T10:00:00-07:00".into()),
                     },
                     attendees: vec![
-                        GoogleAttendee { email: Some("me@example.com".into()), is_self: true, resource: false },
-                        GoogleAttendee { email: Some("Jane@Example.com".into()), is_self: false, resource: false },
-                        GoogleAttendee { email: Some("room-4b@resource.example.com".into()), is_self: false, resource: true },
-                        GoogleAttendee { email: None, is_self: false, resource: false },
+                        GoogleAttendee { email: Some("work@example.com".into()), response_status: Some("needsAction".into()), is_self: true, resource: false },
+                        GoogleAttendee { email: Some("Jane@Example.com".into()), response_status: None, is_self: false, resource: false },
+                        GoogleAttendee { email: Some("room-4b@resource.example.com".into()), response_status: None, is_self: false, resource: true },
+                        GoogleAttendee { email: None, response_status: None, is_self: false, resource: false },
                     ],
-                    organizer: Some(GoogleAttendee { email: Some("jane@example.com".into()), is_self: false, resource: false }),
+                    organizer: Some(GoogleAttendee { email: Some("jane@example.com".into()), response_status: None, is_self: false, resource: false }),
                 },
                 GoogleEvent {
                     id: "all-day".into(),
@@ -700,9 +783,40 @@ mod tests {
             Some("https://meet.google.com/abc-defg-hij")
         );
         assert_eq!(events[0].attendees, vec!["jane@example.com"]);
+        assert_eq!(events[0].response_status.as_deref(), Some("needsAction"));
+        assert!(events[0].can_respond);
+        assert_eq!(events[0].calendar_id, "team@example.com");
         assert_eq!(events[1].title, "Untitled event");
         assert!(events[1].all_day);
         assert!(events[1].attendees.is_empty());
+        assert_eq!(events[1].response_status, None);
+        assert!(!events[1].can_respond);
+    }
+
+    #[test]
+    fn reads_only_the_calendar_owners_response_and_builds_a_scoped_patch() {
+        for status in ["accepted", "declined", "tentative", "needsAction"] {
+            let attendees: Vec<GoogleAttendee> = serde_json::from_value(serde_json::json!([
+                {"email": "guest@example.com", "responseStatus": "accepted"},
+                {"email": "me@example.com", "self": true, "responseStatus": status}
+            ])).unwrap();
+            assert_eq!(self_response(&attendees, "me@example.com"), (Some(status.into()), true));
+            assert_eq!(self_response(&attendees, "other@example.com"), (None, false));
+        }
+        let attendees: Vec<GoogleAttendee> = serde_json::from_value(serde_json::json!([
+            {"email": "guest@example.com", "responseStatus": "accepted"}
+        ])).unwrap();
+        assert_eq!(self_response(&attendees, "me@example.com"), (None, false));
+        let patch = serde_json::to_value(ResponsePatch {
+            attendees_omitted: true,
+            attendees: vec![ResponseAttendee { email: "me@example.com", response_status: "tentative" }],
+        }).unwrap();
+        assert_eq!(patch, serde_json::json!({
+            "attendeesOmitted": true,
+            "attendees": [{"email": "me@example.com", "responseStatus": "tentative"}]
+        }));
+        assert_eq!(event_url("team@example.com", "event/one").unwrap().as_str(),
+            "https://www.googleapis.com/calendar/v3/calendars/team%40example.com/events/event%2Fone");
     }
 
     #[test]
@@ -724,7 +838,7 @@ mod tests {
 
         let attendees = |count: usize| {
             (0..count)
-                .map(|index| GoogleAttendee { email: Some(format!("person{index}@example.com")), is_self: false, resource: false })
+                .map(|index| GoogleAttendee { email: Some(format!("person{index}@example.com")), response_status: None, is_self: false, resource: false })
                 .collect::<Vec<_>>()
         };
         assert_eq!(event_people(None, attendees(MAX_EVENT_ATTENDEES - 1)).len(), MAX_EVENT_ATTENDEES - 1);

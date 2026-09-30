@@ -2094,6 +2094,27 @@ async fn list_schedule_events(
 }
 
 #[tauri::command]
+async fn update_calendar_response(
+    account_id: String,
+    calendar_id: String,
+    event_id: String,
+    response_status: String,
+    state: State<'_, AppState>,
+) -> Result<models::ScheduleEvent, String> {
+    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    if !state.database.list_calendar_accounts()?.iter().any(|account| account.email == account_id) {
+        return Err("Calendar account is not connected".into());
+    }
+    calendar::update_response(
+        config.calendar_account(&account_id),
+        &account_id,
+        &calendar_id,
+        &event_id,
+        &response_status,
+    ).await
+}
+
+#[tauri::command]
 async fn find_availability(
     request: FindAvailabilityRequest,
     state: State<'_, AppState>,
@@ -3274,6 +3295,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         remove_calendar_account,
         remove_synced_calendar_account,
         list_schedule_events,
+        update_calendar_response,
         find_availability,
         check_proposed_time,
         // Settings transfer and retention

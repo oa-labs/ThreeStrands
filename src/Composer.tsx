@@ -19,7 +19,7 @@ import {
   linkifyPlainText,
   plainTextToHtml,
   sanitizeComposeHtml,
-  serializeComposeHtml,
+  serializeComposeBody,
 } from "./richText";
 import { SnippetPicker } from "./SnippetPicker";
 import { firstNameFromRecipient, renderSnippetBody } from "./snippets";
@@ -67,19 +67,19 @@ export const Composer = forwardRef<ComposerHandle, {
   const bodyEditor = useRef<HTMLDivElement>(null);
   const bodyDirty = useRef(false);
   const pendingRecipientFocus = useRef<"cc" | "bcc" | null>(null);
-  const initialBodyHtml = useRef(sanitizeComposeHtml(initial.bodyHtml || plainTextToHtml(initial.body)));
+  // Lazy initializer: `useRef(expr)` would evaluate `expr` on every render, so
+  // each status change re-sanitized the whole quoted thread before the next paint.
+  const [initialBodyHtml] = useState(() => sanitizeComposeHtml(initial.bodyHtml || plainTextToHtml(initial.body)));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
 
   const captureBody = useCallback(() => {
     const editor = bodyEditor.current;
     if (!bodyDirty.current || !editor) return;
-    const html = serializeComposeHtml(editor);
-    const textOnly = editor.cloneNode(true) as HTMLElement;
-    textOnly.querySelectorAll("[data-compose-image-remove], [data-compose-image-resize]").forEach((control) => control.remove());
+    const { html, text } = serializeComposeBody(editor);
     latest.current = {
       ...latest.current,
-      body: textOnly.innerText ?? textOnly.textContent ?? "",
+      body: text,
       bodyHtml: html,
     };
     bodyDirty.current = false;
@@ -401,7 +401,7 @@ export const Composer = forwardRef<ComposerHandle, {
           contentEditable={!busy}
           suppressContentEditableWarning
           data-placeholder="Write your message…"
-          dangerouslySetInnerHTML={{ __html: initialBodyHtml.current }}
+          dangerouslySetInnerHTML={{ __html: initialBodyHtml }}
           onInput={editBody}
           onPaste={(event) => {
             const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));

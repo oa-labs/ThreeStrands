@@ -7,6 +7,7 @@ import {
   insertHtmlAtRange,
   plainTextToHtml,
   sanitizeComposeHtml,
+  serializeComposeBody,
   serializeComposeHtml,
 } from "./richText";
 
@@ -219,6 +220,19 @@ it("keeps safe pasted images and strips compose-only image controls", () => {
 
   expect(serializeComposeHtml(editor)).toBe('<img src="data:image/png;base64,aGVsbG8=" alt="Screenshot" width="320">');
   expect(sanitizeComposeHtml('<img src="javascript:alert(1)"><img src="data:text/html;base64,aGk=">')).toBe("");
+});
+
+it("derives the draft's HTML and plain text from a single clone without image controls", () => {
+  const editor = document.createElement("div");
+  editor.innerHTML = 'Before <span data-compose-image="true"><img src="data:image/png;base64,aGk=" data-compose-source="cid:image-1@threestrands.local" alt="Screenshot"><button data-compose-image-remove="true">×</button><span data-compose-image-resize="true"></span></span> after<br>&gt; quoted';
+  const cloneNode = vi.spyOn(editor, "cloneNode");
+
+  const { html, text } = serializeComposeBody(editor);
+
+  expect(cloneNode).toHaveBeenCalledTimes(1);
+  expect(html).toBe('Before <img src="cid:image-1@threestrands.local" alt="Screenshot"> after<br>&gt; quoted');
+  expect(text).toBe("Before  after> quoted");
+  expect(text).not.toContain("×");
 });
 
 describe("insertHtmlAtRange", () => {

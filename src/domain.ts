@@ -77,6 +77,9 @@ export type CreateCalendarEventRequest = {
 export type ScheduleEvent = {
   id: string;
   accountId: string;
+  calendarId?: string;
+  responseStatus?: "accepted" | "declined" | "tentative" | "needsAction" | null;
+  canRespond?: boolean;
   title: string;
   start: string;
   end: string;

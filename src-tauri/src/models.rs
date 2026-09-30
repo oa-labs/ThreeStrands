@@ -44,6 +44,7 @@ pub struct CreateCalendarEventRequest {
 pub struct ScheduleEvent {
     pub id: String,
     pub account_id: String,
+    pub calendar_id: String,
     pub title: String,
     pub start: String,
     pub end: String,
@@ -53,6 +54,8 @@ pub struct ScheduleEvent {
     pub conference_url: Option<String>,
     /// Lowercased addresses of the other people on the event.
     pub attendees: Vec<String>,
+    pub response_status: Option<String>,
+    pub can_respond: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

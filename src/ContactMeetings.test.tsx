@@ -60,6 +60,16 @@ describe("ContactMeetings", () => {
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "team" }));
   });
 
+  it("shows the user's response in upcoming meetings", async () => {
+    renderMeetings([
+      { ...meeting("pending", 2, ["jane@example.com"]), responseStatus: "needsAction" },
+      { ...meeting("declined", 4, ["jane@example.com"]), responseStatus: "declined" },
+    ]);
+    const section = await screen.findByRole("region", { name: "Upcoming meetings" });
+    expect(within(section).getByRole("button", { name: /Meeting pending/ })).toHaveTextContent("Awaiting response");
+    expect(within(section).getByRole("button", { name: /Meeting declined/ })).toHaveTextContent("Not going");
+  });
+
   it("shows at most the configured number of meetings", async () => {
     const count = (events: number) => Array.from({ length: events }, (_, index) => meeting(`m${index}`, index + 1, ["jane@example.com"]));
     for (const total of [MAX_UPCOMING_MEETINGS - 1, MAX_UPCOMING_MEETINGS, MAX_UPCOMING_MEETINGS + 1]) {

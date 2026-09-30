@@ -712,6 +712,12 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         errors: [],
       };
     },
+    async updateCalendarResponse(event, responseStatus) {
+      const current = scheduleEvents.find((item) => item.id === event.id && item.accountId === event.accountId);
+      if (!current || !current.canRespond) throw new Error("This event has no RSVP for your calendar");
+      current.responseStatus = responseStatus;
+      return structuredClone(current);
+    },
     async createCalendarEvent(request) {
       const calendar = calendarOptions.find((option) => option.id === request.calendarId && option.accountId === request.accountId && option.writable);
       if (!calendar) throw new Error("Choose a calendar where you can create events");

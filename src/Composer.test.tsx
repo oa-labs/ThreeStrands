@@ -1,4 +1,5 @@
 import { createRef } from "react";
+import DOMPurify from "dompurify";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer, type ComposerHandle } from "./Composer";
@@ -168,11 +169,34 @@ describe("Composer body input responsiveness", () => {
 
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(cloneNode).toHaveBeenCalled();
+    // One copy of the body per autosave: HTML and plain text share it.
+    expect(cloneNode).toHaveBeenCalledTimes(1);
     expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({
       body: "A longer message",
       bodyHtml: "A longer message",
     }));
+  });
+
+  it("does not re-sanitize the quoted thread when the composer re-renders during input", async () => {
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const quoted = Array.from({ length: 200 }, (_, index) => `> Quoted line ${index}`).join("\n");
+    const reply: Draft = { ...draft, mode: "replyAll", to: "a@example.com", body: `\n\nOn Monday, A wrote:\n${quoted}` };
+    const props = { draft: reply, accounts, ...snippetProps, onClose: () => {}, onQueued: () => {} };
+    const { rerender } = render(<Composer {...props} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    expect(editor.textContent).toContain("Quoted line 199");
+    const sanitize = vi.spyOn(DOMPurify, "sanitize");
+
+    // The first input flips the status to "Unsaved changes", and a parent
+    // re-render (e.g. App state) renders the composer again. Neither may do
+    // work proportional to the quoted thread before the text is painted.
+    editor.insertAdjacentText("afterbegin", "Dictated reply. ");
+    fireEvent.input(editor);
+    rerender(<Composer {...props} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Unsaved changes");
+    expect(sanitize).not.toHaveBeenCalled();
+    expect(editor.textContent).toMatch(/^Dictated reply\. /);
   });
 
   it("captures the latest body immediately when a send or close flushes the draft", async () => {

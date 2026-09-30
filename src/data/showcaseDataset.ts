@@ -421,11 +421,11 @@ function buildSchedule(now: Date): ScheduleEvent[] {
     events.push({ id: `standup-${weekday}`, accountId: work, title: "Team standup", allDay: false, conferenceUrl: "https://meet.harborlight.example/standup", ...slot(weekday, "09:30", 15) });
   }
   events.push(
-    { id: "roadmap", accountId: work, title: "Roadmap sync", allDay: false, location: "Room 4B", attendees: ["priya@harborlight.example", "theo@harborlight.example"], ...slot(0, "11:00", 60) },
+    { id: "roadmap", accountId: work, title: "Roadmap sync", allDay: false, location: "Room 4B", attendees: ["priya@harborlight.example", "theo@harborlight.example"], responseStatus: "accepted", canRespond: true, ...slot(0, "11:00", 60) },
     { id: "focus-1", accountId: work, title: "Focus time", allDay: false, ...slot(0, "14:00", 120) },
-    { id: "crit", accountId: work, title: "Design crit: onboarding v3", allDay: false, location: "Studio", ...slot(1, "10:30", 60) },
+    { id: "crit", accountId: work, title: "Design crit: onboarding v3", allDay: false, location: "Studio", responseStatus: "needsAction", canRespond: true, ...slot(1, "10:30", 60) },
     { id: "lunch", accountId: SHOWCASE_PERSONAL_ACCOUNT, title: "Lunch with Lena", allDay: false, location: "Juniper Café", ...slot(1, "12:30", 60) },
-    { id: "brightwater", accountId: work, title: "Brightwater renewal call", allDay: false, conferenceUrl: "https://meet.harborlight.example/brightwater", attendees: ["marcus@brightwater.example"], ...slot(1, "15:00", 30) },
+    { id: "brightwater", accountId: work, title: "Brightwater renewal call", allDay: false, conferenceUrl: "https://meet.harborlight.example/brightwater", attendees: ["marcus@brightwater.example"], responseStatus: "tentative", canRespond: true, ...slot(1, "15:00", 30) },
     { id: "interviews", accountId: work, title: "Customer interviews readout", allDay: false, ...slot(2, "13:00", 45) },
     { id: "focus-2", accountId: work, title: "Focus time", allDay: false, ...slot(2, "15:00", 90) },
     { id: "launch-review", accountId: work, title: "Q4 launch plan sign-off", allDay: false, location: "Room 2A", ...slot(3, "10:00", 30) },

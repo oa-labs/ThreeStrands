@@ -151,6 +151,7 @@ export interface MailClient extends CorrespondenceClient {
   listCalendarOptions(): Promise<CalendarOption[]>;
   setCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
+  updateCalendarResponse(event: ScheduleEvent, responseStatus: "accepted" | "declined" | "tentative"): Promise<ScheduleEvent>;
   createCalendarEvent(request: CreateCalendarEventRequest): Promise<ScheduleEvent>;
   /** `maxPerDay` spreads the candidates across days instead of the earliest slots of one day. */
   findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences; maxPerDay?: number }): Promise<AvailabilityResult>;
@@ -257,6 +258,8 @@ const tauriClient: MailClient = {
     complete("set_calendar_selection", { accountId, calendarIds }),
   listScheduleEvents: (timeMin, timeMax, timeZone) =>
     complete("list_schedule_events", { timeMin, timeMax, timeZone }),
+  updateCalendarResponse: (event, responseStatus) =>
+    complete("update_calendar_response", { accountId: event.accountId, calendarId: event.calendarId, eventId: event.id, responseStatus }),
   createCalendarEvent: (request) => complete("create_calendar_event", { request }),
   findAvailability: (request) => complete("find_availability", { request }),
   checkProposedTime: (request) => complete("check_proposed_time", { request }),

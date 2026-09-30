@@ -1266,6 +1266,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   white-space: nowrap;
   cursor: pointer;
 }
+.calendar-all-day button[data-response-status="accepted"],
+.calendar-week-all-day button[data-response-status="accepted"] { background: color-mix(in srgb, var(--accent) 42%, var(--raised)); border: 1px solid var(--accent); }
+.calendar-all-day button[data-response-status="needsAction"],
+.calendar-week-all-day button[data-response-status="needsAction"] { background: var(--raised); border: 2px solid var(--accent); }
+.calendar-all-day button[data-response-status="tentative"],
+.calendar-week-all-day button[data-response-status="tentative"] { background: var(--raised); border: 2px dashed var(--accent); }
+.calendar-all-day button[data-response-status="declined"],
+.calendar-week-all-day button[data-response-status="declined"] { background: var(--raised); border: 1px dashed var(--muted); opacity: .65; }
 .calendar-timezone {
   height: 36px;
   padding: 11px 20px 0 0;
@@ -1381,6 +1389,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .calendar-all-day button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .calendar-schedule-event strong { overflow: hidden; font-size: var(--type-caption); text-overflow: ellipsis; white-space: nowrap; }
 .calendar-schedule-event span { color: var(--secondary); }
+.calendar-schedule-event[data-response-status="accepted"] { background: color-mix(in srgb, var(--accent) 42%, var(--raised)); border-color: var(--accent); }
+.calendar-schedule-event[data-response-status="needsAction"] { background: var(--raised); border: 2px solid var(--accent); }
+.calendar-schedule-event[data-response-status="tentative"] { background: color-mix(in srgb, var(--accent) 9%, var(--raised)); border: 2px dashed var(--accent); }
+.calendar-schedule-event[data-response-status="declined"] { background: var(--raised); border: 1px dashed var(--muted); opacity: .65; }
 .calendar-schedule-event-compact {
   flex-direction: row;
   align-items: baseline;
@@ -1664,6 +1676,13 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .calendar-event-viewer-details svg { margin-top: 1px; color: var(--muted); }
 .calendar-event-viewer-details a { width: fit-content; border-radius: var(--radius-sm); padding: 5px 9px; background: var(--accent); color: #fff; font-weight: 600; text-decoration: none; }
 .calendar-event-viewer-description span { max-height: 8.7em; overflow: auto; white-space: pre-wrap; }
+.calendar-event-response { display: grid; gap: 8px; color: var(--secondary); font-size: var(--type-ui); }
+.calendar-event-response strong { color: var(--text); font-weight: 600; }
+.calendar-event-response p { color: var(--error); }
+.calendar-response-actions { display: flex; gap: 6px; }
+.calendar-response-actions button { padding: 5px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+.calendar-response-actions button[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, var(--surface)); font-weight: 650; }
+.calendar-response-actions button:disabled { cursor: wait; opacity: .6; }
 .tasks-workspace {
   grid-column: 2;
   min-width: 0;
@@ -1857,6 +1876,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-meeting span { display:grid; grid-template-columns:minmax(0,1fr); flex:1; gap:2px; min-width:0; }
 .context-meeting strong { min-width:0; overflow:hidden; font-size:var(--type-caption); font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
 .context-meeting small { color:var(--muted); font-size:var(--type-xs); overflow-wrap:anywhere; }
+.context-meeting .context-meeting-response { color:var(--accent); font-weight:600; }
+.context-meeting[data-response-status="declined"] .context-meeting-response { color:var(--muted); }
 .context-chat-dock { position:sticky; bottom:0; margin:auto -14px 0; padding:0 14px 4px; border-top:1px solid var(--border); background:var(--surface); }
 .thread-chat { border-bottom:0; }
 .thread-chat-log { display:grid; gap:10px; max-height:min(40vh, 360px); margin-bottom:10px; overflow:auto; }

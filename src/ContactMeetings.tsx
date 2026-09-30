@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { ScheduleEvent } from "./domain";
 import { addDays, eventDate, formatEventDate, startOfLocalDay } from "./calendarTime";
 import { useCalendarSchedule } from "./useCalendarSchedule";
+import { responseLabel } from "./calendarResponse";
 
 /** How far ahead the context panel looks for meetings with conversation participants. */
 export const UPCOMING_MEETING_DAYS = 30;
@@ -47,11 +48,12 @@ export function ContactMeetings({ people, timeZone, onOpenEvent }: {
   return <section className="context-section context-meetings" aria-label="Upcoming meetings">
     <header className="context-section-header"><h3>Upcoming meetings</h3></header>
     {meetings.map(({ event, name }) => (
-      <button type="button" key={`${event.accountId}:${event.id}`} className="context-meeting" onClick={() => onOpenEvent(event)}>
+      <button type="button" key={`${event.accountId}:${event.id}`} className="context-meeting" data-response-status={event.responseStatus ?? undefined} onClick={() => onOpenEvent(event)}>
         <CalendarDays size={14} aria-hidden="true" />
         <span>
           <strong>{event.title}</strong>
           <small>{formatEventDate(event)} · with {name}</small>
+          {responseLabel(event) ? <small className="context-meeting-response">{responseLabel(event)}</small> : null}
         </span>
       </button>
     ))}

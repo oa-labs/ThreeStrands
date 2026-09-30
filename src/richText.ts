@@ -281,8 +281,12 @@ export function insertHtmlAtRange(editor: HTMLElement, range: Range, html: strin
   selection.addRange(after);
 }
 
-/** Removes compose-only image controls before a draft is saved or sent. */
-export function serializeComposeHtml(editor: HTMLElement): string {
+/**
+ * Removes compose-only image controls and returns the draft's HTML and plain
+ * text. Both come from a single clone: the body includes the quoted thread,
+ * so every extra copy adds autosave cost proportional to the whole thread.
+ */
+export function serializeComposeBody(editor: HTMLElement): { html: string; text: string } {
   const clone = editor.cloneNode(true) as HTMLElement;
   clone.querySelectorAll<HTMLElement>("[data-compose-image]").forEach((wrapper) => {
     const image = wrapper.querySelector("img");
@@ -291,5 +295,13 @@ export function serializeComposeHtml(editor: HTMLElement): string {
     if (image) wrapper.replaceWith(image);
     else wrapper.remove();
   });
-  return sanitizeComposeHtml(clone.innerHTML);
+  return {
+    html: sanitizeComposeHtml(clone.innerHTML),
+    text: clone.innerText ?? clone.textContent ?? "",
+  };
+}
+
+/** Removes compose-only image controls before a draft is saved or sent. */
+export function serializeComposeHtml(editor: HTMLElement): string {
+  return serializeComposeBody(editor).html;
 }
