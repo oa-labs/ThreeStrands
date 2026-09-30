@@ -188,17 +188,30 @@ mod tests {
     fn handles_dst_transition_without_creating_invalid_local_times() {
         let mut preferences = preferences();
         preferences.working_windows = vec![AvailabilityWindow { weekday: 0, start: "01:00".to_string(), end: "04:00".to_string() }];
+        // Sunday 2099-03-08 is the US spring-forward day: New York local
+        // time jumps from 02:00 EST straight to 03:00 EDT.
         let candidates = find_candidates(
-            "2026-03-08T00:00:00Z",
-            "2026-03-09T00:00:00Z",
+            "2099-03-08T05:00:00Z",
+            "2099-03-09T04:00:00Z",
             &preferences,
             &[],
             0,
             0,
             None,
         ).unwrap();
+        assert!(!candidates.is_empty());
         assert!(candidates.iter().all(|candidate| candidate.status == "unverified"));
-        assert!(candidates.iter().all(|candidate| candidate.start != "2026-03-08T02:00:00-05:00"));
+        let slots = candidates
+            .iter()
+            .map(|candidate| (candidate.start.as_str(), candidate.end.as_str()))
+            .collect::<Vec<_>>();
+        // 01:00 EST is 06:00Z and 03:00 EDT is 07:00Z. Slots that start or
+        // end inside the nonexistent 02:00 local hour are skipped.
+        assert_eq!(slots, vec![
+            ("2099-03-08T06:00:00+00:00", "2099-03-08T06:30:00+00:00"),
+            ("2099-03-08T07:00:00+00:00", "2099-03-08T07:30:00+00:00"),
+            ("2099-03-08T07:30:00+00:00", "2099-03-08T08:00:00+00:00"),
+        ]);
     }
 
     #[test]

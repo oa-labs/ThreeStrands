@@ -405,7 +405,7 @@ describe("archive notice", () => {
       (await screen.findByRole("option", { name: "Work" })).click();
     });
     expect(await screen.findByRole("status")).toHaveTextContent("Work added");
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add label" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
 
     await act(async () => {
       screen.getByRole("button", { name: "Undo" }).click();
@@ -468,7 +468,7 @@ describe("archive notice", () => {
         fireEvent.keyDown(input, { key: "Enter" });
       });
       expect(await screen.findByRole("status")).toHaveTextContent("Keyboard navigation added");
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add label" })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
     } finally {
       await mailClient.deleteLabel(keyboardLabel.id);
     }
@@ -491,7 +491,7 @@ describe("archive notice", () => {
         fireEvent.keyDown(input, { key: "Enter" });
       });
       expect(await screen.findByRole("status")).toHaveTextContent("Project X added");
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add label" })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
 
       await act(async () => {
         screen.getByRole("button", { name: "Labels (l)" }).click();
@@ -520,7 +520,7 @@ describe("archive notice", () => {
         fireEvent.keyDown(input, { key: "Enter" });
       });
       await screen.findByRole("status");
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add label" })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
 
       fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
       const settings = await screen.findByRole("dialog", { name: "Settings" });

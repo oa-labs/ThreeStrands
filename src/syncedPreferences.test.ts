@@ -6,6 +6,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { pullSyncedPreferences, queuePortablePreferences, queuePortablePreferencesAndWait } from "./syncedPreferences";
 import { DEFAULT_AI_FEATURES, readAiFeatures, saveAiFeatures } from "./aiSettings";
 
+function queuedPreferences(): Record<string, unknown> {
+  const call = vi.mocked(invoke).mock.calls.find(([command]) => command === "update_synced_preferences");
+  expect(call).toBeDefined();
+  return (call![1] as { preferences: Record<string, unknown> }).preferences;
+}
+
 describe("synced preferences data boundary", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -20,13 +26,10 @@ describe("synced preferences data boundary", () => {
 
     queuePortablePreferences();
 
-    expect(invoke).toHaveBeenCalledWith("update_synced_preferences", {
-      preferences: expect.not.objectContaining({
-        selectedAccountId: expect.anything(),
-        theme: expect.anything(),
-        accent: expect.anything(),
-      }),
-    });
+    const preferences = queuedPreferences();
+    expect(preferences).not.toHaveProperty("selectedAccountId");
+    expect(preferences).not.toHaveProperty("theme");
+    expect(preferences).not.toHaveProperty("accent");
   });
 
   it("does not queue or pull preferences outside the native app", async () => {
@@ -44,13 +47,21 @@ describe("synced preferences data boundary", () => {
 
     queuePortablePreferences();
 
-    expect(invoke).toHaveBeenCalledWith("update_synced_preferences", {
-      preferences: expect.not.objectContaining({
-        selectedAccountId: expect.anything(),
-        crashReports: expect.anything(),
-        apiKey: expect.anything(),
-      }),
-    });
+    const preferences = queuedPreferences();
+    expect(Object.keys(preferences).sort()).toEqual([
+      "aiEndpoint",
+      "aiFeatures",
+      "aiModel",
+      "aiProvider",
+      "autoReadDelaySeconds",
+      "availabilityPreferences",
+      "fontFamily",
+      "fontScale",
+      "loadRemoteImages",
+    ]);
+    const serialized = JSON.stringify(preferences);
+    expect(serialized).not.toContain("secret");
+    expect(serialized).not.toContain("private diagnostics");
   });
 
   it("applies synced preferences without replacing local appearance or navigation", async () => {

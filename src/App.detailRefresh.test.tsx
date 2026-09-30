@@ -826,7 +826,7 @@ it("renders a reply in the open conversation as soon as Send queues it", async (
     fireEvent.input(editor);
     fireEvent.click(screen.getByRole("button", { name: /Send/ }));
 
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply message" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());
     await waitFor(() => {
       const bodies = screen.getAllByTestId("message-body") as HTMLIFrameElement[];
       expect(bodies.some((body) => body.srcdoc.includes("Visible without waiting for delivery"))).toBe(true);
@@ -850,7 +850,7 @@ it("sends and marks the open conversation done with Mod+Shift+Enter", async () =
     fireEvent.input(editor);
     fireEvent.keyDown(editor, { key: "Enter", metaKey: true, shiftKey: true });
 
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply message" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());
     await waitFor(() => expect(mutateThreads).toHaveBeenCalledWith([
       { kind: "archive", threadId: "welcome", value: true },
     ]));

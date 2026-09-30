@@ -34,6 +34,26 @@ describe("ContextPanel",()=>{
     await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("jane@example.com",100));
   });
 
+  it("uses a saved contact name on participant chips even when the message says only a first name",async()=>{
+    const andy:ContactProfile={...jane,id:"contact:andy@kuzneski.com",displayName:"Andy Kuzneski",addresses:["andy@kuzneski.com","andy@work.example.com"]};
+    const andyDetail={...detail,messages:[
+      {...detail.messages[0],sender:"andy <andy@kuzneski.com>"},
+      {...detail.messages[1],recipients:["You <you@example.com>","A. Kuzneski <andy@work.example.com>"]},
+    ]} as unknown as ThreadDetail;
+    vi.mocked(mailClient.listContactProfiles).mockImplementation(async query=>query?.includes("andy")?[andy]:[bob]);
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===andy.id?andy:bob);
+    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"andy@kuzneski.com":andy.id,"andy@work.example.com":andy.id,"bob@example.com":bob.id});
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    renderPanel({detail:andyDetail});
+
+    const participants=screen.getByRole("group",{name:"Conversation participants"});
+    const andyChip=await within(participants).findByRole("button",{name:"Andy Kuzneski"});
+    expect(within(participants).queryByRole("button",{name:"andy"})).not.toBeInTheDocument();
+    expect(andyChip).toHaveAttribute("title","andy@kuzneski.com, andy@work.example.com");
+    fireEvent.click(andyChip);
+    expect(await screen.findByRole("heading",{name:"Andy Kuzneski"})).toBeInTheDocument();
+  });
+
   it("splits email-only participant chips into separately truncated local and domain parts",async()=>{
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);

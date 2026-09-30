@@ -83,19 +83,30 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
   // One chip per person: addresses linked to the same saved contact share a
   // chip, and anyone without a saved contact keeps a chip per address.
   const participantKey = participants.map((item) => item.email).join("\n");
-  const [owners, setOwners] = useState<Record<string, string>>({});
+  const [participantContacts, setParticipantContacts] = useState<{
+    owners: Record<string, string>;
+    names: Record<string, string>;
+  }>({ owners: {}, names: {} });
   // Re-resolve after the selected contact is saved or its addresses change.
   const profileKey = profile ? `${profile.id}\n${profile.addresses.join("\n")}` : "";
   useEffect(() => {
     const emails = participantKey ? participantKey.split("\n") : [];
-    if (emails.length < 2) { setOwners({}); return; }
+    if (emails.length < 2) { setParticipantContacts({ owners: {}, names: {} }); return; }
     let active = true;
     void (async () => {
       try {
         const resolved = await mailClient.resolveContactIds(emails);
-        if (active) setOwners(resolved);
+        const ids = [...new Set(Object.values(resolved))];
+        const profiles = await Promise.all(ids.map((id) => mailClient.getContactProfile(id).catch((reason) => {
+          logBackgroundFailure("Participant contact name lookup")(reason);
+          return null;
+        })));
+        if (active) setParticipantContacts({
+          owners: resolved,
+          names: Object.fromEntries(profiles.flatMap((item, index) => item?.displayName ? [[ids[index], item.displayName]] : [])),
+        });
       } catch (reason) {
-        if (active) setOwners({});
+        if (active) setParticipantContacts({ owners: {}, names: {} });
         logBackgroundFailure("Participant contact lookup")(reason);
       }
     })();
@@ -104,8 +115,8 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
   const chips = useMemo(() => {
     const byOwner = new Map<string, { emails: string[]; name: string }>();
     for (const item of participants) {
-      const key = owners[item.email] ?? `address:${item.email}`;
-      const named = item.name && item.name !== item.email ? item.name : "";
+      const key = participantContacts.owners[item.email] ?? `address:${item.email}`;
+      const named = participantContacts.names[key] || (item.name !== item.email ? item.name : "");
       const existing = byOwner.get(key);
       if (existing) {
         existing.emails.push(item.email);
@@ -115,7 +126,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
       }
     }
     return [...byOwner].map(([key, chip]) => ({ key, ...chip }));
-  }, [participants, owners]);
+  }, [participants, participantContacts]);
 
   const selected = participants.find((item) => item.email === email);
   const displayName = profile?.displayName || selected?.name || email;

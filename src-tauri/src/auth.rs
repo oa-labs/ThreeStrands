@@ -798,11 +798,17 @@ mod tests {
             );
 
             let result = auth.access_token().await;
-            assert!(
-                matches!(result, Err(AccessTokenError::ReauthenticationRequired(_)))
-                    == expects_reauth,
-                "unexpected refresh classification: {result:?}"
-            );
+            if expects_reauth {
+                assert!(
+                    matches!(result, Err(AccessTokenError::ReauthenticationRequired(_))),
+                    "unexpected refresh classification: {result:?}"
+                );
+            } else {
+                assert!(
+                    matches!(result, Err(AccessTokenError::Transient(_))),
+                    "unexpected refresh classification: {result:?}"
+                );
+            }
             server.abort();
         }
     }

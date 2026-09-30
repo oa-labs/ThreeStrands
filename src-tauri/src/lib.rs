@@ -254,6 +254,22 @@ mod background_failure_tests {
         force_full_resync(&database);
         assert!(database.list_accounts().is_ok());
     }
+
+    #[test]
+    fn full_resync_after_recovery_clears_every_accounts_cursor() {
+        let database = Database::open_memory();
+        for (email, cursor) in [("work@example.com", "work-cursor"), ("personal@example.com", "personal-cursor")] {
+            database.adopt_account(email).unwrap();
+            database.finish_sync(email, cursor).unwrap();
+            assert_eq!(database.cursor(email).unwrap().as_deref(), Some(cursor));
+        }
+
+        force_full_resync(&database);
+
+        assert_eq!(database.list_accounts().unwrap().len(), 2);
+        assert_eq!(database.cursor("work@example.com").unwrap(), None);
+        assert_eq!(database.cursor("personal@example.com").unwrap(), None);
+    }
 }
 
 #[derive(Clone, Default)]

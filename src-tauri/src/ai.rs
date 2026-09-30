@@ -2315,6 +2315,9 @@ mod tests {
         assert!(prompt.contains("sender19@example.com"));
         assert!(!prompt.contains("sender0@example.com"));
         assert!(prompt.matches("sender").count() == MAX_MESSAGES);
+        // Each over-long body is cut to exactly MAX_BODY_CHARS characters.
+        assert!(prompt.contains(&"x".repeat(MAX_BODY_CHARS)));
+        assert!(!prompt.contains(&"x".repeat(MAX_BODY_CHARS + 1)));
     }
 
     #[test]
@@ -2891,7 +2894,19 @@ mod tests {
             body_text: "Can we meet next Friday?".to_string(),
         }];
         let ambiguous = r#"[{"type":"meeting","intent":"schedule","title":"Meeting","participants":[],"rawTimeLanguage":"next Friday","normalizedStart":null,"normalizedEnd":null,"searchRangeStart":null,"searchRangeEnd":null,"durationMinutes":30,"timeZone":null,"confidence":0.4,"evidence":{"sourceMessageId":"message-1","excerpt":"Can we meet next Friday?"}}]"#;
-        assert!(parse_action_proposals(ambiguous, &messages).is_ok());
+        let analysis = parse_action_proposals(ambiguous, &messages).unwrap();
+        assert_eq!(analysis.proposals.len(), 1);
+        assert_eq!(analysis.hidden_count, 0);
+        let ActionProposal::Meeting(meeting) = &analysis.proposals[0] else {
+            panic!("expected the ambiguous meeting proposal to survive");
+        };
+        assert_eq!(meeting.raw_time_language, "next Friday");
+        assert_eq!(meeting.normalized_start, None);
+        assert_eq!(meeting.normalized_end, None);
+        assert_eq!(meeting.search_range_start, None);
+        assert_eq!(meeting.search_range_end, None);
+        assert_eq!(meeting.time_zone, None);
+        assert_eq!(meeting.evidence.excerpt, "Can we meet next Friday?");
     }
 
     #[test]
@@ -3224,10 +3239,14 @@ mod tests {
             is_thread_starter: true,
         }];
         let output = r#"[{"field":"link","value":"https://example.com","sourceMessageId":"m1","excerpt":"https://example.com"},{"field":"link","value":"http://unsafe.test","sourceMessageId":"m1","excerpt":"http://unsafe.test"}]"#;
-        assert_eq!(
-            parse_contact_suggestions(output, &messages).unwrap().len(),
-            1
-        );
+        let suggestions = parse_contact_suggestions(output, &messages).unwrap();
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].field, "link");
+        assert_eq!(suggestions[0].value, "https://example.com/");
+        assert_eq!(suggestions[0].excerpt, "https://example.com");
+        assert_eq!(suggestions[0].source_message_id, "m1");
+        assert_eq!(suggestions[0].source_thread_id, "thread-1");
+        assert!(!suggestions.iter().any(|suggestion| suggestion.value.contains("unsafe.test")));
         assert!(parse_contact_suggestions(
             &format!(
                 "[{}]",

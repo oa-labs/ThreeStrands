@@ -70,6 +70,6 @@ describe("invokeWithPolicy", () => {
       timeout: "bounded-read",
       timeoutMs: 1_000,
     });
-    await vi.advanceTimersByTimeAsync(2_000);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
