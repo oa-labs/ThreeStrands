@@ -26,7 +26,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
   onOpenContact(id: string): void;
   assist?: ReactNode;
   /** Sections about the conversation and the selected person. */
-  related?(person: ContextPerson | null): ReactNode;
+  related?(person: ContextPerson | null, meetingPeople: { email: string; name: string }[]): ReactNode;
   /** The question box, kept at the bottom of the panel. */
   chat?(person: ContextPerson | null): ReactNode;
 }) {
@@ -141,6 +141,13 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
       ? { contactId: profile.id, email, addresses: profile.addresses }
       : { contactId: `derived:${email}`, email, addresses: [email] };
   }, [email, loadedEmail, profile]);
+  const meetingPeople = new Map(chips.flatMap((chip) => chip.emails.map((address) =>
+    [address.toLocaleLowerCase(), { email: address, name: chip.name || address }] as const)));
+  if (person && profile) {
+    for (const address of profile.addresses) {
+      meetingPeople.set(address.toLocaleLowerCase(), { email: address, name: displayName });
+    }
+  }
   const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
   const save = async () => {
     try {
@@ -223,7 +230,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
         </section>
       ) : <p className="contacts-status">Select a conversation participant.</p>}
       {detail ? assist : null}
-      {detail && related ? related(person) : null}
+      {detail && related ? related(person, [...meetingPeople.values()]) : null}
       {otherEmails.length > 0 ? (
         <section className="context-section contact-sidebar-history" aria-labelledby="context-history-heading">
           <header className="context-section-header"><h3 id="context-history-heading">Recent emails</h3></header>

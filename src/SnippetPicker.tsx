@@ -6,12 +6,7 @@ import { readSnippetUsage } from "./settings";
 import { linkifyPlainText, sanitizeComposeHtml } from "./richText";
 import { snippetBodyPreview } from "./snippets";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
-
-function htmlToPlainText(html: string): string {
-  const container = document.createElement("div");
-  container.innerHTML = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div)>/gi, "\n");
-  return (container.textContent ?? "").replace(/\n{3,}/g, "\n\n").trim();
-}
+import { htmlToPlainText } from "./htmlPlainText";
 
 export function SnippetPicker({
   snippets,
@@ -137,7 +132,7 @@ export function SnippetEditor({
   onUpdate(id: string, name: string, body: string): Promise<void>;
 }) {
   const [name, setName] = useState(initialName);
-  const [body, setBody] = useState(target === "new" ? "" : htmlToPlainText(target.body));
+  const [body, setBody] = useState(target === "new" ? "" : htmlToPlainText(target.body, { whitespace: "preserve" }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

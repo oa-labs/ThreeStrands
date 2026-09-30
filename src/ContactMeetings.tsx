@@ -1,10 +1,10 @@
 import { CalendarDays } from "lucide-react";
 import { useState } from "react";
 import type { ScheduleEvent } from "./domain";
-import { addDays, eventDate, formatEventDate, formatEventTime, startOfLocalDay } from "./calendarTime";
+import { addDays, eventDate, formatEventDate, startOfLocalDay } from "./calendarTime";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 
-/** How far ahead the context panel looks for meetings with a person. */
+/** How far ahead the context panel looks for meetings with conversation participants. */
 export const UPCOMING_MEETING_DAYS = 30;
 export const MAX_UPCOMING_MEETINGS = 3;
 
@@ -15,13 +15,13 @@ function eventEnd(event: ScheduleEvent): number {
 }
 
 /**
- * The next few calendar events that include one of the person's addresses.
+ * The next few calendar events that include someone on the conversation.
  * Renders nothing when there are none or the schedule can't be loaded, since
  * this is supplemental context; events from calendars that did load still show
  * when another calendar fails.
  */
-export function ContactMeetings({ addresses, timeZone, onOpenEvent }: {
-  addresses: string[];
+export function ContactMeetings({ people, timeZone, onOpenEvent }: {
+  people: { email: string; name: string }[];
   timeZone: string;
   onOpenEvent(event: ScheduleEvent): void;
 }) {
@@ -32,22 +32,26 @@ export function ContactMeetings({ addresses, timeZone, onOpenEvent }: {
     return { timeMin: start.toISOString(), timeMax: addDays(start, UPCOMING_MEETING_DAYS).toISOString() };
   });
   const { events } = useCalendarSchedule({ ...range, timeZone });
-  const people = new Set(addresses.map((address) => address.toLocaleLowerCase()));
+  const namesByEmail = new Map(people.map(({ email, name }) => [email.toLocaleLowerCase(), name]));
   const now = Date.now();
   const meetings = events
-    .filter((event) => eventEnd(event) > now && event.attendees?.some((attendee) => people.has(attendee)))
-    .sort((left, right) => eventDate(left).getTime() - eventDate(right).getTime())
+    .flatMap((event) => {
+      if (eventEnd(event) <= now) return [];
+      const attendee = event.attendees?.find((address) => namesByEmail.has(address.toLocaleLowerCase()));
+      return attendee ? [{ event, name: namesByEmail.get(attendee.toLocaleLowerCase())! }] : [];
+    })
+    .sort((left, right) => eventDate(left.event).getTime() - eventDate(right.event).getTime())
     .slice(0, MAX_UPCOMING_MEETINGS);
   if (meetings.length === 0) return null;
 
   return <section className="context-section context-meetings" aria-label="Upcoming meetings">
     <header className="context-section-header"><h3>Upcoming meetings</h3></header>
-    {meetings.map((event) => (
-      <button type="button" key={event.id} className="context-meeting" onClick={() => onOpenEvent(event)}>
+    {meetings.map(({ event, name }) => (
+      <button type="button" key={`${event.accountId}:${event.id}`} className="context-meeting" onClick={() => onOpenEvent(event)}>
         <CalendarDays size={14} aria-hidden="true" />
         <span>
           <strong>{event.title}</strong>
-          <small>{formatEventDate(event)} · {formatEventTime(event)}</small>
+          <small>{formatEventDate(event)} · with {name}</small>
         </span>
       </button>
     ))}

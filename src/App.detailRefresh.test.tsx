@@ -35,7 +35,7 @@ it("keeps one read-only context panel beside the conversation; Shift+A reveals s
   expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
 });
 
-it("shows the next meeting with the selected person and opens the week view on its day", async () => {
+it("shows a conversation participant on the next meeting and opens its details in the calendar", async () => {
   clearScheduleCache();
   vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
     { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
@@ -56,9 +56,11 @@ it("shows the next meeting with the selected person and opens the week view on i
 
   const meetings = await within(panel).findByRole("region", { name: "Upcoming meetings" });
   expect(within(meetings).queryByText("Unrelated sync")).not.toBeInTheDocument();
+  expect(within(meetings).getByRole("button", { name: /Onboarding kickoff/ })).toHaveTextContent("with ThreeStrands");
   fireEvent.click(within(meetings).getByRole("button", { name: /Onboarding kickoff/ }));
 
   expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
+  expect(await screen.findByRole("dialog", { name: "Onboarding kickoff details" })).toBeInTheDocument();
   expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
 });
 

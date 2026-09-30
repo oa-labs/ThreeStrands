@@ -237,10 +237,26 @@ describe("ContextPanel",()=>{
     const related=vi.fn(()=>null);
     renderPanel({related});
 
-    expect(related).toHaveBeenCalledWith(null);
-    await waitFor(()=>expect(related).toHaveBeenLastCalledWith({contactId:bob.id,email:"bob@example.com",addresses:["bob@example.com","bob@work.example.com"]}));
+    expect(related).toHaveBeenCalledWith(null, expect.arrayContaining([
+      {email:"jane@example.com",name:"Jane Doe"},
+      {email:"bob@example.com",name:"Bob Lee"},
+    ]));
+    await waitFor(()=>expect(related).toHaveBeenLastCalledWith(
+      {contactId:bob.id,email:"bob@example.com",addresses:["bob@example.com","bob@work.example.com"]},
+      expect.arrayContaining([
+        {email:"jane@example.com",name:"Jane Doe"},
+        {email:"bob@example.com",name:"Bob Lee"},
+        {email:"bob@work.example.com",name:"Bob Lee"},
+      ]),
+    ));
 
     fireEvent.click(within(screen.getByRole("group",{name:"Conversation participants"})).getByRole("button",{name:"Jane Doe"}));
-    await waitFor(()=>expect(related).toHaveBeenLastCalledWith({contactId:"derived:jane@example.com",email:"jane@example.com",addresses:["jane@example.com"]}));
+    await waitFor(()=>expect(related).toHaveBeenLastCalledWith(
+      {contactId:"derived:jane@example.com",email:"jane@example.com",addresses:["jane@example.com"]},
+      expect.arrayContaining([
+        {email:"jane@example.com",name:"Jane Doe"},
+        {email:"bob@example.com",name:"Bob Lee"},
+      ]),
+    ));
   });
 });

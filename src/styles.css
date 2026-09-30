@@ -1856,7 +1856,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-meeting svg { flex:0 0 auto; margin-top:2px; color:var(--accent); }
 .context-meeting span { display:grid; gap:2px; min-width:0; }
 .context-meeting strong { font-size:var(--type-caption); font-weight:500; overflow-wrap:anywhere; }
-.context-meeting small { color:var(--muted); font-size:var(--type-xs); }
+.context-meeting small { color:var(--muted); font-size:var(--type-xs); overflow-wrap:anywhere; }
 .context-chat-dock { position:sticky; bottom:0; margin:auto -14px 0; padding:0 14px 4px; border-top:1px solid var(--border); background:var(--surface); }
 .thread-chat { border-bottom:0; }
 .thread-chat-log { display:grid; gap:10px; max-height:min(40vh, 360px); margin-bottom:10px; overflow:auto; }

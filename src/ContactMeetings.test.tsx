@@ -4,6 +4,7 @@ import { ContactMeetings, MAX_UPCOMING_MEETINGS } from "./ContactMeetings";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { ScheduleEvent } from "./domain";
+import { formatEventDate } from "./calendarTime";
 
 const hour = 60 * 60 * 1000;
 
@@ -18,7 +19,7 @@ function meeting(id: string, startOffsetHours: number, attendees: string[] | und
 function renderMeetings(events: ScheduleEvent[], errors: string[] = []) {
   const listScheduleEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events, errors });
   const onOpenEvent = vi.fn();
-  const view = render(<ContactMeetings addresses={["Jane@Example.com", "jane@work.example.com"]} timeZone="UTC" onOpenEvent={onOpenEvent} />);
+  const view = render(<ContactMeetings people={[{ email: "Jane@Example.com", name: "Jane Doe" }, { email: "jane@work.example.com", name: "Jane Doe" }]} timeZone="UTC" onOpenEvent={onOpenEvent} />);
   return { ...view, onOpenEvent, listScheduleEvents };
 }
 
@@ -38,8 +39,25 @@ describe("ContactMeetings", () => {
     const section = await screen.findByRole("region", { name: "Upcoming meetings" });
     const titles = within(section).getAllByRole("button").map((button) => button.querySelector("strong")?.textContent);
     expect(titles).toEqual(["Meeting soon", "Meeting later"]);
-    fireEvent.click(within(section).getByRole("button", { name: /Meeting soon/ }));
+    const soon = within(section).getByRole("button", { name: /Meeting soon/ });
+    expect(soon).toHaveTextContent(`${formatEventDate(meeting("soon", 2, ["jane@example.com"]))} · with Jane Doe`);
+    expect(soon).not.toHaveTextContent(/\d:\d\d/);
+    fireEvent.click(soon);
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "soon" }));
+  });
+
+  it("shows the first attendee who matches anyone on the conversation", async () => {
+    const onOpenEvent = vi.fn();
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [meeting("team", 2, ["outsider@example.com", "mark@example.com", "frank@example.com"])],
+      errors: [],
+    });
+    render(<ContactMeetings people={[{ email: "frank@example.com", name: "Frank Jackson" }, { email: "mark@example.com", name: "Mark Williams" }]} timeZone="UTC" onOpenEvent={onOpenEvent} />);
+    const row = await screen.findByRole("button", { name: /Meeting team/ });
+    expect(row).toHaveTextContent("with Mark Williams");
+    expect(row).not.toHaveTextContent("Frank Jackson");
+    fireEvent.click(row);
+    expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "team" }));
   });
 
   it("shows at most the configured number of meetings", async () => {
@@ -57,16 +75,16 @@ describe("ContactMeetings", () => {
     const { rerender, unmount } = renderMeetings([meeting("without-jane", 2, ["bob@example.com"])]);
     // Positive control: the loaded schedule does render for an attendee it
     // includes, so the absence below is not just an unsettled first render.
-    rerender(<ContactMeetings addresses={["bob@example.com"]} timeZone="UTC" onOpenEvent={vi.fn()} />);
+    rerender(<ContactMeetings people={[{ email: "bob@example.com", name: "Bob Lee" }]} timeZone="UTC" onOpenEvent={vi.fn()} />);
     expect(await screen.findByRole("region", { name: "Upcoming meetings" })).toHaveTextContent("Meeting without-jane");
-    rerender(<ContactMeetings addresses={["Jane@Example.com", "jane@work.example.com"]} timeZone="UTC" onOpenEvent={vi.fn()} />);
+    rerender(<ContactMeetings people={[{ email: "Jane@Example.com", name: "Jane Doe" }, { email: "jane@work.example.com", name: "Jane Doe" }]} timeZone="UTC" onOpenEvent={vi.fn()} />);
     expect(screen.queryByRole("region", { name: "Upcoming meetings" })).not.toBeInTheDocument();
     unmount();
 
     clearScheduleCache();
     const failed = vi.spyOn(mailClient, "listScheduleEvents").mockRejectedValue(new Error("Calendar unavailable"));
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    render(<ContactMeetings addresses={["jane@example.com"]} timeZone="UTC" onOpenEvent={vi.fn()} />);
+    render(<ContactMeetings people={[{ email: "jane@example.com", name: "Jane Doe" }]} timeZone="UTC" onOpenEvent={vi.fn()} />);
     // Wait until the hook has handled the rejection, not merely issued the call.
     await waitFor(() => expect(error).toHaveBeenCalledWith("Calendar schedule load failed:", expect.objectContaining({ message: "Calendar unavailable" })));
     expect(failed).toHaveBeenCalled();

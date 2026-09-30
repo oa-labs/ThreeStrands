@@ -153,6 +153,24 @@ describe("CalendarWeekView", () => {
     expect(within(viewer).getByText(/Tue, Sep 22/)).toBeInTheDocument();
   });
 
+  it("opens a meeting's details when arriving from the conversation panel", async () => {
+    const linked = event("linked", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Operations team meeting");
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [linked], errors: [] });
+    const { container } = renderWeek({ initialEvent: linked });
+
+    const viewer = await screen.findByRole("dialog", { name: "Operations team meeting details" });
+    expect(within(viewer).getByText(/Tue, Sep 22/)).toBeInTheDocument();
+    expect(container.querySelector(".calendar-week-scroll")?.scrollTop).toBeGreaterThan(0);
+    const eventButton = await screen.findByRole("button", { name: "Operations team meeting" });
+    expect(eventButton).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(eventButton);
+    expect(screen.queryByRole("dialog", { name: "Operations team meeting details" })).not.toBeInTheDocument();
+    fireEvent.click(eventButton);
+    const reopened = await screen.findByRole("dialog", { name: "Operations team meeting details" });
+    fireEvent.click(within(reopened).getByRole("button", { name: "Close Event Details" }));
+    expect(screen.queryByRole("dialog", { name: "Operations team meeting details" })).not.toBeInTheDocument();
+  });
+
   it("uses free overlap space and keeps short meeting titles visible", async () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({
       events: [

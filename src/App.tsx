@@ -67,6 +67,7 @@ import type {
   AvailabilityCandidate,
   Label,
   RecoveryStatus,
+  ScheduleEvent,
   Thread,
   ThreadDetail,
   TriageEvent,
@@ -319,6 +320,7 @@ export function App() {
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(null);
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
+  const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
   const taskWorkspaceRef = useRef<TaskWorkspaceHandle>(null);
   const [selectedTaskStatus, setSelectedTaskStatus] = useState<ThreadTask["status"] | null>(null);
@@ -1752,8 +1754,9 @@ export function App() {
 
   const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
   const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setRightWorkspace("contacts"); }, []);
-  const openCalendarView = useCallback((day?: Date) => {
+  const openCalendarView = useCallback((day?: Date, event?: ScheduleEvent) => {
     setCalendarWeekAnchor((current) => day ? startOfLocalDay(day) : current ?? startOfLocalDay(new Date()));
+    setCalendarEventToOpen(event ?? null);
     setRightWorkspace("week");
     void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
     void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
@@ -2731,6 +2734,7 @@ export function App() {
       {rightWorkspace === "week" ? (
         <CalendarWeekView
           anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
+          initialEvent={calendarEventToOpen}
           onAnchorChange={setCalendarWeekAnchor}
           accounts={calendar.accounts}
           calendars={calendar.calendars}
@@ -2830,7 +2834,7 @@ export function App() {
               )}
             />
           ) : null}
-          related={(person) => visibleDetail ? <>
+          related={(person, meetingPeople) => visibleDetail ? <>
             <ThreadTasks
               thread={visibleDetail.thread}
               contactId={person?.contactId ?? null}
@@ -2840,11 +2844,11 @@ export function App() {
               onDraftFollowUp={(task) => void draftFollowUp(task)}
               onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
             />
-            {calendarConnected && person ? (
+            {calendarConnected && meetingPeople.length > 0 ? (
               <ContactMeetings
-                addresses={person.addresses}
+                people={meetingPeople}
                 timeZone={availabilityPreferences.timeZone}
-                onOpenEvent={(event) => openCalendarView(eventDate(event))}
+                onOpenEvent={(event) => openCalendarView(eventDate(event), event)}
               />
             ) : null}
           </> : null}

@@ -28,6 +28,10 @@ const MAX_WEEK_SCROLL_TOP = 24 * HOUR_HEIGHT;
 const NOW_TICK_MS = 60_000;
 const SLOT_MINUTES = 15;
 
+function sameEvent(left: ScheduleEvent | null, right: ScheduleEvent): boolean {
+  return left?.id === right.id && left.accountId === right.accountId;
+}
+
 function slotAt(clientY: number, column: HTMLElement): number {
   const offset = Math.max(0, Math.min(24 * HOUR_HEIGHT - 1, clientY - column.getBoundingClientRect().top));
   return Math.floor(offset / HOUR_HEIGHT * 60 / SLOT_MINUTES) * SLOT_MINUTES;
@@ -195,6 +199,7 @@ function CalendarList({
 
 export function CalendarWeekView({
   anchor,
+  initialEvent,
   onAnchorChange,
   accounts,
   calendars,
@@ -203,6 +208,8 @@ export function CalendarWeekView({
   onOpenSettings,
 }: {
   anchor: Date;
+  /** Opens these event details when arriving from a conversation. */
+  initialEvent?: ScheduleEvent | null;
   onAnchorChange(date: Date): void;
   accounts: CalendarAccount[];
   calendars: CalendarOption[];
@@ -230,10 +237,18 @@ export function CalendarWeekView({
   }, true);
 
   useEffect(() => { setSelectedEvent(null); }, [weekStart]);
+  useEffect(() => { if (initialEvent) setSelectedEvent(initialEvent); }, [initialEvent]);
 
   useEffect(() => {
     if (gridRef.current) gridRef.current.scrollTop = readWeekScrollTop();
   }, []);
+
+  useEffect(() => {
+    if (!initialEvent || initialEvent.allDay || !gridRef.current) return;
+    const start = new Date(initialEvent.start);
+    const minutes = start.getHours() * 60 + start.getMinutes();
+    gridRef.current.scrollTop = Math.max(0, minutes / 60 * HOUR_HEIGHT - gridRef.current.clientHeight / 2);
+  }, [initialEvent]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), NOW_TICK_MS);
@@ -346,8 +361,8 @@ export function CalendarWeekView({
                     type="button"
                     key={`${event.accountId}:${event.id}`}
                     data-calendar-event-trigger
-                    aria-expanded={selectedEvent === event}
-                    onClick={() => setSelectedEvent((current) => current === event ? null : event)}
+                    aria-expanded={sameEvent(selectedEvent, event)}
+                    onClick={() => setSelectedEvent((current) => sameEvent(current, event) ? null : event)}
                   >
                     {event.title}
                   </button>
@@ -417,8 +432,8 @@ export function CalendarWeekView({
                       className={className}
                       key={`${event.accountId}:${event.id}`}
                       data-calendar-event-trigger
-                      aria-expanded={selectedEvent === event}
-                      onClick={() => setSelectedEvent((current) => current === event ? null : event)}
+                      aria-expanded={sameEvent(selectedEvent, event)}
+                      onClick={() => setSelectedEvent((current) => sameEvent(current, event) ? null : event)}
                       style={{
                         top: (startMinutes / 60) * HOUR_HEIGHT,
                         height,
