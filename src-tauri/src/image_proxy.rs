@@ -20,7 +20,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::redirect::Policy;
 use url::Url;
 
-use crate::net_safety::{self, is_disallowed_host};
+use crate::net_safety::{self, is_disallowed_url_host};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -124,10 +124,8 @@ fn validate_public_image_url(value: &str) -> Result<Url, String> {
     {
         return Err("Image URL must be a plain http(s) URL".to_string());
     }
-    if let Some(host) = url.host_str() {
-        if is_disallowed_host(host) {
-            return Err("Image URL points to a local or private host".to_string());
-        }
+    if is_disallowed_url_host(&url) {
+        return Err("Image URL points to a local or private host".to_string());
     }
     Ok(url)
 }
@@ -217,6 +215,28 @@ mod tests {
         assert!(validate_public_image_url("https://user:pass@example.com/x.png").is_err());
         assert!(validate_public_image_url("https://example.com/x.png").is_ok());
         assert!(validate_public_image_url("http://example.com/x.png").is_ok());
+    }
+
+    #[test]
+    fn rejects_private_ipv6_literal_hosts() {
+        // The URL parser keeps IPv6 hosts bracketed, and the HTTP client
+        // connects to IP literals without consulting the DNS resolver, so
+        // this check is the only defense for these hosts.
+        for url in [
+            "http://[::1]/x.png",
+            "https://[::]/x.png",
+            "http://[fd00::1]/x.png",
+            "http://[fe80::1]/x.png",
+            "http://[::ffff:127.0.0.1]/x.png",
+            "http://[::ffff:169.254.169.254]/x.png",
+        ] {
+            assert_eq!(
+                validate_public_image_url(url).unwrap_err(),
+                "Image URL points to a local or private host",
+                "{url} must be rejected"
+            );
+        }
+        assert!(validate_public_image_url("http://[2606:4700:4700::1111]/x.png").is_ok());
     }
 
     #[test]

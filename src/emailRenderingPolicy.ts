@@ -13,6 +13,9 @@ export const EMAIL_CSS_LIMITS = {
   maxFontSizeRelative: 16,
   maxFontSizePercentage: 1600,
   maxLineHeightUnitless: 16,
+  // A percentage line-height multiplies the font size, like a unitless one,
+  // so it shares that bound (16 × 100%) rather than the layout cap.
+  maxLineHeightPercentage: 1600,
   maxUnitlessFactor: 16,
   maxOpacity: 1,
   maxFrameHeightPx: 50_000,
@@ -74,7 +77,9 @@ function lineHeight(value: string): string | null {
   if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
     return Number(trimmed) <= EMAIL_CSS_LIMITS.maxLineHeightUnitless ? trimmed : null;
   }
-  return boundedLength(trimmed, { allowPercentage: true });
+  const percentage = trimmed.match(/^(\d+(?:\.\d+)?)%$/);
+  if (percentage) return Number(percentage[1]) <= EMAIL_CSS_LIMITS.maxLineHeightPercentage ? trimmed : null;
+  return boundedLength(trimmed);
 }
 
 function unitlessFactor(value: string): string | null {
@@ -233,6 +238,16 @@ export function sanitizeCssDeclaration(property: string, value: string): string 
   const validator = validators[property.trim().toLowerCase()];
   if (!validator || /url\s*\(/i.test(value)) return null;
   return validator(value);
+}
+
+/**
+ * Height to give the message iframe for a document of `contentHeight` CSS
+ * pixels. Past the cap the frame stops growing and its document scrolls
+ * internally, so tall content stays reachable without an unbounded layout.
+ */
+export function emailFrameHeight(contentHeight: number): number {
+  if (!Number.isFinite(contentHeight) || contentHeight <= 0) return 0;
+  return Math.min(contentHeight, EMAIL_CSS_LIMITS.maxFrameHeightPx);
 }
 
 export function sanitizeHtmlDimension(value: string, allowPercent: boolean): string | null {

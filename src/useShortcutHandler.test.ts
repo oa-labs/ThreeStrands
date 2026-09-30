@@ -131,10 +131,14 @@ describe("useShortcutHandler", () => {
   });
 
   it("uses current context values and stops responding after unmount", () => {
-    const first = context();
+    // The first context is composing, so the read-scope `c` shortcut is suppressed.
+    const first = context({ interactionScope: "compose", composerActive: true });
     const second = context();
     const execute = vi.fn();
     const hook = renderHook(({ value }) => useShortcutHandler(value, execute), { initialProps: { value: first } });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+
     hook.rerender({ value: second });
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));

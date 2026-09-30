@@ -19,6 +19,7 @@ import type {
   ContactTimelineItem,
   SaveContactRequest,
   ContactEnrichmentResult,
+  ContactFieldSuggestion,
   CreateTaskRequest,
   Label,
   MailboxUnreadCounts,
@@ -123,7 +124,8 @@ export interface MailClient extends CorrespondenceClient {
   contactTimeline(id: string, offset?: number, limit?: number, accountId?: string): Promise<ContactTimelineItem[]>;
   /** Open tasks from any conversation with the contact (a saved id or `derived:<email>`). */
   listContactTasks(id: string): Promise<ThreadTask[]>;
-  enrichContact(id: string, provider: AiProvider, model: string, endpoint: string | null, searchMore?: boolean, accountId?: string): Promise<ContactEnrichmentResult>;
+  /** Enhances a contact from local email history. `emptyFields` lists the fields holding nothing; only those are ever suggested for, so filled fields are neither revisited nor overwritten. */
+  enrichContact(id: string, provider: AiProvider, model: string, endpoint: string | null, emptyFields: ContactFieldSuggestion["field"][], searchMore?: boolean, accountId?: string): Promise<ContactEnrichmentResult>;
   pinContact(accountId: string, email: string, displayName: string | null): Promise<void>;
   unpinContact(accountId: string, email: string): Promise<void>;
   unsubscribe(messageId: string): Promise<UnsubscribeResult>;
@@ -228,7 +230,7 @@ const tauriClient: MailClient = {
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
   contactTimeline: (id, offset = 0, limit = 30, accountId) => read("contact_timeline", { id, offset, limit, accountId }),
   listContactTasks: (id) => read("list_contact_tasks", { id }),
-  enrichContact: (id, provider, model, endpoint, searchMore = false, accountId) => complete("ai_enrich_contact", { id, provider, model, endpoint, searchMore, accountId }),
+  enrichContact: (id, provider, model, endpoint, emptyFields, searchMore = false, accountId) => complete("ai_enrich_contact", { id, provider, model, endpoint, emptyFields, searchMore, accountId }),
   pinContact: (accountId, email, displayName) => complete("pin_contact", { accountId, email, displayName }),
   unpinContact: (accountId, email) => complete("unpin_contact", { accountId, email }),
   unsubscribe: (messageId) => complete("unsubscribe", { messageId }),

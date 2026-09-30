@@ -104,19 +104,24 @@ describe("ContextPanel",()=>{
   });
 
   it("keeps one chip per address when participant contacts cannot be resolved",async()=>{
-    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+    // Jane writes from two addresses that a successful lookup would merge into
+    // one chip, so a failed lookup must leave three chips instead of two.
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>{
       if(emails.length>1) throw new Error("offline");
-      return {"bob@example.com":bob.id};
+      return {"jane@example.com":jane.id,"jane@work.example.com":jane.id,"bob@example.com":bob.id};
     });
     const warn=vi.spyOn(console,"warn").mockImplementation(()=>undefined);
     const error=vi.spyOn(console,"error").mockImplementation(()=>undefined);
-    renderPanel();
-    await screen.findByRole("heading",{name:"Bob Lee"});
+    const twoAddresses={...detail,messages:[...detail.messages,{id:"3",sender:"Jane Doe <jane@work.example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-26T00:00:00Z"}]} as unknown as ThreadDetail;
+    renderPanel({detail:twoAddresses});
+    await screen.findByRole("heading",{name:"Jane Doe"});
     const participants=screen.getByRole("group",{name:"Conversation participants"});
-    await waitFor(()=>expect(mailClient.resolveContactIds).toHaveBeenCalled());
-    expect(within(participants).getAllByRole("button")).toHaveLength(2);
+    await waitFor(()=>expect(warn).toHaveBeenCalledWith("Participant contact lookup failed:",expect.objectContaining({message:"offline"})));
+    const chips=within(participants).getAllByRole("button");
+    expect(chips).toHaveLength(3);
+    expect(chips.map(chip=>chip.getAttribute("title"))).toEqual(["jane@example.com","bob@example.com","jane@work.example.com"]);
     warn.mockRestore();error.mockRestore();
   });
 

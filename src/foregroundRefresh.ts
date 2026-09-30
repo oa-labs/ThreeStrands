@@ -23,7 +23,6 @@ export function createForegroundRefreshController(
   clock: ForegroundClock = browserClock,
 ) {
   let backgroundedAt: number | null = null;
-  let lastRefreshAt = Number.NEGATIVE_INFINITY;
   let debounceId = 0;
 
   const cancelScheduled = () => {
@@ -43,11 +42,11 @@ export function createForegroundRefreshController(
       const foregroundAt = clock.now();
       debounceId = clock.setTimeout(() => {
         debounceId = 0;
+        // The foreground has settled, so the absence is over whether or not
+        // it was long enough; the next one is measured from scratch.
+        backgroundedAt = null;
         if (awayStarted === null) return;
         if (foregroundAt - awayStarted < FOREGROUND_IDLE_MS) return;
-        if (foregroundAt - lastRefreshAt < FOREGROUND_IDLE_MS) return;
-        backgroundedAt = null;
-        lastRefreshAt = clock.now();
         refresh();
       }, FOREGROUND_DEBOUNCE_MS);
     },

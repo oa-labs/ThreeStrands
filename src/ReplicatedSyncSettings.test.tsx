@@ -344,7 +344,10 @@ describe("enrolled overview", () => {
     expect(screen.getByText("Connectors (1)").closest("details")).toHaveAttribute("open");
   });
 
-  it("offers deleting files only for connectors that report support for it", async () => {
+  it("offers deleting files for a folder connector and keeping data for one that cannot delete", async () => {
+    // Per-kind confirmation wording and the absent delete action for IPFS are
+    // covered on ConnectorCard in SyncConnectors.test.tsx; this checks the
+    // enrolled overview wires each card to its own transport's capability.
     const ipfs: sync.ReplicatedSyncTransportStatus = {
       ...folder,
       instanceId: "ipfs-1",
@@ -361,7 +364,6 @@ describe("enrolled overview", () => {
 
     fireEvent.click(within(ipfsCard!).getByRole("button", { name: "Disconnect…" }));
     expect(within(ipfsCard!).getByRole("button", { name: "Disconnect and keep data" })).toBeInTheDocument();
-    expect(within(ipfsCard!).queryByRole("button", { name: "Delete files and disconnect" })).not.toBeInTheDocument();
   });
 
   it("shows the waiting-for-admission banner above the sync status after joining with a code", async () => {
@@ -394,17 +396,115 @@ describe("enrolled overview", () => {
     expect(screen.getByRole("group", { name: "Add a device" })).toBeInTheDocument();
   });
 
-  it("puts devices waiting to join above the other sections and approves them", async () => {
+  it("puts devices waiting to join above the device and connector sections", async () => {
+    // Approving from this list is covered in "approving a device from an existing device".
     setUp({ status: enrolled });
     vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([{ requestId: "req-9", fingerprint: "9999-8888-7777-6666", createdAt: "2026-09-22T10:00:00Z" }]);
-    vi.mocked(sync.replicatedSyncApproveRequest).mockResolvedValue(undefined);
     render(<ReplicatedSyncSettings />);
 
     const waiting = await screen.findByRole("list", { name: "Devices waiting to join" });
     expect(waiting.closest("details")).toBeNull();
-    fireEvent.click(within(waiting).getByRole("button", { name: "Review…" }));
-    fireEvent.click(within(waiting).getByRole("button", { name: "Codes match — approve" }));
-    await waitFor(() => expect(sync.replicatedSyncApproveRequest).toHaveBeenCalledWith("req-9"));
+    const follows = (later: Element) => waiting.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(screen.getByRole("status", { name: "Sync status" }).compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(follows(screen.getByText("Devices (0)", { selector: "summary" }))).toBeTruthy();
+    expect(follows(screen.getByText("Connectors (1)", { selector: "summary" }))).toBeTruthy();
+    expect(follows(screen.getByText("Advanced", { selector: "summary" }))).toBeTruthy();
+  });
+
+  it("revokes another device only after confirmation, rotating the epoch for that device", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncDeviceRoster).mockResolvedValue(roster);
+    vi.mocked(sync.replicatedSyncRotateEpoch).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    const [self, other] = within(await screen.findByRole("list", { name: "Devices" })).getAllByRole("listitem");
+    expect(within(self!).queryByRole("button", { name: "Revoke…" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(other!).getByRole("button", { name: "Revoke…" }));
+    const confirm = within(other!).getByRole("group", { name: "Revoke device confirmation" });
+    expect(confirm).toHaveTextContent("future writes from it will no longer be trusted");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(within(other!).queryByRole("group", { name: "Revoke device confirmation" })).not.toBeInTheDocument();
+    expect(sync.replicatedSyncRotateEpoch).not.toHaveBeenCalled();
+
+    vi.mocked(sync.replicatedSyncDeviceRoster).mockClear();
+    fireEvent.click(within(other!).getByRole("button", { name: "Revoke…" }));
+    fireEvent.click(within(other!).getByRole("button", { name: "Revoke device" }));
+    await waitFor(() => expect(sync.replicatedSyncRotateEpoch).toHaveBeenCalledWith("device-other"));
+    expect(sync.replicatedSyncRotateEpoch).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(sync.replicatedSyncDeviceRoster).toHaveBeenCalled());
+  });
+
+  it("does not show revoke for a device that is already revoked", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncDeviceRoster).mockResolvedValue([roster[0]!, { ...roster[1]!, status: "revoked" }]);
+    render(<ReplicatedSyncSettings />);
+
+    const devices = within(await screen.findByRole("list", { name: "Devices" })).getAllByRole("listitem");
+    expect(devices[1]).toHaveTextContent("Revoked");
+    expect(screen.queryByRole("button", { name: "Revoke…" })).not.toBeInTheDocument();
+  });
+
+  it("turns beta features off from Advanced and reloads the section", async () => {
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncSetBetaEnabled).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    const advanced = (await screen.findByText("Advanced", { selector: "summary" })).closest("details")!;
+    const beta = within(advanced).getByRole("checkbox", { name: "Enable beta features" });
+    expect(beta).toBeChecked();
+    vi.mocked(sync.replicatedSyncBetaEnabled).mockClear();
+    fireEvent.click(beta);
+
+    await waitFor(() => expect(sync.replicatedSyncSetBetaEnabled).toHaveBeenCalledWith(false));
+    expect(sync.replicatedSyncSetBetaEnabled).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(sync.replicatedSyncBetaEnabled).toHaveBeenCalled());
+  });
+
+  it("resolves a conflict with the chosen candidate and drops it once resolved", async () => {
+    const conflict: sync.FrontierConflict = {
+      entityType: "split_inbox",
+      entityId: "inbox-1",
+      field: "name",
+      candidates: [
+        { operationId: "op-a", deviceId: "device-self-0000", value: "Work" },
+        { operationId: "op-b", deviceId: "device-other-000", value: "Office" },
+      ],
+    };
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncConflicts).mockResolvedValueOnce([conflict]).mockResolvedValue([]);
+    vi.mocked(sync.replicatedSyncResolveConflict).mockResolvedValue(undefined);
+    render(<ReplicatedSyncSettings />);
+
+    expect(await screen.findByText("split inbox conflict: name")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /"Office"/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Resolve conflict" }));
+
+    await waitFor(() => expect(sync.replicatedSyncResolveConflict).toHaveBeenCalledWith(conflict, conflict.candidates[1]));
+    expect(sync.replicatedSyncResolveConflict).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByText("split inbox conflict: name")).not.toBeInTheDocument());
+  });
+
+  it("keeps an unresolved conflict and shows the failure beside it", async () => {
+    const conflict: sync.FrontierConflict = {
+      entityType: "task",
+      entityId: "task-1",
+      field: "title",
+      candidates: [
+        { operationId: "op-a", deviceId: "device-self-0000", value: "Draft" },
+        { operationId: "op-b", deviceId: "device-other-000", value: "Final" },
+      ],
+    };
+    setUp({ status: enrolled });
+    vi.mocked(sync.replicatedSyncConflicts).mockResolvedValue([conflict]);
+    vi.mocked(sync.replicatedSyncResolveConflict).mockRejectedValue("The conflict changed.");
+    render(<ReplicatedSyncSettings />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Resolve conflict" }));
+
+    expect(await screen.findByText("The conflict changed.")).toBeInTheDocument();
+    expect(sync.replicatedSyncResolveConflict).toHaveBeenCalledWith(conflict, conflict.candidates[0]);
+    expect(screen.getByText("task conflict: title")).toBeInTheDocument();
   });
 });
 

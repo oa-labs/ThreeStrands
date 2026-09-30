@@ -198,6 +198,105 @@ describe("adding an S3 connector", () => {
   });
 });
 
+async function openIpfsForm() {
+  render(<Harness>{(operation) => <ConnectorList transports={[]} operation={operation} refresh={refresh} />}</Harness>);
+  fireEvent.click(screen.getByRole("button", { name: /^IPFS/ }));
+  return screen.getByRole("group", { name: "Add IPFS" });
+}
+
+function fillIpfs(form: HTMLElement, baseUrl: string, token: string) {
+  fireEvent.change(within(form).getByLabelText("RPC base URL"), { target: { value: baseUrl } });
+  fireEvent.change(within(form).getByLabelText("Access token (optional)"), { target: { value: token } });
+}
+
+const ipfsStatus: sync.ReplicatedSyncTransportStatus = {
+  ...s3Status,
+  instanceId: "ipfs-1",
+  kind: "ipfs_rpc",
+  location: "https://rpc.filebase.io",
+  supportsDeleteData: false,
+  s3Config: null,
+};
+
+describe("adding an IPFS connector", () => {
+  it("keeps the token in a password field and probes the endpoint with it", async () => {
+    vi.mocked(sync.replicatedSyncProbeIpfsRpc).mockResolvedValue({ versionOk: true, headDiscoveryAvailable: true });
+    const form = await openIpfsForm();
+    expect(within(form).getByLabelText("Access token (optional)")).toHaveAttribute("type", "password");
+    const test = within(form).getByRole("button", { name: "Test connection" });
+    expect(test).toBeDisabled();
+    expect(within(form).getByRole("button", { name: "Add IPFS RPC endpoint" })).toBeDisabled();
+
+    fillIpfs(form, "https://rpc.filebase.io", "bucket-token");
+    fireEvent.click(test);
+
+    expect(await within(form).findByText("Reachable · supports sync discovery through bucket pins")).toBeInTheDocument();
+    expect(sync.replicatedSyncProbeIpfsRpc).toHaveBeenCalledWith("https://rpc.filebase.io", "bucket-token");
+    expect(sync.replicatedSyncAddIpfsRpc).not.toHaveBeenCalled();
+
+    // Editing the URL throws the result away.
+    fireEvent.change(within(form).getByLabelText("RPC base URL"), { target: { value: "https://ipfs.example.com:5001" } });
+    expect(within(form).queryByText(/^Reachable/)).not.toBeInTheDocument();
+  });
+
+  it("says when bucket pins are unavailable on a reachable endpoint", async () => {
+    vi.mocked(sync.replicatedSyncProbeIpfsRpc).mockResolvedValue({ versionOk: true, headDiscoveryAvailable: false });
+    const form = await openIpfsForm();
+    fillIpfs(form, "https://ipfs.example.com:5001", "");
+    fireEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+
+    expect(await within(form).findByText("Reachable · bucket pins unavailable")).toBeInTheDocument();
+  });
+
+  it("explains an endpoint that does not answer as IPFS RPC", async () => {
+    vi.mocked(sync.replicatedSyncProbeIpfsRpc).mockResolvedValue({ versionOk: false, headDiscoveryAvailable: false });
+    const form = await openIpfsForm();
+    fillIpfs(form, "https://not-ipfs.example.com", "bucket-token");
+    fireEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+
+    expect(await within(form).findByText("Could not reach an IPFS RPC endpoint at that URL.")).toBeInTheDocument();
+    expect(within(form).queryByText(/^Reachable/)).not.toBeInTheDocument();
+    expect(sync.replicatedSyncAddIpfsRpc).not.toHaveBeenCalled();
+  });
+
+  it("sends a blank or whitespace-only token as no token", async () => {
+    vi.mocked(sync.replicatedSyncProbeIpfsRpc).mockResolvedValue({ versionOk: true, headDiscoveryAvailable: false });
+    vi.mocked(sync.replicatedSyncAddIpfsRpc).mockResolvedValue(ipfsStatus);
+    const form = await openIpfsForm();
+    fillIpfs(form, "https://ipfs.example.com:5001", "   ");
+    fireEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+    await waitFor(() => expect(sync.replicatedSyncProbeIpfsRpc).toHaveBeenCalledWith("https://ipfs.example.com:5001", null));
+
+    await waitFor(() => expect(within(form).getByRole("button", { name: "Add IPFS RPC endpoint" })).toBeEnabled());
+    fireEvent.click(within(form).getByRole("button", { name: "Add IPFS RPC endpoint" }));
+    await waitFor(() => expect(sync.replicatedSyncAddIpfsRpc).toHaveBeenCalledWith("https://ipfs.example.com:5001", null));
+  });
+
+  it("adds the endpoint with its token, refreshes, and returns to the connector choices", async () => {
+    vi.mocked(sync.replicatedSyncAddIpfsRpc).mockResolvedValue(ipfsStatus);
+    const form = await openIpfsForm();
+    fillIpfs(form, "https://rpc.filebase.io", "bucket-token");
+    fireEvent.click(within(form).getByRole("button", { name: "Add IPFS RPC endpoint" }));
+
+    await waitFor(() => expect(sync.replicatedSyncAddIpfsRpc).toHaveBeenCalledWith("https://rpc.filebase.io", "bucket-token"));
+    expect(sync.replicatedSyncAddIpfsRpc).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(await screen.findByRole("group", { name: "Connector type" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Add IPFS" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the form and explains when the endpoint could not be added", async () => {
+    vi.mocked(sync.replicatedSyncAddIpfsRpc).mockResolvedValue(null);
+    const form = await openIpfsForm();
+    fillIpfs(form, "https://rpc.filebase.io", "bucket-token");
+    fireEvent.click(within(form).getByRole("button", { name: "Add IPFS RPC endpoint" }));
+
+    expect(await within(form).findByText("Could not add that endpoint.")).toBeInTheDocument();
+    expect(within(form).getByLabelText("RPC base URL")).toHaveValue("https://rpc.filebase.io");
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
 describe("connector cards", () => {
   function renderCard(transport: sync.ReplicatedSyncTransportStatus) {
     render(<Harness>{(operation) => <ul><ConnectorCard transport={transport} operation={operation} refresh={refresh} /></ul>}</Harness>);

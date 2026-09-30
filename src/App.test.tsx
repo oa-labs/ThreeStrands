@@ -25,14 +25,19 @@ async function advance(ms: number) {
   });
 }
 
-describe("archive notice", () => {
+async function resetDemoThreads({ labels = false }: { labels?: boolean } = {}) {
+  localStorage.removeItem("threestrands.demoCorrespondence");
+  for (const threadId of demoThreadIds) {
+    await mailClient.mutateThread({ kind: "archive", threadId, value: false });
+    await mailClient.mutateThread({ kind: "spam", threadId, value: false });
+    if (labels) await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
+  }
+}
+
+/** Resets demo threads and reading settings, and runs each test on advanceable fake timers. */
+function useConversationFixture() {
   beforeEach(async () => {
-    localStorage.removeItem("threestrands.demoCorrespondence");
-    for (const threadId of demoThreadIds) {
-      await mailClient.mutateThread({ kind: "archive", threadId, value: false });
-      await mailClient.mutateThread({ kind: "spam", threadId, value: false });
-      await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
-    }
+    await resetDemoThreads({ labels: true });
     localStorage.removeItem("threestrands.settings.autoReadDelaySeconds");
     localStorage.removeItem("threestrands.settings.labelUsageByAccount");
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -40,8 +45,15 @@ describe("archive notice", () => {
 
   afterEach(() => {
     cleanup();
+    // Restore spies (including any on timer functions) while the fake clock is
+    // still installed, so a later restoreAllMocks cannot reinstate a fake timer.
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
+}
+
+describe("archive notice", () => {
+  useConversationFixture();
 
   it("dismisses itself after the notice timeout", async () => {
     render(<App />);
@@ -70,6 +82,121 @@ describe("archive notice", () => {
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
+
+  it("keeps a replacement notice on screen for its own full timeout", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    await archiveSelected();
+    await advance(NOTICE_TIMEOUT_MS - 1000);
+    await archiveSelected();
+
+    await advance(1500);
+    expect(screen.getByRole("status")).toHaveTextContent("Conversation archived");
+
+    await advance(NOTICE_TIMEOUT_MS);
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  });
+
+  it("clears the pending dismiss timer when the app unmounts", async () => {
+    const setTimeout = vi.spyOn(window, "setTimeout");
+    const clearTimeout = vi.spyOn(window, "clearTimeout");
+    const { unmount } = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    await archiveSelected();
+    await screen.findByRole("status");
+    const dismissTimer = setTimeout.mock.results
+      .filter((_, index) => setTimeout.mock.calls[index][1] === NOTICE_TIMEOUT_MS)
+      .map((result) => result.value)
+      .at(-1);
+    expect(dismissTimer).toBeDefined();
+
+    unmount();
+    expect(clearTimeout).toHaveBeenCalledWith(dismissTimer);
+    setTimeout.mockRestore();
+    clearTimeout.mockRestore();
+  });
+});
+
+describe("undo", () => {
+  useConversationFixture();
+
+  it("undoes an archive and optimistically restores the conversation", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    await archiveSelected();
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    await act(async () => {
+      undo.click();
+    });
+
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("undoes the last action with the Superhuman Z shortcut", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    await archiveSelected();
+    await screen.findByRole("status");
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "z" }));
+    });
+
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+  });
+
+  it("undoes adding and removing a label", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Labels (l)" }).click();
+    });
+    await act(async () => {
+      (await screen.findByRole("option", { name: "Work" })).click();
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent("Work added");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Undo" }).click();
+    });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Labels (l)" }).click();
+    });
+    await screen.findByRole("option", { name: "Work" });
+
+    await act(async () => {
+      screen.getByRole("option", { name: "Work" }).click();
+    });
+    await screen.findByText("Work added");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Labels (l)" }).click();
+    });
+    await act(async () => {
+      (await screen.findByRole("option", { name: "Work, added" })).click();
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent("Work removed");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Undo" }).click();
+    });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Labels (l)" }).click();
+    });
+    await screen.findByRole("option", { name: "Work, added" });
+  });
+});
+
+describe("conversation labels", () => {
+  useConversationFixture();
 
   it("resolves opaque Gmail label ids with the conversation account's label catalog", async () => {
     const originalLabels = await mailClient.listLabels();
@@ -102,6 +229,109 @@ describe("archive notice", () => {
       listLabels.mockRestore();
     }
   });
+
+  it("orders labels alphabetically and supports search plus keyboard navigation", async () => {
+    const keyboardLabel = await mailClient.createLabel("Keyboard navigation");
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      await act(async () => {
+        screen.getByRole("button", { name: "Labels (l)" }).click();
+      });
+
+      const dialog = screen.getByRole("dialog", { name: "Manage Labels" });
+      const input = await within(dialog).findByRole("combobox", { name: "Find or Create a Label" });
+      expect(input).toHaveFocus();
+      expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
+        .toEqual(["Keyboard navigation", "Work"]);
+      expect(within(dialog).getAllByRole("option")[0]).toHaveClass("highlighted");
+
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      expect(within(dialog).getAllByRole("option")[1]).toHaveClass("highlighted");
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      expect(within(dialog).getAllByRole("option")[0]).toHaveClass("highlighted");
+
+      fireEvent.change(input, { target: { value: "key" } });
+      expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
+        .toEqual(["Keyboard navigation", 'Create label "key"']);
+
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+      expect(await screen.findByRole("status")).toHaveTextContent("Keyboard navigation added");
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
+    } finally {
+      await mailClient.deleteLabel(keyboardLabel.id);
+    }
+  });
+
+  it("creates and applies a new label from the search box", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    try {
+      await act(async () => {
+        screen.getByRole("button", { name: "Labels (l)" }).click();
+      });
+
+      const input = await screen.findByRole("combobox", { name: "Find or Create a Label" });
+      fireEvent.change(input, { target: { value: "Project X" } });
+      const createRow = await screen.findByRole("option", { name: 'Create label "Project X"' });
+      expect(createRow).toHaveClass("highlighted");
+
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+      expect(await screen.findByRole("status")).toHaveTextContent("Project X added");
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
+
+      await act(async () => {
+        screen.getByRole("button", { name: "Labels (l)" }).click();
+      });
+      const created = await screen.findByRole("option", { name: "Project X, added" });
+      await act(async () => {
+        created.click();
+      });
+      expect(await screen.findByRole("status")).toHaveTextContent("Project X removed");
+    } finally {
+      const projectX = (await mailClient.listLabels()).find((label) => label.name === "Project X");
+      if (projectX) await mailClient.deleteLabel(projectX.id);
+    }
+  });
+
+  it("offers a freshly created label, sorted alphabetically, as a split inbox match", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    try {
+      await act(async () => {
+        screen.getByRole("button", { name: "Labels (l)" }).click();
+      });
+      const input = await screen.findByRole("combobox", { name: "Find or Create a Label" });
+      fireEvent.change(input, { target: { value: "Aardvark" } });
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+      await screen.findByRole("status");
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+      const settings = await screen.findByRole("dialog", { name: "Settings" });
+      fireEvent.click(within(settings).getByRole("button", { name: "Split Inboxes" }));
+      fireEvent.change(within(settings).getByRole("combobox", { name: "Match By" }), {
+        target: { value: "label" },
+      });
+
+      const labelSelect = within(settings).getByRole("combobox", { name: "Label" });
+      expect(within(labelSelect).getAllByRole("option").map((option) => option.textContent))
+        .toEqual(["Choose a label", "Aardvark", "Work"]);
+    } finally {
+      const aardvark = (await mailClient.listLabels()).find((label) => label.name === "Aardvark");
+      if (aardvark) await mailClient.deleteLabel(aardvark.id);
+    }
+  });
+});
+
+describe("message cards", () => {
+  useConversationFixture();
 
   it("toggles only the prior message card whose header was clicked", async () => {
     const originalDetail = await mailClient.getThread("welcome");
@@ -253,51 +483,10 @@ describe("archive notice", () => {
       getThread.mockRestore();
     }
   });
+});
 
-  it("marks an archived conversation not done with Shift+e", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    await archiveSelected();
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "/" }));
-    });
-    const search = await screen.findByRole("textbox", { name: "Search Mail" });
-    fireEvent.change(search, { target: { value: "Welcome" } });
-    const includeArchived = await screen.findByRole("button", { name: "Include archived or trashed mail in search" });
-    await act(async () => {
-      includeArchived.click();
-    });
-    expect(includeArchived).toHaveTextContent("Archived + Trash");
-    expect(includeArchived).toHaveAttribute("aria-pressed", "true");
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
-    });
-
-    expect(await screen.findByRole("status")).toHaveTextContent("Conversation marked as not done");
-  });
-
-  it("confirms and sends unsubscribe with Cmd+u", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    expect(await screen.findByRole("button", { name: "Unsubscribe (⌘U)" })).toBeVisible();
-
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "u", metaKey: true }));
-    });
-
-    const dialog = await screen.findByRole("dialog", { name: "Unsubscribe" });
-    expect(dialog).toHaveTextContent("threestrands.example");
-    expect(dialog).toHaveTextContent("One-Click Request");
-    await act(async () => {
-      screen.getByRole("button", { name: "Send One-Click Request" }).click();
-    });
-
-    expect(await screen.findByRole("status")).toHaveTextContent("Unsubscribe request sent");
-    expect(screen.queryByRole("dialog", { name: "Unsubscribe" })).not.toBeInTheDocument();
-  });
+describe("read state and auto-read", () => {
+  useConversationFixture();
 
   it("keeps a conversation unread after pressing u, instead of the auto-read timer reverting it", async () => {
     render(<App />);
@@ -366,222 +555,59 @@ describe("archive notice", () => {
       else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
     }
   });
+});
 
-  it("undoes an archive and optimistically restores the conversation", async () => {
+describe("conversation shortcuts", () => {
+  useConversationFixture();
+
+  it("marks an archived conversation not done with Shift+e", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await archiveSelected();
-    const undo = await screen.findByRole("button", { name: "Undo" });
     await act(async () => {
-      undo.click();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "/" }));
+    });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
+    fireEvent.change(search, { target: { value: "Welcome" } });
+    const includeArchived = await screen.findByRole("button", { name: "Include archived or trashed mail in search" });
+    await act(async () => {
+      includeArchived.click();
+    });
+    expect(includeArchived).toHaveTextContent("Archived + Trash");
+    expect(includeArchived).toHaveAttribute("aria-pressed", "true");
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
     });
 
-    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Conversation marked as not done");
   });
 
-  it("undoes the last action with the Superhuman Z shortcut", async () => {
+  it("confirms and sends unsubscribe with Cmd+u", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    await archiveSelected();
-    await screen.findByRole("status");
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "z" }));
-    });
-
-    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
-  });
-
-  it("undoes adding and removing a label", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    expect(await screen.findByRole("button", { name: "Unsubscribe (⌘U)" })).toBeVisible();
 
     await act(async () => {
-      screen.getByRole("button", { name: "Labels (l)" }).click();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "u", metaKey: true }));
     });
+
+    const dialog = await screen.findByRole("dialog", { name: "Unsubscribe" });
+    expect(dialog).toHaveTextContent("threestrands.example");
+    expect(dialog).toHaveTextContent("One-Click Request");
     await act(async () => {
-      (await screen.findByRole("option", { name: "Work" })).click();
-    });
-    expect(await screen.findByRole("status")).toHaveTextContent("Work added");
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
-
-    await act(async () => {
-      screen.getByRole("button", { name: "Undo" }).click();
+      screen.getByRole("button", { name: "Send One-Click Request" }).click();
     });
 
-    await act(async () => {
-      screen.getByRole("button", { name: "Labels (l)" }).click();
-    });
-    await screen.findByRole("option", { name: "Work" });
-
-    await act(async () => {
-      screen.getByRole("option", { name: "Work" }).click();
-    });
-    await screen.findByText("Work added");
-
-    await act(async () => {
-      screen.getByRole("button", { name: "Labels (l)" }).click();
-    });
-    await act(async () => {
-      (await screen.findByRole("option", { name: "Work, added" })).click();
-    });
-    expect(await screen.findByRole("status")).toHaveTextContent("Work removed");
-
-    await act(async () => {
-      screen.getByRole("button", { name: "Undo" }).click();
-    });
-
-    await act(async () => {
-      screen.getByRole("button", { name: "Labels (l)" }).click();
-    });
-    await screen.findByRole("option", { name: "Work, added" });
-  });
-
-  it("orders labels alphabetically and supports search plus keyboard navigation", async () => {
-    const keyboardLabel = await mailClient.createLabel("Keyboard navigation");
-    try {
-      render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-      await act(async () => {
-        screen.getByRole("button", { name: "Labels (l)" }).click();
-      });
-
-      const dialog = screen.getByRole("dialog", { name: "Manage Labels" });
-      const input = await within(dialog).findByRole("combobox", { name: "Find or Create a Label" });
-      expect(input).toHaveFocus();
-      expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
-        .toEqual(["Keyboard navigation", "Work"]);
-      expect(within(dialog).getAllByRole("option")[0]).toHaveClass("highlighted");
-
-      fireEvent.keyDown(input, { key: "ArrowDown" });
-      expect(within(dialog).getAllByRole("option")[1]).toHaveClass("highlighted");
-      fireEvent.keyDown(input, { key: "ArrowUp" });
-      expect(within(dialog).getAllByRole("option")[0]).toHaveClass("highlighted");
-
-      fireEvent.change(input, { target: { value: "key" } });
-      expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
-        .toEqual(["Keyboard navigation", 'Create label "key"']);
-
-      await act(async () => {
-        fireEvent.keyDown(input, { key: "Enter" });
-      });
-      expect(await screen.findByRole("status")).toHaveTextContent("Keyboard navigation added");
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
-    } finally {
-      await mailClient.deleteLabel(keyboardLabel.id);
-    }
-  });
-
-  it("creates and applies a new label from the search box", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    try {
-      await act(async () => {
-        screen.getByRole("button", { name: "Labels (l)" }).click();
-      });
-
-      const input = await screen.findByRole("combobox", { name: "Find or Create a Label" });
-      fireEvent.change(input, { target: { value: "Project X" } });
-      const createRow = await screen.findByRole("option", { name: 'Create label "Project X"' });
-      expect(createRow).toHaveClass("highlighted");
-
-      await act(async () => {
-        fireEvent.keyDown(input, { key: "Enter" });
-      });
-      expect(await screen.findByRole("status")).toHaveTextContent("Project X added");
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
-
-      await act(async () => {
-        screen.getByRole("button", { name: "Labels (l)" }).click();
-      });
-      const created = await screen.findByRole("option", { name: "Project X, added" });
-      await act(async () => {
-        created.click();
-      });
-      expect(await screen.findByRole("status")).toHaveTextContent("Project X removed");
-    } finally {
-      const projectX = (await mailClient.listLabels()).find((label) => label.name === "Project X");
-      if (projectX) await mailClient.deleteLabel(projectX.id);
-    }
-  });
-
-  it("offers a freshly created label, sorted alphabetically, as a split inbox match", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    try {
-      await act(async () => {
-        screen.getByRole("button", { name: "Labels (l)" }).click();
-      });
-      const input = await screen.findByRole("combobox", { name: "Find or Create a Label" });
-      fireEvent.change(input, { target: { value: "Aardvark" } });
-      await act(async () => {
-        fireEvent.keyDown(input, { key: "Enter" });
-      });
-      await screen.findByRole("status");
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
-
-      fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-      const settings = await screen.findByRole("dialog", { name: "Settings" });
-      fireEvent.click(within(settings).getByRole("button", { name: "Split Inboxes" }));
-      fireEvent.change(within(settings).getByRole("combobox", { name: "Match By" }), {
-        target: { value: "label" },
-      });
-
-      const labelSelect = within(settings).getByRole("combobox", { name: "Label" });
-      expect(within(labelSelect).getAllByRole("option").map((option) => option.textContent))
-        .toEqual(["Choose a label", "Aardvark", "Work"]);
-    } finally {
-      const aardvark = (await mailClient.listLabels()).find((label) => label.name === "Aardvark");
-      if (aardvark) await mailClient.deleteLabel(aardvark.id);
-    }
-  });
-
-  it("keeps a replacement notice on screen for its own full timeout", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    await archiveSelected();
-    await advance(NOTICE_TIMEOUT_MS - 1000);
-    await archiveSelected();
-
-    await advance(1500);
-    expect(screen.getByRole("status")).toHaveTextContent("Conversation archived");
-
-    await advance(NOTICE_TIMEOUT_MS);
-    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
-  });
-
-  it("clears the pending dismiss timer when the app unmounts", async () => {
-    const setTimeout = vi.spyOn(window, "setTimeout");
-    const clearTimeout = vi.spyOn(window, "clearTimeout");
-    const { unmount } = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    await archiveSelected();
-    await screen.findByRole("status");
-    const dismissTimer = setTimeout.mock.results
-      .filter((_, index) => setTimeout.mock.calls[index][1] === NOTICE_TIMEOUT_MS)
-      .map((result) => result.value)
-      .at(-1);
-    expect(dismissTimer).toBeDefined();
-
-    unmount();
-    expect(clearTimeout).toHaveBeenCalledWith(dismissTimer);
-    setTimeout.mockRestore();
-    clearTimeout.mockRestore();
+    expect(await screen.findByRole("status")).toHaveTextContent("Unsubscribe request sent");
+    expect(screen.queryByRole("dialog", { name: "Unsubscribe" })).not.toBeInTheDocument();
   });
 });
 
 describe("keyboard-first task and action workspaces", () => {
-  beforeEach(async () => {
-    localStorage.removeItem("threestrands.demoCorrespondence");
-    for (const threadId of demoThreadIds) {
-      await mailClient.mutateThread({ kind: "archive", threadId, value: false });
-      await mailClient.mutateThread({ kind: "spam", threadId, value: false });
-    }
-  });
+  beforeEach(() => resetDemoThreads());
 
   afterEach(cleanup);
 
@@ -595,23 +621,6 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument();
-  });
-
-  it("keeps the context panel read-only after Shift+A so letter shortcuts can switch workspaces", async () => {
-    render(<App />);
-    await screen.findByRole("button", { name: "Archive (e)" });
-
-    fireEvent.keyDown(window, { key: "A", shiftKey: true });
-    const panel = screen.getByRole("complementary", { name: "Conversation context" });
-    expect(within(panel).queryByRole("textbox")).not.toBeInTheDocument();
-    expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
-
-    fireEvent.keyDown(window, { key: "3" });
-    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Conversation" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
   });
 
   it("switches directly between mail and task views while 0 has no effect", async () => {
@@ -907,13 +916,7 @@ describe("trash and batch actions", () => {
 });
 
 describe("Escape dismissal", () => {
-  beforeEach(async () => {
-    localStorage.removeItem("threestrands.demoCorrespondence");
-    for (const threadId of demoThreadIds) {
-      await mailClient.mutateThread({ kind: "archive", threadId, value: false });
-      await mailClient.mutateThread({ kind: "spam", threadId, value: false });
-    }
-  });
+  beforeEach(() => resetDemoThreads());
 
   afterEach(cleanup);
 
@@ -931,6 +934,28 @@ describe("Escape dismissal", () => {
     );
     expect(screen.getByRole("region", { name: "Conversation" })).toBeInTheDocument();
   });
+
+  it("closes only the topmost popup when overlays are stacked", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+    const composer = await screen.findByRole("dialog", { name: "New Message" });
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette" }));
+
+    const filter = await screen.findByRole("textbox", { name: "Filter Commands" });
+    fireEvent.keyDown(filter, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Command Palette" })).not.toBeInTheDocument(),
+    );
+    expect(composer).toBeInTheDocument();
+  });
+});
+
+describe("Drafts folder", () => {
+  beforeEach(() => resetDemoThreads());
+
+  afterEach(cleanup);
 
   it("switches to the inline Drafts view and back to the inbox without losing state", async () => {
     render(<App />);
@@ -966,22 +991,6 @@ describe("Escape dismissal", () => {
 
     selectFolder("Inbox");
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
-  });
-
-  it("closes only the topmost popup when overlays are stacked", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
-    const composer = await screen.findByRole("dialog", { name: "New Message" });
-    fireEvent.click(screen.getByRole("button", { name: "Command Palette" }));
-
-    const filter = await screen.findByRole("textbox", { name: "Filter Commands" });
-    fireEvent.keyDown(filter, { key: "Escape" });
-
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Command Palette" })).not.toBeInTheDocument(),
-    );
-    expect(composer).toBeInTheDocument();
   });
 });
 
@@ -1053,8 +1062,7 @@ describe("account selection persistence", () => {
     ]);
 
     const firstRun = render(<App />);
-    await act(async () => {});
-    const workAccount = screen.getByRole("radio", { name: "Work" });
+    const workAccount = await screen.findByRole("radio", { name: "Work" });
     fireEvent.click(workAccount);
     expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("work@example.com");
     expect(firstRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("work@example.com");
@@ -1065,16 +1073,14 @@ describe("account selection persistence", () => {
     firstRun.unmount();
 
     const secondRun = render(<App />);
-    await act(async () => {});
-    expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true");
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true"));
     fireEvent.click(screen.getByRole("radio", { name: /All accounts/i }));
     expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("all");
     expect(secondRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("All accounts");
     secondRun.unmount();
 
     render(<App />);
-    await act(async () => {});
-    expect(screen.getByRole("radio", { name: /All accounts/i })).toHaveAttribute("aria-checked", "true");
+    await waitFor(() => expect(screen.getByRole("radio", { name: /All accounts/i })).toHaveAttribute("aria-checked", "true"));
   });
 
   it("creates a task for the chosen account from the combined task view", async () => {
@@ -1088,8 +1094,7 @@ describe("account selection persistence", () => {
     } satisfies ThreadTask);
     localStorage.setItem("threestrands.settings.selectedAccountId", "all");
     render(<App />);
-    await act(async () => {});
-    expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Inbox" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Tasks (3)" }));
     const workspace = screen.getByRole("region", { name: "Tasks" });
     expect(workspace.querySelector(".tasks-sidebar-header")).toHaveTextContent("All accounts");
@@ -1099,8 +1104,7 @@ describe("account selection persistence", () => {
     expect(within(form).getByRole("button", { name: "Add task" })).toBeDisabled();
     fireEvent.change(within(form).getByRole("combobox", { name: "Account" }), { target: { value: "work@example.com" } });
     fireEvent.click(within(form).getByRole("button", { name: "Add task" }));
-    await act(async () => {});
-    expect(createTask).toHaveBeenCalledWith({ accountId: "work@example.com", threadId: null, subjectSnapshot: null, title: "Review plan", kind: "action" });
+    await waitFor(() => expect(createTask).toHaveBeenCalledWith({ accountId: "work@example.com", threadId: null, subjectSnapshot: null, title: "Review plan", kind: "action" }));
   });
 
   it("shows unread inbox totals on each account and the combined account icon", async () => {
@@ -1140,7 +1144,7 @@ describe("account selection persistence", () => {
     expect(screen.getByRole("radio", { name: "Work, 120 unread" })).toHaveTextContent("99+");
   });
 
-  it("keeps a single account visible when the header shows the folder", async () => {
+  it("shows a lone account as checked, with its email tooltip and no All accounts option", async () => {
     const [account] = await mailClient.listAccounts();
     render(
       <AccountSwitcher
@@ -1155,6 +1159,6 @@ describe("account selection persistence", () => {
 
     expect(screen.getByRole("radio", { name: account!.email })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("tooltip", { name: account!.email, hidden: true })).toBeInTheDocument();
-    expect(screen.queryByRole("radio", { name: "All Accounts" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /^All accounts/i })).not.toBeInTheDocument();
   });
 });

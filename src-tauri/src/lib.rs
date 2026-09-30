@@ -2726,6 +2726,7 @@ async fn ai_enrich_contact(
     provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
+    empty_fields: Option<Vec<String>>,
     search_more: Option<bool>,
     account_id: Option<String>,
     state: State<'_, AppState>,
@@ -2779,6 +2780,7 @@ async fn ai_enrich_contact(
             profile,
             messages,
             search_more: search_more.unwrap_or(false),
+            empty_fields,
         },
         &api_key,
     )

@@ -83,6 +83,7 @@ import { ThreadRow } from "./ThreadList";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
+import { selectedMessageQuote } from "./selectedMessageQuote";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { CalendarWeekView } from "./CalendarWeekView";
@@ -1898,7 +1899,8 @@ export function App() {
           context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
         });
       }
-      correspondence.context.reply();
+      const quote = selectedMessageQuote();
+      correspondence.context.reply(quote?.messageId, quote?.text);
     },
     replyAll: () => {
       if (selected) {
@@ -1908,7 +1910,8 @@ export function App() {
           context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
         });
       }
-      correspondence.context.replyAll();
+      const quote = selectedMessageQuote();
+      correspondence.context.replyAll(quote?.messageId, quote?.text);
     },
     forward: () => {
       if (selected) {

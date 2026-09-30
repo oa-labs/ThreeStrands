@@ -13,7 +13,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("keeps one context panel beside the conversation, and Shift+A reveals suggestions there instead of opening a second panel", async () => {
+it("keeps one read-only context panel beside the conversation; Shift+A reveals suggestions there and workspace shortcuts still switch views", async () => {
   render(<App />);
 
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
@@ -25,6 +25,14 @@ it("keeps one context panel beside the conversation, and Shift+A reveals suggest
   expect(screen.getByRole("complementary", { name: "Conversation context" })).toBe(panel);
   expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
   expect(within(panel).getByRole("region", { name: "Brief" })).toHaveTextContent("AI briefs and suggestions are off.");
+  expect(within(panel).queryByRole("textbox")).not.toBeInTheDocument();
+  expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "3" });
+  expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Conversation" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
 });
 
 it("shows the next meeting with the selected person and opens the week view on its day", async () => {

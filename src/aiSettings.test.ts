@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearAiApiKey,
   DEFAULT_AI_FEATURES,
@@ -86,10 +86,28 @@ describe("AI provider preferences", () => {
 });
 
 describe("AI API key storage (non-Tauri fallback)", () => {
-  it("is not configured until a key is set, and clears back to unconfigured", async () => {
+  afterEach(async () => {
+    await clearAiApiKey();
+    vi.restoreAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it("tracks whether a key is configured for the session without writing the key to web storage", async () => {
+    const secret = "sk-demo-key-7f3a";
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
     expect(await isAiApiKeyConfigured()).toBe(false);
-    await setAiApiKey("sk-demo-key");
+    await setAiApiKey(secret);
     expect(await isAiApiKeyConfigured()).toBe(true);
+
+    const stored = [localStorage, sessionStorage].flatMap((storage) =>
+      Array.from({ length: storage.length }, (_, index) => {
+        const key = storage.key(index) ?? "";
+        return `${key}=${storage.getItem(key) ?? ""}`;
+      }));
+    expect(stored.some((entry) => entry.includes(secret))).toBe(false);
+    expect(setItem.mock.calls.some((args) => args.some((value) => String(value).includes(secret)))).toBe(false);
+
     await clearAiApiKey();
     expect(await isAiApiKeyConfigured()).toBe(false);
   });

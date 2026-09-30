@@ -87,6 +87,27 @@ describe("EnrollmentRequestNotice", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
+  it("clears a previously shown request when a later native response is malformed", async () => {
+    let onStatus: () => void = () => {};
+    listenMock.mockImplementation(async (_event: string, handler: () => void) => { onStatus = handler; return () => {}; });
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
+    vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue([request("req-1")]);
+    try {
+      render(<EnrollmentRequestNotice suppressed={false} onReview={vi.fn()} />);
+      expect(await screen.findByText("A new device is asking to join Replicated Sync.")).toBeInTheDocument();
+      await waitFor(() => expect(listenMock).toHaveBeenCalledWith("replicated-sync-status", expect.any(Function)));
+
+      vi.mocked(sync.replicatedSyncPendingRequests).mockResolvedValue({ requests: [request("req-1")] } as unknown as sync.IncomingEnrollmentRequest[]);
+      await act(async () => { onStatus(); });
+
+      await waitFor(() => expect(screen.queryByText("A new device is asking to join Replicated Sync.")).not.toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Dismiss on this device" })).not.toBeInTheDocument();
+    } finally {
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    }
+  });
+
   it("does not ask for requests when replicated sync is off", async () => {
     vi.mocked(sync.replicatedSyncEnabled).mockResolvedValue(false);
     render(<EnrollmentRequestNotice suppressed={false} onReview={vi.fn()} />);

@@ -2273,6 +2273,28 @@ mod replicator_tests {
         assert_eq!(remote.addresses,vec!["shared@example.com"]);
     }
 
+    #[test]
+    fn a_recorded_contact_survives_snapshot_and_merge_into_another_replica() {
+        let database = Database::open_memory();
+        let keys = test_keys(&database);
+        let contact = json!({"id":"synced-contact","displayName":"Synced person","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["synced@example.com"]});
+        database.record_replicated_write(
+            EntityType::Contact, "synced-contact",
+            &fields(&["id","displayName","role","company","location","bio","notes","links","photoData","favorite","addresses"]),
+            &contact,
+        ).unwrap();
+
+        database.take_local_snapshot(keys.device_id, 1, 1).unwrap();
+        let state = database.load_replica_state().unwrap();
+
+        let other = Database::open_memory();
+        let touched = other.merge_replica_state(&state).unwrap();
+        other.materialize_touched_entities(&touched).unwrap();
+        let synced = other.get_contact_profile("synced-contact").unwrap().unwrap();
+        assert_eq!(synced.display_name.as_deref(), Some("Synced person"));
+        assert_eq!(synced.addresses, vec!["synced@example.com"]);
+    }
+
     /// Synthetic key material matching whatever device id
     /// `record_replicated_write` already provisioned for `database`. Never
     /// touches the OS keychain — that's what makes this different from
@@ -3580,10 +3602,35 @@ mod reconciliation_tests {
             .create_split_inbox("Newsletters", "domain", "news.example.com", "you@example.com")
             .unwrap();
         database.set_retention_days(Some(90)).unwrap();
+        database.adopt_account("you@example.com").unwrap();
+        database
+            .create_task(&crate::models::CreateTaskRequest {
+                account_id: "you@example.com".into(),
+                thread_id: None,
+                source_message_id: None,
+                subject_snapshot: None,
+                title: "Renew passport".into(),
+                notes: None,
+                kind: "action".into(),
+                due_kind: "none".into(),
+                due_value: None,
+                time_zone: None,
+                repeat_interval_days: None,
+                evidence_text: None,
+            })
+            .unwrap();
+        database.save_contact_profile(&crate::models::SaveContactRequest{
+            id:None,display_name:Some("Sweep person".into()),role:None,company:None,
+            location:None,bio:None,notes:None,links:vec![],photo_data:None,
+            favorite:false,addresses:vec!["sweep@example.com".into()],
+        }).unwrap();
 
         let repaired = database.reconcile_replicated_sync_backlog().unwrap();
-        // Snippet, split inbox, and the explicitly chosen retention setting.
-        assert!(repaired >= 3, "expected at least snippet + split inbox + retention, got {repaired}");
+        // Task, snippet, contact, split inbox, mail account, and the
+        // explicitly chosen retention setting.
+        assert_eq!(repaired, 6);
+        // A contact in the sweep must not break the snapshot that follows.
+        database.load_replica_state().unwrap();
 
         let second_pass = database.reconcile_replicated_sync_backlog().unwrap();
         assert_eq!(second_pass, 0, "a second sweep over the same state must repair nothing");

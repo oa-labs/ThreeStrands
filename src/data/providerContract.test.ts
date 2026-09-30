@@ -30,6 +30,9 @@ function providerContract(name: string, client: MailClient) {
         labelId: label.id,
         value: false,
       });
+      const restored = (await client.getThread(thread.id)).thread;
+      expect(restored.labels).not.toContain(label.id);
+      expect(restored.labels).toEqual(thread.labels);
       await client.deleteLabel(label.id);
     });
 

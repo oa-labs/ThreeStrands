@@ -90,8 +90,13 @@ describe("App chrome", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh (r)" }));
     expect(action).toHaveBeenCalledTimes(1);
     view.rerender(<ShortcutHelp onClose={close} />);
-    expect(screen.getByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
-    expect(screen.getByText("Use ThreeStrands without leaving the keyboard.")).toBeInTheDocument();
+    const help = screen.getByRole("dialog", { name: "Keyboard Shortcuts" });
+    expect(within(help).getByText("Use ThreeStrands without leaving the keyboard.")).toBeInTheDocument();
+    const paletteRow = within(help).getByText("Command Palette", { selector: "dt" }).parentElement!;
+    expect(within(paletteRow).getByText("⌘/Ctrl + k").tagName).toBe("KBD");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it("traps modal focus, makes the background inert, and restores the trigger", () => {

@@ -29,6 +29,9 @@ pub struct GmailClient {
     http: reqwest::Client,
     auth: GoogleAuth,
     next_thread_fetch: Arc<Mutex<Instant>>,
+    /// The Gmail API base. Always `API` outside tests; tests point the
+    /// delivery and sent-copy verification paths at a loopback stand-in.
+    api: Arc<str>,
 }
 
 impl GmailClient {
@@ -41,7 +44,14 @@ impl GmailClient {
                 .expect("valid Gmail HTTP client configuration"),
             auth,
             next_thread_fetch: Arc::new(Mutex::new(Instant::now())),
+            api: API.into(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_api_base(mut self, api: &str) -> Self {
+        self.api = api.into();
+        self
     }
 
     async fn pace_thread_fetch(&self) {
@@ -389,7 +399,7 @@ impl MailSync for GmailClient {
 impl MailFetch for GmailClient {
     async fn fetch_message(&self, id: &str) -> ProviderResult<RawMessage> {
         let request = self
-            .request(Method::GET, format!("{API}/messages/{id}?format=full"))
+            .request(Method::GET, format!("{}/messages/{id}?format=full", self.api))
             .await?;
         self.json(request, false).await
     }
@@ -732,6 +742,317 @@ mod tests {
         }
     }
 
+    mod delivery {
+        use std::{
+            collections::HashMap,
+            sync::{Arc, Mutex as StdMutex},
+        };
+
+        use axum::{
+            extract::{Path, Query, State},
+            http::StatusCode as HttpStatus,
+            routing::{get, post},
+            Json, Router,
+        };
+
+        use super::*;
+        use crate::auth::Tokens;
+
+        const OPERATION: &str = "op-1";
+        const SENDER: &str = "me@example.com";
+
+        #[derive(Clone, Default)]
+        struct Stub {
+            send_status: Arc<StdMutex<Option<(u16, String)>>>,
+            send_bodies: Arc<StdMutex<Vec<serde_json::Value>>>,
+            search: Arc<StdMutex<serde_json::Value>>,
+            searches: Arc<StdMutex<Vec<String>>>,
+            messages: Arc<StdMutex<HashMap<String, (u16, serde_json::Value)>>>,
+        }
+
+        async fn serve(stub: Stub) -> String {
+            let router = Router::new()
+                .route(
+                    "/messages/send",
+                    post(
+                        |State(stub): State<Stub>, Json(body): Json<serde_json::Value>| async move {
+                            stub.send_bodies.lock().unwrap().push(body);
+                            let (status, body) =
+                                stub.send_status.lock().unwrap().clone().unwrap();
+                            (HttpStatus::from_u16(status).unwrap(), body)
+                        },
+                    ),
+                )
+                .route(
+                    "/messages",
+                    get(
+                        |State(stub): State<Stub>,
+                         Query(query): Query<HashMap<String, String>>| async move {
+                            stub.searches
+                                .lock()
+                                .unwrap()
+                                .push(query.get("q").cloned().unwrap_or_default());
+                            Json(stub.search.lock().unwrap().clone())
+                        },
+                    ),
+                )
+                .route(
+                    "/messages/{id}",
+                    get(|State(stub): State<Stub>, Path(id): Path<String>| async move {
+                        let (status, body) = stub
+                            .messages
+                            .lock()
+                            .unwrap()
+                            .get(&id)
+                            .cloned()
+                            .unwrap_or((404, serde_json::json!({"error": {"code": 404}})));
+                        (HttpStatus::from_u16(status).unwrap(), Json(body))
+                    }),
+                )
+                .with_state(stub);
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            format!("http://{address}")
+        }
+
+        fn client(base: &str) -> GmailClient {
+            GmailClient::new(GoogleAuth::in_memory_for_test(
+                &format!("{base}/token"),
+                Tokens {
+                    access_token: "token".into(),
+                    refresh_token: Some("refresh".into()),
+                    expires_at: u64::MAX,
+                },
+            ))
+            .with_api_base(base)
+        }
+
+        async fn send_with(status: u16, body: &str) -> Result<DeliveryReceipt, (bool, String)> {
+            let stub = Stub::default();
+            *stub.send_status.lock().unwrap() = Some((status, body.to_string()));
+            let base = serve(stub.clone()).await;
+            let delivery = client(&base).prepare_delivery().await.unwrap();
+            let result = delivery.send_once(b"raw message", Some("thread-9")).await;
+            assert_eq!(
+                stub.send_bodies.lock().unwrap().len(),
+                1,
+                "send is non-idempotent and must be attempted exactly once"
+            );
+            result
+        }
+
+        #[tokio::test]
+        async fn an_accepted_send_returns_the_gmail_receipt() {
+            let stub = Stub::default();
+            *stub.send_status.lock().unwrap() =
+                Some((200, r#"{"id":"m-1","threadId":"t-1"}"#.into()));
+            let base = serve(stub.clone()).await;
+            let delivery = client(&base).prepare_delivery().await.unwrap();
+
+            let receipt = delivery.send_once(b"hello", Some("t-1")).await.unwrap();
+
+            assert_eq!(receipt.provider_message_id, "m-1");
+            assert_eq!(receipt.thread_id.as_deref(), Some("t-1"));
+            let bodies = stub.send_bodies.lock().unwrap();
+            assert_eq!(
+                bodies[0],
+                serde_json::json!({"raw": "aGVsbG8", "threadId": "t-1"}),
+                "raw is URL-safe base64 without padding and the thread is attached"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_400_rejection_is_a_definite_failure() {
+            let (definite, message) = send_with(400, r#"{"error":{"code":400}}"#)
+                .await
+                .unwrap_err();
+            assert!(definite, "an explicit client rejection proves nothing was sent");
+            assert!(message.contains("HTTP 400"), "{message}");
+            assert!(message.contains("Restore the draft"), "{message}");
+        }
+
+        #[tokio::test]
+        async fn a_408_timeout_is_uncertain() {
+            let (definite, message) = send_with(408, "").await.unwrap_err();
+            assert!(!definite, "a request timeout may follow acceptance");
+            assert!(message.contains("HTTP 408"), "{message}");
+            assert!(message.contains("Delivery is uncertain"), "{message}");
+        }
+
+        #[tokio::test]
+        async fn a_503_server_error_is_uncertain() {
+            let (definite, message) = send_with(503, "").await.unwrap_err();
+            assert!(!definite, "a server error may follow acceptance");
+            assert!(message.contains("HTTP 503"), "{message}");
+            assert!(message.contains("Delivery is uncertain"), "{message}");
+        }
+
+        #[tokio::test]
+        async fn a_malformed_success_body_is_uncertain() {
+            let (definite, message) = send_with(200, "not json").await.unwrap_err();
+            assert!(!definite, "Gmail answered 2xx, so the message may have been sent");
+            assert!(message.contains("could not be read"), "{message}");
+
+            let (definite, _) = send_with(200, r#"{"id":"m-1"}"#).await.unwrap_err();
+            assert!(!definite, "a 2xx body missing threadId is also unreadable");
+        }
+
+        #[tokio::test]
+        async fn a_transport_failure_is_uncertain() {
+            // Reserve a loopback port, then close it so the connection is refused.
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            drop(listener);
+            let delivery = client(&base).prepare_delivery().await.unwrap();
+
+            let (definite, message) = delivery.send_once(b"raw", None).await.unwrap_err();
+
+            assert!(!definite, "a transport failure cannot prove the send did not land");
+            assert!(message.contains("Check sent mail"), "{message}");
+        }
+
+        fn message(id: &str, message_id: &str, from: &str, labels: &[&str]) -> serde_json::Value {
+            serde_json::json!({
+                "id": id,
+                "threadId": format!("thread-{id}"),
+                "labelIds": labels,
+                "payload": {
+                    "headers": [
+                        {"name": "Message-ID", "value": message_id},
+                        {"name": "From", "value": from},
+                    ],
+                },
+            })
+        }
+
+        async fn find_with(
+            candidates: &[(&str, u16, serde_json::Value)],
+        ) -> (ProviderResult<Option<DeliveryReceipt>>, Stub) {
+            let stub = Stub::default();
+            *stub.search.lock().unwrap() = if candidates.is_empty() {
+                serde_json::json!({"resultSizeEstimate": 0})
+            } else {
+                serde_json::json!({
+                    "messages": candidates
+                        .iter()
+                        .map(|(id, _, _)| serde_json::json!({"id": id, "threadId": format!("thread-{id}")}))
+                        .collect::<Vec<_>>(),
+                })
+            };
+            for (id, status, body) in candidates {
+                stub.messages
+                    .lock()
+                    .unwrap()
+                    .insert(id.to_string(), (*status, body.clone()));
+            }
+            let base = serve(stub.clone()).await;
+            let result = client(&base).find_sent_copy(OPERATION, SENDER).await;
+            (result, stub)
+        }
+
+        #[tokio::test]
+        async fn a_verified_sent_copy_is_found() {
+            let (result, stub) = find_with(&[(
+                "m-1",
+                200,
+                message(
+                    "m-1",
+                    "<op-1@threestrands.local>",
+                    "Me <ME@example.com>",
+                    &["SENT"],
+                ),
+            )])
+            .await;
+
+            let receipt = result.unwrap().expect("verified copy");
+            assert_eq!(receipt.provider_message_id, "m-1");
+            assert_eq!(receipt.thread_id.as_deref(), Some("thread-m-1"));
+            assert_eq!(
+                *stub.searches.lock().unwrap(),
+                vec!["in:sent rfc822msgid:op-1@threestrands.local".to_string()]
+            );
+        }
+
+        #[tokio::test]
+        async fn an_empty_search_finds_no_sent_copy() {
+            let (result, _) = find_with(&[]).await;
+            assert!(result.unwrap().is_none());
+        }
+
+        #[tokio::test]
+        async fn search_hits_that_fail_verification_are_not_a_sent_copy() {
+            let candidates = [
+                (
+                    "wrong-id",
+                    message("wrong-id", "<op-2@threestrands.local>", SENDER, &["SENT"]),
+                ),
+                (
+                    "wrong-sender",
+                    message(
+                        "wrong-sender",
+                        "<op-1@threestrands.local>",
+                        "other@example.com",
+                        &["SENT"],
+                    ),
+                ),
+                (
+                    "two-senders",
+                    message(
+                        "two-senders",
+                        "<op-1@threestrands.local>",
+                        "me@example.com, other@example.com",
+                        &["SENT"],
+                    ),
+                ),
+                (
+                    "not-sent",
+                    message("not-sent", "<op-1@threestrands.local>", SENDER, &["INBOX"]),
+                ),
+            ];
+            for (id, body) in candidates {
+                let (result, _) = find_with(&[(id, 200, body)]).await;
+                assert!(
+                    result.unwrap().is_none(),
+                    "candidate {id} must not verify as the sent copy"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn verification_skips_unverified_hits_before_a_verified_one() {
+            let (result, _) = find_with(&[
+                (
+                    "decoy",
+                    200,
+                    message("decoy", "<op-1@threestrands.local>", SENDER, &["DRAFT"]),
+                ),
+                (
+                    "real",
+                    200,
+                    message("real", "op-1@threestrands.local", SENDER, &["SENT"]),
+                ),
+            ])
+            .await;
+            assert_eq!(result.unwrap().unwrap().provider_message_id, "real");
+        }
+
+        #[tokio::test]
+        async fn a_candidate_that_cannot_be_fetched_is_an_error_not_absence() {
+            let (result, _) = find_with(&[(
+                "vanished",
+                404,
+                serde_json::json!({"error": {"code": 404}}),
+            )])
+            .await;
+            assert!(
+                matches!(result, Err(ProviderError::NotFound)),
+                "unexpected result: {:?}",
+                result.map(|found| found.map(|r| r.provider_message_id))
+            );
+        }
+    }
+
     #[test]
     fn recognizes_gmail_quota_errors_returned_as_forbidden() {
         assert!(is_quota_error(
@@ -901,7 +1222,7 @@ impl MailSend for GmailClient {
 
     async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
         Ok(Box::new(GmailDelivery(
-            self.request(Method::POST, format!("{API}/messages/send"))
+            self.request(Method::POST, format!("{}/messages/send", self.api))
                 .await?
                 .timeout(Duration::from_secs(60)),
         )))
@@ -918,7 +1239,7 @@ impl MailSend for GmailClient {
             messages: Vec<SentMessage>,
         }
         let request = self
-            .request(Method::GET, format!("{API}/messages"))
+            .request(Method::GET, format!("{}/messages", self.api))
             .await?
             .query(&[(
                 "q",

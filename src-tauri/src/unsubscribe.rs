@@ -9,7 +9,7 @@ use reqwest::{header::CONTENT_TYPE, redirect::Policy};
 use url::Url;
 
 use crate::models::{UnsubscribeMethod, UnsubscribeResult, UnsubscribeTarget};
-use crate::net_safety::{self, is_disallowed_host};
+use crate::net_safety::{self, is_disallowed_url_host};
 
 const ONE_CLICK_BODY: &str = "List-Unsubscribe=One-Click";
 
@@ -81,10 +81,8 @@ fn validate_https_url(value: &str) -> Result<Url, String> {
     {
         return Err("Unsubscribe requires a safe HTTPS URL".to_string());
     }
-    if let Some(host) = url.host_str() {
-        if is_disallowed_host(host) {
-            return Err("Unsubscribe URL points to a local or private host".to_string());
-        }
+    if is_disallowed_url_host(&url) {
+        return Err("Unsubscribe URL points to a local or private host".to_string());
     }
     Ok(url)
 }
@@ -100,6 +98,22 @@ mod tests {
         assert!(validate_https_url("https://localhost/unsubscribe").is_err());
         assert!(validate_https_url("https://127.0.0.1/unsubscribe").is_err());
         assert!(validate_https_url("https://lists.example:8443/unsubscribe").is_err());
+    }
+
+    #[test]
+    fn rejects_private_ipv6_literal_hosts() {
+        for url in [
+            "https://[::1]/unsubscribe",
+            "https://[fd00::1]/unsubscribe",
+            "https://[::ffff:127.0.0.1]/unsubscribe",
+        ] {
+            assert_eq!(
+                validate_https_url(url).unwrap_err(),
+                "Unsubscribe URL points to a local or private host",
+                "{url} must be rejected"
+            );
+        }
+        assert!(validate_https_url("https://[2606:4700:4700::1111]/unsubscribe").is_ok());
     }
 
     #[test]

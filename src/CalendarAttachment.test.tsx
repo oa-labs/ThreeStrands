@@ -71,15 +71,15 @@ describe("CalendarAttachmentGroup", () => {
     vi.spyOn(mailClient, "previewCalendarAttachment").mockResolvedValue({
       truncated: false,
       events: [{
-        uid: "3f5afe6s34tkc86t0dojof6vd6@google.com",
-        title: "Pete lunch w/Joel R.",
+        uid: "team-lunch-20261005@calendar.example.com",
+        title: "Team lunch",
         start: "2026-10-05T11:45:00",
         end: "2026-10-05T13:15:00",
         allDay: false,
         timeZone: "America/New_York",
-        location: "Wise County Biscuits & Cafe",
+        location: "Example Cafe, 100 Main St",
         description: null,
-        organizer: "PGH Only",
+        organizer: "Example Organizer",
         attendeeCount: 1,
         recurring: false,
         status: "CONFIRMED",
@@ -88,8 +88,8 @@ describe("CalendarAttachmentGroup", () => {
 
     render(<CalendarAttachmentGroup messageId="message-1" attachments={[inlineIcs, icsFile]} onError={vi.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "Pete lunch w/Joel R." })).toBeVisible();
-    expect(screen.getAllByRole("heading", { name: "Pete lunch w/Joel R." })).toHaveLength(1);
+    expect(await screen.findByRole("heading", { name: "Team lunch" })).toBeVisible();
+    expect(screen.getAllByRole("heading", { name: "Team lunch" })).toHaveLength(1);
     expect(mailClient.previewCalendarAttachment).toHaveBeenCalledWith("message-1", "calendar-inline");
     expect(mailClient.previewCalendarAttachment).toHaveBeenCalledWith("message-1", "calendar-file");
     expect(mailClient.previewCalendarAttachment).toHaveBeenCalledTimes(2);
@@ -102,7 +102,7 @@ describe("CalendarAttachmentGroup", () => {
       Promise.resolve({
         truncated: false,
         events: [{
-          uid: `${attachmentId}@google.com`,
+          uid: `${attachmentId}@calendar.example.com`,
           title: attachmentId === "calendar-1" ? "Morning standup" : "Lunch",
           start: "2026-10-05T09:00:00",
           end: "2026-10-05T09:30:00",

@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { EMAIL_CSS_LIMITS, sanitizeCssDeclaration, sanitizeHtmlDimension } from "./emailRenderingPolicy";
+import { EMAIL_CSS_LIMITS, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlDimension } from "./emailRenderingPolicy";
 
 describe("email rendering numeric policy", () => {
+  it("grows the message frame with its content up to the frame-height limit", () => {
+    const limit = EMAIL_CSS_LIMITS.maxFrameHeightPx;
+    expect(emailFrameHeight(limit - 1)).toBe(limit - 1);
+    expect(emailFrameHeight(limit)).toBe(limit);
+    expect(emailFrameHeight(limit + 1)).toBe(limit);
+    expect(emailFrameHeight(0)).toBe(0);
+    expect(emailFrameHeight(-5)).toBe(0);
+    expect(emailFrameHeight(Number.NaN)).toBe(0);
+  });
+
   it("uses the same absolute and percentage boundaries for CSS and HTML dimensions", () => {
     expect(sanitizeCssDeclaration("width", "0px")).toBe("0px");
     expect(sanitizeCssDeclaration("width", `${EMAIL_CSS_LIMITS.maxAbsolutePx}px`)).toBe(`${EMAIL_CSS_LIMITS.maxAbsolutePx}px`);
@@ -24,6 +34,21 @@ describe("email rendering numeric policy", () => {
     expect(sanitizeCssDeclaration("font", "14px Arial")).toBe("14px arial");
     expect(sanitizeCssDeclaration("line-height", String(EMAIL_CSS_LIMITS.maxLineHeightUnitless))).toBe(String(EMAIL_CSS_LIMITS.maxLineHeightUnitless));
     expect(sanitizeCssDeclaration("line-height", String(EMAIL_CSS_LIMITS.maxLineHeightUnitless + 1))).toBeNull();
+  });
+
+  it("bounds a percentage line-height by its own font-relative limit, not the layout percentage", () => {
+    // A percentage line-height multiplies the font size, like a unitless one;
+    // the 100% layout cap would reject ordinary spacing such as 150%.
+    expect(sanitizeCssDeclaration("line-height", "150%")).toBe("150%");
+    const limit = EMAIL_CSS_LIMITS.maxLineHeightPercentage;
+    expect(sanitizeCssDeclaration("line-height", `${limit - 1}%`)).toBe(`${limit - 1}%`);
+    expect(sanitizeCssDeclaration("line-height", `${limit}%`)).toBe(`${limit}%`);
+    expect(sanitizeCssDeclaration("line-height", `${limit + 1}%`)).toBeNull();
+    expect(sanitizeCssDeclaration("font", "14px/150% Arial")).toBe("14px/150% arial");
+    expect(sanitizeCssDeclaration("font", `14px/${limit + 1}% Arial`)).toBeNull();
+    expect(sanitizeCssDeclaration("line-height", "-150%")).toBeNull();
+    // Layout percentages keep the tighter cap.
+    expect(sanitizeCssDeclaration("width", "150%")).toBeNull();
   });
 
   it("allows bounded negative margins but rejects them for padding and fixed overlays", () => {

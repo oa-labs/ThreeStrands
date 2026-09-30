@@ -1358,7 +1358,7 @@ mod tests {
     }
 
     #[test]
-    fn v27_creates_the_replicated_sync_tables_and_reaches_latest_version() {
+    fn fully_migrated_schema_reaches_latest_version_with_the_replicated_sync_tables() {
         let mut connection = unmigrated_database_with_one_account();
         super::migrate(&mut connection).unwrap();
         let version: i64 = connection
@@ -1406,7 +1406,7 @@ mod tests {
     }
 
     #[test]
-    fn v28_adds_transport_config_storage() {
+    fn fully_migrated_schema_stores_transport_config() {
         let mut connection = unmigrated_database_with_one_account();
         super::migrate(&mut connection).unwrap();
         connection
@@ -1422,7 +1422,7 @@ mod tests {
     }
 
     #[test]
-    fn v29_adds_the_key_hierarchy_and_enrollment_tables() {
+    fn fully_migrated_schema_has_the_key_hierarchy_and_enrollment_tables() {
         let mut connection = unmigrated_database_with_one_account();
         super::migrate(&mut connection).unwrap();
         for table in ["sync_epoch_history", "replicated_sync_enrollment_requests", "sync_control_objects_seen"] {

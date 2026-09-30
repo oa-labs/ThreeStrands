@@ -54,16 +54,22 @@ describe("ContactMeetings", () => {
   });
 
   it("renders nothing when there are no meetings or the schedule fails", async () => {
-    const { listScheduleEvents, unmount } = renderMeetings([meeting("without-jane", 2, ["bob@example.com"])]);
-    await waitFor(() => expect(listScheduleEvents).toHaveBeenCalled());
+    const { rerender, unmount } = renderMeetings([meeting("without-jane", 2, ["bob@example.com"])]);
+    // Positive control: the loaded schedule does render for an attendee it
+    // includes, so the absence below is not just an unsettled first render.
+    rerender(<ContactMeetings addresses={["bob@example.com"]} timeZone="UTC" onOpenEvent={vi.fn()} />);
+    expect(await screen.findByRole("region", { name: "Upcoming meetings" })).toHaveTextContent("Meeting without-jane");
+    rerender(<ContactMeetings addresses={["Jane@Example.com", "jane@work.example.com"]} timeZone="UTC" onOpenEvent={vi.fn()} />);
     expect(screen.queryByRole("region", { name: "Upcoming meetings" })).not.toBeInTheDocument();
     unmount();
 
     clearScheduleCache();
     const failed = vi.spyOn(mailClient, "listScheduleEvents").mockRejectedValue(new Error("Calendar unavailable"));
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     render(<ContactMeetings addresses={["jane@example.com"]} timeZone="UTC" onOpenEvent={vi.fn()} />);
-    await waitFor(() => expect(failed).toHaveBeenCalled());
+    // Wait until the hook has handled the rejection, not merely issued the call.
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Calendar schedule load failed:", expect.objectContaining({ message: "Calendar unavailable" })));
+    expect(failed).toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: "Upcoming meetings" })).not.toBeInTheDocument();
   });
 

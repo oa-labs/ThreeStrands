@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer, type ComposerHandle } from "./Composer";
 import type { Draft } from "./correspondence";
@@ -516,14 +516,35 @@ describe("Composer Reply Assist", () => {
     expect(await screen.findByRole("dialog", { name: "Reply Assist" })).toBeInTheDocument();
   });
 
-  it("does nothing when Reply Assist is unavailable or already open", async () => {
+  it("does nothing when Reply Assist is unavailable", async () => {
     saveAiProvider("none");
+    const replyAssistContext = vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
     const ref = createRef<ComposerHandle>();
 
     render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     ref.current?.draftReplyWithAI();
 
     expect(screen.queryByText("Reply Assist")).not.toBeInTheDocument();
+    expect(replyAssistContext).not.toHaveBeenCalled();
+  });
+
+  it("does not reopen or reload Reply Assist when it is already open", async () => {
+    const replyAssistContext = vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    await screen.findByRole("button", { name: /Draft Reply With AI/ });
+
+    act(() => ref.current?.draftReplyWithAI());
+    const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
+    expect(await within(assist).findByText("Can we meet Friday?")).toBeInTheDocument();
+    fireEvent.change(within(assist).getByRole("textbox", { name: "Optional Short Instruction" }), { target: { value: "Keep it short" } });
+
+    act(() => ref.current?.draftReplyWithAI());
+
+    expect(screen.getAllByRole("dialog", { name: "Reply Assist" })).toHaveLength(1);
+    expect(within(assist).getByText("Can we meet Friday?")).toBeInTheDocument();
+    expect(within(assist).getByRole("textbox", { name: "Optional Short Instruction" })).toHaveValue("Keep it short");
+    expect(replyAssistContext).toHaveBeenCalledTimes(1);
   });
 });
 

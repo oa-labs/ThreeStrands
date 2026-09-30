@@ -31,10 +31,15 @@ describe("useSnippets", () => {
   });
 
   it("starts empty when the library cannot be listed", async () => {
-    const listSnippets = vi.spyOn(mailClient, "listSnippets").mockRejectedValue(new Error("offline"));
+    const failure = new Error("offline");
+    const listSnippets = vi.spyOn(mailClient, "listSnippets").mockRejectedValue(failure);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { result } = renderHook(() => useSnippets());
 
-    await waitFor(() => expect(listSnippets).toHaveBeenCalled());
+    expect(result.current.snippets).toEqual([]);
+    // Wait for the rejection to be handled, not just for the request to start.
+    await waitFor(() => expect(warn).toHaveBeenCalledWith("Snippet listing failed:", failure));
+    expect(listSnippets).toHaveBeenCalledTimes(1);
     expect(result.current.snippets).toEqual([]);
   });
 });

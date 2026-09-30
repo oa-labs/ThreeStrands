@@ -5,7 +5,11 @@ import "../src/styles.css";
 
 const params = new URLSearchParams(window.location.search);
 const theme = params.get("theme") === "light" ? "light" : "dark";
-const fixture = params.get("fixture") === "transactional" ? emailRenderingFixtures.transactional : emailRenderingFixtures.notification;
+const fixtureName = params.get("fixture");
+if (!fixtureName || !Object.hasOwn(emailRenderingFixtures, fixtureName)) {
+  throw new Error(`Unknown email rendering fixture: ${fixtureName ?? "(missing)"}`);
+}
+const fixture = emailRenderingFixtures[fixtureName as keyof typeof emailRenderingFixtures];
 
 document.documentElement.dataset.theme = theme;
 document.body.style.margin = "0";

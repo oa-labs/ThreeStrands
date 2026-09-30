@@ -34,11 +34,13 @@ pub fn recovery_phrase_from_seed(seed: &[u8; RECOVERY_SEED_LEN]) -> String {
         .to_string()
 }
 
-/// Decodes a 24-word phrase back into its 32-byte seed. Accepts the
-/// standard BIP-39 whitespace/case normalization; rejects an invalid
+/// Decodes a 24-word phrase back into its 32-byte seed. Ignores letter case
+/// and extra whitespace — the same normalization [`check_recovery_phrase`]
+/// applies, so a phrase it reports valid always decodes; rejects an invalid
 /// checksum or word list membership.
 pub fn recovery_seed_from_phrase(phrase: &str) -> Result<[u8; RECOVERY_SEED_LEN], String> {
-    let mnemonic = Mnemonic::parse_normalized(phrase).map_err(|error| error.to_string())?;
+    let normalized = phrase.split_whitespace().map(str::to_lowercase).collect::<Vec<_>>().join(" ");
+    let mnemonic = Mnemonic::parse_normalized(&normalized).map_err(|error| error.to_string())?;
     let entropy = mnemonic.to_entropy();
     entropy
         .as_slice()
@@ -111,6 +113,24 @@ mod tests {
         assert_eq!(phrase.split_whitespace().count(), 24);
         let recovered = recovery_seed_from_phrase(&phrase).unwrap();
         assert_eq!(recovered, seed);
+    }
+
+    #[test]
+    fn phrase_decoding_ignores_letter_case_like_the_phrase_checker() {
+        let seed = generate_recovery_seed();
+        let phrase = recovery_phrase_from_seed(&seed);
+        let words: Vec<&str> = phrase.split_whitespace().collect();
+        // Uppercase, and a phone keyboard's auto-capitalized first word.
+        let shouted = phrase.to_uppercase();
+        let capitalized = {
+            let mut first = words[0].to_string();
+            first[..1].make_ascii_uppercase();
+            std::iter::once(first.as_str()).chain(words[1..].iter().copied()).collect::<Vec<_>>().join(" ")
+        };
+        for variant in [shouted, capitalized] {
+            assert!(check_recovery_phrase(&variant).valid, "{variant}");
+            assert_eq!(recovery_seed_from_phrase(&variant).unwrap(), seed, "{variant}");
+        }
     }
 
     #[test]

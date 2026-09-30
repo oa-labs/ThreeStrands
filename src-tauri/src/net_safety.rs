@@ -15,6 +15,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use url::{Host, Url};
 
 fn is_private_ipv4(address: Ipv4Addr) -> bool {
     address.is_private()
@@ -36,6 +37,20 @@ pub(crate) fn is_private_ip(address: IpAddr) -> bool {
             },
             is_private_ipv4,
         ),
+    }
+}
+
+/// Checks a parsed URL's host. Prefer this over passing `host_str()` to
+/// [`is_disallowed_host`]: `host_str()` keeps IPv6 literals bracketed
+/// (`"[::1]"`), which don't parse as an address, and `reqwest` connects to
+/// IP literals without consulting [`dns_resolver`] — so a string check would
+/// let every private IPv6 literal through.
+pub(crate) fn is_disallowed_url_host(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(domain)) => is_disallowed_host(domain),
+        Some(Host::Ipv4(address)) => is_private_ip(IpAddr::V4(address)),
+        Some(Host::Ipv6(address)) => is_private_ip(IpAddr::V6(address)),
+        None => true,
     }
 }
 

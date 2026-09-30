@@ -129,9 +129,13 @@ describe("command registry", () => {
         for (const [selectedArchived, taskBoardActive] of [[false, false], [true, false], [false, true], [true, true]] as const) {
           for (const mailbox of ["inbox", "drafts"] as const) {
             for (const composerActive of [false, true]) {
-              const context = { ...noopContext(), focusedPane, selectedId: "thread-1", selectedArchived, taskBoardActive, selectedTaskStatus, mailbox, composerActive };
-              for (const ids of [...owners.values()].filter((candidateIds) => candidateIds.length > 1)) {
-                expect(ids.filter((id) => commands.find((command) => command.id === id)?.enabled(context)).length).toBeLessThanOrEqual(1);
+              for (const canNavigateMessages of [false, true]) {
+                for (const selectedTaskHasThread of [false, true]) {
+                  const context = { ...noopContext(), focusedPane, selectedId: "thread-1", selectedArchived, taskBoardActive, selectedTaskStatus, mailbox, composerActive, canNavigateMessages, selectedTaskHasThread };
+                  for (const ids of [...owners.values()].filter((candidateIds) => candidateIds.length > 1)) {
+                    expect(ids.filter((id) => commands.find((command) => command.id === id)?.enabled(context)).length).toBeLessThanOrEqual(1);
+                  }
+                }
               }
             }
           }
@@ -251,14 +255,10 @@ describe("command registry", () => {
     expect(commands.filter((command) => command.keys.includes("q"))).toHaveLength(1);
   });
 
-  it("uses Shift+A for Get Suggestions without replacing reply all", () => {
-    expect(commands.find((command) => command.id === "actions.open")?.keys).toContain("Shift+a");
-    expect(commands.find((command) => command.id === "draft.replyAll")?.keys).toEqual(["a"]);
-  });
-
-  it("binds reply to r and reply all to a", () => {
+  it("binds reply to r and reply all to a, with Shift+A for Get Suggestions", () => {
     expect(commands.find((command) => command.id === "draft.reply")?.keys).toEqual(["r"]);
     expect(commands.find((command) => command.id === "draft.replyAll")?.keys).toEqual(["a"]);
+    expect(commands.find((command) => command.id === "actions.open")?.keys).toContain("Shift+a");
   });
 
   it("sends and marks done with the shifted send shortcut", () => {

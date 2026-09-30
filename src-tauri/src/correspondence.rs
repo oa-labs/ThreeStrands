@@ -1480,10 +1480,11 @@ mod tests {
     }
     #[test]
     fn restart_keeps_drafts_and_never_retries_an_interrupted_send() {
-        let path = std::env::temp_dir().join(format!("dispatch-{}.sqlite", Uuid::new_v4()));
+        let temp = crate::db::tests::TempDbPath::new();
+        let path = &temp.path;
         let id;
         {
-            let db = Database::open(&path).unwrap();
+            let db = Database::open(path).unwrap();
             db.set_compose_identity("you@example.com").unwrap();
             let d = saved(&db);
             id = d.id.clone();
@@ -1500,13 +1501,12 @@ mod tests {
                 .unwrap();
         }
         {
-            let db = Database::open(&path).unwrap();
+            let db = Database::open(path).unwrap();
             assert_eq!(db.draft(&id).unwrap().body, "Saved work ✓");
             let item = db.outbox().unwrap().remove(0);
             assert_eq!(item.state, "uncertain");
             assert!(db.cancel_send(&item.id, true).is_err());
         }
-        let _ = std::fs::remove_file(path);
     }
     #[test]
     fn mime_preserves_unicode_attachments_and_reply_headers() {
@@ -1696,9 +1696,10 @@ mod tests {
         assert!(db.queue(&d.id, d.revision, false, Path::new("/unused")).is_err());
     }
     #[test]
-    fn migrations_preserve_existing_mail_and_are_repeatable() {
+    fn rerunning_migrations_on_a_current_database_keeps_its_threads() {
         let db = database();
         let before = db.list_threads(None).unwrap().len();
+        assert!(before > 0, "the fixture database must hold mail for this check to mean anything");
         crate::schema::migrate(&mut db.connection().unwrap()).unwrap();
         assert_eq!(db.list_threads(None).unwrap().len(), before);
     }
@@ -1845,5 +1846,51 @@ mod tests {
         assert!(build_mime(&d, None, "id", Path::new("/unused")).is_err());
         d.attachments[0].ready = true;
         assert!(build_mime(&d, None, "id", Path::new("/unused")).is_err());
+    }
+    #[test]
+    fn mime_rejects_header_injection_and_unsafe_attachment_ids() {
+        let db = database();
+        let base = saved(&db);
+
+        for subject in ["Hello\r\nBcc: attacker@example.net", "Hello\nBcc: attacker@example.net", "Hello\r"] {
+            let mut d = base.clone();
+            d.subject = subject.into();
+            assert_eq!(
+                build_mime(&d, None, "id", Path::new("/unused")).unwrap_err(),
+                "Subject cannot contain newlines"
+            );
+        }
+
+        let mut d = base.clone();
+        d.reply_id = Some("original@example.com\r\nBcc: attacker@example.net".into());
+        assert_eq!(build_mime(&d, None, "id", Path::new("/unused")).unwrap_err(), "Invalid reply headers");
+
+        let mut d = base.clone();
+        d.reply_id = Some("original@example.com".into());
+        d.references = vec!["ancestor@example.com".into(), "x@example.com\nBcc: attacker@example.net".into()];
+        assert_eq!(build_mime(&d, None, "id", Path::new("/unused")).unwrap_err(), "Invalid reply headers");
+
+        // A path-shaped attachment id must never be joined onto the
+        // attachment root, even when a file exists at the traversal target.
+        let root = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        let inner = root.join("attachments");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(root.join("x"), b"outside the attachment root").unwrap();
+        for id in ["../x", "../../x", "/etc/passwd", "not-a-uuid", ""] {
+            let mut d = base.clone();
+            d.attachments.push(Attachment {
+                id: id.into(),
+                name: "x".into(),
+                size: 1,
+                mime: "text/plain".into(),
+                ready: true,
+                message_id: None,
+                provider_id: None,
+                inline: false,
+                content_id: None,
+            });
+            assert_eq!(build_mime(&d, None, "id", &inner).unwrap_err(), "Invalid attachment ID", "id {id:?}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

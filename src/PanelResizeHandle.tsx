@@ -27,16 +27,17 @@ export function useResizableWidth(config: ResizableWidthConfig) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+  const { storageKey } = config;
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
-        localStorage.setItem(config.storageKey, String(preferredWidth));
+        localStorage.setItem(storageKey, String(preferredWidth));
       } catch {
         // Retain the width for this session if persistence is unavailable.
       }
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [preferredWidth]);
+  }, [storageKey, preferredWidth]);
   // Keep room for the sibling pane without overwriting the user's preferred width
   // when the app window temporarily becomes smaller.
   const maxWidth = Math.max(config.minimumWidth, Math.min(config.maximumWidth, viewportWidth - config.reservedWidth));

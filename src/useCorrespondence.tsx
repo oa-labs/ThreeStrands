@@ -8,9 +8,11 @@ import type { ComposeMode, Draft, OutboxItem } from "./correspondence";
 import type { Account, Snippet } from "./domain";
 import { matchesShortcut } from "./commands";
 import { logBackgroundFailure } from "./errors";
+import { draftWithSelectedQuote } from "./selectedMessageQuote";
 
 type ComposeOptions = {
   availabilityText?: string;
+  selectedQuote?: string;
   replyAssistInstruction?: string;
   followUpTaskId?: string;
 };
@@ -66,9 +68,11 @@ export function useCorrespondence(
       const created = mode === "new"
         ? await mailClient.createDraft(mode)
         : await mailClient.createDraft(mode, messageId ?? sourceId, sourceAccountId);
+      const quoted = options?.selectedQuote ? draftWithSelectedQuote(created, options.selectedQuote) : null;
+      const prepared = quoted ? await mailClient.saveDraft(quoted) : created;
       const d = options?.followUpTaskId
-        ? await mailClient.saveDraft({ ...created, followUpTaskId: options.followUpTaskId })
-        : created;
+        ? await mailClient.saveDraft({ ...prepared, followUpTaskId: options.followUpTaskId })
+        : prepared;
       setActiveAvailabilityText(options?.availabilityText ?? null);
       setActiveReplyAssistInstruction(options?.replyAssistInstruction ?? null);
       setActiveFollowUpTaskId(options?.followUpTaskId ?? null);
@@ -140,8 +144,8 @@ export function useCorrespondence(
   }, [hasActiveDelivery, refresh]);
 
   const compose = useCallback(() => { void start("new"); }, [start]);
-  const reply = useCallback((messageId?: string) => { void start("reply", messageId); }, [start]);
-  const replyAll = useCallback((messageId?: string) => { void start("replyAll", messageId); }, [start]);
+  const reply = useCallback((messageId?: string, selectedQuote?: string) => { void start("reply", messageId, { selectedQuote }); }, [start]);
+  const replyAll = useCallback((messageId?: string, selectedQuote?: string) => { void start("replyAll", messageId, { selectedQuote }); }, [start]);
   const replyWithAvailability = useCallback((text: string, messageId?: string) => {
     void start("reply", messageId, { availabilityText: text });
   }, [start]);

@@ -2751,7 +2751,7 @@ fn serialization_error(error: serde_json::Error) -> DatabaseError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::models::SaveContactRequest;
     use crate::transfer::{TransferAccount, TransferSplitInbox};
@@ -3676,6 +3676,33 @@ mod tests {
     }
 
     #[test]
+    fn a_failing_mutation_rolls_back_the_whole_batch() {
+        let database = database();
+        let starred = |database: &Database, id: &str| {
+            database.list_threads(None).unwrap().into_iter().find(|thread| thread.id == id).unwrap().starred
+        };
+        let queued = |database: &Database| -> i64 {
+            database.connection().unwrap().query_row("SELECT COUNT(*) FROM mutations", [], |row| row.get(0)).unwrap()
+        };
+        let welcome_before = starred(&database, "welcome");
+        let roadmap_before = starred(&database, "roadmap");
+        let queued_before = queued(&database);
+
+        let error = database
+            .mutate_threads(&[
+                ThreadMutation::Star { thread_id: "welcome".into(), value: !welcome_before },
+                ThreadMutation::Star { thread_id: "roadmap".into(), value: !roadmap_before },
+                ThreadMutation::Spam { thread_id: "no-such-thread".into(), value: true },
+            ])
+            .unwrap_err();
+
+        assert!(error.to_string().contains("Thread not found"), "{error}");
+        assert_eq!(starred(&database, "welcome"), welcome_before, "an earlier mutation leaked out of the failed batch");
+        assert_eq!(starred(&database, "roadmap"), roadmap_before, "an earlier mutation leaked out of the failed batch");
+        assert_eq!(queued(&database), queued_before, "a failed batch must not queue provider mutations");
+    }
+
+    #[test]
     fn deleting_a_thread_also_removes_its_search_index_row() {
         let database = database();
         let indexed: i64 = database
@@ -3791,9 +3818,10 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_full_sync_cannot_reuse_the_previous_cursor() {
+    fn clear_cursor_forgets_a_previously_finished_sync_cursor() {
         let database = database();
         database.finish_sync("default", "old-cursor").unwrap();
+        assert_eq!(database.cursor("default").unwrap().as_deref(), Some("old-cursor"));
         database.clear_cursor("default").unwrap();
         assert_eq!(database.cursor("default").unwrap(), None);
     }
@@ -3911,9 +3939,10 @@ mod tests {
     }
 
     #[test]
-    fn removing_an_account_deletes_its_row() {
+    fn removing_the_only_account_leaves_no_accounts_listed() {
         let database = database();
         database.adopt_account("you@gmail.com").unwrap();
+        assert_eq!(database.list_accounts().unwrap().len(), 1);
         database.remove_account("you@gmail.com").unwrap();
         assert!(database.list_accounts().unwrap().is_empty());
     }
@@ -5019,13 +5048,15 @@ mod tests {
     // `open_with_recovery`'s file-level recovery all operate on a path, not
     // an in-memory connection), unlike the rest of this module.
 
-    struct TempDbPath {
+    /// A database path in its own temporary directory. Dropping it removes
+    /// the directory, so SQLite's `-wal`/`-shm` side files go with it.
+    pub(crate) struct TempDbPath {
         dir: PathBuf,
-        path: PathBuf,
+        pub(crate) path: PathBuf,
     }
 
     impl TempDbPath {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let dir = std::env::temp_dir().join(format!("threestrands-db-test-{}", Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             let path = dir.join("test.sqlite");

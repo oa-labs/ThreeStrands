@@ -64,17 +64,44 @@ describe("useCorrespondence", () => {
     await waitFor(() => expect(createDraft).toHaveBeenLastCalledWith("reply", "message-1", "account@example.com"));
   });
 
+  it.each(["reply", "replyAll"] as const)("starts a %s to the selected message with only the selected quote", async (mode) => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    const createDraft = vi.spyOn(mailClient, "createDraft").mockResolvedValue({
+      ...draft, revision: 0, mode, body: "\n\nOn Tuesday, Sender wrote:\n> Full message", bodyHtml: "",
+    });
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: 1 }));
+    const { result } = renderHook(() => useCorrespondence([], "latest", "account@example.com", ...snippetArgs, "thread-1"));
+
+    act(() => result.current.context[mode]("older", "One line\nAnother line"));
+    await waitFor(() => expect(result.current.activeDraft?.revision).toBe(1));
+    expect(createDraft).toHaveBeenCalledWith(mode, "older", "account@example.com");
+    expect(saveDraft.mock.calls[0][0].body).toBe("\n\nOn Tuesday, Sender wrote:\n> One line\n> Another line");
+  });
+
   it("cancels the pending outbox send and refreshes the lists", async () => {
+    // Fake timers keep the one-second outbox poll from firing on its own, so
+    // every listOutbox call below comes from a load or an explicit refresh.
+    vi.useFakeTimers();
+    const flush = () => act(async () => { await vi.advanceTimersByTimeAsync(0); });
     vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
     const listOutbox = vi.spyOn(mailClient, "listOutbox").mockResolvedValue([outbox]);
     const cancelSend = vi.spyOn(mailClient, "cancelSend").mockResolvedValue(draft);
     const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
-    await waitFor(() => expect(result.current.context.canUndoSend).toBe(true));
+    await flush();
+    expect(result.current.context.canUndoSend).toBe(true);
+    expect(listOutbox).toHaveBeenCalledTimes(1);
 
     act(() => result.current.context.undoSend());
-    await waitFor(() => expect(cancelSend).toHaveBeenCalledWith("outbox-1"));
+    await flush();
+    expect(cancelSend).toHaveBeenCalledTimes(1);
+    expect(cancelSend).toHaveBeenCalledWith("outbox-1");
     expect(listOutbox).toHaveBeenCalledTimes(2);
     expect(result.current.activeDraft).toEqual(draft);
+
+    // Control: the poll is what would otherwise have added calls.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(listOutbox).toHaveBeenCalledTimes(3);
   });
 
   it("guards duplicate recovery actions until the first request settles", async () => {

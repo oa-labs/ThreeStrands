@@ -126,6 +126,7 @@ impl std::str::FromStr for EntityType {
             "calendar_selection" => Ok(Self::CalendarSelection),
             "preferences" => Ok(Self::Preferences),
             "retention" => Ok(Self::Retention),
+            "contact" => Ok(Self::Contact),
             _ => Err("Unknown synchronized entity type".to_string()),
         }
     }
@@ -201,6 +202,37 @@ fn display(value: impl std::fmt::Display) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn every_entity_type_parses_back_from_its_stored_name() {
+        // Adding a variant fails to compile here until it is listed below.
+        let listed = |entity_type: EntityType| match entity_type {
+            EntityType::Task
+            | EntityType::Snippet
+            | EntityType::SplitInbox
+            | EntityType::MailAccount
+            | EntityType::CalendarAccount
+            | EntityType::CalendarSelection
+            | EntityType::Preferences
+            | EntityType::Retention
+            | EntityType::Contact => entity_type,
+        };
+        for entity_type in [
+            EntityType::Task,
+            EntityType::Snippet,
+            EntityType::SplitInbox,
+            EntityType::MailAccount,
+            EntityType::CalendarAccount,
+            EntityType::CalendarSelection,
+            EntityType::Preferences,
+            EntityType::Retention,
+            EntityType::Contact,
+        ] {
+            let entity_type = listed(entity_type);
+            assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));
+        }
+        assert!("unknown".parse::<EntityType>().is_err());
+    }
 
     #[test]
     fn validates_task_contract_and_rejects_unknown_status() {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
+import { EMAIL_CSS_LIMITS } from "./emailRenderingPolicy";
 import { extractSafeStyleSheet, sanitizeMessageHtml } from "./SafeMessage";
 
 describe("sanitizeStyleSheet", () => {
@@ -129,12 +130,33 @@ describe("sanitizeStyleSheet", () => {
     const css = sanitizeStyleSheet('[title="</style><script>alert(1)<\\/script>"] { color: red; }');
     expect(css).not.toContain("</style");
     expect(css).not.toContain("<script");
-    if (css) expect(css).toContain("&lt;");
+    expect(css).not.toContain("<");
+    // The rule itself survives; only the raw-text breakout is neutralized.
+    expect(css).toMatch(/^\[data-email-root\] \[title="[^"]*&lt;script>[^"]*"\] \{ color: red; \}$/);
+  });
+
+  describe("media-query width bound (EMAIL_CSS_LIMITS.maxAbsolutePx)", () => {
+    const limit = EMAIL_CSS_LIMITS.maxAbsolutePx;
+
+    it.each(["min-width", "max-width"])("keeps %s below and at the limit and drops it above", (feature) => {
+      for (const width of [limit - 1, limit]) {
+        const css = sanitizeStyleSheet(`@media (${feature}: ${width}px) { .x { color: red; } }`);
+        expect(css).toContain(`@media (${feature}: ${width}px)`);
+        expect(css).toContain("color: red");
+      }
+      expect(sanitizeStyleSheet(`@media (${feature}: ${limit + 1}px) { .x { color: red; } }`)).toBe("");
+    });
+
+    it("drops the whole query when any and-joined or comma-listed width is above the limit", () => {
+      expect(sanitizeStyleSheet(`@media screen and (min-width: ${limit}px) { .x { color: red; } }`)).toContain(`(min-width: ${limit}px)`);
+      expect(sanitizeStyleSheet(`@media screen and (min-width: 100px) and (max-width: ${limit + 1}px) { .x { color: red; } }`)).toBe("");
+      expect(sanitizeStyleSheet(`@media (max-width: 600px), (min-width: ${limit + 1}px) { .x { color: red; } }`)).toBe("");
+    });
   });
 });
 
 describe("extractSafeStyleSheet + sanitizeMessageHtml integration", () => {
-  it("supports the Gmail dark-mode logo-swap pattern end to end", () => {
+  it("supports a stylesheet-driven dark-mode image swap end to end", () => {
     const html = `
       <style>
         .light-logo { display: inline-block; }
@@ -157,6 +179,38 @@ describe("extractSafeStyleSheet + sanitizeMessageHtml integration", () => {
     // <style> tags themselves are still stripped from the body by
     // DOMPurify — extractSafeStyleSheet pulls them from the original html
     // independently and the caller places the result in <head> instead.
+    expect(body).not.toContain("<style");
+  });
+
+  it("supports a stylesheet-driven dark-mode table-row swap scoped to the selected theme", () => {
+    // Structurally different from the image swap: the swapped elements are
+    // table rows carrying text, and the reader-selected theme (not the OS)
+    // decides which branch applies.
+    const html = `
+      <style>
+        .dark-row { display: none; }
+        @media (prefers-color-scheme: dark) {
+          .light-row { display: none; }
+          .dark-row { display: table-row; background-color: #111111; color: #eeeeee; }
+        }
+      </style>
+      <table role="presentation">
+        <tr class="light-row"><td>Light banner</td></tr>
+        <tr class="dark-row"><td>Dark banner</td></tr>
+      </table>
+    `;
+    const dark = extractSafeStyleSheet(html, "dark");
+    expect(dark).toContain('[data-email-root][data-theme="dark"] .dark-row');
+    expect(dark).toContain("display: table-row");
+    expect(dark).not.toContain("prefers-color-scheme");
+
+    const light = extractSafeStyleSheet(html, "light");
+    expect(light).toContain("[data-email-root] .dark-row");
+    expect(light).not.toContain("display: table-row");
+
+    const body = sanitizeMessageHtml(html);
+    expect(body).toContain('class="light-row"');
+    expect(body).toContain('class="dark-row"');
     expect(body).not.toContain("<style");
   });
 

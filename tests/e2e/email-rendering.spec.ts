@@ -12,6 +12,13 @@ test.describe("email rendering fixtures", () => {
           await expect.poll(() => frame.evaluate((element) => (element as HTMLIFrameElement).contentDocument?.body?.textContent?.trim().length ?? 0)).toBeGreaterThan(0);
           const expectedWidth = Math.min(width - 48, 760);
           await expect(frame).toHaveCSS("width", `${expectedWidth}px`);
+          const box = await frame.boundingBox();
+          expect(box?.height ?? 0).toBeGreaterThan(0);
+          const overflow = await frame.evaluate((element) => {
+            const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+            return { scrollWidth: root.scrollWidth, clientWidth: root.clientWidth };
+          });
+          expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth);
           await expect(page).toHaveScreenshot(`email-${fixture}-${theme}-${width}.png`, { animations: "disabled" });
         });
       }

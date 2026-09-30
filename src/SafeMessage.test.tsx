@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   SafeMessage,
@@ -12,7 +12,7 @@ import {
   linkifyText,
   sanitizeMessageHtml,
 } from "./SafeMessage";
-import { EMAIL_IMAGE_LIMITS } from "./emailRenderingPolicy";
+import { EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS } from "./emailRenderingPolicy";
 import { emailRenderingFixtures } from "./test/emailRenderingFixtures";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -289,6 +289,8 @@ describe("SafeMessage", () => {
     expect(frame.srcdoc).toContain("text-decoration-skip-ink: none");
     expect(frame.srcdoc).toContain("script-src 'none'");
     expect(frame.srcdoc).toContain("img-src data:");
+    const body = new DOMParser().parseFromString(frame.srcdoc, "text/html").body;
+    expect(body.querySelectorAll('a[href="https://example.com/paging"]')).toHaveLength(1);
   });
 
   it("safely embeds an installed font family name in the message document", () => {
@@ -325,21 +327,34 @@ describe("SafeMessage", () => {
     window.removeEventListener("keydown", shortcut);
   });
 
-  it("collapses a common HTML reply chain behind an ellipsis until clicked", () => {
-    render(<SafeMessage html={`
-      <div>My current reply</div>
-      <div class="gmail_quote">
-        <div>On Friday, Brian wrote:</div>
-        <blockquote>Earlier message</blockquote>
-      </div>
-    `} />);
+  it.each([
+    {
+      name: "wrapped reply opener and blockquote",
+      html: `
+        <div>My current reply</div>
+        <div>
+          <div>On Friday, A. Sender wrote:</div>
+          <blockquote>Earlier message</blockquote>
+        </div>
+      `,
+      current: "My current reply",
+      quoted: "Earlier message",
+    },
+    {
+      name: "forwarded-message separator and header block",
+      html: emailRenderingFixtures.forwarded,
+      current: "FYI, see below.",
+      quoted: "Original details.",
+    },
+  ])("collapses a $name behind an ellipsis until clicked", ({ html, current, quoted }) => {
+    render(<SafeMessage html={html} />);
 
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
-    expect(frame.srcdoc).toContain("My current reply");
-    expect(frame.srcdoc).not.toContain("Earlier message");
+    expect(frame.srcdoc).toContain(current);
+    expect(frame.srcdoc).not.toContain(quoted);
 
     fireEvent.click(screen.getByRole("button", { name: "Show quoted content" }));
-    expect(frame.srcdoc).toContain("Earlier message");
+    expect(frame.srcdoc).toContain(quoted);
     expect(screen.queryByRole("button", { name: "Show quoted content" })).not.toBeInTheDocument();
   });
 
@@ -347,12 +362,12 @@ describe("SafeMessage", () => {
     const collapsed = collapseQuotedHistoryHtml(`
       <p>Current answer</p>
       <div>------ Original Message ------</div>
-      <div>From Brian</div>
+      <div>From A. Sender</div>
     `);
 
     expect(collapsed).toContain("Current answer");
     expect(collapsed).not.toContain("Original Message");
-    expect(collapsed).not.toContain("From Brian");
+    expect(collapsed).not.toContain("From A. Sender");
   });
 
   it("does not hide a blockquote when it is the only message content", () => {
@@ -438,14 +453,15 @@ it("applyResolvedImages fills in an <img> src and a background-image once resolv
   expect(container.querySelectorAll("img")[1].getAttribute("data-blocked-src")).toBe("https://example.com/still-pending.png");
 });
 
-it("restores a background-image only once resolved, with the same URL validation as <img src>", () => {
-  const blocked = sanitizeMessageHtml('<div style="background-image:url(https://example.com/hero.png)">Hi</div>');
-  expect(blocked).not.toMatch(/style="[^"]*url\(/);
-  expect(blocked).toContain('data-blocked-src="https://example.com/hero.png"');
-
-  const unsafe = sanitizeMessageHtml('<div style="background-image:url(javascript:alert(1))">Hi</div>');
-  expect(unsafe).not.toContain("background-image");
-  expect(unsafe).not.toContain("data-blocked-src");
+it("drops a background-image whose URL fails the same scheme validation as <img src>", () => {
+  // Parking a safe https: background behind data-blocked-src is covered by
+  // the "removes active content" test above; this pins the negative side.
+  for (const url of ["javascript:alert(1)", "file:///etc/passwd"]) {
+    const unsafe = sanitizeMessageHtml(`<div style="background-image:url(${url})">Hi</div>`);
+    expect(unsafe).toContain("Hi");
+    expect(unsafe).not.toContain("background-image");
+    expect(unsafe).not.toContain("data-blocked-src");
+  }
 });
 
 it("preserves line-height, borders, bgcolor, cellpadding/cellspacing, and CSS width/height", () => {
@@ -477,11 +493,13 @@ it("preserves line-height, borders, bgcolor, cellpadding/cellspacing, and CSS wi
   expect(img.style.height).toBe(""); // over the 4096px cap, dropped
 });
 
-it("preserves mix-blend-mode so ESP dark-mode-inversion workarounds keep canceling out", () => {
-  // Customer.io/Klaviyo/HubSpot pair a black background with screen+difference
-  // blend modes to defeat Gmail's automatic color inversion; both modes are a
-  // no-op against black, so without mix-blend-mode the black background has
+it("preserves mix-blend-mode so layered blend compositing keeps canceling out", () => {
+  // Senders can pair a black background with screen+difference blend modes
+  // so that a client-side color inversion cancels itself out; both modes are
+  // a no-op against black, so without mix-blend-mode the black background has
   // nothing to cancel it out and renders as an opaque block over the text.
+  // mix-blend-mode is a cosmetic keyword-only property: it cannot fetch or
+  // position anything, so it must survive on every sender-authored path.
   const sanitized = sanitizeMessageHtml(
     '<div style="background:#000;mix-blend-mode:screen"><div style="background:#000;mix-blend-mode:difference"><p>Hi</p></div></div>',
   );
@@ -490,6 +508,20 @@ it("preserves mix-blend-mode so ESP dark-mode-inversion workarounds keep canceli
   const [outer, inner] = Array.from(container.querySelectorAll("div"));
   expect(outer.style.mixBlendMode).toBe("screen");
   expect(inner.style.mixBlendMode).toBe("difference");
+
+  // Same invariant through a class-targeted stylesheet on table cells.
+  const tableHtml = `
+    <style>
+      .blend-outer { background-color: #000000; mix-blend-mode: screen; }
+      .blend-inner { background-color: #000000; mix-blend-mode: difference; }
+    </style>
+    <table role="presentation"><tr><td class="blend-outer"><table><tr><td class="blend-inner">Hi</td></tr></table></td></tr></table>
+  `;
+  const styleSheet = extractSafeStyleSheet(tableHtml);
+  expect(styleSheet).toMatch(/\[data-email-root\] \.blend-outer \{[^}]*mix-blend-mode: screen/);
+  expect(styleSheet).toMatch(/\[data-email-root\] \.blend-inner \{[^}]*mix-blend-mode: difference/);
+  expect(sanitizeMessageHtml(tableHtml)).toContain('class="blend-inner"');
+  expect(extractSafeStyleSheet("<style>.x { mix-blend-mode: url(https://tracker.invalid/x); }</style>")).toBe("");
 });
 
 it("preserves text color", () => {
@@ -521,7 +553,7 @@ it("decodes entities in the plain text fallback", () => {
 });
 
 it("collapses and reveals quoted history in a plain-text reply", () => {
-  const text = "Current answer\n\n------ Original Message ------\nFrom Brian\nEarlier message";
+  const text = "Current answer\n\n------ Original Message ------\nFrom A. Sender\nEarlier message";
   expect(collapseQuotedHistoryText(text)).toBe("Current answer");
   render(<SafeMessage html="" text={text} />);
 
@@ -535,7 +567,7 @@ it("collapses an 'On ... wrote:' opener whose 'wrote:' hard-wrapped onto the nex
   const text = [
     "Please let me know if there are any other edits needed.",
     "",
-    "On Mon, Sep 21, 2026 at 2:33 PM Brian Anderson <banderson@upwardprojects.com>",
+    "On Mon, Sep 21, 2026 at 2:33 PM A. Sender <sender@example.com>",
     "wrote:",
     "",
     "> Yes, these are examples of several recurring issues.",
@@ -573,6 +605,53 @@ it("linkifies bare URLs, www.-domains, and email addresses without swallowing tr
   expect(container.textContent).toBe(
     "See https://example.com/path, or www.example.org. Contact tom@example.com!",
   );
+});
+
+describe("linkifying bare URLs in HTML bodies", () => {
+  const anchorsIn = (html: string) =>
+    Array.from(new DOMParser().parseFromString(sanitizeMessageHtml(html), "text/html").body.querySelectorAll("a"))
+      .map((anchor) => [anchor.getAttribute("href"), anchor.textContent, anchor.getAttribute("rel")]);
+
+  it.each([
+    {
+      name: "a URL alone in a paragraph",
+      html: "<p>See https://example.com/paging now.</p>",
+      expected: [["https://example.com/paging", "https://example.com/paging", "noopener noreferrer"]],
+    },
+    {
+      name: "several links sharing one table-cell text node",
+      html: "<table><tr><td>Docs: www.example.org, help@example.com or https://example.net/a?b=1</td></tr></table>",
+      expected: [
+        ["https://www.example.org", "www.example.org", "noopener noreferrer"],
+        ["mailto:help@example.com", "help@example.com", "noopener noreferrer"],
+        ["https://example.net/a?b=1", "https://example.net/a?b=1", "noopener noreferrer"],
+      ],
+    },
+  ])("wraps $name in anchors", ({ html, expected }) => {
+    expect(anchorsIn(html)).toEqual(expected);
+  });
+
+  it("links every message the same way, however many were rendered before", () => {
+    const html = "<p>One https://example.com/first</p><p>Two https://example.com/second</p>";
+    const first = anchorsIn(html);
+    expect(first.map(([href]) => href)).toEqual(["https://example.com/first", "https://example.com/second"]);
+    expect(anchorsIn(html)).toEqual(first);
+    // The plain-text path shares the pattern and must not inherit state
+    // left behind by the HTML path.
+    const { container } = render(<>{linkifyText("Plain https://example.com/plain")}</>);
+    expect(container.querySelector("a")?.getAttribute("href")).toBe("https://example.com/plain");
+  });
+
+  it("leaves existing anchors alone and never links a script URL or breaks out of the href", () => {
+    expect(anchorsIn('<p><a href="https://example.com/kept">https://example.com/kept</a></p>')).toEqual([
+      ["https://example.com/kept", "https://example.com/kept", "noopener noreferrer"],
+    ]);
+    expect(anchorsIn("<p>javascript:alert(1)</p>")).toEqual([]);
+    const sanitized = sanitizeMessageHtml("<p>https://example.com/x\"onmouseover=\"alert(1)</p>");
+    const anchor = new DOMParser().parseFromString(sanitized, "text/html").querySelector("a")!;
+    expect(anchor.getAttribute("href")).toBe("https://example.com/x");
+    expect(anchor.getAttributeNames().sort()).toEqual(["href", "rel"]);
+  });
 });
 
 it("renders plain-text URLs as links that open in the OS browser instead of navigating", () => {
@@ -669,57 +748,144 @@ it("loads images automatically through resolveImage when configured", async () =
   });
 });
 
-it("limits concurrent image resolution within one message", async () => {
-  const finishes: Array<() => void> = [];
-  const resolveImage = vi.fn(() => new Promise<string>((resolve) => {
-    finishes.push(() => resolve("data:image/png;base64,x"));
-  }));
-  const html = Array.from(
-    { length: EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage + 1 },
-    (_, index) => `<img src="https://example.com/concurrency-${index}.png">`,
-  ).join("");
+describe("shared image queue", () => {
+  // The global image queue and in-flight map are module-level state. Load a
+  // fresh copy of the module per test so a slot or queue entry left behind
+  // by one test can never change another test's concurrency arithmetic.
+  let IsolatedSafeMessage: typeof SafeMessage;
+  let finishes: Array<() => void>;
 
-  render(<SafeMessage html={html} loadImages resolveImage={resolveImage} />);
-  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage));
+  beforeEach(async () => {
+    vi.resetModules();
+    IsolatedSafeMessage = (await import("./SafeMessage")).SafeMessage;
+    finishes = [];
+  });
 
-  finishes[0]();
-  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage + 1));
-  finishes.forEach((finish) => finish());
-});
+  afterEach(async () => {
+    await settleAll();
+  });
 
-it("limits concurrent image resolution across messages", async () => {
-  const finishes: Array<() => void> = [];
-  const resolveImage = vi.fn(() => new Promise<string>((resolve) => {
+  const deferredResolver = () => vi.fn((_url: string) => new Promise<string>((resolve) => {
     finishes.push(() => resolve("data:image/png;base64,x"));
   }));
 
-  for (let message = 0; message < 3; message += 1) {
-    render(
-      <SafeMessage
-        html={`<img src="https://example.com/global-${message}-a.png"><img src="https://example.com/global-${message}-b.png">`}
-        loadImages
-        resolveImage={resolveImage}
-      />,
-    );
+  // Resolves every started request, repeatedly, until no queued request is
+  // promoted into a newly started one.
+  async function settleAll() {
+    for (;;) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      const batch = finishes.splice(0);
+      if (batch.length === 0) return;
+      await act(async () => { batch.forEach((finish) => finish()); });
+    }
   }
-  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentGlobally));
 
-  finishes[0]();
-  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentGlobally + 1));
-  finishes.forEach((finish) => finish());
-  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(6));
-  finishes[5]();
+  it("limits concurrent image resolution within one message", async () => {
+    const resolveImage = deferredResolver();
+    const html = Array.from(
+      { length: EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage + 1 },
+      (_, index) => `<img src="https://example.com/concurrency-${index}.png">`,
+    ).join("");
+
+    render(<IsolatedSafeMessage html={html} loadImages resolveImage={resolveImage} />);
+    await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage));
+
+    finishes.shift()!();
+    await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage + 1));
+    await settleAll();
+    expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage + 1);
+  });
+
+  it("limits concurrent image resolution across messages", async () => {
+    const resolveImage = deferredResolver();
+
+    for (let message = 0; message < 3; message += 1) {
+      render(
+        <IsolatedSafeMessage
+          html={`<img src="https://example.com/global-${message}-a.png"><img src="https://example.com/global-${message}-b.png">`}
+          loadImages
+          resolveImage={resolveImage}
+        />,
+      );
+    }
+    await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentGlobally));
+
+    finishes.shift()!();
+    await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentGlobally + 1));
+    await settleAll();
+    expect(resolveImage).toHaveBeenCalledTimes(6);
+  });
+
+  it("accepts queued images up to maxPendingGlobally and rejects the next one without requesting it", async () => {
+    const resolveImage = deferredResolver();
+    const limit = EMAIL_IMAGE_LIMITS.maxPendingGlobally;
+    const perMessage = EMAIL_IMAGE_LIMITS.maxConcurrentPerMessage;
+    // Each message holds at most maxConcurrentPerMessage requests in the
+    // global queue, so fill it to one below the limit across many messages.
+    const fillerUrls = Array.from({ length: limit - 1 }, (_, index) => `https://example.com/pending-${index}.png`);
+    for (let offset = 0; offset < fillerUrls.length; offset += perMessage) {
+      const html = fillerUrls.slice(offset, offset + perMessage).map((url) => `<img src="${url}">`).join("");
+      render(<IsolatedSafeMessage html={html} loadImages resolveImage={resolveImage} />);
+    }
+    await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxConcurrentGlobally));
+
+    const atLimitUrl = "https://example.com/pending-at-limit.png";
+    const overLimitUrl = "https://example.com/pending-over-limit.png";
+    const { container: atLimit } = render(
+      <IsolatedSafeMessage html={`<img src="${atLimitUrl}">`} loadImages resolveImage={resolveImage} />,
+    );
+    const { container: overLimit } = render(
+      <IsolatedSafeMessage html={`<img src="${overLimitUrl}">`} loadImages resolveImage={resolveImage} />,
+    );
+
+    await settleAll();
+    expect(resolveImage).toHaveBeenCalledTimes(limit);
+    expect(resolveImage).toHaveBeenCalledWith(atLimitUrl);
+    expect(resolveImage).not.toHaveBeenCalledWith(overLimitUrl);
+    expect(atLimit.querySelector("iframe")!.srcdoc).toContain('src="data:image/png;base64,x"');
+    expect(overLimit.querySelector("iframe")!.srcdoc).toContain(`data-blocked-src="${overLimitUrl}"`);
+  });
+
+  it("caps the number of distinct resources activated by one message", async () => {
+    const resolveImage = vi.fn(async (_url: string) => "data:image/png;base64,x");
+    const urls = Array.from(
+      { length: EMAIL_IMAGE_LIMITS.maxImagesPerMessage + 1 },
+      (_, index) => `https://example.com/fanout-${index}.png`,
+    );
+    const html = urls.map((url) => `<img src="${url}">`).join("");
+
+    render(<IsolatedSafeMessage html={html} loadImages resolveImage={resolveImage} />);
+    await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxImagesPerMessage));
+    // Every activated image resolves immediately, so once only the
+    // over-cap image is still blocked, the per-message workers are done.
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    await waitFor(() => expect(frame.srcdoc.match(/data-blocked-src=/g)).toHaveLength(1));
+    await settleAll();
+    expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxImagesPerMessage);
+    expect(resolveImage).not.toHaveBeenCalledWith(urls[EMAIL_IMAGE_LIMITS.maxImagesPerMessage]);
+    expect(frame.srcdoc).toContain(`data-blocked-src="${urls[EMAIL_IMAGE_LIMITS.maxImagesPerMessage]}"`);
+  });
 });
 
-it("caps the number of distinct resources activated by one message", async () => {
-  const resolveImage = vi.fn(async () => "data:image/png;base64,x");
-  const html = Array.from(
-    { length: EMAIL_IMAGE_LIMITS.maxImagesPerMessage + 1 },
-    (_, index) => `<img src="https://example.com/fanout-${index}.png">`,
-  ).join("");
+describe("frame height limit", () => {
+  const limit = EMAIL_CSS_LIMITS.maxFrameHeightPx;
 
-  render(<SafeMessage html={html} loadImages resolveImage={resolveImage} />);
-  await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxImagesPerMessage));
+  it.each([
+    ["below", limit - 1, limit - 1],
+    ["exactly at", limit, limit],
+    ["above", limit + 1, limit],
+  ])("sizes the frame for content %s maxFrameHeightPx", (_case, contentHeight, expectedHeight) => {
+    render(<SafeMessage html="<p>Tall content</p>" />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    Object.defineProperty(frame.contentDocument!.documentElement, "scrollHeight", {
+      configurable: true,
+      get: () => contentHeight,
+    });
+
+    fireEvent.load(frame);
+
+    expect(frame.style.height).toBe(`${expectedHeight}px`);
+  });
 });
 
 it("accepts data URIs through the message byte budget boundary without clamping", () => {
@@ -831,7 +997,7 @@ it("opens web links separately and rejects unsafe or relative navigation", () =>
 it("keeps cosmetic text/box formatting: border-radius, box-shadow, text-transform, letter-spacing, white-space, word-break, border-spacing", () => {
   const sanitized = sanitizeMessageHtml(`
     <a style="border-radius:24px;box-shadow:1px 2px 4px rgba(153,153,153,0.2);text-decoration:none;" href="https://example.com">Shop now</a>
-    <span style="text-transform:uppercase;letter-spacing:1px;white-space:nowrap;">Amazon</span>
+    <span style="text-transform:uppercase;letter-spacing:1px;white-space:nowrap;">Label</span>
     <table style="border-spacing:0px;"><tr><td style="word-break:break-word;">Text</td></tr></table>
   `);
   expect(sanitized).toContain("border-radius: 24px");
@@ -852,32 +1018,44 @@ it("rejects unsafe values for the new cosmetic properties instead of passing the
   expect(sanitized).not.toContain("url(");
 });
 
-it("keeps font-size (px, em, %) and line-height in em so a sender's heading/label/price hierarchy survives", () => {
-  // Mirrors a QuickBooks invoice email: a 1.5em bold heading, a 12px label,
-  // and a 36px price all lost their sizing entirely when font-size wasn't
-  // in the allowlist, flattening everything to one uniform body size.
-  const sanitized = sanitizeMessageHtml(`
-    <div style="font-size:1.5em;line-height:1.3em;font-weight:bold;">Your invoice is ready!</div>
-    <span style="font-size:12px;">BALANCE DUE</span>
-    <span style="font-size:36px;">$4,770.00</span>
+it("keeps font-size (px, em, rem, %) and relative line-height so a sender's type hierarchy survives", () => {
+  // A heading/label/amount hierarchy (1.5em heading, 12px label, 36px
+  // amount) flattens to one uniform body size if font-size is dropped.
+  const blockLayout = sanitizeMessageHtml(`
+    <div style="font-size:1.5em;line-height:1.3em;font-weight:bold;">Your statement is ready</div>
+    <span style="font-size:12px;">AMOUNT DUE</span>
+    <span style="font-size:36px;">$100.00</span>
   `);
-  expect(sanitized).toContain("font-size: 1.5em");
-  expect(sanitized).toContain("line-height: 1.3em");
-  expect(sanitized).toContain("font-size: 12px");
-  expect(sanitized).toContain("font-size: 36px");
+  expect(blockLayout).toContain("font-size: 1.5em");
+  expect(blockLayout).toContain("line-height: 1.3em");
+  expect(blockLayout).toContain("font-size: 12px");
+  expect(blockLayout).toContain("font-size: 36px");
+
+  // Same invariant in a table layout sized with % and rem units.
+  const container = document.createElement("div");
+  container.innerHTML = sanitizeMessageHtml(`
+    <table role="presentation"><tr>
+      <th style="font-size:125%;line-height:normal">Item</th>
+      <td style="font-size:0.875rem;line-height:1.25rem">Example service</td>
+    </tr></table>
+  `);
+  expect(container.querySelector("th")?.style.fontSize).toBe("125%");
+  expect(container.querySelector("th")?.style.lineHeight).toBe("normal");
+  expect(container.querySelector("td")?.style.fontSize).toBe("0.875rem");
+  expect(container.querySelector("td")?.style.lineHeight).toBe("1.25rem");
 });
 
-it("keeps a local font stack so border-built email buttons retain the sender's text metrics", () => {
-  // This is the shape used by Paylocity's CTA: the cell supplies Arial and
-  // the anchor uses a large line-height plus borders to draw the button.
-  // Replacing Arial with the reader's configured font changes its
-  // ascent/descent and makes the label look vertically off-center.
+it("keeps a sender's local font stack so line-height-centered buttons retain their text metrics", () => {
+  // Border-built button: the cell supplies the font stack and the anchor
+  // uses a large line-height plus borders to draw the button. Replacing the
+  // stack with the reader's configured font changes its ascent/descent and
+  // makes the label look vertically off-center.
   const sanitized = sanitizeMessageHtml(`
     <table><tr>
       <td style="font-family: Arial, Helvetica, sans-serif">
         <a href="https://example.com"
            style="line-height:60px;border-left:20px solid #282b2e;border-right:20px solid #282b2e;border-top:10px solid #282b2e;border-bottom:10px solid #282b2e;background-color:#282b2e;font-size:16px;font-weight:bold;color:#fff;border-radius:20px;text-align:center;text-decoration:none">
-          View Assigned Review(s)
+          Review details
         </a>
       </td>
     </tr></table>
@@ -887,6 +1065,18 @@ it("keeps a local font stack so border-built email buttons retain the sender's t
 
   expect(container.querySelector("td")?.style.fontFamily).toBe("arial, helvetica, sans-serif");
   expect(container.querySelector("a")?.style.lineHeight).toBe("60px");
+
+  // Padding-built button: no table, the stack sits on the anchor itself via
+  // a class-targeted stylesheet, and padding (not borders) draws the shape.
+  const paddedHtml = `
+    <style>.cta { font-family: Verdana, Geneva, sans-serif; line-height: 24px; }</style>
+    <div style="text-align:center"><a class="cta" href="https://example.com/details"
+      style="display:inline-block;padding:12px 24px;background-color:#1a1a1a;color:#ffffff">Open</a></div>
+  `;
+  expect(extractSafeStyleSheet(paddedHtml)).toMatch(/\[data-email-root\] \.cta \{[^}]*font-family: verdana, geneva, sans-serif/);
+  const padded = document.createElement("div");
+  padded.innerHTML = sanitizeMessageHtml(paddedHtml);
+  expect(padded.querySelector("a.cta")?.getAttribute("style")).toContain("padding-top: 12px");
 });
 
 it("rejects functional font-family values", () => {
@@ -902,19 +1092,30 @@ it("rejects an unbounded or unit-less font-size", () => {
   expect(sanitized).not.toContain("font-size");
 });
 
-it("keeps a product thumbnail capped at its intended size instead of growing to fill its container", () => {
-  // Mirrors an actual Amazon Subscribe & Save template: the image itself
-  // carries a responsive `width: 100%` paired with `max-width`/`max-height`
-  // caps meant to keep it thumbnail-sized, plus an HTML width attribute as
-  // a fallback. If max-width/max-height get stripped while width: 100%
-  // survives, the image is left free to grow to the full width of
-  // whatever contains it.
-  const sanitized = sanitizeMessageHtml(`
+it("keeps a responsive image's max-width/max-height caps alongside width: 100%", () => {
+  // A responsive `width: 100%` image relies on max-width/max-height caps to
+  // stay at its intended size. If the caps are stripped while width: 100%
+  // survives, the image grows to the full width of whatever contains it.
+  // Cap on the image itself, with an HTML width attribute as a fallback:
+  const imageCapped = sanitizeMessageHtml(`
     <table role="presentation" width="100%"><tr><td style="width:100%;height:93px;">
       <img style="width:100%;height:auto;max-height:93px;max-width:93px;margin:auto;display:block;"
-           width="165" src="https://m.media-amazon.com/images/I/81nGPnMJHlL.jpg" alt="">
+           width="165" src="https://example.com/thumbnail.jpg" alt="">
     </td></tr></table>
   `);
-  expect(sanitized).toContain("max-width: 93px");
-  expect(sanitized).toContain("max-height: 93px");
+  expect(imageCapped).toContain("width: 100%");
+  expect(imageCapped).toContain("max-width: 93px");
+  expect(imageCapped).toContain("max-height: 93px");
+
+  // Cap on a wrapping block instead, with the image filling it:
+  const container = document.createElement("div");
+  container.innerHTML = sanitizeMessageHtml(`
+    <div style="max-width:120px;max-height:80px;overflow:hidden">
+      <img style="width:100%;height:auto;display:block" src="https://example.com/preview.png" alt="">
+    </div>
+  `);
+  const wrapper = container.querySelector("div")!;
+  expect(wrapper.style.maxWidth).toBe("120px");
+  expect(wrapper.style.maxHeight).toBe("80px");
+  expect(wrapper.querySelector("img")?.style.width).toBe("100%");
 });

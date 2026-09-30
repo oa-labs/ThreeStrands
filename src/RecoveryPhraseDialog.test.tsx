@@ -56,6 +56,38 @@ describe("PendingRecoveryPhraseDialog", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("never writes a phrase word to localStorage or sessionStorage across its lifecycle", () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const phraseWords = new Set(WORDS);
+    // Whole-word tokens, so short words like "act" do not match unrelated keys.
+    const leaked = (text: string) => text.toLowerCase().split(/[^a-z]+/).filter((token) => phraseWords.has(token));
+    const storedText = () => [localStorage, sessionStorage].flatMap((storage) =>
+      Array.from({ length: storage.length }, (_, index) => {
+        const key = storage.key(index) ?? "";
+        return `${key} ${storage.getItem(key) ?? ""}`;
+      })).join("\n");
+    const expectNoLeak = () => {
+      expect(leaked(storedText())).toEqual([]);
+      expect(setItem.mock.calls.flatMap((args) => leaked(args.map(String).join(" ")))).toEqual([]);
+    };
+    try {
+      act(() => dialog.holdRecoveryPhrase(PHRASE));
+      expectNoLeak();
+      const first = render(<dialog.PendingRecoveryPhraseDialog />);
+      expectNoLeak();
+      first.unmount();
+      render(<dialog.PendingRecoveryPhraseDialog />);
+      expectNoLeak();
+      fireEvent.click(screen.getByRole("button", { name: "I’ve written it down" }));
+      expect(dialog.pendingRecoveryPhrase()).toBeNull();
+      expectNoLeak();
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
   it("copies the phrase and reports when the clipboard is unavailable", async () => {
     const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });

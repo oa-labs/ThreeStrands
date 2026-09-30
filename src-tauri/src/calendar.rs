@@ -787,10 +787,10 @@ mod tests {
 
     #[test]
     fn builds_encoded_event_urls_without_empty_segments() {
-        let url = events_url("joelreed@openarc.net").unwrap().unwrap();
+        let url = events_url("person@example.com").unwrap().unwrap();
         assert_eq!(
             url.as_str(),
-            "https://www.googleapis.com/calendar/v3/calendars/joelreed%40openarc.net/events"
+            "https://www.googleapis.com/calendar/v3/calendars/person%40example.com/events"
         );
 
         let group_url = events_url("team#contacts@group.v.calendar.google.com")

@@ -604,14 +604,28 @@ mod tests {
     async fn scan_paginates_and_a_stale_cursor_is_reported_as_unrecognized() {
         let folder = TempFolder::new();
         let transport = open_transport(&folder, "a").await;
-        for index in 0..3 {
+        let total = SCAN_PAGE_SIZE + 3;
+        let mut stored = std::collections::BTreeSet::new();
+        for index in 0..total {
             let bytes = format!("object {index}").into_bytes();
             let cid = Cid::for_bytes(&bytes);
             transport.put_object(&cid, &bytes).await.unwrap();
+            stored.insert(cid.0.clone());
         }
-        let page = transport.scan(None).await.unwrap().unwrap();
-        assert_eq!(page.objects.len(), 3);
-        assert!(page.next_cursor.is_none());
+
+        let first = transport.scan(None).await.unwrap().unwrap();
+        assert_eq!(first.objects.len(), SCAN_PAGE_SIZE);
+        let cursor = first.next_cursor.clone().expect("a full page must hand back a cursor");
+
+        let second = transport.scan(Some(&cursor)).await.unwrap().unwrap();
+        assert_eq!(second.objects.len(), 3);
+        assert!(second.next_cursor.is_none(), "the final page must not hand back a cursor");
+
+        let mut seen = std::collections::BTreeSet::new();
+        for locator in first.objects.iter().chain(&second.objects) {
+            assert!(seen.insert(locator.cid.0.clone()), "an object was enumerated twice");
+        }
+        assert_eq!(seen, stored);
 
         assert_eq!(transport.scan(Some("not-a-number")).await.unwrap(), None);
     }

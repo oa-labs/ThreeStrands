@@ -417,6 +417,10 @@ pub fn import(database: &Database, password: &str) -> Result<Option<ImportResult
         return Ok(None);
     };
     let payload = read_and_decrypt(&path, password)?;
+    apply_import(database, payload).map(Some)
+}
+
+fn apply_import(database: &Database, payload: TransferPayload) -> Result<ImportResult, String> {
     payload.validate()?;
     database.import_transfer_data(
         &payload.accounts,
@@ -425,13 +429,13 @@ pub fn import(database: &Database, password: &str) -> Result<Option<ImportResult
         &payload.contacts,
         payload.retention_days,
     )?;
-    Ok(Some(ImportResult {
+    Ok(ImportResult {
         preferences: payload.preferences,
         account_count: payload.accounts.len(),
         split_inbox_count: payload.split_inboxes.len(),
         snippet_count: payload.snippets.len(),
         contact_count: payload.contacts.len(),
-    }))
+    })
 }
 
 fn read_and_decrypt(path: &Path, password: &str) -> Result<TransferPayload, String> {
@@ -450,10 +454,19 @@ fn encrypt(payload: &TransferPayload, password: &str) -> Result<Vec<u8>, String>
     let mut nonce = [0_u8; NONCE_LEN];
     OsRng.fill_bytes(&mut salt);
     OsRng.fill_bytes(&mut nonce);
-    let key = derive_key(password, &salt)?;
+    seal(&plaintext, password, &salt, &nonce)
+}
+
+fn seal(
+    plaintext: &[u8],
+    password: &str,
+    salt: &[u8; SALT_LEN],
+    nonce: &[u8; NONCE_LEN],
+) -> Result<Vec<u8>, String> {
+    let key = derive_key(password, salt)?;
     let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(display)?;
     let ciphertext = cipher
-        .encrypt(XNonce::from_slice(&nonce), plaintext.as_ref())
+        .encrypt(XNonce::from_slice(nonce), plaintext)
         .map_err(|_| "Could not encrypt the settings export".to_string())?;
     serde_json::to_vec_pretty(&EncryptedEnvelope {
         format: FORMAT.to_string(),
@@ -726,13 +739,14 @@ mod tests {
 
     #[test]
     fn decrypt_accepts_legacy_ai_classify_flag() {
-        let mut legacy_payload = payload();
-        legacy_payload.preferences.ai_features.classify = true;
-        let encoded = encrypt(&legacy_payload, "correct horse").unwrap();
-
-        let decoded = decrypt(&encoded, "correct horse").unwrap();
-
+        // The original version 1 exporter required and emitted `classify`;
+        // the frozen fixture carries it set to true.
+        let decoded = decrypt(fixtures::V1_INITIAL, fixtures::PASSWORD).unwrap();
         assert!(decoded.preferences.ai_features.classify);
+
+        // Still emitted, so a re-export keeps the flag for older builds.
+        let round_trip = decrypt(&encrypt(&decoded, "correct horse").unwrap(), "correct horse").unwrap();
+        assert!(round_trip.preferences.ai_features.classify);
     }
 
     #[test]
@@ -849,5 +863,499 @@ mod tests {
         serialized["preferences"]["aiFeatures"]["unexpected"] = serde_json::json!(true);
 
         assert!(serde_json::from_value::<TransferPayload>(serialized).is_err());
+    }
+
+    /// Frozen encrypted exports, one per shape each format version actually
+    /// shipped, reconstructed from the historical `TransferPayload` structs
+    /// (serde emits fields in declaration order) and sealed with the
+    /// unchanged argon2id + XChaCha20-Poly1305 envelope:
+    ///
+    /// - `v1-initial`: first exporter (a67a66f). No account `provider`, no
+    ///   Split Inbox `accountId`, required `classify` flag.
+    /// - `v1-final`: last version 1 exporter (d7fd17b). Adds account
+    ///   `provider` and Split Inbox `accountId`.
+    /// - `v2-initial`: first version 2 exporter (e6bc2dc). Adds
+    ///   `availabilityPreferences`.
+    /// - `v2-final`: last version 2 exporter (56d1439). Adds `accent`,
+    ///   `actionExtraction`, and `snippets`.
+    /// - `v3-initial`: first version 3 exporter (29705ca). Adds `contacts`
+    ///   and `contactEnrichment`.
+    /// - `v3-current`: what this build exports. The only fixture with a
+    ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
+    ///
+    /// Every file except `v3-current` is frozen: never regenerate or edit
+    /// it, because it stands in for a file a user already has on disk.
+    mod fixtures {
+        pub(super) const PASSWORD: &str = "correct horse battery staple";
+        pub(super) const V1_INITIAL: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v1-initial.dispatch-settings");
+        pub(super) const V1_FINAL: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v1-final.dispatch-settings");
+        pub(super) const V2_INITIAL: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v2-initial.dispatch-settings");
+        pub(super) const V2_FINAL: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v2-final.dispatch-settings");
+        pub(super) const V3_INITIAL: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v3-initial.dispatch-settings");
+        pub(super) const V3_CURRENT: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v3-current.dispatch-settings");
+        pub(super) const V3_CURRENT_PATH: &str = "tests/fixtures/settings-transfer/v3-current.dispatch-settings";
+        pub(super) const V3_CURRENT_SALT: [u8; super::SALT_LEN] = [0x60; super::SALT_LEN];
+        pub(super) const V3_CURRENT_NONCE: [u8; super::NONCE_LEN] = [0xe0; super::NONCE_LEN];
+        /// The webview's `readExportablePreferences()` shape, shared with
+        /// `src/userPreferences.test.ts`.
+        pub(super) const WEBVIEW_PREFERENCES: &str =
+            include_str!("../tests/fixtures/settings-transfer/webview-preferences.json");
+    }
+
+    fn envelope_version(bytes: &[u8]) -> u32 {
+        serde_json::from_slice::<EncryptedEnvelope>(bytes).unwrap().version
+    }
+
+    fn import_fixture(bytes: &[u8]) -> (Database, ImportResult) {
+        let database = Database::open_memory();
+        let payload = decrypt(bytes, fixtures::PASSWORD).unwrap();
+        let result = apply_import(&database, payload).unwrap();
+        (database, result)
+    }
+
+    fn accounts_of(database: &Database) -> Vec<(String, Option<String>, String, String, i64)> {
+        database
+            .list_accounts()
+            .unwrap()
+            .into_iter()
+            .map(|a| (a.email, a.display_name, a.color, a.provider, a.sort_order))
+            .collect()
+    }
+
+    fn split_owners_of(database: &Database) -> Vec<(String, String, String, String)> {
+        database
+            .list_split_inboxes()
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.id, s.match_kind, s.match_value, s.account_id))
+            .collect()
+    }
+
+    fn assert_default_availability(preferences: &TransferPreferences) {
+        let availability = &preferences.availability_preferences;
+        assert_eq!(availability.time_zone, "UTC");
+        assert_eq!(availability.default_duration_minutes, 30);
+        assert_eq!(availability.slot_increment_minutes, 15);
+        let weekdays: Vec<u8> = availability.working_windows.iter().map(|w| w.weekday).collect();
+        assert_eq!(weekdays, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn frozen_v1_initial_export_imports_with_migrated_defaults() {
+        assert_eq!(envelope_version(fixtures::V1_INITIAL), 1);
+        let (database, result) = import_fixture(fixtures::V1_INITIAL);
+
+        let preferences = &result.preferences;
+        assert_eq!(preferences.theme, "dark");
+        assert_eq!(preferences.accent, "purple");
+        assert_eq!(preferences.font_scale, 110);
+        assert_eq!(preferences.font_family, "Georgia");
+        assert_eq!(preferences.auto_read_delay_seconds, 3);
+        assert!(preferences.load_remote_images);
+        assert_eq!(preferences.selected_account_id.as_deref(), Some("legacy@example.com"));
+        assert!(matches!(preferences.ai_provider, AiProvider::Anthropic));
+        assert_eq!(preferences.ai_model, "example-model-v1");
+        assert_eq!(preferences.ai_endpoint, "");
+        let features = &preferences.ai_features;
+        assert!(features.draft_assist && features.summarize && features.classify);
+        assert!(!features.action_extraction && !features.contact_enrichment);
+        assert!(!features.proactive_briefs && !features.proactive_known_senders_only && !features.thread_chat);
+        assert_default_availability(preferences);
+
+        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (2, 1, 0, 0));
+        assert_eq!(
+            accounts_of(&database),
+            vec![
+                ("legacy@example.com".into(), Some("Legacy Person".into()), "#4285F4".into(), "gmail".into(), 0),
+                ("second@example.org".into(), None, "#0F9D58".into(), "gmail".into(), 1),
+            ]
+        );
+        assert!(database.list_accounts().unwrap().iter().all(|a| a.status == "needs_reauth"));
+        // Version 1 Split Inboxes were global; the owner migrates to the first account.
+        assert_eq!(
+            split_owners_of(&database),
+            vec![("split-v1".into(), "domain".into(), "shop.example.com".into(), "legacy@example.com".into())]
+        );
+        assert!(database.list_snippets().unwrap().is_empty());
+        assert!(database.list_saved_contact_profiles().unwrap().is_empty());
+        assert_eq!(database.retention_days().unwrap(), Some(90));
+    }
+
+    #[test]
+    fn frozen_v1_final_export_keeps_explicit_split_inbox_owners() {
+        assert_eq!(envelope_version(fixtures::V1_FINAL), 1);
+        let (database, result) = import_fixture(fixtures::V1_FINAL);
+
+        let preferences = &result.preferences;
+        assert_eq!(preferences.theme, "light");
+        assert_eq!(preferences.accent, "purple");
+        assert_eq!(preferences.font_scale, 95);
+        assert_eq!(preferences.auto_read_delay_seconds, 0);
+        assert!(!preferences.load_remote_images);
+        assert_eq!(preferences.selected_account_id, None);
+        assert!(matches!(preferences.ai_provider, AiProvider::OpenRouter));
+        assert_eq!(preferences.ai_model, "example/model");
+        assert_eq!(preferences.ai_endpoint, "https://api.example.test/v1");
+        assert!(!preferences.ai_features.draft_assist && preferences.ai_features.summarize);
+        assert!(!preferences.ai_features.classify);
+        assert_default_availability(preferences);
+
+        assert_eq!(
+            accounts_of(&database),
+            vec![
+                ("owner@example.com".into(), Some("Owner".into()), "#DB4437".into(), "gmail".into(), 0),
+                ("work@example.org".into(), Some("Work".into()), "#F4B400".into(), "gmail".into(), 1),
+            ]
+        );
+        assert_eq!(
+            split_owners_of(&database),
+            vec![
+                ("split-owned".into(), "label".into(), "Team".into(), "work@example.org".into()),
+                ("split-unowned".into(), "pattern".into(), "newsletter".into(), "owner@example.com".into()),
+            ]
+        );
+        assert_eq!(database.retention_days().unwrap(), None);
+    }
+
+    #[test]
+    fn frozen_v2_initial_export_imports_availability_without_later_fields() {
+        assert_eq!(envelope_version(fixtures::V2_INITIAL), 2);
+        let (database, result) = import_fixture(fixtures::V2_INITIAL);
+
+        let preferences = &result.preferences;
+        assert_eq!(preferences.theme, "system");
+        assert_eq!(preferences.accent, "purple");
+        assert_eq!(preferences.font_family, "Inter");
+        assert!(matches!(preferences.ai_provider, AiProvider::OpenAi));
+        assert!(preferences.ai_features.draft_assist);
+        assert!(!preferences.ai_features.action_extraction);
+        let availability = &preferences.availability_preferences;
+        assert_eq!(availability.time_zone, "America/New_York");
+        assert_eq!(availability.default_duration_minutes, 45);
+        assert_eq!(availability.slot_increment_minutes, 15);
+        let windows: Vec<(u8, &str, &str)> = availability
+            .working_windows
+            .iter()
+            .map(|w| (w.weekday, w.start.as_str(), w.end.as_str()))
+            .collect();
+        assert_eq!(windows, vec![(1, "08:30", "16:30"), (3, "10:00", "18:00")]);
+
+        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (1, 1, 0, 0));
+        assert_eq!(
+            split_owners_of(&database),
+            vec![("split-v2".into(), "domain".into(), "calendar.example.com".into(), "planner@example.com".into())]
+        );
+        assert_eq!(database.retention_days().unwrap(), Some(30));
+    }
+
+    #[test]
+    fn frozen_v2_final_export_imports_accent_actions_and_snippets() {
+        assert_eq!(envelope_version(fixtures::V2_FINAL), 2);
+        let (database, result) = import_fixture(fixtures::V2_FINAL);
+
+        let preferences = &result.preferences;
+        assert_eq!(preferences.accent, "teal");
+        assert!(matches!(preferences.ai_provider, AiProvider::Fireworks));
+        assert_eq!(preferences.ai_model, "accounts/example/models/demo");
+        assert!(preferences.ai_features.action_extraction);
+        assert!(!preferences.ai_features.contact_enrichment);
+        assert_eq!(preferences.availability_preferences.time_zone, "Europe/Berlin");
+        assert_eq!(preferences.availability_preferences.working_windows.len(), 2);
+        assert_eq!(preferences.availability_preferences.default_duration_minutes, 60);
+
+        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (1, 0, 1, 0));
+        let snippets = database.list_snippets().unwrap();
+        assert_eq!(snippets.len(), 1);
+        assert_eq!(snippets[0].id, "snippet-v2");
+        assert_eq!(snippets[0].name, "Scheduling");
+        assert_eq!(
+            snippets[0].body,
+            "<p>Here is my calendar:</p>\n<p>https://calendar.example.com/writer</p>"
+        );
+        assert_eq!(snippets[0].created_at, "2026-09-21T15:00:00+00:00");
+        assert!(database.list_saved_contact_profiles().unwrap().is_empty());
+        assert_eq!(database.retention_days().unwrap(), Some(365));
+    }
+
+    #[test]
+    fn frozen_v3_initial_export_imports_contacts_without_proactive_or_chat_flags() {
+        assert_eq!(envelope_version(fixtures::V3_INITIAL), 3);
+        let (database, result) = import_fixture(fixtures::V3_INITIAL);
+
+        let preferences = &result.preferences;
+        assert_eq!(preferences.accent, "graphite");
+        assert!(matches!(preferences.ai_provider, AiProvider::Custom));
+        assert_eq!(preferences.ai_endpoint, "https://llm.example.test/v1");
+        let features = &preferences.ai_features;
+        assert!(features.contact_enrichment && features.summarize);
+        assert!(!features.proactive_briefs && !features.proactive_known_senders_only && !features.thread_chat);
+
+        assert_eq!(result.contact_count, 1);
+        let contacts = database.list_saved_contact_profiles().unwrap();
+        assert_eq!(contacts.len(), 1);
+        let contact = &contacts[0];
+        assert_eq!(contact.id, "contact-v3");
+        assert_eq!(contact.display_name.as_deref(), Some("Ada Example"));
+        assert_eq!(contact.role.as_deref(), Some("Engineer"));
+        assert_eq!(contact.company.as_deref(), Some("Example Co"));
+        assert_eq!(contact.location.as_deref(), Some("Remote"));
+        assert_eq!(contact.bio.as_deref(), Some("Writes compilers."));
+        assert_eq!(contact.notes.as_deref(), Some("Met at the conference."));
+        assert_eq!(contact.links, vec!["https://ada.example.com".to_string()]);
+        assert_eq!(contact.photo_data, None);
+        assert!(contact.favorite);
+        let mut addresses = contact.addresses.clone();
+        addresses.sort();
+        assert_eq!(addresses, vec!["ada.work@example.org".to_string(), "ada@example.com".to_string()]);
+        assert_eq!(
+            accounts_of(&database),
+            vec![("contacts@example.com".into(), None, "#0F9D58".into(), "gmail".into(), 0)]
+        );
+        assert_eq!(database.retention_days().unwrap(), None);
+    }
+
+    /// The payload behind `v3-current`: every field this build knows about,
+    /// set away from its default so a dropped or renamed field is visible.
+    fn current_fixture_payload() -> TransferPayload {
+        TransferPayload {
+            version: VERSION,
+            exported_at: "2026-09-29T12:00:00+00:00".to_string(),
+            preferences: TransferPreferences {
+                theme: "dark".to_string(),
+                accent: "amber".to_string(),
+                font_scale: 125,
+                font_family: "Iowan Old Style".to_string(),
+                auto_read_delay_seconds: 15,
+                load_remote_images: true,
+                selected_account_id: Some("current@example.com".to_string()),
+                ai_provider: AiProvider::Anthropic,
+                ai_model: "example-model-v3".to_string(),
+                ai_endpoint: String::new(),
+                ai_features: AiFeaturePreferences {
+                    draft_assist: true,
+                    summarize: true,
+                    action_extraction: true,
+                    contact_enrichment: true,
+                    classify: false,
+                    proactive_briefs: true,
+                    proactive_known_senders_only: true,
+                    thread_chat: true,
+                },
+                availability_preferences: AvailabilityPreferences {
+                    time_zone: "Asia/Tokyo".to_string(),
+                    working_windows: vec![crate::models::AvailabilityWindow {
+                        weekday: 0,
+                        start: "07:00".to_string(),
+                        end: "11:00".to_string(),
+                    }],
+                    default_duration_minutes: 25,
+                    slot_increment_minutes: 5,
+                },
+            },
+            accounts: vec![
+                TransferAccount {
+                    email: "current@example.com".to_string(),
+                    display_name: Some("Current".to_string()),
+                    color: "#123ABC".to_string(),
+                    provider: "gmail".to_string(),
+                    sort_order: 0,
+                },
+                TransferAccount {
+                    email: "other@example.net".to_string(),
+                    display_name: None,
+                    color: "#ABCDEF".to_string(),
+                    provider: "gmail".to_string(),
+                    sort_order: 1,
+                },
+            ],
+            split_inboxes: vec![TransferSplitInbox {
+                id: "split-current".to_string(),
+                name: "Builds".to_string(),
+                match_kind: "pattern".to_string(),
+                match_value: "build failed".to_string(),
+                sort_order: 0,
+                created_at: "2026-09-28T08:00:00+00:00".to_string(),
+                account_id: "other@example.net".to_string(),
+            }],
+            snippets: vec![TransferSnippet {
+                id: "snippet-current".to_string(),
+                name: "Thanks".to_string(),
+                body: "<p>Thanks!</p>".to_string(),
+                created_at: "2026-09-27T08:00:00+00:00".to_string(),
+            }],
+            contacts: vec![TransferContact {
+                id: "contact-current".to_string(),
+                display_name: Some("Grace Example".to_string()),
+                role: None,
+                company: Some("Example Navy".to_string()),
+                location: None,
+                bio: None,
+                notes: Some("Prefers email.".to_string()),
+                links: vec![],
+                photo_data: None,
+                favorite: false,
+                addresses: vec!["grace@example.com".to_string()],
+            }],
+            retention_days: Some(365),
+        }
+    }
+
+    fn seal_current_fixture() -> Vec<u8> {
+        let plaintext = serde_json::to_vec(&current_fixture_payload()).unwrap();
+        seal(&plaintext, fixtures::PASSWORD, &fixtures::V3_CURRENT_SALT, &fixtures::V3_CURRENT_NONCE).unwrap()
+    }
+
+    #[test]
+    fn frozen_v3_current_export_imports_every_current_field() {
+        assert_eq!(envelope_version(fixtures::V3_CURRENT), VERSION);
+        let (database, result) = import_fixture(fixtures::V3_CURRENT);
+
+        let preferences = &result.preferences;
+        assert_eq!(preferences.accent, "amber");
+        assert_eq!(preferences.font_family, "Iowan Old Style");
+        assert_eq!(preferences.auto_read_delay_seconds, 15);
+        let features = &preferences.ai_features;
+        assert!(features.draft_assist && features.summarize && features.action_extraction);
+        assert!(features.contact_enrichment && features.proactive_briefs);
+        assert!(features.proactive_known_senders_only && features.thread_chat);
+        assert!(!features.classify);
+        assert_eq!(preferences.availability_preferences.time_zone, "Asia/Tokyo");
+        assert_eq!(preferences.availability_preferences.slot_increment_minutes, 5);
+
+        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (2, 1, 1, 1));
+        assert_eq!(
+            accounts_of(&database),
+            vec![
+                ("current@example.com".into(), Some("Current".into()), "#123ABC".into(), "gmail".into(), 0),
+                ("other@example.net".into(), None, "#ABCDEF".into(), "gmail".into(), 1),
+            ]
+        );
+        assert_eq!(
+            split_owners_of(&database),
+            vec![("split-current".into(), "pattern".into(), "build failed".into(), "other@example.net".into())]
+        );
+        assert_eq!(database.list_snippets().unwrap()[0].body, "<p>Thanks!</p>");
+        let contacts = database.list_saved_contact_profiles().unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(contacts[0].company.as_deref(), Some("Example Navy"));
+        assert_eq!(contacts[0].addresses, vec!["grace@example.com".to_string()]);
+        assert_eq!(database.retention_days().unwrap(), Some(365));
+    }
+
+    /// Fails whenever this build's export bytes drift from the checked-in
+    /// current fixture. That is intended: any change to the export shape
+    /// must be deliberate. Before regenerating, copy the existing
+    /// `v3-current.dispatch-settings` to a new frozen file (for example
+    /// `v3-<release>.dispatch-settings`) with its own import test, so the
+    /// preceding schema keeps regression coverage as AGENTS.md requires.
+    #[test]
+    fn this_build_still_exports_the_current_fixture_bytes() {
+        assert!(
+            seal_current_fixture() == fixtures::V3_CURRENT,
+            "the export shape changed; freeze the old v3-current fixture, then run \
+             `cargo test --lib transfer::tests::regenerate_current_settings_transfer_fixture -- --ignored`"
+        );
+    }
+
+    /// Regenerates only `v3-current`. Run deliberately, after freezing the
+    /// previous file (see `this_build_still_exports_the_current_fixture_bytes`):
+    /// `cargo test --lib transfer::tests::regenerate_current_settings_transfer_fixture -- --ignored`.
+    /// The older fixtures have no regenerate helper by design.
+    #[test]
+    #[ignore]
+    fn regenerate_current_settings_transfer_fixture() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixtures::V3_CURRENT_PATH);
+        std::fs::write(path, seal_current_fixture()).unwrap();
+    }
+
+    #[test]
+    fn frozen_fixtures_reject_the_wrong_password() {
+        for fixture in [fixtures::V1_INITIAL, fixtures::V2_FINAL, fixtures::V3_CURRENT] {
+            assert_eq!(
+                decrypt(fixture, "not the fixture password").unwrap_err(),
+                "The password is incorrect or the settings export is damaged"
+            );
+        }
+    }
+
+    #[test]
+    fn an_envelope_from_a_future_format_version_is_rejected() {
+        let mut envelope: serde_json::Value = serde_json::from_slice(fixtures::V3_CURRENT).unwrap();
+        envelope["version"] = serde_json::json!(VERSION + 1);
+        let future = serde_json::to_vec_pretty(&envelope).unwrap();
+        assert_eq!(
+            decrypt(&future, fixtures::PASSWORD).unwrap_err(),
+            "This ThreeStrands settings export uses an unsupported format"
+        );
+
+        envelope["version"] = serde_json::json!(0);
+        assert_eq!(
+            decrypt(&serde_json::to_vec(&envelope).unwrap(), fixtures::PASSWORD).unwrap_err(),
+            "This ThreeStrands settings export uses an unsupported format"
+        );
+    }
+
+    #[test]
+    fn a_future_payload_version_inside_a_current_envelope_is_rejected_on_import() {
+        let mut plaintext = serde_json::to_value(current_fixture_payload()).unwrap();
+        plaintext["version"] = serde_json::json!(VERSION + 1);
+        let sealed = seal(
+            &serde_json::to_vec(&plaintext).unwrap(),
+            fixtures::PASSWORD,
+            &fixtures::V3_CURRENT_SALT,
+            &fixtures::V3_CURRENT_NONCE,
+        )
+        .unwrap();
+        let payload = decrypt(&sealed, fixtures::PASSWORD).unwrap();
+        let database = Database::open_memory();
+        assert_eq!(
+            apply_import(&database, payload).unwrap_err(),
+            format!("Unsupported transfer version {}", VERSION + 1)
+        );
+        assert!(database.list_accounts().unwrap().is_empty(), "a rejected import must not write");
+    }
+
+    /// Keys of a JSON object tree as dotted paths, e.g. `aiFeatures.summarize`.
+    /// Arrays contribute the keys of their first element under `path[]`.
+    fn key_paths(value: &serde_json::Value, prefix: &str, out: &mut std::collections::BTreeSet<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    let path = if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
+                    out.insert(path.clone());
+                    key_paths(child, &path, out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                if let Some(first) = items.first() {
+                    key_paths(first, &format!("{prefix}[]"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn webview_preferences_fixture_matches_the_native_transfer_preferences() {
+        let fixture: serde_json::Value = serde_json::from_str(fixtures::WEBVIEW_PREFERENCES).unwrap();
+        // deny_unknown_fields: the webview may not send a key the native
+        // side would reject, and every required native key must be present.
+        let preferences: TransferPreferences = serde_json::from_value(fixture.clone()).unwrap();
+        preferences.validate().unwrap();
+
+        let mut sent = std::collections::BTreeSet::new();
+        key_paths(&fixture, "", &mut sent);
+        let mut native = std::collections::BTreeSet::new();
+        key_paths(&serde_json::to_value(&preferences).unwrap(), "", &mut native);
+        // `classify` is the one native-only key: kept for version 1
+        // compatibility, no longer read or written by the webview.
+        native.remove("aiFeatures.classify");
+        assert_eq!(sent, native, "a native transfer preference is missing from the webview export (or vice versa)");
     }
 }

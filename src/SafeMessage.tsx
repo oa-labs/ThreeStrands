@@ -8,7 +8,7 @@ import {
   safeColor,
   safeImageSrc,
   safeStyleProperties,
-  EMAIL_CSS_LIMITS,
+  emailFrameHeight,
   EMAIL_IMAGE_LIMITS,
   sanitizeCssDeclaration,
   sanitizeHtmlDimension,
@@ -239,8 +239,10 @@ function linkifyTextNodes(root: Node): void {
   });
   const targets: Text[] = [];
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    LINKIFY_PATTERN.lastIndex = 0;
-    if (LINKIFY_PATTERN.test(node.textContent ?? "")) targets.push(node as Text);
+    // search(), not test(): test() on this shared global pattern leaves
+    // lastIndex past the match, and matchAll() — here and in every other
+    // caller — starts from that copied lastIndex and skips the link.
+    if ((node.textContent ?? "").search(LINKIFY_PATTERN) !== -1) targets.push(node as Text);
   }
   targets.forEach((textNode) => {
     const text = textNode.textContent ?? "";
@@ -760,7 +762,7 @@ export function SafeMessage({
 
     const resize = () => {
       const height = frameDoc.documentElement?.scrollHeight ?? frameDoc.body?.scrollHeight ?? 0;
-      const nextHeight = Math.min(height, EMAIL_CSS_LIMITS.maxFrameHeightPx);
+      const nextHeight = emailFrameHeight(height);
       setFrameHeight((previous) => previous === nextHeight ? previous : nextHeight);
     };
     resize();

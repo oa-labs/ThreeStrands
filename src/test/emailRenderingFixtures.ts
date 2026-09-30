@@ -44,12 +44,12 @@ export const emailRenderingFixtures = {
   `,
   replyWrappedWroteLineBreak: `
     <p>Here is my answer.</p>
-    <p>On Mon, Sep 21, 2026 at 2:33 PM Brian Anderson &lt;banderson@upwardprojects.com&gt;<br>wrote:</p>
+    <p>On Mon, Sep 21, 2026 at 2:33 PM A. Sender &lt;sender@example.com&gt;<br>wrote:</p>
     <blockquote><p>Earlier message content.</p></blockquote>
   `,
   replyWrappedWroteParagraphs: `
     <p>Here is my answer.</p>
-    <p>On Mon, Sep 21, 2026 at 2:33 PM Brian Anderson &lt;banderson@upwardprojects.com&gt;</p>
+    <p>On Mon, Sep 21, 2026 at 2:33 PM A. Sender &lt;sender@example.com&gt;</p>
     <p>wrote:</p>
     <blockquote><p>Earlier message content.</p></blockquote>
   `,

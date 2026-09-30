@@ -94,21 +94,17 @@ describe("conversationLabelGroups", () => {
     ]);
   });
 
-  it("drops an unresolved opaque user-label id instead of flashing it", () => {
-    const result = conversationLabelGroups(["INBOX", "Label_99"], catalog);
-    expect(result.systemLabelNames).toEqual(["Inbox"]);
-    expect(result.userLabels).toEqual([]);
+  it("drops an unresolved opaque user-label id instead of flashing it, matching a thread with no user labels", () => {
+    for (const labelIds of [["INBOX", "Label_99"], ["INBOX"]]) {
+      const result = conversationLabelGroups(labelIds, catalog);
+      expect(result.systemLabelNames).toEqual(["Inbox"]);
+      expect(result.userLabels).toEqual([]);
+    }
   });
 
   it("falls back to the raw id for an unresolved non-opaque id", () => {
     const result = conversationLabelGroups(["some-custom-id"], catalog);
     expect(result.systemLabelNames).toEqual(["some-custom-id"]);
-    expect(result.userLabels).toEqual([]);
-  });
-
-  it("treats a thread with no user labels as having an empty badge group", () => {
-    const result = conversationLabelGroups(["INBOX"], catalog);
-    expect(result.systemLabelNames).toEqual(["Inbox"]);
     expect(result.userLabels).toEqual([]);
   });
 

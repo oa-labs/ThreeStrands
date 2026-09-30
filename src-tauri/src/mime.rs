@@ -1008,4 +1008,57 @@ mod tests {
             Some("https://list.example/one")
         );
     }
+
+    /// An authenticated one-click message whose `List-Unsubscribe` is
+    /// `list_unsubscribe` and whose DKIM verdict is `dkim`.
+    fn unsubscribe_of(list_unsubscribe: &str, dkim: &str) -> Option<UnsubscribeMetadata> {
+        let mut message = RawMessage {
+            id: "m".into(),
+            thread_id: "t".into(),
+            label_ids: vec![],
+            snippet: String::new(),
+            internal_date: String::new(),
+            payload: part("text/plain", "ok"),
+        };
+        message.payload.headers = vec![
+            MimeHeader { name: "List-Unsubscribe".into(), value: list_unsubscribe.into() },
+            MimeHeader { name: "List-Unsubscribe-Post".into(), value: "List-Unsubscribe=One-Click".into() },
+            MimeHeader { name: "Authentication-Results".into(), value: format!("mx.example; {dkim} header.i=@example") },
+        ];
+        normalize(&message).unwrap().unsubscribe
+    }
+
+    #[test]
+    fn never_offers_a_plain_http_unsubscribe_url() {
+        assert!(unsubscribe_of("<http://list.example/one>", "dkim=pass").is_none());
+        // Parsing stops at the first unsupported scheme rather than
+        // skipping past it to later entries.
+        assert!(unsubscribe_of("<http://list.example/one>, <https://list.example/two>", "dkim=pass").is_none());
+    }
+
+    #[test]
+    fn never_offers_an_unsubscribe_url_carrying_userinfo() {
+        assert!(unsubscribe_of("<https://user@list.example/one>", "dkim=pass").is_none());
+        assert!(unsubscribe_of("<https://user:secret@list.example/one>", "dkim=pass").is_none());
+        let metadata =
+            unsubscribe_of("<https://user:secret@list.example/one>, <https://list.example/safe>", "dkim=pass").unwrap();
+        assert_eq!(metadata.one_click_url.as_deref(), Some("https://list.example/safe"));
+        assert!(metadata.web_url.is_none());
+    }
+
+    #[test]
+    fn never_offers_an_https_unsubscribe_url_on_a_non_default_port() {
+        assert!(unsubscribe_of("<https://list.example:8443/one>", "dkim=pass").is_none());
+        let metadata = unsubscribe_of("<https://list.example:8443/one>, <mailto:list@example.com>", "dkim=pass").unwrap();
+        assert!(metadata.one_click_url.is_none());
+        assert!(metadata.web_url.is_none());
+        assert_eq!(metadata.mailto_url.as_deref(), Some("mailto:list@example.com"));
+    }
+
+    #[test]
+    fn a_failed_dkim_verdict_downgrades_one_click_to_a_web_link() {
+        let metadata = unsubscribe_of("<https://list.example/one>", "dkim=fail").unwrap();
+        assert!(metadata.one_click_url.is_none());
+        assert_eq!(metadata.web_url.as_deref(), Some("https://list.example/one"));
+    }
 }

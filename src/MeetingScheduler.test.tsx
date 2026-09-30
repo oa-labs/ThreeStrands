@@ -27,7 +27,13 @@ function renderScheduler(plan: SchedulePlan, overrides: Partial<Parameters<typeo
 
 describe("MeetingScheduler", () => {
   beforeEach(clearScheduleCache);
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  // Pins only Date so range math is deterministic while findBy/waitFor keep real timeouts.
+  // Tests run with TZ=America/New_York (vite.config.ts), so 14:00Z is 10:00 local.
+  const NOW = "2026-09-29T14:00:00.000Z";
+  const pinClock = () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(NOW)); };
+  const at = (iso: string, hours: number) => new Date(Date.parse(iso) + hours * 3_600_000).toISOString();
 
   it("confirms a free exact time and offers to add it or reply that it works", async () => {
     const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
@@ -43,23 +49,29 @@ describe("MeetingScheduler", () => {
     expect(handlers.onMoreTimes).toHaveBeenCalledWith(new Date(specific.query!.start), 30);
   });
 
-  it("names the conflicting events and switches to a search for other times", async () => {
-    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start: specific.query!.start, end: specific.query!.end }], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+  it.each([
+    { when: "on a later day", start: at(NOW, 26), rangeStart: "2026-09-30T04:00:00.000Z", rangeEnd: "2026-10-07T04:00:00.000Z" },
+    { when: "later today", start: at(NOW, 2), rangeStart: NOW, rangeEnd: "2026-10-06T14:00:00.000Z" },
+  ])("names the conflicting events and switches to a search for other times $when", async ({ start, rangeStart, rangeEnd }) => {
+    pinClock();
+    const conflicting: SchedulePlan = { query: { kind: "specific", start, end: at(start, 0.5) }, durationMinutes: 30, timeZoneAssumed: false };
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start, end: at(start, 0.5) }], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
       events: [
-        { id: "crit", accountId: "you@example.com", title: "Design crit", allDay: false, start: specific.query!.start, end: specific.query!.end },
+        { id: "crit", accountId: "you@example.com", title: "Design crit", allDay: false, start, end: at(start, 0.5) },
         { id: "holiday", accountId: "you@example.com", title: "Offsite", allDay: true, start: "2026-01-01", end: "2026-01-02" },
       ],
       errors: [],
     });
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [candidate(30)], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
-    renderScheduler(specific);
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [{ start: at(NOW, 30), end: at(NOW, 30.75), status: "verified" }], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    renderScheduler(conflicting);
 
     expect(await screen.findByText("Conflicts with Design crit")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reply “That Works”" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Find Other Times" }));
     expect(await screen.findByRole("group", { name: "Open times" })).toBeInTheDocument();
-    expect(find).toHaveBeenCalledWith(expect.objectContaining({ maxPerDay: 1 }));
+    // The search starts at the conflict's local midnight, but never in the past.
+    expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart, rangeEnd, maxPerDay: 1 }));
   });
 
   it("offers the first open time on each of the next days, selectable with ordinary buttons", async () => {
@@ -102,12 +114,14 @@ describe("MeetingScheduler", () => {
   });
 
   it("explains a passed time and can search new times instead", async () => {
+    pinClock();
     const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
     renderScheduler({ query: null, durationMinutes: 30, timeZoneAssumed: false });
     expect(screen.getByText("That time has already passed.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Find New Times" }));
     expect(await screen.findByText("No open times in your working hours for this range.")).toBeInTheDocument();
-    expect(find).toHaveBeenCalled();
+    expect(find).toHaveBeenCalledTimes(1);
+    expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart: NOW, rangeEnd: "2026-10-06T14:00:00.000Z" }));
   });
 
   it("keeps a failed check retryable", async () => {

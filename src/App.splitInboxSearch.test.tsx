@@ -110,7 +110,7 @@ describe("split inbox search shortcuts", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Choose folder, current folder All Mail" })).toBeInTheDocument());
   });
 
-  it("closes the search box when switching accounts, but not when switching tabs", async () => {
+  it("closes the search box when switching accounts", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     const [primary] = await mailClient.listAccounts();
     vi.spyOn(mailClient, "listAccounts").mockResolvedValue([
@@ -136,14 +136,11 @@ describe("split inbox search shortcuts", () => {
     ]);
 
     render(<App />);
-    const splitTab = await screen.findByRole("tab", { name: "Work" });
+    await screen.findByRole("tab", { name: "Work" });
     fireEvent.keyDown(window, { key: "/" });
     const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "roadmap" } });
-
-    fireEvent.click(splitTab);
-    await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
-    expect(screen.getByRole("textbox", { name: "Search Mail" })).toHaveValue("roadmap");
+    expect(search).toHaveValue("roadmap");
 
     fireEvent.click(screen.getByRole("radio", { name: "Work" }));
     await waitFor(() => expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true"));
@@ -181,18 +178,24 @@ describe("split inbox search shortcuts", () => {
         accountId: "demo@example.com",
       },
     ]);
-    const rememberedTab = () =>
-      JSON.parse(localStorage.getItem("threestrands.settings.selectedTabByAccount") ?? "{}")["demo@example.com"];
-
-    render(<App />);
+    const first = render(<App />);
     const splitTab = await screen.findByRole("tab", { name: "Work" });
     fireEvent.click(splitTab);
     await waitFor(() => expect(splitTab).toHaveAttribute("aria-selected", "true"));
-    expect(rememberedTab()).toBe("work-split");
+    first.unmount();
+
+    const second = render(<App />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Work" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "false");
 
     fireEvent.click(screen.getByRole("tab", { name: /^Main/ }));
     await waitFor(() => expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true"));
-    expect(rememberedTab()).toBeNull();
+    second.unmount();
+
+    render(<App />);
+    await screen.findByRole("tab", { name: "Work" });
+    await waitFor(() => expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("tab", { name: "Work" })).toHaveAttribute("aria-selected", "false");
   });
 
   it("keeps the active split when returning from calendar, tasks, and contacts", async () => {

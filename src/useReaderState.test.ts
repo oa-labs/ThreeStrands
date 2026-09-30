@@ -81,7 +81,7 @@ describe("useReaderState", () => {
     ]));
   });
 
-  it("resets reader state when selection changes and scrolls only without a composer", () => {
+  it("resets reader state when selection changes and does not scroll without thread detail", () => {
     const scrollIntoView = vi.fn();
     const { result, rerender } = renderHook((props) => useReaderState(props), {
       initialProps: {
@@ -102,5 +102,50 @@ describe("useReaderState", () => {
     expect(result.current.messageExpansionOverrides).toEqual(new Map());
     expect(result.current.activeMessageId).toBeNull();
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { composerOpen: false, scrolls: true },
+    { composerOpen: true, scrolls: false },
+  ])("scrolls to the latest message when detail loads only without a composer (composerOpen: $composerOpen)", ({ composerOpen, scrolls }) => {
+    const scrollIntoView = vi.fn();
+    const { result, rerender } = renderHook((props) => useReaderState(props), {
+      initialProps: {
+        selectedThreadId: "thread-1",
+        detail: null as ThreadDetail | null,
+        displayedMessages: [] as Message[],
+        composerOpen,
+      },
+    });
+    result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+
+    rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen });
+
+    if (scrolls) {
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    } else {
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    }
+    expect(result.current.latestDisplayedMessageId).toBe("latest");
+  });
+
+  it("scrolls to the latest message once the composer closes over loaded detail", () => {
+    const scrollIntoView = vi.fn();
+    const { result, rerender } = renderHook((props) => useReaderState(props), {
+      initialProps: {
+        selectedThreadId: "thread-1",
+        detail: detail as ThreadDetail | null,
+        displayedMessages: detail.messages,
+        composerOpen: true,
+      },
+    });
+    result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: true });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
   });
 });

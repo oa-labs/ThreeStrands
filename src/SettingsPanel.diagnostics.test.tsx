@@ -6,7 +6,7 @@ import type { SyncStatus } from "./domain";
 
 afterEach(cleanup);
 
-describe("mutation failure diagnostics", () => {
+describe("DiagnosticsSettings", () => {
   it("keeps crash-report controls in the diagnostics section", () => {
     render(<DiagnosticsSettings status={null} accountCount={1} />);
 

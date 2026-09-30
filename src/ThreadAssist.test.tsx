@@ -147,10 +147,15 @@ describe("ThreadAssist", () => {
     expect(screen.getByRole("button", { name: "Get Suggestions" })).toBeInTheDocument();
   });
 
-  it("shows progress without offering to run again while a request is in flight", () => {
-    render(<ThreadAssist {...props({ loading: true })} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Reading the conversation…");
-    expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
+  it("shows a non-retryable error verbatim without Try Again or technical details", () => {
+    const onRun = vi.fn();
+    const message = "AI briefs are disabled for this account";
+    const { container } = render(<ThreadAssist {...props({ onRun, error: message })} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+    expect(screen.queryByRole("button", { name: "Try Again" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
+    expect(container.querySelector(".action-analysis-error-details")).toBeNull();
+    expect(onRun).not.toHaveBeenCalled();
   });
 
   it("explains missing provider credentials separately from the feature flags", () => {

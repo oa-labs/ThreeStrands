@@ -62,6 +62,35 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await expect(forward.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: Welcome to ThreeStrands");
 });
 
+for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"]] as const) {
+  test(`${key} quotes only selected email text`, async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+    const body = page.getByTitle("Message content").contentFrame().locator("body");
+    await body.click();
+    const selected = await body.evaluate((element) => {
+      const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let node: Node | null;
+      while ((node = walker.nextNode()) && !node.textContent?.trim()) { /* find visible text */ }
+      if (!node) throw new Error("Message has no text to select");
+      const range = element.ownerDocument.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, Math.min(12, node.textContent!.length));
+      const selection = element.ownerDocument.defaultView!.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return selection.toString().trim();
+    });
+    await page.keyboard.press(key);
+
+    const reply = page.getByRole("dialog", { name: "Reply Message" });
+    await expect(reply.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    const editor = reply.getByRole("textbox", { name: "Message Body" });
+    await expect(editor).toContainText(`> ${selected}`);
+    await expect(editor).not.toContainText("A keyboard-first inbox that keeps your mail on this device.");
+  });
+}
+
 test("switching conversations saves an edited reply all and shows the selected thread", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();

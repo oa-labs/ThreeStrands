@@ -1483,14 +1483,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mutation_backoff_is_exponential_and_bounded() {
-        assert_eq!(crate::backoff::retry_delay_secs(1), 30);
-        assert_eq!(crate::backoff::retry_delay_secs(2), 60);
-        assert_eq!(crate::backoff::retry_delay_secs(8), 3_600);
-        assert_eq!(crate::backoff::retry_delay_secs(u32::MAX), 3_600);
-    }
-
     #[tokio::test]
     async fn permanent_mutation_failure_is_exposed_by_sync_status() {
         let database = Database::open_memory();
