@@ -62,6 +62,18 @@ describe("demoClient split inbox exclusion", () => {
 });
 
 describe("demoClient default dataset messages", () => {
+  it("lists the contact address on recent mail instead of the mailbox address", async () => {
+    const dataset = defaultDemoDataset();
+    dataset.contacts.push({ email: "hello@threestrands.local", displayName: "ThreeStrands", sentCount: 0, receivedCount: 1, lastInteractedAt: "2026-03-05T16:30:00Z", pinned: false });
+    const client = createDemoClient(dataset);
+    const timeline = await client.contactTimeline("derived:hello@threestrands.local");
+    expect(timeline).toContainEqual(expect.objectContaining({
+      threadId: "welcome",
+      accountId: DEMO_ACCOUNT_ID,
+      contactEmail: "hello@threestrands.local",
+    }));
+  });
+
   it("keeps unsubscribe limited to messages that advertise it", async () => {
     const client = createDemoClient(defaultDemoDataset());
     await expect(client.unsubscribe("welcome-message")).resolves.toMatchObject({ method: "oneClick", outcome: "requested" });

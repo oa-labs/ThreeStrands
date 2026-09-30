@@ -76,12 +76,13 @@ describe("ContactsWorkspace",()=>{
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
     const onOpenThread=vi.fn();
     vi.mocked(mailClient.getContactProfile).mockResolvedValue({...jane,sentCount:20,receivedCount:20});
-    vi.mocked(mailClient.contactTimeline).mockResolvedValue([{threadId:"work-thread",accountId:"work@example.com",subject:"Project",snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]}]);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([{threadId:"work-thread",accountId:"work@example.com",contactEmail:"jane@example.com",subject:"Project",snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]}]);
     render(<ContactsWorkspace accountId="work@example.com" onOpenThread={onOpenThread} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
     expect(screen.getByText("· work@example.com")).toBeInTheDocument();
     expect(mailClient.listContactProfiles).toHaveBeenCalledWith("",500,"work@example.com");
     expect(mailClient.contactTimeline).toHaveBeenCalledWith(jane.id,0,20,"work@example.com");
+    expect(screen.getByRole("button",{name:/Project/})).toHaveTextContent("jane@example.com");
     expect(screen.getByText("3 sent · 2 received")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:/Project/}));
     expect(onOpenThread).toHaveBeenCalledWith("work-thread");

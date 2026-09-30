@@ -509,6 +509,7 @@ impl From<&ContactProfile> for ContactRecord {
 pub struct ContactTimelineItem {
     pub thread_id: String,
     pub account_id: String,
+    pub contact_email: String,
     pub subject: String,
     pub snippet: String,
     pub sent_at: String,

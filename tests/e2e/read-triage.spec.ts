@@ -41,6 +41,33 @@ test("gives the conversation shortcut key breathing room", async ({ page }) => {
   expect(padding.right).toBeGreaterThanOrEqual(6);
 });
 
+test("keeps meeting titles and recent email subjects on one line in the context panel", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".context-panel")).toBeVisible();
+
+  const titles = await page.evaluate(() => {
+    const panel = document.querySelector(".context-panel")!;
+    const meetings = document.createElement("section");
+    meetings.className = "context-section context-meetings";
+    meetings.innerHTML = `<button class="context-meeting"><svg width="14" height="14"></svg><span><strong>${"Momentum Prep Call - EO Pittsburgh - Week 7 and 8 ".repeat(3)}</strong><small>Mon, Oct 5 · with Beth Goldstein</small></span></button>`;
+    const history = document.createElement("section");
+    history.className = "context-section contact-sidebar-history";
+    history.innerHTML = `<button><strong>${"Invitation: Call with Joel and McKenzie on Tuesday ".repeat(3)}</strong><small>9/21/2026 · beth@example.com</small></button>`;
+    panel.append(meetings, history);
+    return [meetings, history].map((section) => {
+      const title = section.querySelector("strong")!;
+      const style = getComputedStyle(title);
+      return { whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, scrollWidth: title.scrollWidth, clientWidth: title.clientWidth };
+    });
+  });
+
+  for (const title of titles) {
+    expect(title.whiteSpace).toBe("nowrap");
+    expect(title.textOverflow).toBe("ellipsis");
+    expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
+  }
+});
+
 test("processes the inbox from the keyboard", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();

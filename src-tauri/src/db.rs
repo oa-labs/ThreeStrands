@@ -3304,6 +3304,7 @@ pub(crate) mod tests {
         assert_eq!(timeline.len(),2);
         assert!(timeline.iter().any(|item|item.account_id=="you@example.com"));
         assert!(timeline.iter().any(|item|item.account_id=="other@example.com"));
+        assert!(timeline.iter().all(|item|item.contact_email=="jane@example.com"));
         let you=database.list_contact_profiles_for_account("jane",20,Some("you@example.com")).unwrap();
         let other=database.list_contact_profiles_for_account("jane",20,Some("other@example.com")).unwrap();
         assert_eq!(you.len(),1);
@@ -3327,6 +3328,22 @@ pub(crate) mod tests {
         let no_history=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("New friend".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["newfriend@example.com".into()]}).unwrap();
         assert_eq!(database.list_contact_profiles_for_account("New friend",20,Some("you@example.com")).unwrap()[0].id,no_history.id);
         assert_eq!(database.list_contact_profiles_for_account("New friend",20,Some("other@example.com")).unwrap()[0].id,no_history.id);
+    }
+
+    #[test]
+    fn contact_timeline_shows_the_address_used_on_the_latest_matching_message() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        let mut first=message("first","thread","2026-09-20T12:00:00Z","hello");
+        first.from="Jane <jane@example.com>".into();first.to=vec!["you@example.com".into()];
+        let mut latest=message("latest","thread","2026-09-21T12:00:00Z","hello again");
+        latest.from="Jane Work <jane@work.example.com>".into();latest.to=vec!["you@example.com".into()];
+        database.upsert_thread("you@example.com",&[first,latest]).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"jane@work.example.com".into()]}).unwrap();
+
+        let timeline=database.contact_timeline(&saved.id,0,10).unwrap();
+        assert_eq!(timeline.len(),1);
+        assert_eq!(timeline[0].contact_email,"jane@work.example.com");
     }
 
     #[test]

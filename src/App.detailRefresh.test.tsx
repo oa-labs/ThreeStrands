@@ -417,7 +417,7 @@ it("opens archived contact timeline email in All Mail and keeps it selected afte
     addresses: ["team@example.com"], sentCount: 1, receivedCount: 1, lastInteractedAt: null,
   };
   const timelineItem: ContactTimelineItem = {
-    threadId: "roadmap", accountId: "demo@example.com", subject: "Phase 1: read and triage",
+    threadId: "roadmap", accountId: "demo@example.com", contactEmail: "team@example.com", subject: "Phase 1: read and triage",
     snippet: "The first vertical slice includes local search and optimistic actions.",
     sentAt: "2026-03-05T14:15:00Z", labels: [],
   };

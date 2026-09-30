@@ -3,7 +3,7 @@ import { isActiveTaskStatus } from "../taskViews";
 import type { MailClient } from "./client";
 import { DEMO_ACCOUNT_ID, defaultDemoDataset, type DemoDataset } from "./demoDataset";
 import { buildShowcaseDataset } from "./showcaseDataset";
-import { parseAddress } from "../emailAddress";
+import { parseAddress, splitAddressList } from "../emailAddress";
 import type {
   Account,
   ActionAnalysis,
@@ -534,8 +534,14 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       for (const thread of threads) {
         if (accountId && thread.accountId !== accountId) continue;
         const detail = await client.getThread(thread.id);
-        const matched = detail.messages.some((message) => [message.sender, ...message.recipients].some((raw) => target.has(parseAddress(raw).email.toLocaleLowerCase())));
-        if (matched) items.push({ threadId: thread.id, accountId: thread.accountId, subject: thread.subject, snippet: thread.snippet, sentAt: thread.lastMessageAt, labels: thread.labels });
+        const matching = detail.messages.flatMap((message) => {
+          const sender = parseAddress(message.sender).email.toLocaleLowerCase();
+          const contactEmail = sender === thread.accountId.toLocaleLowerCase()
+            ? message.recipients.flatMap(splitAddressList).map((raw) => parseAddress(raw).email.toLocaleLowerCase()).find((address) => target.has(address))
+            : target.has(sender) ? sender : undefined;
+          return contactEmail ? [{ contactEmail, sentAt: message.sentAt }] : [];
+        }).sort((left, right) => right.sentAt.localeCompare(left.sentAt))[0];
+        if (matching) items.push({ threadId: thread.id, accountId: thread.accountId, contactEmail: matching.contactEmail, subject: thread.subject, snippet: thread.snippet, sentAt: matching.sentAt, labels: thread.labels });
       }
       items.sort((a,b) => b.sentAt.localeCompare(a.sentAt));
       return structuredClone(items.slice(offset, offset + limit));

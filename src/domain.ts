@@ -268,6 +268,8 @@ export type ContactProfile = {
 export type ContactTimelineItem = {
   threadId: string;
   accountId: string;
+  /** The matching contact address on this conversation's latest interaction. */
+  contactEmail: string;
   subject: string;
   snippet: string;
   sentAt: string;

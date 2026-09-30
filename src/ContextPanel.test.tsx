@@ -12,7 +12,7 @@ const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",
 const bob:ContactProfile={...jane,id:"contact:bob@example.com",displayName:"Bob Lee",addresses:["bob@example.com"]};
 const detail={thread:{id:"thread-1"},messages:[{id:"1",sender:"Jane Doe <jane@example.com>",recipients:["You <you@example.com>","Bob Lee <bob@example.com>"],sentAt:"2026-09-24T00:00:00Z"},{id:"2",sender:"Bob Lee <bob@example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-25T00:00:00Z"}]} as unknown as ThreadDetail;
 const account={email:"you@example.com"} as Account;
-const timelineItem=(threadId:string,subject:string):ContactTimelineItem=>({threadId,accountId:"you@example.com",subject,snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]});
+const timelineItem=(threadId:string,subject:string):ContactTimelineItem=>({threadId,accountId:"you@example.com",contactEmail:"bob@example.com",subject,snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]});
 
 function renderPanel(overrides:Partial<Parameters<typeof ContextPanel>[0]>={}){
   return render(<ContextPanel detail={detail} accounts={[account]} onOpenThread={vi.fn()} onOpenContact={vi.fn()} {...overrides}/>);
@@ -211,6 +211,8 @@ describe("ContextPanel",()=>{
 
     const history=await screen.findByRole("region",{name:"Recent emails"});
     expect(within(history).queryByText("This conversation")).not.toBeInTheDocument();
+    expect(within(history).getByRole("button",{name:/Budget review/})).toHaveTextContent("bob@example.com");
+    expect(history).not.toHaveTextContent("you@example.com");
     fireEvent.click(within(history).getByRole("button",{name:/Budget review/}));
     expect(onOpenThread).toHaveBeenCalledWith("thread-2");
   });

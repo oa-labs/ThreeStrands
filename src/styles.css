@@ -1854,8 +1854,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-meeting { display:flex; align-items:flex-start; gap:8px; width:100%; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
 .context-meeting:hover { background:var(--hover); }
 .context-meeting svg { flex:0 0 auto; margin-top:2px; color:var(--accent); }
-.context-meeting span { display:grid; gap:2px; min-width:0; }
-.context-meeting strong { font-size:var(--type-caption); font-weight:500; overflow-wrap:anywhere; }
+.context-meeting span { display:grid; grid-template-columns:minmax(0,1fr); flex:1; gap:2px; min-width:0; }
+.context-meeting strong { min-width:0; overflow:hidden; font-size:var(--type-caption); font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
 .context-meeting small { color:var(--muted); font-size:var(--type-xs); overflow-wrap:anywhere; }
 .context-chat-dock { position:sticky; bottom:0; margin:auto -14px 0; padding:0 14px 4px; border-top:1px solid var(--border); background:var(--surface); }
 .thread-chat { border-bottom:0; }
@@ -1892,8 +1892,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-sidebar-bio { padding:12px 0; color:var(--secondary); }
 .contact-sidebar-notes,.contact-sidebar-history { margin-top:16px; }
 .contact-sidebar-notes h3,.contact-sidebar-history h3 { margin:0 0 8px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.06em; text-transform:uppercase; }
-.contact-sidebar-history > button { display:grid; gap:4px; }
-.contact-sidebar-history > button strong { color:var(--secondary); font-size:var(--type-caption); font-weight:500; line-height:1.35; }
+.contact-sidebar-history > button { display:grid; grid-template-columns:minmax(0,1fr); gap:4px; }
+.contact-sidebar-history > button strong { min-width:0; overflow:hidden; color:var(--secondary); font-size:var(--type-caption); font-weight:500; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
 .context-section.contact-sidebar-history { margin-top:0; }
 .context-section.contact-sidebar-history > button { padding:8px 9px; }
 .context-section.contact-sidebar-history .context-section-header h3 { margin:0; }

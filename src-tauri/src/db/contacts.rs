@@ -495,14 +495,14 @@ impl Database {
         }
         self.with_connection(|connection|{
             let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
-            let sql=format!("SELECT t.id,t.account_id,t.subject,t.snippet,MAX(ci.sent_at),t.labels_json FROM contact_interactions ci JOIN threads t ON t.id=ci.thread_id WHERE ci.email IN ({marks}) AND (? IS NULL OR ci.account_id=?) GROUP BY t.id ORDER BY MAX(ci.sent_at) DESC LIMIT ? OFFSET ?");
+            let sql=format!("WITH matched AS (SELECT ci.thread_id,ci.account_id,ci.email,ci.sent_at,ROW_NUMBER() OVER (PARTITION BY ci.thread_id ORDER BY ci.sent_at DESC,ci.message_id DESC,ci.email) AS position FROM contact_interactions ci WHERE ci.email IN ({marks}) AND (? IS NULL OR ci.account_id=?)) SELECT t.id,t.account_id,matched.email,t.subject,t.snippet,matched.sent_at,t.labels_json FROM matched JOIN threads t ON t.id=matched.thread_id WHERE matched.position=1 ORDER BY matched.sent_at DESC LIMIT ? OFFSET ?");
             let mut values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
             for _ in 0..2 { values.push(account_id.map(|id| rusqlite::types::Value::Text(id.to_string())).unwrap_or(rusqlite::types::Value::Null)); }
             values.push(rusqlite::types::Value::Integer(limit.clamp(1,100) as i64));
             values.push(rusqlite::types::Value::Integer(offset.min(i64::MAX as usize) as i64));
             let mut statement=connection.prepare(&sql)?;
-            let rows=statement.query_map(rusqlite::params_from_iter(values),|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,String>(5)?)))?;
-            rows.map(|row|{let(thread_id,account_id,subject,snippet,sent_at,labels)=row?;Ok(ContactTimelineItem{thread_id,account_id,subject,snippet,sent_at,labels:serde_json::from_str(&labels).unwrap_or_default()})}).collect()
+            let rows=statement.query_map(rusqlite::params_from_iter(values),|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,String>(5)?,row.get::<_,String>(6)?)))?;
+            rows.map(|row|{let(thread_id,account_id,contact_email,subject,snippet,sent_at,labels)=row?;Ok(ContactTimelineItem{thread_id,account_id,contact_email,subject,snippet,sent_at,labels:serde_json::from_str(&labels).unwrap_or_default()})}).collect()
         })
     }
 

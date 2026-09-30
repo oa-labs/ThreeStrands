@@ -237,7 +237,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
           {otherEmails.map((item) => (
             <button type="button" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
               <strong>{item.subject || "(no subject)"}</strong>
-              <small>{new Date(item.sentAt).toLocaleDateString()} · {item.accountId}</small>
+              <small>{new Date(item.sentAt).toLocaleDateString()} · {item.contactEmail}</small>
             </button>
           ))}
         </section>
