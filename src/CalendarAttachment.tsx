@@ -1,5 +1,6 @@
 import { CalendarDays, Download, ExternalLink, MapPin, Repeat2, Users } from "lucide-react";
 import { useEffect, useState } from "react";
+import { calendarDescriptionText } from "./calendarDescription";
 import { mailClient } from "./data/client";
 import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from "./domain";
 import { errorMessage } from "./errors";
@@ -183,7 +184,7 @@ function CalendarEvent({ event }: { event: CalendarEventPreview }) {
           <p><Users size={14} /><span>{peopleLabel(event)}</span></p>
         ) : null}
         {event.recurring ? <p><Repeat2 size={14} /><span>Recurring event</span></p> : null}
-        {event.description ? <p className="calendar-description">{event.description}</p> : null}
+        {event.description ? <p className="calendar-description">{calendarDescriptionText(event.description)}</p> : null}
       </div>
     </article>
   );

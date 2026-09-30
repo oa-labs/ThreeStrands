@@ -120,9 +120,11 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
       {busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
         <div className="context-section-header-actions">
           {!failure && (missingSummary || missingSuggestions) ? (
-            <button type="button" className="thread-assist-run" onClick={() => onRun(false)}>
-              <Sparkles size={12} />{missingSummary ? "Get Brief" : "Get Suggestions"}
-            </button>
+            <HoverTooltip title={missingSummary ? "Get Brief" : "Get Suggestions"} shortcut={missingSummary ? "i" : undefined} placement="bottom">
+              <button type="button" className="thread-assist-run" aria-keyshortcuts={missingSummary ? "i" : undefined} onClick={() => onRun(false)}>
+                <Sparkles size={12} />{missingSummary ? "Get Brief" : "Get Suggestions"}
+              </button>
+            </HoverTooltip>
           ) : null}
           {summaryText ? (
             <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">

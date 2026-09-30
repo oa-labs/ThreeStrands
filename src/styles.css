@@ -1295,8 +1295,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .action-analysis-error-actions button { display: inline-flex; align-items: center; gap: 4px; }
 .action-analysis-error-details { color: var(--muted); font-size: var(--type-sm); }
 .action-analysis-error-details p { margin: 4px 0 0; color: var(--muted); }
-.action-proposals { display: grid; gap: 8px; margin-top: 8px; }
-.action-proposal-card { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font-size: var(--type-caption); }
+.action-proposals { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 8px; margin-top: 8px; }
+.action-proposal-card { display: grid; min-width: 0; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font-size: var(--type-caption); overflow-wrap: anywhere; }
 .action-proposal-card-header { display: flex; justify-content: space-between; color: var(--muted); font-size: var(--type-xs); text-transform: uppercase; letter-spacing: .04em; }
 .proposal-kind { color: var(--accent); }
 .proposal-check { color: var(--warning); }
@@ -1843,7 +1843,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .thread-assist-run:hover { border-color:var(--accent); }
 .context-section-header-actions .thread-assist-run { margin-right:4px; }
 .thread-assist-run svg { color:var(--accent); }
-.thread-assist-suggestions { display:grid; gap:8px; margin-top:10px; }
+.thread-assist-suggestions { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:8px; margin-top:10px; }
 .thread-assist-suggestions h4 { margin:0; color:var(--muted); font-size:var(--type-xs); font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
 .context-task { display:flex; align-items:center; gap:2px; }
 .context-task-main { display:grid; flex:1; gap:2px; min-width:0; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
@@ -1874,7 +1874,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .thread-chat-prompt { display:flex; align-items:center; gap:8px; width:100%; margin-top:10px; padding:8px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-md); color:var(--muted); background:var(--input); font:inherit; font-size:var(--type-ui); text-align:left; cursor:text; }
 .thread-chat-prompt:hover { border-color:var(--accent); }
 .thread-chat-prompt span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.thread-chat-prompt kbd { padding:0 5px; border:1px solid var(--border); border-radius:var(--radius-xs); font:inherit; font-size:var(--type-xs); }
+.thread-chat-prompt kbd { padding:2px 6px 3px; border:1px solid var(--border); border-radius:var(--radius-xs); font:inherit; font-size:var(--type-xs); }
 .thread-chat-form { display:grid; gap:8px; margin-top:10px; }
 .thread-chat-form textarea { box-sizing:border-box; width:100%; min-height:56px; padding:8px 10px; border:1px solid var(--accent); border-radius:var(--radius-md); color:var(--text); background:var(--input); font:inherit; font-size:var(--type-ui); resize:vertical; }
 .thread-chat-quick { display:flex; flex-wrap:wrap; gap:6px; }

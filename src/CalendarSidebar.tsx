@@ -13,6 +13,7 @@ import {
   startOfLocalDay,
   timeZoneLabel,
 } from "./calendarTime";
+import { calendarDescriptionText } from "./calendarDescription";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
@@ -202,7 +203,7 @@ export function EventViewer({ event, onDismiss }: { event: ScheduleEvent; onDism
         ) : null}
         {event.location ? <p><MapPin size={17} /><span>{event.location}</span></p> : null}
         <p><CalendarDays size={17} /><span>{event.accountId}</span></p>
-        {event.description ? <p className="calendar-event-viewer-description"><AlignLeft size={17} /><span>{event.description}</span></p> : null}
+        {event.description ? <p className="calendar-event-viewer-description"><AlignLeft size={17} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
     </div>
   );

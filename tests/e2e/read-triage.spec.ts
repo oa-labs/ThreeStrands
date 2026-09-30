@@ -2,6 +2,45 @@ import { expect, test } from "@playwright/test";
 
 const threadOptions = (page: import("@playwright/test").Page) => page.getByRole("listbox").getByRole("option");
 
+test("keeps a long suggested task inside the right panel", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".context-panel")).toBeVisible();
+
+  const layout = await page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>(".context-panel");
+    if (!panel) throw new Error("Missing context panel");
+    const section = document.createElement("section");
+    section.className = "context-section thread-assist";
+    section.innerHTML = `<div class="thread-assist-suggestions"><h4>Suggested</h4><div class="action-proposals"><article class="action-proposal-card"><strong>Review shared Google Doc and reply with thoughts</strong><p>Link from Mark: https://docs.google.com/document/d/${"A".repeat(180)}/edit?usp=sharing</p></article></div></div>`;
+    panel.append(section);
+    const card = section.querySelector<HTMLElement>(".action-proposal-card")!;
+    const panelRight = panel.getBoundingClientRect().right - parseFloat(getComputedStyle(panel).paddingRight);
+    return { cardRight: card.getBoundingClientRect().right, panelRight, cardScrollWidth: card.scrollWidth, cardClientWidth: card.clientWidth };
+  });
+
+  expect(layout.cardRight).toBeLessThanOrEqual(layout.panelRight + 1);
+  expect(layout.cardScrollWidth).toBeLessThanOrEqual(layout.cardClientWidth + 1);
+});
+
+test("gives the conversation shortcut key breathing room", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".context-panel")).toBeVisible();
+
+  const padding = await page.evaluate(() => {
+    const prompt = document.createElement("button");
+    prompt.className = "thread-chat-prompt";
+    prompt.innerHTML = "<span>Ask about this conversation…</span><kbd>q</kbd>";
+    document.querySelector(".context-panel")!.append(prompt);
+    const style = getComputedStyle(prompt.querySelector("kbd")!);
+    return { top: parseFloat(style.paddingTop), right: parseFloat(style.paddingRight), bottom: parseFloat(style.paddingBottom), left: parseFloat(style.paddingLeft) };
+  });
+
+  expect(padding.top).toBeGreaterThanOrEqual(2);
+  expect(padding.bottom).toBeGreaterThan(padding.top);
+  expect(padding.left).toBeGreaterThanOrEqual(6);
+  expect(padding.right).toBeGreaterThanOrEqual(6);
+});
+
 test("processes the inbox from the keyboard", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();

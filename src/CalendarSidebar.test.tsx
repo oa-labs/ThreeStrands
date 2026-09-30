@@ -303,7 +303,7 @@ describe("calendar sidebar", () => {
           end: "2026-09-18T11:00:00-07:00",
           allDay: false,
           location: "Room 4B",
-          description: "Review the fall roadmap.",
+          description: "Review the fall roadmap.<br/>Phone: +1 262-735-5488, PIN: 812868058",
           conferenceUrl: "https://meet.google.com/abc-defg-hij",
         },
       ],
@@ -317,6 +317,8 @@ describe("calendar sidebar", () => {
     const viewer = await screen.findByRole("dialog", { name: "Product planning details" });
     expect(viewer).toHaveTextContent("Room 4B");
     expect(viewer).toHaveTextContent("Review the fall roadmap.");
+    expect(viewer).toHaveTextContent("Phone: +1 262-735-5488, PIN: 812868058");
+    expect(viewer).not.toHaveTextContent("<br");
     expect(viewer).toHaveTextContent("calendar@example.com");
 
     fireEvent.click(screen.getByRole("link", { name: "Join video meeting" }));

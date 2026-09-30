@@ -33,7 +33,7 @@ describe("CalendarAttachment", () => {
         allDay: false,
         timeZone: "America/New_York",
         location: "Room 4B",
-        description: "Review the roadmap",
+        description: "<p>Review the roadmap</p><p>PIN: 812868058</p>",
         organizer: "Jane Doe",
         attendeeCount: 3,
         recurring: true,
@@ -47,6 +47,7 @@ describe("CalendarAttachment", () => {
     expect(screen.getByText("Room 4B")).toBeVisible();
     expect(screen.getByText("Organized by Jane Doe · 3 attendees")).toBeVisible();
     expect(screen.getByText("Recurring event")).toBeVisible();
+    expect(document.querySelector(".calendar-description")?.textContent).toBe("Review the roadmap\nPIN: 812868058");
     expect(mailClient.previewCalendarAttachment).toHaveBeenCalledWith("message-1", "calendar-1");
   });
 

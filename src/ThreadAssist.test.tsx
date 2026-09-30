@@ -100,7 +100,12 @@ describe("ThreadAssist", () => {
     const onRun = vi.fn();
     const { rerender } = render(<ThreadAssist {...props({ onRun })} />);
     expect(screen.getByRole("heading", { name: "Brief" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Get Brief" }));
+    const getBrief = screen.getByRole("button", { name: "Get Brief" });
+    expect(getBrief).toHaveAttribute("aria-keyshortcuts", "i");
+    const briefTooltip = within(getBrief.parentElement as HTMLElement).getByRole("tooltip");
+    expect(within(briefTooltip).getByText("Get Brief")).toBeInTheDocument();
+    expect(within(briefTooltip).getByText("i").tagName).toBe("KBD");
+    fireEvent.click(getBrief);
     expect(onRun).toHaveBeenLastCalledWith(false);
     expect(screen.queryByRole("button", { name: "Refresh brief" })).not.toBeInTheDocument();
 
@@ -131,7 +136,10 @@ describe("ThreadAssist", () => {
     const onRun = vi.fn();
     render(<ThreadAssist {...props({ onRun, detail: summarized })} />);
     expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Get Suggestions" }));
+    const getSuggestions = screen.getByRole("button", { name: "Get Suggestions" });
+    expect(getSuggestions).not.toHaveAttribute("aria-keyshortcuts");
+    expect(within(getSuggestions.parentElement as HTMLElement).getByRole("tooltip").querySelector("kbd")).toBeNull();
+    fireEvent.click(getSuggestions);
     expect(onRun).toHaveBeenCalledWith(false);
   });
 
