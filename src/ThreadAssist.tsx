@@ -119,6 +119,11 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
       <h3 id="thread-assist-heading"><Sparkles size={13} />{title}</h3>
       {busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
         <div className="context-section-header-actions">
+          {!failure && (missingSummary || missingSuggestions) ? (
+            <button type="button" className="thread-assist-run" onClick={() => onRun(false)}>
+              <Sparkles size={12} />{missingSummary ? "Get Brief" : "Get Suggestions"}
+            </button>
+          ) : null}
           {summaryText ? (
             <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">
               <button type="button" className="context-icon-button" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
@@ -137,11 +142,6 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
       {summaryLines(summaryText).map((line, index) => <li key={index}>{line}</li>)}
     </ul> : null}
     {stale ? <p className="context-status">New messages since this brief.</p> : null}
-    {!busy && !failure && (missingSummary || missingSuggestions) ? (
-      <button type="button" className="thread-assist-run" onClick={() => onRun(false)}>
-        <Sparkles size={14} />{missingSummary ? "Get Brief" : "Get Suggestions"}
-      </button>
-    ) : null}
     {failure ? <div className="action-analysis-error" role="alert">
       <p>{failure.summary}</p>
       <div className="action-analysis-error-actions">

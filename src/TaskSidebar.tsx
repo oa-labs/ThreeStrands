@@ -391,7 +391,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {selectedTask ? <>
             <header>
               <div className="task-detail-heading">
-                <span className="eyebrow">{selectedTask.kind.replace("_", " ")}{selectedTask.status === "in_progress" ? " · In progress" : ""}</span>
+                <span className="eyebrow">{selectedTask.kind === "action" ? "Task" : selectedTask.kind.replace("_", " ")}{selectedTask.status === "in_progress" ? " · In progress" : ""}</span>
                 <div className="task-detail-title-row">
                   <button type="button" className="task-detail-complete" aria-label={isActiveTaskStatus(selectedTask.status) ? `Complete ${selectedTask.title}` : `Reopen ${selectedTask.title}`} onClick={() => void setStatus(selectedTask, isActiveTaskStatus(selectedTask.status) ? "completed" : "open")}>
                     {isActiveTaskStatus(selectedTask.status) ? <Check size={20} /> : <RotateCcw size={20} />}

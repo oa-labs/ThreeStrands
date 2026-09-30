@@ -1839,22 +1839,23 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-link-button { margin-top:6px; padding:0; border:0; color:var(--accent); background:transparent; font:inherit; font-size:var(--type-sm); cursor:pointer; }
 .thread-assist-summary { margin:0 0 6px; padding-left:18px; color:var(--secondary); font-size:var(--type-ui); line-height:1.45; }
 .thread-assist-summary li { margin:3px 0; }
-.thread-assist-run { display:inline-flex; align-items:center; gap:7px; margin-top:4px; padding:7px 12px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); color:var(--text); background:var(--hover); font:inherit; font-size:var(--type-sm); cursor:pointer; }
+.thread-assist-run { display:inline-flex; align-items:center; gap:5px; padding:3px 8px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); color:var(--text); background:var(--hover); font:inherit; font-size:var(--type-sm); white-space:nowrap; cursor:pointer; }
 .thread-assist-run:hover { border-color:var(--accent); }
+.context-section-header-actions .thread-assist-run { margin-right:4px; }
 .thread-assist-run svg { color:var(--accent); }
 .thread-assist-suggestions { display:grid; gap:8px; margin-top:10px; }
 .thread-assist-suggestions h4 { margin:0; color:var(--muted); font-size:var(--type-xs); font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
 .context-task { display:flex; align-items:center; gap:2px; }
 .context-task-main { display:grid; flex:1; gap:2px; min-width:0; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
 .context-task-main:hover { background:var(--hover); }
-.context-task-main strong { font-size:var(--type-ui); font-weight:500; overflow-wrap:anywhere; }
+.context-task-main strong { font-size:var(--type-caption); font-weight:500; overflow-wrap:anywhere; }
 .context-task-main small { display:inline-flex; align-items:center; gap:4px; color:var(--muted); font-size:var(--type-xs); }
 .context-task-source { overflow:hidden; color:var(--muted); font-size:var(--type-xs); text-overflow:ellipsis; white-space:nowrap; }
 .context-meeting { display:flex; align-items:flex-start; gap:8px; width:100%; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
 .context-meeting:hover { background:var(--hover); }
 .context-meeting svg { flex:0 0 auto; margin-top:2px; color:var(--accent); }
 .context-meeting span { display:grid; gap:2px; min-width:0; }
-.context-meeting strong { font-size:var(--type-ui); font-weight:500; overflow-wrap:anywhere; }
+.context-meeting strong { font-size:var(--type-caption); font-weight:500; overflow-wrap:anywhere; }
 .context-meeting small { color:var(--muted); font-size:var(--type-xs); }
 .context-chat-dock { position:sticky; bottom:0; margin:auto -14px 0; padding:0 14px 4px; border-top:1px solid var(--border); background:var(--surface); }
 .thread-chat { border-bottom:0; }
@@ -1892,8 +1893,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-sidebar-notes,.contact-sidebar-history { margin-top:16px; }
 .contact-sidebar-notes h3,.contact-sidebar-history h3 { margin:0 0 8px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.06em; text-transform:uppercase; }
 .contact-sidebar-history > button { display:grid; gap:4px; }
-.contact-sidebar-history > button strong { color:var(--secondary); font-size:var(--type-ui); font-weight:500; line-height:1.35; }
+.contact-sidebar-history > button strong { color:var(--secondary); font-size:var(--type-caption); font-weight:500; line-height:1.35; }
 .context-section.contact-sidebar-history { margin-top:0; }
+.context-section.contact-sidebar-history > button { padding:8px 9px; }
 .context-section.contact-sidebar-history .context-section-header h3 { margin:0; }
 .tasks-sidebar-header {
   min-height: 90px;

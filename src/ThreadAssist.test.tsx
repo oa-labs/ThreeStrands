@@ -112,6 +112,21 @@ describe("ThreadAssist", () => {
     expect(onRun).toHaveBeenLastCalledWith(true);
   });
 
+  it("keeps the run button in the section header so an unrun brief takes one line", () => {
+    const { rerender, container } = render(<ThreadAssist {...props()} />);
+    const header = container.querySelector(".context-section-header")!;
+    expect(within(header as HTMLElement).getByRole("button", { name: "Get Brief" })).toBeInTheDocument();
+    expect(container.querySelectorAll(".thread-assist-run")).toHaveLength(1);
+
+    rerender(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true } })} />);
+    expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
+    expect(within(header as HTMLElement).getByRole("button", { name: "Refresh brief" })).toBeInTheDocument();
+
+    rerender(<ThreadAssist {...props({ loading: true })} />);
+    expect(within(container.querySelector(".context-section-header") as HTMLElement).getByRole("status")).toHaveTextContent("Reading the conversation…");
+    expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
+  });
+
   it("asks only for the missing suggestions when a summary was saved earlier", () => {
     const onRun = vi.fn();
     render(<ThreadAssist {...props({ onRun, detail: summarized })} />);

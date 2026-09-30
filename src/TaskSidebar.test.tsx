@@ -67,6 +67,7 @@ describe("TaskSidebar", () => {
     render(<TaskSidebar accountId={null} onOpenThread={vi.fn()} />);
 
     const card = (await screen.findByText("Set up the website", { selector: "strong" })).closest("article")!;
+    expect(within(screen.getByRole("region", { name: "Task details" })).getByText("Task", { selector: ".eyebrow" })).toBeInTheDocument();
     fireEvent.click(within(card).getByRole("button", { name: "Complete Set up the website" }));
     await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-1", "completed"));
   });
