@@ -1718,7 +1718,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .task-inline-actions { display: flex; gap: 7px; }
 .task-inline-actions button, .task-inline-title button { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; cursor: pointer; }
 .task-inline-actions button:disabled, .task-inline-title button:disabled { opacity: .5; cursor: default; }
-.task-detail-source { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--border); }
+.task-detail-source { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
 .task-detail-source p { margin: 0 0 9px; color: var(--muted); font-size: var(--type-sm); overflow-wrap: anywhere; }
 .task-detail-source > button { display: inline-flex; align-items: center; gap: 7px; padding: 6px 0; border: 0; background: transparent; color: var(--link); font: inherit; font-size: var(--type-sm); cursor: pointer; }
 .task-detail-source details { margin-top: 10px; color: var(--muted); font-size: var(--type-sm); }

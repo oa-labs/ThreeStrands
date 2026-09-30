@@ -20,6 +20,7 @@ function readTaskLayout(): TaskLayout {
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = { open: "To Do", in_progress: "In Progress", completed: "Done", cancelled: "Done" };
+const TASK_DETAIL_KIND_LABELS: Record<ThreadTask["kind"], string> = { action: "Task", follow_up: "Follow up", waiting_for: "Waiting for reply" };
 
 function formatDueDetail(task: ThreadTask): string | null {
   if (!task.dueValue) return null;
@@ -391,7 +392,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {selectedTask ? <>
             <header>
               <div className="task-detail-heading">
-                <span className="eyebrow">{selectedTask.kind === "action" ? "Task" : selectedTask.kind.replace("_", " ")}{selectedTask.status === "in_progress" ? " · In progress" : ""}</span>
+                <span className="eyebrow">{TASK_DETAIL_KIND_LABELS[selectedTask.kind]}{selectedTask.status === "in_progress" ? " · In progress" : ""}</span>
                 <div className="task-detail-title-row">
                   <button type="button" className="task-detail-complete" aria-label={isActiveTaskStatus(selectedTask.status) ? `Complete ${selectedTask.title}` : `Reopen ${selectedTask.title}`} onClick={() => void setStatus(selectedTask, isActiveTaskStatus(selectedTask.status) ? "completed" : "open")}>
                     {isActiveTaskStatus(selectedTask.status) ? <Check size={20} /> : <RotateCcw size={20} />}

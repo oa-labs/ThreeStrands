@@ -323,6 +323,7 @@ describe("TaskSidebar", () => {
       fireEvent.click(within(views).getByRole("button", { name }));
       expect(container.querySelectorAll(".task-card")).toHaveLength(1);
       expect(container.querySelector(".task-card")).toHaveAttribute("id", `task-${expected}`);
+      if (name === "Waiting") expect(within(screen.getByRole("region", { name: "Task details" })).getByText("Waiting for reply", { selector: ".eyebrow" })).toBeInTheDocument();
     }
     fireEvent.click(within(views).getByRole("button", { name: "Overdue" }));
     expect(container.querySelector(".task-card")).toHaveAttribute("id", "task-overdue");
