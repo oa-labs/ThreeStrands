@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -31,10 +31,42 @@ describe("SafeMessage", () => {
     expect(stylesheet).toContain('[data-email-root][data-theme="dark"] .dark-copy');
   });
 
-  it.each(["newsletter", "table", "flex", "darkMode", "spacer"] as const)("keeps the %s fixture structure intact", (fixture) => {
-    const sanitized = sanitizeMessageHtml(emailRenderingFixtures[fixture]);
-    expect(sanitized).toBeTruthy();
-    if (fixture === "spacer") expect(sanitized).toContain("&nbsp;");
+  const parseSanitized = (fixture: keyof typeof emailRenderingFixtures) =>
+    new DOMParser().parseFromString(sanitizeMessageHtml(emailRenderingFixtures[fixture]), "text/html").body;
+
+  it("keeps the newsletter fixture's table spacing and width cap", () => {
+    const table = parseSanitized("newsletter").querySelector("table")!;
+    expect(table.style.maxWidth).toBe("640px");
+    expect(table.style.borderSpacing).toBe("8px");
+    expect(table.querySelector("td")!.style.padding).toBe("16px");
+  });
+
+  it("keeps the table fixture's presentational attributes", () => {
+    const table = parseSanitized("table").querySelector("table")!;
+    expect(table.getAttribute("cellpadding")).toBe("12");
+    expect(table.getAttribute("cellspacing")).toBe("4");
+    expect(table.querySelector("th")!.getAttribute("align")).toBe("left");
+    expect(table.querySelector("td[align='right']")?.textContent).toBe("$24");
+  });
+
+  it("keeps the flex fixture's flow layout", () => {
+    const row = parseSanitized("flex").querySelector("div")!;
+    expect(row.style.display).toBe("flex");
+    expect(row.style.gap).toBe("8px");
+    expect(row.style.justifyContent).toBe("space-between");
+    expect(row.querySelector("span")!.style.flex).toBe("1 1 180px");
+  });
+
+  it("keeps the darkMode fixture's themed rule and the element it targets", () => {
+    expect(parseSanitized("darkMode").querySelector("div.panel")?.textContent).toBe("Theme-aware content");
+    expect(extractSafeStyleSheet(emailRenderingFixtures.darkMode, "dark")).toContain(".panel");
+  });
+
+  it("keeps the spacer fixture's empty structural elements", () => {
+    const body = parseSanitized("spacer");
+    expect(body.querySelector("div:empty")).not.toBeNull();
+    expect(body.querySelector("td:empty")).not.toBeNull();
+    expect(body.innerHTML).toContain("&nbsp;");
   });
 
   it("enforces the capability boundary on malformed fixture content", () => {
@@ -220,9 +252,23 @@ describe("SafeMessage", () => {
     expect(frame.tagName).toBe("IFRAME");
     expect(frame.getAttribute("sandbox")).toBe("allow-same-origin allow-scripts");
     expect(frame.srcdoc).toContain("<p>Hello <strong>friend</strong></p>");
-    expect(frame.srcdoc).toContain("Content-Security-Policy");
-    expect(frame.srcdoc).toContain("script-src 'none'");
-    expect(frame.srcdoc).toContain("img-src data:");
+    expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
+    // The sandbox grants allow-scripts (see SafeMessage), so this CSP is the
+    // only thing stopping sender script: pin every directive, not a sample.
+    const csp = new DOMParser()
+      .parseFromString(frame.srcdoc, "text/html")
+      .querySelector('meta[http-equiv="Content-Security-Policy"]')
+      ?.getAttribute("content");
+    expect(csp?.split(";").map((directive) => directive.trim()).sort()).toEqual([
+      "base-uri 'none'",
+      "default-src 'none'",
+      "form-action 'none'",
+      "frame-src 'none'",
+      "img-src data:",
+      "object-src 'none'",
+      "script-src 'none'",
+      "style-src 'unsafe-inline'",
+    ]);
     // break-word, not anywhere: anywhere shrinks a box's minimum content
     // size for auto-layout, so a narrow fixed-width table cell (a numbered
     // list's index column, say) would treat even a short 2-character
@@ -758,8 +804,12 @@ it("leaves an image blocked when resolveImage rejects, rather than crashing", as
   render(<SafeMessage html="<img src='https://example.com/broken.png'>" loadImages resolveImage={resolveImage} />);
 
   await waitFor(() => expect(resolveImage).toHaveBeenCalled());
-  expect((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc)
-    .toContain('data-blocked-src="https://example.com/broken.png"');
+  // Let the rejection settle before judging the result.
+  await expect(resolveImage.mock.results[0].value).rejects.toThrow("network error");
+  await act(async () => {});
+  const srcdoc = (screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc;
+  expect(srcdoc).toContain('data-blocked-src="https://example.com/broken.png"');
+  expect(srcdoc).not.toMatch(/\ssrc="https:\/\/example\.com\/broken\.png"/);
 });
 
 it("opens web links separately and rejects unsafe or relative navigation", () => {

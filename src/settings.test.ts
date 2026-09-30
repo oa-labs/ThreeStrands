@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyFontFamily,
   DEFAULT_AVAILABILITY_PREFERENCES,
@@ -216,10 +216,16 @@ describe("label usage tracking", () => {
   });
 
   it("updates the timestamp when the same label is used again", () => {
-    recordLabelUsed("work@example.com", "Label_1");
-    const first = readLabelUsage("work@example.com").Label_1;
-    recordLabelUsed("work@example.com", "Label_1");
-    expect(readLabelUsage("work@example.com").Label_1).toBeGreaterThanOrEqual(first);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-01T10:00:00Z"));
+      recordLabelUsed("work@example.com", "Label_1");
+      vi.setSystemTime(new Date("2026-09-01T10:05:00Z"));
+      recordLabelUsed("work@example.com", "Label_1");
+      expect(readLabelUsage("work@example.com").Label_1).toBe(Date.parse("2026-09-01T10:05:00Z"));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ignores a corrupted stored map", () => {
@@ -246,10 +252,16 @@ describe("snippet usage tracking", () => {
   });
 
   it("updates the timestamp when the same snippet is used again", () => {
-    recordSnippetUsed("snippet-1");
-    const first = readSnippetUsage()["snippet-1"];
-    recordSnippetUsed("snippet-1");
-    expect(readSnippetUsage()["snippet-1"]).toBeGreaterThanOrEqual(first);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-01T10:00:00Z"));
+      recordSnippetUsed("snippet-1");
+      vi.setSystemTime(new Date("2026-09-01T10:05:00Z"));
+      recordSnippetUsed("snippet-1");
+      expect(readSnippetUsage()["snippet-1"]).toBe(Date.parse("2026-09-01T10:05:00Z"));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ignores a corrupted stored map", () => {

@@ -30,6 +30,7 @@ describe("filterThreadsByMessageFilters", () => {
     makeThread({ id: "important-only", labels: ["IMPORTANT"] }),
     makeThread({ id: "replied", labels: ["SENT"] }),
     makeThread({ id: "no-reply-and-unread", unread: true }),
+    makeThread({ id: "replied-and-unread", unread: true, labels: ["SENT"] }),
     makeThread({ id: "plain" }),
   ];
 
@@ -39,7 +40,7 @@ describe("filterThreadsByMessageFilters", () => {
 
   it("keeps only unread threads", () => {
     const result = filterThreadsByMessageFilters(threads, new Set<MessageFilterKind>(["unread"]));
-    expect(result.map((thread) => thread.id)).toEqual(["unread-only", "no-reply-and-unread"]);
+    expect(result.map((thread) => thread.id)).toEqual(["unread-only", "no-reply-and-unread", "replied-and-unread"]);
   });
 
   it("keeps only starred threads", () => {

@@ -3678,6 +3678,16 @@ mod tests {
     #[test]
     fn deleting_a_thread_also_removes_its_search_index_row() {
         let database = database();
+        let indexed: i64 = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM thread_search WHERE thread_id = 'welcome'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed, 1);
         database
             .delete_thread("default", "demo-welcome")
             .unwrap();
@@ -4683,6 +4693,16 @@ mod tests {
                 &[message("m1", "t1", "2000-01-01T00:00:00Z", "body")],
             )
             .unwrap();
+        let indexed: i64 = database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM thread_search WHERE thread_id = 'work@example.com:t1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed, 1);
         database.set_retention_days(Some(30)).unwrap();
         database.prune_expired_threads().unwrap();
         let remaining: i64 = database

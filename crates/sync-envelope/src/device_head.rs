@@ -133,7 +133,7 @@ mod tests {
         let signing_key = SigningKey::generate(&mut OsRng);
         let mut signed = sign_device_head(&signing_key, sample_head()).unwrap();
         signed.head.state_sequence += 1;
-        assert!(verify_device_head(&signing_key.verifying_key(), &signed).is_err());
+        assert_eq!(verify_device_head(&signing_key.verifying_key(), &signed), Err(EnvelopeError::SignatureInvalid));
     }
 
     #[test]
@@ -144,13 +144,13 @@ mod tests {
 
         let mut sequence = signed.clone();
         sequence.head.state_sequence += 1;
-        assert!(verify_device_head(&verifying_key, &sequence).is_err());
+        assert_eq!(verify_device_head(&verifying_key, &sequence), Err(EnvelopeError::SignatureInvalid));
         let mut published = signed.clone();
         published.head.published_at_ms += 1;
-        assert!(verify_device_head(&verifying_key, &published).is_err());
+        assert_eq!(verify_device_head(&verifying_key, &published), Err(EnvelopeError::SignatureInvalid));
         let mut snapshot = signed;
         snapshot.head.state_cid = Some("bafkreihyp2mdkcvn2et4tbcjqsirtmpevqgemx5ab2ac5oioyzmfkwlhlu".to_string());
-        assert!(verify_device_head(&verifying_key, &snapshot).is_err());
+        assert_eq!(verify_device_head(&verifying_key, &snapshot), Err(EnvelopeError::SignatureInvalid));
     }
 
     #[test]
@@ -158,13 +158,13 @@ mod tests {
         let signing_key = SigningKey::generate(&mut OsRng);
         let mut bad_link = sample_head();
         bad_link.state_cid = Some("not-a-cid".to_string());
-        assert!(sign_device_head(&signing_key, bad_link).is_err());
+        assert_eq!(sign_device_head(&signing_key, bad_link), Err(EnvelopeError::InvalidCidReference));
         let mut link_without_sequence = sample_head();
         link_without_sequence.state_sequence = 0;
-        assert!(sign_device_head(&signing_key, link_without_sequence).is_err());
+        assert_eq!(sign_device_head(&signing_key, link_without_sequence), Err(EnvelopeError::Malformed));
         let mut sequence_without_link = sample_head();
         sequence_without_link.state_cid = None;
-        assert!(sign_device_head(&signing_key, sequence_without_link).is_err());
+        assert_eq!(sign_device_head(&signing_key, sequence_without_link), Err(EnvelopeError::Malformed));
         let mut fresh = sample_head();
         fresh.state_sequence = 0;
         fresh.state_cid = None;
@@ -176,6 +176,6 @@ mod tests {
         let signing_key = SigningKey::generate(&mut OsRng);
         let other = SigningKey::generate(&mut OsRng);
         let signed = sign_device_head(&signing_key, sample_head()).unwrap();
-        assert!(verify_device_head(&other.verifying_key(), &signed).is_err());
+        assert_eq!(verify_device_head(&other.verifying_key(), &signed), Err(EnvelopeError::SignatureInvalid));
     }
 }

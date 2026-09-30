@@ -145,7 +145,9 @@ describe("useShortcutHandler", () => {
   });
 
   it("respects explicit entry scopes and preserves native button activation", () => {
-    const current = context();
+    // A selected thread enables Space (page down), so the guards below are
+    // what keep it from firing, not a disabled command.
+    const current = context({ selectedId: "thread-1" });
     const execute = vi.fn();
     const hook = renderHook(() => useShortcutHandler(current, execute));
     const modal = document.createElement("div");
@@ -162,6 +164,11 @@ describe("useShortcutHandler", () => {
     document.body.append(readButton);
     readButton.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
     expect(execute).not.toHaveBeenCalled();
+
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "thread.pageDown" }));
+    modal.remove();
+    readButton.remove();
     hook.unmount();
   });
 

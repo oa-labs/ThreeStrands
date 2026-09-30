@@ -2627,10 +2627,56 @@ mod tests {
             },
         )
         .unwrap();
+        assert!(matches!(
+            apply_key_share(&c.database, &c.identity, &c.epoch_keys, &forged, "forged-unknown").unwrap(),
+            KeyShare::UnknownSender
+        ));
         publish_to_all(&transports, &encode_signed_enrollment_grant(&forged).unwrap()).await;
         c.sweep(&transports).await;
         assert!(c.epoch_keys.get(7).is_none());
         assert_eq!(c.active_epoch(), 1, "the real rotation still applies");
+
+        // A share that claims to come from A, a trusted active member, but is
+        // signed by a different key fails signature verification and is
+        // deliberately consumed without applying anything.
+        let a_status: String = c
+            .database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT status FROM sync_devices WHERE device_id=?1",
+                params![encode_id(a.identity.device_id.as_bytes())],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(a_status, "active");
+        let impersonating = sign_enrollment_grant(
+            &stranger,
+            EnrollmentGrant {
+                request_id: RequestId::from_bytes(random_id()),
+                approver_device_id: a.identity.device_id,
+                signed_by_recovery: false,
+                key_epoch: 8,
+                sealed_epoch_key: ByteBuf::from(seal_to_x25519(&c_x25519, &[0x44; 32])),
+                roster: vec![],
+                recovery_ed25519_public: ByteBuf::from(recovery_ed25519.to_vec()),
+                recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
+                created_at_ms: now_ms(),
+                earlier_epoch_keys: vec![],
+            },
+        )
+        .unwrap();
+        assert!(verify_enrollment_grant(&a.identity.signing_key.verifying_key(), &impersonating).is_err());
+        assert!(matches!(
+            apply_key_share(&c.database, &c.identity, &c.epoch_keys, &impersonating, "forged-impersonating").unwrap(),
+            KeyShare::Applied
+        ));
+        assert!(c.epoch_keys.get(8).is_none());
+        assert_eq!(c.active_epoch(), 1);
+        publish_to_all(&transports, &encode_signed_enrollment_grant(&impersonating).unwrap()).await;
+        c.sweep(&transports).await;
+        assert!(c.epoch_keys.get(8).is_none());
+        assert_eq!(c.active_epoch(), 1);
 
         // A share from a member C has since revoked is ignored too.
         let shared_before_revocation = {

@@ -68,9 +68,8 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
     let active = true;
     void (async () => {
       try {
-        const found = await mailClient.listContactProfiles(email, 100);
-        const match = found.find((contact) => contact.addresses.some((address) => address.toLocaleLowerCase() === email));
-        const loaded = match ? await mailClient.getContactProfile(match.id) : null;
+        const owners = await mailClient.resolveContactIds([email]);
+        const loaded = await mailClient.getContactProfile(owners[email] ?? `derived:${email}`);
         const events = await mailClient.contactTimeline(loaded?.id ?? `derived:${email}`, 0, 6);
         if (active) { setProfile(loaded); setTimeline(events); setLoadedEmail(email); setError(null); }
       } catch (reason) {
@@ -96,14 +95,20 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
     void (async () => {
       try {
         const resolved = await mailClient.resolveContactIds(emails);
-        const ids = [...new Set(Object.values(resolved))];
-        const profiles = await Promise.all(ids.map((id) => mailClient.getContactProfile(id).catch((reason) => {
+        const targets = new Map<string, string>();
+        for (const email of emails) {
+          const owner = resolved[email];
+          targets.set(owner ?? `address:${email}`, owner ?? `derived:${email}`);
+        }
+        const entries = [...targets];
+        const profiles = await Promise.all(entries.map(([, id]) => mailClient.getContactProfile(id).catch((reason) => {
           logBackgroundFailure("Participant contact name lookup")(reason);
           return null;
         })));
         if (active) setParticipantContacts({
           owners: resolved,
-          names: Object.fromEntries(profiles.flatMap((item, index) => item?.displayName ? [[ids[index], item.displayName]] : [])),
+          names: Object.fromEntries(profiles.flatMap((item, index) =>
+            item?.id === entries[index][1] && item.displayName ? [[entries[index][0], item.displayName]] : [])),
         });
       } catch (reason) {
         if (active) setParticipantContacts({ owners: {}, names: {} });

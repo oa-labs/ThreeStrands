@@ -184,7 +184,7 @@ test("a new message opens as the conversation pane instead of a modal window", a
   await expect(reader.getByRole("dialog", { name: "New Message" })).toBeVisible();
   await expect(composer.locator("xpath=parent::*")).toHaveClass(/draft-message-stack/);
   await expect(reader.getByRole("heading", { name: "Welcome to ThreeStrands" })).toHaveCount(0);
-  await expect(page.locator(".compose-backdrop")).toHaveCount(0);
+  await expect(composer).not.toHaveAttribute("aria-modal", "true");
 });
 
 test("the command palette can send from a composer and the outbox records simulated delivery", async ({ page }) => {

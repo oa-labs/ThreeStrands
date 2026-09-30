@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ContextPanel } from "./ContextPanel";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 
-vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),resolveContactIds:vi.fn(async()=>({})),contactTimeline:vi.fn(),saveContactProfile:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null};
@@ -19,9 +19,13 @@ function renderPanel(overrides:Partial<Parameters<typeof ContextPanel>[0]>={}){
 }
 
 describe("ContextPanel",()=>{
+  beforeEach(()=>{
+    vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>Object.fromEntries(
+      emails.filter(email=>email==="jane@example.com"||email==="bob@example.com")
+        .map(email=>[email,`contact:${email}`])));
+  });
   afterEach(()=>{cleanup();vi.clearAllMocks();});
   it("defaults to the latest external sender and lets the reader switch participants",async()=>{
-    vi.mocked(mailClient.listContactProfiles).mockImplementation(async query=>query?.includes("jane")?[jane]:[bob]);
     vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     renderPanel();
@@ -31,31 +35,45 @@ describe("ContextPanel",()=>{
     fireEvent.click(within(participants).getByRole("button",{name:"Jane Doe"}));
     await screen.findByRole("heading",{name:"Jane Doe"});
     expect(within(participants).getByRole("button",{name:"Jane Doe"})).toHaveAttribute("aria-pressed","true");
-    await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("jane@example.com",100));
+    await waitFor(()=>expect(mailClient.resolveContactIds).toHaveBeenCalledWith(["jane@example.com"]));
   });
 
   it("uses a saved contact name on participant chips even when the message says only a first name",async()=>{
-    const andy:ContactProfile={...jane,id:"contact:andy@kuzneski.com",displayName:"Andy Kuzneski",addresses:["andy@kuzneski.com","andy@work.example.com"]};
+    const andy:ContactProfile={...jane,id:"contact:andy@example.com",displayName:"Andy Example",addresses:["andy@example.com","andy@work.example.com"]};
     const andyDetail={...detail,messages:[
-      {...detail.messages[0],sender:"andy <andy@kuzneski.com>"},
-      {...detail.messages[1],recipients:["You <you@example.com>","A. Kuzneski <andy@work.example.com>"]},
+      {...detail.messages[0],sender:"andy <andy@example.com>"},
+      {...detail.messages[1],recipients:["You <you@example.com>","A. Example <andy@work.example.com>"]},
     ]} as unknown as ThreadDetail;
-    vi.mocked(mailClient.listContactProfiles).mockImplementation(async query=>query?.includes("andy")?[andy]:[bob]);
     vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===andy.id?andy:bob);
-    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"andy@kuzneski.com":andy.id,"andy@work.example.com":andy.id,"bob@example.com":bob.id});
+    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"andy@example.com":andy.id,"andy@work.example.com":andy.id,"bob@example.com":bob.id});
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     renderPanel({detail:andyDetail});
 
     const participants=screen.getByRole("group",{name:"Conversation participants"});
-    const andyChip=await within(participants).findByRole("button",{name:"Andy Kuzneski"});
+    const andyChip=await within(participants).findByRole("button",{name:"Andy Example"});
     expect(within(participants).queryByRole("button",{name:"andy"})).not.toBeInTheDocument();
-    expect(andyChip).toHaveAttribute("title","andy@kuzneski.com, andy@work.example.com");
+    expect(andyChip).toHaveAttribute("title","andy@example.com, andy@work.example.com");
     fireEvent.click(andyChip);
-    expect(await screen.findByRole("heading",{name:"Andy Kuzneski"})).toBeInTheDocument();
+    expect(await screen.findByRole("heading",{name:"Andy Example"})).toBeInTheDocument();
+  });
+
+  it("uses a mail-derived contact name when the participant has no saved contact",async()=>{
+    const derived:ContactProfile={...jane,id:"derived:andy@example.com",displayName:"Andy Example",addresses:["andy@example.com"]};
+    const andyDetail={...detail,messages:[
+      {...detail.messages[0],sender:"andy <andy@example.com>"},
+      detail.messages[1],
+    ]} as unknown as ThreadDetail;
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===derived.id?derived:id===bob.id?bob:null);
+    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"bob@example.com":bob.id});
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    renderPanel({detail:andyDetail});
+
+    const participants=screen.getByRole("group",{name:"Conversation participants"});
+    expect(await within(participants).findByRole("button",{name:"Andy Example"})).toHaveAttribute("title","andy@example.com");
+    expect(mailClient.getContactProfile).toHaveBeenCalledWith("derived:andy@example.com");
   });
 
   it("splits email-only participant chips into separately truncated local and domain parts",async()=>{
-    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     const bareDetail={...detail,messages:[{...detail.messages[0],sender:"mjacobs@upwardprojects.com"},detail.messages[1]]} as unknown as ThreadDetail;
@@ -71,7 +89,6 @@ describe("ContextPanel",()=>{
 
   it("shows one chip per saved contact when a person writes from several addresses",async()=>{
     const janeBoth:ContactProfile={...jane,addresses:["jane@example.com","jane@work.example.com"]};
-    vi.mocked(mailClient.listContactProfiles).mockImplementation(async query=>query?.includes("jane")?[janeBoth]:[bob]);
     vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?janeBoth:bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"jane@example.com":jane.id,"jane@work.example.com":jane.id,"bob@example.com":bob.id});
@@ -87,10 +104,12 @@ describe("ContextPanel",()=>{
   });
 
   it("keeps one chip per address when participant contacts cannot be resolved",async()=>{
-    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
-    vi.mocked(mailClient.resolveContactIds).mockRejectedValue(new Error("offline"));
+    vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>{
+      if(emails.length>1) throw new Error("offline");
+      return {"bob@example.com":bob.id};
+    });
     const warn=vi.spyOn(console,"warn").mockImplementation(()=>undefined);
     const error=vi.spyOn(console,"error").mockImplementation(()=>undefined);
     renderPanel();
@@ -102,7 +121,6 @@ describe("ContextPanel",()=>{
   });
 
   it("toggles favorite from a heart button and shows an error when saving fails",async()=>{
-    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     vi.mocked(mailClient.saveContactProfile).mockRejectedValueOnce(new Error("Address belongs to another contact")).mockResolvedValueOnce({...bob,favorite:true});
@@ -119,7 +137,6 @@ describe("ContextPanel",()=>{
   });
 
   it("copies the selected participant email from the contact card",async()=>{
-    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     const writeText=vi.fn().mockResolvedValue(undefined);
@@ -134,7 +151,6 @@ describe("ContextPanel",()=>{
   });
 
   it("opens the saved profile in the address book from the contact name",async()=>{
-    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     const onOpenContact=vi.fn();
@@ -150,7 +166,8 @@ describe("ContextPanel",()=>{
   });
 
   it("saves an unknown participant with a compact button instead of a name link",async()=>{
-    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([]);
+    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({});
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(null);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     vi.mocked(mailClient.saveContactProfile).mockResolvedValue(bob);
     renderPanel();
@@ -166,7 +183,6 @@ describe("ContextPanel",()=>{
 
   it("shows the contact URL as a text hyperlink after the address instead of a button",async()=>{
     const brian:ContactProfile={...bob,displayName:"Brian Anderson",role:"Vice President of IT",location:"3443 N. Central Ave., Phoenix, AZ 85012",links:["https://upwardprojects.com"]};
-    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([brian]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(brian);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     renderPanel();
@@ -183,7 +199,6 @@ describe("ContextPanel",()=>{
   });
 
   it("lists recent emails with the participant, excluding the open conversation",async()=>{
-    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([timelineItem("thread-1","This conversation"),timelineItem("thread-2","Budget review")]);
     const onOpenThread=vi.fn();
@@ -196,7 +211,6 @@ describe("ContextPanel",()=>{
   });
 
   it("places the AI brief and related tasks below the contact card in one panel",async()=>{
-    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([bob]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     renderPanel({assist:<section aria-label="Brief">brief</section>,related:()=><section aria-label="Conversation tasks">tasks</section>});
@@ -208,8 +222,12 @@ describe("ContextPanel",()=>{
 
   it("hands related sections the selected person once their contact record is known",async()=>{
     const bobWork={...bob,addresses:["bob@example.com","bob@work.example.com"]};
-    vi.mocked(mailClient.listContactProfiles).mockImplementation(async query=>query?.includes("bob")?[bobWork]:[]);
-    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bobWork);
+    vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>{
+      const owners:Record<string,string>={};
+      if(emails.includes("bob@example.com")) owners["bob@example.com"]=bob.id;
+      return owners;
+    });
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===bob.id?bobWork:null);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     const related=vi.fn(()=>null);
     renderPanel({related});

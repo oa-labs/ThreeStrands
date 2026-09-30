@@ -626,9 +626,8 @@ describe("TaskSidebar", () => {
     render(<TaskSidebar accountId="you@example.com" onOpenThread={onOpenThread} />);
 
     expect(await screen.findByRole("heading", { name: "Buy printer paper" })).toBeInTheDocument();
-    expect(screen.queryByText("Conversation")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Source conversation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open conversation" })).not.toBeInTheDocument();
-    expect(screen.queryByText("open conversation")).not.toBeInTheDocument();
     expect(onOpenThread).not.toHaveBeenCalled();
   });
 });

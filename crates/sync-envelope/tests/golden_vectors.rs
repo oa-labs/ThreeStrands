@@ -142,8 +142,17 @@ fn signed_head_encodes_to_the_frozen_bytes() {
 
 #[test]
 fn earlier_protocol_versions_heads_are_refused() {
-    assert!(decode_signed_head(&hex_decode(V1_HEAD_HEX)).is_err(), "a v1 head must not decode");
-    assert!(decode_signed_head(&hex_decode(V2_HEAD_HEX)).is_err(), "a v2 head must not decode");
+    use threestrands_sync_envelope::EnvelopeError;
+    assert_eq!(
+        decode_signed_head(&hex_decode(V1_HEAD_HEX)).map(|_| ()),
+        Err(EnvelopeError::DecodingFailed),
+        "a v1 head must not decode"
+    );
+    assert_eq!(
+        decode_signed_head(&hex_decode(V2_HEAD_HEX)).map(|_| ()),
+        Err(EnvelopeError::DecodingFailed),
+        "a v2 head must not decode"
+    );
 }
 
 #[test]

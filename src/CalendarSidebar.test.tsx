@@ -465,8 +465,8 @@ describe("calendar sidebar", () => {
     fireEvent.keyDown(window, { key: "?" });
 
     const dialog = await screen.findByRole("dialog", { name: "Keyboard Shortcuts" });
-    expect(dialog).toHaveTextContent("Toggle Today’s Schedule");
-    expect(dialog).toHaveTextContent("T");
+    const title = within(dialog).getByText("Toggle Today’s Schedule", { selector: "dt" });
+    expect(title.nextElementSibling?.querySelector("kbd")?.textContent).toBe("T");
   });
 
   it("checks availability and distinguishes verified candidate slots", async () => {

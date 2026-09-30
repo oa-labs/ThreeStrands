@@ -121,15 +121,28 @@ mod tests {
         assert_eq!(recovery_seed_from_phrase(&noisy).unwrap(), seed);
     }
 
-    #[test]
-    fn rejects_a_bad_checksum() {
-        let seed = generate_recovery_seed();
-        let phrase = recovery_phrase_from_seed(&seed);
+    /// A fixed seed whose phrase, with its first and last words swapped, is
+    /// known to fail the BIP-39 checksum. A random seed would pass the
+    /// swapped checksum by chance in roughly one run in 256.
+    const SWAP_TAMPER_SEED: [u8; RECOVERY_SEED_LEN] = [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ];
+
+    fn swap_first_and_last_words(phrase: &str) -> String {
         let mut words: Vec<&str> = phrase.split_whitespace().collect();
         let last = words.len() - 1;
+        assert_ne!(words[0], words[last], "the tamper must change the phrase");
         words.swap(0, last);
-        let tampered = words.join(" ");
-        assert!(recovery_seed_from_phrase(&tampered).is_err());
+        words.join(" ")
+    }
+
+    #[test]
+    fn rejects_a_bad_checksum() {
+        let phrase = recovery_phrase_from_seed(&SWAP_TAMPER_SEED);
+        let tampered = swap_first_and_last_words(&phrase);
+        let error = recovery_seed_from_phrase(&tampered).unwrap_err();
+        assert!(error.to_lowercase().contains("checksum"), "unexpected error: {error}");
     }
 
     #[test]
@@ -143,14 +156,11 @@ mod tests {
 
     #[test]
     fn only_a_complete_checksummed_phrase_is_valid() {
-        let phrase = recovery_phrase_from_seed(&generate_recovery_seed());
+        let phrase = recovery_phrase_from_seed(&SWAP_TAMPER_SEED);
         let check = check_recovery_phrase(&phrase.to_uppercase());
         assert_eq!(check, RecoveryPhraseCheck { word_count: 24, unknown_word_positions: vec![], valid: true });
 
-        let mut words: Vec<&str> = phrase.split_whitespace().collect();
-        let last = words.len() - 1;
-        words.swap(0, last);
-        let swapped = check_recovery_phrase(&words.join(" "));
+        let swapped = check_recovery_phrase(&swap_first_and_last_words(&phrase));
         assert!(swapped.unknown_word_positions.is_empty());
         assert!(!swapped.valid);
 

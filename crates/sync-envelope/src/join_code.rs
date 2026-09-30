@@ -564,22 +564,22 @@ mod tests {
 
         // Wrong invite key (someone without the code).
         let other_invite = invite_ed25519_signing_key(&[3u8; 32]);
-        assert!(verify_invitation_redemption(&other_invite.verifying_key(), &signed).is_err());
+        assert_eq!(verify_invitation_redemption(&other_invite.verifying_key(), &signed), Err(EnvelopeError::SignatureInvalid));
         let forged = sign_invitation_redemption(&other_invite, &device_key, redemption.clone()).unwrap();
-        assert!(verify_invitation_redemption(&invite_key.verifying_key(), &forged).is_err());
+        assert_eq!(verify_invitation_redemption(&invite_key.verifying_key(), &forged), Err(EnvelopeError::SignatureInvalid));
 
         // A device signature from a key other than the embedded one.
         let impostor = SigningKey::from_bytes(&[4u8; 32]);
         let mismatched = sign_invitation_redemption(&invite_key, &impostor, redemption.clone()).unwrap();
-        assert!(verify_invitation_redemption(&invite_key.verifying_key(), &mismatched).is_err());
+        assert_eq!(verify_invitation_redemption(&invite_key.verifying_key(), &mismatched), Err(EnvelopeError::SignatureInvalid));
 
         // Any tampered field fails.
         let mut tampered = signed.clone();
         tampered.redemption.device_name = "Someone else".to_string();
-        assert!(verify_invitation_redemption(&invite_key.verifying_key(), &tampered).is_err());
+        assert_eq!(verify_invitation_redemption(&invite_key.verifying_key(), &tampered), Err(EnvelopeError::SignatureInvalid));
         let mut swapped = signed;
         swapped.invite_signature = swapped.device_signature;
-        assert!(verify_invitation_redemption(&invite_key.verifying_key(), &swapped).is_err());
+        assert_eq!(verify_invitation_redemption(&invite_key.verifying_key(), &swapped), Err(EnvelopeError::SignatureInvalid));
     }
 
     #[test]
@@ -590,10 +590,16 @@ mod tests {
         redemption.device_name = "n".repeat(MAX_JOIN_NAME_CHARS);
         assert!(sign_invitation_redemption(&invite_key, &device_key, redemption.clone()).is_ok());
         redemption.device_name = "n".repeat(MAX_JOIN_NAME_CHARS + 1);
-        assert!(sign_invitation_redemption(&invite_key, &device_key, redemption.clone()).is_err());
+        assert!(matches!(
+            sign_invitation_redemption(&invite_key, &device_key, redemption.clone()),
+            Err(EnvelopeError::LimitExceeded("device name"))
+        ));
         redemption.device_name = String::new();
         redemption.invitation_cid = "not-a-cid".to_string();
-        assert!(sign_invitation_redemption(&invite_key, &device_key, redemption).is_err());
+        assert!(matches!(
+            sign_invitation_redemption(&invite_key, &device_key, redemption),
+            Err(EnvelopeError::InvalidCidReference)
+        ));
     }
 
     #[test]
@@ -616,7 +622,7 @@ mod tests {
         verify_invitation(&inviter.verifying_key(), &signed).unwrap();
         let mut tampered = signed.clone();
         tampered.invitation.expires_at_ms = 30;
-        assert!(verify_invitation(&inviter.verifying_key(), &tampered).is_err());
+        assert_eq!(verify_invitation(&inviter.verifying_key(), &tampered), Err(EnvelopeError::SignatureInvalid));
         assert!(verify_invitation(&SigningKey::from_bytes(&[9u8; 32]).verifying_key(), &signed).is_err());
     }
 

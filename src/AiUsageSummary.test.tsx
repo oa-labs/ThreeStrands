@@ -6,8 +6,11 @@ import { readAiPrices } from "./aiSettings";
 import { mailClient } from "./data/client";
 import type { AiUsageDay } from "./domain";
 
-const today = localDay(new Date());
-const yesterday = localDay(new Date(Date.now() - 24 * 60 * 60 * 1000));
+const now = new Date();
+const today = localDay(now);
+// Step back a calendar day, not 24 hours: on a 25-hour DST day, now − 24h
+// can still be today.
+const yesterday = localDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12));
 
 function row(overrides: Partial<AiUsageDay>): AiUsageDay {
   return { day: today, provider: "openai", model: "gpt-4o", requests: 1, inputTokens: 0, outputTokens: 0, reportedCostRequests: 0, reportedCostUsd: 0, ...overrides };
