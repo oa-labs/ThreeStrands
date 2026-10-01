@@ -1761,8 +1761,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contacts-workspace { grid-column:2; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:var(--background); }
 .contacts-header { border-bottom:1px solid var(--border); }
 .contacts-header h1 { font-size:var(--type-heading); font-weight:600; }
-.contacts-workspace-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(240px, var(--inbox-width, 400px)) minmax(0,1fr); }
-.contacts-list-panel { min-height:0; overflow:auto; padding:16px 12px; border-right:1px solid var(--border); }
+.contacts-workspace-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(240px, var(--contact-list-width, 400px)) minmax(0,1fr); }
+.contacts-list-pane { min-width:0; min-height:0; position:relative; display:flex; flex-direction:column; }
+.contacts-list-panel { flex:1; min-height:0; overflow:auto; padding:16px 12px; border-right:1px solid var(--border); }
 .contacts-search { height:38px; display:flex; align-items:center; gap:8px; margin:0 4px 14px; padding:0 10px; border:1px solid var(--border); border-radius:var(--radius-md); color:var(--muted); background:var(--surface); }
 .contacts-search input { min-width:0; flex:1; border:0; outline:0; color:var(--text); background:transparent; font:inherit; }
 .contacts-search kbd { font-size:var(--type-xs); }
@@ -2235,12 +2236,17 @@ form.split-inbox-add select {
 .settings-nav-sections { display: flex; flex-direction: column; gap: 12px; }
 .settings-nav-group { display: flex; flex-direction: column; gap: 2px; }
 .settings-nav-group-label { padding: 0 10px 3px; color: var(--muted); font-size: var(--type-xs); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.settings-nav button { width: 100%; padding: 7px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--secondary); text-align: left; cursor: pointer; font-size: var(--type-ui); }
+.settings-nav button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--secondary); text-align: left; cursor: pointer; font-size: var(--type-ui); }
 .settings-nav button:hover { background: var(--hover); color: var(--text); }
 .settings-nav button.active { background: var(--selected); color: var(--text); font-weight: 600; }
+.settings-nav button svg { flex-shrink: 0; color: var(--muted); }
+.settings-nav button:hover svg { color: var(--secondary); }
+.settings-nav button.active svg { color: var(--accent); }
 .settings-nav-empty { margin: 4px 10px; color: var(--muted); font-size: var(--type-caption); }
 .settings-panel { min-height: 0; overflow-y: auto; padding: 0 24px 28px; scroll-padding-top: 92px; }
 .settings-page-header { position: sticky; z-index: var(--z-local-front); top: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin: 0 -4px 14px; padding: 8px 4px 14px; border-bottom: 1px solid var(--border); background: var(--raised); }
+.settings-page-icon { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); margin-right: -8px; }
+.settings-page-title { flex: 1; min-width: 0; }
 .settings-page-header h2 { margin: 0; color: var(--text); font-size: var(--type-heading); letter-spacing: -.01em; }
 .settings-page-header p { margin: 4px 0 0; color: var(--muted); font-size: var(--type-caption); line-height: 1.4; }
 .settings-save-note { display: inline-flex; flex-shrink: 0; align-items: center; gap: 5px; padding-top: 4px; color: var(--muted); font-size: var(--type-xs); white-space: nowrap; }
@@ -2429,6 +2435,7 @@ form.split-inbox-add select {
   .settings-nav-group { min-width: 150px; }
   .settings-panel { padding-right: 16px; padding-left: 16px; }
   .settings-page-header { flex-direction: column; gap: 4px; }
+  .settings-page-icon { display: none; }
   .settings-save-note { padding-top: 0; }
   .settings-inline-confirm { align-items: flex-start; flex-direction: column; }
   .settings-inline-confirm-actions { flex-wrap: wrap; }

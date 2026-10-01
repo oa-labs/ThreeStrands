@@ -322,20 +322,27 @@ async fn contact_suggestions_from_batch(
         request.endpoint.as_deref(),
         &contact_system_prompt(allowed),
         &prompt,
-        1800,
+        STRUCTURED_OUTPUT_TOKENS,
         0.1,
         Some(&contact_output_schema(allowed)),
         api_key,
     )
     .await?;
     let mut tally = ContactSuggestionTally::default();
-    let suggestions =
-        parse_contact_suggestions(&reply.content, batch, &mut tally).inspect_err(|error| {
+    let suggestions = parse_contact_suggestions(&reply.content, batch, &mut tally)
+        .inspect_err(|error| {
             log::warn!(
                 target: "ai_enrich_contact",
                 "contact suggestions rejected: {error} ({})",
                 describe_reply(&reply)
             );
+        })
+        .map_err(|error| {
+            if reply_was_cut_off(&reply) {
+                CUT_OFF_REPLY_ERROR.to_string()
+            } else {
+                error
+            }
         })?;
     let kept = retain_contact_suggestions_for_fields(suggestions, allowed, &mut tally);
     let mut line = format!(
@@ -370,6 +377,16 @@ fn describe_contact_batch(batch: &[ContactMessageInput], allowed: &[&'static str
         allowed.join(", ")
     )
 }
+
+/// Whether the provider stopped because it reached the output token limit
+/// rather than because the model finished. Reasoning models can spend the
+/// whole budget thinking and return no answer at all.
+fn reply_was_cut_off(reply: &ProviderReply) -> bool {
+    matches!(reply.stop_reason.as_deref(), Some("length" | "max_tokens"))
+}
+
+const CUT_OFF_REPLY_ERROR: &str =
+    "The AI model ran out of output space before answering. Try again, or choose a model that reasons less.";
 
 /// Summarizes a rejected reply for the log: its length, why the provider
 /// stopped (a length stop means the output was cut off), and a capped prefix
@@ -703,7 +720,18 @@ fn check_contact_suggestion(
 const MAX_MESSAGES: usize = 15;
 const MAX_BODY_CHARS: usize = 6000;
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+/// Long enough for a reasoning model to fill `STRUCTURED_OUTPUT_TOKENS` at a
+/// modest generation speed, so a slow answer is not cut off as a timeout.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+/// Output budgets are ceilings, not targets: a provider bills only the tokens
+/// the model writes, and the prompts and parsers still bound the visible
+/// answer. Reasoning models spend part of the budget thinking before they
+/// answer, and one that exhausts it returns nothing usable, so these favor
+/// headroom over thrift. Structured calls (contact enrichment, thread
+/// analysis, briefs, chat) get the larger budget; plain-text summaries and
+/// reply drafts get the smaller one.
+const STRUCTURED_OUTPUT_TOKENS: usize = 16_000;
+const TEXT_OUTPUT_TOKENS: usize = 8_000;
 const MAX_ACTION_PROPOSALS: usize = 10;
 const MAX_ACTION_OUTPUT_CHARS: usize = 32_000;
 const MAX_EVIDENCE_CHARS: usize = 1_000;
@@ -756,7 +784,7 @@ pub async fn brief(request: AnalyzeRequest, api_key: &str) -> Result<ThreadBrief
         request.endpoint.as_deref(),
         BRIEF_SYSTEM_PROMPT,
         &prompt,
-        4_400,
+        STRUCTURED_OUTPUT_TOKENS,
         0.1,
         Some(&brief_output_schema()),
         api_key,
@@ -780,7 +808,7 @@ pub async fn analyze(request: AnalyzeRequest, api_key: &str) -> Result<ActionAna
         request.endpoint.as_deref(),
         ACTION_SYSTEM_PROMPT,
         &prompt,
-        4_000,
+        STRUCTURED_OUTPUT_TOKENS,
         0.1,
         Some(&action_output_schema()),
         api_key,
@@ -1464,7 +1492,7 @@ pub async fn chat(request: ChatRequest, api_key: &str) -> Result<ChatAnswer, Str
         request.endpoint.as_deref(),
         CHAT_SYSTEM_PROMPT,
         &prompt,
-        3_000,
+        STRUCTURED_OUTPUT_TOKENS,
         0.2,
         Some(&chat_output_schema()),
         api_key,
@@ -1625,7 +1653,7 @@ pub async fn summarize(request: SummarizeRequest, api_key: &str) -> Result<Strin
         request.endpoint.as_deref(),
         SYSTEM_PROMPT,
         &prompt,
-        300,
+        TEXT_OUTPUT_TOKENS,
         0.2,
         None,
         api_key,
@@ -1670,7 +1698,7 @@ pub async fn generate_reply(
         endpoint,
         REPLY_SYSTEM_PROMPT,
         &prompt,
-        600,
+        TEXT_OUTPUT_TOKENS,
         0.2,
         None,
         api_key,
@@ -3500,6 +3528,19 @@ mod tests {
     }
 
     #[test]
+    fn a_reply_stopped_at_the_token_limit_counts_as_cut_off() {
+        let reply = |stop: Option<&str>| ProviderReply {
+            content: String::new(),
+            stop_reason: stop.map(str::to_string),
+        };
+        assert!(reply_was_cut_off(&reply(Some("length"))));
+        assert!(reply_was_cut_off(&reply(Some("max_tokens"))));
+        for stop in [Some("stop"), Some("end_turn"), Some("tool_use"), None] {
+            assert!(!reply_was_cut_off(&reply(stop)), "{stop:?}");
+        }
+    }
+
+    #[test]
     fn contact_batch_description_reports_evidence_shape_without_content() {
         let message = |id: &str, body: &str, from_contact: bool| ContactMessageInput {
             id: id.into(),
@@ -3585,6 +3626,147 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("company", "Acme Corp"), ("link", "https://example.com")],
         );
+    }
+
+    #[tokio::test]
+    async fn every_feature_requests_its_reasoning_headroom_output_budget() {
+        type Budgets = Arc<Mutex<Vec<serde_json::Value>>>;
+        async fn respond(
+            State(budgets): State<Budgets>,
+            Json(payload): Json<serde_json::Value>,
+        ) -> Json<serde_json::Value> {
+            budgets.lock().unwrap().push(payload["max_tokens"].clone());
+            Json(json!({"choices":[{"message":{"content":"[]"}}]}))
+        }
+        let budgets: Budgets = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .route("/chat/completions", post(respond))
+            .with_state(Arc::clone(&budgets));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let take = || std::mem::take(&mut *budgets.lock().unwrap());
+        let action_message = || ActionMessageInput {
+            id: "m1".into(),
+            sender: "jane@example.com".into(),
+            sent_at: "2026-09-25T10:00:00Z".into(),
+            body_text: "Can we meet Friday?".into(),
+        };
+        let analyze_request = || AnalyzeRequest {
+            provider: AiProvider::Custom,
+            model: "test".into(),
+            endpoint: Some(endpoint.clone()),
+            subject: "Hello".into(),
+            messages: vec![action_message()],
+            current_time: "2026-09-25T10:00:00Z".into(),
+            user_time_zone: "UTC".into(),
+        };
+
+        let _ = summarize(
+            SummarizeRequest {
+                provider: AiProvider::Custom,
+                model: "test".into(),
+                endpoint: Some(endpoint.clone()),
+                subject: "Hello".into(),
+                messages: vec![ThreadMessageInput {
+                    sender: "jane@example.com".into(),
+                    sent_at: "2026-09-25".into(),
+                    body_text: "Hello".into(),
+                }],
+            },
+            "key",
+        )
+        .await;
+        assert_eq!(take(), vec![json!(TEXT_OUTPUT_TOKENS)], "summary");
+
+        let _ = generate_reply(
+            &ReplyAssistContext {
+                subject: "Hello".into(),
+                messages: vec![ReplyAssistMessage {
+                    sender: "jane@example.com".into(),
+                    sent_at: "2026-09-25".into(),
+                    body_text: "Hello".into(),
+                }],
+            },
+            "",
+            AiProvider::Custom,
+            "test",
+            Some(&endpoint),
+            "key",
+        )
+        .await;
+        assert_eq!(take(), vec![json!(TEXT_OUTPUT_TOKENS)], "reply");
+
+        let _ = analyze(analyze_request(), "key").await;
+        assert_eq!(take(), vec![json!(STRUCTURED_OUTPUT_TOKENS)], "analysis");
+
+        let _ = brief(analyze_request(), "key").await;
+        assert_eq!(take(), vec![json!(STRUCTURED_OUTPUT_TOKENS)], "brief");
+
+        let _ = chat(
+            ChatRequest {
+                provider: AiProvider::Custom,
+                model: "test".into(),
+                endpoint: Some(endpoint.clone()),
+                question: "When is the meeting?".into(),
+                history: Vec::new(),
+                subject: "Hello".into(),
+                messages: vec![action_message()],
+                open_tasks: Vec::new(),
+                other_threads: Vec::new(),
+                proposals_allowed: false,
+                current_time: "2026-09-25T10:00:00Z".into(),
+                user_time_zone: "UTC".into(),
+            },
+            "key",
+        )
+        .await;
+        assert_eq!(take(), vec![json!(STRUCTURED_OUTPUT_TOKENS)], "chat");
+
+        let _ = enrich_contact(
+            ContactEnrichmentRequest {
+                provider: AiProvider::Custom,
+                model: "test".into(),
+                endpoint: Some(endpoint.clone()),
+                profile: ContactProfile {
+                    id: "contact-jane".into(),
+                    display_name: None,
+                    role: None,
+                    company: None,
+                    location: None,
+                    bio: None,
+                    notes: None,
+                    links: Vec::new(),
+                    photo_data: None,
+                    favorite: false,
+                    addresses: vec!["jane@example.com".into()],
+                    sent_count: 0,
+                    received_count: 0,
+                    last_interacted_at: None,
+                },
+                messages: vec![ContactMessageInput {
+                    id: "m1".into(),
+                    thread_id: "t1".into(),
+                    sender: "jane@example.com".into(),
+                    sent_at: "2026-09-25".into(),
+                    subject: "Hello".into(),
+                    body_text: "Hello".into(),
+                    from_contact: true,
+                    is_thread_starter: true,
+                }],
+                search_more: false,
+                empty_fields: None,
+            },
+            "key",
+        )
+        .await;
+        assert_eq!(take(), vec![json!(STRUCTURED_OUTPUT_TOKENS)], "contact");
+        server.abort();
+
+        // A reasoning model filling the larger budget at a modest ~150
+        // tokens per second must finish before the request times out.
+        assert!(REQUEST_TIMEOUT.as_secs() * 150 >= STRUCTURED_OUTPUT_TOKENS as u64);
+        assert!(TEXT_OUTPUT_TOKENS <= STRUCTURED_OUTPUT_TOKENS);
     }
 
     #[tokio::test]

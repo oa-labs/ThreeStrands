@@ -1,16 +1,27 @@
 import {
+  Activity,
   AlertCircle,
+  ArrowLeftRight,
+  BookOpen,
   CalendarDays,
   Check,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Clock,
   Download,
+  Inbox,
   Mail,
+  Network,
+  Palette,
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
+  Sparkles,
+  TextQuote,
   Upload,
+  type LucideIcon,
 } from "lucide-react";
 import {
   useEffect,
@@ -230,23 +241,24 @@ type SettingsSectionDefinition = {
   group: SettingsGroup;
   description: string;
   keywords: string;
+  icon: LucideIcon;
 };
 
 const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Integrations", "System"];
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
-  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and reads.", keywords: "theme light dark accent color font size family" },
-  { id: "reading", label: "Reading", group: "General", description: "Control what happens when you open a conversation.", keywords: "mark read delay conversation" },
-  { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail sender name color reconnect disconnect" },
-  { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection" },
-  { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings" },
-  { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern" },
-  { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose" },
-  { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions" },
-  { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted" },
-  { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache" },
-  { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect synchronization health and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting" },
-  { id: "data", label: "Data Transfer", group: "System", description: "Move encrypted settings and account metadata between devices.", keywords: "import export backup password" },
+  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and reads.", keywords: "theme light dark accent color font size family", icon: Palette },
+  { id: "reading", label: "Reading", group: "General", description: "Control what happens when you open a conversation.", keywords: "mark read delay conversation", icon: BookOpen },
+  { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail sender name color reconnect disconnect", icon: Mail },
+  { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
+  { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock },
+  { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern", icon: Inbox },
+  { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
+  { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
+  { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted", icon: Network },
+  { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache", icon: ShieldCheck },
+  { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect synchronization health and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting", icon: Activity },
+  { id: "data", label: "Data Transfer", group: "System", description: "Move encrypted settings and account metadata between devices.", keywords: "import export backup password", icon: ArrowLeftRight },
 ];
 
 /**
@@ -417,6 +429,7 @@ export function Settings({
                       ref={item.id === section ? selectedSectionButtonRef : undefined}
                       onClick={() => onSectionChange(item.id)}
                     >
+                      <item.icon size={15} aria-hidden="true" />
                       {item.label}
                     </button>
                   ))}
@@ -428,7 +441,10 @@ export function Settings({
         </nav>
         <div className="settings-panel" ref={settingsPanelRef}>
           <header className="settings-page-header">
-            <div>
+            <span className="settings-page-icon" aria-hidden="true">
+              {visibleSections.length === 0 ? <Search size={18} /> : <selectedSection.icon size={18} />}
+            </span>
+            <div className="settings-page-title">
               <h2>{visibleSections.length === 0 ? "Search settings" : selectedSection.label}</h2>
               <p>{visibleSections.length === 0 ? "No matching controls or sections are currently visible." : selectedSection.description}</p>
             </div>

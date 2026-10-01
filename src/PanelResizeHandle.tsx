@@ -74,6 +74,19 @@ export function useTaskDetailWidth() {
   return useResizableWidth(taskDetailWidthConfig);
 }
 
+// Icon rail plus room for the contact details pane.
+const contactListWidthConfig: ResizableWidthConfig = {
+  storageKey: "threestrands.contactListWidth",
+  minimumWidth: 240,
+  defaultWidth: 400,
+  maximumWidth: 640,
+  reservedWidth: 58 + 420,
+};
+
+export function useContactListWidth() {
+  return useResizableWidth(contactListWidthConfig);
+}
+
 export function PanelResizeHandle({
   width,
   minWidth,

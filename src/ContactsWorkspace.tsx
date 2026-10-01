@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Check, ChevronDown, ContactRound, Heart, LoaderCircle, Plus, Search, Sparkles, Trash2, UserRound } from "lucide-react";
 import { ContactAddressField, ContactLinksField } from "./ContactAddressField";
 import { mailClient } from "./data/client";
 import type { ContactFieldSuggestion, ContactProfile, ContactTimelineItem, SaveContactRequest } from "./domain";
 import { readAiFeatures, readAiRequestConfig } from "./aiSettings";
 import { errorMessage } from "./errors";
+import { PanelResizeHandle, useContactListWidth } from "./PanelResizeHandle";
 
 const empty = (): SaveContactRequest => ({ id:null,displayName:"",role:"",company:"",location:"",bio:"",notes:"",links:[],photoData:null,favorite:false,addresses:[] });
 const CONTACT_SUGGESTION_FIELD_LABELS:Record<ContactFieldSuggestion["field"],string> = { displayName:"Name",role:"Role",company:"Company",location:"Location",bio:"About",link:"Link" };
@@ -70,14 +71,16 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,ac
   const favoriteProfiles=orderedProfiles.filter(item=>item.favorite);const recentProfiles=orderedProfiles.filter(item=>!item.favorite);
   useEffect(()=>{const onKey=(event:KeyboardEvent)=>{if(event.key!=="ArrowDown"&&event.key!=="ArrowUp")return;if(event.metaKey||event.ctrlKey||event.altKey)return;const target=event.target;if(target instanceof HTMLElement&&(target.isContentEditable||["INPUT","TEXTAREA","SELECT"].includes(target.tagName)))return;if(!orderedProfiles.length)return;event.preventDefault();const currentIndex=orderedProfiles.findIndex(item=>item.id===selectedId);const nextIndex=event.key==="ArrowDown"?Math.min(orderedProfiles.length-1,currentIndex+1):Math.max(0,currentIndex===-1?0:currentIndex-1);const next=orderedProfiles[nextIndex];if(!next)return;setAdding(false);setSelectedId(next.id);};window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);},[orderedProfiles,selectedId]);
   useEffect(()=>{selectedItemRef.current?.scrollIntoView?.({block:"nearest"});},[selectedId]);
+  const listSize=useContactListWidth();
   return <section className="contacts-workspace" aria-label="Contacts">
     <header className="contacts-header"><div><span className="eyebrow">Address book <span className="eyebrow-account">· {accountId??"All accounts"}</span></span><h1>Contacts</h1></div><button type="button" className="contact-primary-button" onClick={startNew}><Plus size={16}/>New contact</button></header>
-    <div className="contacts-workspace-body">
-      <aside className="contacts-list-panel" aria-label="Contact list"><label className="contacts-search"><Search size={16}/><input ref={searchRef} aria-label="Search contacts" placeholder="Search contacts" value={query} onChange={event=>setQuery(event.target.value)}/><kbd>/</kbd></label><p className="contacts-sort-hint">Favorites first · then recent activity</p>
+    <div className="contacts-workspace-body" style={{ "--contact-list-width": `${listSize.width}px` } as CSSProperties}>
+      <div className="contacts-list-pane"><PanelResizeHandle {...listSize} label="Resize contact list" controlsId="contact-list-panel" title="Drag to resize the contact list. Use arrow keys to adjust; double-click to reset."/>
+      <aside id="contact-list-panel" className="contacts-list-panel" aria-label="Contact list"><label className="contacts-search"><Search size={16}/><input ref={searchRef} aria-label="Search contacts" placeholder="Search contacts" value={query} onChange={event=>setQuery(event.target.value)}/><kbd>/</kbd></label><p className="contacts-sort-hint">Favorites first · then recent activity</p>
         {loading?<p className="contacts-status">Loading contacts…</p>:null}{error?<p className="contacts-error" role="alert">{error}</p>:null}
         <div className="contacts-list">{favoriteProfiles.length?<section className="contact-list-group" aria-label="Favorites"><h2>Favorites</h2>{favoriteProfiles.map(item=><ContactListItem key={item.id} item={item} selected={selectedId===item.id&&!adding} itemRef={selectedId===item.id&&!adding?selectedItemRef:undefined} onSelect={()=>{setAdding(false);setSelectedId(item.id);}}/>)}</section>:null}{recentProfiles.length?<section className="contact-list-group" aria-label="Recent contacts"><h2>Recent</h2>{recentProfiles.map(item=><ContactListItem key={item.id} item={item} selected={selectedId===item.id&&!adding} itemRef={selectedId===item.id&&!adding?selectedItemRef:undefined} onSelect={()=>{setAdding(false);setSelectedId(item.id);}}/>)}</section>:null}</div>
         {!loading&&profiles.length===0?<p className="contacts-empty">No contacts found. People you email will appear here.</p>:null}
-      </aside>
+      </aside></div>
       <section className="contact-profile-panel" aria-label="Contact details">
         {adding||profile?<>
           <div className="contact-profile-top"><div className="contact-identity"><label className="contact-avatar large" title="Contact photo">{avatar?<img src={avatar} alt=""/>:<span>{initial||<UserRound/>}</span>}<input type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" aria-label="Upload contact photo" onChange={async event=>{const file=event.target.files?.[0];if(!file)return;try{setField("photoData",await encodePhoto(file));}catch(reason){setError(errorMessage(reason));}}}/></label><div><input className="contact-name-input" aria-label="Name" placeholder="Name" value={draft.displayName??""} onChange={event=>setField("displayName",event.target.value)}/><input aria-label="Role" placeholder="Role or title" value={draft.role??""} onChange={event=>setField("role",event.target.value)}/></div></div>

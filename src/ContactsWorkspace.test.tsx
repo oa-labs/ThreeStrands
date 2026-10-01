@@ -37,6 +37,55 @@ describe("ContactsWorkspace",()=>{
     await waitFor(()=>expect(onSaved).toHaveBeenCalledOnce());
   });
 
+  it("resizes the contact list from the divider and persists the width",async()=>{
+    const originalInnerWidth=Object.getOwnPropertyDescriptor(window,"innerWidth");
+    Object.defineProperty(window,"innerWidth",{value:1600,configurable:true});
+    try{
+      const {container}=render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      const handle=screen.getByRole("separator",{name:"Resize contact list"});
+      expect(handle).toHaveAttribute("aria-controls","contact-list-panel");
+      expect(document.getElementById("contact-list-panel")).toHaveAccessibleName("Contact list");
+      expect(handle).toHaveAttribute("aria-valuemin","240");
+      expect(handle).toHaveAttribute("aria-valuemax","640");
+      const body=container.querySelector(".contacts-workspace-body") as HTMLElement;
+      const appliedWidth=()=>body.style.getPropertyValue("--contact-list-width");
+      expect(appliedWidth()).toBe("400px");
+
+      // The list sits to the left of the handle, so ArrowRight widens it; the
+      // handle keeps the keys from reaching the list's own arrow navigation.
+      fireEvent.keyDown(handle,{key:"ArrowRight"});
+      expect(appliedWidth()).toBe("410px");
+      fireEvent.keyDown(handle,{key:"ArrowLeft",shiftKey:true});
+      expect(appliedWidth()).toBe("370px");
+      fireEvent.keyDown(handle,{key:"Home"});
+      expect(appliedWidth()).toBe("240px");
+      fireEvent.keyDown(handle,{key:"ArrowLeft"});
+      expect(appliedWidth()).toBe("240px");
+
+      handle.setPointerCapture=vi.fn();
+      handle.releasePointerCapture=vi.fn();
+      fireEvent.pointerDown(handle,{button:0,pointerId:1,clientX:300});
+      fireEvent.pointerMove(handle,{pointerId:1,clientX:360});
+      expect(appliedWidth()).toBe("300px");
+      fireEvent.pointerMove(handle,{pointerId:1,clientX:380});
+      expect(appliedWidth()).toBe("320px");
+      fireEvent.pointerUp(handle,{pointerId:1,clientX:380});
+      await waitFor(()=>expect(localStorage.getItem("threestrands.contactListWidth")).toBe("320"));
+
+      cleanup();
+      const remount=render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      const remountedBody=remount.container.querySelector(".contacts-workspace-body") as HTMLElement;
+      expect(remountedBody.style.getPropertyValue("--contact-list-width")).toBe("320px");
+      fireEvent.dblClick(screen.getByRole("separator",{name:"Resize contact list"}));
+      expect(remountedBody.style.getPropertyValue("--contact-list-width")).toBe("400px");
+      await waitFor(()=>expect(localStorage.getItem("threestrands.contactListWidth")).toBe("400"));
+    }finally{
+      if(originalInnerWidth)Object.defineProperty(window,"innerWidth",originalInnerWidth);
+    }
+  });
+
   it("edits email addresses as removable badges",async()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");

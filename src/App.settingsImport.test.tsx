@@ -145,6 +145,26 @@ describe("settings section keyboard navigation", () => {
     expect(lastButton).toHaveFocus();
   });
 
+  it("shows a decorative icon for every section without changing its accessible name", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
+    const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
+    expect(sectionButtons).toHaveLength(12);
+    for (const button of sectionButtons) {
+      const icon = button.querySelector("svg");
+      expect(icon).not.toBeNull();
+      expect(icon).toHaveAttribute("aria-hidden", "true");
+    }
+    const headerIcon = dialog.querySelector(".settings-page-icon");
+    expect(headerIcon).toHaveAttribute("aria-hidden", "true");
+    expect(headerIcon?.querySelector("svg")).not.toBeNull();
+    expect(within(dialog).getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  });
+
   it("groups and searches settings by control keywords", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
