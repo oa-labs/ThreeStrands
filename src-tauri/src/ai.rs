@@ -328,14 +328,23 @@ async fn contact_suggestions_from_batch(
         api_key,
     )
     .await?;
-    let suggestions = parse_contact_suggestions(&reply.content, batch).inspect_err(|error| {
-        log::warn!(
-            target: "ai_enrich_contact",
-            "contact suggestions rejected: {error} ({})",
-            describe_reply(&reply)
-        );
-    })?;
-    Ok(retain_contact_suggestions_for_fields(suggestions, allowed))
+    let mut tally = ContactSuggestionTally::default();
+    let suggestions =
+        parse_contact_suggestions(&reply.content, batch, &mut tally).inspect_err(|error| {
+            log::warn!(
+                target: "ai_enrich_contact",
+                "contact suggestions rejected: {error} ({})",
+                describe_reply(&reply)
+            );
+        })?;
+    let kept = retain_contact_suggestions_for_fields(suggestions, allowed, &mut tally);
+    log::info!(
+        target: "ai_enrich_contact",
+        "batch of {} emails: {}",
+        batch.len(),
+        tally.summary(kept.len())
+    );
+    Ok(kept)
 }
 
 /// Summarizes a rejected reply for the log: its length, why the provider
@@ -433,12 +442,14 @@ fn contact_output_schema(allowed: &[&'static str]) -> OutputSchema {
 fn retain_contact_suggestions_for_fields(
     suggestions: Vec<ContactFieldSuggestion>,
     allowed: &[&'static str],
+    tally: &mut ContactSuggestionTally,
 ) -> Vec<ContactFieldSuggestion> {
     let mut seen = std::collections::HashSet::new();
     suggestions
         .into_iter()
         .filter(|suggestion| {
             if !allowed.iter().any(|field| *field == suggestion.field.as_str()) {
+                tally.dropped.push(ContactSuggestionDrop::FieldNotEmpty);
                 return false;
             }
             let key = if suggestion.field == "link" {
@@ -451,7 +462,11 @@ fn retain_contact_suggestions_for_fields(
                     .join(" ")
                     .to_lowercase()
             };
-            seen.insert((suggestion.field.clone(), key))
+            let fresh = seen.insert((suggestion.field.clone(), key));
+            if !fresh {
+                tally.dropped.push(ContactSuggestionDrop::Duplicate);
+            }
+            fresh
         })
         .collect()
 }
@@ -523,70 +538,139 @@ fn contact_suggestion_values(content: &str) -> Option<Vec<serde_json::Value>> {
     }
 }
 
+/// Why one suggested item was not offered to the user. Logged as counts only,
+/// never with the item's content, so a run that finds nothing can be told
+/// apart from one whose evidence failed validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContactSuggestionDrop {
+    Incomplete,
+    UnsupportedField,
+    UnknownMessage,
+    TooLong,
+    ExcerptNotFound,
+    InvalidLink,
+    FieldNotEmpty,
+    Duplicate,
+}
+
+impl ContactSuggestionDrop {
+    const ALL: [Self; 8] = [
+        Self::Incomplete,
+        Self::UnsupportedField,
+        Self::UnknownMessage,
+        Self::TooLong,
+        Self::ExcerptNotFound,
+        Self::InvalidLink,
+        Self::FieldNotEmpty,
+        Self::Duplicate,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Incomplete => "missing field, value, message, or excerpt",
+            Self::UnsupportedField => "unsupported field",
+            Self::UnknownMessage => "unknown message",
+            Self::TooLong => "value or excerpt too long",
+            Self::ExcerptNotFound => "excerpt not found in message",
+            Self::InvalidLink => "not an https link",
+            Self::FieldNotEmpty => "field not empty",
+            Self::Duplicate => "duplicate",
+        }
+    }
+}
+
+/// Counts what one batch's reply suggested and why items were dropped.
+#[derive(Debug, Default)]
+struct ContactSuggestionTally {
+    returned: usize,
+    dropped: Vec<ContactSuggestionDrop>,
+}
+
+impl ContactSuggestionTally {
+    fn summary(&self, kept: usize) -> String {
+        let reasons = ContactSuggestionDrop::ALL
+            .iter()
+            .filter_map(|reason| {
+                let count = self.dropped.iter().filter(|drop| *drop == reason).count();
+                (count > 0).then(|| format!("{}: {count}", reason.label()))
+            })
+            .collect::<Vec<_>>();
+        let mut summary = format!("{} returned, {kept} kept", self.returned);
+        if !reasons.is_empty() {
+            summary.push_str(&format!(" ({})", reasons.join(", ")));
+        }
+        summary
+    }
+}
+
 fn parse_contact_suggestions(
     content: &str,
     bounded: &[ContactMessageInput],
+    tally: &mut ContactSuggestionTally,
 ) -> Result<Vec<ContactFieldSuggestion>, String> {
     let values = contact_suggestion_values(content)
         .ok_or_else(|| "The AI provider returned invalid contact suggestions".to_string())?;
     if values.len() > 20 {
         return Err("The AI provider returned too many contact suggestions".into());
     }
-    let allowed = CONTACT_FIELDS;
+    tally.returned += values.len();
     let mut result = Vec::new();
     for value in values {
-        let Some(field) = value.get("field").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(text) = value
-            .get("value")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        else {
-            continue;
-        };
-        let Some(message_id) = value.get("sourceMessageId").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(excerpt) = value
-            .get("excerpt")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        else {
-            continue;
-        };
-        let Some(source) = bounded.iter().find(|message| message.id == message_id) else {
-            continue;
-        };
-        if !allowed.contains(&field)
-            || text.chars().count() > 4000
-            || excerpt.chars().count() > 300
-            || !source.body_text.contains(excerpt)
-        {
-            continue;
+        match check_contact_suggestion(&value, bounded) {
+            Ok(suggestion) => result.push(suggestion),
+            Err(reason) => tally.dropped.push(reason),
         }
-        let value = if field == "link" {
-            let Ok(url) = url::Url::parse(text) else {
-                continue;
-            };
-            if url.scheme() != "https" || url.host_str().is_none() {
-                continue;
-            }
-            url.to_string()
-        } else {
-            text.to_string()
-        };
-        result.push(ContactFieldSuggestion {
-            field: field.to_string(),
-            value,
-            source_message_id: message_id.to_string(),
-            source_thread_id: source.thread_id.clone(),
-            excerpt: excerpt.to_string(),
-        });
     }
     Ok(result)
+}
+
+/// Validates one suggested item against the message it cites.
+fn check_contact_suggestion(
+    value: &serde_json::Value,
+    bounded: &[ContactMessageInput],
+) -> Result<ContactFieldSuggestion, ContactSuggestionDrop> {
+    let text_of = |key: &str| {
+        value
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    };
+    let (Some(field), Some(text), Some(message_id), Some(excerpt)) = (
+        value.get("field").and_then(|v| v.as_str()),
+        text_of("value"),
+        value.get("sourceMessageId").and_then(|v| v.as_str()),
+        text_of("excerpt"),
+    ) else {
+        return Err(ContactSuggestionDrop::Incomplete);
+    };
+    if !CONTACT_FIELDS.contains(&field) {
+        return Err(ContactSuggestionDrop::UnsupportedField);
+    }
+    let Some(source) = bounded.iter().find(|message| message.id == message_id) else {
+        return Err(ContactSuggestionDrop::UnknownMessage);
+    };
+    if text.chars().count() > 4000 || excerpt.chars().count() > 300 {
+        return Err(ContactSuggestionDrop::TooLong);
+    }
+    if !source.body_text.contains(excerpt) {
+        return Err(ContactSuggestionDrop::ExcerptNotFound);
+    }
+    let value = if field == "link" {
+        match url::Url::parse(text) {
+            Ok(url) if url.scheme() == "https" && url.host_str().is_some() => url.to_string(),
+            _ => return Err(ContactSuggestionDrop::InvalidLink),
+        }
+    } else {
+        text.to_string()
+    };
+    Ok(ContactFieldSuggestion {
+        field: field.to_string(),
+        value,
+        source_message_id: message_id.to_string(),
+        source_thread_id: source.thread_id.clone(),
+        excerpt: excerpt.to_string(),
+    })
 }
 
 /// Bounds the prompt to a handful of recent messages, and each message to a
@@ -3159,7 +3243,7 @@ mod tests {
             is_thread_starter: true,
         }];
         let valid = r#"[{"field":"company","value":"Acme","sourceMessageId":"m1","excerpt":"founder of Acme"},{"field":"notes","value":"nice person","sourceMessageId":"m1","excerpt":"I am"},{"field":"role","value":"Founder","sourceMessageId":"unknown","excerpt":"founder"},{"field":"location","value":"Boston","sourceMessageId":"m1","excerpt":"not exact"}]"#;
-        let parsed = parse_contact_suggestions(valid, &messages).unwrap();
+        let parsed = parse_contact_suggestions(valid, &messages, &mut ContactSuggestionTally::default()).unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].field, "company");
         assert_eq!(parsed[0].source_message_id, "m1");
@@ -3185,18 +3269,18 @@ mod tests {
             format!("Here are the suggestions:\n[{item}]"),
             format!(r#"{{"suggestions":[{item}]}}"#),
         ] {
-            let parsed = parse_contact_suggestions(&output, &messages).unwrap();
+            let parsed = parse_contact_suggestions(&output, &messages, &mut ContactSuggestionTally::default()).unwrap();
             assert_eq!(parsed.len(), 1, "{output}");
             assert_eq!(parsed[0].value, "Acme");
         }
-        assert!(parse_contact_suggestions("[]", &messages)
+        assert!(parse_contact_suggestions("[]", &messages, &mut ContactSuggestionTally::default())
             .unwrap()
             .is_empty());
         let unsupported_evidence = format!(
             "```json\n[{}]\n```",
             r#"{"field":"company","value":"Acme","sourceMessageId":"m1","excerpt":"not in the body"}"#
         );
-        assert!(parse_contact_suggestions(&unsupported_evidence, &messages)
+        assert!(parse_contact_suggestions(&unsupported_evidence, &messages, &mut ContactSuggestionTally::default())
             .unwrap()
             .is_empty());
         for invalid in [
@@ -3206,7 +3290,7 @@ mod tests {
             "[{\"field\":",
         ] {
             assert!(
-                parse_contact_suggestions(invalid, &messages).is_err(),
+                parse_contact_suggestions(invalid, &messages, &mut ContactSuggestionTally::default()).is_err(),
                 "{invalid}"
             );
         }
@@ -3271,6 +3355,7 @@ mod tests {
         let suggestions = parse_contact_suggestions(
             r#"[{"field":"role","value":"CEO","sourceMessageId":"original","excerpt":"CEO at Acme"}]"#,
             &bounded[..INITIAL_CONTACT_MESSAGES],
+            &mut ContactSuggestionTally::default(),
         ).unwrap();
         assert_eq!(suggestions[0].source_message_id, "original");
     }
@@ -3320,6 +3405,7 @@ mod tests {
             source_thread_id: "t1".into(),
             excerpt: value.into(),
         };
+        let mut tally = ContactSuggestionTally::default();
         let filtered = retain_contact_suggestions_for_fields(
             vec![
                 suggestion("displayName", "Janet Smith"),
@@ -3332,6 +3418,7 @@ mod tests {
                 suggestion("bio", "Builds useful things"),
             ],
             &empty_contact_fields(&profile),
+            &mut tally,
         );
         assert_eq!(
             filtered
@@ -3344,6 +3431,47 @@ mod tests {
                 ("location", "Boston"),
                 ("bio", "Builds useful things"),
             ],
+        );
+        assert_eq!(
+            tally.summary(filtered.len()),
+            "0 returned, 4 kept (field not empty: 3, duplicate: 1)"
+        );
+    }
+
+    #[test]
+    fn contact_enrichment_tallies_why_each_suggestion_was_dropped() {
+        let messages = vec![ContactMessageInput {
+            id: "m1".into(),
+            thread_id: "thread-1".into(),
+            sender: "jane@example.com".into(),
+            sent_at: String::new(),
+            subject: String::new(),
+            body_text: "Jane Smith\nCEO, Acme\nhttp://acme.example".into(),
+            from_contact: true,
+            is_thread_starter: true,
+        }];
+        let long_excerpt = "x".repeat(301);
+        let output = json!([
+            {"field":"company","value":"Acme","sourceMessageId":"m1","excerpt":"CEO, Acme"},
+            {"field":"role","value":"CEO","sourceMessageId":"m1"},
+            {"field":"notes","value":"Met at a conference","sourceMessageId":"m1","excerpt":"Acme"},
+            {"field":"role","value":"CEO","sourceMessageId":"m9","excerpt":"CEO"},
+            {"field":"bio","value":"Leads Acme","sourceMessageId":"m1","excerpt":long_excerpt},
+            {"field":"displayName","value":"Jane Smith","sourceMessageId":"m1","excerpt":"Jane Smith CEO, Acme"},
+            {"field":"link","value":"http://acme.example","sourceMessageId":"m1","excerpt":"http://acme.example"},
+        ])
+        .to_string();
+        let mut tally = ContactSuggestionTally::default();
+        let kept = parse_contact_suggestions(&output, &messages, &mut tally).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].value, "Acme");
+        assert_eq!(
+            tally.summary(kept.len()),
+            "7 returned, 1 kept (missing field, value, message, or excerpt: 1, unsupported field: 1, unknown message: 1, value or excerpt too long: 1, excerpt not found in message: 1, not an https link: 1)"
+        );
+        assert_eq!(
+            ContactSuggestionTally::default().summary(0),
+            "0 returned, 0 kept"
         );
     }
 
@@ -3394,6 +3522,7 @@ mod tests {
                 suggestion("link", "https://example.com"),
             ],
             &allowed,
+            &mut ContactSuggestionTally::default(),
         );
         assert_eq!(
             filtered
@@ -3638,7 +3767,7 @@ mod tests {
             is_thread_starter: true,
         }];
         let output = r#"[{"field":"link","value":"https://example.com","sourceMessageId":"m1","excerpt":"https://example.com"},{"field":"link","value":"http://unsafe.test","sourceMessageId":"m1","excerpt":"http://unsafe.test"}]"#;
-        let suggestions = parse_contact_suggestions(output, &messages).unwrap();
+        let suggestions = parse_contact_suggestions(output, &messages, &mut ContactSuggestionTally::default()).unwrap();
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].field, "link");
         assert_eq!(suggestions[0].value, "https://example.com/");
@@ -3652,7 +3781,8 @@ mod tests {
                 vec![r#"{"field":"bio","value":"x","sourceMessageId":"m1","excerpt":"Visit"}"#; 21]
                     .join(",")
             ),
-            &messages
+            &messages,
+            &mut ContactSuggestionTally::default(),
         )
         .is_err());
     }
