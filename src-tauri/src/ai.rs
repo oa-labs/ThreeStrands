@@ -338,13 +338,37 @@ async fn contact_suggestions_from_batch(
             );
         })?;
     let kept = retain_contact_suggestions_for_fields(suggestions, allowed, &mut tally);
-    log::info!(
-        target: "ai_enrich_contact",
-        "batch of {} emails: {}",
-        batch.len(),
+    let mut line = format!(
+        "{}: {}",
+        describe_contact_batch(batch, allowed),
         tally.summary(kept.len())
     );
+    if tally.returned == 0 {
+        line.push_str(&format!(" ({})", describe_reply(&reply)));
+    }
+    log::info!(target: "ai_enrich_contact", "{line}");
     Ok(kept)
+}
+
+/// Describes what one batch gave the model, without any message content: how
+/// many emails the contact wrote, how much body text there was, and which
+/// fields were requested. A batch that comes back empty can then be told
+/// apart from one that never held usable evidence.
+fn describe_contact_batch(batch: &[ContactMessageInput], allowed: &[&'static str]) -> String {
+    let from_contact = batch.iter().filter(|message| message.from_contact).count();
+    let body_chars: usize = batch
+        .iter()
+        .map(|message| message.body_text.trim().chars().count())
+        .sum();
+    let blank_bodies = batch
+        .iter()
+        .filter(|message| message.body_text.trim().is_empty())
+        .count();
+    format!(
+        "batch of {} emails ({from_contact} from contact, {blank_bodies} blank, {body_chars} body chars; fields: {})",
+        batch.len(),
+        allowed.join(", ")
+    )
 }
 
 /// Summarizes a rejected reply for the log: its length, why the provider
@@ -3472,6 +3496,36 @@ mod tests {
         assert_eq!(
             ContactSuggestionTally::default().summary(0),
             "0 returned, 0 kept"
+        );
+    }
+
+    #[test]
+    fn contact_batch_description_reports_evidence_shape_without_content() {
+        let message = |id: &str, body: &str, from_contact: bool| ContactMessageInput {
+            id: id.into(),
+            thread_id: "thread-1".into(),
+            sender: "jane@example.com".into(),
+            sent_at: String::new(),
+            subject: "Private subject".into(),
+            body_text: body.into(),
+            from_contact,
+            is_thread_starter: false,
+        };
+        let batch = vec![
+            message("m1", "Jane Smith\nCEO", true),
+            message("m2", "  \n ", true),
+            message("m3", "Thanks", false),
+        ];
+        let description = describe_contact_batch(&batch, &["role", "bio"]);
+        assert_eq!(
+            description,
+            "batch of 3 emails (2 from contact, 1 blank, 20 body chars; fields: role, bio)"
+        );
+        assert!(!description.contains("Jane"));
+        assert!(!description.contains("Private"));
+        assert_eq!(
+            describe_contact_batch(&[], &["link"]),
+            "batch of 0 emails (0 from contact, 0 blank, 0 body chars; fields: link)"
         );
     }
 
