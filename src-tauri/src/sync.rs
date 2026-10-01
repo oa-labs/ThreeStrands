@@ -96,6 +96,15 @@ impl SyncService {
     }
 
     async fn sync_provider(&self) -> ProviderResult<SyncStatus> {
+        self.sync_provider_reporting_changes()
+            .await
+            .map(|(status, _)| status)
+    }
+
+    /// Like [`Self::sync_provider`], also reporting whether the sync changed
+    /// any local mail, so the polling loop can skip notifying the UI after a
+    /// poll that found nothing new.
+    async fn sync_provider_reporting_changes(&self) -> ProviderResult<(SyncStatus, bool)> {
         let _guard = self.gate.lock().await;
         let account_id = self.account_id();
         let provider = self.auth.provider();
@@ -103,16 +112,21 @@ impl SyncService {
         if let Ok(mut last_attempt) = self.last_attempt.lock() {
             *last_attempt = Some(Instant::now());
         }
-        if let Err(error) = result {
-            let message = error.to_string();
-            self.database
-                .fail_sync(&account_id, &message)
-                .map_err(database_provider_error)?;
-            return Err(error);
-        }
-        self.database
+        let changed = match result {
+            Ok(changed) => changed,
+            Err(error) => {
+                let message = error.to_string();
+                self.database
+                    .fail_sync(&account_id, &message)
+                    .map_err(database_provider_error)?;
+                return Err(error);
+            }
+        };
+        let status = self
+            .database
             .sync_status(&account_id)
-            .map_err(database_provider_error)
+            .map_err(database_provider_error)?;
+        Ok((status, changed))
     }
 
     /// Incremental catch-up for OS resume / window focus. Skips if polling
@@ -198,10 +212,12 @@ impl SyncService {
             .map_err(|error| error.to_string())
     }
 
-    /// `on_synced` fires after every poll that actually reached the server
-    /// successfully, with the account's id, so callers (e.g. the frontend's
-    /// per-account unread badges) can refresh state that this background
-    /// account just changed without waiting for the user to switch to it.
+    /// `on_synced` fires after a successful poll that changed local state,
+    /// with the account's id, so callers (e.g. the frontend's per-account
+    /// unread badges) can refresh state that this background account just
+    /// changed without waiting for the user to switch to it. A poll that
+    /// found nothing new, which is most of them, stays silent so the UI
+    /// doesn't reload its lists and counts every interval.
     pub async fn polling_loop(self, on_synced: impl Fn(&str) + Send + Sync + 'static) {
         let mut delay = MIN_POLL_INTERVAL;
         loop {
@@ -219,11 +235,11 @@ impl SyncService {
                 .sync_status(&self.account_id())
                 .map(|status| status.pending_mutations)
                 .unwrap_or_default();
-            let result = self.sync_provider().await;
-            if result.is_ok() {
+            let result = self.sync_provider_reporting_changes().await;
+            if should_notify_after_poll(before, &result) {
                 on_synced(&self.account_id());
             }
-            delay = next_poll_delay(delay, before, result);
+            delay = next_poll_delay(delay, before, result.map(|(status, _)| status));
             self.reconcile_if_due().await;
         }
     }
@@ -250,6 +266,19 @@ impl SyncService {
         let _guard = self.gate.lock().await;
         let provider = self.auth.provider();
         let _ = reconcile_and_mark(self.database.as_ref(), &account_id, provider.as_ref()).await;
+    }
+}
+
+/// A poll changes what the UI shows when it ingested or removed mail, or
+/// when it settled queued local mutations (whose pending state the UI
+/// displays and which can fail and roll back).
+fn should_notify_after_poll(
+    pending_before: i64,
+    result: &ProviderResult<(SyncStatus, bool)>,
+) -> bool {
+    match result {
+        Ok((status, changed)) => *changed || status.pending_mutations != pending_before,
+        Err(_) => false,
     }
 }
 
@@ -297,16 +326,17 @@ pub async fn flush_pending_with(
     pause_for_permanent_auth_failure(database, account_id, result)
 }
 
+/// Returns whether the sync ingested or removed any local mail.
 pub async fn sync_with(
     database: &Database,
     account_id: &str,
     provider: &(impl MailSync + MailMutate + ?Sized),
-) -> ProviderResult<()> {
+) -> ProviderResult<bool> {
     if database
         .account_needs_reauth(account_id)
         .map_err(database_provider_error)?
     {
-        return Ok(());
+        return Ok(false);
     }
     let result = sync_active_with(database, account_id, provider).await;
     pause_for_permanent_auth_failure(database, account_id, result)
@@ -316,7 +346,7 @@ async fn sync_active_with(
     database: &Database,
     account_id: &str,
     provider: &(impl MailSync + MailMutate + ?Sized),
-) -> ProviderResult<()> {
+) -> ProviderResult<bool> {
     deliver_mutations(database, account_id, provider).await?;
     match database.cursor(account_id).map_err(database_provider_error)? {
         Some(cursor) => match incremental_sync(database, account_id, provider, &SyncCursor::new(cursor))
@@ -329,11 +359,11 @@ async fn sync_active_with(
     }
 }
 
-fn pause_for_permanent_auth_failure(
+fn pause_for_permanent_auth_failure<T>(
     database: &Database,
     account_id: &str,
-    result: ProviderResult<()>,
-) -> ProviderResult<()> {
+    result: ProviderResult<T>,
+) -> ProviderResult<T> {
     if let Err(error) = &result {
         if error.requires_reauthentication() {
             database
@@ -348,7 +378,7 @@ async fn full_sync(
     database: &Database,
     account_id: &str,
     provider: &(impl MailSync + MailMutate + ?Sized),
-) -> ProviderResult<()> {
+) -> ProviderResult<bool> {
     match full_sync_attempt(database, account_id, provider).await {
         Err(ProviderError::InvalidCursor) => {
             database
@@ -360,11 +390,12 @@ async fn full_sync(
     }
 }
 
+/// A full sync rebuilds the local snapshot, so it always reports a change.
 async fn full_sync_attempt(
     database: &Database,
     account_id: &str,
     provider: &(impl MailSync + MailMutate + ?Sized),
-) -> ProviderResult<()> {
+) -> ProviderResult<bool> {
     // An interrupted recovery must keep the normal sync cursor cleared rather
     // than running incrementally against an incomplete snapshot. Its separate,
     // durable generation lets the expensive thread refresh resume safely.
@@ -405,15 +436,17 @@ async fn full_sync_attempt(
             .complete_sync_recovery_threads(account_id, &batch)
             .map_err(database_provider_error)?;
     }
-    incremental_sync(database, account_id, provider, &starting_cursor).await
+    incremental_sync(database, account_id, provider, &starting_cursor).await?;
+    Ok(true)
 }
 
+/// Returns whether the provider reported any changed threads.
 async fn incremental_sync(
     database: &Database,
     account_id: &str,
     provider: &(impl MailSync + ?Sized),
     cursor: &SyncCursor,
-) -> ProviderResult<()> {
+) -> ProviderResult<bool> {
     let mut position = cursor.clone();
     let mut changed = HashSet::new();
     // Only the cursor returned by the final page is persisted: a provider may
@@ -434,6 +467,7 @@ async fn incremental_sync(
         }
         position = batch.cursor;
     };
+    let any_changed = !changed.is_empty();
     ingest_threads(
         database,
         account_id,
@@ -443,7 +477,8 @@ async fn incremental_sync(
     .await?;
     database
         .finish_sync(account_id, final_cursor.as_str())
-        .map_err(database_provider_error)
+        .map_err(database_provider_error)?;
+    Ok(any_changed)
 }
 
 async fn list_inbox_thread_ids(
@@ -1016,6 +1051,40 @@ mod tests {
             ),
             Duration::from_secs(60)
         );
+    }
+
+    #[tokio::test]
+    async fn sync_reports_whether_local_mail_changed() {
+        let database = Database::open_memory();
+        let provider = ContractProvider::normal();
+
+        // No cursor yet: the full sync rebuilds the local snapshot.
+        assert!(sync_with(&database, "default", &provider).await.unwrap());
+        // The follow-up incremental poll finds no changed threads.
+        assert!(!sync_with(&database, "default", &provider).await.unwrap());
+    }
+
+    #[test]
+    fn polls_notify_the_ui_only_when_something_changed() {
+        let status = |pending_mutations| SyncStatus {
+            state: "idle",
+            last_successful_sync: None,
+            cursor: None,
+            pending_mutations,
+            failed_mutations: vec![],
+            quarantined_messages: vec![],
+            error: None,
+        };
+
+        assert!(!should_notify_after_poll(0, &Ok((status(0), false))));
+        assert!(should_notify_after_poll(0, &Ok((status(0), true))));
+        // Settling queued mutations changes what the UI shows even when no
+        // new mail arrived.
+        assert!(should_notify_after_poll(2, &Ok((status(0), false))));
+        assert!(!should_notify_after_poll(
+            0,
+            &Err(ProviderError::RetryableServer("offline".into()))
+        ));
     }
 
     #[tokio::test]

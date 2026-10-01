@@ -1041,6 +1041,40 @@ describe("foreground mail refresh", () => {
   });
 });
 
+describe("search debounce", () => {
+  useConversationFixture();
+
+  it("stays debounced once the outbox holds delivered history", async () => {
+    const sentDraft = {
+      id: "sent-draft", revision: 1, account: "demo@example.com", mode: "new", sourceId: null, threadId: null,
+      replyId: null, references: [], to: "a@example.com", cc: "", bcc: "", subject: "Sent", body: "Hi",
+      followUpTaskId: null, attachments: [], updatedAt: 0,
+    };
+    localStorage.setItem("threestrands.demoCorrespondence", JSON.stringify({
+      drafts: [],
+      outbox: [{ id: "sent-1", draft: sentDraft, state: "sent", deadline: 0, error: null }],
+    }));
+    const searchThreads = vi.spyOn(mailClient, "searchThreads");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    await advance(50);
+
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
+    searchThreads.mockClear();
+    await act(async () => {
+      fireEvent.change(search, { target: { value: "r" } });
+      fireEvent.change(search, { target: { value: "ro" } });
+      fireEvent.change(search, { target: { value: "roa" } });
+    });
+    expect(searchThreads).not.toHaveBeenCalled();
+
+    await advance(200);
+    await waitFor(() => expect(searchThreads).toHaveBeenCalledTimes(1));
+    expect(searchThreads).toHaveBeenCalledWith(expect.objectContaining({ query: "roa" }), undefined);
+  });
+});
+
 describe("account selection persistence", () => {
   afterEach(() => {
     cleanup();

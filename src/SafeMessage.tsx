@@ -299,7 +299,7 @@ export function sanitizeMessageHtml(html: string): string {
     // Same URL scheme check as <img src>. Every remote background, like
     // every remote <img>, is always parked behind the blocked-src marker
     // here — resolving it to a real value is the caller's job (see
-    // applyResolvedImages), once the native proxy has fetched it.
+    // fillResolvedImages), once the native proxy has fetched it.
     const backgroundImageMatch = original.getPropertyValue("background-image").trim().match(backgroundImageUrl);
     if (backgroundImageMatch) {
       const backgroundUrl = backgroundImageMatch[1] ?? backgroundImageMatch[2] ?? backgroundImageMatch[3] ?? "";
@@ -593,14 +593,20 @@ export function extractBlockedImageUrls(html: string): string[] {
  * available, leaving any without one (not yet fetched, or the fetch failed)
  * blocked exactly as sanitizeMessageHtml left them.
  */
-export function applyResolvedImages(html: string, resolved: ReadonlyMap<string, string>): string {
-  if (resolved.size === 0) return html;
-  const container = document.createElement("div");
-  container.innerHTML = html;
-  container.querySelectorAll<HTMLElement>(`[${blockedSrcAttr}]`).forEach((element) => {
+/**
+ * Fills resolved images into an already-parsed document (the live message
+ * frame) in place. Patching the loaded frame instead of rebuilding its
+ * `srcdoc` means each arriving image no longer reloads the whole frame,
+ * which flashed the content and reset scrolling and selection. Only `data:`
+ * URIs produced by the native proxy/attachment reader are admitted, the
+ * same values the frame's `img-src data:` CSP already allowed.
+ */
+export function fillResolvedImages(root: ParentNode, resolved: ReadonlyMap<string, string>): void {
+  if (resolved.size === 0) return;
+  root.querySelectorAll<HTMLElement>(`[${blockedSrcAttr}]`).forEach((element) => {
     const url = element.getAttribute(blockedSrcAttr);
     const dataUri = url ? resolved.get(url) : undefined;
-    if (!dataUri) return;
+    if (!dataUri || !/^data:/i.test(dataUri)) return;
     element.removeAttribute(blockedSrcAttr);
     if (element.tagName.toLowerCase() === "img") {
       element.setAttribute("src", dataUri);
@@ -608,7 +614,6 @@ export function applyResolvedImages(html: string, resolved: ReadonlyMap<string, 
       element.style.setProperty("background-image", `url("${dataUri}")`);
     }
   });
-  return container.innerHTML;
 }
 
 // Only in-flight work is retained here. The native proxy owns the bounded
@@ -670,6 +675,10 @@ export function SafeMessage({
 }: SafeMessageProps) {
   const onImageClickRef = useRef(onImageClick);
   onImageClickRef.current = onImageClick;
+  // Callers typically pass an inline resolver; reading it through a ref
+  // keeps each parent render from cancelling and restarting image loads.
+  const resolveImageRef = useRef(resolveImage);
+  resolveImageRef.current = resolveImage;
   const onEnterKeyRef = useRef(onEnterKey);
   onEnterKeyRef.current = onEnterKey;
   const [imagesAllowedForMessage, setImagesAllowedForMessage] = useState(false);
@@ -709,7 +718,7 @@ export function SafeMessage({
         if (acceptedImageUrlsRef.current.has(url)) continue;
         const cacheKey = /^cid:/i.test(url) ? `${imageCacheKey}\0${url}` : url;
         try {
-          const dataUri = await resolveSharedImage(cacheKey, url, resolveImage);
+          const dataUri = await resolveSharedImage(cacheKey, url, (next) => resolveImageRef.current(next));
           if (cancelled) return;
           // Data URIs are ASCII, so string length is their byte size. Reject
           // the whole resource instead of truncating sender-controlled data.
@@ -735,17 +744,15 @@ export function SafeMessage({
     return () => {
       cancelled = true;
     };
-  }, [imageCacheKey, resolvableUrls, resolveImage]);
+  }, [imageCacheKey, resolvableUrls]);
 
-  const displayHtml = useMemo(
-    () => applyResolvedImages(renderedHtml, resolvedImages),
-    [renderedHtml, resolvedImages],
-  );
+  const resolvedImagesRef = useRef(resolvedImages);
+  resolvedImagesRef.current = resolvedImages;
   const emailStyleSheet = useMemo(() => extractSafeStyleSheet(html, theme), [html, theme]);
 
   const doc = useMemo(
-    () => buildMessageDocument(displayHtml, { theme, fontScale, fontFamily, tone, emailStyleSheet }),
-    [displayHtml, theme, fontScale, fontFamily, tone, emailStyleSheet],
+    () => buildMessageDocument(renderedHtml, { theme, fontScale, fontFamily, tone, emailStyleSheet }),
+    [renderedHtml, theme, fontScale, fontFamily, tone, emailStyleSheet],
   );
 
   const frameRef = useRef<HTMLIFrameElement | null>(null);
@@ -759,6 +766,9 @@ export function SafeMessage({
     const frame = frameRef.current;
     const frameDoc = frame?.contentDocument;
     if (!frameDoc) return;
+    // A reload (theme change, quote expansion) starts from the blocked
+    // markup again, so re-apply everything resolved so far.
+    fillResolvedImages(frameDoc, resolvedImagesRef.current);
 
     const resize = () => {
       const height = frameDoc.documentElement?.scrollHeight ?? frameDoc.body?.scrollHeight ?? 0;
@@ -783,7 +793,7 @@ export function SafeMessage({
         return;
       }
       // Read the live src (not the sanitized markup) so this reflects
-      // whatever applyResolvedImages ended up resolving the image to.
+      // whatever fillResolvedImages ended up resolving the image to.
       const src = target?.closest("img")?.getAttribute("src");
       if (!src) return;
       event.preventDefault();
@@ -826,6 +836,11 @@ export function SafeMessage({
   }, []);
 
   useEffect(() => () => cleanupRef.current?.(), []);
+
+  useEffect(() => {
+    const frameDoc = frameRef.current?.contentDocument;
+    if (frameDoc) fillResolvedImages(frameDoc, resolvedImages);
+  }, [resolvedImages]);
 
   useEffect(() => {
     setQuotedHistoryExpanded(false);

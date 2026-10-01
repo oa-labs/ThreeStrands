@@ -2577,3 +2577,40 @@ input::placeholder { color: var(--muted); opacity: 1; }
 
 .notice--error { --notice-tone: var(--error); }
 .notice--warning { --notice-tone: var(--warning); }
+
+/* Motion. Short, compositor-only (opacity/transform) entrances that make
+   state changes read as responses rather than jumps. Fill is `backwards`
+   only, so no animated value lingers after an entrance to affect layout,
+   stacking, or author CSS. Everything is disabled under reduced motion. */
+@keyframes motion-fade-in { from { opacity: 0; } }
+@keyframes motion-rise-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes motion-drop-in { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes motion-toast-in { from { opacity: 0; transform: translateY(10px); } }
+@keyframes motion-modal-in { from { opacity: 0; transform: translateY(-6px) scale(0.98); } }
+
+/* Opening a conversation: cards settle in instead of popping. */
+.message-card { animation: motion-rise-in 160ms ease-out backwards; }
+/* Most conversations open faster than this delay, so the loading text only
+   appears (softly) when a load is genuinely slow, instead of flashing. */
+.reader-empty[role="status"] { animation: motion-fade-in 140ms ease-out 180ms backwards; }
+
+.toast, .send-notice, .compose-notice, .exit-notice { animation: motion-toast-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.modal-backdrop { animation: motion-fade-in 120ms ease-out backwards; }
+.modal { animation: motion-modal-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.folder-menu, .filters-menu, .recipient-suggestions, .font-picker-popover { animation: motion-drop-in 110ms ease-out backwards; }
+
+/* Immediate press feedback, even while the work behind a click is still in
+   flight. */
+.nav-button, .icon-button, .action-button, .message-header-action, .attachment-download { transition: transform 80ms ease; }
+.nav-button:active, .icon-button:active, .action-button:active, .message-header-action:active, .attachment-download:active { transform: scale(0.94); }
+.unread-dot { transition: background-color 180ms ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   SafeMessage,
-  applyResolvedImages,
+  fillResolvedImages,
   collapseQuotedHistoryHtml,
   collapseQuotedHistoryText,
   extractBlockedImageUrls,
@@ -21,6 +21,17 @@ afterEach(() => {
   cleanup();
   vi.mocked(openUrl).mockClear();
 });
+
+/**
+ * jsdom does not populate an iframe from srcdoc. Mirror the document into the
+ * frame and fire load, as a browser would, so tests observe the live frame
+ * the way a reader sees it.
+ */
+function loadFrame(frame: HTMLIFrameElement) {
+  frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
+  fireEvent.load(frame);
+  return frame.contentDocument!;
+}
 
 describe("SafeMessage", () => {
   it("preserves structurally distinct notification and transactional layouts", () => {
@@ -433,7 +444,7 @@ it("extracts every distinct blocked-src URL, deduplicated", () => {
   ]);
 });
 
-it("applyResolvedImages fills in an <img> src and a background-image once resolved, leaving unresolved ones blocked", () => {
+it("fillResolvedImages fills in an <img> src and a background-image once resolved, leaving unresolved ones blocked", () => {
   const sanitized = sanitizeMessageHtml(`
     <img src="https://example.com/a.png">
     <div style="background-image:url(https://example.com/b.png)">Hi</div>
@@ -443,14 +454,32 @@ it("applyResolvedImages fills in an <img> src and a background-image once resolv
     ["https://example.com/a.png", "data:image/png;base64,AAA="],
     ["https://example.com/b.png", "data:image/png;base64,BBB="],
   ]);
-  const filled = applyResolvedImages(sanitized, resolved);
   const container = document.createElement("div");
-  container.innerHTML = filled;
+  container.innerHTML = sanitized;
+  fillResolvedImages(container, resolved);
 
   expect(container.querySelectorAll("img")[0].getAttribute("src")).toBe("data:image/png;base64,AAA=");
   expect(container.querySelector("div")?.style.backgroundImage).toBe('url("data:image/png;base64,BBB=")');
   expect(container.querySelectorAll("img")[1].hasAttribute("src")).toBe(false);
   expect(container.querySelectorAll("img")[1].getAttribute("data-blocked-src")).toBe("https://example.com/still-pending.png");
+});
+
+it("fillResolvedImages never admits a resolved value that is not a data: URI", () => {
+  const sanitized = sanitizeMessageHtml(`
+    <img src="https://example.com/a.png">
+    <div style="background-image:url(https://example.com/b.png)">Hi</div>
+  `);
+  const container = document.createElement("div");
+  container.innerHTML = sanitized;
+  fillResolvedImages(container, new Map([
+    ["https://example.com/a.png", "https://tracker.invalid/pixel.gif"],
+    ["https://example.com/b.png", "javascript:alert(1)"],
+  ]));
+
+  expect(container.querySelector("img")?.hasAttribute("src")).toBe(false);
+  expect(container.querySelector("img")?.getAttribute("data-blocked-src")).toBe("https://example.com/a.png");
+  expect(container.querySelector("div")?.style.backgroundImage).toBe("");
+  expect(container.querySelector("div")?.getAttribute("data-blocked-src")).toBe("https://example.com/b.png");
 });
 
 it("drops a background-image whose URL fails the same scheme validation as <img src>", () => {
@@ -706,8 +735,9 @@ it("leaves plain text without links untouched", () => {
 it("blocks images by default and resolves them through resolveImage once the reader asks to load them", async () => {
   const resolveImage = vi.fn(async (url: string) => `data:image/gif;base64,RESOLVED(${url})`);
   render(<SafeMessage html="<img src='https://tracker.invalid/pixel.gif'>" resolveImage={resolveImage} />);
-  const frame = () => screen.getByTestId("message-body") as HTMLIFrameElement;
-  expect(frame().srcdoc).toContain('data-blocked-src="https://tracker.invalid/pixel.gif"');
+  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+  expect(frame.srcdoc).toContain('data-blocked-src="https://tracker.invalid/pixel.gif"');
+  const live = loadFrame(frame);
   expect(resolveImage).not.toHaveBeenCalled();
   expect(screen.getByText("Load images")).toBeInTheDocument();
 
@@ -715,9 +745,60 @@ it("blocks images by default and resolves them through resolveImage once the rea
   expect(screen.queryByText("Load images")).not.toBeInTheDocument();
 
   await waitFor(() => {
-    expect(frame().srcdoc).toContain('src="data:image/gif;base64,RESOLVED(https://tracker.invalid/pixel.gif)"');
+    expect(live.querySelector("img")?.getAttribute("src")).toBe("data:image/gif;base64,RESOLVED(https://tracker.invalid/pixel.gif)");
   });
   expect(resolveImage).toHaveBeenCalledWith("https://tracker.invalid/pixel.gif");
+});
+
+it("patches resolved images into the loaded frame without reloading it", async () => {
+  const resolveImage = vi.fn(async (url: string) => `data:image/png;base64,RESOLVED(${url})`);
+  render(
+    <SafeMessage
+      html="<p>Newsletter</p><img src='https://example.com/a.png'><img src='https://example.com/b.png'>"
+      loadImages
+      resolveImage={resolveImage}
+    />,
+  );
+  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+  const initialDocument = frame.srcdoc;
+  const live = loadFrame(frame);
+
+  await waitFor(() => {
+    expect([...live.querySelectorAll("img")].map((image) => image.getAttribute("src"))).toEqual([
+      "data:image/png;base64,RESOLVED(https://example.com/a.png)",
+      "data:image/png;base64,RESOLVED(https://example.com/b.png)",
+    ]);
+  });
+  // Rewriting srcdoc would reload the frame once per image, flashing the
+  // content and losing the reader's scroll position and selection.
+  expect(frame.srcdoc).toBe(initialDocument);
+});
+
+it("re-applies already resolved images when the frame reloads", async () => {
+  const resolveImage = vi.fn(async (url: string) => `data:image/png;base64,RESOLVED(${url})`);
+  const { rerender } = render(<SafeMessage html="<img src='https://example.com/a.png'>" loadImages resolveImage={resolveImage} theme="dark" />);
+  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+  await waitFor(() => expect(resolveImage).toHaveBeenCalled());
+
+  rerender(<SafeMessage html="<img src='https://example.com/a.png'>" loadImages resolveImage={resolveImage} theme="light" />);
+  const live = loadFrame(frame);
+
+  expect(live.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,RESOLVED(https://example.com/a.png)");
+});
+
+it("does not restart image loading when the parent passes a new resolver each render", async () => {
+  let finish: (value: string) => void = () => {};
+  const first = vi.fn((_url: string) => new Promise<string>((resolve) => { finish = resolve; }));
+  const { rerender } = render(<SafeMessage html="<img src='https://example.com/slow.png'>" loadImages resolveImage={first} />);
+  await waitFor(() => expect(first).toHaveBeenCalledTimes(1));
+  const live = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+
+  const second = vi.fn(async (_url: string) => "data:image/png;base64,SECOND");
+  rerender(<SafeMessage html="<img src='https://example.com/slow.png'>" loadImages resolveImage={second} />);
+  await act(async () => { finish("data:image/png;base64,FIRST"); });
+
+  await waitFor(() => expect(live.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,FIRST"));
+  expect(second).not.toHaveBeenCalled();
 });
 
 it("resolves embedded cid images automatically while remote images remain blocked", async () => {
@@ -732,9 +813,11 @@ it("resolves embedded cid images automatically while remote images remain blocke
 
   await waitFor(() => expect(resolveImage).toHaveBeenCalledWith("cid:signature.logo"));
   expect(resolveImage).not.toHaveBeenCalledWith("https://tracker.invalid/pixel.gif");
-  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
-  expect(frame.srcdoc).toContain("data:image/png;base64,RESOLVED(cid:signature.logo)");
-  expect(frame.srcdoc).toContain('data-blocked-src="https://tracker.invalid/pixel.gif"');
+  const live = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+  const [embedded, remote] = live.querySelectorAll("img");
+  await waitFor(() => expect(embedded.getAttribute("src")).toBe("data:image/png;base64,RESOLVED(cid:signature.logo)"));
+  expect(remote.getAttribute("data-blocked-src")).toBe("https://tracker.invalid/pixel.gif");
+  expect(remote.hasAttribute("src")).toBe(false);
 });
 
 it("loads images automatically through resolveImage when configured", async () => {
@@ -742,9 +825,9 @@ it("loads images automatically through resolveImage when configured", async () =
   render(<SafeMessage html="<img src='https://example.com/logo.png'>" loadImages resolveImage={resolveImage} />);
 
   expect(screen.queryByText("Load images")).not.toBeInTheDocument();
+  const live = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
   await waitFor(() => {
-    expect((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc)
-      .toContain('src="data:image/png;base64,RESOLVED(https://example.com/logo.png)"');
+    expect(live.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,RESOLVED(https://example.com/logo.png)");
   });
 });
 
@@ -842,8 +925,10 @@ describe("shared image queue", () => {
     expect(resolveImage).toHaveBeenCalledTimes(limit);
     expect(resolveImage).toHaveBeenCalledWith(atLimitUrl);
     expect(resolveImage).not.toHaveBeenCalledWith(overLimitUrl);
-    expect(atLimit.querySelector("iframe")!.srcdoc).toContain('src="data:image/png;base64,x"');
-    expect(overLimit.querySelector("iframe")!.srcdoc).toContain(`data-blocked-src="${overLimitUrl}"`);
+    expect(loadFrame(atLimit.querySelector("iframe")!).querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,x");
+    const overLimitImage = loadFrame(overLimit.querySelector("iframe")!).querySelector("img");
+    expect(overLimitImage?.getAttribute("data-blocked-src")).toBe(overLimitUrl);
+    expect(overLimitImage?.hasAttribute("src")).toBe(false);
   });
 
   it("caps the number of distinct resources activated by one message", async () => {
@@ -858,12 +943,12 @@ describe("shared image queue", () => {
     await waitFor(() => expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxImagesPerMessage));
     // Every activated image resolves immediately, so once only the
     // over-cap image is still blocked, the per-message workers are done.
-    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
-    await waitFor(() => expect(frame.srcdoc.match(/data-blocked-src=/g)).toHaveLength(1));
+    const live = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    await waitFor(() => expect(live.querySelectorAll("[data-blocked-src]")).toHaveLength(1));
     await settleAll();
     expect(resolveImage).toHaveBeenCalledTimes(EMAIL_IMAGE_LIMITS.maxImagesPerMessage);
     expect(resolveImage).not.toHaveBeenCalledWith(urls[EMAIL_IMAGE_LIMITS.maxImagesPerMessage]);
-    expect(frame.srcdoc).toContain(`data-blocked-src="${urls[EMAIL_IMAGE_LIMITS.maxImagesPerMessage]}"`);
+    expect(live.querySelector("[data-blocked-src]")?.getAttribute("data-blocked-src")).toBe(urls[EMAIL_IMAGE_LIMITS.maxImagesPerMessage]);
   });
 });
 
@@ -911,15 +996,16 @@ it("renders each resolved image without waiting for slower images", async () => 
     />,
   );
 
-  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
-  await waitFor(() => expect(frame.srcdoc).toContain('src="data:image/png;base64,FAST="'));
-  expect(frame.srcdoc).toContain(`data-blocked-src="${slowUrl}"`);
-  expect(frame.srcdoc).not.toContain(`background-image: url(&quot;${slowUrl}`);
+  const live = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+  const hero = live.querySelector<HTMLElement>("[data-email-root] div")!;
+  await waitFor(() => expect(live.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,FAST="));
+  expect(hero.getAttribute("data-blocked-src")).toBe(slowUrl);
+  expect(hero.style.backgroundImage).toBe("");
 
   finishSlow("data:image/png;base64,SLOW=");
   await waitFor(() => {
-    expect(frame.srcdoc).toContain("data:image/png;base64,SLOW=");
-    expect(frame.srcdoc).not.toContain(`data-blocked-src="${slowUrl}"`);
+    expect(hero.style.backgroundImage).toBe('url("data:image/png;base64,SLOW=")');
+    expect(hero.hasAttribute("data-blocked-src")).toBe(false);
   });
 });
 
@@ -934,16 +1020,10 @@ it("reports the resolved src when the reader clicks an image in the message body
       onImageClick={onImageClick}
     />,
   );
-  const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
-  fireEvent.load(frame);
+  const live = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+  const image = live.querySelector("img")!;
+  await waitFor(() => expect(image.getAttribute("src")).toContain("data:image/png;base64,RESOLVED"));
 
-  await waitFor(() => expect(frame.srcdoc).toContain("data:image/png;base64,RESOLVED"));
-  // jsdom doesn't navigate the iframe to its srcdoc, so contentDocument
-  // never actually gets the message markup on its own — mirror what the
-  // real browser would have loaded before dispatching into it.
-  frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
-
-  const image = frame.contentDocument!.querySelector("img")!;
   fireEvent.click(image);
 
   expect(onImageClick).toHaveBeenCalledWith("data:image/png;base64,RESOLVED(https://example.com/photo.png)");

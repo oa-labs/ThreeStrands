@@ -818,9 +818,15 @@ it("resolves a queued reply's inline image from its outbox draft", async () => {
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
   await waitFor(() => expect(readInline).toHaveBeenCalledWith("inline-reply-draft", "inline-1"));
+  // Resolved images are patched into the loaded frame rather than rewritten
+  // into srcdoc. jsdom does not load srcdoc, so mirror it and fire load.
+  const queuedFrame = (screen.getAllByTestId("message-body") as HTMLIFrameElement[])
+    .find((body) => body.srcdoc.includes("cid:inline-1@threestrands.local"))!;
+  queuedFrame.contentDocument!.body.innerHTML = new DOMParser()
+    .parseFromString(queuedFrame.srcdoc, "text/html").body.innerHTML;
+  fireEvent.load(queuedFrame);
   await waitFor(() => {
-    const bodies = screen.getAllByTestId("message-body") as HTMLIFrameElement[];
-    expect(bodies.some((body) => body.srcdoc.includes("data:image/png;base64,iVBORw=="))).toBe(true);
+    expect(queuedFrame.contentDocument!.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,iVBORw==");
   });
 });
 

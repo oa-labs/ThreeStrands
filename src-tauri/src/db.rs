@@ -159,6 +159,16 @@ fn run_quick_check(connection: &Connection) -> Result<(), OpenError> {
     }
 }
 
+/// Opens a short-lived connection for maintenance that must not hold the
+/// shared connection mutex (backups, WAL checkpoints). WAL mode is a
+/// persistent property of the file, so this connection shares it without
+/// re-running the schema; the busy timeout matches the primary connection.
+fn maintenance_connection(path: &Path) -> DbResult<Connection> {
+    let connection = Connection::open(path)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    Ok(connection)
+}
+
 fn vacuum_into(connection: &Connection, dest: &Path) -> DbResult<()> {
     connection
         .execute("VACUUM INTO ?1", params![path_string(dest)])?;
@@ -486,24 +496,33 @@ impl Database {
     /// periodic maintenance loop so a long-running session doesn't leave an
     /// ever-growing `-wal` file between the automatic checkpoints SQLite
     /// already performs on its own.
+    ///
+    /// Runs on a dedicated maintenance connection when the database has a
+    /// file, so copying WAL pages back never holds the shared connection
+    /// mutex that UI reads wait on. Under WAL, readers keep working
+    /// throughout; writers only wait for the checkpoint's final truncate.
     pub fn checkpoint_wal(&self) -> DbResult<()> {
-        self.with_connection(|connection| {
-            Ok(connection
-                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?)
-        })
+        let checkpoint = |connection: &Connection| -> DbResult<()> {
+            Ok(connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?)
+        };
+        match &self.path {
+            Some(path) => checkpoint(&maintenance_connection(path)?),
+            None => self.with_connection(checkpoint),
+        }
     }
 
     /// Snapshots the database to a rotating sibling file via `VACUUM INTO`,
     /// pruning older snapshots beyond the retention window. A no-op for the
     /// in-memory test database, which has no path to snapshot alongside.
+    ///
+    /// `VACUUM INTO` copies the whole file, so it reads from its own WAL
+    /// snapshot on a dedicated connection instead of holding the shared
+    /// connection mutex (and with it every UI read) for the full copy.
     pub fn create_periodic_backup(&self) -> DbResult<()> {
-        let Some(path) = self.path.clone() else {
+        let Some(path) = self.path.as_deref() else {
             return Ok(());
         };
-        self.with_connection(|connection| {
-            periodic_backup(connection, &path)?;
-            Ok(())
-        })
+        periodic_backup(&maintenance_connection(path)?, path)
     }
 
     /// The Inbox is unarchived/untrashed threads *minus* anything claimed by
@@ -5189,6 +5208,37 @@ pub(crate) mod tests {
                 && list_matching(&temp.dir, "pre-migration-v0101").is_empty(),
             "only the most recent PRE_MIGRATION_BACKUPS_KEPT snapshots should survive"
         );
+    }
+
+    #[test]
+    fn backup_and_checkpoint_do_not_wait_on_the_shared_connection() {
+        let temp = TempDbPath::new();
+        let database = std::sync::Arc::new(Database::open(&temp.path).unwrap());
+        database
+            .upsert_thread(
+                "work@example.com",
+                &[message("m1", "keep-me", "2026-01-01T00:00:00Z", "body")],
+            )
+            .unwrap();
+
+        // Hold the shared connection the way a long sync batch or UI read
+        // would, then run maintenance on another thread.
+        let guard = database.connection().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let maintenance_db = database.clone();
+        std::thread::spawn(move || {
+            let result = maintenance_db
+                .checkpoint_wal()
+                .and_then(|_| maintenance_db.create_periodic_backup());
+            let _ = sender.send(result.map_err(|error| error.to_string()));
+        });
+        let outcome = receiver.recv_timeout(std::time::Duration::from_secs(10));
+        drop(guard);
+
+        outcome
+            .expect("maintenance blocked on the shared connection mutex")
+            .unwrap();
+        assert_eq!(list_matching(&temp.dir, ".backup-").len(), 1);
     }
 
     #[test]

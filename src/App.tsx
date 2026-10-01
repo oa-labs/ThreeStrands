@@ -6,24 +6,15 @@ import {
   Check,
   ContactRound,
   ChevronDown,
-  ChevronUp,
   Command as CommandIcon,
-  Copy,
-  Reply,
-  ReplyAll,
-  Forward,
   Inbox,
   Mail,
   MailOpen,
   Moon,
-  Download,
-  ExternalLink,
-  Paperclip,
   Sun,
   Pencil,
   RefreshCw,
   RotateCcw,
-  Search,
   Settings as SettingsIcon,
   ShieldAlert,
   Star,
@@ -81,11 +72,12 @@ import type {
 import { PanelResizeHandle, useInboxWidth } from "./PanelResizeHandle";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { ThreadRow } from "./ThreadList";
+import { MessageCard, type MessageResponseKind } from "./MessageCard";
+import { SearchField } from "./SearchField";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
-import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
+import { decodeHtmlEntities } from "./SafeMessage";
 import { selectedMessageQuote } from "./selectedMessageQuote";
-import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { CalendarWeekView } from "./CalendarWeekView";
 import { eventDate, startOfLocalDay } from "./calendarTime";
@@ -105,8 +97,7 @@ import { clearScheduleCache } from "./calendarScheduleCache";
 import { hasEmailedBefore, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
-import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
-import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
+import { parseAddress } from "./emailAddress";
 import {
   readLabelUsage,
   readSelectedAccountId,
@@ -139,10 +130,7 @@ import {
   type MutationTemplate,
 } from "./threadMutations";
 import {
-  formatAttachmentSize,
-  formatMailTimestamp,
   sortByRecency,
-  splitAttachmentName,
   triageNow,
 } from "./threadPresentation";
 import {
@@ -170,6 +158,11 @@ type Notice = { message: string; undo?: () => void };
 export const NOTICE_TIMEOUT_MS = 6000;
 
 let noticeSequence = 0;
+
+/** Smooth scrolling, unless the reader asked the OS to reduce motion. */
+function scrollBehavior(): ScrollBehavior {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+}
 
 function useNotice() {
   const [notice, setCurrent] = useState<(Notice & { key: number }) | null>(null);
@@ -310,6 +303,8 @@ export function App() {
     composerOpen: composerBelongsToVisibleThread,
   });
   const [query, setQuery] = useState("");
+  const queryRef = useRef(query);
+  queryRef.current = query;
   const [searchOpen, setSearchOpen] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [remoteSearchState, setRemoteSearchState] = useState<"idle" | "searching" | "error">("idle");
@@ -642,13 +637,13 @@ export function App() {
       // A null activeAccountId is the merged "All accounts" view, which
       // shows every account's mail, so any account's sync should refresh it.
       if (activeAccountId === null || event.payload === activeAccountId) {
-        void loadThreadsRef.current(query);
+        void loadThreadsRef.current(queryRef.current);
       }
     });
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [refreshUnreadCounts, refreshMailboxUnreadCounts, activeAccountId, query]);
+  }, [refreshUnreadCounts, refreshMailboxUnreadCounts, activeAccountId]);
 
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
@@ -686,9 +681,15 @@ export function App() {
     }
   }, [query, threads.length, includeArchived, activeAccountId, mailbox, activeSplitInboxId]);
 
+  // Reload only when a send completes. Outbox history persists, so testing
+  // `sentCount > 0` would stay true forever and turn every search keystroke
+  // into an undebounced reload.
+  const previousSentCountRef = useRef(correspondence.sentCount);
   useEffect(() => {
-    if (correspondence.sentCount > 0) void loadThreads(query);
-  }, [correspondence.sentCount, loadThreads, query]);
+    const previous = previousSentCountRef.current;
+    previousSentCountRef.current = correspondence.sentCount;
+    if (correspondence.sentCount > previous) void loadThreadsRef.current(queryRef.current);
+  }, [correspondence.sentCount]);
 
   useEffect(() => {
     // Warm every connected account's label catalog, not just ones whose
@@ -880,9 +881,10 @@ export function App() {
     // debounce below is intentionally only for starting the replacement
     // request; it must not leave an older search eligible to paint.
     ++threadsRequest.current;
+    // SearchField already debounces typing before committing `query`.
     const timeout = window.setTimeout(() => {
       void loadThreads(query).finally(() => setLoading(false));
-    }, query.trim() ? 180 : 0);
+    }, 0);
     return () => window.clearTimeout(timeout);
   }, [query, loadThreads]);
 
@@ -1728,7 +1730,7 @@ export function App() {
     if (!node) return;
     const focusTarget = node.querySelector<HTMLElement>(".message-card-toggle, .message-expanded-toggle") ?? node;
     focusTarget.focus({ preventScroll: true });
-    node.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    node.scrollIntoView?.({ block: "nearest", behavior: scrollBehavior() });
   }, [activeMessageIdRef, displayedMessages, messageRefs]);
 
   // Switches to the Inbox tab (`null`) or a split inbox tab and remembers the
@@ -1943,12 +1945,12 @@ export function App() {
     pageMessageDown: () => {
       const node = messageStackRef.current;
       if (!node) return;
-      node.scrollBy({ top: node.clientHeight * 0.9, behavior: "smooth" });
+      node.scrollBy({ top: node.clientHeight * 0.9, behavior: scrollBehavior() });
     },
     pageMessageUp: () => {
       const node = messageStackRef.current;
       if (!node) return;
-      node.scrollBy({ top: -node.clientHeight * 0.9, behavior: "smooth" });
+      node.scrollBy({ top: -node.clientHeight * 0.9, behavior: scrollBehavior() });
     },
     aiSummaryAvailable,
     summarizeSelected: async () => {
@@ -2048,6 +2050,52 @@ export function App() {
     if (!selectAllRef.current) return;
     selectAllRef.current.indeterminate = checkedIds.size > 0 && checkedIds.size < threads.length;
   }, [checkedIds, threads.length]);
+
+  const clearContextOpenedThread = useCallback(() => {
+    contextOpenedThreadRef.current = null;
+  }, []);
+  const closeSearch = useCallback(() => {
+    setQuery("");
+    setSearchOpen(false);
+    selectedThreadRowRef.current?.focus();
+  }, []);
+  const toggleIncludeArchived = useCallback(() => setIncludeArchived((current) => !current), []);
+
+  // Stable callbacks for MessageCard, so a card re-renders only when its own
+  // message or display state changes rather than on every App render.
+  const activateMessage = useCallback((messageId: string) => {
+    activeMessageIdRef.current = messageId;
+    setActiveMessageId(messageId);
+  }, [activeMessageIdRef, setActiveMessageId]);
+  const toggleMessage = useCallback((messageId: string, isExpanded: boolean) => {
+    activateMessage(messageId);
+    pendingMessageToggleFocusRef.current = messageId;
+    setMessageExpansionOverrides((current) => {
+      const next = new Map(current);
+      next.set(messageId, !isExpanded);
+      return next;
+    });
+  }, [activateMessage, pendingMessageToggleFocusRef, setMessageExpansionOverrides]);
+  const registerMessageNode = useCallback((messageId: string, isLatest: boolean, node: HTMLElement | null) => {
+    if (isLatest) latestMessageRef.current = node;
+    if (node) messageRefs.current.set(messageId, node);
+    else messageRefs.current.delete(messageId);
+  }, [latestMessageRef, messageRefs]);
+  const respondToMessageRef = useRef<(kind: MessageResponseKind, messageId: string) => void>(() => {});
+  respondToMessageRef.current = (kind, messageId) => {
+    if (selected) {
+      recordTriageEvent({
+        threadId: selected.id,
+        kind: "response",
+        context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
+      });
+    }
+    correspondence.context[kind](messageId);
+  };
+  const respondToMessage = useCallback((kind: MessageResponseKind, messageId: string) => {
+    respondToMessageRef.current(kind, messageId);
+  }, []);
+  const showNoticeMessage = useCallback((message: string) => setNotice({ message }), [setNotice]);
 
   const selectedThreads = threads.filter((thread) => checkedIds.has(thread.id));
   const allSelectedThreadsStarred = selectedThreads.length > 0
@@ -2257,43 +2305,15 @@ export function App() {
         </header>
         {isTabbedMailbox && searchOpen ? (
           <div className="list-toolbar">
-            <label className="search-box">
-              <Search size={16} />
-              <input
-                ref={searchRef}
-                value={query}
-                onChange={(event) => {
-                  contextOpenedThreadRef.current = null;
-                  setQuery(event.target.value);
-                }}
-                placeholder="Search mail"
-                aria-label="Search Mail"
-                data-mailbox-tab-shortcut
-                data-shortcut-scope="search"
-                onKeyDown={(event) => {
-                  if (event.key !== "Escape") return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setQuery("");
-                  setSearchOpen(false);
-                  selectedThreadRowRef.current?.focus();
-                }}
-              />
-              {query.trim() ? (
-                <button
-                  type="button"
-                  className={`search-toggle ${includeArchived ? "active" : ""}`}
-                  aria-pressed={includeArchived}
-                  aria-label={includeArchived ? "Exclude archived and trashed mail from search" : "Include archived or trashed mail in search"}
-                  title={includeArchived ? "Exclude archived and trashed mail from search" : "Include archived or trashed mail in search"}
-                  onClick={() => setIncludeArchived((current) => !current)}
-                >
-                  <Archive size={14} />
-                  <span>{includeArchived ? "Archived + Trash" : "Search All Mail"}</span>
-                </button>
-              ) : null}
-              <kbd>/</kbd>
-            </label>
+            <SearchField
+              inputRef={searchRef}
+              query={query}
+              onCommit={setQuery}
+              onInput={clearContextOpenedThread}
+              onEscape={closeSearch}
+              includeArchived={includeArchived}
+              onToggleIncludeArchived={toggleIncludeArchived}
+            />
           </div>
         ) : null}
         <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={mailboxTitle}>
@@ -2453,261 +2473,29 @@ export function App() {
           >
             {visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? displayedMessages.map((message, index) => {
                 const isLatest = index === displayedMessages.length - 1;
-                const isExpanded = messageExpansionOverrides.get(message.id) ?? (isLatest || message.unread);
-                const isActive = (activeMessageId ?? latestDisplayedMessageId) === message.id;
-                const parsedSender = parseAddress(message.sender);
-                const senderAccount = accounts.find(
-                  (account) => account.email.toLocaleLowerCase() === parsedSender.email.toLocaleLowerCase(),
-                );
-                const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
-                const senderDisplayName = formatDisplayName(senderName);
-                const recipients = splitAddressList(message.recipients.join(", "));
-                const referencedContentIds = referencedImageContentIds(message.bodyHtml);
-                const downloadableAttachments = message.attachments.filter(
-                  (attachment) => !isInlineImageAttachment(attachment, referencedContentIds),
-                );
-                const queuedItem = correspondence.outbox.find((item) => `outbox-${item.id}` === message.id);
-                const cardBodyId = `message-body-${index}`;
-                const activateMessage = () => {
-                  activeMessageIdRef.current = message.id;
-                  setActiveMessageId(message.id);
-                };
-                const toggleMessage = () => {
-                  activateMessage();
-                  pendingMessageToggleFocusRef.current = message.id;
-                  setMessageExpansionOverrides((current) => {
-                    const next = new Map(current);
-                    next.set(message.id, !isExpanded);
-                    return next;
-                  });
-                };
-                const registerMessageNode = (node: HTMLElement | null) => {
-                  if (isLatest) latestMessageRef.current = node;
-                  if (node) messageRefs.current.set(message.id, node);
-                  else messageRefs.current.delete(message.id);
-                };
-                if (!isExpanded) {
-                  return (
-                    <article
-                      className={`message message-card message-card-collapsed ${isActive ? "message-active" : ""}`}
-                      key={message.id}
-                      ref={registerMessageNode}
-                      data-message-id={message.id}
-                      onFocusCapture={activateMessage}
-                      onMouseDown={activateMessage}
-                    >
-                      <header className="message-card-header">
-                        <button
-                          type="button"
-                          className="message-card-toggle"
-                          aria-expanded={false}
-                          aria-controls={cardBodyId}
-                          onClick={toggleMessage}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter") return;
-                            event.preventDefault();
-                            toggleMessage();
-                          }}
-                        >
-                          <span className="message-card-sender">{senderDisplayName}</span>
-                          <span className="message-card-snippet">{messageSnippet(message.bodyText)}</span>
-                          {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
-                          <time>{formatMailTimestamp(message.sentAt)}</time>
-                          <ChevronDown size={14} className="message-card-chevron" />
-                        </button>
-                      </header>
-                      <div id={cardBodyId} hidden />
-                    </article>
-                  );
-                }
-                const replyToMessage = () => {
-                  if (selected) {
-                    recordTriageEvent({
-                      threadId: selected.id,
-                      kind: "response",
-                      context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
-                    });
-                  }
-                  correspondence.context.reply(message.id);
-                };
-                const replyAllToMessage = () => {
-                  if (selected) {
-                    recordTriageEvent({
-                      threadId: selected.id,
-                      kind: "response",
-                      context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
-                    });
-                  }
-                  correspondence.context.replyAll(message.id);
-                };
-                const forwardMessage = () => {
-                  if (selected) {
-                    recordTriageEvent({
-                      threadId: selected.id,
-                      kind: "response",
-                      context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
-                    });
-                  }
-                  correspondence.context.forward(message.id);
-                };
-                const headerDetails = (
-                  <div className="message-header-details">
-                    <div className="message-sender-row">
-                      <strong><AddressWithCopy address={message.sender} displayName={senderDisplayName} /></strong>
-                      {queuedItem ? null : (
-                        <div className="message-header-actions">
-                          <HoverTooltip label="Reply" placement="bottom">
-                            <button
-                              type="button"
-                              className="message-header-action"
-                              aria-label="Reply"
-                              onClick={replyToMessage}
-                            >
-                              <Reply size={14} />
-                            </button>
-                          </HoverTooltip>
-                          <HoverTooltip label="Reply all" placement="bottom">
-                            <button
-                              type="button"
-                              className="message-header-action"
-                              aria-label="Reply All"
-                              onClick={replyAllToMessage}
-                            >
-                              <ReplyAll size={14} />
-                            </button>
-                          </HoverTooltip>
-                          <HoverTooltip label="Forward" placement="bottom">
-                            <button
-                              type="button"
-                              className="message-header-action"
-                              aria-label="Forward"
-                              onClick={forwardMessage}
-                            >
-                              <Forward size={14} />
-                            </button>
-                          </HoverTooltip>
-                        </div>
-                      )}
-                      <time>{formatMailTimestamp(message.sentAt)}</time>
-                    </div>
-                    <div className="message-recipients">
-                      to{" "}
-                      {recipients.map((recipient, recipientIndex) => (
-                        <span key={recipient}>
-                          {recipientListSeparator(recipientIndex, recipients.length)}
-                          <AddressWithCopy
-                            address={recipient}
-                            displayName={formatDisplayName(parseAddress(recipient).name)}
-                          />
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                );
                 return (
-                  <article
-                    className={`message message-card message-card-expanded ${isActive ? "message-active" : ""}`}
+                  <MessageCard
                     key={message.id}
-                    ref={registerMessageNode}
-                    data-message-id={message.id}
-                    onFocusCapture={activateMessage}
-                    onMouseDown={activateMessage}
-                  >
-                    <header
-                      className="message-expanded-header"
-                    >
-                      {headerDetails}
-                      <button
-                        type="button"
-                        className="message-expanded-toggle"
-                        aria-expanded={true}
-                        aria-controls={cardBodyId}
-                        aria-label={`Collapse message from ${senderDisplayName}, ${formatMailTimestamp(message.sentAt)}`}
-                        onClick={toggleMessage}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter") return;
-                          event.preventDefault();
-                          toggleMessage();
-                        }}
-                      >
-                        <ChevronUp size={14} />
-                      </button>
-                    </header>
-                    <div id={cardBodyId} className="message-card-body">
-                      <SafeMessage
-                        html={message.bodyHtml}
-                        text={message.bodyText}
-                        loadImages={loadRemoteImages}
-                        imageCacheKey={message.id}
-                        onImageClick={setLightboxImageSrc}
-                        onEnterKey={toggleMessage}
-                        resolveImage={(url) => {
-                          if (!/^cid:/i.test(url)) return mailClient.fetchRemoteImage(url);
-                          const contentId = normalizeContentId(url.slice(4));
-                          const embedded = message.attachments.find((attachment) =>
-                            attachment.contentId
-                            && normalizeContentId(attachment.contentId) === contentId
-                          );
-                          if (!embedded) return Promise.reject(new Error("Embedded image not found"));
-                          return queuedItem
-                            ? mailClient.readInlineImage(queuedItem.draft.id, embedded.id)
-                            : mailClient.fetchAttachmentImage(message.id, embedded.id);
-                        }}
-                        theme={effectiveThemeValue}
-                        fontScale={fontScale / 100}
-                        fontFamily={fontFamily}
-                        tone={isLatest ? "current" : message.unread ? "default" : "muted"}
-                      />
-                      {downloadableAttachments.length > 0 ? (
-                        <div className="message-attachments" aria-label="Attachments">
-                          {downloadableAttachments.some(isCalendarAttachment) ? (
-                            <CalendarAttachmentGroup
-                              messageId={message.id}
-                              attachments={downloadableAttachments.filter(isCalendarAttachment)}
-                              onError={(notice) => setNotice({ message: notice })}
-                            />
-                          ) : null}
-                          {downloadableAttachments.filter((attachment) => !isCalendarAttachment(attachment)).map((attachment) => {
-                              const attachmentName = splitAttachmentName(attachment.filename);
-                              return (
-                              <div className="message-attachment" key={attachment.id}>
-                                <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button
-                                  type="button"
-                                  className="attachment-badge"
-                                  aria-label={`View ${attachment.filename}`}
-                                  onClick={() => {
-                                    void mailClient.openAttachment(message.id, attachment.id).catch((reason: unknown) => {
-                                      setNotice({ message: `Could not open attachment: ${errorMessage(reason)}` });
-                                    });
-                                  }}
-                                >
-                                  <Paperclip size={14} />
-                                  <span className="attachment-name">
-                                    <span className="attachment-name-base">{attachmentName.base}</span>
-                                    {attachmentName.extension ? <span className="attachment-name-ext">{attachmentName.extension}</span> : null}
-                                  </span>
-                                  <small>{formatAttachmentSize(attachment.size)}</small>
-                                  <ExternalLink size={13} />
-                                </button></HoverTooltip>
-                                <button
-                                  type="button"
-                                  className="attachment-download"
-                                  aria-label={`Download ${attachment.filename}`}
-                                  onClick={() => {
-                                    void mailClient.saveAttachment(message.id, attachment.id).catch((reason: unknown) => {
-                                      setNotice({ message: `Could not download attachment: ${errorMessage(reason)}` });
-                                    });
-                                  }}
-                                >
-                                  <Download size={14} />
-                                </button>
-                              </div>
-                              );
-                            })}
-                        </div>
-                      ) : null}
-                    </div>
-                  </article>
+                    message={message}
+                    index={index}
+                    isLatest={isLatest}
+                    isExpanded={messageExpansionOverrides.get(message.id) ?? (isLatest || message.unread)}
+                    isActive={(activeMessageId ?? latestDisplayedMessageId) === message.id}
+                    accounts={accounts}
+                    queuedItem={message.id.startsWith("outbox-")
+                      ? correspondence.outbox.find((item) => `outbox-${item.id}` === message.id)
+                      : undefined}
+                    loadRemoteImages={loadRemoteImages}
+                    theme={effectiveThemeValue}
+                    fontScale={fontScale / 100}
+                    fontFamily={fontFamily}
+                    onActivate={activateMessage}
+                    onToggle={toggleMessage}
+                    onRespond={respondToMessage}
+                    onRegisterNode={registerMessageNode}
+                    onImageClick={setLightboxImageSrc}
+                    onNotice={showNoticeMessage}
+                  />
                 );
             }) : null}
             {correspondence.activeDraft ? correspondence.composer : null}
@@ -3023,40 +2811,7 @@ export function App() {
   );
 }
 
-function AddressWithCopy({ address, displayName }: { address: string; displayName?: string }) {
-  const [copied, setCopied] = useState(false);
-  const parsedAddress = parseAddress(address);
-  const parsed = displayName ? { ...parsedAddress, name: displayName } : parsedAddress;
 
-  const handleCopy = async (event: React.MouseEvent) => {
-    event.stopPropagation();
-    await navigator.clipboard.writeText(parsed.email);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  };
-
-  return (
-    <span className="address" tabIndex={0} onClick={(event) => event.stopPropagation()}>
-      <span className="address-name">{parsed.name}</span>
-      <span className="address-popover">
-        <span className="address-email">{parsed.email}</span>
-        <button
-          type="button"
-          className="address-copy"
-          aria-label={copied ? "Copied" : `Copy ${parsed.email}`}
-          onClick={handleCopy}
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-        </button>
-      </span>
-    </span>
-  );
-}
-
-function messageSnippet(bodyText: string, maxLength = 140): string {
-  const collapsed = decodeHtmlEntities(bodyText).replace(/\s+/g, " ").trim();
-  return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength).trimEnd()}…` : collapsed;
-}
 
 function splitDraftRecipients(draft: Draft): string[] {
   const result: string[] = [];
@@ -3130,11 +2885,6 @@ export function messagesWithQueuedReplies(detail: ThreadDetail, outbox: OutboxIt
   return queuedReplies.length > 0 ? [...detail.messages, ...queuedReplies] : detail.messages;
 }
 
-function recipientListSeparator(index: number, recipientCount: number): string {
-  if (index === 0) return "";
-  if (index === recipientCount - 1) return recipientCount === 2 ? " and " : ", and ";
-  return ", ";
-}
 
 const FOLDER_OPTIONS = [
   { id: "inbox", label: "Inbox", commandId: "mailbox.inbox", shortcut: "G I" },

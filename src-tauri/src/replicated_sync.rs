@@ -2034,10 +2034,20 @@ impl ReplicatedSync {
     {
         tauri::async_runtime::spawn(async move {
             let mut interval = tokio::time::interval(SYNC_INTERVAL);
+            let mut was_active = false;
             loop {
                 // `interval` ticks immediately once, so a device catches up
                 // on startup instead of waiting for the first 30-second tick.
                 interval.tick().await;
+                let active = self.database.replicated_sync_active().unwrap_or(false);
+                // While the feature is off, `sync_once` does nothing, so a
+                // status event would only make every listener re-read (and
+                // re-save) preferences for no change. The tick right after
+                // it turns off still reports, so status views settle.
+                if !should_report_cycle(was_active, active) {
+                    continue;
+                }
+                was_active = active;
                 match self.sync_once().await {
                     Ok(()) => on_synced(&handle),
                     Err(error) => log::warn!(target: "replicated_sync", "periodic sync failed: {error}"),
@@ -2049,11 +2059,26 @@ impl ReplicatedSync {
     }
 }
 
+/// Whether a periodic cycle should run its callback and status event: always
+/// while the feature is active, plus the first tick after it turns off.
+fn should_report_cycle(was_active: bool, active: bool) -> bool {
+    active || was_active
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn periodic_cycles_stay_silent_while_the_feature_is_off() {
+        assert!(!should_report_cycle(false, false));
+        assert!(should_report_cycle(false, true));
+        assert!(should_report_cycle(true, true));
+        // One last report when the feature turns off, then silence.
+        assert!(should_report_cycle(true, false));
+    }
 
     fn fields(names: &[&str]) -> BTreeSet<String> {
         names.iter().map(|name| name.to_string()).collect()
