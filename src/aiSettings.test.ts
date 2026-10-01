@@ -7,7 +7,9 @@ import {
   readAiFeatures,
   readAiProvider,
   readAiRequestConfig,
+  AI_MODEL_TIERS,
   saveAiEndpoint,
+  saveAiFastModel,
   saveAiFeatures,
   saveAiModel,
   saveAiProvider,
@@ -45,32 +47,68 @@ describe("AI provider preferences", () => {
   });
 
   it("requires a provider before building an AI request", () => {
-    expect(() => readAiRequestConfig("summarizing")).toThrow("Choose an AI provider in AI settings before summarizing.");
+    expect(() => readAiRequestConfig("summarizing", "summary")).toThrow("Choose an AI provider in AI settings before summarizing.");
   });
 
   it("falls back to the provider's default model and omits the endpoint for hosted providers", () => {
     saveAiProvider("openai");
     saveAiEndpoint("https://ignored.example.com");
-    expect(readAiRequestConfig("summarizing")).toEqual({ provider: "openai", model: "gpt-4o", endpoint: null });
+    expect(readAiRequestConfig("summarizing", "summary")).toEqual({ provider: "openai", model: "gpt-4o", endpoint: null });
 
     saveAiModel("  gpt-4o-mini  ");
-    expect(readAiRequestConfig("summarizing").model).toBe("gpt-4o-mini");
+    expect(readAiRequestConfig("summarizing", "summary").model).toBe("gpt-4o-mini");
   });
 
   it("requires both a model and an endpoint for a custom provider", () => {
     saveAiProvider("custom");
-    expect(() => readAiRequestConfig("drafting a reply")).toThrow("Set a model in AI settings before drafting a reply.");
+    expect(() => readAiRequestConfig("drafting a reply", "replyDraft")).toThrow("Set a model in AI settings before drafting a reply.");
 
     saveAiModel("local-llama");
     saveAiEndpoint("   ");
-    expect(() => readAiRequestConfig("drafting a reply")).toThrow("Set an endpoint URL in AI settings before drafting a reply.");
+    expect(() => readAiRequestConfig("drafting a reply", "replyDraft")).toThrow("Set an endpoint URL in AI settings before drafting a reply.");
 
     saveAiEndpoint(" http://localhost:8080/v1 ");
-    expect(readAiRequestConfig("drafting a reply")).toEqual({
+    expect(readAiRequestConfig("drafting a reply", "replyDraft")).toEqual({
       provider: "custom",
       model: "local-llama",
       endpoint: "http://localhost:8080/v1",
     });
+  });
+
+  it("sends reading and copying work to the fast model and reasoning work to the main model", () => {
+    expect(AI_MODEL_TIERS).toEqual({
+      summary: "fast",
+      replyDraft: "fast",
+      contactEnrichment: "fast",
+      actionExtraction: "reasoning",
+      brief: "reasoning",
+      threadChat: "reasoning",
+    });
+    saveAiProvider("fireworks");
+    saveAiModel("example/reasoning");
+    saveAiFastModel("  example/fast  ");
+    const modelFor = (use: keyof typeof AI_MODEL_TIERS) => readAiRequestConfig("testing", use).model;
+    expect(["summary", "replyDraft", "contactEnrichment"].map((use) => modelFor(use as keyof typeof AI_MODEL_TIERS)))
+      .toEqual(["example/fast", "example/fast", "example/fast"]);
+    expect(["actionExtraction", "brief", "threadChat"].map((use) => modelFor(use as keyof typeof AI_MODEL_TIERS)))
+      .toEqual(["example/reasoning", "example/reasoning", "example/reasoning"]);
+  });
+
+  it("uses the main model for every feature while the fast model is blank", () => {
+    saveAiProvider("openai");
+    saveAiFastModel("   ");
+    expect(readAiRequestConfig("summarizing", "summary").model).toBe("gpt-4o");
+    saveAiModel("gpt-4.1-mini");
+    expect(readAiRequestConfig("summarizing", "summary").model).toBe("gpt-4.1-mini");
+    expect(readAiRequestConfig("getting a brief", "brief").model).toBe("gpt-4.1-mini");
+  });
+
+  it("still requires a main model for a custom provider when only the fast model is set", () => {
+    saveAiProvider("custom");
+    saveAiEndpoint("http://localhost:8080/v1");
+    saveAiFastModel("local-fast");
+    expect(readAiRequestConfig("summarizing", "summary").model).toBe("local-fast");
+    expect(() => readAiRequestConfig("getting a brief", "brief")).toThrow("Set a model in AI settings before getting a brief.");
   });
 
   it("defaults every feature flag to off and merges a partial saved value", () => {

@@ -50,6 +50,7 @@ describe("synced preferences data boundary", () => {
     const preferences = queuedPreferences();
     expect(Object.keys(preferences).sort()).toEqual([
       "aiEndpoint",
+      "aiFastModel",
       "aiFeatures",
       "aiModel",
       "aiProvider",

@@ -76,11 +76,13 @@ import {
   clearAiApiKey,
   isAiApiKeyConfigured,
   readAiEndpoint,
+  readAiFastModel,
   readAiFeatures,
   readAiModel,
   readAiProvider,
   resolveAiModel,
   saveAiEndpoint,
+  saveAiFastModel,
   saveAiFeatures,
   saveAiModel,
   saveAiProvider,
@@ -1662,6 +1664,7 @@ function AccountColorInput({
 export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const [provider, setProvider] = useState(readAiProvider);
   const [model, setModel] = useState(readAiModel);
+  const [fastModel, setFastModel] = useState(readAiFastModel);
   const [endpoint, setEndpoint] = useState(readAiEndpoint);
   const [features, setFeatures] = useState<AiFeatureFlags>(readAiFeatures);
   const featuresRef = useRef(features);
@@ -1712,7 +1715,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
       {provider !== "none" ? (
         <>
           <label className="settings-field">
-            <span>Model</span>
+            <span>Reasoning model</span>
             <input
               value={model}
               placeholder={AI_MODEL_PLACEHOLDERS[provider]}
@@ -1745,6 +1748,27 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               </div>
             </div>
           ) : null}
+
+          <p className="settings-hint">
+            Used for suggestions, briefs, and conversation chat, where working through
+            dates and multi-step questions pays off.
+          </p>
+
+          <label className="settings-field">
+            <span>Fast model</span>
+            <input
+              value={fastModel}
+              placeholder="Same as reasoning model"
+              onChange={(event) => {
+                setFastModel(event.target.value);
+                saveAiFastModel(event.target.value);
+              }}
+            />
+          </label>
+          <p className="settings-hint">
+            Optional. Used for summaries, reply drafts, and contact enrichment, which mostly
+            read and copy text. Leave blank to use the reasoning model for everything.
+          </p>
 
           {provider === "custom" ? (
             <label className="settings-field">
@@ -1892,7 +1916,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             <input type="checkbox" checked={features.contactEnrichment} onChange={(event) => updateFeature("contactEnrichment", event.target.checked)} />
           </label>
           <p className="settings-hint">Contact enrichment starts with three local emails. If they yield no supported suggestions, it checks up to nine more. You can choose to search more emails when the first three yield suggestions.</p>
-          <AiUsageSummary provider={provider} model={resolveAiModel(provider, model)} />
+          <AiUsageSummary provider={provider} model={resolveAiModel(provider, model)} fastModel={fastModel} />
         </>
       ) : null}
     </section>

@@ -46,6 +46,7 @@ describe("settings import navigation", () => {
         selectedAccountId: null,
         aiProvider: "none",
         aiModel: "",
+        aiFastModel: "",
         aiEndpoint: "",
         aiFeatures: {
           draftAssist: false,

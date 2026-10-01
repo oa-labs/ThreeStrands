@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   readAiEndpoint,
+  readAiFastModel,
   readAiFeatures,
   readAiModel,
   readAiProvider,
   saveAiEndpoint,
+  saveAiFastModel,
   saveAiFeatures,
   saveAiModel,
   saveAiProvider,
@@ -44,6 +46,8 @@ export type ExportablePreferences = {
   selectedAccountId: string | null;
   aiProvider: AiProvider;
   aiModel: string;
+  /** Blank means every feature uses `aiModel`. */
+  aiFastModel: string;
   aiEndpoint: string;
   aiFeatures: AiFeatureFlags;
   availabilityPreferences: AvailabilityPreferences;
@@ -67,6 +71,7 @@ export function readExportablePreferences(): ExportablePreferences {
     selectedAccountId: readSelectedAccountId(),
     aiProvider: readAiProvider(),
     aiModel: readAiModel(),
+    aiFastModel: readAiFastModel(),
     aiEndpoint: readAiEndpoint(),
     aiFeatures: readAiFeatures(),
     availabilityPreferences: readAvailabilityPreferences(),
@@ -83,6 +88,7 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveSelectedAccountId(preferences.selectedAccountId);
   saveAiProvider(preferences.aiProvider);
   saveAiModel(preferences.aiModel);
+  saveAiFastModel(preferences.aiFastModel ?? "");
   saveAiEndpoint(preferences.aiEndpoint);
   saveAiFeatures(preferences.aiFeatures);
   saveAvailabilityPreferences(preferences.availabilityPreferences);

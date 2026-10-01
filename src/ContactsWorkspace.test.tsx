@@ -289,6 +289,17 @@ describe("ContactsWorkspace",()=>{
     expect(screen.queryByText("From the email")).not.toBeInTheDocument();
   });
 
+  it("enhances with the fast model when one is set",async()=>{
+    localStorage.setItem("threestrands.settings.ai.provider","openai");
+    localStorage.setItem("threestrands.settings.ai.model","gpt-4o");
+    localStorage.setItem("threestrands.settings.ai.fastModel","gpt-4o-mini");
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o-mini",null,["company","location","bio","link"],false,undefined));
+  });
+
   it("offers more emails only after the first three produced suggestions",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));

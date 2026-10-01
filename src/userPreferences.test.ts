@@ -43,6 +43,7 @@ describe("exportable preferences", () => {
       selectedAccountId: "person@example.com",
       aiProvider: "openrouter",
       aiModel: "example/model",
+      aiFastModel: "example/fast-model",
       aiEndpoint: "https://api.example.test/v1",
       aiFeatures: {
         draftAssist: true,

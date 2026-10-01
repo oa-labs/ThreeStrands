@@ -67,14 +67,43 @@ export type AiRequestConfig = {
   endpoint: string | null;
 };
 
+/** The AI work the app sends to a provider, each served by one model tier. */
+export type AiModelUse = "summary" | "replyDraft" | "contactEnrichment" | "actionExtraction" | "brief" | "threadChat";
+
+/**
+ * Which model serves each use. Reading and copying (summaries, reply drafts,
+ * pulling facts out of a signature) gains little from reasoning and pays for
+ * it in latency, so it goes to the fast model. Resolving dates and time zones,
+ * choosing between a meeting and a task, and multi-step questions do benefit,
+ * so they keep the main reasoning model.
+ */
+export const AI_MODEL_TIERS: Record<AiModelUse, "fast" | "reasoning"> = {
+  summary: "fast",
+  replyDraft: "fast",
+  contactEnrichment: "fast",
+  actionExtraction: "reasoning",
+  brief: "reasoning",
+  threadChat: "reasoning",
+};
+
+/**
+ * The model for `use`. A blank fast model falls back to the reasoning model,
+ * so a single configured model keeps serving every feature.
+ */
+export function resolveAiModelFor(provider: AiProvider, use: AiModelUse, model: string, fastModel: string): string {
+  const reasoning = resolveAiModel(provider, model);
+  return AI_MODEL_TIERS[use] === "fast" ? fastModel.trim() || reasoning : reasoning;
+}
+
 /**
  * Reads the saved provider settings for an AI request, throwing a message
- * that names `action` (e.g. "summarizing") when they are incomplete.
+ * that names `action` (e.g. "summarizing") when they are incomplete. `use`
+ * picks the fast or reasoning model.
  */
-export function readAiRequestConfig(action: string): AiRequestConfig {
+export function readAiRequestConfig(action: string, use: AiModelUse): AiRequestConfig {
   const provider = readAiProvider();
   if (provider === "none") throw new Error(`Choose an AI provider in AI settings before ${action}.`);
-  const model = resolveAiModel(provider, readAiModel());
+  const model = resolveAiModelFor(provider, use, readAiModel(), readAiFastModel());
   if (!model) throw new Error(`Set a model in AI settings before ${action}.`);
   const endpoint = provider === "custom" ? readAiEndpoint().trim() : null;
   if (provider === "custom" && !endpoint) throw new Error(`Set an endpoint URL in AI settings before ${action}.`);
@@ -83,6 +112,7 @@ export function readAiRequestConfig(action: string): AiRequestConfig {
 
 const PROVIDER_KEY = "threestrands.settings.ai.provider";
 const MODEL_KEY = "threestrands.settings.ai.model";
+const FAST_MODEL_KEY = "threestrands.settings.ai.fastModel";
 const ENDPOINT_KEY = "threestrands.settings.ai.endpoint";
 const FEATURES_KEY = "threestrands.settings.ai.features";
 const PRICES_KEY = "threestrands.settings.ai.prices";
@@ -118,6 +148,23 @@ export function saveAiModel(value: string): void {
     localStorage.setItem(MODEL_KEY, value);
   } catch {
     // Ignored; see readAiModel.
+  }
+}
+
+/** The optional fast model; blank means every feature uses the main model. */
+export function readAiFastModel(): string {
+  try {
+    return localStorage.getItem(FAST_MODEL_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveAiFastModel(value: string): void {
+  try {
+    localStorage.setItem(FAST_MODEL_KEY, value);
+  } catch {
+    // Ignored; see readAiFastModel.
   }
 }
 

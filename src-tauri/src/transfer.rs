@@ -73,6 +73,10 @@ pub struct TransferPreferences {
     pub selected_account_id: Option<String>,
     pub ai_provider: AiProvider,
     pub ai_model: String,
+    // Added in 0.53 under format version 3; earlier exports omit it and
+    // import with no fast model, so every feature keeps using `ai_model`.
+    #[serde(default)]
+    pub ai_fast_model: String,
     pub ai_endpoint: String,
     pub ai_features: AiFeaturePreferences,
     #[serde(default = "default_availability_preferences")]
@@ -120,6 +124,7 @@ impl TransferPreferences {
             validate_text("selected account", account_id, 320)?;
         }
         validate_text("AI model", &self.ai_model, MAX_TEXT_LENGTH)?;
+        validate_text("AI fast model", &self.ai_fast_model, MAX_TEXT_LENGTH)?;
         validate_text("AI endpoint", &self.ai_endpoint, MAX_TEXT_LENGTH)?;
         crate::availability::validate_preferences(&self.availability_preferences)
             .map_err(|_| "The transfer contains invalid availability preferences".to_string())?;
@@ -579,6 +584,7 @@ mod tests {
                 selected_account_id: Some("person@example.com".to_string()),
                 ai_provider: AiProvider::None,
                 ai_model: String::new(),
+                ai_fast_model: String::new(),
                 ai_endpoint: String::new(),
                 ai_features: AiFeaturePreferences {
                     draft_assist: false,
@@ -880,6 +886,8 @@ mod tests {
     ///   `actionExtraction`, and `snippets`.
     /// - `v3-initial`: first version 3 exporter (29705ca). Adds `contacts`
     ///   and `contactEnrichment`.
+    /// - `v3-0.52`: last export before the fast model (0.52.0). Every field
+    ///   through `threadChat`, no `aiFastModel`.
     /// - `v3-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
@@ -897,6 +905,8 @@ mod tests {
             include_bytes!("../tests/fixtures/settings-transfer/v2-final.dispatch-settings");
         pub(super) const V3_INITIAL: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v3-initial.dispatch-settings");
+        pub(super) const V3_0_52: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v3-0.52.dispatch-settings");
         pub(super) const V3_CURRENT: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v3-current.dispatch-settings");
         pub(super) const V3_CURRENT_PATH: &str = "tests/fixtures/settings-transfer/v3-current.dispatch-settings";
@@ -1136,6 +1146,7 @@ mod tests {
                 selected_account_id: Some("current@example.com".to_string()),
                 ai_provider: AiProvider::Anthropic,
                 ai_model: "example-model-v3".to_string(),
+                ai_fast_model: "example-fast-model".to_string(),
                 ai_endpoint: String::new(),
                 ai_features: AiFeaturePreferences {
                     draft_assist: true,
@@ -1218,6 +1229,8 @@ mod tests {
 
         let preferences = &result.preferences;
         assert_eq!(preferences.accent, "amber");
+        assert_eq!(preferences.ai_model, "example-model-v3");
+        assert_eq!(preferences.ai_fast_model, "example-fast-model");
         assert_eq!(preferences.font_family, "Iowan Old Style");
         assert_eq!(preferences.auto_read_delay_seconds, 15);
         let features = &preferences.ai_features;
@@ -1245,6 +1258,23 @@ mod tests {
         assert_eq!(contacts.len(), 1);
         assert_eq!(contacts[0].company.as_deref(), Some("Example Navy"));
         assert_eq!(contacts[0].addresses, vec!["grace@example.com".to_string()]);
+        assert_eq!(database.retention_days().unwrap(), Some(365));
+    }
+
+    #[test]
+    fn frozen_v3_0_52_export_imports_without_a_fast_model() {
+        assert_eq!(envelope_version(fixtures::V3_0_52), 3);
+        let (database, result) = import_fixture(fixtures::V3_0_52);
+
+        let preferences = &result.preferences;
+        preferences.validate().unwrap();
+        assert!(matches!(preferences.ai_provider, AiProvider::Anthropic));
+        assert_eq!(preferences.ai_model, "example-model-v3");
+        assert_eq!(preferences.ai_fast_model, "");
+        let features = &preferences.ai_features;
+        assert!(features.contact_enrichment && features.thread_chat && features.proactive_briefs);
+        assert_eq!(preferences.availability_preferences.time_zone, "Asia/Tokyo");
+        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (2, 1, 1, 1));
         assert_eq!(database.retention_days().unwrap(), Some(365));
     }
 

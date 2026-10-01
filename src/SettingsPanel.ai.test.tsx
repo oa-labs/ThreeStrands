@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { readAiFeatures, saveAiProvider } from "./aiSettings";
+import { readAiFastModel, readAiFeatures, readAiModel, saveAiProvider } from "./aiSettings";
 import { AiProviderSettings } from "./SettingsPanel";
 import { queuePortablePreferences } from "./syncedPreferences";
 
@@ -37,6 +37,22 @@ describe("AI provider feature settings", () => {
       }),
     });
     expect(readAiFeatures()).toMatchObject({ draftAssist: true, contactEnrichment: true });
+  });
+
+  it("saves a reasoning model and an optional fast model separately", () => {
+    render(<AiProviderSettings />);
+    const fast = screen.getByRole("textbox", { name: "Fast model" });
+    expect(fast).toHaveValue("");
+    expect(fast).toHaveAttribute("placeholder", "Same as reasoning model");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Reasoning model" }), { target: { value: "example/reasoning" } });
+    fireEvent.change(fast, { target: { value: "example/fast" } });
+
+    expect(readAiModel()).toBe("example/reasoning");
+    expect(readAiFastModel()).toBe("example/fast");
+    expect(screen.getByText(/Used for summaries, reply drafts, and contact enrichment/)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Prices for example/fast" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Prices for example/reasoning" })).toBeInTheDocument();
   });
 
   it("saves the Thread Chat switch and explains how to enter and leave it", () => {

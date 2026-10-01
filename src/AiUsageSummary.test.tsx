@@ -45,6 +45,36 @@ describe("AiUsageSummary", () => {
     expect(readAiPrices()).toEqual({});
   });
 
+  it("prices the fast model's requests separately from the main model's", async () => {
+    vi.spyOn(mailClient, "aiUsageSummary").mockResolvedValue([
+      row({ requests: 1, inputTokens: 1_000_000, outputTokens: 0 }),
+      row({ model: "gpt-4o-mini", requests: 1, inputTokens: 1_000_000, outputTokens: 0 }),
+    ]);
+    render(<AiUsageSummary provider="openai" model="gpt-4o" fastModel=" gpt-4o-mini " />);
+    const usage = screen.getByRole("region", { name: "AI usage" });
+    expect(await within(usage).findByText(/2 requests have no price yet/)).toBeInTheDocument();
+
+    const main = within(usage).getByRole("group", { name: "Prices for gpt-4o" });
+    fireEvent.change(within(main).getByLabelText("Input price"), { target: { value: "2" } });
+    expect(within(usage).getByText(/1 request has no price yet/)).toBeInTheDocument();
+
+    const fast = within(usage).getByRole("group", { name: "Prices for gpt-4o-mini" });
+    fireEvent.change(within(fast).getByLabelText("Input price"), { target: { value: "0.5" } });
+    expect(within(usage).queryByText(/no price yet/)).not.toBeInTheDocument();
+    expect(within(usage).getAllByText("2 requests · 2M tokens · $2.50")).toHaveLength(2);
+    expect(readAiPrices()).toEqual({
+      "openai:gpt-4o": { inputPerMillion: 2, outputPerMillion: 0 },
+      "openai:gpt-4o-mini": { inputPerMillion: 0.5, outputPerMillion: 0 },
+    });
+  });
+
+  it("asks for one model's prices when the fast model is blank or the same", async () => {
+    vi.spyOn(mailClient, "aiUsageSummary").mockResolvedValue([]);
+    render(<AiUsageSummary provider="openai" model="gpt-4o" fastModel="gpt-4o" />);
+    await screen.findByText("Today");
+    expect(screen.getAllByRole("group", { name: /^Prices for/ })).toHaveLength(1);
+  });
+
   it("ignores an invalid price instead of saving it", async () => {
     vi.spyOn(mailClient, "aiUsageSummary").mockResolvedValue([]);
     render(<AiUsageSummary provider="anthropic" model="claude-sonnet-5" />);

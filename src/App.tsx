@@ -1378,7 +1378,7 @@ export function App() {
     const threadId = selected.id;
     if (!beginSummary(threadId)) return;
     try {
-      const { provider, model, endpoint } = readAiRequestConfig("summarizing");
+      const { provider, model, endpoint } = readAiRequestConfig("summarizing", "summary");
       applySummary(threadId, await mailClient.summarizeThread(threadId, provider, model, endpoint));
     } catch (error) {
       setSummaryErrors((current) => ({
@@ -1438,7 +1438,7 @@ export function App() {
     setActionAnalysisLoading(true);
     setActionAnalysisError(null);
     try {
-      const { provider, model, endpoint } = readAiRequestConfig("getting suggestions");
+      const { provider, model, endpoint } = readAiRequestConfig("getting suggestions", "actionExtraction");
       const { proposals, hiddenCount } = await mailClient.analyzeThread(
         visibleDetail.thread.id,
         availabilityPreferences.timeZone,
@@ -1465,7 +1465,7 @@ export function App() {
     setActionAnalysisLoading(true);
     setActionAnalysisError(null);
     try {
-      const { provider, model, endpoint } = readAiRequestConfig("getting a brief");
+      const { provider, model, endpoint } = readAiRequestConfig("getting a brief", "brief");
       const { summary, analysis } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
       applySummary(threadId, summary);
       setActionProposalSets((current) => ({ ...current, [proposalKey]: analysis.proposals }));
@@ -1552,7 +1552,7 @@ export function App() {
       return next;
     });
     try {
-      const { provider, model, endpoint } = readAiRequestConfig("asking about a conversation");
+      const { provider, model, endpoint } = readAiRequestConfig("asking about a conversation", "threadChat");
       const reply = await mailClient.threadChat({
         threadId,
         question,

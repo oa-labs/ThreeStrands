@@ -194,7 +194,7 @@ export const Composer = forwardRef<ComposerHandle, {
     setReplyAssistBusy(true);
     setReplyAssistError("");
     try {
-      const { provider, model, endpoint } = readAiRequestConfig("drafting a reply");
+      const { provider, model, endpoint } = readAiRequestConfig("drafting a reply", "replyDraft");
       const result = await mailClient.generateReply(
         replyAssistContext,
         replyInstruction,
