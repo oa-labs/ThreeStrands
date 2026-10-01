@@ -6,7 +6,7 @@ import { ActionButton, HoverTooltip } from "./AppChrome";
 import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import { PanelResizeHandle, useTaskDetailWidth } from "./PanelResizeHandle";
 import { errorMessage } from "./errors";
-import { adjacentTaskStatus, formatDue, formatRelativeDate, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskMatchesView, taskViewForAll, type TaskView } from "./taskViews";
+import { adjacentTaskStatus, compareTasksForDisplay, formatDue, formatRelativeDate, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll, type TaskBoardColumn, type TaskView } from "./taskViews";
 
 export type TaskLayout = "board" | "list";
 const TASK_LAYOUT_KEY = "threestrands.tasks.layout";
@@ -35,6 +35,29 @@ function dateTimeInputValue(value: string | null | undefined): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.slice(0, 16);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+// The board's Done column already holds finished work, so it has no Completed view.
+const BOARD_TASK_VIEWS = TASK_VIEWS.filter((name) => name !== "Completed");
+const DRAG_THRESHOLD_PX = 5;
+
+type CardDrag = {
+  taskId: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  x: number;
+  y: number;
+  active: boolean;
+  over: TaskBoardColumn | null;
+};
+
+function boardColumnAt(x: number, y: number): TaskBoardColumn | null {
+  const column = document.elementFromPoint?.(x, y)?.closest<HTMLElement>("[data-board-column]")?.dataset.boardColumn;
+  return TASK_BOARD_COLUMNS.find((name) => name === column) ?? null;
 }
 
 const COMPLETED_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
@@ -134,15 +157,20 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     const interval = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(interval);
   }, []);
+  const sortedTasks = useMemo(() => [...tasks].sort(compareTasksForDisplay), [tasks]);
   const workspaceGroups = useMemo(() => TASK_VIEWS.filter((name) => name !== "All")
-    .map((name) => ({ name, tasks: tasks.filter((task) =>
+    .map((name) => ({ name, tasks: sortedTasks.filter((task) =>
       view === "All" ? taskViewForAll(task, now) === name && isActiveTaskStatus(task.status) : name === view && taskMatchesView(task, view, now),
     ) }))
-    .filter((group) => group.tasks.length > 0), [now, tasks, view]);
-  const boardColumns = useMemo(() => TASK_BOARD_COLUMNS.map((name) => ({ name, tasks: tasks.filter((task) =>
+    .filter((group) => group.tasks.length > 0), [now, sortedTasks, view]);
+  const boardColumns = useMemo(() => TASK_BOARD_COLUMNS.map((name) => ({ name, tasks: sortedTasks.filter((task) =>
     taskBoardColumn(task.status) === name
     && (view === "All" ? showOlderDone || !isStaleCompleted(task) : taskMatchesView(task, view, now)),
-  ) })), [now, showOlderDone, tasks, view]);
+  ) })), [now, showOlderDone, sortedTasks, view]);
+  // A date or Waiting filter narrows open work, so the board drops the Done column rather than show it permanently empty.
+  const visibleBoardColumns = view === "All" ? boardColumns : boardColumns.filter((column) => column.name !== "Done");
+  const [cardDrag, setCardDrag] = useState<CardDrag | null>(null);
+  const suppressCardClick = useRef(false);
   const olderDoneCount = useMemo(() => view === "All" ? tasks.filter(isStaleCompleted).length : 0, [tasks, view]);
   const displayedGroups = board ? boardColumns : workspaceGroups;
   const orderedTasks = useMemo(() => displayedGroups.flatMap((group) => group.tasks), [displayedGroups]);
@@ -166,6 +194,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   useEffect(() => { onSelectedTaskChange?.(selectedTask); }, [onSelectedTaskChange, selectedTask]);
   useEffect(() => { onLayoutChange?.(layout); }, [layout, onLayoutChange]);
+  useEffect(() => { if (board && view === "Completed") setView("All"); }, [board, view]);
 
   const changeLayout = useCallback((next: TaskLayout) => {
     setLayout(next);
@@ -260,10 +289,41 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   const moveSelection = useCallback((direction: -1 | 1) => {
     if (orderedTasks.length === 0) return;
+    if (board) {
+      // On the board, up and down stay inside the selected card's column and stop at its ends.
+      const column = boardColumns.find((candidate) => candidate.tasks.some((task) => task.id === selectedTaskId));
+      if (!column) {
+        setSelectedTaskId(orderedTasks[0].id);
+        return;
+      }
+      const index = column.tasks.findIndex((task) => task.id === selectedTaskId);
+      setSelectedTaskId(column.tasks[Math.max(0, Math.min(column.tasks.length - 1, index + direction))].id);
+      return;
+    }
     const currentIndex = orderedTasks.findIndex((task) => task.id === selectedTaskId);
     const from = currentIndex === -1 ? 0 : currentIndex;
     setSelectedTaskId(orderedTasks[(from + direction + orderedTasks.length) % orderedTasks.length].id);
-  }, [orderedTasks, selectedTaskId]);
+  }, [board, boardColumns, orderedTasks, selectedTaskId]);
+
+  useEffect(() => {
+    if (!cardDrag?.active) return;
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setCardDrag(null);
+    };
+    window.addEventListener("keydown", cancel, true);
+    return () => window.removeEventListener("keydown", cancel, true);
+  }, [cardDrag?.active]);
+
+  const dropCard = (drag: CardDrag) => {
+    const task = tasks.find((candidate) => candidate.id === drag.taskId);
+    if (!task || !drag.over || drag.over === taskBoardColumn(task.status)) return;
+    if (!visibleBoardColumns.some((column) => column.name === drag.over)) return;
+    setSelectedTaskId(task.id);
+    void setStatus(task, taskBoardColumnStatus(drag.over));
+  };
 
   useImperativeHandle(ref, () => ({
     startNew,
@@ -306,14 +366,52 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     return <article
       id={`task-${task.id}`}
       ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }}
-      className={`task-card task-${task.status}${selectedTaskId === task.id ? " selected" : ""}`}
+      className={`task-card task-${task.status}${selectedTaskId === task.id ? " selected" : ""}${isOverdue(task) ? " task-card-overdue" : ""}${cardDrag?.active && cardDrag.taskId === task.id ? " dragging" : ""}`}
       aria-current={selectedTaskId === task.id ? "true" : undefined}
       key={task.id}
     >
-      <button type="button" className="task-card-main" onClick={() => setSelectedTaskId(task.id)}>
+      <button
+        type="button"
+        className="task-card-main"
+        onClick={() => {
+          if (suppressCardClick.current) {
+            suppressCardClick.current = false;
+            return;
+          }
+          setSelectedTaskId(task.id);
+        }}
+        onPointerDown={board ? (event) => {
+          if (event.button !== 0) return;
+          const rect = event.currentTarget.closest("article")?.getBoundingClientRect();
+          suppressCardClick.current = false;
+          setCardDrag({
+            taskId: task.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+            offsetX: rect ? event.clientX - rect.left : 0, offsetY: rect ? event.clientY - rect.top : 0, width: rect?.width ?? 0,
+            x: event.clientX, y: event.clientY, active: false, over: null,
+          });
+        } : undefined}
+        onPointerMove={board ? (event) => {
+          const drag = cardDrag;
+          if (!drag || drag.pointerId !== event.pointerId || drag.taskId !== task.id) return;
+          if (!drag.active && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < DRAG_THRESHOLD_PX) return;
+          if (!drag.active) event.currentTarget.setPointerCapture?.(event.pointerId);
+          setCardDrag({ ...drag, active: true, x: event.clientX, y: event.clientY, over: boardColumnAt(event.clientX, event.clientY) });
+        } : undefined}
+        onPointerUp={board ? (event) => {
+          const drag = cardDrag;
+          if (!drag || drag.pointerId !== event.pointerId) return;
+          setCardDrag(null);
+          if (!drag.active) return;
+          suppressCardClick.current = true;
+          event.currentTarget.releasePointerCapture?.(event.pointerId);
+          dropCard({ ...drag, over: boardColumnAt(event.clientX, event.clientY) });
+        } : undefined}
+        onPointerCancel={board ? () => setCardDrag(null) : undefined}
+      >
         <strong>{task.title}</strong>
         {!board && task.status === "in_progress" ? <span className="task-progress-badge">In progress</span> : null}
-        {due || kindLabel || task.threadId ? <span className="task-card-meta">
+        {due || kindLabel || task.threadId || task.status === "cancelled" ? <span className="task-card-meta">
+          {task.status === "cancelled" ? <small className="task-card-kind">Cancelled</small> : null}
           {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
           {kindLabel ? <small className="task-card-kind">{kindLabel}</small> : null}
           {task.threadId ? <small className="task-card-source" title="From an email"><Mail size={12} aria-hidden="true" /><span className="sr-only">From an email</span></small> : null}
@@ -332,10 +430,12 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     </article>;
   };
 
-  const taskList = board ? <div className="task-board">
-    {boardColumns.map((column) => {
+  const draggedTask = cardDrag?.active ? tasks.find((task) => task.id === cardDrag.taskId) ?? null : null;
+  const taskList = board ? <div className="task-board" style={{ "--task-board-columns": visibleBoardColumns.length } as CSSProperties}>
+    {visibleBoardColumns.map((column) => {
       const headingId = `task-column-${column.name.replace(/\s/g, "-")}`;
-      return <section key={column.name} className="task-board-column" aria-labelledby={headingId}>
+      const dropTarget = draggedTask && cardDrag?.over === column.name && taskBoardColumn(draggedTask.status) !== column.name;
+      return <section key={column.name} className={`task-board-column${dropTarget ? " drop-target" : ""}`} aria-labelledby={headingId} data-board-column={column.name}>
         <header><h3 id={headingId}>{column.name}</h3><span className="task-view-count">{column.tasks.length}</span></header>
         <div className="task-board-cards">
           {column.tasks.length > 0 ? column.tasks.map(renderCard) : olderDoneCount > 0 && column.name === "Done" && !showOlderDone ? null : <p className="task-board-empty">No tasks</p>}
@@ -371,7 +471,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             <button type="button" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={15} />List</button>
             <button type="button" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={15} />Board</button>
           </div>
-          {onCreateTask ? <button type="button" className="task-add-button" onClick={startNew}><Plus size={17} />Add task</button> : null}
+          {onCreateTask ? <button type="button" className="task-add-button" onClick={startNew}><Plus size={15} />Add task</button> : null}
         </div>
       </header>
       {error ? <p className="form-error tasks-error" role="alert">
@@ -391,9 +491,12 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         <div className={board ? "tasks-board-pane" : "tasks-list-pane"}>
           {board ? <PanelResizeHandle {...detailSize} panelSide="right" label="Resize task detail" controlsId="task-detail-panel" title="Drag to resize the task detail. Use arrow keys to adjust; double-click to reset." /> : null}
           <nav className="task-view-nav" aria-label="Task views">
-            {TASK_VIEWS.map((name) => <button key={name} type="button" aria-pressed={view === name} onClick={() => setView(name)}>
-              <span>{name}</span><span className="task-view-count" aria-hidden="true">{tasks.filter((task) => taskMatchesView(task, name, now)).length}</span>
-            </button>)}
+            {(board ? BOARD_TASK_VIEWS : TASK_VIEWS).map((name) => {
+              const count = tasks.filter((task) => taskMatchesView(task, name, now)).length;
+              return <button key={name} type="button" aria-pressed={view === name} onClick={() => setView(name)}>
+                <span>{name}</span>{count > 0 ? <span className="task-view-count" aria-hidden="true">{count}</span> : null}
+              </button>;
+            })}
           </nav>
           {addingTask ? <form className="task-quick-add" data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); void createTask(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!creatingTask) setAddingTask(false); } }}>
             <label htmlFor="quick-add-task-title">Task title</label>
@@ -403,6 +506,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </form> : null}
           {!board && !loading && tasks.length > 0 && displayedGroups.length === 0 ? <p className="tasks-status">{view === "All" ? "No open tasks. Add a task or view completed work." : `No tasks in ${view.toLowerCase()}.`}</p> : null}
           {taskList}
+          {draggedTask && cardDrag ? <div className="task-drag-preview" aria-hidden="true" style={{ left: cardDrag.x - cardDrag.offsetX, top: cardDrag.y - cardDrag.offsetY, width: cardDrag.width }}>
+            <strong>{draggedTask.title}</strong>
+          </div> : null}
         </div>
         <section id="task-detail-panel" className="task-detail" aria-label="Task details">
           {selectedTask ? <>
@@ -420,7 +526,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
                 </div>
               </div>
               <div className="task-detail-actions">
-                {onEditTask ? <HoverTooltip label="Task options" placement="bottom">
+                {onEditTask ? <HoverTooltip label="Edit type, repeat, and all fields" placement="bottom">
                   <ActionButton label="Task Options" onClick={() => onEditTask(selectedTask)}><Pencil size={17} /></ActionButton>
                 </HoverTooltip> : null}
               </div>

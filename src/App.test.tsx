@@ -790,7 +790,8 @@ describe("keyboard-first task and action workspaces", () => {
       fireEvent.keyDown(window, { key: "e" });
       await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-roadmap", "completed"));
 
-      fireEvent.click(within(workspace).getByRole("button", { name: "Completed" }));
+      // The board keeps finished work in its Done column instead of a Completed view.
+      fireEvent.click(await within(within(workspace).getByRole("region", { name: "Done" })).findByText("Review the roadmap", { selector: "strong" }));
       await waitFor(() => expect(workspace.querySelector("#task-task-roadmap")).toHaveAttribute("aria-current", "true"));
       fireEvent.keyDown(window, { key: "Enter" });
       const details = within(screen.getByRole("region", { name: "Task details" }));

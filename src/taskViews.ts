@@ -24,6 +24,43 @@ export function adjacentTaskStatus(status: TaskStatus, direction: -1 | 1): TaskS
   return column ? COLUMN_STATUS[column] : null;
 }
 
+/** The status a task takes when dropped on a board column. */
+export function taskBoardColumnStatus(column: TaskBoardColumn): TaskStatus {
+  return COLUMN_STATUS[column];
+}
+
+function dueTime(task: ThreadTask): number | null {
+  if (!task.dueValue || task.dueKind === "none") return null;
+  // A date-only task stays due through the end of its day.
+  const time = new Date(task.dueKind === "date" ? `${task.dueValue}T23:59:59` : task.dueValue).getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+function timestamp(value: string | null | undefined): number {
+  const time = value ? new Date(value).getTime() : Number.NaN;
+  return Number.isNaN(time) ? 0 : time;
+}
+
+/**
+ * Orders tasks within a board column or list group: active work by soonest due
+ * (so overdue rises to the top) with undated tasks after in creation order;
+ * finished work by most recently completed.
+ */
+export function compareTasksForDisplay(a: ThreadTask, b: ThreadTask): number {
+  const aActive = isActiveTaskStatus(a.status);
+  const bActive = isActiveTaskStatus(b.status);
+  if (aActive !== bActive) return aActive ? -1 : 1;
+  if (!aActive) return timestamp(b.completedAt ?? b.updatedAt) - timestamp(a.completedAt ?? a.updatedAt);
+  const aDue = dueTime(a);
+  const bDue = dueTime(b);
+  if (aDue !== bDue) {
+    if (aDue === null) return 1;
+    if (bDue === null) return -1;
+    return aDue - bDue;
+  }
+  return timestamp(a.createdAt) - timestamp(b.createdAt);
+}
+
 function localDateKey(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");

@@ -501,6 +501,13 @@ describe("TaskSidebar", () => {
     await waitFor(() => expect(selected()).toBe("task-todo-1"));
     act(() => ref.current?.selectNext());
     expect(selected()).toBe("task-todo-2");
+    // Up and down stay inside the column and stop at its ends instead of wrapping into the next column.
+    act(() => ref.current?.selectNext());
+    expect(selected()).toBe("task-todo-2");
+    act(() => ref.current?.selectPrevious());
+    act(() => ref.current?.selectPrevious());
+    expect(selected()).toBe("task-todo-1");
+    act(() => ref.current?.selectNext());
     act(() => ref.current?.selectAdjacentColumn(1));
     expect(selected()).toBe("task-done-1");
     act(() => ref.current?.selectAdjacentColumn(1));
@@ -509,6 +516,121 @@ describe("TaskSidebar", () => {
     expect(selected()).toBe("task-todo-1");
     act(() => ref.current?.toggleLayout());
     expect(screen.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("drops the Completed view and the Done column on the board when a date filter narrows open work", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([
+      workspaceTask("overdue", { title: "Pay invoice", dueKind: "date", dueValue: localDate(-1) }),
+      workspaceTask("doing", { title: "Draft memo", status: "in_progress" }),
+      workspaceTask("done", { title: "Book venue", status: "completed", completedAt: new Date().toISOString() }),
+    ]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const views = await screen.findByRole("navigation", { name: "Task views" });
+    await screen.findByText("Book venue", { selector: "strong" });
+    expect(within(views).queryByRole("button", { name: /Completed/ })).not.toBeInTheDocument();
+    expect(within(views).getByRole("button", { name: "Overdue" })).toHaveTextContent("Overdue1");
+    expect(within(views).getByRole("button", { name: "Today" })).toHaveTextContent(/^Today$/);
+    expect(screen.getByRole("region", { name: "Done" })).toBeInTheDocument();
+
+    fireEvent.click(within(views).getByRole("button", { name: "Overdue" }));
+    expect(screen.queryByRole("region", { name: "Done" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "To Do" })).toHaveTextContent("Pay invoice");
+    expect(screen.getByRole("region", { name: "In Progress" })).toHaveTextContent("No tasks");
+
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Task views" })).getByRole("button", { name: "Completed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Board" }));
+    expect(within(screen.getByRole("navigation", { name: "Task views" })).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "Done" })).toHaveTextContent("Book venue");
+  });
+
+  it("orders board cards by soonest due with overdue first and marks overdue and cancelled cards", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([
+      workspaceTask("undated", { title: "Undated" }),
+      workspaceTask("later", { title: "Later", dueKind: "date", dueValue: localDate(5) }),
+      workspaceTask("overdue", { title: "Overdue", dueKind: "date", dueValue: localDate(-2) }),
+      workspaceTask("cancelled", { title: "Dropped", status: "cancelled", updatedAt: new Date().toISOString() }),
+    ]);
+    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const todo = await screen.findByRole("region", { name: "To Do" });
+    await waitFor(() => expect(within(todo).getAllByRole("article")).toHaveLength(3));
+    expect(within(todo).getAllByRole("article").map((card) => card.id)).toEqual(["task-overdue", "task-later", "task-undated"]);
+    expect(container.querySelector("#task-overdue")).toHaveClass("task-card-overdue");
+    expect(container.querySelector("#task-later")).not.toHaveClass("task-card-overdue");
+    expect(container.querySelector("#task-cancelled")).toHaveTextContent("Cancelled");
+  });
+
+  describe("dragging board cards", () => {
+    const originalElementFromPoint = document.elementFromPoint;
+    afterEach(() => {
+      document.elementFromPoint = originalElementFromPoint;
+    });
+
+    async function renderDraggableBoard() {
+      let current = workspaceTask("plan", { title: "Plan launch" });
+      vi.spyOn(mailClient, "listTasks").mockResolvedValue([current, workspaceTask("other", { title: "Other", status: "in_progress" })]);
+      const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (_id, status) => {
+        current = { ...current, status, completedAt: status === "completed" ? new Date().toISOString() : null };
+        return current;
+      });
+      const view = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+      const card = await screen.findByText("Plan launch", { selector: "strong" });
+      const main = card.closest("button") as HTMLButtonElement;
+      main.setPointerCapture = vi.fn();
+      main.releasePointerCapture = vi.fn();
+      const point = (column: string) => {
+        document.elementFromPoint = vi.fn(() => screen.getByRole("region", { name: column }));
+      };
+      return { ...view, main, point, setTaskStatus };
+    }
+
+    it("moves a card to the column it is dropped on and highlights the target while dragging", async () => {
+      const { container, main, point, setTaskStatus } = await renderDraggableBoard();
+
+      point("Done");
+      fireEvent.pointerDown(main, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(main, { pointerId: 1, clientX: 400, clientY: 20 });
+      expect(screen.getByRole("region", { name: "Done" })).toHaveClass("drop-target");
+      expect(container.querySelector("#task-plan")).toHaveClass("dragging");
+      expect(container.querySelector(".task-drag-preview")).toHaveTextContent("Plan launch");
+
+      fireEvent.pointerUp(main, { pointerId: 1, clientX: 400, clientY: 20 });
+      fireEvent.click(main);
+      await waitFor(() => expect(setTaskStatus).toHaveBeenCalledWith("plan", "completed"));
+      expect(container.querySelector(".task-drag-preview")).toBeNull();
+      expect(await within(screen.getByRole("region", { name: "Done" })).findByText("Plan launch")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    });
+
+    it("treats a short press as a click and ignores drops on the card's own column or after Escape", async () => {
+      const { container, main, point, setTaskStatus } = await renderDraggableBoard();
+      fireEvent.click(screen.getByText("Other", { selector: "strong" }));
+      expect(container.querySelector("#task-other")).toHaveClass("selected");
+
+      point("Done");
+      fireEvent.pointerDown(main, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(main, { pointerId: 1, clientX: 12, clientY: 11 });
+      expect(container.querySelector(".task-drag-preview")).toBeNull();
+      fireEvent.pointerUp(main, { pointerId: 1, clientX: 12, clientY: 11 });
+      fireEvent.click(main);
+      expect(container.querySelector("#task-plan")).toHaveClass("selected");
+
+      point("To Do");
+      fireEvent.pointerDown(main, { button: 0, pointerId: 2, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(main, { pointerId: 2, clientX: 10, clientY: 80 });
+      expect(screen.getByRole("region", { name: "To Do" })).not.toHaveClass("drop-target");
+      fireEvent.pointerUp(main, { pointerId: 2, clientX: 10, clientY: 80 });
+
+      point("In Progress");
+      fireEvent.pointerDown(main, { button: 0, pointerId: 3, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(main, { pointerId: 3, clientX: 300, clientY: 10 });
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(container.querySelector(".task-drag-preview")).toBeNull();
+      fireEvent.pointerUp(main, { pointerId: 3, clientX: 300, clientY: 10 });
+      expect(setTaskStatus).not.toHaveBeenCalled();
+    });
   });
 
   it("edits the task title, description, and due date in the detail pane", async () => {
@@ -646,7 +768,7 @@ describe("TaskSidebar", () => {
     expect(edit).toHaveClass("action-button");
     expect(done.querySelector("svg")).not.toBeNull();
     const tooltips = screen.getAllByRole("tooltip", { hidden: true }).map((tooltip) => tooltip.textContent);
-    expect(tooltips).toEqual(["Task options"]);
+    expect(tooltips).toEqual(["Edit type, repeat, and all fields"]);
 
     fireEvent.click(edit);
     expect(onEditTask).toHaveBeenCalledWith(task);
@@ -654,6 +776,8 @@ describe("TaskSidebar", () => {
     expect(onOpenThread).toHaveBeenCalledWith("thread-1");
     fireEvent.click(done);
     await waitFor(() => expect(setTaskStatus).toHaveBeenCalledWith("task-1", "completed"));
+    // The board shows finished work in its Done column; the Completed view lives in the list layout.
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("button", { name: "Completed" }));
     expect(await within(screen.getByRole("region", { name: "Task details" })).findByRole("button", { name: "Reopen Set up the website" })).toBeInTheDocument();
   });
