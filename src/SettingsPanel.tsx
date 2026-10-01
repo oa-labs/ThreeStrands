@@ -1292,7 +1292,7 @@ function SplitInboxNameInput({
   );
 }
 
-function SplitInboxesSettings({
+export function SplitInboxesSettings({
   splitInboxes,
   accounts,
   activeAccountId,
@@ -1419,9 +1419,6 @@ function SplitInboxesSettings({
           {splitInboxes.map((splitInbox, index) => (
             <li className="account-card" key={splitInbox.id}>
               <div className="account-card-row">
-                <span className="account-card-avatar split-inbox-avatar" aria-hidden="true">
-                  {splitInbox.name.charAt(0).toUpperCase()}
-                </span>
                 <div className="account-card-identity">
                   <SplitInboxNameInput
                     splitInbox={splitInbox}
