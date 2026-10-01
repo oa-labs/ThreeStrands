@@ -1471,7 +1471,7 @@ function SplitInboxesSettings({
   );
 }
 
-function SnippetsSettings({
+export function SnippetsSettings({
   snippets,
   onCreate,
   onUpdate,
@@ -1513,9 +1513,6 @@ function SnippetsSettings({
           {orderedSnippets.map((snippet) => (
             <li className="account-card" key={snippet.id}>
               <div className="account-card-row">
-                <span className="account-card-avatar split-inbox-avatar" aria-hidden="true">
-                  {snippet.name.charAt(0).toUpperCase()}
-                </span>
                 <div className="account-card-identity">
                   <strong>{snippet.name}</strong>
                   <span className="account-card-email">{snippetBodyPreview(snippet.body)}</span>
