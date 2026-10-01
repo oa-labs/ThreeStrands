@@ -327,9 +327,27 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(filled);
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Every contact field already has a value.");
+    const enhance=screen.getByRole("button",{name:/Enhance with AI/});
+    fireEvent.click(enhance);
+    expect(await within(enhance.closest("section")!).findByRole("alert")).toHaveTextContent("Every contact field already has a value.");
     expect(mailClient.enrichContact).not.toHaveBeenCalled();
+  });
+
+  it("reports enhancement failures and empty results beside the Enhance button",async()=>{
+    localStorage.setItem("threestrands.settings.ai.provider","openai");
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
+    vi.mocked(mailClient.enrichContact).mockRejectedValueOnce("The AI provider returned invalid contact suggestions");
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const enhance=screen.getByRole("button",{name:/Enhance with AI/});
+    const section=within(enhance.closest("section")!);
+    fireEvent.click(enhance);
+    expect(await section.findByRole("alert")).toHaveTextContent("The AI provider returned invalid contact suggestions");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+
+    fireEvent.click(enhance);
+    expect(await section.findByRole("status")).toHaveTextContent("No supported profile details were found in the available emails.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("stays on a mail-derived person when accepting suggestions saves their profile",async()=>{
