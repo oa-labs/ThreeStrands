@@ -212,7 +212,7 @@ export function ReplicatedSyncSettings() {
     <>
       <label className="settings-checkbox">
         <input type="checkbox" checked={betaEnabled} disabled={busy} onChange={(event) => actFor("beta", () => replicatedSyncSetBetaEnabled(event.target.checked))} />
-        <span>Enable beta features</span>
+        <span>Enable replicated sync</span>
       </label>
       <InlineStatus operation={operation} for="beta" />
     </>
@@ -233,9 +233,9 @@ export function ReplicatedSyncSettings() {
   if (!available) {
     return (
       <section className="settings-section" aria-label="Replicated Sync">
-        <h3>Replicated Sync (Beta)</h3>
+        <h3>Replicated Sync</h3>
         <p className="settings-hint">
-          An in-development, end-to-end encrypted alternative to Three Strands Account sync, with no Three
+          An end-to-end encrypted alternative to Three Strands Account sync, with no Three
           Strands-operated server: it replicates directly through a shared folder, S3-compatible storage, or an IPFS
           endpoint you choose. Turn it on to set it up on this device.
         </p>
@@ -250,7 +250,7 @@ export function ReplicatedSyncSettings() {
 
   return (
     <section className="settings-section" aria-label="Replicated Sync">
-      <h3>Replicated Sync (Beta)</h3>
+      <h3>Replicated Sync</h3>
       <Disclosure summary="How replicated sync works">
         <p className="settings-hint">
           Replicates tasks, snippets, Split Inboxes, and account metadata as end-to-end encrypted files through
@@ -284,7 +284,7 @@ export function ReplicatedSyncSettings() {
       ) : null}
 
       {conflicts.length > 0 ? (
-        <div>
+        <div className="sync-conflicts">
           <h3>Resolve Conflicts</h3>
           {conflicts.map((conflict) => {
             const key = `conflict:${conflict.entityType}-${conflict.entityId}-${conflict.field}`;

@@ -56,6 +56,15 @@ describe("contact detail header", () => {
   });
 });
 
+describe("settings section headers", () => {
+  it("lets descriptions use the available width and moves actions below when space runs out", () => {
+    expect(lastDeclaration(".accounts-manager-header p", "max-width")).toBeUndefined();
+    expect(lastDeclaration(".accounts-manager-header > div", "flex")).toBe("1 1 420px");
+    expect(lastDeclaration(".accounts-manager-header > div", "min-width")).toBe("0");
+    expect(lastDeclaration(".accounts-manager-header", "flex-wrap")).toBe("wrap");
+  });
+});
+
 describe("mail workspace with the calendar schedule open", () => {
   it("keeps the context panel and schedule in separate columns", () => {
     let desktopColumns: string | undefined;

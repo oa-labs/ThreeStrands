@@ -243,7 +243,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern" },
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose" },
   { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions" },
-  { id: "replicatedSync", label: "Replicated Sync (Beta)", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted beta" },
+  { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted" },
   { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache" },
   { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect synchronization health and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting" },
   { id: "data", label: "Data Transfer", group: "System", description: "Move encrypted settings and account metadata between devices.", keywords: "import export backup password" },
@@ -344,7 +344,7 @@ export function Settings({
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const selectedSectionButtonRef = useRef<HTMLButtonElement>(null);
   // Replicated Sync's own section handles its "not enabled yet" state
-  // itself (it shows the "enable beta features" toggle there) — the nav
+  // itself (it shows the "enable replicated sync" toggle there) — the nav
   // entry must stay visible even before that toggle is on, or there would
   // be no way to reach the toggle at all.
   const availableSections = SETTINGS_SECTIONS;

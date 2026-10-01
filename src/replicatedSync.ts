@@ -190,13 +190,13 @@ function isDesktop(): boolean {
 
 /** Whether replicated sync is active right now for this device: either the
  * `THREESTRANDS_REPLICATED_SYNC` dev/CI env-var override, or the user's own
- * "enable beta features" Settings toggle. The Settings section stays
+ * "enable replicated sync" Settings toggle. The Settings section stays
  * visible either way, but only offers actions when this is true. */
 export async function replicatedSyncEnabled(): Promise<boolean> {
   return isDesktop() ? invoke("replicated_sync_enabled") : false;
 }
 
-/** The persisted state of the "enable beta features" toggle itself, as
+/** The persisted state of the "enable replicated sync" toggle itself, as
  * opposed to {@link replicatedSyncEnabled}'s combined (env-var-or-toggle)
  * check — this is what the checkbox in Settings should reflect. */
 export async function replicatedSyncBetaEnabled(): Promise<boolean> {

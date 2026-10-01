@@ -124,6 +124,7 @@ describe("settings section keyboard navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByRole("button", { name: "Replicated Sync" })).toBeInTheDocument();
     const appearanceButton = within(dialog).getByRole("button", { name: "Appearance" });
     expect(appearanceButton).toHaveAttribute("aria-current", "true");
 

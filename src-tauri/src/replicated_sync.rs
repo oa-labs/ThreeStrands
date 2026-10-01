@@ -70,14 +70,14 @@ fn parse_flag(value: Option<&str>) -> bool {
 impl Database {
     /// Whether replicated sync is active for this device: the hard
     /// `THREESTRANDS_REPLICATED_SYNC` env-var override (dev/CI), or the
-    /// persisted "beta features" Settings toggle a user turned on
+    /// persisted "Enable replicated sync" Settings toggle a user turned on
     /// themselves. Reuses `sync_spaces.enabled`, which every earlier phase
     /// reserved for exactly this without ever wiring it up.
     pub fn replicated_sync_active(&self) -> Result<bool, String> {
         Ok(enabled() || self.beta_features_enabled()?)
     }
 
-    /// The persisted state of the Settings "enable beta features" toggle.
+    /// The persisted state of the Settings "Enable replicated sync" toggle.
     /// `false` (not an error) when no `sync_spaces` row exists yet — nothing
     /// has ever been turned on.
     pub fn beta_features_enabled(&self) -> Result<bool, String> {
@@ -89,10 +89,10 @@ impl Database {
         Ok(enabled.unwrap_or(false))
     }
 
-    /// Turns the Settings "enable beta features" toggle on or off. Turning
+    /// Turns the Settings "Enable replicated sync" toggle on or off. Turning
     /// it off stops replication (the periodic loop and every push/pull
     /// call check this) without deleting local keys, roster, or graph
-    /// state — matching "disabling the beta and returning to local-only
+    /// state — matching "disabling sync and returning to local-only
     /// operation" rather than an irreversible reset.
     pub fn set_beta_features_enabled(&self, on: bool) -> Result<(), String> {
         self.with_connection(|connection| {

@@ -41,6 +41,26 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+describe("replicated sync conflicts", () => {
+  it("places long preference conflicts in a constrained section", async () => {
+    setUp({ status: { state: "enrolled", deviceCount: 2 } });
+    vi.mocked(sync.replicatedSyncConflicts).mockResolvedValue([{
+      entityType: "preferences",
+      entityId: "settings",
+      field: "aiFeatures",
+      candidates: [
+        { operationId: "op-a", deviceId: "device-aaaaaaaa", value: { featureNameWithoutBreaks: true } },
+        { operationId: "op-b", deviceId: "device-bbbbbbbb", value: { featureNameWithoutBreaks: false } },
+      ],
+    }]);
+    render(<ReplicatedSyncSettings />);
+
+    const heading = await screen.findByRole("heading", { name: "Resolve Conflicts" });
+    expect(heading.parentElement).toHaveClass("sync-conflicts");
+    expect(within(heading.parentElement!).getAllByRole("radio")).toHaveLength(2);
+  });
+});
+
 describe("replicated sync setup choice", () => {
   it("steers toward the recovery phrase when the connector already holds a group", async () => {
     vi.mocked(sync.replicatedSyncInspectSpace).mockResolvedValue("existing");
@@ -234,7 +254,7 @@ describe("replicated sync setup steps", () => {
     expect(stepState("Verify this device")).toBe("current");
   });
 
-  it("keeps the privacy explanation and beta toggle out of the main flow", async () => {
+  it("keeps the privacy explanation and enable toggle out of the main flow", async () => {
     setUp({ transports: [] });
     render(<ReplicatedSyncSettings />);
 
@@ -242,11 +262,11 @@ describe("replicated sync setup steps", () => {
     expect(explanation).not.toHaveAttribute("open");
     expect(within(explanation).getByText(/never sees the plaintext/)).toBeInTheDocument();
     const advanced = screen.getByText("Advanced", { selector: "summary" }).closest("details")!;
-    expect(within(advanced).getByRole("checkbox", { name: "Enable beta features" })).toBeChecked();
-    expect(screen.getAllByRole("checkbox", { name: "Enable beta features" })).toHaveLength(1);
+    expect(within(advanced).getByRole("checkbox", { name: "Enable replicated sync" })).toBeChecked();
+    expect(screen.getAllByRole("checkbox", { name: "Enable replicated sync" })).toHaveLength(1);
   });
 
-  it("lays out disclosure content in a spaced body and keeps the beta checkbox beside its label", async () => {
+  it("lays out disclosure content in a spaced body and keeps the enable checkbox beside its label", async () => {
     setUp({ transports: [] });
     render(<ReplicatedSyncSettings />);
 
@@ -257,17 +277,18 @@ describe("replicated sync setup steps", () => {
     for (const details of document.querySelectorAll("details.settings-disclosure")) {
       expect(Array.from(details.children).map((child) => child.tagName)).toEqual(["SUMMARY", "DIV"]);
     }
-    const betaLabel = screen.getByRole("checkbox", { name: "Enable beta features" }).closest("label")!;
-    expect(betaLabel).toHaveClass("settings-checkbox");
-    expect(betaLabel).not.toHaveClass("settings-field-inline");
+    const enableLabel = screen.getByRole("checkbox", { name: "Enable replicated sync" }).closest("label")!;
+    expect(enableLabel).toHaveClass("settings-checkbox");
+    expect(enableLabel).not.toHaveClass("settings-field-inline");
   });
 
-  it("shows only the beta toggle until replicated sync is turned on", async () => {
+  it("shows only the enable toggle until replicated sync is turned on", async () => {
     vi.mocked(sync.replicatedSyncEnabled).mockResolvedValue(false);
     vi.mocked(sync.replicatedSyncBetaEnabled).mockResolvedValue(false);
     render(<ReplicatedSyncSettings />);
 
-    expect(await screen.findByRole("checkbox", { name: "Enable beta features" })).not.toBeChecked();
+    expect(await screen.findByRole("checkbox", { name: "Enable replicated sync" })).not.toBeChecked();
+    expect(screen.getByRole("heading", { name: "Replicated Sync" })).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Replicated sync setup" })).not.toBeInTheDocument();
   });
 });
@@ -445,16 +466,16 @@ describe("enrolled overview", () => {
     expect(screen.queryByRole("button", { name: "Revoke…" })).not.toBeInTheDocument();
   });
 
-  it("turns beta features off from Advanced and reloads the section", async () => {
+  it("turns replicated sync off from Advanced and reloads the section", async () => {
     setUp({ status: enrolled });
     vi.mocked(sync.replicatedSyncSetBetaEnabled).mockResolvedValue(undefined);
     render(<ReplicatedSyncSettings />);
 
     const advanced = (await screen.findByText("Advanced", { selector: "summary" })).closest("details")!;
-    const beta = within(advanced).getByRole("checkbox", { name: "Enable beta features" });
-    expect(beta).toBeChecked();
+    const enable = within(advanced).getByRole("checkbox", { name: "Enable replicated sync" });
+    expect(enable).toBeChecked();
     vi.mocked(sync.replicatedSyncBetaEnabled).mockClear();
-    fireEvent.click(beta);
+    fireEvent.click(enable);
 
     await waitFor(() => expect(sync.replicatedSyncSetBetaEnabled).toHaveBeenCalledWith(false));
     expect(sync.replicatedSyncSetBetaEnabled).toHaveBeenCalledTimes(1);

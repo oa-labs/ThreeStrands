@@ -39,7 +39,7 @@ export function FrontierConflictEditor({
     if (chosen) onResolve(chosen);
   };
   return (
-    <div className="notice accounts-config-notice">
+    <div className="notice accounts-config-notice frontier-conflict-editor">
       <strong>{conflict.entityType.replaceAll("_", " ")} conflict: {conflict.field}</strong>
       <fieldset className="settings-field">
         <legend>{conflict.candidates.length} concurrent {conflict.candidates.length === 1 ? "value" : "values"}</legend>
@@ -50,8 +50,8 @@ export function FrontierConflictEditor({
               name={`${conflict.entityId}-${conflict.field}`}
               checked={selectedOperationId === candidate.operationId}
               onChange={() => setSelectedOperationId(candidate.operationId)}
-            />{" "}
-            Device {candidate.deviceId.slice(0, 8)}: {JSON.stringify(candidate.value)}
+            />
+            <span>Device {candidate.deviceId.slice(0, 8)}: {JSON.stringify(candidate.value)}</span>
           </label>
         ))}
       </fieldset>

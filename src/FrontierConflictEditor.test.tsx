@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import postcss from "postcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FrontierConflictEditor, type FrontierConflict } from "./FrontierConflictEditor";
 
@@ -53,5 +56,34 @@ describe("FrontierConflictEditor", () => {
     expect(screen.getAllByRole("radio")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Resolve conflict" }));
     expect(onResolve).toHaveBeenCalledWith(single.candidates[0]);
+  });
+
+  it("keeps long structured values in a full-width, wrapping conflict card", () => {
+    const longValue = { aiFeatures: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`feature${index}`, true])) };
+    const preferencesConflict: FrontierConflict = {
+      ...conflict,
+      entityType: "preferences",
+      field: "aiFeatures",
+      candidates: [{ ...conflict.candidates[0], value: longValue }],
+    };
+    const { container } = render(<FrontierConflictEditor conflict={preferencesConflict} disabled={false} onResolve={vi.fn()} />);
+    const card = container.querySelector(".frontier-conflict-editor");
+    expect(card).toHaveTextContent(JSON.stringify(longValue));
+    expect(screen.getByRole("radio").closest("label")?.querySelector("span")).toHaveTextContent(JSON.stringify(longValue));
+
+    // jsdom does not calculate widths, so guard the CSS rules that prevent
+    // fieldset intrinsic sizing and unbroken JSON from widening the panel.
+    const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
+    const declaration = (selector: string, property: string) => {
+      let value: string | undefined;
+      css.walkRules(selector, (rule) => {
+        if (rule.selector === selector) rule.walkDecls(property, (entry) => { value = entry.value; });
+      });
+      return value;
+    };
+    expect(declaration(".frontier-conflict-editor", "flex-direction")).toBe("column");
+    expect(declaration(".frontier-conflict-editor .settings-field", "min-width")).toBe("0");
+    expect(declaration(".frontier-conflict-editor strong, .frontier-conflict-editor label span", "overflow-wrap")).toBe("anywhere");
+    expect(declaration(".frontier-conflict-editor input[type=\"radio\"]", "width")).toBe("auto");
   });
 });

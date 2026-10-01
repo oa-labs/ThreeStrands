@@ -1671,14 +1671,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 }
 .calendar-event-viewer header button:hover { background: var(--hover); color: var(--text); }
 .calendar-event-color { width: 12px; height: 12px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--accent) 55%, #fff); }
-.calendar-event-viewer-details { display: grid; gap: 11px; margin-top: 17px; }
-.calendar-event-viewer-details p { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 9px; margin: 0; color: var(--secondary); font-size: var(--type-ui); line-height: 1.45; }
+.calendar-event-viewer-details { display: grid; grid-template-columns: minmax(0, 1fr); gap: 11px; margin-top: 17px; }
+.calendar-event-viewer-details > p { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 9px; margin: 0; color: var(--secondary); font-size: var(--type-ui); line-height: 1.45; }
 .calendar-event-viewer-details svg { margin-top: 1px; color: var(--muted); }
 .calendar-event-viewer-details a { width: fit-content; border-radius: var(--radius-sm); padding: 5px 9px; background: var(--accent); color: #fff; font-weight: 600; text-decoration: none; }
 .calendar-event-viewer-description span { max-height: 8.7em; overflow: auto; white-space: pre-wrap; }
-.calendar-event-response { display: grid; gap: 8px; color: var(--secondary); font-size: var(--type-ui); }
+.calendar-event-response { display: grid; min-width: 0; gap: 8px; color: var(--secondary); font-size: var(--type-ui); }
 .calendar-event-response strong { color: var(--text); font-weight: 600; }
-.calendar-event-response p { color: var(--error); }
+.calendar-event-response p { margin: 0; color: var(--error); overflow-wrap: anywhere; }
 .calendar-response-actions { display: flex; gap: 6px; }
 .calendar-response-actions button { padding: 5px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
 .calendar-response-actions button[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, var(--surface)); font-weight: 650; }
@@ -2107,9 +2107,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .snippet-editor-actions button[type="submit"] { border-color: var(--accent); background: var(--accent); color: var(--accent-contrast); }
 .snippet-editor-actions button:disabled { opacity: .5; cursor: default; }
 .accounts-manager { width: 100%; padding: 10px 20px 24px; }
-.accounts-manager-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; width: 100%; }
+.accounts-manager-header { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; width: 100%; }
+.accounts-manager-header > div { min-width: 0; flex: 1 1 420px; }
+.accounts-manager-header > button { flex-shrink: 0; }
 .accounts-manager-header h3 { margin-top: 0; }
-.accounts-manager-header p { max-width: 330px; }
 .split-inbox-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; margin: 2px 0; }
 .split-inbox-add input, .split-inbox-add select {
   width: 100%;
@@ -2242,6 +2243,13 @@ form.split-inbox-add select {
 .settings-field { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; width: 100%; font-size: var(--type-ui); }
 .settings-field > span { color: var(--muted); }
 .settings-field input { width: 100%; }
+.sync-conflicts { width: 100%; min-width: 0; }
+.frontier-conflict-editor { min-width: 0; flex-direction: column; }
+.frontier-conflict-editor .settings-field { min-width: 0; align-items: stretch; }
+.frontier-conflict-editor strong, .frontier-conflict-editor label span { overflow-wrap: anywhere; }
+.frontier-conflict-editor label { display: flex; min-width: 0; align-items: flex-start; gap: 8px; }
+.frontier-conflict-editor label span { min-width: 0; }
+.frontier-conflict-editor input[type="radio"] { width: auto; flex: 0 0 auto; margin-top: 3px; padding: 0; }
 .settings-field-inline { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
 .settings-field.settings-field-inline input { width: 76px; }
 .settings-row { display: flex; align-items: center; gap: 10px; }
