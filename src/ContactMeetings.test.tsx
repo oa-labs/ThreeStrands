@@ -61,13 +61,16 @@ describe("ContactMeetings", () => {
   });
 
   it("shows the user's response in upcoming meetings", async () => {
-    renderMeetings([
-      { ...meeting("pending", 2, ["jane@example.com"]), responseStatus: "needsAction" },
-      { ...meeting("declined", 4, ["jane@example.com"]), responseStatus: "declined" },
-    ]);
+    const pending = { ...meeting("pending", 2, ["jane@example.com"]), responseStatus: "needsAction" as const };
+    const declined = { ...meeting("declined", 4, ["jane@example.com"]), responseStatus: "declined" as const };
+    const accepted = { ...meeting("accepted", 6, ["jane@example.com"]), responseStatus: "accepted" as const };
+    renderMeetings([pending, declined, accepted]);
     const section = await screen.findByRole("region", { name: "Upcoming meetings" });
-    expect(within(section).getByRole("button", { name: /Meeting pending/ })).toHaveTextContent("Awaiting response");
-    expect(within(section).getByRole("button", { name: /Meeting declined/ })).toHaveTextContent("Not going");
+    for (const [event, label] of [[pending, "Awaiting response"], [declined, "Not going"], [accepted, "Going"]] as const) {
+      const row = within(section).getByRole("button", { name: new RegExp(`Meeting ${event.id}`) });
+      expect(row.querySelectorAll("small")).toHaveLength(1);
+      expect(row.querySelector(".context-meeting-meta")).toHaveTextContent(`${formatEventDate(event)} · with Jane Doe · ${label}`);
+    }
   });
 
   it("shows at most the configured number of meetings", async () => {

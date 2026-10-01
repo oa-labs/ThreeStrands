@@ -1873,10 +1873,11 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-meeting { display:flex; align-items:flex-start; gap:8px; width:100%; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
 .context-meeting:hover { background:var(--hover); }
 .context-meeting svg { flex:0 0 auto; margin-top:2px; color:var(--accent); }
-.context-meeting span { display:grid; grid-template-columns:minmax(0,1fr); flex:1; gap:2px; min-width:0; }
+.context-meeting > span { display:grid; grid-template-columns:minmax(0,1fr); flex:1; gap:2px; min-width:0; }
 .context-meeting strong { min-width:0; overflow:hidden; font-size:var(--type-caption); font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
-.context-meeting small { color:var(--muted); font-size:var(--type-xs); overflow-wrap:anywhere; }
-.context-meeting .context-meeting-response { color:var(--accent); font-weight:600; }
+.context-meeting-meta { display:flex; min-width:0; color:var(--muted); font-size:var(--type-xs); white-space:nowrap; }
+.context-meeting-details { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.context-meeting .context-meeting-response { flex:0 0 auto; color:var(--accent); font-weight:600; white-space:pre; }
 .context-meeting[data-response-status="declined"] .context-meeting-response { color:var(--muted); }
 .context-chat-dock { position:sticky; bottom:0; margin:auto -14px 0; padding:0 14px 4px; border-top:1px solid var(--border); background:var(--surface); }
 .thread-chat { border-bottom:0; }

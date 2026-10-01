@@ -52,8 +52,10 @@ export function ContactMeetings({ people, timeZone, onOpenEvent }: {
         <CalendarDays size={14} aria-hidden="true" />
         <span>
           <strong>{event.title}</strong>
-          <small>{formatEventDate(event)} · with {name}</small>
-          {responseLabel(event) ? <small className="context-meeting-response">{responseLabel(event)}</small> : null}
+          <small className="context-meeting-meta">
+            <span className="context-meeting-details">{formatEventDate(event)} · with {name}</span>
+            {responseLabel(event) ? <span className="context-meeting-response"> · {responseLabel(event)}</span> : null}
+          </small>
         </span>
       </button>
     ))}

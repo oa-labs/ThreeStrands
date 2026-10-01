@@ -45,27 +45,33 @@ test("keeps meeting titles and recent email subjects on one line in the context 
   await page.goto("/");
   await expect(page.locator(".context-panel")).toBeVisible();
 
-  const titles = await page.evaluate(() => {
+  const layout = await page.evaluate(() => {
     const panel = document.querySelector(".context-panel")!;
     const meetings = document.createElement("section");
     meetings.className = "context-section context-meetings";
-    meetings.innerHTML = `<button class="context-meeting"><svg width="14" height="14"></svg><span><strong>${"Momentum Prep Call - EO Pittsburgh - Week 7 and 8 ".repeat(3)}</strong><small>Mon, Oct 5 · with Beth Goldstein</small></span></button>`;
+    meetings.innerHTML = `<button class="context-meeting"><svg width="14" height="14"></svg><span><strong>${"Momentum Prep Call - EO Pittsburgh - Week 7 and 8 ".repeat(3)}</strong><small class="context-meeting-meta"><span class="context-meeting-details">Mon, Oct 5 · with ${"Beth Goldstein ".repeat(8)}</span><span class="context-meeting-response"> · Going</span></small></span></button>`;
     const history = document.createElement("section");
     history.className = "context-section contact-sidebar-history";
     history.innerHTML = `<button><strong>${"Invitation: Call with Joel and McKenzie on Tuesday ".repeat(3)}</strong><small>9/21/2026 · beth@example.com</small></button>`;
     panel.append(meetings, history);
-    return [meetings, history].map((section) => {
+    const titles = [meetings, history].map((section) => {
       const title = section.querySelector("strong")!;
       const style = getComputedStyle(title);
       return { whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, scrollWidth: title.scrollWidth, clientWidth: title.clientWidth };
     });
+    const meta = meetings.querySelector<HTMLElement>(".context-meeting-meta")!;
+    const response = meetings.querySelector<HTMLElement>(".context-meeting-response")!;
+    return { titles, metaWhiteSpace: getComputedStyle(meta).whiteSpace, metaHeight: meta.clientHeight, responseHeight: response.clientHeight, responseRight: response.getBoundingClientRect().right, metaRight: meta.getBoundingClientRect().right };
   });
 
-  for (const title of titles) {
+  for (const title of layout.titles) {
     expect(title.whiteSpace).toBe("nowrap");
     expect(title.textOverflow).toBe("ellipsis");
     expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
   }
+  expect(layout.metaWhiteSpace).toBe("nowrap");
+  expect(layout.metaHeight).toBeLessThanOrEqual(layout.responseHeight + 1);
+  expect(layout.responseRight).toBeLessThanOrEqual(layout.metaRight + 1);
 });
 
 test("processes the inbox from the keyboard", async ({ page }) => {
