@@ -1960,8 +1960,18 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .task-board-cards { min-height: 0; flex: 1; overflow-y: auto; padding: 2px 8px 10px; }
 .tasks-workspace .task-board .task-card { min-height: 0; margin: 6px 0; }
 .task-board-empty { margin: 8px 6px; color: var(--muted); font-size: var(--type-sm); }
-.task-board-moves { display: flex; align-self: center; margin-right: 3px; }
-.task-board-moves .task-status-button { margin-right: 0; }
+.task-board-older { align-self: flex-start; margin: 4px 2px; padding: 4px 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--secondary); cursor: pointer; font: inherit; font-size: var(--type-sm); }
+.task-board-older:hover { background: var(--hover); color: var(--text); }
+.tasks-workspace .task-board .task-card { flex-direction: column; gap: 0; }
+/* Board cards are the only place a title appears, so let it wrap instead of truncating. */
+.task-board .task-card-main strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
+.task-board-moves { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; padding: 0 8px 8px; }
+.task-board-moves .task-follow-up-button { margin: 0 auto 0 0; }
+.task-move-button { display: inline-flex; align-items: center; gap: 2px; padding: 3px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--secondary); cursor: pointer; font: inherit; font-size: var(--type-xs); white-space: nowrap; }
+.task-move-button:hover { border-color: var(--border-strong); background: var(--hover); color: var(--text); }
+.task-card-main .task-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: auto; overflow: visible; }
+.task-card-main .task-card-meta .sr-only { width: 1px; }
+.task-card-main small.task-card-kind { padding: 0 6px; border-radius: var(--radius-pill); background: var(--hover); }
 .task-card-main .task-progress-badge { width: auto; padding: 1px 7px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); font-size: var(--type-xs); font-weight: 650; }
 .tasks-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 14px 0; }
 .tasks-error button { flex: 0 0 auto; display: grid; place-items: center; padding: 2px; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; cursor: pointer; }

@@ -180,6 +180,48 @@ describe("TaskSidebar", () => {
     await screen.findByRole("heading", { name: "Done" });
     expect(await screen.findByText("recent", { selector: "strong" })).toBeInTheDocument();
     expect(screen.queryByText("stale", { selector: "strong" })).not.toBeInTheDocument();
+
+    const done = screen.getByRole("region", { name: "Done" });
+    const showOlder = within(done).getByRole("button", { name: "Show 1 older completed" });
+    expect(showOlder).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(showOlder);
+    expect(within(done).getByText("stale", { selector: "strong" })).toBeInTheDocument();
+    fireEvent.click(within(done).getByRole("button", { name: "Hide older completed" }));
+    expect(within(done).queryByText("stale", { selector: "strong" })).not.toBeInTheDocument();
+  });
+
+  it("explains an empty Done column when only older completed tasks exist", async () => {
+    const stale = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("stale", { status: "completed", completedAt: stale })]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const done = await screen.findByRole("region", { name: "Done" });
+    expect(await within(done).findByRole("button", { name: "Show 1 older completed" })).toBeInTheDocument();
+    expect(done).not.toHaveTextContent("No tasks");
+    expect(screen.getByRole("region", { name: "To Do" })).toHaveTextContent("No tasks");
+  });
+
+  it("shows the full title, task kind, and email source on board cards without repeating the subject", async () => {
+    const longTitle = "Email Crunchtime Sync Errors to management before the Thursday review";
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([
+      workspaceTask("follow", { title: longTitle, kind: "follow_up", threadId: "thread-1", subjectSnapshot: "Re: Data quality" }),
+      workspaceTask("wait", { title: "Hear back from venue", kind: "waiting_for" }),
+      workspaceTask("plain", { title: "Standalone errand" }),
+    ]);
+    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const follow = await waitFor(() => {
+      const card = container.querySelector("#task-follow") as HTMLElement;
+      expect(card).not.toBeNull();
+      return card;
+    });
+    expect(within(follow).getByText(longTitle, { selector: "strong" })).toBeInTheDocument();
+    expect(within(follow).getByText("Follow up")).toBeInTheDocument();
+    expect(within(follow).getByText("From an email")).toBeInTheDocument();
+    expect(container.querySelector(".task-board")).not.toHaveTextContent("Re: Data quality");
+    expect(container.querySelector("#task-wait")).toHaveTextContent("Waiting");
+    expect(container.querySelector("#task-wait")).not.toHaveTextContent("From an email");
+    expect(container.querySelector("#task-plain .task-card-meta")).toBeNull();
   });
 
   it("shows the selected task visually in the list layout", async () => {
@@ -385,6 +427,19 @@ describe("TaskSidebar", () => {
       expect(appliedWidth()).toBe("410px");
       await waitFor(() => expect(localStorage.getItem("threestrands.taskDetailWidth")).toBe("410"));
 
+      // Dragging measures from where the drag began, so successive moves do not compound.
+      handle.setPointerCapture = vi.fn();
+      handle.releasePointerCapture = vi.fn();
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 1000 });
+      fireEvent.pointerMove(handle, { pointerId: 1, clientX: 980 });
+      expect(appliedWidth()).toBe("430px");
+      fireEvent.pointerMove(handle, { pointerId: 1, clientX: 960 });
+      expect(appliedWidth()).toBe("450px");
+      fireEvent.pointerUp(handle, { pointerId: 1, clientX: 960 });
+      fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+      expect(appliedWidth()).toBe("410px");
+      await waitFor(() => expect(localStorage.getItem("threestrands.taskDetailWidth")).toBe("410"));
+
       cleanup();
       const remount = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
       expect(await screen.findByRole("region", { name: "To Do" })).toBeInTheDocument();
@@ -411,11 +466,15 @@ describe("TaskSidebar", () => {
     const ref = createRef<TaskWorkspaceHandle>();
     render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Move Plan launch to In Progress" }));
+    const start = await screen.findByRole("button", { name: "Move Plan launch to In Progress" });
+    expect(start).toHaveTextContent("In Progress");
+    fireEvent.click(start);
     await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("plan", "in_progress"));
     expect(await within(screen.getByRole("region", { name: "In Progress" })).findByText("Plan launch")).toBeInTheDocument();
     expect(screen.getByText("Started: Plan launch")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Task details" })).toHaveTextContent("In progress");
+    expect(screen.getByRole("button", { name: "Move Plan launch to To Do" })).toHaveTextContent("To Do");
+    expect(screen.getByRole("button", { name: "Move Plan launch to Done" })).toHaveTextContent("Done");
 
     act(() => ref.current?.moveSelected(1));
     await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("plan", "completed"));

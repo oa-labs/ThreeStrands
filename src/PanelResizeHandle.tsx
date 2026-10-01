@@ -122,7 +122,7 @@ export function PanelResizeHandle({
       }}
       onPointerMove={(event) => {
         if (drag.current?.pointerId === event.pointerId) {
-          resize(width + direction * (event.clientX - drag.current.x));
+          resize(drag.current.width + direction * (event.clientX - drag.current.x));
         }
       }}
       onPointerUp={(event) => {

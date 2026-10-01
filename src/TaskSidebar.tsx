@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, MessageSquare, Pencil, Plus, RotateCcw, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, MessageSquare, Pencil, Plus, RotateCcw, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ThreadTask, UpdateTaskRequest, TaskDueKind, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
@@ -21,6 +21,7 @@ function readTaskLayout(): TaskLayout {
 
 const STATUS_LABELS: Record<TaskStatus, string> = { open: "To Do", in_progress: "In Progress", completed: "Done", cancelled: "Done" };
 const TASK_DETAIL_KIND_LABELS: Record<ThreadTask["kind"], string> = { action: "Task", follow_up: "Follow up", waiting_for: "Waiting for reply" };
+const TASK_CARD_KIND_LABELS: Partial<Record<ThreadTask["kind"], string>> = { follow_up: "Follow up", waiting_for: "Waiting" };
 
 function formatDueDetail(task: ThreadTask): string | null {
   if (!task.dueValue) return null;
@@ -86,6 +87,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [error, setError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [view, setView] = useState<TaskView>("All");
+  const [showOlderDone, setShowOlderDone] = useState(false);
   const [layout, setLayout] = useState<TaskLayout>(readTaskLayout);
   const board = layout === "board";
   const detailSize = useTaskDetailWidth();
@@ -139,8 +141,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     .filter((group) => group.tasks.length > 0), [now, tasks, view]);
   const boardColumns = useMemo(() => TASK_BOARD_COLUMNS.map((name) => ({ name, tasks: tasks.filter((task) =>
     taskBoardColumn(task.status) === name
-    && (view === "All" ? !isStaleCompleted(task) : taskMatchesView(task, view, now)),
-  ) })), [now, tasks, view]);
+    && (view === "All" ? showOlderDone || !isStaleCompleted(task) : taskMatchesView(task, view, now)),
+  ) })), [now, showOlderDone, tasks, view]);
+  const olderDoneCount = useMemo(() => view === "All" ? tasks.filter(isStaleCompleted).length : 0, [tasks, view]);
   const displayedGroups = board ? boardColumns : workspaceGroups;
   const orderedTasks = useMemo(() => displayedGroups.flatMap((group) => group.tasks), [displayedGroups]);
   const selectedTask = orderedTasks.find((task) => task.id === selectedTaskId) ?? null;
@@ -295,6 +298,11 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     const active = isActiveTaskStatus(task.status);
     const back = board ? adjacentTaskStatus(task.status, -1) : null;
     const forward = board ? adjacentTaskStatus(task.status, 1) : null;
+    const due = formatDue(task);
+    const kindLabel = TASK_CARD_KIND_LABELS[task.kind];
+    const followUp = onDraftFollowUp && task.threadId && task.kind === "follow_up" && isDue(task) ? (
+      <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button>
+    ) : null;
     return <article
       id={`task-${task.id}`}
       ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }}
@@ -305,17 +313,22 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       <button type="button" className="task-card-main" onClick={() => setSelectedTaskId(task.id)}>
         <strong>{task.title}</strong>
         {!board && task.status === "in_progress" ? <span className="task-progress-badge">In progress</span> : null}
-        {formatDue(task) ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {formatDue(task)}</small> : null}
+        {due || kindLabel || task.threadId ? <span className="task-card-meta">
+          {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
+          {kindLabel ? <small className="task-card-kind">{kindLabel}</small> : null}
+          {task.threadId ? <small className="task-card-source" title="From an email"><Mail size={12} aria-hidden="true" /><span className="sr-only">From an email</span></small> : null}
+        </span> : null}
       </button>
-      {board ? <div className="task-board-moves">
-        {back ? <button type="button" className="task-status-button" aria-label={`Move ${task.title} to ${STATUS_LABELS[back]}`} onClick={() => void setStatus(task, back)}><ChevronLeft size={15} /></button> : null}
-        {forward ? <button type="button" className="task-status-button" aria-label={`Move ${task.title} to ${STATUS_LABELS[forward]}`} onClick={() => void setStatus(task, forward)}><ChevronRight size={15} /></button> : null}
-      </div> : <button type="button" className="task-status-button" aria-label={active ? `Complete ${task.title}` : `Reopen ${task.title}`} onClick={() => void setStatus(task, active ? "completed" : "open")}>
-        {active ? <Check size={15} /> : <RotateCcw size={15} />}
-      </button>}
-      {onDraftFollowUp && task.threadId && task.kind === "follow_up" && isDue(task) ? (
-        <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button>
-      ) : null}
+      {board ? (back || forward || followUp) ? <div className="task-board-moves">
+        {followUp}
+        {back ? <button type="button" className="task-move-button" aria-label={`Move ${task.title} to ${STATUS_LABELS[back]}`} onClick={() => void setStatus(task, back)}><ChevronLeft size={14} aria-hidden="true" />{STATUS_LABELS[back]}</button> : null}
+        {forward ? <button type="button" className="task-move-button" aria-label={`Move ${task.title} to ${STATUS_LABELS[forward]}`} onClick={() => void setStatus(task, forward)}>{STATUS_LABELS[forward]}<ChevronRight size={14} aria-hidden="true" /></button> : null}
+      </div> : null : <>
+        <button type="button" className="task-status-button" aria-label={active ? `Complete ${task.title}` : `Reopen ${task.title}`} onClick={() => void setStatus(task, active ? "completed" : "open")}>
+          {active ? <Check size={15} /> : <RotateCcw size={15} />}
+        </button>
+        {followUp}
+      </>}
     </article>;
   };
 
@@ -325,7 +338,10 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       return <section key={column.name} className="task-board-column" aria-labelledby={headingId}>
         <header><h3 id={headingId}>{column.name}</h3><span className="task-view-count">{column.tasks.length}</span></header>
         <div className="task-board-cards">
-          {column.tasks.length > 0 ? column.tasks.map(renderCard) : <p className="task-board-empty">No tasks</p>}
+          {column.tasks.length > 0 ? column.tasks.map(renderCard) : olderDoneCount > 0 && column.name === "Done" && !showOlderDone ? null : <p className="task-board-empty">No tasks</p>}
+          {column.name === "Done" && olderDoneCount > 0 ? <button type="button" className="task-board-older" aria-expanded={showOlderDone} onClick={() => setShowOlderDone((shown) => !shown)}>
+            {showOlderDone ? "Hide older completed" : `Show ${olderDoneCount} older completed`}
+          </button> : null}
         </div>
       </section>;
     })}
