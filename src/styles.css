@@ -325,6 +325,20 @@ button { color: inherit; }
   line-height: 1;
   pointer-events: none;
 }
+.account-reconnect-badge {
+  position: absolute;
+  right: -8px;
+  bottom: -6px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--sidebar);
+  border-radius: var(--radius-circle);
+  background: var(--error);
+  color: #fff;
+  pointer-events: none;
+}
 
 .sidebar-spacer {
   flex: 1;
@@ -1780,15 +1794,15 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-profile-actions button { display:grid; place-items:center; width:34px; height:34px; border:0; border-radius:var(--radius-sm); color:var(--muted); background:transparent; cursor:pointer; }
 .contact-profile-actions button:hover { color:var(--text); background:var(--hover); }
 .contact-editor-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 24px; margin:26px 0; }
-.contact-editor-grid label,.contact-editor-grid .contact-address-field { min-width:0; display:grid; align-content:start; gap:6px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.05em; text-transform:uppercase; }
-.contact-address-box { display:flex; flex-wrap:wrap; align-items:center; gap:6px; min-width:0; padding:5px 6px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--background); cursor:text; }
-.contact-address-box:focus-within { border-color:var(--accent); }
-.contact-editor-grid .contact-address-box input { flex:1 1 140px; width:auto; min-width:80px; padding:3px 4px; border:0; background:transparent; outline:none; }
-.contact-address-chip { min-width:0; max-width:100%; color:var(--text); letter-spacing:normal; text-transform:none; cursor:default; }
-.contact-address-chip .recipient-chip-label { max-width:100%; }
-.contact-address-copy { opacity:0; }
-.contact-address-chip:hover .contact-address-copy,.contact-address-copy:focus-visible,.contact-address-copy[aria-label^="Copied"] { opacity:1; }
-@media (hover:none) { .contact-address-copy { opacity:1; } }
+.contact-editor-grid label,.contact-editor-grid .contact-multi-value-field { min-width:0; display:grid; align-content:start; gap:6px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.05em; text-transform:uppercase; }
+.contact-multi-value-box { display:flex; flex-wrap:wrap; align-items:center; gap:6px; min-width:0; padding:5px 6px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--background); cursor:text; }
+.contact-multi-value-box:focus-within { border-color:var(--accent); }
+.contact-editor-grid .contact-multi-value-box input { flex:1 1 140px; width:auto; min-width:80px; padding:3px 4px; border:0; background:transparent; outline:none; }
+.contact-multi-value-chip { min-width:0; max-width:100%; color:var(--text); letter-spacing:normal; text-transform:none; cursor:default; }
+.contact-multi-value-chip .recipient-chip-label { max-width:100%; }
+.contact-multi-value-copy { opacity:0; }
+.contact-multi-value-chip:hover .contact-multi-value-copy,.contact-multi-value-copy:focus-visible,.contact-multi-value-copy[aria-label^="Copied"] { opacity:1; }
+@media (hover:none) { .contact-multi-value-copy { opacity:1; } }
 .contact-editor-grid label.wide { grid-column:1/-1; }
 .contact-editor-grid input,.contact-editor-grid textarea { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; letter-spacing:normal; text-transform:none; resize:vertical; }
 .contact-save-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 0; border-top:1px solid var(--border); color:var(--muted); font-size:var(--type-sm); }

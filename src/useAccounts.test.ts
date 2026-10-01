@@ -27,6 +27,36 @@ it("refreshes an open account manager when credentials need reconnection", async
   expect(result.current.accounts[0]?.status).toBe("needs_reauth");
 });
 
+it("refreshes account status while Settings is closed and keeps accounts after a transient failure", async () => {
+  const [account] = await mailClient.listAccounts();
+  let status: "connected" | "needs_reauth" = "connected";
+  const listAccounts = vi.spyOn(mailClient, "listAccounts").mockImplementation(async () => [
+    { ...account!, status },
+  ]);
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+
+  const { result } = renderHook(() => useAccounts(false));
+  await waitFor(() => expect(result.current.accounts[0]?.status).toBe("connected"));
+
+  status = "needs_reauth";
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ACCOUNT_STATUS_REFRESH_MS);
+  });
+  expect(result.current.accounts[0]?.status).toBe("needs_reauth");
+
+  listAccounts.mockRejectedValueOnce(new Error("temporary status failure"));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ACCOUNT_STATUS_REFRESH_MS);
+  });
+  expect(result.current.accounts[0]?.status).toBe("needs_reauth");
+
+  status = "connected";
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ACCOUNT_STATUS_REFRESH_MS);
+  });
+  expect(result.current.accounts[0]?.status).toBe("connected");
+});
+
 it("clears the active account when it is removed and reports that it was active", async () => {
   const [account] = await mailClient.listAccounts();
   vi.spyOn(mailClient, "removeAccount").mockResolvedValue();

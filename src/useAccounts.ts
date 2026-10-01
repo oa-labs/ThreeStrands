@@ -42,9 +42,8 @@ export function useAccounts(settingsOpen: boolean) {
             : null,
         );
       })
-      .catch(() => {
-        if (requestId === accountsRequest.current) setAccounts([]);
-      });
+      // A transient status request failure should not hide account controls.
+      .catch(logBackgroundFailure("Account status refresh"));
   }, []);
 
   const refreshMailboxUnreadCounts = useCallback((accountOverride?: string | null) => {
@@ -119,10 +118,12 @@ export function useAccounts(settingsOpen: boolean) {
   useEffect(refreshMailboxUnreadCounts, [refreshMailboxUnreadCounts]);
 
   useEffect(() => {
-    if (!settingsOpen) return;
-    void refreshAccounts();
     const interval = window.setInterval(refreshAccounts, ACCOUNT_STATUS_REFRESH_MS);
     return () => window.clearInterval(interval);
+  }, [refreshAccounts]);
+
+  useEffect(() => {
+    if (settingsOpen) void refreshAccounts();
   }, [settingsOpen, refreshAccounts]);
 
   useEffect(() => {

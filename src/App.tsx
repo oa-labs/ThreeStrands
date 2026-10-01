@@ -3038,14 +3038,15 @@ export function AccountSwitcher({
       {accounts.map((account) => {
         const name = account.displayName ?? account.email;
         const unreadCount = unreadCounts[account.email] ?? 0;
+        const needsReconnect = account.status === "needs_reauth";
         const selected = activeAccountId === account.email || (accounts.length === 1 && activeAccountId === null);
         return (
-          <HoverTooltip key={account.email} label={account.email}>
+          <HoverTooltip key={account.email} label={needsReconnect ? `${account.email} · Needs reconnect in Mail Accounts` : account.email}>
             <button
               type="button"
               role="radio"
               aria-checked={selected}
-              aria-label={unreadCount > 0 ? `${name}, ${unreadCount} unread` : name}
+              aria-label={[name, unreadCount > 0 ? `${unreadCount} unread` : null, needsReconnect ? "Needs reconnect" : null].filter(Boolean).join(", ")}
               draggable
               className={`account-icon ${selected ? "active" : ""} ${draggedEmail === account.email ? "dragging" : ""} ${dragOverEmail === account.email && draggedEmail !== account.email ? "drag-over" : ""}`}
               style={{ background: account.color }}
@@ -3073,6 +3074,7 @@ export function AccountSwitcher({
             >
               {name.charAt(0).toUpperCase()}
               {unreadCount > 0 ? <UnreadBadge count={unreadCount} /> : null}
+              {needsReconnect ? <span className="account-reconnect-badge" aria-hidden="true"><AlertCircle size={14} strokeWidth={2.5} /></span> : null}
             </button>
           </HoverTooltip>
         );

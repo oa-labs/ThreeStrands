@@ -64,6 +64,14 @@ Use shared `box-sizing` and height rules instead of relying on native padding or
 line-height, because browsers render dropdowns differently from text inputs.
 Textareas and multi-line editors are exempt from the fixed-height rule.
 
+When a field holds multiple discrete values in one text box, show committed
+values as removable badges instead of a delimiter-filled text area. Keep an
+input for adding another value, accept pasted lists and keyboard separators
+appropriate to the value type, and commit an unfinished value on blur. Each
+badge should have an accessible copy button that appears on hover or keyboard
+focus and stays available on touch devices. Preserve punctuation that belongs
+to a value, such as commas and semicolons in URLs.
+
 `Cmd/Ctrl+Enter` is the standard optional shortcut for submitting a structured
 form. Textareas retain ordinary Enter for new lines.
 

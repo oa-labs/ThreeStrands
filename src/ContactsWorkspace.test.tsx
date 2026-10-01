@@ -71,6 +71,48 @@ describe("ContactsWorkspace",()=>{
     expect(screen.getByRole("button",{name:"Copy jane@example.com"})).toBeInTheDocument();
   });
 
+  it("edits links as removable badges without splitting URL punctuation",async()=>{
+    const existing="https://example.com/path?a=1,2;b=3";
+    const linked={...jane,links:[existing]};
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([linked]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(linked);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const input=screen.getByRole("textbox",{name:"Links"});
+    expect(screen.getByRole("button",{name:`Remove ${existing}`})).toBeInTheDocument();
+
+    fireEvent.change(input,{target:{value:"https://second.example/a,b;c"}});
+    fireEvent.keyDown(input,{key:"Enter"});
+    expect(input).toHaveValue("");
+    expect(screen.getByRole("button",{name:"Remove https://second.example/a,b;c"})).toBeInTheDocument();
+    fireEvent.paste(input,{clipboardData:{getData:()=>"https://third.example/one\nhttps://fourth.example/two"}});
+    fireEvent.change(input,{target:{value:existing}});
+    fireEvent.blur(input);
+    expect(screen.getAllByRole("button",{name:/^Remove https:/})).toHaveLength(4);
+    fireEvent.click(screen.getByRole("button",{name:`Remove ${existing}`}));
+    fireEvent.change(input,{target:{value:"https://fifth.example/last"}});
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
+    await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({links:["https://second.example/a,b;c","https://third.example/one","https://fourth.example/two","https://fifth.example/last"]})));
+  });
+
+  it("copies a link from its badge and reports clipboard failures",async()=>{
+    const link="https://example.com/profile";
+    const linked={...jane,links:[link]};
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([linked]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(linked);
+    const writeText=vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
+    Object.defineProperty(navigator,"clipboard",{value:{writeText},configurable:true});
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(screen.getByRole("button",{name:`Copy ${link}`}));
+    expect(await screen.findByRole("button",{name:`Copied ${link}`})).toBeInTheDocument();
+    expect(writeText).toHaveBeenCalledWith(link);
+    fireEvent.click(screen.getByRole("button",{name:`Copied ${link}`}));
+    expect(await screen.findByRole("status")).toHaveTextContent("Could not copy link");
+    expect(screen.getByRole("button",{name:`Copy ${link}`})).toBeInTheDocument();
+  });
+
   it("shows the selected account and scopes contacts, history, and enrichment",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));

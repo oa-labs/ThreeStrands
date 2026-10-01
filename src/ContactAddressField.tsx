@@ -1,15 +1,16 @@
 import { useEffect, useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { Check, Copy, X } from "lucide-react";
 
-// Typing one of these ends the address in progress and turns it into a badge.
-const SEPARATOR_KEYS = new Set(["Enter", ",", ";", " "]);
-const SEPARATORS = /[\s,;]+/;
+const EMAIL_SEPARATOR_KEYS = new Set(["Enter", ",", ";", " "]);
+const LINK_SEPARATOR_KEYS = new Set(["Enter", " "]);
+const EMAIL_SEPARATORS = /[\s,;]+/;
+const LINK_SEPARATORS = /\s+/;
 
-function addAll(addresses: string[], text: string): string[] {
-  const next = [...addresses];
-  for (const token of text.split(SEPARATORS)) {
-    const email = token.trim();
-    if (email && !next.some((value) => value.toLocaleLowerCase() === email.toLocaleLowerCase())) next.push(email);
+function addAll(values: string[], text: string, kind: "email" | "link"): string[] {
+  const next = [...values];
+  for (const token of text.split(kind === "email" ? EMAIL_SEPARATORS : LINK_SEPARATORS)) {
+    const value = token.trim();
+    if (value && !next.some((existing) => kind === "email" ? existing.toLocaleLowerCase() === value.toLocaleLowerCase() : existing === value)) next.push(value);
   }
   return next;
 }
@@ -25,6 +26,26 @@ export function ContactAddressField({ addresses, disabled, onChange }: {
   disabled?: boolean;
   onChange(addresses: string[]): void;
 }) {
+  return <ContactMultiValueField kind="email" values={addresses} disabled={disabled} onChange={onChange} />;
+}
+
+export function ContactLinksField({ links, disabled, onChange }: {
+  links: string[];
+  disabled?: boolean;
+  onChange(links: string[]): void;
+}) {
+  return <ContactMultiValueField kind="link" values={links} disabled={disabled} onChange={onChange} />;
+}
+
+function ContactMultiValueField({ kind, values, disabled, onChange }: {
+  kind: "email" | "link";
+  values: string[];
+  disabled?: boolean;
+  onChange(values: string[]): void;
+}) {
+  const isEmail = kind === "email";
+  const label = isEmail ? "Emails" : "Links";
+  const itemName = isEmail ? "address" : "link";
   const labelId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState("");
@@ -33,11 +54,11 @@ export function ContactAddressField({ addresses, disabled, onChange }: {
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
 
-  const copy = async (address: string) => {
+  const copy = async (value: string) => {
     setCopyFailed(false);
     try {
-      await navigator.clipboard.writeText(address);
-      setCopied(address);
+      await navigator.clipboard.writeText(value);
+      setCopied(value);
       if (copiedTimer.current) clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopied(null), 1500);
     } catch {
@@ -47,54 +68,54 @@ export function ContactAddressField({ addresses, disabled, onChange }: {
   };
 
   const commit = (text: string) => {
-    const next = addAll(addresses, text);
+    const next = addAll(values, text, kind);
     setDraft("");
-    if (next.length !== addresses.length) onChange(next);
+    if (next.length !== values.length) onChange(next);
   };
   const remove = (target: string) => {
-    onChange(addresses.filter((value) => value !== target));
+    onChange(values.filter((value) => value !== target));
     inputRef.current?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (SEPARATOR_KEYS.has(event.key)) {
+    if ((isEmail ? EMAIL_SEPARATOR_KEYS : LINK_SEPARATOR_KEYS).has(event.key)) {
       event.preventDefault();
       commit(draft);
-    } else if (event.key === "Backspace" && !draft && addresses.length) {
+    } else if (event.key === "Backspace" && !draft && values.length) {
       event.preventDefault();
-      onChange(addresses.slice(0, -1));
+      onChange(values.slice(0, -1));
     }
   };
   const onPaste = (event: ClipboardEvent<HTMLInputElement>) => {
     const text = event.clipboardData.getData("text");
-    if (!SEPARATORS.test(text.trim())) return;
+    if (!(isEmail ? EMAIL_SEPARATORS : LINK_SEPARATORS).test(text.trim())) return;
     event.preventDefault();
     commit(`${draft} ${text}`);
   };
 
   return (
-    <div className="contact-address-field">
-      <span id={labelId}>Emails</span>
-      <div className="contact-address-box" onClick={(event) => { if (event.target === event.currentTarget) inputRef.current?.focus(); }}>
-        {addresses.map((address) => (
-          <span key={address} className="recipient-chip contact-address-chip">
-            <span className="recipient-chip-label" title={address}>{address}</span>
-            <button type="button" className="recipient-chip-remove contact-address-copy" aria-label={copied === address ? `Copied ${address}` : `Copy ${address}`} title="Copy address" onClick={() => void copy(address)}>
-              {copied === address ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+    <div className="contact-multi-value-field">
+      <span id={labelId}>{label}</span>
+      <div className="contact-multi-value-box" onClick={(event) => { if (event.target === event.currentTarget) inputRef.current?.focus(); }}>
+        {values.map((value) => (
+          <span key={value} className="recipient-chip contact-multi-value-chip">
+            <span className="recipient-chip-label" title={value}>{value}</span>
+            <button type="button" className="recipient-chip-remove contact-multi-value-copy" aria-label={copied === value ? `Copied ${value}` : `Copy ${value}`} title={`Copy ${itemName}`} onClick={() => void copy(value)}>
+              {copied === value ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
             </button>
-            <button type="button" className="recipient-chip-remove" aria-label={`Remove ${address}`} disabled={disabled} onClick={() => remove(address)}>
+            <button type="button" className="recipient-chip-remove" aria-label={`Remove ${value}`} disabled={disabled} onClick={() => remove(value)}>
               <X size={12} aria-hidden="true" />
             </button>
           </span>
         ))}
         <input
           ref={inputRef}
-          aria-label="Email addresses"
+          aria-label={isEmail ? "Email addresses" : "Links"}
           aria-describedby={labelId}
           type="text"
-          inputMode="email"
+          inputMode={isEmail ? "email" : "url"}
           autoComplete="off"
           spellCheck={false}
-          placeholder={addresses.length ? "Add another address" : "name@example.com"}
+          placeholder={values.length ? `Add another ${itemName}` : isEmail ? "name@example.com" : "https://example.com"}
           disabled={disabled}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
@@ -103,7 +124,7 @@ export function ContactAddressField({ addresses, disabled, onChange }: {
           onBlur={() => commit(draft)}
         />
       </div>
-      {copyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}
+      {copyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy {isEmail ? "email address" : "link"}</span> : null}
     </div>
   );
 }

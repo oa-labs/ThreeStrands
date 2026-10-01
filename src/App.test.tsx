@@ -1161,6 +1161,7 @@ describe("account selection persistence", () => {
         email: "work@example.com",
         displayName: "Work",
         color: "#34A853",
+        status: "needs_reauth" as const,
         sortOrder: 1,
           },
         ]}
@@ -1174,8 +1175,11 @@ describe("account selection persistence", () => {
 
     expect(screen.getByRole("radio", { name: "All accounts, 123 unread" })).toHaveTextContent("99+");
     expect(screen.getByRole("radio", { name: `${primary.email}, 3 unread` })).toHaveTextContent("3");
-    expect(screen.getByRole("tooltip", { name: "work@example.com" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Work, 120 unread" })).toHaveTextContent("99+");
+    expect(screen.getByRole("tooltip", { name: "work@example.com · Needs reconnect in Mail Accounts" })).toBeInTheDocument();
+    const disconnectedAccount = screen.getByRole("radio", { name: "Work, 120 unread, Needs reconnect" });
+    expect(disconnectedAccount).toHaveTextContent("99+");
+    expect(disconnectedAccount.querySelector(".account-reconnect-badge")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: `${primary.email}, 3 unread` }).querySelector(".account-reconnect-badge")).not.toBeInTheDocument();
   });
 
   it("shows a lone account as checked, with its email tooltip and no All accounts option", async () => {
