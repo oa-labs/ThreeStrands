@@ -25,7 +25,7 @@ export function htmlToPlainText(html: string, { whitespace }: { whitespace: Html
   const doc = new DOMParser().parseFromString(html, "text/html");
   let text = "";
   const breakLine = () => {
-    text = text.replace(/[ \t ]+$/, "");
+    text = text.replace(/[ \t\u00a0]+$/, "");
     if (text && !text.endsWith("\n")) text += "\n";
   };
   const visit = (node: Node) => {
@@ -48,7 +48,7 @@ export function htmlToPlainText(html: string, { whitespace }: { whitespace: Html
   doc.body.childNodes.forEach(visit);
 
   if (whitespace === "collapse") {
-    text = text.replace(/[ \t ]+\n/g, "\n").replace(/\n[ \t ]+/g, "\n");
+    text = text.replace(/[ \t\u00a0]+\n/g, "\n").replace(/\n[ \t\u00a0]+/g, "\n");
   }
   return text.replace(/\n{3,}/g, "\n\n").trim();
 }
