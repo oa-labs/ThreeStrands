@@ -175,13 +175,13 @@ describe("settings section keyboard navigation", () => {
     expect(within(dialog).getByText("General")).toBeInTheDocument();
     expect(within(dialog).getByText("Accounts")).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
-    expect(within(dialog).getByText("Preference changes save automatically")).toBeInTheDocument();
+    expect(within(dialog).getByText("Changes save automatically")).toBeInTheDocument();
     // Mark-read timing lives on the Appearance page rather than its own one.
     expect(within(dialog).getByRole("spinbutton", { name: "Auto-Read Delay" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Reading" })).not.toBeInTheDocument();
     // Pages with explicit Save buttons must not claim everything autosaves.
     fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
-    expect(within(dialog).queryByText("Preference changes save automatically")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("Changes save automatically")).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Appearance" }));
 
     const search = within(dialog).getByRole("searchbox", { name: "Search Settings" });

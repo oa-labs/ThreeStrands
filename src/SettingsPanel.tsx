@@ -555,7 +555,7 @@ export function Settings({
               <p>{visibleSections.length === 0 ? "No matching controls or sections are currently visible." : selectedSection.description}</p>
             </div>
             {visibleSections.length > 0 && selectedSection.autosaves ? (
-              <span className="settings-save-note"><Check size={13} aria-hidden="true" /> Preference changes save automatically</span>
+              <span className="settings-save-note"><Check size={13} aria-hidden="true" /> Changes save automatically</span>
             ) : null}
           </header>
           {visibleSections.length === 0 ? (
