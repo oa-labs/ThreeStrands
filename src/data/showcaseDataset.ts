@@ -460,6 +460,7 @@ function buildTasks(now: Date): ThreadTask[] {
     { ...base, id: "task-security", accountId: SHOWCASE_WORK_ACCOUNT, threadId: "security-review", subjectSnapshot: "Security review sign-off for launch", title: "Waiting on Aisha's security sign-off", kind: "waiting_for", dueKind: "date", dueValue: inDays(1), status: "open" },
     { ...base, id: "task-crit", accountId: SHOWCASE_WORK_ACCOUNT, threadId: "design-crit", subjectSnapshot: "Design crit: onboarding flow v3", title: "Review the onboarding v3 prototype", kind: "action", dueKind: "none", dueValue: null, status: "open" },
     { ...base, id: "task-flights", accountId: SHOWCASE_WORK_ACCOUNT, threadId: "offsite", subjectSnapshot: "Offsite logistics — Lisbon, Oct 14–16", title: "Book flights for the Lisbon offsite", kind: "action", dueKind: "none", dueValue: null, status: "completed", completionSource: "user", completedAt: stamp },
+    { ...base, id: "task-agenda", accountId: SHOWCASE_WORK_ACCOUNT, threadId: null, subjectSnapshot: null, title: "Prepare the team retrospective agenda", kind: "action", dueKind: "date", dueValue: inDays(1), status: "open" },
     { ...base, id: "task-cake", accountId: SHOWCASE_PERSONAL_ACCOUNT, threadId: "birthday", subjectSnapshot: "Re: Mom's birthday plans", title: "Buy lemons and cake flour", kind: "action", dueKind: "date", dueValue: inDays(3), status: "open" },
   ];
 }
@@ -476,6 +477,29 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
     ],
     threads,
     messages,
+    aiFixtures: {
+      renewal: {
+        summary: "- Brightwater is renewing its annual plan and needs pricing for 35 seats.\n- Marcus wants to finalize the renewal before budget season.",
+        analysis: {
+          hiddenCount: 0,
+          proposals: [{
+            type: "task", kind: "action", title: "Send Marcus pricing for 35 seats",
+            notes: "Include annual pricing and the volume discount tier.",
+            dueKind: "none", dueValue: null, timeZone: null, repeatIntervalDays: null,
+            confidence: 0.96,
+            evidence: { sourceMessageId: "renewal-message", excerpt: "Could you send over updated pricing for 35 seats on an annual plan?" },
+          }],
+        },
+      },
+      "launch-plan": {
+        chat: {
+          answer: "Onboarding v3 asks for the team name after the first inbox connects. The launch starts in North America, with EU and APAC following 48 hours later. Priya will update the plan before Thursday’s sign-off.",
+          analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, availability: null,
+          sources: threads.filter((thread) => thread.id === "design-crit").map(({ id, accountId, subject, lastMessageAt }) => ({ threadId: id, accountId, subject, lastMessageAt })),
+          searched: threads.filter((thread) => thread.id === "design-crit").map(({ id, accountId, subject, lastMessageAt }) => ({ threadId: id, accountId, subject, lastMessageAt })),
+        },
+      },
+    },
     details: {},
     labels: [
       { id: "INBOX", name: "Inbox", kind: "system", color: null },
@@ -505,7 +529,7 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
       {
         id: "contact:priya@harborlight.example", displayName: "Priya Natarajan", role: "VP of Product Marketing", company: "Harborlight", location: "San Francisco, CA",
         bio: "Leads launches and positioning. Prefers written proposals before live reviews.", notes: "Loves a clear decision log. Out Oct 24–27.",
-        links: ["https://harborlight.example/team/priya"], photoData: null, favorite: true, addresses: ["priya@harborlight.example"], sentCount: 48, receivedCount: 63, lastInteractedAt: daysAgo(0.02),
+        links: ["https://harborlight.example/team/priya"], photoData: null, favorite: true, addresses: ["priya@harborlight.example", "priya.natarajan@harborlight.example"], sentCount: 48, receivedCount: 63, lastInteractedAt: daysAgo(0.02),
       },
       {
         id: "contact:marcus@brightwater.example", displayName: "Marcus Webb", role: "Operations Director", company: "Brightwater Co-op", location: "Portland, OR",

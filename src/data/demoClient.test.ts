@@ -95,6 +95,60 @@ describe("showcase dataset", () => {
     expect(domains.filter((domain) => !RESERVED_DOMAIN.test(domain.toLocaleLowerCase()))).toEqual([]);
   });
 
+  it("produces reproducible AI fixtures with evidence from the fictional mailbox", async () => {
+    const dataset = buildShowcaseDataset(now);
+    expect(dataset.aiFixtures).toEqual(buildShowcaseDataset(now).aiFixtures);
+    const client = createDemoClient(dataset);
+    const tasksBefore = await client.listTasks();
+    const brief = await client.briefThread("renewal", "UTC", "openai", "fictional-model", null);
+    expect(brief.summary.summary).toContain("pricing for 35 seats");
+    expect(brief.analysis.proposals).toHaveLength(1);
+    const detail = await client.getThread("renewal");
+    for (const proposal of brief.analysis.proposals) {
+      const source = detail.messages.find((message) => message.id === proposal.evidence.sourceMessageId);
+      expect(source?.bodyText).toContain(proposal.evidence.excerpt);
+    }
+    expect(detail.thread.summary).toBe(brief.summary.summary);
+    expect(await client.listTasks()).toEqual(tasksBefore);
+    brief.analysis.proposals[0]!.title = "An edit to the returned copy";
+    const again = await client.analyzeThread("renewal", "UTC", "openai", "fictional-model", null);
+    expect(again.proposals[0]?.title).toBe("Send Marcus pricing for 35 seats");
+  });
+
+  it("shares only selected attachments and returns other-mail sources only for a requested search", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    const request = {
+      threadId: "launch-plan", question: "What changed in onboarding and how will we roll it out?",
+      history: [], searchMailbox: true, includeProposals: false, contactId: null, userTimeZone: "UTC",
+      attachments: [{ messageId: "launch-plan-message", attachmentId: "launch-plan-pdf" }],
+    };
+    const searched = await client.threadChat(request, "openai", "fictional-model", null);
+    expect(searched.answer).toContain("EU and APAC following 48 hours later");
+    expect(searched.attachments).toEqual([{ ...request.attachments[0], filename: "Q4-launch-plan-v7.pdf", truncated: false }]);
+    expect(searched.sources).toHaveLength(1);
+    expect(searched.searched).toEqual(searched.sources);
+    const source = await client.getThread(searched.sources[0]!.threadId);
+    expect(source.thread.subject).toBe(searched.sources[0]?.subject);
+    expect(source.messages[0]?.bodyText).toContain("after the first inbox connects");
+    const local = await client.threadChat({ ...request, searchMailbox: false, attachments: [] }, "openai", "fictional-model", null);
+    expect(local.sources).toEqual([]);
+    expect(local.searched).toEqual([]);
+    expect(local.attachments).toEqual([]);
+    expect(local.answer).not.toContain("asks for the team name");
+  });
+
+  it("keeps the default demo's generic AI behavior and opt-in fixtures independent", async () => {
+    const dataset = defaultDemoDataset();
+    expect(dataset.aiFixtures).toBeUndefined();
+    const client = createDemoClient(dataset);
+    const thread = dataset.threads[0]!;
+    const analysis = await client.analyzeThread(thread.id, "UTC", "openai", "fictional-model", null);
+    expect(analysis.proposals[0]?.title).toBe(`Review: ${thread.subject}`);
+    const summary = await client.summarizeThread(thread.id, "openai", "fictional-model", null);
+    expect(summary.summary).toContain(thread.subject);
+    expect(summary.summary).not.toContain("Brightwater");
+  });
+
   it("dates mail relative to now and schedules the current week", () => {
     const dataset = buildShowcaseDataset(now);
     const newest = Math.max(...dataset.threads.map((thread) => Date.parse(thread.lastMessageAt)));

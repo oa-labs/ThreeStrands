@@ -17,7 +17,7 @@
     "site:build": "tsc --noEmit -p site && vite build --config site/vite.config.ts",
     "site:images": "node site/scripts/optimize-screenshots.mjs",
     "site:og": "node site/scripts/render-og.mjs",
-    "test:site": "tsc --noEmit -p site && playwright test --config playwright.site.config.ts",
+    "test:site": "node --test site/scripts/optimize-screenshots.test.mjs && tsc --noEmit -p site && playwright test --config playwright.site.config.ts",
     "build:linux": "./scripts/build-linux.sh",
     "tauri": "node scripts/tauri.mjs"
   },

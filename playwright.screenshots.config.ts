@@ -10,6 +10,7 @@ const port = 1421;
 export default defineConfig({
   testDir: "./tests/screenshots",
   fullyParallel: true,
+  workers: 2,
   reporter: "list",
   timeout: 60_000,
   use: {
@@ -17,6 +18,7 @@ export default defineConfig({
     browserName: "chromium",
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
+    reducedMotion: "reduce",
     locale: "en-US",
     timezoneId: "America/Los_Angeles",
   },

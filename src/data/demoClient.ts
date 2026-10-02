@@ -345,7 +345,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const thread = threads.find((candidate) => candidate.id === threadId);
       if (!thread) throw new Error("Thread not found");
       await new Promise((resolve) => setTimeout(resolve, 400));
-      const summary = [
+      const summary = seed.aiFixtures?.[threadId]?.summary ?? [
         `- ${thread.subject}`,
         `- Latest message from ${thread.participants[0] ?? "a participant"}`,
         `- ${thread.snippet}`,
@@ -361,6 +361,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const latest = detail.messages.at(-1);
       if (!latest) return { proposals: [], hiddenCount: 0 };
       await new Promise((resolve) => setTimeout(resolve, 400));
+      const fixture = seed.aiFixtures?.[threadId]?.analysis;
+      if (fixture) return structuredClone(fixture);
       return { hiddenCount: 0, proposals: [{
         type: "task",
         kind: "action",
@@ -383,15 +385,16 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const wantsReply = /\b(draft|write|reply)\b/i.test(request.question);
       const wantsTimes = /\b(free|available|availability|when can|find a time)\b/i.test(request.question);
       const now = new Date();
+      const fixture = seed.aiFixtures?.[request.threadId]?.chat;
       return {
         availability: wantsTimes
           ? { rangeStart: now.toISOString(), rangeEnd: new Date(now.getTime() + 7 * 86_400_000).toISOString(), durationMinutes: 30 }
           : null,
-        answer: `In the demo, answers come from “${detail.thread.subject}”: ${detail.thread.snippet}`,
-        analysis: { proposals: [], hiddenCount: 0 },
-        replyDraft: wantsReply ? "Thanks for the update. I'll take a look and get back to you soon." : null,
-        sources: [],
-        searched: [],
+        answer: (request.searchMailbox ? fixture?.answer : undefined) ?? `In the demo, answers come from “${detail.thread.subject}”: ${detail.thread.snippet}`,
+        analysis: request.includeProposals && fixture ? structuredClone(fixture.analysis) : { proposals: [], hiddenCount: 0 },
+        replyDraft: fixture?.replyDraft ?? (wantsReply ? "Thanks for the update. I'll take a look and get back to you soon." : null),
+        sources: request.searchMailbox && fixture ? structuredClone(fixture.sources) : [],
+        searched: request.searchMailbox && fixture ? structuredClone(fixture.searched) : [],
         attachments: request.attachments.flatMap((reference) => {
           const attachment = detail.messages
             .find((message) => message.id === reference.messageId)

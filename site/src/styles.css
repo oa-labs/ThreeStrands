@@ -1500,6 +1500,7 @@ button.keycap:active {
 }
 
 .check-list .icon {
+  flex-shrink: 0;
   width: 36px;
   height: 36px;
   padding: 8px;
@@ -1508,99 +1509,23 @@ button.keycap:active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.proposal {
-  position: relative;
-  padding: 24px 12px;
+.ai-screenshots {
+  display: grid;
+  gap: 28px;
+  min-width: 0;
 }
 
-.proposal::before {
-  content: "";
-  position: absolute;
-  inset: 44px 34px 64px 48px;
-  border-radius: 22px;
-  background: color-mix(in srgb, var(--strand-mail) 22%, var(--paper-raised));
-  rotate: 4deg;
-}
-
-.proposal-card {
-  position: relative;
-  padding: 30px;
-  border-radius: 22px;
-  background: var(--paper-raised);
-  border: 1.5px dashed var(--strand-mail-ink);
-  box-shadow: 0 36px 70px -36px rgb(31 27 92 / 0.55);
-  rotate: -1.5deg;
-}
-
-.proposal-kicker {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.78rem;
-  font-weight: 650;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--accent);
-}
-
-.proposal-title {
+.ai-screenshots figcaption {
   margin-top: 12px;
-  font-family: var(--font-display);
-  font-variation-settings: "opsz" 72, "SOFT" 100;
-  font-weight: 560;
-  font-size: 1.6rem;
-  line-height: 1.2;
-}
-
-.proposal-meta {
-  margin-top: 6px;
-  font-size: 0.9rem;
-  color: var(--ink-faint);
-}
-
-.proposal-evidence {
-  margin: 20px 0 0;
-  padding: 14px 18px;
-  border-left: 3px solid var(--peach);
-  border-radius: 0 12px 12px 0;
-  background: color-mix(in srgb, var(--peach) 14%, transparent);
-  font-family: var(--font-display);
-  font-style: italic;
-  font-variation-settings: "opsz" 24, "SOFT" 100;
-  color: var(--ink);
-}
-
-.proposal-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 22px;
-}
-
-.fake-button {
-  display: inline-flex;
-  align-items: center;
-  height: 38px;
-  padding: 0 16px;
-  border-radius: 999px;
-  border: 1px solid var(--paper-line);
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--ink-soft);
-}
-
-.fake-button.primary {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--paper);
-}
-
-.proposal figcaption {
-  position: relative;
-  margin-top: 26px;
-  text-align: center;
   font-size: 0.92rem;
   color: var(--ink-soft);
 }
+
+.ai-note {
+  margin-top: 22px;
+  color: var(--ink-soft);
+}
+
 
 @media (max-width: 900px) {
   .ai-grid {

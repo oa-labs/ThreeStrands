@@ -140,13 +140,13 @@
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
               <p class="strand-label">Tasks</p>
               <h3>Follow-Ups That Close Themselves</h3>
-              <p>Turn any conversation into an action, follow-up, or waiting-for task. When the reply arrives, the task can complete on its own.</p>
+              <p>Create standalone tasks or turn a conversation into an action, follow-up, or waiting-for. Linked follow-ups can complete when a reply arrives.</p>
             </article>
             <article class="strand-card" style="--strand: var(--strand-schedule); --strand-ink: var(--strand-schedule-ink)">
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
               <p class="strand-label">Schedule</p>
               <h3>Your Day, Beside Your Mail</h3>
-              <p>See today or the whole week from Google Calendar, find free time against your working hours, and drop it straight into a reply.</p>
+              <p>See your day or week from Google Calendar, find free time against your working hours, and create an event or put available times in a reply.</p>
             </article>
           </div>
         </div>
@@ -237,8 +237,8 @@
               <li class="tour-step" data-step="tasks">
                 <p class="step-count">04</p>
                 <h3>Tasks Tied to Conversations</h3>
-                <p>Actions, follow-ups, and waiting-fors with due dates and repeats. Linked tasks can complete when a new reply lands.</p>
-                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="tasks" sizes="92vw" alt="The Tasks view listing open actions, follow-ups, and waiting-for items linked to conversations."></ts-shot></div></div>
+                <p>Standalone tasks and conversation-linked actions, follow-ups, and waiting-fors with due dates and repeats. Linked follow-ups can complete when a new reply lands.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="tasks" sizes="92vw" alt="The Tasks view listing standalone actions and conversation-linked follow-ups and waiting-for items."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="today-schedule">
                 <p class="step-count">05</p>
@@ -249,14 +249,20 @@
               <li class="tour-step" data-step="calendar-week">
                 <p class="step-count">06</p>
                 <h3>Plan the Week</h3>
-                <p>A full week view across the calendars you choose, without leaving your mail.</p>
+                <p>A full week view across the calendars you choose. Open a time slot or select New event to start planning without leaving your mail.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="calendar-week" sizes="92vw" alt="A week calendar view with meetings, focus time, and an all-day launch event."></ts-shot></div></div>
               </li>
-              <li class="tour-step" data-step="contacts">
+              <li class="tour-step" data-step="calendar-create">
                 <p class="step-count">07</p>
+                <h3>From Conversation to Calendar</h3>
+                <p>Create events with invitees from the week view or a reviewed meeting suggestion. Check the title, time, and calendar before creating.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="calendar-create" sizes="92vw" alt="A new calendar event with a title, time, calendar, and invitee, awaiting Create event."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="contacts">
+                <p class="step-count">08</p>
                 <h3>People, in Context</h3>
-                <p>Contacts built from your real correspondence, with notes and a timeline of recent conversations.</p>
-                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="contacts" sizes="92vw" alt="A contact profile with role, company, notes, and a list of recent emails."></ts-shot></div></div>
+                <p>Browse, add, and edit contacts with multiple addresses, notes, and correspondence history. The conversation context panel brings people, related tasks, and meetings beside your mail. Optional AI enrichment suggests profile details for you to apply.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="contacts" sizes="92vw" alt="An editable contact profile with role, company, multiple addresses, notes, and recent emails."></ts-shot></div></div>
               </li>
             </ol>
             <div class="tour-stage" aria-hidden="true">
@@ -269,6 +275,7 @@
                   <ts-shot scene="tasks" data-scene="tasks" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="today-schedule" data-scene="today-schedule" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="calendar-week" data-scene="calendar-week" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="calendar-create" data-scene="calendar-create" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="contacts" data-scene="contacts" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                 </div>
               </div>
@@ -337,14 +344,14 @@
                 <div class="stamp-inner">
                   <ts-icon name="file-lock-2"></ts-icon>
                   <h3>Encrypted Settings Export</h3>
-                  <p>Move preferences to a new machine with a password-encrypted file. Mail, drafts, and credentials stay behind.</p>
+                  <p>Move preferences, account display details, saved contacts, snippets, and Split Inboxes with a password-encrypted file. Mail, drafts, queued sends, and credentials stay behind.</p>
                 </div>
               </li>
               <li class="stamp" style="--stamp: var(--strand-mail-ink)">
                 <div class="stamp-inner">
                   <ts-icon name="folder-sync"></ts-icon>
                   <h3>Encrypted Sync <span class="tag">Beta</span></h3>
-                  <p>Replicate tasks, snippets, and Split Inboxes end to end through storage you choose: a shared folder, an S3-compatible bucket, or IPFS.</p>
+                  <p>Sync tasks, saved contacts, snippets, Split Inboxes, portable preferences, and account display details with end-to-end encryption through a shared folder, S3-compatible storage, or IPFS. Mail, drafts, queued sends, and provider credentials stay on each device.</p>
                 </div>
               </li>
             </ul>
@@ -357,30 +364,30 @@
         <div class="container ai-grid">
           <div>
             <p class="eyebrow">Optional AI</p>
-            <h2 id="ai-title" class="display-2">A Proposal, <em>Never</em> a Mutation</h2>
+            <h2 id="ai-title" class="display-2">Assistance, with <em>You</em> in Control</h2>
             <p class="section-lead">
-              Bring your own API key for thread summaries, drafting help, and suggested tasks or meetings.
-              AI suggests; you decide. Nothing is created or sent until you review it — with the evidence right there.
+              Bring your own provider and API key for summaries, drafting help, contact enrichment, and suggested tasks or meetings.
+              Ask questions about a conversation, search other mail when you choose, or share selected readable attachments.
+              You review and apply tasks, calendar events, contact changes, and drafts. You choose when to send.
             </p>
             <ul class="check-list">
               <li><ts-icon name="key-round"></ts-icon>Your provider, your key.</li>
-              <li><ts-icon name="shield-check"></ts-icon>Only the thread you ask about is sent.</li>
-              <li><ts-icon name="lock"></ts-icon>Off until you add a key.</li>
+              <li><ts-icon name="shield-check"></ts-icon>Chat searches other mail only when you choose Search all mail. You select which readable attachments to share.</li>
+              <li><ts-icon name="lock"></ts-icon>AI starts off. Set up your provider and key, then enable the features you want.</li>
             </ul>
+            <p class="ai-note">Proactive briefs are a separate opt-in: when enabled, qualifying conversations are sent to your provider after you stay on them. Contact enrichment reviews correspondence with that person when you request it.</p>
+            <p class="ai-note">Track requests, tokens, and estimated costs in settings. An optional fast model handles summaries, reply drafts, and contact enrichment while your main model handles briefs, suggestions, and chat.</p>
           </div>
-          <figure class="proposal" aria-labelledby="proposal-caption">
-            <div class="proposal-card">
-              <p class="proposal-kicker"><ts-icon name="sparkles"></ts-icon>Suggested Task</p>
-              <p class="proposal-title">Send Marcus pricing for 35 seats</p>
-              <p class="proposal-meta">Due Friday · From “Contract renewal — Brightwater Co-op”</p>
-              <blockquote class="proposal-evidence">“Could you send over updated pricing for 35 seats on an annual plan?”</blockquote>
-              <div class="proposal-actions" aria-hidden="true">
-                <span class="fake-button primary">Review &amp; Add</span>
-                <span class="fake-button">Dismiss</span>
-              </div>
-            </div>
-            <figcaption id="proposal-caption">An AI suggestion waits for review, quoting the sentence it came from.</figcaption>
-          </figure>
+          <div class="ai-screenshots">
+            <figure>
+              <div class="window window-flat"><div class="window-body"><ts-shot scene="thread-assist" sizes="(min-width: 1000px) 560px, 92vw" alt="A conversation brief and a suggested pricing task with quoted evidence, awaiting review."></ts-shot></div></div>
+              <figcaption>A brief keeps the next step beside the conversation. Suggested actions wait for your review.</figcaption>
+            </figure>
+            <figure>
+              <div class="window window-flat"><div class="window-body"><ts-shot scene="thread-chat" sizes="(min-width: 1000px) 560px, 92vw" alt="Thread Chat answering a rollout question with a selected PDF attachment and a source email from an explicitly requested mailbox search."></ts-shot></div></div>
+              <figcaption>Ask about the conversation, with selected attachments and source emails visible in the chat.</figcaption>
+            </figure>
+          </div>
         </div>
       </section>
 
@@ -414,11 +421,9 @@
           </header>
           <ol class="roadmap-list">
             <li><h3>Snooze and Scheduled Sending</h3><p>Put a conversation aside until a chosen time, and queue a message for later delivery.</p></li>
-            <li><h3>A Fuller Address Book</h3><p>Browse, add, and edit contacts anywhere, building on today's history-based suggestions.</p></li>
             <li><h3>Smarter Inbox Rules</h3><p>Inspectable, user-controlled classification beyond domain, label, and address rules.</p></li>
-            <li><h3>Calendar Planning</h3><p>Go from checking availability to creating events, always after explicit review.</p></li>
             <li><h3>More Mail Providers</h3><p>Microsoft 365, then IMAP and SMTP. Gmail is the only provider today.</p></li>
-            <li><h3>More Ways to Stay in Sync</h3><p>A more mature encrypted sync, with smoother onboarding and recovery across devices.</p></li>
+            <li><h3>Encrypted Sync Reliability</h3><p>Harden the encrypted sync beta across devices, especially upgrades and interrupted joins.</p></li>
             <li><h3>Shared and Mobile Workflows</h3><p>A mobile companion and shared conversations or drafts, where demand justifies them.</p></li>
           </ol>
         </div>

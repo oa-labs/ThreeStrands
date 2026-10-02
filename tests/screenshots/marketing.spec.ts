@@ -27,6 +27,20 @@ async function openThread(page: Page, subject: RegExp) {
   await waitForMessage(page);
 }
 
+/** Browser-only demo key: no credentials or provider requests are involved. */
+async function configureDemoAi(page: Page, features: string[]) {
+  await page.getByRole("button", { name: /^Settings/ }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: "AI Provider", exact: true }).click();
+  await settings.getByRole("combobox", { name: "Provider", exact: true }).selectOption("openai");
+  await settings.getByLabel("API Key", { exact: true }).fill("fictional-showcase-key");
+  await settings.getByRole("button", { name: "Save Key", exact: true }).click();
+  await expect(settings.getByText("API key configured", { exact: true })).toBeVisible();
+  for (const feature of features) await settings.getByRole("checkbox", { name: feature, exact: true }).check();
+  await page.keyboard.press("Escape");
+  await expect(settings).toBeHidden();
+}
+
 const scenes: Scene[] = [
   {
     name: "inbox",
@@ -83,10 +97,65 @@ const scenes: Scene[] = [
     },
   },
   {
+    name: "calendar-create",
+    capture: async (page) => {
+      await page.keyboard.press("2");
+      await page.getByRole("button", { name: "New event", exact: true }).click();
+      const event = page.getByRole("dialog", { name: "New event", exact: true });
+      await event.getByLabel("Title", { exact: true }).fill("Q4 launch rollout review");
+      await event.getByLabel("Invite people", { exact: true }).fill("priya@harborlight.example");
+      await event.getByLabel("Description", { exact: true }).fill("Confirm North America first, then EU and APAC 48 hours later.");
+      await expect(event.getByRole("button", { name: "Create event", exact: true })).toBeEnabled();
+      await expect(event.getByRole("combobox", { name: "Calendar", exact: true })).not.toHaveValue("");
+    },
+  },
+  {
+    name: "thread-assist",
+    capture: async (page) => {
+      await configureDemoAi(page, ["Thread Summaries", "Suggestions"]);
+      await openThread(page, /Contract renewal — Brightwater Co-op/);
+      const brief = page.getByRole("region", { name: "Brief", exact: true });
+      await brief.getByRole("button", { name: "Get Brief", exact: true }).click();
+      await expect(brief.getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
+      await brief.getByText("From the email", { exact: true }).click();
+      await expect(brief.locator("blockquote")).toBeVisible();
+      await brief.getByRole("button", { name: "Review & Add Task", exact: true }).scrollIntoViewIfNeeded();
+      await expect(brief.locator("blockquote")).toBeInViewport();
+      await expect(brief.locator("blockquote")).toContainText("Could you send over updated pricing for 35 seats");
+      await expect(brief.getByText("Brightwater is renewing its annual plan and needs pricing for 35 seats.", { exact: true })).toBeVisible();
+    },
+  },
+  {
+    name: "thread-chat",
+    capture: async (page) => {
+      await configureDemoAi(page, ["Thread Chat"]);
+      await openThread(page, /Q4 launch plan — final review/);
+      await page.keyboard.press("q");
+      const chat = page.getByRole("region", { name: "Ask about this conversation", exact: true });
+      const question = chat.getByRole("textbox", { name: "Ask about this conversation", exact: true });
+      await question.fill("@Q4");
+      await chat.getByRole("option", { name: /Q4-launch-plan-v7.pdf/ }).click();
+      await question.press("End");
+      await question.pressSequentially(" What changed in onboarding and how will we roll it out?");
+      await chat.getByRole("checkbox", { name: "Search all mail", exact: true }).check();
+      await chat.getByRole("button", { name: "Ask", exact: true }).click();
+      await expect(chat.getByRole("log")).toContainText("EU and APAC following 48 hours later");
+      // Submitting can return the dock to read mode; reopen it to show shared files.
+      const prompt = chat.getByRole("button", { name: "Ask about this conversation…", exact: true });
+      if (await prompt.isVisible()) await prompt.click();
+      await chat.getByRole("log").evaluate((element) => { element.scrollTop = 0; });
+      await chat.getByRole("navigation", { name: "Sources" }).scrollIntoViewIfNeeded();
+      await expect(chat.getByRole("navigation", { name: "Sources" })).toBeInViewport();
+      await expect(chat.getByRole("list", { name: "Attachments shared with AI" })).toBeInViewport();
+      await expect(chat.getByRole("log")).toContainText("Shared Q4-launch-plan-v7.pdf");
+    },
+  },
+  {
     name: "tasks",
     capture: async (page) => {
       await page.keyboard.press("3");
       await expect(page.getByText("Sign off on the Q4 launch plan").first()).toBeVisible();
+      await expect(page.getByText("Prepare the team retrospective agenda", { exact: true })).toBeVisible();
     },
   },
   {
@@ -95,6 +164,7 @@ const scenes: Scene[] = [
       await page.getByRole("button", { name: "Contacts", exact: true }).click();
       await expect(page.getByRole("textbox", { name: "Name" })).toHaveValue("Priya Natarajan");
       await expect(page.getByRole("heading", { name: "Recent emails" })).toBeVisible();
+      await expect(page.getByText("priya.natarajan@harborlight.example", { exact: true })).toBeVisible();
     },
   },
 ];
@@ -104,7 +174,16 @@ for (const theme of ["light", "dark"] as const) {
     test.use({ colorScheme: theme });
 
     for (const scene of scenes) {
-      test(scene.name, async ({ page }) => {
+      test(scene.name, async ({ page, baseURL }) => {
+        const foreignRequests: string[] = [];
+        const origin = new URL(baseURL!).origin;
+        await page.route("**/*", async (route) => {
+          const url = new URL(route.request().url());
+          if (url.protocol.startsWith("http") && url.origin !== origin) {
+            foreignRequests.push(url.href);
+            await route.abort();
+          } else await route.continue();
+        });
         await page.clock.setFixedTime(frozenNow);
         await page.addInitScript((value) => {
           try {
@@ -117,6 +196,15 @@ for (const theme of ["light", "dark"] as const) {
         await expect(page.getByRole("heading", { name: /\d+ conversations?/ })).toBeVisible();
 
         await scene.capture(page);
+
+        // Fonts and decoded images must settle before the reproducible capture.
+        for (const frame of page.frames()) {
+          await frame.evaluate(async () => {
+            await document.fonts.ready;
+            await Promise.all([...document.images].filter((image) => image.src).map((image) => image.decode()));
+          });
+        }
+        expect(foreignRequests).toEqual([]);
 
         // Park the pointer so no hover tooltip or row highlight leaks into the shot.
         const viewport = page.viewportSize()!;

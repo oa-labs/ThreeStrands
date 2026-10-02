@@ -65,9 +65,15 @@ pnpm screenshots                     # capture every scene, light and dark
 
 `pnpm screenshots` writes 2x PNGs to `artifacts/screenshots/<theme>/` with the
 clock frozen to a Tuesday morning. Set `SCREENSHOT_DIR` or `SCREENSHOT_NOW` to
-override either. Scenes live in `tests/screenshots/marketing.spec.ts` and the
-data lives in `src/data/showcaseDataset.ts`. Keep `src/data/demoDataset.ts`
-unchanged, because the test suites depend on it.
+override either. `pnpm site:images` honors the same `SCREENSHOT_DIR`, and validates
+the complete light/dark capture set before replacing assets. Scenes live in
+`tests/screenshots/marketing.spec.ts`; data and deterministic AI responses live
+in `src/data/showcaseDataset.ts`.
+The brief, thread-chat, and calendar-creation scenes use fictional inputs; AI
+captures configure an in-memory placeholder key and never call a provider.
+Hands-on visual review remains the developer’s responsibility. Keep the default
+fixtures in `src/data/demoDataset.ts` unchanged, because the test suites depend
+on them.
 
 ### Website
 

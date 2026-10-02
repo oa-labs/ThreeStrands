@@ -1,7 +1,7 @@
 # ThreeStrands product plan
 
 **Status:** Current product baseline and forward-looking roadmap
-**Reviewed:** 2026-09-24 against the 0.32.1 codebase
+**Reviewed:** 2026-10-02 against the 0.55.1 codebase
 
 ## Product direction
 
@@ -15,7 +15,7 @@ not require a ThreeStrands account or an application-operated mail backend.
 Mail is cached in SQLite for fast reading, search, and offline work. Gmail
 remains the source of truth for mail. The app stores OAuth credentials in the
 operating system's credential store and sends mail through a durable local
-outbox. Optional AI sends bounded thread context to a provider the user
+outbox. Optional AI sends bounded mail context to a provider the user
 configures. Optional cross-device sync, currently a beta, replicates selected
 workflow data through storage the user chooses.
 
@@ -59,6 +59,9 @@ particular platform package, or always-on service behavior.
   standalone tasks too. Set due dates and repeating follow-ups. Waiting and
   follow-up tasks linked to a conversation can complete when a new reply
   arrives.
+- Browse, add, and edit contacts outside the composer, with multiple addresses,
+  notes, profile details, and correspondence history. A conversation context
+  panel brings people, related tasks, and meetings beside the message.
 - Unsubscribe when a message advertises a supported unsubscribe method, with
   confirmation before the request.
 
@@ -67,11 +70,18 @@ particular platform package, or always-on service behavior.
 - Connect Google Calendar separately from mail. See today's schedule or a
   week view, choose visible calendars, preview calendar invitations, and
   check available times against selected calendars and working hours. Put
-  selected times into a draft reply.
+  selected times into a draft reply. Create events with invitees from the week
+  view or a reviewed meeting suggestion, after checking the event dialog.
 - Optionally connect an AI provider with your own API key for thread
   summaries, draft assistance, and suggested tasks or meetings. Suggested
   actions stay proposals until you review them; the app does not create a
-  task or send a message from AI output on its own.
+  task or send a message from AI output on its own. Thread Chat can answer
+  questions with selected readable attachments and explicitly requested mailbox
+  search. Contact enrichment suggests profile details from correspondence for
+  the user to apply. Proactive briefs require a separate opt-in; enabled briefs
+  send qualifying conversations after the reader stays on them. Settings show
+  requests, tokens, and estimated costs, with an optional fast model for
+  summaries, reply drafts, and contact enrichment.
 
 ### Stay in control of local data
 
@@ -80,15 +90,16 @@ particular platform package, or always-on service behavior.
 - Adjust local mail retention and remote-image loading. Sender HTML is
   sanitized and contained in a sandboxed reader; remote images stay behind
   the native proxy and the chosen image-loading setting.
-- Transfer settings and account display metadata with a password-encrypted
-  export. Mail, drafts, queued sends, OAuth credentials, and AI keys are
-  excluded; accounts need authorization on the new device.
+- Transfer settings, account display metadata, saved contacts, snippets, and
+  Split Inboxes with a password-encrypted export. Mail, drafts, queued sends,
+  OAuth credentials, and AI keys are excluded; accounts need authorization on
+  the new device.
 - Inspect sync diagnostics and use opt-in crash reporting. Local database
   backups and startup recovery protect access when the cache is damaged.
 
 **Beta:** End-to-end encrypted cross-device sync can replicate tasks,
-snippets, Split Inboxes, selected preferences, and account display metadata
-through a shared folder, S3-compatible storage, or an IPFS connector. Devices
+saved contacts, snippets, Split Inboxes, selected preferences, and account
+display metadata through a shared folder, S3-compatible storage, or an IPFS connector. Devices
 can join with a code, recovery phrase, or approval from another device.
 Cached mail, attachments, drafts, queued sends, and provider credentials stay
 on each device. See [cross-device sync](docs/cross-device-sync.md) for the
@@ -103,17 +114,15 @@ from the current feature set when publishing a website.
 | Direction | What users could expect |
 | --- | --- |
 | Snooze and scheduled sending | Put a conversation aside until a chosen time and queue a message for later delivery, with clear behavior when the desktop app is closed. |
-| A fuller address book | Browse, add, and edit contacts outside the composer, building on today's history-based suggestions and pinned addresses. |
 | Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
-| Calendar planning | Move from checking availability and reviewing meeting proposals to creating events after explicit review. |
 | More mail providers | Add Microsoft 365 and, after its folder and threading behavior is designed, IMAP/SMTP. Gmail is the only implemented mail provider today. |
-| More ways to stay in sync | Mature the optional encrypted sync beta, its onboarding, recovery, compatibility, and reliability across devices. |
+| Encrypted sync reliability | Harden the optional encrypted sync beta across devices, especially upgrades and interrupted joins. |
 | Shared and mobile workflows | Explore a mobile companion and shared conversations or drafts where demand justifies the additional architecture. |
 
 The roadmap should be revised as research and reliability work change
-priorities. Meeting proposals and available-time replies exist today; direct
-calendar-event creation does not. Task follow-ups exist today; snoozing a
-conversation and scheduled sending do not.
+priorities. Contact browsing and editing, meeting proposals, available-time
+replies, and reviewed calendar-event creation exist today. Task follow-ups exist
+today; snoozing a conversation and scheduled sending do not.
 
 ## Current product model and decisions
 

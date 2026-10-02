@@ -1,5 +1,7 @@
 import type {
   Account,
+  ActionAnalysis,
+  ThreadChatReply,
   CalendarAccount,
   CalendarOption,
   ContactProfile,
@@ -46,6 +48,8 @@ export type DemoDataset = {
   calendarAccounts: CalendarAccount[];
   calendarOptions: CalendarOption[];
   scheduleEvents: ScheduleEvent[];
+  /** Optional fictional AI outputs for marketing; absent from the default test dataset. */
+  aiFixtures?: Record<string, { summary?: string; analysis?: ActionAnalysis; chat?: Omit<ThreadChatReply, "attachments"> }>;
 };
 
 /**

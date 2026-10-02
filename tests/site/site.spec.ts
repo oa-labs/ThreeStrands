@@ -3,7 +3,7 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 const RELEASES = "https://github.com/oa-labs/dispatch/releases/latest";
-const TOUR_SCENES = ["inbox", "split-inbox", "reply", "tasks", "today-schedule", "calendar-week", "contacts"];
+const TOUR_SCENES = ["inbox", "split-inbox", "reply", "tasks", "today-schedule", "calendar-week", "calendar-create", "contacts"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
 /** Walks the whole page so every lazy image and scroll-driven effect gets a chance to run. */
@@ -40,6 +40,50 @@ test.describe("links", () => {
   test("shows the app version from package.json", async ({ page }) => {
     await page.goto("./");
     await expect(page.locator(".badge")).toContainText(`v${version}`);
+  });
+});
+
+test.describe("feature claims", () => {
+  test("presents contacts and event creation as shipped features", async ({ page }) => {
+    await page.goto("./");
+    const tour = page.locator("[data-tour-steps]");
+    await expect(tour).toContainText("Browse, add, and edit contacts");
+    await expect(tour).toContainText("Create events with invitees");
+    await expect(tour).toContainText("Standalone tasks");
+    const roadmap = page.locator("#roadmap");
+    await expect(roadmap.getByRole("heading", { level: 3 })).toHaveText([
+      "Snooze and Scheduled Sending", "Smarter Inbox Rules", "More Mail Providers",
+      "Encrypted Sync Reliability", "Shared and Mobile Workflows",
+    ]);
+  });
+
+  test("explains AI activation, sharing choices, and reviewed actions", async ({ page }) => {
+    await page.goto("./");
+    const ai = page.locator(".ai");
+    await expect(ai).toContainText("AI starts off. Set up your provider and key, then enable the features you want.");
+    await expect(ai).toContainText("Proactive briefs are a separate opt-in");
+    await expect(ai).toContainText("qualifying conversations are sent to your provider");
+    await expect(ai).toContainText("Chat searches other mail only when you choose Search all mail. You select which readable attachments to share");
+    await expect(ai).toContainText("Contact enrichment reviews correspondence with that person when you request it");
+    await expect(ai).toContainText("You review and apply tasks, calendar events, contact changes, and drafts. You choose when to send.");
+    await expect(ai).toContainText("estimated costs");
+    await expect(ai).toContainText("optional fast model");
+    for (const scene of ["thread-assist", "thread-chat"]) {
+      const shot = ai.locator(`picture:has(img[src*="${scene}-"])`);
+      await expect(shot).toHaveCount(1);
+      expect(await shot.locator("img").getAttribute("alt")).toBeTruthy();
+    }
+  });
+
+  test("includes saved contacts in encrypted export and sync without promising mail transfer", async ({ page }) => {
+    await page.goto("./");
+    const stamps = page.locator(".stamps");
+    for (const title of ["Encrypted Settings Export", "Encrypted Sync"]) {
+      const stamp = stamps.locator("li").filter({ has: page.getByRole("heading", { name: new RegExp(title) }) });
+      await expect(stamp).toContainText("saved contacts");
+      await expect(stamp).toContainText("Mail, drafts, queued sends");
+    }
+    await expect(stamps.locator(".tag")).toHaveText("Beta");
   });
 });
 
@@ -82,8 +126,8 @@ test.describe("images", () => {
     expect(images.filter((image) => image.alt === null)).toEqual([]);
     expect(images.filter((image) => image.rendered && !image.loaded)).toEqual([]);
     const described = images.filter((image) => !image.hidden && image.alt);
-    // Hero, command palette, sandboxed reader, and one inline image per tour step.
-    expect(described).toHaveLength(3 + TOUR_SCENES.length);
+    // Hero, command palette, sandboxed reader, two AI scenes, and one inline image per tour step.
+    expect(described).toHaveLength(5 + TOUR_SCENES.length);
   });
 
   test("each tour step has a matching sticky frame and an inline fallback", async ({ page }) => {
