@@ -114,6 +114,9 @@ from the current feature set when publishing a website.
 | Direction | What users could expect |
 | --- | --- |
 | Snooze and scheduled sending | Put a conversation aside until a chosen time and queue a message for later delivery, with clear behavior when the desktop app is closed. |
+| Sending aliases and signatures | Send from verified Gmail aliases, with a signature for each identity. |
+| Drafts across devices | Start a reply on one computer and finish it on another, with clear controls over draft synchronization. |
+| Connected address books | Import existing Google Contacts and keep them connected to local profiles, notes, and correspondence history. |
 | Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
 | More mail providers | Add Microsoft 365 and, after its folder and threading behavior is designed, IMAP/SMTP. Gmail is the only implemented mail provider today. |
 | Encrypted sync reliability | Harden the optional encrypted sync beta across devices, especially upgrades and interrupted joins. |

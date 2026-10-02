@@ -52,9 +52,13 @@ test.describe("feature claims", () => {
     await expect(tour).toContainText("Standalone tasks");
     const roadmap = page.locator("#roadmap");
     await expect(roadmap.getByRole("heading", { level: 3 })).toHaveText([
-      "Snooze and Scheduled Sending", "Smarter Inbox Rules", "More Mail Providers",
+      "Snooze and Scheduled Sending", "Sending Aliases and Signatures", "Drafts Across Devices",
+      "Connected Address Books", "Smarter Inbox Rules", "More Mail Providers",
       "Encrypted Sync Reliability", "Shared and Mobile Workflows",
     ]);
+    await expect(roadmap).toContainText("verified Gmail aliases");
+    await expect(roadmap).toContainText("clear controls over draft synchronization");
+    await expect(roadmap).toContainText("Import existing Google Contacts");
   });
 
   test("explains AI activation, sharing choices, and reviewed actions", async ({ page }) => {
