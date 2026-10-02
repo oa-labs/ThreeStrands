@@ -39,6 +39,28 @@ describe("AI provider feature settings", () => {
     expect(readAiFeatures()).toMatchObject({ draftAssist: true, contactEnrichment: true });
   });
 
+  it("queues every model and endpoint edit for sync so a later pull cannot revert it", async () => {
+    saveAiProvider("custom");
+    render(<AiProviderSettings onChange={queuePortablePreferences} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Fast model" }), { target: { value: "example/fast" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Reasoning model" }), { target: { value: "example/reasoning" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Endpoint URL" }), { target: { value: "https://api.example.com/v1" } });
+
+    await waitFor(() => expect(vi.mocked(invoke).mock.calls
+      .filter(([command]) => command === "update_synced_preferences")).toHaveLength(3));
+    const queued = vi.mocked(invoke).mock.calls
+      .filter(([command]) => command === "update_synced_preferences");
+    expect(queued[0][1]).toEqual({ preferences: expect.objectContaining({ aiFastModel: "example/fast" }) });
+    expect(queued[2][1]).toEqual({
+      preferences: expect.objectContaining({
+        aiFastModel: "example/fast",
+        aiModel: "example/reasoning",
+        aiEndpoint: "https://api.example.com/v1",
+      }),
+    });
+  });
+
   it("saves a reasoning model and an optional fast model separately", () => {
     render(<AiProviderSettings />);
     const fast = screen.getByRole("textbox", { name: "Fast model" });

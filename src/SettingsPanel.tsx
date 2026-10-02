@@ -1808,6 +1808,12 @@ function AccountColorInput({
   );
 }
 
+/**
+ * `onChange` must run after every saved field, not just the switches: it
+ * queues the portable preference record, and the next replicated-sync pull
+ * applies that record over local storage, so a field saved without it is
+ * silently reverted to its last queued value.
+ */
 export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const [provider, setProvider] = useState(readAiProvider);
   const [model, setModel] = useState(readAiModel);
@@ -1876,6 +1882,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                   setEndpoint(event.target.value);
                   setConnectionTested(false);
                   saveAiEndpoint(event.target.value);
+                  onChange?.();
                 }}
               />
             </label>
@@ -1969,6 +1976,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                 setModel(event.target.value);
                 setConnectionTested(false);
                 saveAiModel(event.target.value);
+                onChange?.();
               }}
             />
           </label>
@@ -1984,6 +1992,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                       setModel(suggestion);
                       setConnectionTested(false);
                       saveAiModel(suggestion);
+                      onChange?.();
                     }}
                   >
                     {suggestion}
@@ -2005,6 +2014,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               onChange={(event) => {
                 setFastModel(event.target.value);
                 saveAiFastModel(event.target.value);
+                onChange?.();
               }}
             />
           </label>
