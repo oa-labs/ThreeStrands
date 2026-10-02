@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { EMAIL_CSS_LIMITS, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlDimension } from "./emailRenderingPolicy";
+import { EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlDimension } from "./emailRenderingPolicy";
 
 describe("email rendering numeric policy", () => {
+  it("validates the reader font floor at both boundaries without silently clamping", () => {
+    const { minPx, maxPx } = EMAIL_MINIMUM_FONT_SIZE;
+    expect(parseEmailMinimumFontSize(0)).toBe(0);
+    expect(parseEmailMinimumFontSize(minPx - 1)).toBe(0);
+    expect(parseEmailMinimumFontSize(minPx)).toBe(minPx);
+    expect(parseEmailMinimumFontSize(minPx + 1)).toBe(minPx + 1);
+    expect(parseEmailMinimumFontSize(maxPx - 1)).toBe(maxPx - 1);
+    expect(parseEmailMinimumFontSize(maxPx)).toBe(maxPx);
+    expect(parseEmailMinimumFontSize(maxPx + 1)).toBe(0);
+    for (const value of [-1, 18.5, NaN, Infinity, "18", "18px; background:url(https://tracker.invalid)"]) {
+      expect(parseEmailMinimumFontSize(value)).toBe(0);
+    }
+  });
   it("grows the message frame with its content up to the frame-height limit", () => {
     const limit = EMAIL_CSS_LIMITS.maxFrameHeightPx;
     expect(emailFrameHeight(limit - 1)).toBe(limit - 1);

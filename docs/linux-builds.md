@@ -88,15 +88,29 @@ dependencies beside the packages.
 ## Continuous integration
 
 `.github/workflows/linux-build.yml` runs an unconfigured build for pull
-requests. Version tags matching `v*` run in release mode and require these
-GitHub Actions secrets:
+requests and supports manual builds. `.github/workflows/release.yml` builds
+the Linux packages in release mode for version tags matching `v*` and attaches
+them to a draft GitHub Release after all platforms succeed. Release-mode builds
+require these GitHub Actions secrets:
 
 - `THREESTRANDS_GOOGLE_CLIENT_ID`
 - `THREESTRANDS_GOOGLE_CLIENT_SECRET`
 
-The workflow can also be started manually. Select the `release` input only when
-the repository secrets are configured. Release-mode builds fail before
-compilation rather than silently producing a Gmail-disabled application.
+For a manual Linux build, select the `release` input only when the repository
+secrets are configured. Release-mode builds fail before compilation rather than
+silently producing a Gmail-disabled application.
+
+Both workflows select a Buildx builder with the `docker-container` driver before
+running `devcontainers/ci`. Specifying `platform: linux/amd64` makes the action
+export an OCI archive, which the runner's default `docker` driver cannot export
+without the containerd image store. The explicit builder avoids depending on
+that runner setting. See [Docker's OCI exporter documentation](https://docs.docker.com/build/exporters/oci-docker/).
+
+Run the release workflow regression tests with:
+
+```sh
+node --test scripts/release.test.mjs
+```
 
 ## Runtime expectations
 
@@ -131,6 +145,11 @@ runtime checks before advertising ARM64 support.
 
 ## Troubleshooting
 
+- `OCI exporter is not supported for the docker driver` means the devcontainer
+  build used the default Docker builder. Ensure the Buildx setup step runs
+  before `devcontainers/ci` and selects the `docker-container` driver. A release
+  tag must point to a commit containing this setup; rerunning an older tag
+  reuses its original workflow.
 - An immediate architecture error means the container was started without its
   required `linux/amd64` platform setting. Rebuild and reopen the devcontainer.
 - A Rust compiler `SIGSEGV` on Apple Silicon generally means the container

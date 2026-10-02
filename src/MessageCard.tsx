@@ -27,6 +27,7 @@ type MessageCardProps = {
   theme: "light" | "dark";
   fontScale: number;
   fontFamily: FontFamily;
+  emailMinimumFontSize?: number;
   onActivate: (messageId: string) => void;
   onToggle: (messageId: string, isExpanded: boolean) => void;
   onRespond: (kind: MessageResponseKind, messageId: string) => void;
@@ -52,6 +53,7 @@ export const MessageCard = memo(function MessageCard({
   theme,
   fontScale,
   fontFamily,
+  emailMinimumFontSize = 0,
   onActivate,
   onToggle,
   onRespond,
@@ -217,6 +219,7 @@ export const MessageCard = memo(function MessageCard({
           theme={theme}
           fontScale={fontScale}
           fontFamily={fontFamily}
+          emailMinimumFontSize={emailMinimumFontSize}
           tone={isLatest ? "current" : message.unread ? "default" : "muted"}
         />
         {downloadableAttachments.length > 0 ? (

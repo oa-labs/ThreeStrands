@@ -12,7 +12,9 @@ import {
   EMAIL_IMAGE_LIMITS,
   sanitizeCssDeclaration,
   sanitizeHtmlDimension,
+  parseEmailMinimumFontSize,
 } from "./emailRenderingPolicy";
+import { createEmailFontSizeController } from "./emailMinimumFontSize";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
 import { LINKIFY_PATTERN, linkHrefFor, trimTrailingPunctuation } from "./linkify";
 import { fontFamilyStack, type FontFamily } from "./settings";
@@ -33,6 +35,7 @@ type SafeMessageProps = {
   imageCacheKey?: string;
   theme?: "light" | "dark";
   fontScale?: number;
+  emailMinimumFontSize?: number;
   fontFamily?: FontFamily;
   tone?: "default" | "current" | "muted";
   /** Called with an image's resolved `src` when the reader clicks it in the message body. */
@@ -668,11 +671,17 @@ export function SafeMessage({
   imageCacheKey = "",
   theme = "dark",
   fontScale = 1,
+  emailMinimumFontSize = 0,
   fontFamily = "system",
   tone = "default",
   onImageClick,
   onEnterKey,
 }: SafeMessageProps) {
+  const minimumFontSize = parseEmailMinimumFontSize(emailMinimumFontSize);
+  const minimumFontSizeRef = useRef(minimumFontSize);
+  minimumFontSizeRef.current = minimumFontSize;
+  const fontSizeControllerRef = useRef<((value: number) => void) | null>(null);
+  useEffect(() => { fontSizeControllerRef.current?.(minimumFontSize); }, [minimumFontSize]);
   const onImageClickRef = useRef(onImageClick);
   onImageClickRef.current = onImageClick;
   // Callers typically pass an inline resolver; reading it through a ref
@@ -766,6 +775,9 @@ export function SafeMessage({
     const frame = frameRef.current;
     const frameDoc = frame?.contentDocument;
     if (!frameDoc) return;
+    const updateFontSize = createEmailFontSizeController(frameDoc);
+    fontSizeControllerRef.current = updateFontSize;
+    updateFontSize(minimumFontSizeRef.current);
     // A reload (theme change, quote expansion) starts from the blocked
     // markup again, so re-apply everything resolved so far.
     fillResolvedImages(frameDoc, resolvedImagesRef.current);
@@ -776,6 +788,11 @@ export function SafeMessage({
       setFrameHeight((previous) => previous === nextHeight ? previous : nextHeight);
     };
     resize();
+    const onResize = () => {
+      updateFontSize(minimumFontSizeRef.current);
+      resize();
+    };
+    frameDoc.defaultView?.addEventListener("resize", onResize);
 
     let observer: ResizeObserver | undefined;
     if (frameDoc.body && typeof ResizeObserver !== "undefined") {
@@ -830,6 +847,7 @@ export function SafeMessage({
 
     cleanupRef.current = () => {
       observer?.disconnect();
+      frameDoc.defaultView?.removeEventListener("resize", onResize);
       frameDoc.removeEventListener("click", onClick);
       frameDoc.removeEventListener("keydown", onKeyDown);
     };
@@ -863,7 +881,11 @@ export function SafeMessage({
     const visibleText = !quotedHistoryExpanded && collapsedText !== null ? collapsedText : decoded;
     return (
       <>
-        <div className="message-body message-body-plain" data-testid="message-body">
+        <div
+          className="message-body message-body-plain"
+          data-testid="message-body"
+          style={minimumFontSize ? { fontSize: `max(${minimumFontSize}px, var(--type-reading))` } : undefined}
+        >
           {visibleText ? linkifyText(visibleText) : "No message content."}
         </div>
         {quotedHistoryButton}

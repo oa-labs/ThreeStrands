@@ -69,6 +69,7 @@ import {
   MIN_AUTO_READ_DELAY_SECONDS,
   type FontFamily,
 } from "./settings";
+import { EMAIL_MINIMUM_FONT_SIZE } from "./emailRenderingPolicy";
 import { listSystemFontFamilies } from "./systemFonts";
 import {
   AI_MODEL_PLACEHOLDERS,
@@ -350,7 +351,7 @@ type SettingsSectionDefinition = {
 const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Integrations", "System"];
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
-  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and when conversations are marked read.", keywords: "theme light dark accent color font size family reading mark read delay conversation", icon: Palette, autosaves: true },
+  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and when conversations are marked read.", keywords: "theme light dark accent color font size family minimum email font size accessibility reading mark read delay conversation", icon: Palette, autosaves: true },
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail sender name color reconnect disconnect", icon: Mail },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
   { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock, autosaves: true },
@@ -376,6 +377,8 @@ export type SettingsPreferences = {
   setAccent(accent: Accent): void;
   fontScale: number;
   setFontScale(value: number): void;
+  emailMinimumFontSize: number;
+  setEmailMinimumFontSize(value: number): void;
   fontFamily: FontFamily;
   setFontFamily(value: FontFamily): void;
   autoReadDelaySeconds: number;
@@ -575,6 +578,8 @@ export function Settings({
               onAccentChange={preferences.setAccent}
               fontScale={preferences.fontScale}
               onFontScaleChange={preferences.setFontScale}
+              emailMinimumFontSize={preferences.emailMinimumFontSize}
+              onEmailMinimumFontSizeChange={preferences.setEmailMinimumFontSize}
               fontFamily={preferences.fontFamily}
               onFontFamilyChange={preferences.setFontFamily}
             />
@@ -667,13 +672,15 @@ export function Settings({
   );
 }
 
-function AppearanceSettings({
+export function AppearanceSettings({
   theme,
   onThemeChange,
   accent,
   onAccentChange,
   fontScale,
   onFontScaleChange,
+  emailMinimumFontSize,
+  onEmailMinimumFontSizeChange,
   fontFamily,
   onFontFamilyChange,
 }: {
@@ -683,6 +690,8 @@ function AppearanceSettings({
   onAccentChange(accent: Accent): void;
   fontScale: number;
   onFontScaleChange(value: number): void;
+  emailMinimumFontSize: number;
+  onEmailMinimumFontSizeChange(value: number): void;
   fontFamily: FontFamily;
   onFontFamilyChange(value: FontFamily): void;
 }) {
@@ -800,6 +809,21 @@ function AppearanceSettings({
           onChange={(event) => onFontScaleChange(Number(event.target.value))}
         />
         <span>{fontScale}%</span>
+      </div>
+
+      <h3>Minimum Email Font Size</h3>
+      <p className="settings-hint" id="email-minimum-font-size-hint">Enlarges small text in received emails while keeping larger text at its original size. Try 18 px for easier reading. Text inside images is unchanged.</p>
+      <div className="settings-row">
+        <select
+          aria-label="Minimum email font size"
+          aria-describedby="email-minimum-font-size-hint"
+          value={emailMinimumFontSize}
+          onChange={(event) => onEmailMinimumFontSizeChange(Number(event.target.value))}
+        >
+          <option value={EMAIL_MINIMUM_FONT_SIZE.disabled}>Off — use sender sizes</option>
+          {Array.from({ length: EMAIL_MINIMUM_FONT_SIZE.maxPx - EMAIL_MINIMUM_FONT_SIZE.minPx + 1 }, (_, index) => EMAIL_MINIMUM_FONT_SIZE.minPx + index)
+            .map((size) => <option key={size} value={size}>{size} px</option>)}
+        </select>
       </div>
 
       <h3>Default Font</h3>

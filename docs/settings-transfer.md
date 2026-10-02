@@ -57,3 +57,10 @@ versions are rejected before SQLite is changed.
 Changing the payload requires a new schema version and an explicit migration;
 the application must not deserialize an old file directly into the current
 database schema.
+
+## Minimum email font size (0.56)
+
+`emailMinimumFontSize` is an optional, defaulted addition to format version 3.
+Missing values in earlier exports import as `0` (off); valid nonzero values are
+whole CSS-pixel sizes from 12 through 32. The frozen `v3-0.55` fixture covers the
+preceding schema. The preference participates in the portable sync record.

@@ -41,6 +41,7 @@ describe("settings import navigation", () => {
         accent: "rose",
         fontScale: 110,
         fontFamily: "Georgia",
+        emailMinimumFontSize: 18,
         autoReadDelaySeconds: 8,
         loadRemoteImages: true,
         selectedAccountId: null,
@@ -186,6 +187,9 @@ describe("settings section keyboard navigation", () => {
 
     const search = within(dialog).getByRole("searchbox", { name: "Search Settings" });
     search.focus();
+    fireEvent.change(search, { target: { value: "minimum email font size" } });
+    expect(within(dialog).getByRole("button", { name: "Appearance" })).toHaveAttribute("aria-current", "true");
+    expect(within(dialog).getByRole("combobox", { name: "Minimum email font size" })).toBeInTheDocument();
     fireEvent.change(search, {
       target: { value: "remote images" },
     });

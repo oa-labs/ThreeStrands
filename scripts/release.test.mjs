@@ -6,6 +6,24 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { prepareReleaseAssets, releaseMetadata } from "./release.mjs";
 
+describe("Linux CI container builds", () => {
+  for (const [path, job] of [["release.yml", "linux"], ["linux-build.yml", "linux-amd64"]]) {
+    it(`${path} selects an OCI-capable builder before building the amd64 devcontainer`, async () => {
+      const workflow = await readFile(new URL(`../.github/workflows/${path}`, import.meta.url), "utf8");
+      const jobBlock = workflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0];
+      assert.ok(jobBlock, `Missing ${job} job`);
+      const steps = jobBlock.split(/\n {6}- /).slice(1);
+      const buildIndex = steps.findIndex((step) => /uses: devcontainers\/ci@/.test(step));
+      assert.ok(buildIndex >= 0, "Missing devcontainer build step");
+      const setup = steps.slice(0, buildIndex).findLast((step) => /uses: docker\/setup-buildx-action@/.test(step));
+      assert.ok(setup, "OCI export requires Buildx setup before the devcontainer build");
+      assert.match(setup, /^ {10}driver: docker-container$/m);
+      assert.match(setup, /^ {10}use: true$/m);
+      assert.match(steps[buildIndex], /^ {10}platform: linux\/amd64$/m);
+    });
+  }
+});
+
 function sources(version = "0.56.0") {
   return {
     packageJson: JSON.stringify({ version }),

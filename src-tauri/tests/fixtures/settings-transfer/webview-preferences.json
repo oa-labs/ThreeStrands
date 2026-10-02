@@ -22,10 +22,19 @@
   "availabilityPreferences": {
     "timeZone": "America/New_York",
     "workingWindows": [
-      { "weekday": 1, "start": "09:00", "end": "17:00" },
-      { "weekday": 5, "start": "10:00", "end": "15:00" }
+      {
+        "weekday": 1,
+        "start": "09:00",
+        "end": "17:00"
+      },
+      {
+        "weekday": 5,
+        "start": "10:00",
+        "end": "15:00"
+      }
     ],
     "defaultDurationMinutes": 30,
     "slotIncrementMinutes": 15
-  }
+  },
+  "emailMinimumFontSize": 18
 }

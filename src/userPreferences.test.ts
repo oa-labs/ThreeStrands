@@ -38,6 +38,7 @@ describe("exportable preferences", () => {
       accent: "teal",
       fontScale: 120,
       fontFamily: "Georgia",
+      emailMinimumFontSize: 18,
       autoReadDelaySeconds: 8,
       loadRemoteImages: true,
       selectedAccountId: "person@example.com",
@@ -71,6 +72,14 @@ describe("exportable preferences", () => {
     applyExportablePreferences(preferences);
 
     expect(readExportablePreferences()).toEqual(preferences);
+  });
+
+  it("imports the preceding preference schema with the email font floor off", () => {
+    const { emailMinimumFontSize: _floor, ...previous } = nativeContractFixture;
+    applyExportablePreferences({ ...nativeContractFixture, emailMinimumFontSize: 24 });
+    applyExportablePreferences(previous as ExportablePreferences);
+    expect(readExportablePreferences().emailMinimumFontSize).toBe(0);
+    expect(readExportablePreferences().fontFamily).toBe(previous.fontFamily);
   });
 
   it("does not collect secrets or transient storage", () => {

@@ -10,11 +10,13 @@ import {
   applyFontFamily,
   readAutoReadDelaySeconds,
   readFontFamily,
+  readEmailMinimumFontSize,
   readLoadRemoteImages,
   readAvailabilityPreferences,
   saveAvailabilityPreferences,
   saveAutoReadDelaySeconds,
   saveFontFamily,
+  saveEmailMinimumFontSize,
   saveLoadRemoteImages,
   type FontFamily,
 } from "./settings";
@@ -44,6 +46,7 @@ export function useAppPreferences() {
   const [theme, setThemeState] = useState(readTheme);
   const [accent, setAccentState] = useState(readAccent);
   const [fontScale, setFontScaleState] = useState(readFontScale);
+  const [emailMinimumFontSize, setEmailMinimumFontSizeState] = useState(readEmailMinimumFontSize);
   const [fontFamily, setFontFamilyState] = useState(readFontFamily);
   const [autoReadDelaySeconds, setAutoReadDelayState] = useState(readAutoReadDelaySeconds);
   const [loadRemoteImages, setLoadRemoteImagesState] = useState(readLoadRemoteImages);
@@ -57,6 +60,7 @@ export function useAppPreferences() {
           setThemeState(readTheme());
           setFontScaleState(readFontScale());
           setFontFamilyState(readFontFamily());
+          setEmailMinimumFontSizeState(readEmailMinimumFontSize());
           setAutoReadDelayState(readAutoReadDelaySeconds());
           setLoadRemoteImagesState(readLoadRemoteImages());
           setAvailabilityPreferencesState(readAvailabilityPreferences());
@@ -111,6 +115,10 @@ export function useAppPreferences() {
     setFontScaleState((current) => saveFontScale(changeFontScale(current, direction)));
     queuePortablePreferences();
   }, []);
+  const setEmailMinimumFontSize = useCallback((value: number) => {
+    setEmailMinimumFontSizeState(saveEmailMinimumFontSize(value));
+    queuePortablePreferences();
+  }, []);
   const setFontFamily = useCallback((value: FontFamily) => {
     setFontFamilyState(saveFontFamily(value));
     queuePortablePreferences();
@@ -140,6 +148,8 @@ export function useAppPreferences() {
     adjustFontScale,
     fontFamily,
     setFontFamily,
+    emailMinimumFontSize,
+    setEmailMinimumFontSize,
     autoReadDelaySeconds,
     setAutoReadDelaySeconds,
     loadRemoteImages,

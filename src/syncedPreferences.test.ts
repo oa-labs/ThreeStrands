@@ -56,6 +56,7 @@ describe("synced preferences data boundary", () => {
       "aiProvider",
       "autoReadDelaySeconds",
       "availabilityPreferences",
+      "emailMinimumFontSize",
       "fontFamily",
       "fontScale",
       "loadRemoteImages",
@@ -74,6 +75,7 @@ describe("synced preferences data boundary", () => {
       accent: "rose", // Legacy replica field from an older app version.
       selectedAccountId: "remote@example.com",
       fontScale: 110,
+      emailMinimumFontSize: 18,
       fontFamily: "Georgia",
       autoReadDelaySeconds: 4,
       loadRemoteImages: false,
@@ -97,6 +99,7 @@ describe("synced preferences data boundary", () => {
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.dataset.accent).toBe("teal");
     expect(localStorage.getItem("threestrands.fontScale")).toBe("110");
+    expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("18");
     expect(localStorage.getItem("threestrands.crash-reports")).toBeNull();
   });
 

@@ -21,6 +21,21 @@ export const EMAIL_CSS_LIMITS = {
   maxFrameHeightPx: 50_000,
 } as const;
 
+/** Reader-owned accessibility preference; zero preserves sender typography. */
+export const EMAIL_MINIMUM_FONT_SIZE = {
+  disabled: 0,
+  minPx: 12,
+  maxPx: 32,
+  minLineHeightRatio: 1.2,
+} as const;
+
+export function parseEmailMinimumFontSize(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value)
+    && (value === EMAIL_MINIMUM_FONT_SIZE.disabled
+      || (value >= EMAIL_MINIMUM_FONT_SIZE.minPx && value <= EMAIL_MINIMUM_FONT_SIZE.maxPx))
+    ? value : EMAIL_MINIMUM_FONT_SIZE.disabled;
+}
+
 /**
  * Resource budgets for remote and embedded images. These are kept beside the
  * other sender-controlled rendering limits so components do not invent local

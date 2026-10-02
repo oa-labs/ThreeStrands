@@ -223,6 +223,8 @@ export function App() {
     adjustFontScale,
     fontFamily,
     setFontFamily,
+    emailMinimumFontSize,
+    setEmailMinimumFontSize,
     autoReadDelaySeconds,
     setAutoReadDelaySeconds,
     loadRemoteImages,
@@ -1198,6 +1200,7 @@ export function App() {
     setAccent(imported.accent);
     setFontScale(imported.fontScale);
     setFontFamily(imported.fontFamily);
+    setEmailMinimumFontSize(imported.emailMinimumFontSize ?? 0);
     setAutoReadDelaySeconds(imported.autoReadDelaySeconds);
     setLoadRemoteImages(imported.loadRemoteImages);
     setAvailabilityPreferences(imported.availabilityPreferences);
@@ -1209,7 +1212,7 @@ export function App() {
     ]);
     refreshAiAvailability();
     setSettingsSection("accounts");
-  }, [refreshAccounts, refreshAiAvailability, refreshSplitInboxes, setActiveAccountId, setAccent, setAuthStatus, setAutoReadDelaySeconds, setAvailabilityPreferences, setFontFamily, setFontScale, setLoadRemoteImages, setTheme]);
+  }, [refreshAccounts, refreshAiAvailability, refreshSplitInboxes, setActiveAccountId, setAccent, setAuthStatus, setAutoReadDelaySeconds, setAvailabilityPreferences, setEmailMinimumFontSize, setFontFamily, setFontScale, setLoadRemoteImages, setTheme]);
 
   const openToday = useCallback(() => {
     if (rightWorkspace === "calendar") {
@@ -2504,6 +2507,7 @@ export function App() {
                     theme={effectiveThemeValue}
                     fontScale={fontScale / 100}
                     fontFamily={fontFamily}
+                    emailMinimumFontSize={emailMinimumFontSize}
                     onActivate={activateMessage}
                     onToggle={toggleMessage}
                     onRespond={respondToMessage}

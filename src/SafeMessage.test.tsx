@@ -34,6 +34,46 @@ function loadFrame(frame: HTMLIFrameElement) {
 }
 
 describe("SafeMessage", () => {
+  it("enlarges small text, leaves larger text and spacers intact, and restores author styles", () => {
+    const html = '<p style="font-size:10px;line-height:12px">Small</p><h2 style="font-size:28px">Heading</h2><div style="font-size:1px;height:8px">&nbsp;</div>';
+    const { rerender } = render(<SafeMessage html={html} emailMinimumFontSize={18} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const doc = loadFrame(frame);
+    expect(doc.querySelector("p")!.style.fontSize).toBe("18px");
+    expect(doc.querySelector("p")!.style.lineHeight).toBe("21.6px");
+    expect(doc.querySelector("h2")!.style.fontSize).toBe("28px");
+    expect(doc.querySelector("div[style*=height]")!.getAttribute("style")).toBe("font-size: 1px; height: 8px");
+    // A proxy-resolved background arriving after load survives font changes.
+    doc.querySelector("p")!.style.backgroundImage = 'url("data:image/png;base64,aGVsbG8=")';
+    rerender(<SafeMessage html={html} emailMinimumFontSize={22} />);
+    expect(doc.querySelector("p")!.style.fontSize).toBe("22px");
+    rerender(<SafeMessage html={html} emailMinimumFontSize={0} />);
+    expect(doc.querySelector("p")!.style.fontSize).toBe("10px");
+    expect(doc.querySelector("p")!.style.getPropertyPriority("font-size")).toBe("");
+    expect(doc.querySelector("p")!.style.lineHeight).toBe("12px");
+    expect(doc.querySelector("p")!.style.backgroundImage).toContain("data:image/png;base64,aGVsbG8=");
+  });
+
+  it("uses the floor for plain text and rejects an invalid floor", () => {
+    const { rerender } = render(<SafeMessage html="" text="Plain message" emailMinimumFontSize={18} />);
+    expect(screen.getByTestId("message-body")).toHaveStyle({ fontSize: "max(18px, var(--type-reading))" });
+    rerender(<SafeMessage html="" text="Plain message" emailMinimumFontSize={9000} />);
+    expect(screen.getByTestId("message-body").style.fontSize).toBe("");
+  });
+
+  it("keeps the script and remote-resource boundary with a font floor enabled", () => {
+    render(<SafeMessage emailMinimumFontSize={18} html={'<p style="font-size:10px;background:url(https://tracker.invalid)">Read me</p><img src="https://tracker.invalid/image"><script>parent.compromised=true</script><a href="javascript:alert(1)">Bad link</a>'} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const doc = loadFrame(frame);
+    expect(doc.querySelector("p")!.style.fontSize).toBe("18px");
+    expect(frame.srcdoc).toContain("script-src 'none'");
+    expect(frame.getAttribute("sandbox")).toBe("allow-same-origin allow-scripts");
+    expect(doc.querySelector("script")).toBeNull();
+    expect(doc.querySelector("img")!.hasAttribute("src")).toBe(false);
+    expect(doc.querySelector("a")!.hasAttribute("href")).toBe(false);
+    expect(doc.querySelector("p")!.style.backgroundImage).toBe("");
+  });
+
   it("preserves structurally distinct notification and transactional layouts", () => {
     expect(sanitizeMessageHtml(emailRenderingFixtures.notification)).toContain("<table");
     expect(sanitizeMessageHtml(emailRenderingFixtures.transactional)).toContain('class="layout"');

@@ -13,3 +13,18 @@ The allowlisted CSS capability families are typography, box model, table layout,
 Quoted-history folding is independent of provider markup. It scores standalone reply separators or reply-introduction lines (3), trailing blockquotes/citations (2), compact header clusters with an address or timestamp (2), and non-empty current content (1). Folding requires at least four points; ambiguous content remains visible and can be expanded when folded. This is visual normalization, not a security decision: the security stages still sanitize and contain the complete message.
 
 When changing this policy, add structurally distinct fixtures, security-negative cases, numeric-boundary tests, and visual coverage at narrow/wide widths and light/dark themes. Do not encode a sender-specific workaround in production logic.
+
+## Reader minimum font size
+
+The optional minimum email font size defaults to off. The shared policy accepts
+zero (off) or whole CSS-pixel values from 12 through 32. The parent adjusts
+computed typography in the already sanitized, CSP-scoped iframe; it adds no
+sender CSS capabilities or resource paths. The accessibility override deliberately
+raises small text above author sizes, while the existing fallback CSS stays
+unchanged. All baseline sizes are read before any writes so relative descendants
+and larger headings keep their intended sizes. Explicit line spacing scales with
+enlarged text. Empty, whitespace-only, and zero-font spacers retain their structure.
+Changes and responsive resizing restore author styles before recalculation; off
+restores author typography. Plain-text emails also respect the floor. Raster text
+inside images cannot be enlarged independently, and sender fixed-size boxes may
+wrap or overflow when text grows.

@@ -20,6 +20,7 @@ describe("useAppPreferences", () => {
     act(() => result.current.setAccent("green"));
     act(() => result.current.setFontScale(140));
     act(() => result.current.setFontFamily("Georgia"));
+    act(() => result.current.setEmailMinimumFontSize(18));
     act(() => result.current.setAutoReadDelaySeconds(10));
     act(() => result.current.setLoadRemoteImages(true));
 
@@ -27,6 +28,8 @@ describe("useAppPreferences", () => {
     expect(result.current.accent).toBe("green");
     expect(result.current.fontScale).toBe(140);
     expect(result.current.fontFamily).toBe("Georgia");
+    expect(result.current.emailMinimumFontSize).toBe(18);
+    expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("18");
     expect(result.current.autoReadDelaySeconds).toBe(10);
     expect(result.current.loadRemoteImages).toBe(true);
     expect(document.documentElement.dataset.theme).toBe("dark");

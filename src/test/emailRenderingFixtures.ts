@@ -1,4 +1,19 @@
 export const emailRenderingFixtures = {
+  smallTextTable: `
+    <table cellpadding="6" cellspacing="4"><tr><td style="font-size:10px;line-height:12px">
+      Table copy <span style="font-size:80%">Relative footnote</span><span style="font-size:2.8em">Large relative heading</span>
+      <font size="1">Legacy small text</font><a href="https://example.com" style="font:10px/12px Arial">Small link</a>
+    </td></tr><tr><td style="font-size:0;line-height:0;height:8px">&nbsp;</td></tr></table>
+  `,
+  smallTextFlow: `
+    <style>
+      .small-copy { font-size:10px;line-height:120%; }
+      .relative-copy { font-size:0.5em; }
+      .rem-copy { font-size:0.5rem; }
+      @media screen and (max-width:600px) { .small-copy { font-size:8px; } }
+    </style>
+    <article><h1 style="font-size:28px">Large heading</h1><p class="small-copy">Flow copy <em class="relative-copy">Nested small text</em></p><p class="rem-copy">Root relative text</p><div style="height:8px;font-size:1px">&nbsp;</div><p style="display:none;font-size:10px">Hidden copy</p></article>
+  `,
   notification: `
     <div style="height:18px"></div>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;table-layout:fixed">

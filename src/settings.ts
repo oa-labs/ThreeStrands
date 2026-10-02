@@ -1,3 +1,5 @@
+import { parseEmailMinimumFontSize } from "./emailRenderingPolicy";
+
 export type FontFamily = string;
 
 const FONT_FAMILY_KEY = "threestrands.settings.fontFamily";
@@ -400,4 +402,21 @@ export function recordSnippetUsed(snippetId: string): void {
     // Usage tracking is best-effort; a blocked storage backend just means
     // "recently used" sorting falls back to alphabetical order.
   }
+}
+
+const EMAIL_MINIMUM_FONT_SIZE_KEY = "threestrands.settings.emailMinimumFontSize";
+
+export function readEmailMinimumFontSize(): number {
+  try {
+    const saved = localStorage.getItem(EMAIL_MINIMUM_FONT_SIZE_KEY);
+    return parseEmailMinimumFontSize(saved === null ? 0 : Number(saved));
+  } catch {
+    return 0;
+  }
+}
+
+export function saveEmailMinimumFontSize(value: number): number {
+  const next = parseEmailMinimumFontSize(value);
+  try { localStorage.setItem(EMAIL_MINIMUM_FONT_SIZE_KEY, String(next)); } catch { /* session preference still applies */ }
+  return next;
 }

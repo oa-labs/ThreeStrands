@@ -19,11 +19,13 @@ import {
   readAutoReadDelaySeconds,
   readAvailabilityPreferences,
   readFontFamily,
+  readEmailMinimumFontSize,
   readLoadRemoteImages,
   readSelectedAccountId,
   saveAutoReadDelaySeconds,
   saveAvailabilityPreferences,
   saveFontFamily,
+  saveEmailMinimumFontSize,
   saveLoadRemoteImages,
   saveSelectedAccountId,
 } from "./settings";
@@ -41,6 +43,7 @@ export type ExportablePreferences = {
   accent: Accent;
   fontScale: number;
   fontFamily: string;
+  emailMinimumFontSize: number;
   autoReadDelaySeconds: number;
   loadRemoteImages: boolean;
   selectedAccountId: string | null;
@@ -66,6 +69,7 @@ export function readExportablePreferences(): ExportablePreferences {
     accent: readAccent(),
     fontScale: readFontScale(),
     fontFamily: readFontFamily(),
+    emailMinimumFontSize: readEmailMinimumFontSize(),
     autoReadDelaySeconds: readAutoReadDelaySeconds(),
     loadRemoteImages: readLoadRemoteImages(),
     selectedAccountId: readSelectedAccountId(),
@@ -83,6 +87,7 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveAccent(preferences.accent);
   saveFontScale(preferences.fontScale);
   saveFontFamily(preferences.fontFamily);
+  saveEmailMinimumFontSize(preferences.emailMinimumFontSize ?? 0);
   saveAutoReadDelaySeconds(preferences.autoReadDelaySeconds);
   saveLoadRemoteImages(preferences.loadRemoteImages);
   saveSelectedAccountId(preferences.selectedAccountId);

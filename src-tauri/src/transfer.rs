@@ -68,6 +68,9 @@ pub struct TransferPreferences {
     pub accent: String,
     pub font_scale: i64,
     pub font_family: String,
+    // Added in 0.56; older exports preserve sender sizes.
+    #[serde(default)]
+    pub email_minimum_font_size: i64,
     pub auto_read_delay_seconds: i64,
     pub load_remote_images: bool,
     pub selected_account_id: Option<String>,
@@ -117,6 +120,10 @@ impl TransferPreferences {
             return Err("The transfer contains an invalid font scale".to_string());
         }
         validate_required_text("font family", &self.font_family, 200)?;
+        // Mirrors the reader preference bounds in emailRenderingPolicy.ts.
+        if self.email_minimum_font_size != 0 && !(12..=32).contains(&self.email_minimum_font_size) {
+            return Err("The transfer contains an invalid minimum email font size".to_string());
+        }
         if !(0..=60).contains(&self.auto_read_delay_seconds) {
             return Err("The transfer contains an invalid read delay".to_string());
         }
@@ -579,6 +586,7 @@ mod tests {
                 accent: "rose".to_string(),
                 font_scale: 110,
                 font_family: "system".to_string(),
+                email_minimum_font_size: 18,
                 auto_read_delay_seconds: 2,
                 load_remote_images: false,
                 selected_account_id: Some("person@example.com".to_string()),
@@ -957,6 +965,29 @@ mod tests {
     }
 
     #[test]
+    fn frozen_v3_0_55_export_defaults_minimum_email_font_size_to_off() {
+        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v3-0.55.dispatch-settings");
+        let (_, result) = import_fixture(bytes);
+        assert_eq!(result.preferences.email_minimum_font_size, 0);
+        assert_eq!(result.preferences.font_family, "Iowan Old Style");
+        assert_eq!(result.preferences.ai_fast_model, "example-fast-model");
+    }
+
+    #[test]
+    fn minimum_email_font_size_round_trips_and_rejects_invalid_bounds() {
+        let mut payload = decrypt(fixtures::V3_CURRENT, fixtures::PASSWORD).unwrap();
+        for value in [0, 12, 18, 32] {
+            payload.preferences.email_minimum_font_size = value;
+            let result = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+            assert_eq!(result.preferences.email_minimum_font_size, value);
+        }
+        for value in [-1, 1, 11, 33] {
+            payload.preferences.email_minimum_font_size = value;
+            assert!(payload.preferences.validate().is_err());
+        }
+    }
+
+    #[test]
     fn frozen_v1_initial_export_imports_with_migrated_defaults() {
         assert_eq!(envelope_version(fixtures::V1_INITIAL), 1);
         let (database, result) = import_fixture(fixtures::V1_INITIAL);
@@ -1141,6 +1172,7 @@ mod tests {
                 accent: "amber".to_string(),
                 font_scale: 125,
                 font_family: "Iowan Old Style".to_string(),
+                email_minimum_font_size: 18,
                 auto_read_delay_seconds: 15,
                 load_remote_images: true,
                 selected_account_id: Some("current@example.com".to_string()),
@@ -1232,6 +1264,7 @@ mod tests {
         assert_eq!(preferences.ai_model, "example-model-v3");
         assert_eq!(preferences.ai_fast_model, "example-fast-model");
         assert_eq!(preferences.font_family, "Iowan Old Style");
+        assert_eq!(preferences.email_minimum_font_size, 18);
         assert_eq!(preferences.auto_read_delay_seconds, 15);
         let features = &preferences.ai_features;
         assert!(features.draft_assist && features.summarize && features.action_extraction);

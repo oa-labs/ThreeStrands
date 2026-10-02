@@ -10,6 +10,7 @@ import {
   readAutoReadDelaySeconds,
   readAvailabilityPreferences,
   readFontFamily,
+  readEmailMinimumFontSize,
   readLabelUsage,
   readLoadRemoteImages,
   readSelectedAccountId,
@@ -21,6 +22,7 @@ import {
   saveAutoReadDelaySeconds,
   saveAvailabilityPreferences,
   saveFontFamily,
+  saveEmailMinimumFontSize,
   saveLoadRemoteImages,
   saveSelectedAccountId,
   saveSelectedMailboxForAccount,
@@ -267,5 +269,28 @@ describe("snippet usage tracking", () => {
   it("ignores a corrupted stored map", () => {
     localStorage.setItem("threestrands.settings.snippetUsage", "not json");
     expect(readSnippetUsage()).toEqual({});
+  });
+});
+
+describe("minimum email font size preference", () => {
+  afterEach(() => localStorage.clear());
+
+  it("defaults to off and restores a saved size", () => {
+    expect(readEmailMinimumFontSize()).toBe(0);
+    expect(saveEmailMinimumFontSize(18)).toBe(18);
+    expect(readEmailMinimumFontSize()).toBe(18);
+    saveEmailMinimumFontSize(0);
+    expect(readEmailMinimumFontSize()).toBe(0);
+  });
+
+  it("rejects invalid stored values and handles unavailable storage", () => {
+    localStorage.setItem("threestrands.settings.emailMinimumFontSize", "9000");
+    expect(readEmailMinimumFontSize()).toBe(0);
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
+    expect(readEmailMinimumFontSize()).toBe(0);
+    get.mockRestore();
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("unavailable"); });
+    expect(saveEmailMinimumFontSize(18)).toBe(18);
+    set.mockRestore();
   });
 });
