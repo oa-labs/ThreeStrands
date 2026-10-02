@@ -318,7 +318,15 @@ export type ThreadChatRequest = {
   includeProposals: boolean;
   contactId: string | null;
   userTimeZone: string;
+  /** Attachments in this conversation the user chose to share for the question. */
+  attachments: ChatAttachmentRef[];
 };
+
+/** An attachment in the open conversation, by message and attachment id. */
+export type ChatAttachmentRef = { messageId: string; attachmentId: string };
+
+/** An attachment whose text was shared with the provider; `truncated` means only its start was. */
+export type ChatAttachmentSource = ChatAttachmentRef & { filename: string; truncated: boolean };
 
 /** A range the chat asked the app to search; times always come from the calendar. */
 export type ChatAvailability = { rangeStart: string; rangeEnd: string; durationMinutes: number | null };
@@ -334,6 +342,8 @@ export type ThreadChatReply = {
   sources: ChatSource[];
   /** Every other conversation shared because the question searched all mail. */
   searched: ChatSource[];
+  /** Every attachment whose text was shared for this question. */
+  attachments: ChatAttachmentSource[];
   availability: ChatAvailability | null;
 };
 

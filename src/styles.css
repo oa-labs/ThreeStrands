@@ -1919,6 +1919,18 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .thread-chat-form { display:grid; gap:8px; margin-top:10px; }
 .thread-chat-form textarea { box-sizing:border-box; width:100%; min-height:56px; padding:8px 10px; border:1px solid var(--accent); border-radius:var(--radius-md); color:var(--text); background:var(--input); font:inherit; font-size:var(--type-ui); resize:vertical; }
 .thread-chat-quick { display:flex; flex-wrap:wrap; gap:6px; }
+.thread-chat-mentions { display:grid; gap:1px; max-height:220px; margin:0; padding:4px; overflow:auto; border:1px solid var(--border-strong); border-radius:var(--radius-md); background:var(--surface); list-style:none; font-size:var(--type-sm); }
+.thread-chat-mentions [role="option"] { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:6px; padding:5px 8px; border-radius:var(--radius-sm); color:var(--text); cursor:pointer; }
+.thread-chat-mentions [role="option"][aria-selected="true"] { background:color-mix(in srgb,var(--accent) 14%,var(--surface)); }
+.thread-chat-mentions span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.thread-chat-mentions small, .thread-chat-mentions-note { color:var(--muted); font-size:var(--type-xs); }
+.thread-chat-mentions small { max-width:12em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.thread-chat-mentions-note { padding:5px 8px; }
+.thread-chat-attachments { display:flex; flex-wrap:wrap; gap:6px; margin:0; padding:0; list-style:none; }
+.thread-chat-attachments li { display:inline-flex; align-items:center; gap:4px; max-width:100%; padding:2px 6px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--secondary); background:var(--hover); font-size:var(--type-xs); }
+.thread-chat-attachments span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.thread-chat-attachments button { display:inline-flex; padding:0; border:0; color:var(--muted); background:transparent; cursor:pointer; }
+.thread-chat-attachments button:hover { color:var(--text); }
 .thread-chat-controls { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--muted); font-size:var(--type-sm); }
 .thread-chat-controls label { display:inline-flex; align-items:center; gap:6px; }
 .thread-chat-controls button { display:inline-flex; align-items:center; gap:5px; }

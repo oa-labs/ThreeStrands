@@ -392,6 +392,12 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         replyDraft: wantsReply ? "Thanks for the update. I'll take a look and get back to you soon." : null,
         sources: [],
         searched: [],
+        attachments: request.attachments.flatMap((reference) => {
+          const attachment = detail.messages
+            .find((message) => message.id === reference.messageId)
+            ?.attachments.find((candidate) => candidate.id === reference.attachmentId);
+          return attachment ? [{ ...reference, filename: attachment.filename, truncated: false }] : [];
+        }),
       };
     },
     async aiUsageSummary(): Promise<AiUsageDay[]> {

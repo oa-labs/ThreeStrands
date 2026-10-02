@@ -29,6 +29,10 @@ jobs:
     name: Build and test
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # configure-pages reads the Pages site to resolve the base path and URL.
+    permissions:
+      contents: read
+      pages: read
 
     steps:
       - name: Check out repository

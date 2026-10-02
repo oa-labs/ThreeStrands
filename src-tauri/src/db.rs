@@ -128,8 +128,10 @@ fn restrict_to_owner(path: &Path) {
 #[cfg(not(unix))]
 fn restrict_to_owner(_path: &Path) {}
 
-const PRE_MIGRATION_BACKUPS_KEPT: usize = 3;
-const PERIODIC_BACKUPS_KEPT: usize = 7;
+// Each snapshot is a full copy of the database, so retention is kept small:
+// recovery only ever restores the newest one.
+const PRE_MIGRATION_BACKUPS_KEPT: usize = 1;
+const PERIODIC_BACKUPS_KEPT: usize = 3;
 
 fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
@@ -511,6 +513,20 @@ impl Database {
         }
     }
 
+    /// Checkpoints and truncates the WAL as the app exits. The process ends
+    /// without closing the shared connection, so SQLite never does this on
+    /// its own, and a non-empty WAL at the next launch makes `open` pay for a
+    /// full `quick_check`. Best effort and briefly bounded: a busy database
+    /// only means the next launch runs that check.
+    pub fn checkpoint_on_exit(&self) -> DbResult<()> {
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
+        let connection = Connection::open(path)?;
+        connection.busy_timeout(std::time::Duration::from_millis(500))?;
+        Ok(connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?)
+    }
+
     /// Snapshots the database to a rotating sibling file via `VACUUM INTO`,
     /// pruning older snapshots beyond the retention window. A no-op for the
     /// in-memory test database, which has no path to snapshot alongside.
@@ -713,7 +729,7 @@ impl Database {
         self.with_connection(|connection| {
             connection
                 .query_row(
-                    "SELECT t.account_id, mm.payload
+                    "SELECT t.account_id, mm.payload, mm.payload_z
                      FROM messages m
                      JOIN threads t ON t.id = m.thread_id
                      JOIN message_metadata mm ON mm.id = m.id
@@ -721,7 +737,7 @@ impl Database {
                     [message_id],
                     |row| {
                         let account_id: String = row.get(0)?;
-                        let payload: String = row.get(1)?;
+                        let payload = resolve_body(1, row.get(1)?, row.get(2)?)?;
                         let message: RawMessage = serde_json::from_str(&payload).map_err(|error| {
                             rusqlite::Error::FromSqlConversionFailure(
                                 payload.len(),
@@ -1770,6 +1786,56 @@ impl Database {
         })
     }
 
+    /// Like [`Self::compress_next_body_batch`] for raw provider payloads
+    /// stored before `message_metadata.payload_z` existed. Payloads can be
+    /// large, so callers use a smaller batch than for bodies.
+    pub fn compress_next_metadata_batch(&self, batch_size: usize) -> DbResult<usize> {
+        self.with_transaction(|transaction| {
+            let rows: Vec<(String, String)> = {
+                let mut statement = transaction.prepare(
+                    "SELECT id, payload FROM message_metadata WHERE payload_z IS NULL LIMIT ?1",
+                )?;
+                let collected = statement
+                    .query_map(params![batch_size as i64], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                collected
+            };
+            for (id, payload) in &rows {
+                store_message_metadata(transaction, id, payload)?;
+            }
+            Ok(rows.len())
+        })
+    }
+
+    /// Deletes raw payloads whose message is gone. Replacing or deleting a
+    /// thread cascades to `messages` but not to `message_metadata`.
+    pub fn prune_orphaned_message_metadata(&self) -> DbResult<usize> {
+        self.with_connection(|connection| {
+            Ok(connection.execute(
+                "DELETE FROM message_metadata
+                 WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = message_metadata.id)",
+                [],
+            )?)
+        })
+    }
+
+    /// The raw provider payload cached for `id`, if any.
+    pub(crate) fn message_metadata(&self, id: &str) -> DbResult<Option<String>> {
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT payload, payload_z FROM message_metadata WHERE id = ?1",
+                    [id],
+                    |row| resolve_body(0, row.get(0)?, row.get(1)?),
+                )
+                .optional()?)
+        })
+    }
+
+    pub(crate) fn put_message_metadata(&self, id: &str, payload: &str) -> DbResult<()> {
+        self.with_connection(|connection| store_message_metadata(connection, id, payload))
+    }
+
     fn apply_thread(
         transaction: &Transaction<'_>,
         account_id: &str,
@@ -1889,7 +1955,7 @@ impl Database {
             )?;
         let mut body = String::new();
         for message in messages {
-            transaction.execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", params![message.id, message.metadata_json])?;
+            store_message_metadata(transaction, &message.id, &message.metadata_json)?;
             body.push_str(&message.body_text);
             body.push(' ');
             let message_unread = message.labels.iter().any(|label| label == "UNREAD");
@@ -2666,6 +2732,16 @@ fn decode_json(value: String) -> rusqlite::Result<Vec<String>> {
 fn compress_body(text: &str) -> Vec<u8> {
     zstd::stream::encode_all(text.as_bytes(), 3)
         .expect("zstd encoding of an in-memory byte slice cannot fail")
+}
+
+/// Writes a raw provider payload compressed, clearing any legacy plaintext.
+fn store_message_metadata(connection: &Connection, id: &str, payload: &str) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO message_metadata(id, payload, payload_z) VALUES (?1, '', ?2)
+         ON CONFLICT(id) DO UPDATE SET payload = '', payload_z = excluded.payload_z",
+        params![id, compress_body(payload)],
+    )?;
+    Ok(())
 }
 
 /// Prefers the compressed column when present (every row written after the
@@ -5195,6 +5271,97 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn checkpoint_on_exit_truncates_the_wal_so_the_next_open_skips_quick_check() {
+        let temp = TempDbPath::new();
+        let database = Database::open(&temp.path).unwrap();
+        database
+            .upsert_thread("work@example.com", &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")])
+            .unwrap();
+        assert!(wal_sidecar_nonempty(&temp.path), "a write should leave frames in the WAL");
+        database.checkpoint_on_exit().unwrap();
+        assert!(
+            !wal_sidecar_nonempty(&temp.path),
+            "an exit checkpoint must leave the WAL empty, or the next launch runs quick_check"
+        );
+        assert_eq!(database.get_thread("work@example.com:t1").unwrap().messages.len(), 1);
+    }
+
+    #[test]
+    fn message_metadata_is_stored_compressed_and_round_trips() {
+        let database = database();
+        let payload = format!("{{\"id\":\"m1\",\"pad\":\"{}\"}}", "x".repeat(10_000));
+        database.put_message_metadata("m1", &payload).unwrap();
+        let (legacy, compressed): (String, Option<Vec<u8>>) = database
+            .connection()
+            .unwrap()
+            .query_row("SELECT payload, payload_z FROM message_metadata WHERE id='m1'", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(legacy, "");
+        assert!(compressed.unwrap().len() < payload.len() / 10);
+        assert_eq!(database.message_metadata("m1").unwrap().as_deref(), Some(payload.as_str()));
+        assert_eq!(database.message_metadata("missing").unwrap(), None);
+    }
+
+    #[test]
+    fn synced_messages_store_compressed_metadata_that_attachment_lookup_reads() {
+        let database = database();
+        let mut synced = message("m1", "t1", "2026-01-01T00:00:00Z", "body");
+        synced.metadata_json = r#"{"id":"m1","threadId":"t1","payload":{"mimeType":"text/plain"}}"#.into();
+        database.upsert_thread("work@example.com", &[synced]).unwrap();
+        let stored_plaintext: String = database
+            .connection()
+            .unwrap()
+            .query_row("SELECT payload FROM message_metadata WHERE id='m1'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored_plaintext, "");
+        let (account, raw) = database.attachment_message("m1").unwrap();
+        assert_eq!(account, "work@example.com");
+        assert_eq!(raw.id, "m1");
+    }
+
+    #[test]
+    fn compress_next_metadata_batch_converts_legacy_rows_and_drains_to_zero() {
+        let database = database();
+        database
+            .connection()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO message_metadata(id, payload) VALUES ('a', '{\"id\":\"a\"}'), ('b', '{\"id\":\"b\"}');",
+            )
+            .unwrap();
+        assert_eq!(database.compress_next_metadata_batch(1).unwrap(), 1);
+        assert_eq!(database.compress_next_metadata_batch(10).unwrap(), 1);
+        assert_eq!(database.compress_next_metadata_batch(10).unwrap(), 0);
+        assert_eq!(database.message_metadata("a").unwrap().as_deref(), Some("{\"id\":\"a\"}"));
+        assert_eq!(database.message_metadata("b").unwrap().as_deref(), Some("{\"id\":\"b\"}"));
+    }
+
+    #[test]
+    fn prune_orphaned_message_metadata_removes_payloads_whose_message_is_gone() {
+        let database = database();
+        database
+            .upsert_thread(
+                "work@example.com",
+                &[
+                    message("m1", "t1", "2026-01-01T00:00:00Z", "body"),
+                    message("m2", "t1", "2026-01-02T00:00:00Z", "body"),
+                ],
+            )
+            .unwrap();
+        // A resync that no longer includes m2 replaces the thread's messages.
+        database
+            .upsert_thread("work@example.com", &[message("m1", "t1", "2026-01-01T00:00:00Z", "body")])
+            .unwrap();
+        database.put_message_metadata("never-synced", "{}").unwrap();
+        assert_eq!(database.prune_orphaned_message_metadata().unwrap(), 2);
+        assert!(database.message_metadata("m1").unwrap().is_some());
+        assert!(database.message_metadata("m2").unwrap().is_none());
+        assert_eq!(database.prune_orphaned_message_metadata().unwrap(), 0);
+    }
+
+    #[test]
     fn opening_a_brand_new_database_takes_a_pre_migration_snapshot() {
         let temp = TempDbPath::new();
         let database = Database::open(&temp.path).unwrap();
@@ -5221,18 +5388,13 @@ pub(crate) mod tests {
         drop(connection);
 
         assert_eq!(
-            list_matching(&temp.dir, "pre-migration-v0102")
-                .into_iter()
-                .chain(list_matching(&temp.dir, "pre-migration-v0103"))
-                .chain(list_matching(&temp.dir, "pre-migration-v0104"))
-                .count(),
-            3,
-            "the three highest injected versions should survive pruning"
+            list_matching(&temp.dir, ".pre-migration-v").len(),
+            PRE_MIGRATION_BACKUPS_KEPT,
+            "only the most recent PRE_MIGRATION_BACKUPS_KEPT snapshots should survive"
         );
         assert!(
-            list_matching(&temp.dir, "pre-migration-v0100").is_empty()
-                && list_matching(&temp.dir, "pre-migration-v0101").is_empty(),
-            "only the most recent PRE_MIGRATION_BACKUPS_KEPT snapshots should survive"
+            !list_matching(&temp.dir, "pre-migration-v0104").is_empty(),
+            "the highest injected version should be the one kept"
         );
     }
 

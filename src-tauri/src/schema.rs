@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 42;
+pub(crate) const LATEST_VERSION: i64 = 43;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1271,6 +1271,22 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             PRAGMA user_version=42;",
         ).map_err(error)?;
     }
+    if version < 43 {
+        // Raw provider payloads are the largest thing stored locally, so new
+        // rows go to the zstd-compressed `payload_z` column (legacy plaintext
+        // rows are converted in the background by storage maintenance). Also
+        // a one-time sweep of payloads whose message no longer exists:
+        // nothing removed them when their thread was replaced or deleted.
+        if !has_column(&tx, "message_metadata", "payload_z")? {
+            tx.execute_batch("ALTER TABLE message_metadata ADD COLUMN payload_z BLOB;")
+                .map_err(error)?;
+        }
+        tx.execute_batch(
+            "DELETE FROM message_metadata
+             WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = message_metadata.id);
+            PRAGMA user_version=43;",
+        ).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1403,6 +1419,30 @@ mod tests {
         let email:String=connection.query_row("SELECT email FROM contact_addresses WHERE email='jane@example.com'",[],|row|row.get(0)).unwrap();
         assert_eq!(name,"Jane Doe");
         assert_eq!(email,"jane@example.com");
+    }
+
+    #[test]
+    fn v43_drops_orphaned_message_metadata_and_keeps_live_payloads() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch(
+            "INSERT INTO threads(id,provider_thread_id,subject,snippet,participants_json,last_message_at)
+                VALUES('a:t1','t1','s','','[]','2026-01-01T00:00:00Z');
+            INSERT INTO messages(id,thread_id,sender,recipients_json,sent_at,body_html,body_text)
+                VALUES('live','a:t1','x','[]','2026-01-01T00:00:00Z','','');
+            INSERT INTO message_metadata(id,payload) VALUES('live','{\"id\":\"live\"}'),('gone','{\"id\":\"gone\"}');",
+        ).unwrap();
+        connection.pragma_update(None, "user_version", 42).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let ids: Vec<String> = connection
+            .prepare("SELECT id FROM message_metadata ORDER BY id").unwrap()
+            .query_map([], |row| row.get(0)).unwrap()
+            .collect::<Result<_, _>>().unwrap();
+        assert_eq!(ids, ["live"]);
+        let legacy: String = connection
+            .query_row("SELECT payload FROM message_metadata WHERE id='live'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(legacy, "{\"id\":\"live\"}", "legacy plaintext stays readable until backfilled");
     }
 
     #[test]

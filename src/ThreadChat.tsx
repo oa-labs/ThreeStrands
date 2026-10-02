@@ -1,9 +1,25 @@
-import { MessageSquareText, RotateCcw, Sparkles } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { ChatAvailability, ChatSource } from "./domain";
+import { FileText, MessageSquareText, RotateCcw, Sparkles, X } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  MAX_CHAT_ATTACHMENTS,
+  activeMention,
+  applyMention,
+  attachmentKey,
+  matchAttachments,
+  type ChatAttachmentOption,
+  type Mention,
+} from "./chatAttachments";
+import type { ChatAttachmentSource, ChatAvailability, ChatSource } from "./domain";
 
 export type ChatEntry =
-  | { id: string; role: "user"; content: string; searchMailbox: boolean }
+  | {
+    id: string;
+    role: "user";
+    content: string;
+    searchMailbox: boolean;
+    /** Attachments first shared with this question. */
+    attachments: ChatAttachmentOption[];
+  }
   | {
     id: string;
     role: "assistant";
@@ -13,9 +29,23 @@ export type ChatEntry =
     hiddenSuggestions: number;
     sources: ChatSource[];
     searched: ChatSource[];
+    /** Attachments whose text the answer could see. */
+    attachments: ChatAttachmentSource[];
     /** A range to show open times for, taken from the user's calendar. */
     availability: ChatAvailability | null;
   };
+
+/** Attachments the chat's questions shared so far, each once, in order. */
+export function sharedChatAttachments(entries: ChatEntry[]): ChatAttachmentOption[] {
+  const shared = new Map<string, ChatAttachmentOption>();
+  for (const entry of entries) {
+    if (entry.role !== "user") continue;
+    for (const attachment of entry.attachments) {
+      if (!shared.has(attachmentKey(attachment))) shared.set(attachmentKey(attachment), attachment);
+    }
+  }
+  return [...shared.values()];
+}
 
 export const QUICK_QUESTIONS = [
   "Draft a reply",
@@ -29,6 +59,10 @@ export const QUICK_QUESTIONS = [
  * pressing the chat shortcut (which bumps `focusRequest`) turns it into a
  * text box marked as an entry surface. Escape returns to read mode and to
  * whatever had focus before, keeping any unsent text.
+ *
+ * Typing @ lists the conversation's readable attachments; choosing one
+ * shares its text with the provider for this question and the rest of the
+ * chat. Nothing is shared unless the user picks it.
  */
 export function ThreadChat({
   enabled,
@@ -37,6 +71,8 @@ export function ThreadChat({
   pending,
   error,
   focusRequest,
+  attachments = [],
+  sharedAttachments = [],
   onAsk,
   onRetry,
   onUseReply,
@@ -51,7 +87,11 @@ export function ThreadChat({
   pending: boolean;
   error: string | null;
   focusRequest: number;
-  onAsk(question: string, searchMailbox: boolean): void;
+  /** Readable attachments in the conversation, offered after @. */
+  attachments?: ChatAttachmentOption[];
+  /** Attachments earlier questions in this chat already shared. */
+  sharedAttachments?: ChatAttachmentOption[];
+  onAsk(question: string, searchMailbox: boolean, attachments: ChatAttachmentOption[]): void;
   onRetry(): void;
   onUseReply(text: string): void;
   onOpenThread(threadId: string): void;
@@ -63,6 +103,15 @@ export function ThreadChat({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [searchMailbox, setSearchMailbox] = useState(false);
+  const [selected, setSelected] = useState<ChatAttachmentOption[]>([]);
+  const [mention, setMention] = useState<Mention | null>(null);
+  const [dismissedMention, setDismissedMention] = useState<number | null>(null);
+  const [highlighted, setHighlighted] = useState(0);
+  const pendingCaret = useRef<number | null>(null);
+  // React can report a selection change for a keystroke after the handler
+  // already replaced the text; such a report describes the old text.
+  const latestDraft = useRef("");
+  const menuId = useId();
   const input = useRef<HTMLTextAreaElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const log = useRef<HTMLDivElement>(null);
@@ -101,16 +150,66 @@ export function ThreadChat({
     else input.current?.blur();
   };
 
+  useLayoutEffect(() => {
+    if (pendingCaret.current === null || !input.current) return;
+    input.current.setSelectionRange(pendingCaret.current, pendingCaret.current);
+    pendingCaret.current = null;
+  }, [draft]);
+
+  const sharedKeys = new Set([...sharedAttachments, ...selected].map(attachmentKey));
+  const atLimit = sharedKeys.size >= MAX_CHAT_ATTACHMENTS;
+  const offered = attachments.filter((attachment) => !sharedKeys.has(attachmentKey(attachment)));
+  const matches = mention && mention.start !== dismissedMention ? matchAttachments(offered, mention.query) : [];
+  const menuOpen = mention !== null && mention.start !== dismissedMention && (matches.length > 0 || (atLimit && offered.length > 0));
+  const active = matches.length > 0 ? Math.min(highlighted, matches.length - 1) : -1;
+
+  const updateDraft = (text: string) => {
+    latestDraft.current = text;
+    setDraft(text);
+  };
+
+  const trackMention = (text: string, caret: number | null) => {
+    if (text !== latestDraft.current) return;
+    const next = caret === null ? null : activeMention(text, caret);
+    if (next?.start !== mention?.start || next?.query !== mention?.query) setHighlighted(0);
+    setMention((current) => current?.start === next?.start && current?.query === next?.query ? current : next);
+    setDismissedMention((dismissed) => next?.start === dismissed ? dismissed : null);
+  };
+
+  const choose = (option: ChatAttachmentOption) => {
+    if (!mention || atLimit) return;
+    const caret = input.current?.selectionStart ?? draft.length;
+    const next = applyMention(draft, mention, caret, option.filename);
+    pendingCaret.current = next.caret;
+    updateDraft(next.text);
+    setSelected((current) => [...current, option]);
+    setMention(null);
+    input.current?.focus();
+  };
+
   const ask = (question: string) => {
     const text = question.trim();
     if (!text || pending) return;
-    onAsk(text, searchMailbox);
-    setDraft("");
+    onAsk(text, searchMailbox, selected);
+    updateDraft("");
     setSearchMailbox(false);
+    setSelected([]);
+    setMention(null);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Escape") {
+    if (menuOpen && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setDismissedMention(mention!.start);
+    } else if (menuOpen && matches.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setHighlighted((active + step + matches.length) % matches.length);
+    } else if (menuOpen && matches.length > 0 && !atLimit && (event.key === "Enter" || event.key === "Tab") && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      choose(matches[active]);
+    } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       leave();
@@ -125,6 +224,7 @@ export function ThreadChat({
       {entries.map((entry) => entry.role === "user" ? (
         <p key={entry.id} className="thread-chat-question">
           {entry.content}
+          {entry.attachments.length > 0 ? <small>Shared {entry.attachments.map((attachment) => attachment.filename).join(", ")}</small> : null}
           {entry.searchMailbox ? <small>Searched all mail</small> : null}
         </p>
       ) : (
@@ -142,6 +242,9 @@ export function ThreadChat({
           {entry.sources.length > 0 ? <nav className="thread-chat-sources" aria-label="Sources">
             {entry.sources.map((source) => <button type="button" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}
           </nav> : null}
+          {entry.attachments.filter((attachment) => attachment.truncated).map((attachment) => <small key={attachmentKey(attachment)}>
+            {attachment.filename} is long, so only its first part was shared.
+          </small>)}
           {entry.searched.length > 0 ? <details className="thread-chat-searched">
             <summary>Shared {entry.searched.length === 1 ? "1 other email" : `${entry.searched.length} other emails`} with AI</summary>
             {entry.searched.map((source) => <button type="button" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}
@@ -170,14 +273,54 @@ export function ThreadChat({
           ref={input}
           aria-label="Ask about this conversation"
           aria-describedby="thread-chat-hint"
+          aria-autocomplete={attachments.length > 0 ? "list" : undefined}
+          aria-expanded={attachments.length > 0 ? menuOpen : undefined}
+          aria-controls={menuOpen ? menuId : undefined}
+          aria-activedescendant={menuOpen && active >= 0 ? `${menuId}-${active}` : undefined}
           rows={2}
           maxLength={2000}
           value={draft}
-          placeholder="Ask about this conversation…"
-          onChange={(event) => setDraft(event.target.value)}
+          placeholder={attachments.length > 0 ? "Ask about this conversation… Type @ to add an attachment" : "Ask about this conversation…"}
+          onChange={(event) => {
+            updateDraft(event.target.value);
+            trackMention(event.target.value, event.target.selectionStart);
+          }}
+          onSelect={(event) => trackMention(event.currentTarget.value, event.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
         />
-        <p id="thread-chat-hint" className="sr-only">Enter to ask, Shift+Enter for a new line, Escape to return to shortcuts.</p>
+        <p id="thread-chat-hint" className="sr-only">
+          Enter to ask, Shift+Enter for a new line, Escape to return to shortcuts.
+          {attachments.length > 0 ? " Type @ to share an attachment with AI." : null}
+        </p>
+        {menuOpen ? <ul className="thread-chat-mentions" id={menuId} role="listbox" aria-label="Attachments">
+          {atLimit ? <li className="thread-chat-mentions-note" role="presentation">You can share up to {MAX_CHAT_ATTACHMENTS} attachments in one chat.</li> : null}
+          {atLimit ? null : matches.map((option, index) => <li
+            key={attachmentKey(option)}
+            id={`${menuId}-${index}`}
+            role="option"
+            aria-selected={index === active}
+            onMouseDown={(event) => event.preventDefault()}
+            onMouseEnter={() => setHighlighted(index)}
+            onClick={() => choose(option)}
+          >
+            <FileText size={13} aria-hidden="true" />
+            <span>{option.filename}</span>
+            <small>{option.sender}</small>
+          </li>)}
+        </ul> : null}
+        {sharedAttachments.length + selected.length > 0 ? <ul className="thread-chat-attachments" aria-label="Attachments shared with AI">
+          {sharedAttachments.map((attachment) => <li key={attachmentKey(attachment)} title="Shared earlier in this chat">
+            <FileText size={12} aria-hidden="true" /><span>{attachment.filename}</span>
+          </li>)}
+          {selected.map((attachment) => <li key={attachmentKey(attachment)}>
+            <FileText size={12} aria-hidden="true" /><span>{attachment.filename}</span>
+            <button
+              type="button"
+              aria-label={`Don’t share ${attachment.filename}`}
+              onClick={() => setSelected((current) => current.filter((candidate) => attachmentKey(candidate) !== attachmentKey(attachment)))}
+            ><X size={12} aria-hidden="true" /></button>
+          </li>)}
+        </ul> : null}
         {!draft.trim() && entries.length === 0 ? <div className="thread-chat-quick" aria-label="Suggested questions" role="group">
           {QUICK_QUESTIONS.map((question) => <button key={question} type="button" disabled={pending} onClick={() => ask(question)}>{question}</button>)}
         </div> : null}

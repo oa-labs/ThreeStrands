@@ -217,6 +217,7 @@ describe("conversation brief", () => {
       const rangeEnd = new Date(Date.now() + 5 * 24 * hour).toISOString();
       vi.spyOn(mailClient, "threadChat").mockResolvedValue({
         answer: "Here are open times from your calendar.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [],
+        attachments: [],
         availability: { rangeStart, rangeEnd, durationMinutes: 45 },
       });
       const slot = { start: new Date(Date.now() + 20 * hour).toISOString(), end: new Date(Date.now() + 20.75 * hour).toISOString(), status: "verified" as const };
@@ -266,8 +267,8 @@ describe("conversation brief", () => {
     it("sends the question with earlier turns, files its tasks under Suggested, and opens a drafted reply for review", async () => {
       await enableAi({ threadChat: true, actionExtraction: true });
       const threadChat = vi.spyOn(mailClient, "threadChat")
-        .mockResolvedValueOnce({ answer: "It introduces the shortcuts.", analysis: { proposals: [chatProposal], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], availability: null })
-        .mockResolvedValueOnce({ answer: "Here is a reply.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: "Thanks for the tour!", sources: [], searched: [], availability: null });
+        .mockResolvedValueOnce({ answer: "It introduces the shortcuts.", analysis: { proposals: [chatProposal], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], attachments: [], availability: null })
+        .mockResolvedValueOnce({ answer: "Here is a reply.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: "Thanks for the tour!", sources: [], searched: [], attachments: [], availability: null });
       render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
@@ -303,7 +304,7 @@ describe("conversation brief", () => {
       await enableAi({ threadChat: true });
       const threadChat = vi.spyOn(mailClient, "threadChat")
         .mockRejectedValueOnce(new Error("error sending request for url"))
-        .mockResolvedValueOnce({ answer: "Answered.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], availability: null });
+        .mockResolvedValueOnce({ answer: "Answered.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], attachments: [], availability: null });
       render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
@@ -319,6 +320,54 @@ describe("conversation brief", () => {
       fireEvent.click(within(panel).getByRole("button", { name: "Try Again" }));
       expect(await within(panel).findByText("Answered.")).toBeInTheDocument();
       expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({ question: "Anything due?", history: [] }), "openai", expect.any(String), null);
+    });
+    it("shares an attachment chosen with @ and keeps it shared for follow-up questions", async () => {
+      await enableAi({ threadChat: true });
+      const threadChat = vi.spyOn(mailClient, "threadChat").mockResolvedValue({
+        answer: "It lists the shortcuts.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [],
+        attachments: [{ messageId: "welcome-message", attachmentId: "demo-guide", filename: "threestrands-shortcuts.txt", truncated: false }],
+        availability: null,
+      });
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+      fireEvent.keyDown(window, { key: "q" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      fireEvent.change(input, { target: { value: "Summarize @short" } });
+      fireEvent.click(within(within(panel).getByRole("listbox", { name: "Attachments" })).getByRole("option", { name: /threestrands-shortcuts\.txt/ }));
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(await within(panel).findByText("It lists the shortcuts.")).toBeInTheDocument();
+      expect(within(panel).getByText("Shared threestrands-shortcuts.txt")).toBeInTheDocument();
+      expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({
+        question: "Summarize @threestrands-shortcuts.txt",
+        attachments: [{ messageId: "welcome-message", attachmentId: "demo-guide" }],
+      }), "openai", expect.any(String), null);
+
+      fireEvent.change(input, { target: { value: "Which one archives?" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(threadChat).toHaveBeenCalledTimes(2));
+      expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({
+        question: "Which one archives?",
+        attachments: [{ messageId: "welcome-message", attachmentId: "demo-guide" }],
+      }), "openai", expect.any(String), null);
+    });
+
+    it("shares no attachments unless one is chosen", async () => {
+      await enableAi({ threadChat: true });
+      const threadChat = vi.spyOn(mailClient, "threadChat").mockResolvedValue({
+        answer: "Answered.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], attachments: [], availability: null,
+      });
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+      fireEvent.keyDown(window, { key: "q" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      fireEvent.change(input, { target: { value: "What does threestrands-shortcuts.txt say?" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(threadChat).toHaveBeenCalled());
+      expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({ attachments: [] }), "openai", expect.any(String), null);
     });
   });
 

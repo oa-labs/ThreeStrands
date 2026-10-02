@@ -588,6 +588,29 @@ pub struct ThreadChatRequest {
     pub include_proposals: bool,
     pub contact_id: Option<String>,
     pub user_time_zone: String,
+    /// Attachments in this conversation the user chose to share with the
+    /// provider for this question.
+    #[serde(default)]
+    pub attachments: Vec<ChatAttachmentRef>,
+}
+
+/// An attachment in the open conversation, by message and attachment id.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChatAttachmentRef {
+    pub message_id: String,
+    pub attachment_id: String,
+}
+
+/// An attachment whose text was shared with the provider while answering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAttachmentSource {
+    pub message_id: String,
+    pub attachment_id: String,
+    pub filename: String,
+    /// Only the start of the file was shared.
+    pub truncated: bool,
 }
 
 /// A range the chat asked the app to search for open times; the times shown
@@ -620,6 +643,8 @@ pub struct ThreadChatReply {
     pub sources: Vec<ChatSource>,
     /// Every other conversation shared because the question searched all mail.
     pub searched: Vec<ChatSource>,
+    /// Every attachment whose text was shared for this question.
+    pub attachments: Vec<ChatAttachmentSource>,
     pub availability: Option<ChatAvailability>,
 }
 

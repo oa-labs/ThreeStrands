@@ -336,14 +336,11 @@ impl Database {
         };
         if mode != "new" {
             let source_id = source_id.ok_or("Select a source message")?;
-            let raw: String = self
-                .connection()?
-                .query_row(
-                    "SELECT payload FROM message_metadata WHERE id=?1",
-                    [&source_id],
-                    |r| r.get(0),
-                )
-                .map_err(|_| {
+            let raw = self
+                .message_metadata(&source_id)
+                .ok()
+                .flatten()
+                .ok_or_else(|| {
                     "Reply metadata is unavailable offline. Refresh mail while connected first."
                         .to_string()
                 })?;
@@ -859,13 +856,7 @@ impl Correspondence {
                             .fetch_message(id)
                             .await
                             .map_err(error)?;
-                        self.database
-                            .connection()?
-                            .execute(
-                                "INSERT OR REPLACE INTO message_metadata VALUES (?1,?2)",
-                                params![id, json(&source)?],
-                            )
-                            .map_err(error)?;
+                        self.database.put_message_metadata(id, &json(&source)?)?;
                     }
                 }
                 let draft = self
@@ -1608,7 +1599,7 @@ mod tests {
         db.connection()
             .unwrap()
             .execute(
-                "INSERT INTO message_metadata VALUES ('source',?1)",
+                "INSERT INTO message_metadata(id, payload) VALUES ('source',?1)",
                 [source.to_string()],
             )
             .unwrap();
@@ -1636,7 +1627,7 @@ mod tests {
         db.connection()
             .unwrap()
             .execute(
-                "INSERT INTO message_metadata VALUES ('source-b',?1)",
+                "INSERT INTO message_metadata(id, payload) VALUES ('source-b',?1)",
                 [source.to_string()],
             )
             .unwrap();
@@ -1657,7 +1648,7 @@ mod tests {
         db.connection()
             .unwrap()
             .execute(
-                "INSERT INTO message_metadata VALUES ('source-c',?1)",
+                "INSERT INTO message_metadata(id, payload) VALUES ('source-c',?1)",
                 [source.to_string()],
             )
             .unwrap();

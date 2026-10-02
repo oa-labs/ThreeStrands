@@ -89,7 +89,8 @@ import { ContextPanel } from "./ContextPanel";
 import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { ThreadTasks } from "./ThreadTasks";
 import { ContactMeetings } from "./ContactMeetings";
-import { ThreadChat, type ChatEntry } from "./ThreadChat";
+import { sharedChatAttachments, ThreadChat, type ChatEntry } from "./ThreadChat";
+import { attachmentKey, chatAttachmentOptions, type ChatAttachmentOption } from "./chatAttachments";
 import { MeetingScheduler, type ScheduleSlot } from "./MeetingScheduler";
 import { planChatAvailability } from "./scheduling";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
@@ -1540,17 +1541,21 @@ export function App() {
   // removed from the transcript and offered again through Try Again.
   const [chatByThread, setChatByThread] = useState<Record<string, ChatEntry[]>>({});
   const [chatPendingThreads, setChatPendingThreads] = useState<ReadonlySet<string>>(() => new Set());
-  const [chatFailures, setChatFailures] = useState<Record<string, { message: string; question: string; searchMailbox: boolean }>>({});
+  const [chatFailures, setChatFailures] = useState<Record<string, { message: string; question: string; searchMailbox: boolean; attachments: ChatAttachmentOption[] }>>({});
   const [chatFocusRequest, setChatFocusRequest] = useState(0);
   const chatEntrySequence = useRef(0);
-  const askThread = useCallback(async (question: string, searchMailbox: boolean, contactId: string | null) => {
+  const askThread = useCallback(async (question: string, searchMailbox: boolean, contactId: string | null, attachments: ChatAttachmentOption[]) => {
     if (!visibleDetail || !actionProposalKey) return;
     const threadId = visibleDetail.thread.id;
     const proposalKey = actionProposalKey;
     if (chatPendingThreads.has(threadId)) return;
     const earlier = chatByThread[threadId] ?? [];
+    // Attachments stay shared for the rest of the chat so follow-up
+    // questions can still see them.
+    const shared = new Map<string, ChatAttachmentOption>();
+    for (const attachment of [...sharedChatAttachments(earlier), ...attachments]) shared.set(attachmentKey(attachment), attachment);
     const nextId = () => `chat-${chatEntrySequence.current += 1}`;
-    const questionEntry: ChatEntry = { id: nextId(), role: "user", content: question, searchMailbox };
+    const questionEntry: ChatEntry = { id: nextId(), role: "user", content: question, searchMailbox, attachments };
     setChatByThread((current) => ({ ...current, [threadId]: [...(current[threadId] ?? []), questionEntry] }));
     setChatPendingThreads((current) => new Set(current).add(threadId));
     setChatFailures((current) => {
@@ -1569,6 +1574,7 @@ export function App() {
         includeProposals: aiActionAvailable,
         contactId,
         userTimeZone: availabilityPreferences.timeZone,
+        attachments: [...shared.values()].map(({ messageId, attachmentId }) => ({ messageId, attachmentId })),
       }, provider, model, endpoint);
       if (reply.analysis.proposals.length > 0) {
         setActionProposalSets((current) => ({ ...current, [proposalKey]: [...(current[proposalKey] ?? []), ...reply.analysis.proposals] }));
@@ -1583,11 +1589,12 @@ export function App() {
         availability: reply.availability,
         sources: reply.sources,
         searched: reply.searched,
+        attachments: reply.attachments,
       };
       setChatByThread((current) => ({ ...current, [threadId]: [...(current[threadId] ?? []), answer] }));
     } catch (error) {
       setChatByThread((current) => ({ ...current, [threadId]: (current[threadId] ?? []).filter((entry) => entry.id !== questionEntry.id) }));
-      setChatFailures((current) => ({ ...current, [threadId]: { message: describeAnalysisError(errorMessage(error)).summary, question, searchMailbox } }));
+      setChatFailures((current) => ({ ...current, [threadId]: { message: describeAnalysisError(errorMessage(error)).summary, question, searchMailbox, attachments } }));
     } finally {
       setChatPendingThreads((current) => {
         const next = new Set(current);
@@ -2611,10 +2618,12 @@ export function App() {
               pending={chatPendingThreads.has(visibleDetail.thread.id)}
               error={chatFailures[visibleDetail.thread.id]?.message ?? null}
               focusRequest={chatFocusRequest}
-              onAsk={(question, searchMailbox) => void askThread(question, searchMailbox, person?.contactId ?? null)}
+              attachments={chatAttachmentOptions(visibleDetail.messages)}
+              sharedAttachments={sharedChatAttachments(chatByThread[visibleDetail.thread.id] ?? [])}
+              onAsk={(question, searchMailbox, attachments) => void askThread(question, searchMailbox, person?.contactId ?? null, attachments)}
               onRetry={() => {
                 const failure = chatFailures[visibleDetail.thread.id];
-                if (failure) void askThread(failure.question, failure.searchMailbox, person?.contactId ?? null);
+                if (failure) void askThread(failure.question, failure.searchMailbox, person?.contactId ?? null, failure.attachments);
               }}
               onUseReply={(text) => correspondence.replyWithText(text, visibleDetail.messages.at(-1)?.id)}
               onOpenThread={openTaskThread}

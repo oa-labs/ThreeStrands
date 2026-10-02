@@ -1,6 +1,7 @@
 mod ai;
 mod availability;
 mod attachment_reader;
+mod attachment_text;
 mod attachment_security;
 mod auth;
 mod backoff;
@@ -44,7 +45,7 @@ use db::Database;
 use models::{
     ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateCalendarEventRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
-    FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
+    FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
     UpdateLabelRequest, UpdateSnippetRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
 };
@@ -192,6 +193,8 @@ struct AppState {
     exiting: std::sync::atomic::AtomicBool,
     image_cache: image_proxy::ImageCache,
     attachment_reader: attachment_reader::ReaderCache,
+    /// Attachment text recently shared with Thread Chat.
+    attachment_text: attachment_text::ExtractCache,
     /// `Some` only when the local database had to be recovered at startup
     /// (restored from a backup, or recreated fresh) — see `open_with_recovery`.
     recovery: Option<db::RecoveryOutcome>,
@@ -2638,10 +2641,161 @@ fn chat_task_line(task: &ThreadTask) -> String {
     }
 }
 
+/// The attachments a question shares, once each, after checking each belongs
+/// to a message in the open conversation.
+fn chat_attachment_refs(
+    requested: &[ChatAttachmentRef],
+    thread_message_ids: &[&str],
+) -> Result<Vec<ChatAttachmentRef>, String> {
+    let mut unique: Vec<ChatAttachmentRef> = Vec::new();
+    for reference in requested {
+        if !unique.contains(reference) {
+            unique.push(reference.clone());
+        }
+    }
+    if unique.len() > attachment_text::MAX_CHAT_ATTACHMENTS {
+        return Err(format!(
+            "Share up to {} attachments at a time",
+            attachment_text::MAX_CHAT_ATTACHMENTS
+        ));
+    }
+    if unique.iter().any(|reference| !thread_message_ids.contains(&reference.message_id.as_str())) {
+        return Err("That attachment isn't in this conversation".to_string());
+    }
+    Ok(unique)
+}
+
+/// Extracts an attachment's text off the async runtime, failing if the
+/// parser runs past the timeout or panics on a hostile file.
+async fn extract_chat_attachment(
+    filename: &str,
+    mime_type: &str,
+    bytes: Vec<u8>,
+    timeout: std::time::Duration,
+) -> Result<attachment_text::ExtractedText, String> {
+    let kind = attachment_text::kind_for(filename, mime_type).ok_or_else(|| {
+        format!("Thread Chat can't read {filename}; it reads text, PDF, Word, Excel, and PowerPoint files")
+    })?;
+    run_attachment_extraction(filename, timeout, move || attachment_text::extract(kind, &bytes)).await
+}
+
+async fn run_attachment_extraction(
+    filename: &str,
+    timeout: std::time::Duration,
+    job: impl FnOnce() -> Result<attachment_text::ExtractedText, String> + Send + 'static,
+) -> Result<attachment_text::ExtractedText, String> {
+    let task = tokio::task::spawn_blocking(job);
+    let reason = match tokio::time::timeout(timeout, task).await {
+        Ok(Ok(Ok(text))) => return Ok(text),
+        Ok(Ok(Err(reason))) => reason,
+        Ok(Err(_)) => "it isn't a readable file".to_string(),
+        Err(_) => "it took too long to read".to_string(),
+    };
+    Err(format!("Couldn't read {filename}: {reason}"))
+}
+
+/// Loads and extracts the shared attachments, reusing recent extractions.
+async fn chat_attachments(
+    references: Vec<ChatAttachmentRef>,
+    state: &AppState,
+) -> Result<(Vec<ChatAttachmentSource>, Vec<ai::ChatAttachmentInput>), String> {
+    let mut sources = Vec::new();
+    let mut inputs = Vec::new();
+    for reference in references {
+        let (filename, mime_type, extracted) = match state.attachment_text.get(&reference.message_id, &reference.attachment_id) {
+            Some(cached) => cached,
+            None => {
+                let (filename, mime_type, bytes) =
+                    load_attachment(&reference.message_id, &reference.attachment_id, state).await?;
+                let text = extract_chat_attachment(&filename, &mime_type, bytes, attachment_text::ATTACHMENT_EXTRACT_TIMEOUT).await?;
+                let entry = (filename, mime_type, text);
+                state.attachment_text.insert(&reference.message_id, &reference.attachment_id, entry.clone());
+                entry
+            }
+        };
+        sources.push(ChatAttachmentSource {
+            message_id: reference.message_id.clone(),
+            attachment_id: reference.attachment_id,
+            filename: filename.clone(),
+            truncated: extracted.truncated,
+        });
+        inputs.push(ai::ChatAttachmentInput {
+            message_id: reference.message_id,
+            filename,
+            mime_type,
+            text: extracted.text,
+            truncated: extracted.truncated,
+        });
+    }
+    Ok((sources, inputs))
+}
+
+#[cfg(test)]
+mod chat_attachment_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn reference(message_id: &str, attachment_id: &str) -> ChatAttachmentRef {
+        ChatAttachmentRef { message_id: message_id.into(), attachment_id: attachment_id.into() }
+    }
+
+    #[test]
+    fn shares_each_attachment_once_and_only_from_the_open_conversation() {
+        let ids = ["m1", "m2"];
+        let shared = chat_attachment_refs(&[reference("m1", "a"), reference("m2", "b"), reference("m1", "a")], &ids).unwrap();
+        assert_eq!(shared, vec![reference("m1", "a"), reference("m2", "b")]);
+        assert_eq!(
+            chat_attachment_refs(&[reference("m1", "a"), reference("elsewhere", "a")], &ids).unwrap_err(),
+            "That attachment isn't in this conversation"
+        );
+        assert!(chat_attachment_refs(&[], &ids).unwrap().is_empty());
+    }
+
+    #[test]
+    fn limits_how_many_attachments_one_question_shares() {
+        let ids = ["m1"];
+        let refs: Vec<ChatAttachmentRef> = (0..=attachment_text::MAX_CHAT_ATTACHMENTS).map(|index| reference("m1", &index.to_string())).collect();
+        assert_eq!(chat_attachment_refs(&refs[..attachment_text::MAX_CHAT_ATTACHMENTS - 1], &ids).unwrap().len(), attachment_text::MAX_CHAT_ATTACHMENTS - 1);
+        assert_eq!(chat_attachment_refs(&refs[..attachment_text::MAX_CHAT_ATTACHMENTS], &ids).unwrap().len(), attachment_text::MAX_CHAT_ATTACHMENTS);
+        assert_eq!(
+            chat_attachment_refs(&refs, &ids).unwrap_err(),
+            format!("Share up to {} attachments at a time", attachment_text::MAX_CHAT_ATTACHMENTS)
+        );
+    }
+
+    #[tokio::test]
+    async fn names_the_file_when_it_cannot_be_read() {
+        let text = extract_chat_attachment("notes.txt", "text/plain", b"Ship Friday".to_vec(), Duration::from_secs(5)).await.unwrap();
+        assert_eq!(text.text, "Ship Friday");
+        assert_eq!(
+            extract_chat_attachment("photo.jpg", "image/jpeg", vec![1, 2, 3], Duration::from_secs(5)).await.unwrap_err(),
+            "Thread Chat can't read photo.jpg; it reads text, PDF, Word, Excel, and PowerPoint files"
+        );
+        assert_eq!(
+            extract_chat_attachment("contract.docx", "", b"not a zip".to_vec(), Duration::from_secs(5)).await.unwrap_err(),
+            "Couldn't read contract.docx: it isn't a readable Office file"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_parser_that_hangs_or_panics_fails_only_the_question() {
+        let slow = run_attachment_extraction("slow.pdf", Duration::from_millis(10), || {
+            std::thread::sleep(Duration::from_millis(300));
+            Ok(attachment_text::ExtractedText { text: "late".into(), truncated: false })
+        })
+        .await;
+        assert_eq!(slow.unwrap_err(), "Couldn't read slow.pdf: it took too long to read");
+
+        let panicked = run_attachment_extraction("bad.pdf", Duration::from_secs(5), || panic!("hostile file")).await;
+        assert_eq!(panicked.unwrap_err(), "Couldn't read bad.pdf: it isn't a readable file");
+    }
+}
+
 /// Answers a question about the open conversation. The context is the
 /// conversation itself, open tasks linked to it or to the selected person,
-/// and, only when `search_mailbox` is set, the best-matching other
-/// conversations from local search.
+/// the text of any attachments the user shared for the question, and, only
+/// when `search_mailbox` is set, the best-matching other conversations from
+/// local search.
 #[tauri::command]
 async fn ai_thread_chat(
     request: ThreadChatRequest,
@@ -2667,6 +2821,9 @@ async fn ai_thread_chat(
         &state,
     )
     .await?;
+    let message_ids: Vec<&str> = analysis_request.messages.iter().map(|message| message.id.as_str()).collect();
+    let attachment_refs = chat_attachment_refs(&request.attachments, &message_ids)?;
+    let (shared_attachments, attachment_inputs) = chat_attachments(attachment_refs, &state).await?;
 
     let database = state.database.clone();
     let contact_id = request.contact_id.clone();
@@ -2729,6 +2886,7 @@ async fn ai_thread_chat(
                     .collect(),
             })
             .collect(),
+        attachments: attachment_inputs,
         proposals_allowed: request.include_proposals,
         current_time: analysis_request.current_time,
         user_time_zone: analysis_request.user_time_zone,
@@ -2736,8 +2894,9 @@ async fn ai_thread_chat(
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     log::info!(
         target: "ai_thread_chat",
-        "asking about thread {thread_id} with provider {provider:?} model {model}, {} other thread(s)",
-        searched.len()
+        "asking about thread {thread_id} with provider {provider:?} model {model}, {} other thread(s), {} attachment(s)",
+        searched.len(),
+        shared_attachments.len()
     );
     let answer = match ai::chat(chat_request, &api_key).await {
         Ok(answer) => answer,
@@ -2757,6 +2916,7 @@ async fn ai_thread_chat(
         reply_draft: answer.reply_draft,
         sources,
         searched,
+        attachments: shared_attachments,
         availability: answer.availability,
     })
 }
@@ -3137,6 +3297,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         exiting: std::sync::atomic::AtomicBool::new(false),
         image_cache: image_proxy::ImageCache::new().map_err(std::io::Error::other)?,
         attachment_reader,
+        attachment_text: attachment_text::ExtractCache::default(),
         recovery,
     });
     Ok(())
@@ -3218,6 +3379,20 @@ fn spawn_storage_maintenance(database: Arc<Database>) {
             }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
+        // Same for raw provider payloads cached before they were compressed.
+        loop {
+            let backfill_db = database.clone();
+            let converted =
+                tokio::task::spawn_blocking(move || backfill_db.compress_next_metadata_batch(100))
+                    .await
+                    .ok()
+                    .and_then(|result| log_failure("compressing message metadata", result))
+                    .unwrap_or(0);
+            if converted == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
         // Stay clear of the launch window, when the inbox loads and every
         // account runs its first sync; maintenance is never urgent.
         tokio::time::sleep(FIRST_STORAGE_MAINTENANCE_DELAY).await;
@@ -3239,6 +3414,10 @@ fn run_storage_maintenance(database: &Database) -> Vec<&'static str> {
         }
     };
     step("pruning expired threads", database.prune_expired_threads().map(|_| ()));
+    step(
+        "pruning orphaned message metadata",
+        database.prune_orphaned_message_metadata().map(|_| ()),
+    );
     step("reclaiming free pages", database.reclaim_space());
     // Bound WAL growth, then snapshot: checkpointing first means the backup
     // reflects the latest writes without carrying an ever-growing WAL of its
@@ -3475,6 +3654,11 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
             }
         }
         tauri::RunEvent::Resumed => spawn_foreground_sync(handle),
+        tauri::RunEvent::Exit => {
+            if let Some(state) = handle.try_state::<AppState>() {
+                log_failure("checkpointing the WAL at exit", state.database.checkpoint_on_exit());
+            }
+        }
         _ => {}
     }
 }
