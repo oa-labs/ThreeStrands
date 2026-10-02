@@ -96,3 +96,19 @@ describe("mail workspace with the calendar schedule open", () => {
     expect(column).toBe("auto");
   });
 });
+
+describe("conversation participant layout", () => {
+  it("bounds the badges to three font-aware rows while allowing shorter lists to size naturally", () => {
+    expect(lastDeclaration(".context-participants", "max-height")).toBe("calc(var(--participant-row-height) * 3 + 12px)");
+    expect(lastDeclaration(".context-participants", "gap")).toBe("6px");
+    expect(lastDeclaration(".context-participants", "height")).toBeUndefined();
+    expect(lastDeclaration(".context-participants", "min-height")).toBeUndefined();
+    expect(lastDeclaration(".context-participants", "--participant-row-height")).toBe("max(26px, calc(var(--type-xs) * 1.4 + 6px))");
+    expect(lastDeclaration(".context-participants button", "height")).toBe("var(--participant-row-height)");
+    expect(lastDeclaration(".context-participants", "overflow-y")).toBe("auto");
+    expect(lastDeclaration(".context-participants", "overflow-x")).toBe("hidden");
+    expect(lastDeclaration(".context-participants", "scrollbar-width")).toBe("thin");
+    expect(lastDeclaration(".context-participants-section", "flex-shrink")).toBe("0");
+    expect(lastDeclaration(".context-participants button:focus-visible", "outline-offset")).toBe("-2px");
+  });
+});

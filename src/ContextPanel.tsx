@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Copy, Heart, Mail, UserPlus } from "lucide-react";
 import { mailClient } from "./data/client";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -60,6 +60,8 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
   const [emailCopied, setEmailCopied] = useState(false);
   const [emailCopyFailed, setEmailCopyFailed] = useState(false);
   const openHintId = useId();
+  const participantCountId = useId();
+  const participantListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setEmail(preferred); setEmailCopied(false); setEmailCopyFailed(false); }, [preferred, detail?.thread.id]);
   useEffect(() => { setEmailCopied(false); setEmailCopyFailed(false); }, [email]);
@@ -133,6 +135,21 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
     return [...byOwner].map(([key, chip]) => ({ key, ...chip }));
   }, [participants, participantContacts]);
 
+  useLayoutEffect(() => {
+    const list = participantListRef.current;
+    if (!list) return;
+    const revealSelected = () => {
+      const button = list.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+      if (button) revealParticipant(list, button);
+    };
+    revealSelected();
+    // Names, panel width, and font preferences can change the badge wrapping.
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(revealSelected);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [chips, email, detail?.thread.id]);
+
   const selected = participants.find((item) => item.email === email);
   const displayName = profile?.displayName || selected?.name || email;
   const person = useMemo<ContextPerson | null>(() => {
@@ -182,13 +199,19 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
   return (
     <aside className="context-panel" aria-label="Conversation context">
       {chips.length > 1 ? (
-        <div className="context-participants" role="group" aria-label="Conversation participants">
-          {chips.map((chip) => (
-            <button key={chip.key} type="button" aria-pressed={chip.emails.includes(email)} title={chip.emails.join(", ")} onClick={() => { if (!chip.emails.includes(email)) setEmail(chip.emails[0]); }}>
-              <span className="context-participant-initial" aria-hidden="true">{(chip.name || chip.emails[0]).slice(0, 1).toLocaleUpperCase()}</span>
-              {chip.name ? <span>{chip.name}</span> : <ParticipantAddress email={chip.emails[0]} />}
-            </button>
-          ))}
+        <div className="context-participants-section">
+          <div id={participantCountId} className="context-participants-label">Participants · {chips.length}</div>
+          <div ref={participantListRef} className="context-participants" role="group" aria-label="Conversation participants" aria-describedby={participantCountId}
+            onFocusCapture={(event) => {
+              if (event.target instanceof HTMLButtonElement) revealParticipant(event.currentTarget, event.target);
+            }}>
+            {chips.map((chip) => (
+              <button key={chip.key} type="button" aria-pressed={chip.emails.includes(email)} title={chip.emails.join(", ")} onClick={() => { if (!chip.emails.includes(email)) setEmail(chip.emails[0]); }}>
+                <span className="context-participant-initial" aria-hidden="true">{(chip.name || chip.emails[0]).slice(0, 1).toLocaleUpperCase()}</span>
+                {chip.name ? <span>{chip.name}</span> : <ParticipantAddress email={chip.emails[0]} />}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
       {email ? (
@@ -246,6 +269,15 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
       {detail && chat ? <div className="context-chat-dock">{chat(person)}</div> : null}
     </aside>
   );
+}
+
+/** Reveal a badge without scrolling the contact card or the surrounding app. */
+function revealParticipant(list: HTMLElement, button: HTMLButtonElement) {
+  const viewport = list.getBoundingClientRect();
+  if (!viewport.height) return;
+  const badge = button.getBoundingClientRect();
+  if (badge.top < viewport.top) list.scrollTop += badge.top - viewport.top;
+  else if (badge.bottom > viewport.bottom) list.scrollTop += badge.bottom - viewport.bottom;
 }
 
 function ParticipantAddress({ email }: { email: string }) {

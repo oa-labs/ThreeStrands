@@ -18,13 +18,37 @@ function renderPanel(overrides:Partial<Parameters<typeof ContextPanel>[0]>={}){
   return render(<ContextPanel detail={detail} accounts={[account]} onOpenThread={vi.fn()} onOpenContact={vi.fn()} {...overrides}/>);
 }
 
+// JSDOM has no layout. Model wrapped badge rows so scrolling tests exercise
+// visibility against a viewport, rather than just checking a method call.
+function mockParticipantRows() {
+  return vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockImplementation(function(this:HTMLElement) {
+    let top=0;
+    let height=0;
+    if(this.classList.contains("context-participants")) {
+      top=100;
+      height=90;
+    } else if(this instanceof HTMLButtonElement && this.parentElement?.classList.contains("context-participants")) {
+      const list=this.parentElement;
+      const index=Array.from(list.children).indexOf(this);
+      top=100+index*32-list.scrollTop;
+      height=26;
+    }
+    return {top,bottom:top+height,left:0,right:200,width:200,height,x:0,y:top,toJSON:()=>({})};
+  });
+}
+
+const largeDetail={...detail,messages:[
+  {...detail.messages[0],recipients:["You <you@example.com>",...Array.from({length:40},(_,index)=>`Person ${index+1} <person${index+1}@example.com>`)]},
+  detail.messages[1],
+]} as unknown as ThreadDetail;
+
 describe("ContextPanel",()=>{
   beforeEach(()=>{
     vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>Object.fromEntries(
       emails.filter(email=>email==="jane@example.com"||email==="bob@example.com")
         .map(email=>[email,`contact:${email}`])));
   });
-  afterEach(()=>{cleanup();vi.clearAllMocks();});
+  afterEach(()=>{cleanup();vi.clearAllMocks();vi.restoreAllMocks();});
   it("defaults to the latest external sender and lets the reader switch participants",async()=>{
     vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
@@ -36,6 +60,95 @@ describe("ContextPanel",()=>{
     await screen.findByRole("heading",{name:"Jane Doe"});
     expect(within(participants).getByRole("button",{name:"Jane Doe"})).toHaveAttribute("aria-pressed","true");
     await waitFor(()=>expect(mailClient.resolveContactIds).toHaveBeenCalledWith(["jane@example.com"]));
+  });
+
+  it("keeps every participant accessible in a long list and reveals the selected sender without scrolling the panel",async()=>{
+    mockParticipantRows();
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:id===bob.id?bob:null);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    renderPanel({detail:largeDetail});
+    await screen.findByRole("heading",{name:"Bob Lee"});
+
+    const list=screen.getByRole("group",{name:"Conversation participants"});
+    const selected=within(list).getByRole("button",{name:"Bob Lee"});
+    expect(list).toHaveAccessibleDescription("Participants · 42");
+    expect(within(list).getAllByRole("button")).toHaveLength(42);
+    expect(list.scrollTop).toBeGreaterThan(0);
+    expect(selected.getBoundingClientRect().bottom).toBeLessThanOrEqual(list.getBoundingClientRect().bottom);
+    expect(selected.getBoundingClientRect().top).toBeGreaterThanOrEqual(list.getBoundingClientRect().top);
+    expect(screen.getByRole("complementary",{name:"Conversation context"}).scrollTop).toBe(0);
+    expect(screen.getByRole("region",{name:"Contact"})).toBeInTheDocument();
+  });
+
+  it("reveals keyboard-focused badges in either direction without changing the selected contact",async()=>{
+    mockParticipantRows();
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:id===bob.id?bob:null);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    renderPanel({detail:largeDetail});
+    await screen.findByRole("heading",{name:"Bob Lee"});
+    const list=screen.getByRole("group",{name:"Conversation participants"});
+    const panel=screen.getByRole("complementary",{name:"Conversation context"});
+    panel.scrollTop=70;
+
+    const first=within(list).getByRole("button",{name:"Jane Doe"});
+    first.focus();
+    expect(first).toHaveFocus();
+    expect(list.scrollTop).toBe(0);
+    expect(first).toHaveAttribute("aria-pressed","false");
+
+    const last=within(list).getByRole("button",{name:"Person 40"});
+    last.focus();
+    expect(last).toHaveFocus();
+    expect(list.scrollTop).toBeGreaterThan(0);
+    expect(last.getBoundingClientRect().bottom).toBeLessThanOrEqual(list.getBoundingClientRect().bottom);
+    const priorScroll=list.scrollTop;
+    last.focus();
+    expect(list.scrollTop).toBe(priorScroll);
+    expect(within(list).getByRole("button",{name:"Bob Lee"})).toHaveAttribute("aria-pressed","true");
+    expect(panel.scrollTop).toBe(70);
+
+    fireEvent.click(first);
+    await screen.findByRole("heading",{name:"Jane Doe"});
+    expect(list.scrollTop).toBe(0);
+    expect(first).toHaveAttribute("aria-pressed","true");
+    expect(panel.scrollTop).toBe(70);
+  });
+
+  it("reveals the preferred sender when switching conversations",async()=>{
+    mockParticipantRows();
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:id===bob.id?bob:null);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    const {rerender}=renderPanel({detail:largeDetail});
+    await screen.findByRole("heading",{name:"Bob Lee"});
+    const list=screen.getByRole("group",{name:"Conversation participants"});
+    const previousScroll=list.scrollTop;
+
+    const nextDetail={...largeDetail,thread:{...largeDetail.thread,id:"thread-2"},messages:[
+      largeDetail.messages[0],{...largeDetail.messages[1],sender:"Person 20 <person20@example.com>"},
+    ]};
+    rerender(<ContextPanel detail={nextDetail} accounts={[account]} onOpenThread={vi.fn()} onOpenContact={vi.fn()}/>);
+    await screen.findByRole("heading",{name:"Person 20"});
+    const selected=within(list).getByRole("button",{name:"Person 20"});
+    expect(selected).toHaveAttribute("aria-pressed","true");
+    expect(list.scrollTop).toBeLessThan(previousScroll);
+    expect(selected.getBoundingClientRect().top).toBeGreaterThanOrEqual(list.getBoundingClientRect().top);
+    expect(selected.getBoundingClientRect().bottom).toBeLessThanOrEqual(list.getBoundingClientRect().bottom);
+  });
+
+  it("leaves short lists unscrolled and omits the selector for a single participant",async()=>{
+    mockParticipantRows();
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:bob);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    const {rerender}=renderPanel();
+    await screen.findByRole("heading",{name:"Bob Lee"});
+    expect(screen.getByRole("group",{name:"Conversation participants"}).scrollTop).toBe(0);
+    expect(screen.getByText("Participants · 2")).toBeInTheDocument();
+
+    const singleDetail={...detail,messages:[{...detail.messages[0],recipients:["You <you@example.com>"]}]};
+    rerender(<ContextPanel detail={singleDetail} accounts={[account]} onOpenThread={vi.fn()} onOpenContact={vi.fn()}/>);
+    await screen.findByRole("heading",{name:"Jane Doe"});
+    expect(screen.queryByRole("group",{name:"Conversation participants"})).not.toBeInTheDocument();
+    expect(screen.queryByText(/Participants ·/)).not.toBeInTheDocument();
   });
 
   it("uses a saved contact name on participant chips even when the message says only a first name",async()=>{
@@ -97,6 +210,7 @@ describe("ContextPanel",()=>{
     await screen.findByRole("heading",{name:"Jane Doe"});
     const participants=screen.getByRole("group",{name:"Conversation participants"});
     await waitFor(()=>expect(within(participants).getAllByRole("button")).toHaveLength(2));
+    expect(participants).toHaveAccessibleDescription("Participants · 2");
     const janeChip=within(participants).getByRole("button",{name:"Jane Doe"});
     expect(janeChip).toHaveAttribute("aria-pressed","true");
     expect(janeChip).toHaveAttribute("title","jane@example.com, jane@work.example.com");
