@@ -37,6 +37,11 @@ jobs:
           THREESTRANDS_GOOGLE_CLIENT_ID: ${{ inputs.release == true && secrets.THREESTRANDS_GOOGLE_CLIENT_ID || '' }}
           THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ inputs.release == true && secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET || '' }}
           THREESTRANDS_RELEASE_BUILD: ${{ inputs.release == true && '1' || '0' }}
+          # Avoid full debug symbols and incremental caches on ephemeral runners.
+          CARGO_BUILD_JOBS: "2"
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
+          CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
         with:
           platform: linux/amd64
           push: never
@@ -45,6 +50,10 @@ jobs:
             THREESTRANDS_GOOGLE_CLIENT_ID
             THREESTRANDS_GOOGLE_CLIENT_SECRET
             THREESTRANDS_RELEASE_BUILD
+            CARGO_BUILD_JOBS
+            CARGO_INCREMENTAL
+            CARGO_PROFILE_DEV_DEBUG
+            CARGO_PROFILE_TEST_DEBUG
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v6

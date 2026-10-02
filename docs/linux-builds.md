@@ -106,6 +106,16 @@ export an OCI archive, which the runner's default `docker` driver cannot export
 without the containerd image store. The explicit builder avoids depending on
 that runner setting. See [Docker's OCI exporter documentation](https://docs.docker.com/build/exporters/oci-docker/).
 
+Both Linux CI jobs limit Cargo to two concurrent compilation jobs, disable
+incremental compilation, and use `line-tables-only` debug information for dev
+and test builds. This retains filename/line-number backtraces while reducing
+the test build's disk and memory requirements. Test assertions, overflow checks,
+and release optimization settings retain their defaults. These overrides are
+explicitly forwarded into the container and do not affect local builds.
+See [Cargo's profile documentation](https://doc.rust-lang.org/cargo/reference/profiles.html).
+The build script reports disk space, memory, and Rust target directory size
+before building and after command failures, preserving the failing exit status.
+
 Run the release workflow regression tests with:
 
 ```sh
@@ -145,6 +155,11 @@ runtime checks before advertising ARM64 support.
 
 ## Troubleshooting
 
+- `collect2: fatal error: ld terminated with signal 7 [Bus error]` means the
+  linker crashed. Check the resource report at the end of the log for disk or
+  memory pressure. The signal alone does not establish whether this is resource
+  exhaustion or a linker defect; keep the full linker backtrace if resources
+  are available. Ensure the tag contains the current CI resource settings.
 - `OCI exporter is not supported for the docker driver` means the devcontainer
   build used the default Docker builder. Ensure the Buildx setup step runs
   before `devcontainers/ci` and selects the `docker-container` driver. A release

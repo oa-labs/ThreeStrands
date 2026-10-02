@@ -45,6 +45,25 @@ if [[ "$release_build" == "1" ]]; then
   fi
 fi
 
+report_build_resources() {
+  echo "Linux build resources:"
+  # Diagnostics are best-effort so they cannot hide the original build failure.
+  df -h "$project_root" /tmp || true
+  free -h || true
+  if [[ -d "$project_root/src-tauri/target" ]]; then
+    du -sh "$project_root/src-tauri/target" || true
+  fi
+}
+
+build_failed() {
+  local status=$?
+  trap - ERR
+  echo "Linux build failed (exit $status); reporting available resources" >&2
+  report_build_resources
+  exit "$status"
+}
+trap build_failed ERR
+
 echo "Building ThreeStrands Linux x86-64 packages"
 echo "Bundles: $bundle_selection"
 echo "Node:  $(node --version)"
@@ -53,6 +72,7 @@ echo "Rust:  $(rustc --version)"
 echo "Cargo: $(cargo --version)"
 echo "Tauri: $(pnpm exec tauri --version)"
 
+report_build_resources
 pnpm install --frozen-lockfile
 pnpm test
 cargo test --locked --manifest-path src-tauri/Cargo.toml

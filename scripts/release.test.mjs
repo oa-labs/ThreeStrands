@@ -22,6 +22,70 @@ describe("Linux CI container builds", () => {
       assert.match(setup, /^ {10}use: true$/m);
       assert.match(steps[buildIndex], /^ {10}platform: linux\/amd64$/m);
     });
+
+    it(`${path} forwards resource limits into the Linux build container`, async () => {
+      const workflow = await readFile(new URL(`../.github/workflows/${path}`, import.meta.url), "utf8");
+      const jobBlock = workflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0];
+      const buildStep = jobBlock?.split(/\n {6}- /).find((step) => /uses: devcontainers\/ci@/.test(step));
+      assert.ok(buildStep, "Missing devcontainer build step");
+      for (const [name, value] of [
+        ["CARGO_BUILD_JOBS", "2"], ["CARGO_INCREMENTAL", "0"],
+        ["CARGO_PROFILE_DEV_DEBUG", "line-tables-only"],
+        ["CARGO_PROFILE_TEST_DEBUG", "line-tables-only"],
+      ]) {
+        assert.match(buildStep, new RegExp(`^ {10}${name}: "${value}"$`, "m"));
+        assert.match(buildStep, new RegExp(`^ {12}${name}$`, "m"), `${name} must reach the container`);
+      }
+    });
+  }
+
+  for (const diagnosticsFail of [false, true]) {
+    it(`reports resources after a Rust failure and preserves its exit status (diagnostics fail: ${diagnosticsFail})`, async (t) => {
+      const directory = await mkdtemp(join(tmpdir(), "threestrands linux test "));
+      t.after(() => rm(directory, { recursive: true, force: true }));
+      for (const folder of ["scripts", "bin", "src-tauri/target/debug"]) {
+        await mkdir(join(directory, folder), { recursive: true });
+      }
+      await writeFile(join(directory, "scripts/build-linux.sh"), await readFile(new URL("./build-linux.sh", import.meta.url)));
+      const log = join(directory, "commands.jsonl");
+      const fakeTool = join(directory, "bin/tool");
+      await writeFile(fakeTool, `#!${process.execPath}
+const { appendFileSync } = require("node:fs");
+const { basename } = require("node:path");
+const name = basename(process.argv[1]);
+const args = process.argv.slice(2);
+appendFileSync(process.env.LINUX_BUILD_TEST_LOG, JSON.stringify([name, ...args]) + "\\n");
+if (name === "uname") console.log(args[0] === "-s" ? "Linux" : "x86_64");
+else if (name === "cargo" && args[0] === "test") { console.error("simulated linker failure"); process.exit(23); }
+else if (["df", "free", "du"].includes(name)) {
+  console.log("resource diagnostic: " + name);
+  if (process.env.LINUX_BUILD_TEST_DIAGNOSTICS_FAIL === "1") process.exit(9);
+} else console.log("test tool " + name);
+`);
+      await chmod(fakeTool, 0o755);
+      for (const name of ["uname", "node", "pnpm", "rustc", "cargo", "df", "free", "du"]) {
+        await symlink(fakeTool, join(directory, "bin", name));
+      }
+      const result = spawnSync("bash", ["scripts/build-linux.sh"], {
+        cwd: directory, encoding: "utf8",
+        env: {
+          ...process.env, PATH: `${join(directory, "bin")}${delimiter}${process.env.PATH}`,
+          THREESTRANDS_RELEASE_BUILD: "0", THREESTRANDS_LINUX_BUNDLES: "deb,rpm,appimage",
+          LINUX_BUILD_TEST_LOG: log, LINUX_BUILD_TEST_DIAGNOSTICS_FAIL: diagnosticsFail ? "1" : "0",
+        },
+      });
+      assert.equal(result.status, 23, result.stderr);
+      assert.match(result.stderr, /simulated linker failure/);
+      assert.match(result.stderr, /Linux build failed \(exit 23\)/);
+      const commands = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      assert.deepEqual(commands.filter(([name, command]) => name === "pnpm" && ["install", "test", "tauri"].includes(command)), [
+        ["pnpm", "install", "--frozen-lockfile"], ["pnpm", "test"],
+      ]);
+      assert.ok(commands.some((command) => JSON.stringify(command) === JSON.stringify(["cargo", "test", "--locked", "--manifest-path", "src-tauri/Cargo.toml"])));
+      for (const name of ["df", "free", "du"]) {
+        assert.equal(commands.filter(([tool]) => tool === name).length, 2, `${name} must run before the build and on failure`);
+      }
+    });
   }
 });
 
