@@ -2129,6 +2129,32 @@ impl Database {
         })
     }
 
+    /// Requeues every permanently failed mutation with a fresh attempt budget,
+    /// for when the user wants to try again after fixing the cause (for
+    /// example reconnecting an account). Returns how many were requeued.
+    pub fn retry_failed_mutations(&self) -> DbResult<usize> {
+        self.with_connection(|connection| {
+            Ok(connection.execute(
+                "UPDATE mutations SET state = 'pending', attempts = 0, last_error = NULL,
+                    next_attempt_at = NULL
+                 WHERE state = 'failed'",
+                [],
+            )?)
+        })
+    }
+
+    /// Forgets failed mutations and quarantine records once the user has seen
+    /// them. Both are reports only: a quarantined message is reingested (and
+    /// its record replaced) whenever its thread syncs again, and a failed
+    /// mutation is never retried on its own.
+    pub fn dismiss_sync_problems(&self) -> DbResult<()> {
+        self.with_transaction(|transaction| {
+            transaction.execute("DELETE FROM mutations WHERE state = 'failed'", [])?;
+            transaction.execute("DELETE FROM quarantined_messages", [])?;
+            Ok(())
+        })
+    }
+
     /// Applies the native portion of a settings transfer atomically. Existing
     /// destination accounts keep their connection status because their
     /// keychain credentials are deliberately not part of the transfer. An

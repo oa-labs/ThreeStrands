@@ -1300,6 +1300,14 @@ mod tests {
         assert!(status.quarantined_messages[0]
             .error
             .contains("Invalid Gmail base64url body"));
+
+        database.dismiss_sync_problems().unwrap();
+        assert!(database
+            .sync_status("default")
+            .unwrap()
+            .quarantined_messages
+            .is_empty());
+        assert_eq!(database.list_threads(None).unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1573,6 +1581,42 @@ mod tests {
         assert_eq!(status.failed_mutations.len(), 1);
         assert_eq!(status.failed_mutations[0].kind, "archive");
         assert!(status.failed_mutations[0].error.contains("invalid label"));
+    }
+
+    #[tokio::test]
+    async fn failed_mutations_can_be_retried_or_dismissed() {
+        let database = Database::open_memory();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+        let failing = ContractProvider {
+            permanently_fail_mutation: true,
+            ..ContractProvider::normal()
+        };
+        sync_with(&database, "default", &failing).await.unwrap();
+        assert_eq!(database.sync_status("default").unwrap().failed_mutations.len(), 1);
+
+        assert_eq!(database.retry_failed_mutations().unwrap(), 1);
+        let status = database.sync_status("default").unwrap();
+        assert!(status.failed_mutations.is_empty());
+        assert_eq!(status.pending_mutations, 1);
+        assert_eq!(status.error, None);
+
+        sync_with(&database, "default", &failing).await.unwrap();
+        let status = database.sync_status("default").unwrap();
+        assert_eq!(status.failed_mutations.len(), 1);
+        assert_eq!(status.failed_mutations[0].attempts, 1);
+        assert_eq!(status.state, "error");
+
+        database.dismiss_sync_problems().unwrap();
+        let status = database.sync_status("default").unwrap();
+        assert!(status.failed_mutations.is_empty());
+        assert_eq!(status.pending_mutations, 0);
+        assert_eq!(status.error, None);
+        assert_eq!(status.state, "idle");
     }
 
     #[tokio::test]

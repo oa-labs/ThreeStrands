@@ -27,7 +27,9 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useId,
   useState,
+  type ReactNode,
 } from "react";
 import {
   clearLocalCrashReports,
@@ -114,25 +116,61 @@ function recoveryStatusMessage(recovery: RecoveryStatus): string {
   }
 }
 
+/** Lines of the merged sync error that are not just a failed mutation's
+ * error repeated: the native status falls back to the newest failed
+ * mutation's error, and the merged status prefixes each line with its
+ * account, so both shapes are recognised. */
+function independentSyncErrors(status: SyncStatus | null): string[] {
+  if (!status?.error) return [];
+  const failedErrors = status.failedMutations.map((mutation) => mutation.error);
+  return status.error
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !failedErrors.some((error) => line === error || line.endsWith(`: ${error}`)));
+}
+
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+export type SyncDiagnosticsActions = {
+  retryFailed(): Promise<void>;
+  dismissProblems(): Promise<void>;
+  dismissRecovery(): void;
+};
+
+function DiagnosticsIssue({
+  title,
+  children,
+  actions,
+}: {
+  title: string;
+  children: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="diagnostics-issue" role="group" aria-label={title}>
+      <div className="diagnostics-issue-header">
+        <AlertCircle size={15} aria-hidden="true" />
+        <strong>{title}</strong>
+        {actions ? <span className="diagnostics-issue-actions">{actions}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function SyncDiagnosticsDetails({
   status,
-  recovery,
   accountCount,
 }: {
   status: SyncStatus | null;
-  recovery?: RecoveryStatus | null;
   /** Connected mail accounts. The merged status only carries a cursor when
    * there is exactly one, so the row is meaningless beyond that. */
   accountCount: number;
 }) {
   return (
     <dl className="diagnostics">
-      {recovery ? (
-        <>
-          <dt>Database recovery</dt>
-          <dd className="notice">{recoveryStatusMessage(recovery)}</dd>
-        </>
-      ) : null}
       <dt>State</dt><dd>{status?.state ?? "unknown"}</dd>
       <dt>Last successful sync</dt>
       <dd>{status?.lastSuccessfulSync ? new Date(status.lastSuccessfulSync).toLocaleString() : "Never"}</dd>
@@ -143,11 +181,82 @@ function SyncDiagnosticsDetails({
         </>
       ) : null}
       <dt>Pending mutations</dt><dd>{status?.pendingMutations ?? 0}</dd>
-      <dt>Permanently failed operations</dt>
-      <dd>
-        {status?.failedMutations?.length ? (
+      <dt>Last error</dt><dd>{status?.error ?? "None"}</dd>
+    </dl>
+  );
+}
+
+export function DiagnosticsSettings({
+  status,
+  recovery,
+  accountCount,
+  actions,
+}: {
+  status: SyncStatus | null;
+  recovery?: RecoveryStatus | null;
+  accountCount: number;
+  actions?: SyncDiagnosticsActions;
+}) {
+  const [reporting, setReporting] = useState(crashReportingEnabled);
+  const [reportCount, setReportCount] = useState(() => localCrashReports().length);
+  const { pending, error, runFor } = useSettingsOperation();
+  const failed = status?.failedMutations ?? [];
+  const quarantined = status?.quarantinedMessages ?? [];
+  const syncErrors = independentSyncErrors(status);
+  const issueCount = (recovery ? 1 : 0) + (failed.length ? 1 : 0) + (quarantined.length ? 1 : 0) + (syncErrors.length ? 1 : 0);
+  const pendingCount = status?.pendingMutations ?? 0;
+
+  return (
+    <section className="settings-section" aria-label="Diagnostics">
+      <h3>Sync Health</h3>
+      <div className={`diagnostics-summary${issueCount ? " attention" : ""}`} role="status">
+        {issueCount ? <AlertCircle size={18} aria-hidden="true" /> : <CheckCircle2 size={18} aria-hidden="true" />}
+        <div>
+          <strong>{issueCount ? `${plural(issueCount, "item")} to review` : "Sync is healthy"}</strong>
+          <span>
+            {status?.lastSuccessfulSync
+              ? `Last synced ${new Date(status.lastSuccessfulSync).toLocaleString()}`
+              : "Not synced yet"}
+            {pendingCount ? ` · ${plural(pendingCount, "change")} waiting to sync` : ""}
+          </span>
+        </div>
+      </div>
+
+      {recovery ? (
+        <DiagnosticsIssue
+          title="Mail cache was recovered"
+          actions={actions ? <button type="button" onClick={actions.dismissRecovery}>Dismiss</button> : null}
+        >
+          <p>{recoveryStatusMessage(recovery)}</p>
+        </DiagnosticsIssue>
+      ) : null}
+
+      {syncErrors.length ? (
+        <DiagnosticsIssue title="Last sync attempt failed">
+          <p>This clears automatically after the next successful sync.</p>
           <ul className="failed-mutations">
-            {status.failedMutations.map((mutation) => (
+            {syncErrors.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        </DiagnosticsIssue>
+      ) : null}
+
+      {failed.length ? (
+        <DiagnosticsIssue
+          title={`${plural(failed.length, "change")} couldn’t be applied in Gmail`}
+          actions={actions ? (
+            <>
+              <button type="button" disabled={pending !== null} onClick={() => runFor("retry", actions.retryFailed)}>
+                {pending === "retry" ? "Retrying…" : "Retry"}
+              </button>
+              <button type="button" disabled={pending !== null} onClick={() => runFor("dismiss-failed", actions.dismissProblems)}>
+                Dismiss
+              </button>
+            </>
+          ) : null}
+        >
+          <p>Gmail rejected these, so they only took effect in ThreeStrands. Retry once the cause is fixed, such as after reconnecting an account, or dismiss them.</p>
+          <ul className="failed-mutations">
+            {failed.map((mutation) => (
               <li key={mutation.id}>
                 <strong>{mutation.kind}</strong>
                 {" · "}
@@ -160,13 +269,21 @@ function SyncDiagnosticsDetails({
               </li>
             ))}
           </ul>
-        ) : "None"}
-      </dd>
-      <dt>Quarantined messages</dt>
-      <dd>
-        {status?.quarantinedMessages?.length ? (
+        </DiagnosticsIssue>
+      ) : null}
+
+      {quarantined.length ? (
+        <DiagnosticsIssue
+          title={`${plural(quarantined.length, "message")} couldn’t be read`}
+          actions={actions ? (
+            <button type="button" disabled={pending !== null} onClick={() => runFor("dismiss-quarantine", actions.dismissProblems)}>
+              Dismiss
+            </button>
+          ) : null}
+        >
+          <p>These messages were skipped so the rest of their conversations could sync. They are retried whenever their conversation changes.</p>
           <ul className="failed-mutations">
-            {status.quarantinedMessages.map((message) => (
+            {quarantined.map((message) => (
               <li key={`${message.threadId}:${message.messageId}`}>
                 <strong>Message {message.messageId}</strong>
                 {" · "}
@@ -179,32 +296,14 @@ function SyncDiagnosticsDetails({
               </li>
             ))}
           </ul>
-        ) : "None"}
-      </dd>
-      <dt>Last error</dt><dd>{status?.error ?? "None"}</dd>
-    </dl>
-  );
-}
+        </DiagnosticsIssue>
+      ) : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
 
-export function DiagnosticsSettings({
-  status,
-  recovery,
-  accountCount,
-}: {
-  status: SyncStatus | null;
-  recovery?: RecoveryStatus | null;
-  accountCount: number;
-}) {
-  const [reporting, setReporting] = useState(crashReportingEnabled);
-  const [reportCount, setReportCount] = useState(() => localCrashReports().length);
-
-  return (
-    <section className="settings-section" aria-label="Diagnostics">
-      <h3>Sync Diagnostics</h3>
-      <p className="settings-hint">
-        This information can help troubleshoot synchronization problems. Most people will not need to change anything here.
-      </p>
-      <SyncDiagnosticsDetails status={status} recovery={recovery} accountCount={accountCount} />
+      <details className="settings-disclosure diagnostics-details">
+        <summary>Technical details</summary>
+        <SyncDiagnosticsDetails status={status} accountCount={accountCount} />
+      </details>
 
       <h3>Crash Reports</h3>
       <label className="settings-switch">
@@ -337,6 +436,7 @@ export function Settings({
   snippets,
   syncStatus,
   recoveryStatus,
+  syncDiagnostics,
   onAiConfigChange,
   onSettingsImported,
 }: {
@@ -351,6 +451,7 @@ export function Settings({
   snippets: SnippetSettingsState;
   syncStatus: SyncStatus | null;
   recoveryStatus: RecoveryStatus | null;
+  syncDiagnostics?: SyncDiagnosticsActions;
   onAiConfigChange(): void;
   onSettingsImported(result: SettingsImportResult): Promise<void>;
 }) {
@@ -539,7 +640,12 @@ export function Settings({
             />
           ) : null}
           {section === "diagnostics" ? (
-            <DiagnosticsSettings status={syncStatus} recovery={recoveryStatus} accountCount={mailAccounts.accounts.length} />
+            <DiagnosticsSettings
+              status={syncStatus}
+              recovery={recoveryStatus}
+              accountCount={mailAccounts.accounts.length}
+              actions={syncDiagnostics}
+            />
           ) : null}
           {section === "data" ? <DataTransferSettings onImported={onSettingsImported} /> : null}
             </>
@@ -812,7 +918,7 @@ function AccountsSettings({
   onReorder(emails: string[]): Promise<void>;
 }) {
   const { pending: busyEmail, error, setError, runFor } = useSettingsOperation();
-  const [confirmEverywhereEmail, setConfirmEverywhereEmail] = useState<string | null>(null);
+  const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
 
   const move = (index: number, direction: -1 | 1) => {
     const next = moveItem(accounts, index, direction);
@@ -860,7 +966,12 @@ function AccountsSettings({
         </div>
       ) : (
         <ul className="accounts-list">
-          {accounts.map((account, index) => (
+          {accounts.map((account, index) => {
+            const secondaryLine = [
+              account.displayName ? account.email : null,
+              account.lastSyncedAt ? `Last synced ${formatTimeOnly(account.lastSyncedAt)}` : "Not synced yet",
+            ].filter(Boolean).join(" · ");
+            return (
             <li className="account-card" key={account.email}>
               <div className="account-card-row">
                 <span className="account-card-avatar" aria-hidden="true" style={{ background: account.color }}>
@@ -868,17 +979,21 @@ function AccountsSettings({
                 </span>
                 <div className="account-card-identity">
                   <div className="account-card-heading">
-                    <strong>{account.displayName ?? account.email}</strong>
-                    <span className={`account-status ${account.status}`}>
-                      {account.status === "needs_reauth" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
-                      {account.status === "needs_reauth" ? "Needs reconnect" : "Connected"}
-                    </span>
+                    <strong title={account.displayName ?? account.email}>{account.displayName ?? account.email}</strong>
+                    <AccountStatusBadge status={account.status} />
                   </div>
-                  <span className="account-card-email">
-                    {account.displayName ? `${account.email} · ` : null}
-                    {account.lastSyncedAt ? `Last synced ${formatTimeOnly(account.lastSyncedAt)}` : "Not synced yet"}
-                  </span>
+                  <span className="account-card-email" title={secondaryLine}>{secondaryLine}</span>
                 </div>
+                {account.status === "needs_reauth" ? (
+                  <button
+                    type="button"
+                    className="account-action-button account-reconnect"
+                    disabled={busyEmail !== null}
+                    onClick={() => runFor(`reconnect:${account.email}`, () => onReconnect(account.email))}
+                  >
+                    {busyEmail === `reconnect:${account.email}` ? "Waiting for Google…" : "Reconnect"}
+                  </button>
+                ) : null}
               </div>
               <div className="account-card-controls">
                 <AccountSenderNameInput
@@ -922,58 +1037,84 @@ function AccountsSettings({
                       }
                     />
                   </label>
-                  {account.status === "needs_reauth" ? (
-                    <button
-                      type="button"
-                      className="account-action-button"
-                      disabled={busyEmail !== null}
-                      onClick={() => runFor(account.email, () => onReconnect(account.email))}
-                    >
-                      Reconnect
-                    </button>
-                  ) : null}
                   <button
                     type="button"
                     className="account-action-button danger-action"
                     disabled={busyEmail !== null}
-                    onClick={() => runFor(account.email, () => onRemove(account.email))}
+                    aria-expanded={confirmEmail === account.email}
+                    onClick={() => setConfirmEmail(account.email)}
                   >
-                    Disconnect
-                  </button>
-                  <button
-                    type="button"
-                    className="account-action-button"
-                    disabled={busyEmail !== null}
-                    aria-expanded={confirmEverywhereEmail === account.email}
-                    onClick={() => setConfirmEverywhereEmail(account.email)}
-                  >
-                    More…
+                    Disconnect…
                   </button>
                 </span>
               </div>
-              {confirmEverywhereEmail === account.email ? (
-                <InlineConfirm
-                  ariaLabel="Remove mail account from all devices confirmation"
-                  cancelLabel="Cancel"
-                  onCancel={() => setConfirmEverywhereEmail(null)}
+              {confirmEmail === account.email ? (
+                <AccountDisconnectConfirm
+                  kind="mail"
+                  email={account.email}
                   disabled={busyEmail !== null}
-                  actions={[{ label: "Remove on all devices", className: "danger-action", onClick: () => {
+                  onCancel={() => setConfirmEmail(null)}
+                  onDisconnect={() => {
+                    runFor(account.email, () => onRemove(account.email));
+                    setConfirmEmail(null);
+                  }}
+                  onRemoveEverywhere={() => {
                     runFor(account.email, () => onRemoveEverywhere(account.email));
-                    setConfirmEverywhereEmail(null);
-                  } }]}
-                >
-                  <strong>Remove from every device?</strong><br />This disconnects {account.email} everywhere. Gmail itself is not changed.
-                </InlineConfirm>
+                    setConfirmEmail(null);
+                  }}
+                />
               ) : null}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
-      <p className="accounts-footnote">
-        Disconnecting removes this account and its local ThreeStrands cache. Gmail and the account itself are not changed.
-      </p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
+  );
+}
+
+function AccountStatusBadge({ status }: { status: Account["status"] | CalendarAccount["status"] }) {
+  return (
+    <span className={`account-status ${status}`}>
+      {status === "needs_reauth" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
+      {status === "needs_reauth" ? "Needs reconnect" : "Connected"}
+    </span>
+  );
+}
+
+/** One confirmation for both removal scopes, so the destructive action is
+ * never a single click and the two scopes are compared side by side. */
+function AccountDisconnectConfirm({
+  kind,
+  email,
+  disabled,
+  onCancel,
+  onDisconnect,
+  onRemoveEverywhere,
+}: {
+  kind: "mail" | "calendar";
+  email: string;
+  disabled: boolean;
+  onCancel(): void;
+  onDisconnect(): void;
+  onRemoveEverywhere(): void;
+}) {
+  const service = kind === "mail" ? "Gmail" : "Google Calendar";
+  return (
+    <InlineConfirm
+      ariaLabel={`Disconnect ${kind} account confirmation`}
+      cancelLabel="Cancel"
+      onCancel={onCancel}
+      disabled={disabled}
+      actions={[
+        { label: "Disconnect this device", className: "danger-action", onClick: onDisconnect },
+        { label: "Remove on all devices", className: "danger-action", onClick: onRemoveEverywhere },
+      ]}
+    >
+      <strong>Disconnect {email}?</strong><br />
+      This device forgets the account{kind === "mail" ? " and its local cache" : ""}; removing it on all devices also disconnects your other devices. {service} itself is not changed.
+    </InlineConfirm>
   );
 }
 
@@ -1117,7 +1258,7 @@ function CalendarAccountsSettings({
   onSetSelection(accountId: string, calendarIds: string[]): Promise<void>;
 }) {
   const { pending: busyEmail, error, runFor } = useSettingsOperation();
-  const [confirmEverywhereEmail, setConfirmEverywhereEmail] = useState<string | null>(null);
+  const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
 
   return (
     <section className="settings-section accounts-manager" aria-label="Calendar Accounts">
@@ -1164,57 +1305,48 @@ function CalendarAccountsSettings({
                 </span>
                 <div className="account-card-identity">
                   <div className="account-card-heading">
-                    <strong>{account.email}</strong>
-                    <span className={`account-status ${account.status}`}>
-                      {account.status === "needs_reauth" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
-                      {account.status === "needs_reauth" ? "Needs reconnect" : "Connected"}
-                    </span>
+                    <strong title={account.email}>{account.email}</strong>
+                    <AccountStatusBadge status={account.status} />
                   </div>
                   <span className="account-card-email">Calendar events and availability</span>
                 </div>
+                {account.status === "needs_reauth" ? (
+                  <button
+                    type="button"
+                    className="account-action-button account-reconnect"
+                    disabled={busyEmail !== null}
+                    onClick={() => runFor(`reconnect:${account.email}`, () => onReconnect(account.email))}
+                  >
+                    {busyEmail === `reconnect:${account.email}` ? "Waiting for Google…" : "Reconnect"}
+                  </button>
+                ) : null}
                 <span className="accounts-list-actions">
-                  {account.status === "needs_reauth" ? (
-                    <button
-                      type="button"
-                      className="account-action-button"
-                      disabled={busyEmail !== null}
-                      onClick={() => runFor(account.email, () => onReconnect(account.email))}
-                    >
-                      Reconnect
-                    </button>
-                  ) : null}
                   <button
                     type="button"
                     className="account-action-button danger-action"
                     disabled={busyEmail !== null}
-                    onClick={() => runFor(account.email, () => onRemove(account.email))}
+                    aria-expanded={confirmEmail === account.email}
+                    onClick={() => setConfirmEmail(account.email)}
                   >
-                    Disconnect
-                  </button>
-                  <button
-                    type="button"
-                    className="account-action-button"
-                    disabled={busyEmail !== null}
-                    aria-expanded={confirmEverywhereEmail === account.email}
-                    onClick={() => setConfirmEverywhereEmail(account.email)}
-                  >
-                    More…
+                    Disconnect…
                   </button>
                 </span>
               </div>
-              {confirmEverywhereEmail === account.email ? (
-                <InlineConfirm
-                  ariaLabel="Remove calendar account from all devices confirmation"
-                  cancelLabel="Cancel"
-                  onCancel={() => setConfirmEverywhereEmail(null)}
+              {confirmEmail === account.email ? (
+                <AccountDisconnectConfirm
+                  kind="calendar"
+                  email={account.email}
                   disabled={busyEmail !== null}
-                  actions={[{ label: "Remove on all devices", className: "danger-action", onClick: () => {
+                  onCancel={() => setConfirmEmail(null)}
+                  onDisconnect={() => {
+                    runFor(account.email, () => onRemove(account.email));
+                    setConfirmEmail(null);
+                  }}
+                  onRemoveEverywhere={() => {
                     runFor(account.email, () => onRemoveEverywhere(account.email));
-                    setConfirmEverywhereEmail(null);
-                  } }]}
-                >
-                  <strong>Remove from every device?</strong><br />This disconnects {account.email} everywhere. Google Calendar itself is not changed.
-                </InlineConfirm>
+                    setConfirmEmail(null);
+                  }}
+                />
               ) : null}
               {account.status === "connected" ? (
                 <fieldset className="calendar-picker">
@@ -1687,14 +1819,19 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
     onChange?.();
   };
 
+  const brief = features.summarize || features.actionExtraction;
+  const testDisabled = busy || testingConnection || !keyConfigured || !resolveAiModel(provider, model)
+    || (provider === "custom" && !endpoint.trim());
+
   return (
-    <section className="settings-section" aria-label="AI provider">
+    <section className="settings-section ai-settings" aria-label="AI provider">
       <p className="settings-hint">
         Disabled by default. ThreeStrands only sends thread content to your chosen
         provider for the features you turn on below, using your own API key.
       </p>
 
-      <label className="settings-field">
+      <h3>Connection</h3>
+      <label className="settings-field settings-field-row">
         <span>Provider</span>
         <select
           value={provider}
@@ -1714,64 +1851,8 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
 
       {provider !== "none" ? (
         <>
-          <label className="settings-field">
-            <span>Reasoning model</span>
-            <input
-              value={model}
-              placeholder={AI_MODEL_PLACEHOLDERS[provider]}
-              onChange={(event) => {
-                setModel(event.target.value);
-                setConnectionTested(false);
-                saveAiModel(event.target.value);
-              }}
-            />
-          </label>
-
-          {AI_MODEL_SUGGESTIONS[provider].length > 0 ? (
-            <div className="model-suggestions" aria-label="Suggested models">
-              <span className="settings-hint">Suggestions</span>
-              <div>
-                {AI_MODEL_SUGGESTIONS[provider].map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    className={model.trim() === suggestion ? "selected" : undefined}
-                    onClick={() => {
-                      setModel(suggestion);
-                      setConnectionTested(false);
-                      saveAiModel(suggestion);
-                    }}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <p className="settings-hint">
-            Used for suggestions, briefs, and conversation chat, where working through
-            dates and multi-step questions pays off.
-          </p>
-
-          <label className="settings-field">
-            <span>Fast model</span>
-            <input
-              value={fastModel}
-              placeholder="Same as reasoning model"
-              onChange={(event) => {
-                setFastModel(event.target.value);
-                saveAiFastModel(event.target.value);
-              }}
-            />
-          </label>
-          <p className="settings-hint">
-            Optional. Used for summaries, reply drafts, and contact enrichment, which mostly
-            read and copy text. Leave blank to use the reasoning model for everything.
-          </p>
-
           {provider === "custom" ? (
-            <label className="settings-field">
+            <label className="settings-field settings-field-row">
               <span>Endpoint URL</span>
               <input
                 value={endpoint}
@@ -1785,21 +1866,18 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             </label>
           ) : null}
 
-          <label className="settings-field">
-            <span>API Key</span>
-            <input
-              type="password"
-              value={keyInput}
-              placeholder={keyConfigured ? "Saved to keychain" : "Paste API key"}
-              onChange={(event) => setKeyInput(event.target.value)}
-            />
-          </label>
-          <span className={`settings-connection-status${keyConfigured ? " configured" : ""}`} role="status">
-            {keyConfigured ? <CheckCircle2 size={13} aria-hidden="true" /> : <AlertCircle size={13} aria-hidden="true" />}
-            {keyConfigured ? "API key configured" : "API key required"}
-          </span>
-          <div className="settings-row">
+          <div className="settings-field-row ai-key-row">
+            <label className="settings-field settings-field-row">
+              <span>API Key</span>
+              <input
+                type="password"
+                value={keyInput}
+                placeholder={keyConfigured ? "Saved to keychain" : "Paste API key"}
+                onChange={(event) => setKeyInput(event.target.value)}
+              />
+            </label>
             <button
+              type="button"
               disabled={busy || !keyInput.trim()}
               onClick={() => {
                 setBusy(true);
@@ -1817,27 +1895,38 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             >
               Save Key
             </button>
-            <button
-              disabled={busy || !keyConfigured}
-              onClick={() => {
-                setBusy(true);
-                setConfigurationError(null);
-                void clearAiApiKey()
-                  .then(() => isAiApiKeyConfigured())
-                  .then(setKeyConfigured)
-                  .then(() => onChange?.())
-                  .catch((reason: unknown) => setConfigurationError(errorMessage(reason)))
-                  .finally(() => setBusy(false));
-              }}
-            >
-              Remove Key
-            </button>
           </div>
-          <div className="settings-row ai-connection-actions">
+          <div className="settings-field-detail ai-key-status">
+            <span className={`settings-connection-status${keyConfigured ? " configured" : ""}`} role="status">
+              {keyConfigured ? <CheckCircle2 size={13} aria-hidden="true" /> : <AlertCircle size={13} aria-hidden="true" />}
+              {keyConfigured ? "API key configured" : "API key required"}
+            </span>
+            <span className="settings-hint">Stored in your OS keychain, never in the mail database.</span>
+            {keyConfigured ? (
+              <button
+                type="button"
+                className="settings-link-button"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  setConfigurationError(null);
+                  void clearAiApiKey()
+                    .then(() => isAiApiKeyConfigured())
+                    .then(setKeyConfigured)
+                    .then(() => onChange?.())
+                    .catch((reason: unknown) => setConfigurationError(errorMessage(reason)))
+                    .finally(() => setBusy(false));
+                }}
+              >
+                Remove Key
+              </button>
+            ) : null}
+          </div>
+          <div className="settings-field-detail ai-connection-actions">
             <button
               className="ai-connection-test"
               type="button"
-              disabled={busy || testingConnection || !keyConfigured || !resolveAiModel(provider, model) || (provider === "custom" && !endpoint.trim())}
+              disabled={testDisabled}
               onClick={() => {
                 setTestingConnection(true);
                 setConfigurationError(null);
@@ -1853,73 +1942,152 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             </button>
             {connectionTested ? <span className="settings-connection-status configured" role="status"><CheckCircle2 size={13} aria-hidden="true" /> Connection successful</span> : null}
           </div>
-          <span className="settings-hint">
-            Stored in your OS keychain, never in the mail database.
-          </span>
-          {configurationError ? <p className="form-error" role="alert">{configurationError}</p> : null}
+          {configurationError ? <p className="form-error settings-field-detail" role="alert">{configurationError}</p> : null}
+
+          <h3>Models</h3>
+          <label className="settings-field settings-field-row">
+            <span>Reasoning model</span>
+            <input
+              value={model}
+              placeholder={AI_MODEL_PLACEHOLDERS[provider]}
+              onChange={(event) => {
+                setModel(event.target.value);
+                setConnectionTested(false);
+                saveAiModel(event.target.value);
+              }}
+            />
+          </label>
+          <div className="settings-field-detail">
+            {AI_MODEL_SUGGESTIONS[provider].length > 0 ? (
+              <div className="model-suggestions" aria-label="Suggested models">
+                {AI_MODEL_SUGGESTIONS[provider].map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    className={model.trim() === suggestion ? "selected" : undefined}
+                    onClick={() => {
+                      setModel(suggestion);
+                      setConnectionTested(false);
+                      saveAiModel(suggestion);
+                    }}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <p className="settings-hint">
+              Used for suggestions, briefs, and conversation chat, where working through
+              dates and multi-step questions pays off.
+            </p>
+          </div>
+
+          <label className="settings-field settings-field-row">
+            <span>Fast model</span>
+            <input
+              value={fastModel}
+              placeholder="Same as reasoning model"
+              onChange={(event) => {
+                setFastModel(event.target.value);
+                saveAiFastModel(event.target.value);
+              }}
+            />
+          </label>
+          <p className="settings-hint settings-field-detail">
+            Optional. Used for summaries, reply drafts, and contact enrichment, which mostly
+            read and copy text. Leave blank to use the reasoning model for everything.
+          </p>
 
           <h3>Features</h3>
-          <label className="settings-switch">
-            <span>Draft Assist</span>
-            <input
-              type="checkbox"
+          <div className="settings-toggle-list">
+            <SettingsToggle
+              label="Draft Assist"
+              description="Drafts a reply from a short instruction when you reply."
               checked={features.draftAssist}
-              onChange={(event) => updateFeature("draftAssist", event.target.checked)}
+              onChange={(value) => updateFeature("draftAssist", value)}
             />
-          </label>
-          <label className="settings-switch">
-            <span>Thread Summaries</span>
-            <input
-              type="checkbox"
+            <SettingsToggle
+              label="Thread Summaries"
+              description="Summarizes the open conversation."
               checked={features.summarize}
-              onChange={(event) => updateFeature("summarize", event.target.checked)}
+              onChange={(value) => updateFeature("summarize", value)}
             />
-          </label>
-          <label className="settings-switch">
-            <span>Suggestions</span>
-            <input
-              type="checkbox"
+            <SettingsToggle
+              label="Suggestions"
+              description="Suggests next steps, such as tasks and meetings, for the open conversation."
               checked={features.actionExtraction}
-              onChange={(event) => updateFeature("actionExtraction", event.target.checked)}
+              onChange={(value) => updateFeature("actionExtraction", value)}
             />
-          </label>
-          <label className="settings-switch">
-            <span>Thread Chat</span>
-            <input
-              type="checkbox"
-              checked={features.threadChat}
-              onChange={(event) => updateFeature("threadChat", event.target.checked)}
-            />
-          </label>
-          <p className="settings-hint">Thread chat answers questions about the open conversation. Press q or ⌘J to ask; Escape returns to shortcuts. It shares other emails only for a question where you choose Search all mail.</p>
-          <label className="settings-switch">
-            <span>Proactive Suggestions</span>
-            <input
-              type="checkbox"
+            <SettingsToggle
+              label="Proactive Suggestions"
+              description={`Prepares the brief once you stay on a conversation for the mark-read delay, at least ${MIN_PROACTIVE_DWELL_SECONDS} seconds. They skip mailing lists and conversations with no one else in them, and read each conversation again only when a new message arrives.${brief ? "" : " Turn on Thread Summaries or Suggestions first."}`}
               checked={features.proactiveBriefs}
-              disabled={!features.summarize && !features.actionExtraction}
-              onChange={(event) => updateFeature("proactiveBriefs", event.target.checked)}
+              disabled={!brief}
+              onChange={(value) => updateFeature("proactiveBriefs", value)}
             />
-          </label>
-          <label className="settings-switch">
-            <span>Only for People I&rsquo;ve Emailed</span>
-            <input
-              type="checkbox"
+            <SettingsToggle
+              label="Only for People I’ve Emailed"
+              description="Limits proactive suggestions to senders you have written to."
               checked={features.proactiveKnownSendersOnly}
-              disabled={!features.proactiveBriefs || (!features.summarize && !features.actionExtraction)}
-              onChange={(event) => updateFeature("proactiveKnownSendersOnly", event.target.checked)}
+              disabled={!features.proactiveBriefs || !brief}
+              nested
+              onChange={(value) => updateFeature("proactiveKnownSendersOnly", value)}
             />
-          </label>
-          <p className="settings-hint">Proactive suggestions prepare the brief once you stay on a conversation for the mark-read delay, at least {MIN_PROACTIVE_DWELL_SECONDS} seconds. They skip mailing lists and conversations with no one else in them, and read each conversation again only when a new message arrives.</p>
-          <label className="settings-switch">
-            <span>Contact Enrichment</span>
-            <input type="checkbox" checked={features.contactEnrichment} onChange={(event) => updateFeature("contactEnrichment", event.target.checked)} />
-          </label>
-          <p className="settings-hint">Contact enrichment starts with three local emails. If they yield no supported suggestions, it checks up to nine more. You can choose to search more emails when the first three yield suggestions.</p>
+            <SettingsToggle
+              label="Thread Chat"
+              description="Answers questions about the open conversation. Press q or ⌘J to ask; Escape returns to shortcuts. It shares other emails only for a question where you choose Search all mail."
+              checked={features.threadChat}
+              onChange={(value) => updateFeature("threadChat", value)}
+            />
+            <SettingsToggle
+              label="Contact Enrichment"
+              description="Starts with three local emails. If they yield no supported suggestions, it checks up to nine more. You can choose to search more emails when the first three yield suggestions."
+              checked={features.contactEnrichment}
+              onChange={(value) => updateFeature("contactEnrichment", value)}
+            />
+          </div>
+
           <AiUsageSummary provider={provider} model={resolveAiModel(provider, model)} fastModel={fastModel} />
         </>
       ) : null}
     </section>
+  );
+}
+
+/** A switch whose accessible name stays the short label while its longer
+ * explanation is attached as a description, so the row reads as one unit
+ * without the explanation floating loose below unrelated switches. */
+function SettingsToggle({
+  label,
+  description,
+  checked,
+  disabled = false,
+  nested = false,
+  onChange,
+}: {
+  label: string;
+  description?: string;
+  checked: boolean;
+  disabled?: boolean;
+  nested?: boolean;
+  onChange(value: boolean): void;
+}) {
+  const descriptionId = useId();
+  return (
+    <label className={`settings-switch settings-toggle${nested ? " nested" : ""}${disabled ? " disabled" : ""}`}>
+      <span className="settings-toggle-text">
+        <span className="settings-toggle-label">{label}</span>
+        {description ? <span className="settings-toggle-description" id={descriptionId}>{description}</span> : null}
+      </span>
+      <input
+        type="checkbox"
+        aria-label={label}
+        aria-describedby={description ? descriptionId : undefined}
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </label>
   );
 }
 

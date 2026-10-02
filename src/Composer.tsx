@@ -194,13 +194,14 @@ export const Composer = forwardRef<ComposerHandle, {
     setReplyAssistBusy(true);
     setReplyAssistError("");
     try {
-      const { provider, model, endpoint } = readAiRequestConfig("drafting a reply", "replyDraft");
+      const { provider, model, endpoint, reasoning } = readAiRequestConfig("drafting a reply", "replyDraft");
       const result = await mailClient.generateReply(
         replyAssistContext,
         replyInstruction,
         provider,
         model,
         endpoint,
+        reasoning,
       );
       if (!bodyEditor.current) return;
       // The provider's output is always handled as text. `plainTextToHtml`

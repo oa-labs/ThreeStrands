@@ -65,7 +65,15 @@ export type AiRequestConfig = {
   model: string;
   /** Only set for the `custom` provider, where it is required. */
   endpoint: string | null;
+  /**
+   * `off` asks the model to skip reasoning. Sent only when the work goes to a
+   * fast model the user configured; the native layer applies it where the
+   * provider documents a switch and retries without it if the model refuses.
+   */
+  reasoning: AiReasoning;
 };
+
+export type AiReasoning = "default" | "off";
 
 /** The AI work the app sends to a provider, each served by one model tier. */
 export type AiModelUse = "summary" | "replyDraft" | "contactEnrichment" | "actionExtraction" | "brief" | "threadChat";
@@ -96,6 +104,15 @@ export function resolveAiModelFor(provider: AiProvider, use: AiModelUse, model: 
 }
 
 /**
+ * Reasoning is turned off only for fast-tier work that actually runs on a
+ * fast model. With no fast model, that work uses the reasoning model as
+ * configured, so its behavior does not change.
+ */
+export function aiReasoningFor(use: AiModelUse, fastModel: string): AiReasoning {
+  return AI_MODEL_TIERS[use] === "fast" && fastModel.trim() ? "off" : "default";
+}
+
+/**
  * Reads the saved provider settings for an AI request, throwing a message
  * that names `action` (e.g. "summarizing") when they are incomplete. `use`
  * picks the fast or reasoning model.
@@ -107,7 +124,7 @@ export function readAiRequestConfig(action: string, use: AiModelUse): AiRequestC
   if (!model) throw new Error(`Set a model in AI settings before ${action}.`);
   const endpoint = provider === "custom" ? readAiEndpoint().trim() : null;
   if (provider === "custom" && !endpoint) throw new Error(`Set an endpoint URL in AI settings before ${action}.`);
-  return { provider, model, endpoint };
+  return { provider, model, endpoint, reasoning: aiReasoningFor(use, readAiFastModel()) };
 }
 
 const PROVIDER_KEY = "threestrands.settings.ai.provider";

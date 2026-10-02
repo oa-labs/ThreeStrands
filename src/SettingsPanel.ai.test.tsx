@@ -55,6 +55,20 @@ describe("AI provider feature settings", () => {
     expect(screen.getByRole("group", { name: "Prices for example/reasoning" })).toBeInTheDocument();
   });
 
+  it("groups the page and attaches each feature's explanation to its switch", () => {
+    render(<AiProviderSettings />);
+    for (const name of ["Connection", "Models", "Features"]) {
+      expect(screen.getByRole("heading", { name })).toBeInTheDocument();
+    }
+    expect(screen.getByRole("checkbox", { name: "Contact Enrichment" }))
+      .toHaveAccessibleDescription(/starts with three local emails/i);
+    expect(screen.getByRole("checkbox", { name: "Proactive Suggestions" }))
+      .toHaveAccessibleDescription(/Turn on Thread Summaries or Suggestions first/);
+    // No key is saved, so there is nothing to remove yet.
+    expect(screen.getByRole("status")).toHaveTextContent("API key required");
+    expect(screen.queryByRole("button", { name: "Remove Key" })).not.toBeInTheDocument();
+  });
+
   it("saves the Thread Chat switch and explains how to enter and leave it", () => {
     render(<AiProviderSettings />);
     fireEvent.click(screen.getByRole("checkbox", { name: "Thread Chat" }));

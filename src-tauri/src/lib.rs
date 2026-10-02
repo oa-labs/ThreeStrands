@@ -1108,6 +1108,26 @@ async fn sync_status(state: State<'_, AppState>) -> Result<SyncStatus, String> {
     run_database_task(move || combined_sync_status(database.as_ref())).await
 }
 
+#[tauri::command]
+async fn retry_failed_mutations(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+    let database = state.database.clone();
+    run_database_task(move || {
+        database_result(database.retry_failed_mutations())?;
+        combined_sync_status(database.as_ref())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn dismiss_sync_problems(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+    let database = state.database.clone();
+    run_database_task(move || {
+        database_result(database.dismiss_sync_problems())?;
+        combined_sync_status(database.as_ref())
+    })
+    .await
+}
+
 /// `Some` only when this launch had to recover the local database (restored
 /// from a backup, or recreated fresh) — see `db::open_with_recovery`. The
 /// frontend uses this once at startup to explain a resync/empty inbox rather
@@ -2482,6 +2502,7 @@ async fn ai_summarize_thread(
     provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
+    reasoning: Option<ai::Reasoning>,
     state: State<'_, AppState>,
 ) -> Result<SummaryResult, String> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
@@ -2490,6 +2511,7 @@ async fn ai_summarize_thread(
         provider,
         model,
         endpoint,
+        reasoning: reasoning.unwrap_or_default(),
         subject: detail.thread.subject,
         messages: detail
             .messages
@@ -2814,6 +2836,7 @@ async fn ai_enrich_contact(
     empty_fields: Option<Vec<String>>,
     search_more: Option<bool>,
     account_id: Option<String>,
+    reasoning: Option<ai::Reasoning>,
     state: State<'_, AppState>,
 ) -> Result<ai::ContactEnrichmentResult, String> {
     let profile = state
@@ -2862,6 +2885,7 @@ async fn ai_enrich_contact(
             provider,
             model,
             endpoint,
+            reasoning: reasoning.unwrap_or_default(),
             profile,
             messages,
             search_more: search_more.unwrap_or(false),
@@ -2906,6 +2930,7 @@ async fn ai_generate_reply(
     provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
+    reasoning: Option<ai::Reasoning>,
 ) -> Result<ReplyAssistResult, String> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     // Re-apply the native bounds even though normal callers received this
@@ -2929,6 +2954,7 @@ async fn ai_generate_reply(
         provider,
         &model,
         endpoint.as_deref(),
+        reasoning.unwrap_or_default(),
         &api_key,
     )
     .await?;
@@ -3343,6 +3369,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         sync_status,
         sync_account,
         flush_pending_mutations,
+        retry_failed_mutations,
+        dismiss_sync_problems,
         // Mail accounts
         google_auth_status,
         connect_google,

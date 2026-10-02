@@ -189,18 +189,20 @@ describe("settings section keyboard navigation", () => {
     expect(within(dialog).queryByRole("button", { name: "Appearance" })).not.toBeInTheDocument();
   });
 
-  it("reveals device-wide account removal behind a scoped confirmation", async () => {
+  it("puts both account removal scopes behind one confirmation", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
-    fireEvent.click(await within(dialog).findByRole("button", { name: "More…" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Disconnect…" }));
 
-    expect(within(dialog).getByText("Remove from every device?")).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Remove on all devices" })).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(within(dialog).queryByText("Remove from every device?")).not.toBeInTheDocument();
+    const confirm = within(dialog).getByRole("group", { name: "Disconnect mail account confirmation" });
+    expect(within(confirm).getByRole("button", { name: "Disconnect this device" })).toBeInTheDocument();
+    expect(within(confirm).getByRole("button", { name: "Remove on all devices" })).toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(within(dialog).queryByRole("group", { name: "Disconnect mail account confirmation" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Disconnect…" })).toBeInTheDocument();
   });
 });

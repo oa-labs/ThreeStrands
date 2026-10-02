@@ -49,7 +49,7 @@ import type {
   UpdateTaskRequest,
   ProposedTimeCheck,
 } from "../domain";
-import type { AiProvider } from "../aiSettings";
+import type { AiProvider, AiReasoning } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
 import { demoClient } from "./demoClient";
 
@@ -80,6 +80,7 @@ export interface MailClient extends CorrespondenceClient {
     provider: AiProvider,
     model: string,
     endpoint: string | null,
+    reasoning?: AiReasoning,
   ): Promise<SummaryResult>;
   analyzeThread(
     threadId: string,
@@ -105,6 +106,7 @@ export interface MailClient extends CorrespondenceClient {
     provider: AiProvider,
     model: string,
     endpoint: string | null,
+    reasoning?: AiReasoning,
   ): Promise<ReplyAssistResult>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
   /** Fetches Gmail search hits missing from the local cache so a subsequent local search can include historical archived mail. */
@@ -125,13 +127,17 @@ export interface MailClient extends CorrespondenceClient {
   /** Open tasks from any conversation with the contact (a saved id or `derived:<email>`). */
   listContactTasks(id: string): Promise<ThreadTask[]>;
   /** Enhances a contact from local email history. `emptyFields` lists the fields holding nothing; only those are ever suggested for, so filled fields are neither revisited nor overwritten. */
-  enrichContact(id: string, provider: AiProvider, model: string, endpoint: string | null, emptyFields: ContactFieldSuggestion["field"][], searchMore?: boolean, accountId?: string): Promise<ContactEnrichmentResult>;
+  enrichContact(id: string, provider: AiProvider, model: string, endpoint: string | null, emptyFields: ContactFieldSuggestion["field"][], searchMore?: boolean, accountId?: string, reasoning?: AiReasoning): Promise<ContactEnrichmentResult>;
   pinContact(accountId: string, email: string, displayName: string | null): Promise<void>;
   unpinContact(accountId: string, email: string): Promise<void>;
   unsubscribe(messageId: string): Promise<UnsubscribeResult>;
   sync(): Promise<SyncStatus>;
   flushPending(): Promise<SyncStatus>;
   syncStatus(): Promise<SyncStatus>;
+  /** Requeues every permanently failed mailbox operation for another attempt. */
+  retryFailedMutations(): Promise<SyncStatus>;
+  /** Clears failed-operation and quarantined-message reports once reviewed. */
+  dismissSyncProblems(): Promise<SyncStatus>;
   /** `null` unless this launch had to recover the local database cache. */
   recoveryStatus(): Promise<RecoveryStatus | null>;
   googleAuthStatus(): Promise<AuthStatus>;
@@ -206,8 +212,8 @@ const tauriClient: MailClient = {
   fetchRemoteImage: (url) => complete("fetch_remote_image", { url }),
   fetchAttachmentImage: (messageId, attachmentId) => complete("fetch_attachment_image", { messageId, attachmentId }),
   previewCalendarAttachment: (messageId, attachmentId) => complete("preview_calendar_attachment", { messageId, attachmentId }),
-  summarizeThread: (threadId, provider, model, endpoint) =>
-    complete("ai_summarize_thread", { threadId, provider, model, endpoint }),
+  summarizeThread: (threadId, provider, model, endpoint, reasoning = "default") =>
+    complete("ai_summarize_thread", { threadId, provider, model, endpoint, reasoning }),
   analyzeThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
   aiUsageSummary: (days) => read("ai_usage_summary", { days }),
@@ -215,8 +221,8 @@ const tauriClient: MailClient = {
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
-  generateReply: (context, instruction, provider, model, endpoint) =>
-    complete("ai_generate_reply", { context, instruction, provider, model, endpoint }),
+  generateReply: (context, instruction, provider, model, endpoint, reasoning = "default") =>
+    complete("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning }),
   searchThreads: (request, accountId) => read("search_threads", { request, accountId }),
   backfillSearchThreads: (query, accountId) => complete("backfill_search_threads", { query, accountId }),
   mutateThread: (mutation) => complete("mutate_thread", { mutation }),
@@ -231,13 +237,15 @@ const tauriClient: MailClient = {
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
   contactTimeline: (id, offset = 0, limit = 30, accountId) => read("contact_timeline", { id, offset, limit, accountId }),
   listContactTasks: (id) => read("list_contact_tasks", { id }),
-  enrichContact: (id, provider, model, endpoint, emptyFields, searchMore = false, accountId) => complete("ai_enrich_contact", { id, provider, model, endpoint, emptyFields, searchMore, accountId }),
+  enrichContact: (id, provider, model, endpoint, emptyFields, searchMore = false, accountId, reasoning = "default") => complete("ai_enrich_contact", { id, provider, model, endpoint, emptyFields, searchMore, accountId, reasoning }),
   pinContact: (accountId, email, displayName) => complete("pin_contact", { accountId, email, displayName }),
   unpinContact: (accountId, email) => complete("unpin_contact", { accountId, email }),
   unsubscribe: (messageId) => complete("unsubscribe", { messageId }),
   sync: () => complete("sync_account"),
   flushPending: () => complete("flush_pending_mutations"),
   syncStatus: () => read("sync_status"),
+  retryFailedMutations: () => complete("retry_failed_mutations"),
+  dismissSyncProblems: () => complete("dismiss_sync_problems"),
   recoveryStatus: () => read("recovery_status"),
   googleAuthStatus: () => read("google_auth_status"),
   connectGoogle: () => complete("connect_google"),

@@ -140,7 +140,7 @@ import {
   resumeTriageSession,
   type TriageSession,
 } from "./triage";
-import { Settings, type MailAccountSettings, type SettingsSection } from "./SettingsPanel";
+import { Settings, type MailAccountSettings, type SettingsSection, type SyncDiagnosticsActions } from "./SettingsPanel";
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
@@ -332,6 +332,14 @@ export function App() {
     // launch's database open, so there's nothing to refresh later.
     void mailClient.recoveryStatus().then(setRecoveryStatus).catch(logBackgroundFailure("Recovery status check"));
   }, []);
+  const syncDiagnostics = useMemo<SyncDiagnosticsActions>(() => ({
+    retryFailed: async () => {
+      setSyncStatus(await mailClient.retryFailedMutations());
+      void mailClient.flushPending().then(setSyncStatus).catch(logBackgroundFailure("Pending mutation flush"));
+    },
+    dismissProblems: async () => setSyncStatus(await mailClient.dismissSyncProblems()),
+    dismissRecovery: () => setRecoveryStatus(null),
+  }), [setSyncStatus]);
   useEffect(() => {
     void mailClient.reconcileTasks().catch(logBackgroundFailure("Task reconciliation"));
   }, []);
@@ -1378,8 +1386,8 @@ export function App() {
     const threadId = selected.id;
     if (!beginSummary(threadId)) return;
     try {
-      const { provider, model, endpoint } = readAiRequestConfig("summarizing", "summary");
-      applySummary(threadId, await mailClient.summarizeThread(threadId, provider, model, endpoint));
+      const { provider, model, endpoint, reasoning } = readAiRequestConfig("summarizing", "summary");
+      applySummary(threadId, await mailClient.summarizeThread(threadId, provider, model, endpoint, reasoning));
     } catch (error) {
       setSummaryErrors((current) => ({
         ...current,
@@ -2777,6 +2785,7 @@ export function App() {
           snippets={snippetLibrary}
           syncStatus={syncStatus}
           recoveryStatus={recoveryStatus}
+          syncDiagnostics={syncDiagnostics}
           onAiConfigChange={refreshAiAvailability}
           onSettingsImported={applyImportedSettings}
         />

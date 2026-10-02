@@ -2115,6 +2115,19 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .failed-mutations { margin: 0; padding: 0; list-style: none; }
 .failed-mutations li + li { margin-top: 10px; }
 .failed-mutations small { display: block; color: var(--muted); margin-top: 2px; }
+.diagnostics-summary { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--success); }
+.diagnostics-summary.attention { color: var(--warning); }
+.diagnostics-summary > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.diagnostics-summary strong { color: var(--text); font-size: var(--type-ui); }
+.diagnostics-summary span { color: var(--muted); font-size: var(--type-caption); }
+.diagnostics-issue { display: flex; flex-direction: column; gap: 8px; width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); font-size: var(--type-ui); }
+.diagnostics-issue-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.diagnostics-issue-header > svg { flex-shrink: 0; color: var(--warning); }
+.diagnostics-issue-header strong { flex: 1; min-width: 0; color: var(--text); }
+.diagnostics-issue-actions { display: flex; gap: 6px; margin-left: auto; }
+.settings-section .diagnostics-issue-actions button { padding: 5px 9px; font-size: var(--type-caption); }
+.diagnostics-issue .failed-mutations { max-height: 180px; overflow-y: auto; overflow-wrap: anywhere; font-size: var(--type-caption); }
+.diagnostics-details .diagnostics { margin-top: 8px; padding: 0; font-size: var(--type-caption); }
 .label-search { padding: 8px 14px 12px; }
 .label-search input { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); outline: none; color: var(--text); background: var(--input); }
 .label-search input:focus { border-color: var(--accent); }
@@ -2197,15 +2210,21 @@ form.split-inbox-add select {
 .account-card-email { overflow: hidden; color: var(--muted); font-size: var(--type-caption); text-overflow: ellipsis; white-space: nowrap; }
 .device-roster-id { display: flex; min-width: 0; gap: 5px; color: var(--muted); font-size: var(--type-sm); }
 .device-roster-id code { min-width: 0; overflow-wrap: anywhere; user-select: all; }
-.account-card-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding-top: 10px; border-top: 1px solid var(--border); }
-.account-sender-name { display: flex; align-items: center; gap: 6px; }
+/* The controls row is identical on every card (status-dependent actions
+   live in the header row), and the action group pins right whether or not it
+   wraps, so buttons never change position between accounts. */
+.account-card-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding-top: 10px; border-top: 1px solid var(--border); }
+.account-sender-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .account-sender-name input { width: min(220px, 100%); min-width: 0; font-size: var(--type-ui); }
+.account-card-controls .account-sender-name { flex: 1 1 240px; }
+.account-card-controls .account-sender-name input { flex: 1 1 auto; width: auto; max-width: 280px; }
 .account-sender-name button { white-space: nowrap; }
 .account-status { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; padding: 2px 7px; border-radius: var(--radius-pill); color: var(--muted); background: var(--hover); font-size: var(--type-sm); }
 .account-status.connected { color: var(--secondary); background: color-mix(in srgb, var(--secondary) 12%, transparent); }
 .account-status.needs_reauth { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
 .accounts-footnote { width: 100%; margin: 2px 0 0; color: var(--muted); font-size: var(--type-sm); line-height: 1.45; }
-.accounts-list-actions { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
+.accounts-list-actions { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; margin-left: auto; }
+.settings-section button.account-reconnect { flex-shrink: 0; padding: 5px 10px; border-color: var(--primary-border); background: var(--primary); font-size: var(--type-caption); white-space: nowrap; }
 .accounts-manager .accounts-list-actions button { display: inline-flex; align-items: center; padding: 5px 8px; border: 0; border-radius: var(--radius-sm); color: var(--muted); background: transparent; font-size: var(--type-caption); cursor: pointer; }
 .accounts-manager .accounts-list-actions button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .accounts-manager .accounts-list-actions button:disabled { opacity: .4; }
@@ -2380,11 +2399,36 @@ form.split-inbox-add select {
 .settings-panel > .accounts-manager { padding: 0; }
 .settings-connection-status { display: inline-flex; align-items: center; gap: 5px; color: var(--error); font-size: var(--type-caption); }
 .settings-connection-status.configured { color: var(--secondary); }
-.model-suggestions { display: flex; width: 100%; flex-direction: column; gap: 6px; }
-.model-suggestions > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.model-suggestions { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
 .model-suggestions button { max-width: 100%; overflow: hidden; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--secondary); background: var(--input); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--type-sm); text-overflow: ellipsis; white-space: nowrap; }
 .model-suggestions button:hover, .model-suggestions button.selected { border-color: var(--accent); color: var(--text); background: var(--selected); }
-.ai-connection-actions { flex-wrap: wrap; }
+.ai-connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+/* Label-left form rows: a fixed label column keeps every control in a section
+   aligned, and .settings-field-detail indents hints and secondary controls
+   under the control they belong to. */
+.settings-field.settings-field-row, .settings-field-row { display: grid; grid-template-columns: var(--settings-label-width, 150px) minmax(0, 1fr); align-items: center; gap: 6px 14px; width: 100%; }
+.settings-field.settings-field-row > span { color: var(--text); }
+.settings-field-row select, .settings-field-row input { width: 100%; max-width: 420px; }
+.ai-key-row { grid-template-columns: minmax(0, 1fr) auto; max-width: calc(var(--settings-label-width, 150px) + 14px + 420px + 90px); }
+.settings-field-detail { width: 100%; padding-left: calc(var(--settings-label-width, 150px) + 14px); }
+.settings-field-detail .settings-hint, p.settings-field-detail { display: block; margin-top: 4px; }
+.ai-key-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.settings-section button.settings-link-button { padding: 0; border: 0; background: none; color: var(--accent); font-size: var(--type-caption); }
+.settings-section button.settings-link-button:hover:not(:disabled) { text-decoration: underline; }
+.settings-toggle-list { display: flex; flex-direction: column; width: 100%; }
+.settings-toggle-list > .settings-toggle + .settings-toggle { border-top: 1px solid var(--border); }
+.settings-toggle { align-items: flex-start; }
+.settings-toggle input { margin-top: 1px; }
+.settings-toggle.nested { padding-left: 22px; }
+.settings-toggle.disabled { cursor: default; }
+.settings-toggle.disabled .settings-toggle-label { color: var(--muted); }
+.settings-toggle-text { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.settings-toggle-description { max-width: 560px; color: var(--muted); font-size: var(--type-caption); line-height: 1.45; }
+@media (max-width: 680px) {
+  .settings-field.settings-field-row, .settings-field-row { grid-template-columns: minmax(0, 1fr); }
+  .ai-key-row { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+  .settings-field-detail { padding-left: 0; }
+}
 .font-search {
   display: flex;
   align-items: center;

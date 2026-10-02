@@ -407,6 +407,7 @@ describe("Composer Reply Assist", () => {
       "openai",
       "gpt-4o",
       null,
+      "default",
     ));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Assist" })).not.toBeInTheDocument());
     const editor = screen.getByRole("textbox", { name: "Message Body" });

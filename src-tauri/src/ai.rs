@@ -36,7 +36,30 @@ struct ProviderDescriptor {
     base_url: Option<&'static str>,
 }
 
+/// Whether a request asks the model to skip reasoning. The webview sends
+/// `Off` only for work routed to the user's fast model; everything else keeps
+/// the model's own default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Reasoning {
+    #[default]
+    Default,
+    Off,
+}
+
 impl AiProvider {
+    /// The request parameter that turns reasoning off, for providers that
+    /// document one. Fireworks accepts `reasoning_effort: "none"` on models
+    /// that can skip reasoning and rejects it on models that cannot, which the
+    /// caller answers by retrying with the model's default. Anthropic models
+    /// do not think unless asked, so they need nothing.
+    fn reasoning_off_parameter(self) -> Option<(&'static str, serde_json::Value)> {
+        match self {
+            Self::Fireworks => Some(("reasoning_effort", json!("none"))),
+            _ => None,
+        }
+    }
+
     #[cfg(test)]
     const ALL: [Self; 6] = [
         Self::None,
@@ -148,6 +171,7 @@ pub struct SummarizeRequest {
     pub provider: AiProvider,
     pub model: String,
     pub endpoint: Option<String>,
+    pub reasoning: Reasoning,
     pub subject: String,
     pub messages: Vec<ThreadMessageInput>,
 }
@@ -186,6 +210,7 @@ pub struct ContactEnrichmentRequest {
     pub provider: AiProvider,
     pub model: String,
     pub endpoint: Option<String>,
+    pub reasoning: Reasoning,
     pub profile: ContactProfile,
     pub messages: Vec<ContactMessageInput>,
     pub search_more: bool,
@@ -325,6 +350,7 @@ async fn contact_suggestions_from_batch(
         STRUCTURED_OUTPUT_TOKENS,
         0.1,
         Some(&contact_output_schema(allowed)),
+        request.reasoning,
         api_key,
     )
     .await?;
@@ -1647,7 +1673,7 @@ pub fn chat_search_terms(question: &str) -> Vec<String> {
 
 pub async fn summarize(request: SummarizeRequest, api_key: &str) -> Result<String, String> {
     let prompt = build_prompt(&request.subject, &request.messages);
-    let content = call_provider(
+    let content = call_provider_reply(
         request.provider,
         &request.model,
         request.endpoint.as_deref(),
@@ -1656,9 +1682,11 @@ pub async fn summarize(request: SummarizeRequest, api_key: &str) -> Result<Strin
         TEXT_OUTPUT_TOKENS,
         0.2,
         None,
+        request.reasoning,
         api_key,
     )
-    .await?;
+    .await?
+    .content;
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Err("The AI provider returned an empty summary".to_string());
@@ -1689,10 +1717,11 @@ pub async fn generate_reply(
     provider: AiProvider,
     model: &str,
     endpoint: Option<&str>,
+    reasoning: Reasoning,
     api_key: &str,
 ) -> Result<String, String> {
     let prompt = build_reply_prompt(context, instruction)?;
-    let content = call_provider(
+    let content = call_provider_reply(
         provider,
         model,
         endpoint,
@@ -1701,9 +1730,11 @@ pub async fn generate_reply(
         TEXT_OUTPUT_TOKENS,
         0.2,
         None,
+        reasoning,
         api_key,
     )
-    .await?;
+    .await?
+    .content;
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Err("The AI provider returned an empty reply".to_string());
@@ -1803,6 +1834,7 @@ async fn call_provider(
         max_tokens,
         temperature,
         schema,
+        Reasoning::Default,
         api_key,
     )
     .await
@@ -1817,7 +1849,8 @@ struct ProviderReply {
     stop_reason: Option<String>,
 }
 
-/// Like `call_provider`, but keeps the reported stop reason for diagnostics.
+/// Like `call_provider`, but keeps the reported stop reason for diagnostics
+/// and can ask the model to skip reasoning.
 async fn call_provider_reply(
     provider: AiProvider,
     model: &str,
@@ -1827,6 +1860,7 @@ async fn call_provider_reply(
     max_tokens: usize,
     temperature: f64,
     schema: Option<&OutputSchema>,
+    reasoning: Reasoning,
     api_key: &str,
 ) -> Result<ProviderReply, String> {
     let request = ProviderRequest {
@@ -1836,27 +1870,69 @@ async fn call_provider_reply(
         prompt,
         max_tokens,
         temperature,
+        reasoning,
     };
     let base_url = provider.base_url(endpoint)?;
-    let Some(schema) = schema else {
-        return send_provider_request(&base_url, &request, None, api_key)
-            .await
-            .map_err(|error| error.message);
-    };
-    match send_provider_request(&base_url, &request, Some(schema), api_key).await {
-        Err(error) if error.rejected_request => {
-            log::warn!(
-                target: "ai_provider",
-                "provider rejected structured output for {}; retrying without a schema: {}",
-                schema.name,
-                error.message
-            );
-            send_provider_request(&base_url, &request, None, api_key)
-                .await
-                .map_err(|error| error.message)
-        }
-        result => result.map_err(|error| error.message),
+    send_with_fallbacks(&base_url, request, schema, api_key).await
+}
+
+/// Sends a request, dropping optional parameters when the provider rejects
+/// it. A rejection does not say which parameter it objected to, so the
+/// combinations are tried from most to least capable: first without the
+/// request to skip reasoning (support varies by model), then without the
+/// structured-output schema but with the reasoning switch restored (support
+/// varies by provider, model, and on OpenRouter the routed endpoint), then
+/// without either. Callers parse every reply with the same tolerant,
+/// evidence-validating parser.
+async fn send_with_fallbacks(
+    base_url: &str,
+    mut request: ProviderRequest<'_>,
+    schema: Option<&OutputSchema>,
+    api_key: &str,
+) -> Result<ProviderReply, String> {
+    let requested = request.reasoning;
+    let mut attempts = vec![(requested, schema)];
+    if request.disables_reasoning() {
+        attempts.push((Reasoning::Default, schema));
     }
+    if schema.is_some() {
+        attempts.push((requested, None));
+        if request.disables_reasoning() {
+            attempts.push((Reasoning::Default, None));
+        }
+    }
+    let mut attempts = attempts.into_iter().peekable();
+    while let Some((reasoning, schema)) = attempts.next() {
+        request.reasoning = reasoning;
+        match send_provider_request(base_url, &request, schema, api_key).await {
+            Err(error) if error.rejected_request && attempts.peek().is_some() => {
+                let (next_reasoning, next_schema) = *attempts.peek().unwrap();
+                log::warn!(
+                    target: "ai_provider",
+                    "provider rejected the request for {} (reasoning {}, {}); retrying with reasoning {}, {}: {}",
+                    request.model,
+                    describe_reasoning(reasoning),
+                    describe_schema(schema),
+                    describe_reasoning(next_reasoning),
+                    describe_schema(next_schema),
+                    error.message
+                );
+            }
+            result => return result.map_err(|error| error.message),
+        }
+    }
+    unreachable!("at least one attempt is always made")
+}
+
+fn describe_reasoning(reasoning: Reasoning) -> &'static str {
+    match reasoning {
+        Reasoning::Default => "at the model default",
+        Reasoning::Off => "off",
+    }
+}
+
+fn describe_schema(schema: Option<&OutputSchema>) -> String {
+    schema.map_or_else(|| "no schema".to_string(), |schema| format!("schema {}", schema.name))
 }
 
 struct ProviderRequest<'a> {
@@ -1866,6 +1942,14 @@ struct ProviderRequest<'a> {
     prompt: &'a str,
     max_tokens: usize,
     temperature: f64,
+    reasoning: Reasoning,
+}
+
+impl ProviderRequest<'_> {
+    /// Whether this request carries a parameter that turns reasoning off.
+    fn disables_reasoning(&self) -> bool {
+        self.reasoning == Reasoning::Off && self.provider.reasoning_off_parameter().is_some()
+    }
 }
 
 /// One provider request that returned a successful response, whether or not
@@ -2028,6 +2112,11 @@ fn openai_body(request: &ProviderRequest<'_>, schema: Option<&OutputSchema>) -> 
         // `response_format`; requiring it yields a rejection we can fall back on.
         if matches!(request.provider, AiProvider::OpenRouter) {
             body["provider"] = json!({"require_parameters": true});
+        }
+    }
+    if request.disables_reasoning() {
+        if let Some((parameter, value)) = request.provider.reasoning_off_parameter() {
+            body[parameter] = value;
         }
     }
     // OpenRouter reports each request's price only when asked.
@@ -2347,6 +2436,7 @@ mod tests {
             prompt: "prompt",
             max_tokens: 100,
             temperature: 0.1,
+            reasoning: Reasoning::Default,
         }
     }
 
@@ -2543,6 +2633,128 @@ mod tests {
     }
 
     #[test]
+    fn only_fireworks_requests_turn_reasoning_off_and_only_when_asked() {
+        let request = |provider, reasoning| ProviderRequest {
+            reasoning,
+            ..provider_request(provider)
+        };
+        let off = openai_body(&request(AiProvider::Fireworks, Reasoning::Off), None);
+        assert_eq!(off["reasoning_effort"], json!("none"));
+        assert!(off.get("thinking").is_none());
+        let structured = openai_body(
+            &request(AiProvider::Fireworks, Reasoning::Off),
+            Some(&contact_output_schema(&CONTACT_FIELDS)),
+        );
+        assert_eq!(structured["reasoning_effort"], json!("none"));
+        assert!(structured.get("response_format").is_some());
+        assert!(openai_body(&request(AiProvider::Fireworks, Reasoning::Default), None)
+            .get("reasoning_effort")
+            .is_none());
+        // Providers without a documented, verified switch keep the model's
+        // default rather than receiving a parameter they may reject.
+        for provider in [AiProvider::OpenAi, AiProvider::OpenRouter, AiProvider::Custom] {
+            let body = openai_body(&request(provider, Reasoning::Off), None);
+            assert!(body.get("reasoning_effort").is_none(), "{provider:?}");
+            assert!(body.get("reasoning").is_none(), "{provider:?}");
+        }
+        // Anthropic models do not think unless asked.
+        let anthropic = anthropic_body(&request(AiProvider::Anthropic, Reasoning::Off), None);
+        assert!(anthropic.get("thinking").is_none());
+    }
+
+    #[test]
+    fn reasoning_mode_reads_the_webview_values_and_defaults_to_the_model() {
+        assert_eq!(serde_json::from_value::<Reasoning>(json!("off")).unwrap(), Reasoning::Off);
+        assert_eq!(serde_json::from_value::<Reasoning>(json!("default")).unwrap(), Reasoning::Default);
+        assert!(serde_json::from_value::<Reasoning>(json!("none")).is_err());
+        assert_eq!(Option::<Reasoning>::None.unwrap_or_default(), Reasoning::Default);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_reasoning_switch_is_dropped_before_the_schema() {
+        use axum::http::StatusCode;
+        type RequestLog = Arc<Mutex<Vec<serde_json::Value>>>;
+        // Rejects whichever optional parameters it is told not to support.
+        async fn respond(
+            State((requests, rejects_reasoning, rejects_schema)): State<(RequestLog, bool, bool)>,
+            Json(payload): Json<serde_json::Value>,
+        ) -> (StatusCode, Json<serde_json::Value>) {
+            let rejected = (rejects_reasoning && payload.get("reasoning_effort").is_some())
+                || (rejects_schema && payload.get("response_format").is_some());
+            requests.lock().unwrap().push(payload);
+            if rejected {
+                return (StatusCode::BAD_REQUEST, Json(json!({"error": "unsupported"})));
+            }
+            (
+                StatusCode::OK,
+                Json(json!({"choices":[{"message":{"content":"{\"suggestions\":[]}"}}]})),
+            )
+        }
+        let schema = contact_output_schema(&CONTACT_FIELDS);
+        // (rejects reasoning, rejects schema) -> which parameters each call carried.
+        for (rejects_reasoning, rejects_schema, expected) in [
+            (false, false, vec![(true, true)]),
+            (true, false, vec![(true, true), (false, true)]),
+            (true, true, vec![(true, true), (false, true), (true, false), (false, false)]),
+            // A rejection does not name the parameter, so the reasoning
+            // switch is dropped first, then restored once the schema goes.
+            (false, true, vec![(true, true), (false, true), (true, false)]),
+        ] {
+            let requests: RequestLog = Arc::new(Mutex::new(Vec::new()));
+            let app = Router::new()
+                .route("/chat/completions", post(respond))
+                .with_state((Arc::clone(&requests), rejects_reasoning, rejects_schema));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base_url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+            let request = ProviderRequest {
+                reasoning: Reasoning::Off,
+                ..provider_request(AiProvider::Fireworks)
+            };
+            let reply = send_with_fallbacks(&base_url, request, Some(&schema), "key").await;
+            let case = (rejects_reasoning, rejects_schema);
+            assert!(reply.is_ok(), "{case:?}: {:?}", reply.err());
+            let carried = requests
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|call| {
+                    (
+                        call.get("reasoning_effort").is_some(),
+                        call.get("response_format").is_some(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(carried, expected, "{case:?}");
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failure_other_than_a_rejected_request_does_not_retry_without_the_reasoning_switch() {
+        use axum::http::StatusCode;
+        async fn respond(State(calls): State<Arc<Mutex<usize>>>) -> StatusCode {
+            *calls.lock().unwrap() += 1;
+            StatusCode::TOO_MANY_REQUESTS
+        }
+        let calls = Arc::new(Mutex::new(0));
+        let app = Router::new()
+            .route("/chat/completions", post(respond))
+            .with_state(Arc::clone(&calls));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let request = ProviderRequest {
+            reasoning: Reasoning::Off,
+            ..provider_request(AiProvider::Fireworks)
+        };
+        assert!(send_with_fallbacks(&base_url, request, None, "key").await.is_err());
+        assert_eq!(*calls.lock().unwrap(), 1);
+        server.abort();
+    }
+
+    #[test]
     fn usage_is_read_from_each_protocol_and_tolerates_missing_fields() {
         assert_eq!(
             parse_usage(
@@ -2591,6 +2803,7 @@ mod tests {
             prompt: "p",
             max_tokens: 10,
             temperature: 0.1,
+            reasoning: Reasoning::Default,
         };
         assert_eq!(
             openai_body(&request(AiProvider::OpenRouter), None)["usage"],
@@ -3595,6 +3808,7 @@ mod tests {
             provider: AiProvider::Custom,
             model: "test".into(),
             endpoint: None,
+            reasoning: Reasoning::Default,
             profile,
             messages: Vec::new(),
             search_more: false,
@@ -3667,6 +3881,7 @@ mod tests {
                 provider: AiProvider::Custom,
                 model: "test".into(),
                 endpoint: Some(endpoint.clone()),
+                reasoning: Reasoning::Default,
                 subject: "Hello".into(),
                 messages: vec![ThreadMessageInput {
                     sender: "jane@example.com".into(),
@@ -3692,6 +3907,7 @@ mod tests {
             AiProvider::Custom,
             "test",
             Some(&endpoint),
+            Reasoning::Default,
             "key",
         )
         .await;
@@ -3728,6 +3944,7 @@ mod tests {
                 provider: AiProvider::Custom,
                 model: "test".into(),
                 endpoint: Some(endpoint.clone()),
+                reasoning: Reasoning::Default,
                 profile: ContactProfile {
                     id: "contact-jane".into(),
                     display_name: None,
@@ -3806,6 +4023,7 @@ mod tests {
                 provider: AiProvider::Custom,
                 model: "test".into(),
                 endpoint: Some(endpoint),
+                reasoning: Reasoning::Default,
                 profile: ContactProfile {
                     id: "contact-jane".into(),
                     display_name: Some("Jane Smith".into()),
@@ -3934,6 +4152,7 @@ mod tests {
             provider: AiProvider::Custom,
             model: "test".into(),
             endpoint: Some(endpoint.clone()),
+            reasoning: Reasoning::Default,
             profile,
             messages: vec![ContactMessageInput {
                 id: "m1".into(),

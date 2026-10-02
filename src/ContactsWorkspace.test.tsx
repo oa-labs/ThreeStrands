@@ -178,7 +178,7 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(screen.getByRole("button",{name:/Project/}));
     expect(onOpenThread).toHaveBeenCalledWith("work-thread");
     fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
-    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,"work@example.com"));
+    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,"work@example.com","default"));
   });
 
   it("does not confirm a contact save that failed",async()=>{
@@ -289,7 +289,7 @@ describe("ContactsWorkspace",()=>{
     expect(screen.queryByText("From the email")).not.toBeInTheDocument();
   });
 
-  it("enhances with the fast model when one is set",async()=>{
+  it("enhances with the fast model, reasoning off, when one is set",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.model","gpt-4o");
     localStorage.setItem("threestrands.settings.ai.fastModel","gpt-4o-mini");
@@ -297,7 +297,7 @@ describe("ContactsWorkspace",()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
     fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
-    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o-mini",null,["company","location","bio","link"],false,undefined));
+    await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o-mini",null,["company","location","bio","link"],false,undefined,"off"));
   });
 
   it("offers more emails only after the first three produced suggestions",async()=>{
@@ -312,13 +312,13 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
     await screen.findByText("I work at Acme.");
     expect(screen.getByText("3 emails reviewed")).toBeInTheDocument();
-    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,undefined);
+    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,undefined,"default");
 
     fireEvent.click(screen.getByRole("button",{name:"Search more emails"}));
     await screen.findByText("I live in Boston.");
     expect(screen.getByText("12 emails reviewed")).toBeInTheDocument();
     expect(screen.getByText("I work at Acme.")).toBeInTheDocument();
-    expect(mailClient.enrichContact).toHaveBeenLastCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],true,undefined);
+    expect(mailClient.enrichContact).toHaveBeenLastCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],true,undefined,"default");
     expect(screen.queryByRole("button",{name:"Search more emails"})).not.toBeInTheDocument();
     expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
   });
@@ -336,7 +336,7 @@ describe("ContactsWorkspace",()=>{
     const evidence=(await screen.findByText("I work at Acme.")).closest("article") as HTMLElement;
     // Name and Role already hold values, so they are never asked about, and
     // even a stray answer for them never surfaces.
-    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,undefined);
+    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,undefined,"default");
     expect(within(evidence).getByText("Company")).toBeInTheDocument();
     expect(screen.queryByText("I am the CEO.")).not.toBeInTheDocument();
     expect(screen.queryByText("CEO")).not.toBeInTheDocument();
@@ -351,7 +351,7 @@ describe("ContactsWorkspace",()=>{
     fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Typed Co"}});
     fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
     await screen.findByText("3 emails reviewed");
-    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["location","bio","link"],false,undefined);
+    expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["location","bio","link"],false,undefined,"default");
     // Even a stray suggestion for the typed field never surfaces.
     expect(screen.queryByText("I work at Acme.")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Company")).toHaveValue("Typed Co");

@@ -53,7 +53,7 @@ describe("AI provider preferences", () => {
   it("falls back to the provider's default model and omits the endpoint for hosted providers", () => {
     saveAiProvider("openai");
     saveAiEndpoint("https://ignored.example.com");
-    expect(readAiRequestConfig("summarizing", "summary")).toEqual({ provider: "openai", model: "gpt-4o", endpoint: null });
+    expect(readAiRequestConfig("summarizing", "summary")).toEqual({ provider: "openai", model: "gpt-4o", endpoint: null, reasoning: "default" });
 
     saveAiModel("  gpt-4o-mini  ");
     expect(readAiRequestConfig("summarizing", "summary").model).toBe("gpt-4o-mini");
@@ -72,6 +72,7 @@ describe("AI provider preferences", () => {
       provider: "custom",
       model: "local-llama",
       endpoint: "http://localhost:8080/v1",
+      reasoning: "default",
     });
   });
 
@@ -92,6 +93,21 @@ describe("AI provider preferences", () => {
       .toEqual(["example/fast", "example/fast", "example/fast"]);
     expect(["actionExtraction", "brief", "threadChat"].map((use) => modelFor(use as keyof typeof AI_MODEL_TIERS)))
       .toEqual(["example/reasoning", "example/reasoning", "example/reasoning"]);
+  });
+
+  it("turns reasoning off only for fast-tier work running on a configured fast model", () => {
+    saveAiProvider("fireworks");
+    saveAiModel("example/reasoning");
+    const reasoningFor = (use: keyof typeof AI_MODEL_TIERS) => readAiRequestConfig("testing", use).reasoning;
+    const fastUses = ["summary", "replyDraft", "contactEnrichment"] as const;
+    const reasoningUses = ["actionExtraction", "brief", "threadChat"] as const;
+
+    expect([...fastUses, ...reasoningUses].map(reasoningFor)).toEqual(Array(6).fill("default"));
+    saveAiFastModel("example/fast");
+    expect(fastUses.map(reasoningFor)).toEqual(["off", "off", "off"]);
+    expect(reasoningUses.map(reasoningFor)).toEqual(["default", "default", "default"]);
+    saveAiFastModel("  ");
+    expect(fastUses.map(reasoningFor)).toEqual(["default", "default", "default"]);
   });
 
   it("uses the main model for every feature while the fast model is blank", () => {
