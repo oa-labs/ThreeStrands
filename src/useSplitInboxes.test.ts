@@ -12,11 +12,15 @@ describe("useSplitInboxes", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("marks the catalog loaded even when the first listing fails", async () => {
-    vi.spyOn(mailClient, "listSplitInboxes").mockRejectedValue(new Error("offline"));
+    const offline = new Error("offline");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(mailClient, "listSplitInboxes").mockRejectedValue(offline);
     const { result } = renderHook(() => useSplitInboxes());
 
     await waitFor(() => expect(result.current.loaded).toBe(true));
     expect(result.current.splitInboxes).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith("Split inbox listing failed:", offline);
   });
 
   it("applies create, rename, and delete results to the catalog", async () => {
