@@ -29,7 +29,7 @@ jobs:
     name: Build and test
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # configure-pages reads the Pages site to resolve the base path and URL.
+    # configure-pages reads the Pages site to resolve its canonical URL.
     permissions:
       contents: read
       pages: read
@@ -53,18 +53,19 @@ jobs:
       - name: Install Chromium for Playwright
         run: pnpm exec playwright install --with-deps chromium
 
-      # Pull requests build at "/" so they pass before Pages is enabled.
+      # Pull requests can build before Pages is enabled.
       - name: Resolve the Pages URL
         id: pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v6
 
-      # test:site builds site/dist with this base and URL, then tests that exact output.
+      # Relative assets support both the custom domain and repository URL.
+      # test:site tests the same production output at both hosting paths.
       - name: Build and test the site
         run: pnpm test:site
         env:
           CI: "1"
-          SITE_BASE: ${{ steps.pages.outputs.base_path }}/
+          SITE_BASE: "./"
           SITE_URL: ${{ steps.pages.outputs.base_url && format('{0}/', steps.pages.outputs.base_url) || '' }}
 
       - name: Upload the Pages artifact

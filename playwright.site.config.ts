@@ -6,7 +6,9 @@ import { defineConfig } from "@playwright/test";
  * what it deploys.
  */
 const port = 1424;
-const base = process.env.SITE_BASE ?? "/";
+const configuredBase = process.env.SITE_BASE ?? "./";
+// Vite serves a build with relative asset URLs at the preview root.
+const base = configuredBase === "./" || configuredBase === "" ? "/" : configuredBase;
 const vite = "node node_modules/vite/bin/vite.js";
 
 export default defineConfig({

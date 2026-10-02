@@ -107,7 +107,9 @@ pnpm site:og      # re-render the social card (site/public/og.png)
 ```
 
 `.github/workflows/site.yml` deploys to GitHub Pages when `site/` changes on
-`master`.
+`master`. The production build uses relative asset URLs so the same output
+works at both the custom-domain root and `/ThreeStrands/` on GitHub Pages.
+The site tests cover both hosting paths.
 
 To connect Gmail, enable the Gmail API in a Google Cloud project, create an
 OAuth client of type **Desktop app**, and launch the native client with its

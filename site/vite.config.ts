@@ -6,6 +6,10 @@ import { defineConfig, type Plugin } from "vite";
 const siteRoot = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(siteRoot, "..");
 const { version } = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as { version: string };
+// The same Pages artifact must work at both a custom-domain root and the
+// repository path. Root-absolute assets fail at the latter when Pages reports
+// the custom domain's empty base_path.
+const siteBase = process.env.SITE_BASE ?? "./";
 
 /** Must match the widths `scripts/optimize-screenshots.mjs` writes. */
 const SHOT_WIDTHS = [800, 1440, 2880];
@@ -67,7 +71,7 @@ function icon(name: string) {
  */
 function socialUrl(file: string) {
   const siteUrl = process.env.SITE_URL;
-  return siteUrl ? new URL(file, siteUrl.endsWith("/") ? siteUrl : `${siteUrl}/`).href : `${process.env.SITE_BASE ?? "/"}${file}`;
+  return siteUrl ? new URL(file, siteUrl.endsWith("/") ? siteUrl : `${siteUrl}/`).href : `${siteBase}${file}`;
 }
 
 function siteMarkup(): Plugin {
@@ -88,7 +92,7 @@ function siteMarkup(): Plugin {
 
 export default defineConfig({
   root: siteRoot,
-  base: process.env.SITE_BASE ?? "/",
+  base: siteBase,
   publicDir: path.join(siteRoot, "public"),
   plugins: [siteMarkup()],
   server: { port: 1423, strictPort: true },

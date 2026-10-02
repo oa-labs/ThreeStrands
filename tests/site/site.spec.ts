@@ -107,6 +107,39 @@ test.describe("privacy", () => {
 });
 
 test.describe("images", () => {
+  for (const mount of ["/", "/ThreeStrands/"]) {
+    test(`the same build loads its assets and bounds images when hosted at ${mount}`, async ({ page, baseURL }) => {
+      const server = new URL(baseURL!);
+      const outsideMount: string[] = [];
+      // Mount the production output at either URL, as Pages does when a
+      // custom domain and the repository URL serve the same artifact.
+      await page.route(`${server.origin}/**`, async (route) => {
+        const requested = new URL(route.request().url());
+        if (!requested.pathname.startsWith(mount)) {
+          outsideMount.push(requested.pathname);
+          await route.abort();
+          return;
+        }
+        const asset = new URL(requested.pathname.slice(mount.length) + requested.search, server);
+        await route.fulfill({ response: await route.fetch({ url: asset.href }) });
+      });
+      await page.goto(`${server.origin}${mount}`);
+      // A missing stylesheet leaves SVGs at their intrinsic (gigantic) size.
+      await expect(page.locator(".brand-mark")).toHaveCSS("width", "32px");
+      await expect(page.locator("[data-theme-switch]")).toBeVisible();
+      await scrollThrough(page);
+      await expect.poll(() => page.locator("img").evaluateAll((images) =>
+        images.filter((image) => image.getClientRects().length > 0 && (!image.complete || image.naturalWidth === 0)).length,
+      )).toBe(0);
+      const oversized = await page.locator("img").evaluateAll((images) =>
+        images.filter((image) => image.getBoundingClientRect().width > document.documentElement.clientWidth)
+          .map((image) => image.currentSrc),
+      );
+      expect(oversized).toEqual([]);
+      expect(outsideMount).toEqual([]);
+    });
+  }
+
   test("every rendered screenshot loads and meaningful images are described", async ({ page }) => {
     await page.goto("./");
     await scrollThrough(page);
