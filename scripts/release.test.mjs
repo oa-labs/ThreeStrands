@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { describe, it } from "node:test";
 import { prepareReleaseAssets, releaseMetadata } from "./release.mjs";
 
@@ -72,6 +73,103 @@ describe("release version validation", () => {
     assert.throws(() => releaseMetadata("v0.56.0", {
       ...sources(), cargoToml: '[package]\nname = "threestrands"\n[dependencies]\nversion = "0.56.0"\n',
     }), /version missing/);
+  });
+});
+
+async function releaseCommand(t, { version = "0.56.0", branch = "master", dirty = "", failAt = "" } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), "threestrands release test "));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  for (const folder of ["scripts", "src-tauri", "bin"]) await mkdir(join(directory, folder));
+  const fixture = sources(version);
+  for (const [path, content] of [
+    ["package.json", fixture.packageJson], ["src-tauri/tauri.conf.json", fixture.tauriConfig],
+    ["src-tauri/Cargo.toml", fixture.cargoToml], ["src-tauri/Cargo.lock", fixture.cargoLock],
+  ]) await writeFile(join(directory, path), content);
+  await writeFile(join(directory, "scripts/release.mjs"), await readFile(new URL("./release.mjs", import.meta.url)));
+
+  const log = join(directory, "git-commands.jsonl");
+  const fakeGit = join(directory, "bin/git");
+  await writeFile(fakeGit, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.RELEASE_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "branch") console.log(process.env.RELEASE_TEST_BRANCH);
+if (args[0] === "status") console.log(process.env.RELEASE_TEST_DIRTY);
+const action = args[0] === "tag" ? "sign-tag" : args[0] === "push" ? (args[2] === "master" ? "push-master" : "push-tag") : "read";
+if (action === process.env.RELEASE_TEST_FAIL_AT) process.exit(7);
+`);
+  await chmod(fakeGit, 0o755);
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const [runtime, script, ...args] = packageJson.scripts.release.split(" ");
+  assert.equal(runtime, "node");
+  return {
+    directory,
+    run: () => spawnSync(process.execPath, [script, ...args], {
+      cwd: directory,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${join(directory, "bin")}${delimiter}${process.env.PATH}`,
+        RELEASE_TEST_LOG: log,
+        RELEASE_TEST_BRANCH: branch,
+        RELEASE_TEST_DIRTY: dirty,
+        RELEASE_TEST_FAIL_AT: failAt,
+      },
+    }),
+    commands: async () => {
+      try {
+        return (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      } catch (error) {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      }
+    },
+  };
+}
+
+describe("pnpm release command", () => {
+  const commands = (version) => [
+    ["branch", "--show-current"], ["status", "--porcelain"],
+    ["push", "origin", "master"],
+    ["tag", "-s", `v${version}`, "-m", `ThreeStrands v${version}`],
+    ["push", "origin", `v${version}`],
+  ];
+
+  for (const version of ["0.56.0", "0.57.0-beta.1"]) {
+    it(`pushes master, signs the current ${version} tag, and pushes only that tag`, async (t) => {
+      const fixture = await releaseCommand(t, { version });
+      const result = fixture.run();
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(await fixture.commands(), commands(version));
+    });
+  }
+
+  for (const [failAt, index] of [["push-master", 2], ["sign-tag", 3], ["push-tag", 4]]) {
+    it(`stops when ${failAt} fails`, async (t) => {
+      const fixture = await releaseCommand(t, { failAt });
+      const result = fixture.run();
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /failed \(exit 7\)/);
+      assert.deepEqual(await fixture.commands(), commands("0.56.0").slice(0, index + 1));
+    });
+  }
+
+  it("requires the master branch and committed changes before pushing", async (t) => {
+    const branch = await releaseCommand(t, { branch: "feature" });
+    assert.match(branch.run().stderr, /Switch to master/);
+    assert.deepEqual(await branch.commands(), commands("0.56.0").slice(0, 1));
+    const dirty = await releaseCommand(t, { dirty: " M package.json" });
+    assert.match(dirty.run().stderr, /Commit or stash/);
+    assert.deepEqual(await dirty.commands(), commands("0.56.0").slice(0, 2));
+  });
+
+  it("rejects inconsistent application versions before invoking Git", async (t) => {
+    const fixture = await releaseCommand(t);
+    await writeFile(join(fixture.directory, "src-tauri/Cargo.lock"), sources("0.55.3").cargoLock);
+    const result = fixture.run();
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Cargo\.lock.*requires 0\.56\.0/);
+    assert.deepEqual(await fixture.commands(), []);
   });
 });
 

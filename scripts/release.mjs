@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { appendFile, copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
@@ -80,14 +81,50 @@ export async function prepareReleaseAssets(inputDir, outputDir, version) {
   return selected.map(({ name }) => name);
 }
 
+async function readReleaseSources(directory) {
+  const paths = ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"];
+  const [packageJson, tauriConfig, cargoToml, cargoLock] = await Promise.all(
+    paths.map((path) => readFile(resolve(directory, path), "utf8")),
+  );
+  return { packageJson, tauriConfig, cargoToml, cargoLock };
+}
+
+export async function tagRelease(directory = root) {
+  const sources = await readReleaseSources(directory);
+  const tag = `v${JSON.parse(sources.packageJson).version}`;
+  releaseMetadata(tag, sources);
+
+  const git = (args, capture = false) => {
+    const result = spawnSync("git", args, {
+      cwd: directory,
+      encoding: "utf8",
+      stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(`git ${args.join(" ")} failed (${result.signal ?? `exit ${result.status}`})`);
+    }
+    return result.stdout?.trim();
+  };
+
+  if (git(["branch", "--show-current"], true) !== "master") {
+    throw new Error("Switch to master before releasing; the release tag must point to the branch being pushed");
+  }
+  if (git(["status", "--porcelain"], true)) {
+    throw new Error("Commit or stash your changes before releasing; the release version must be committed");
+  }
+
+  console.log(`Releasing ThreeStrands ${tag}`);
+  git(["push", "origin", "master"]);
+  git(["tag", "-s", tag, "-m", `ThreeStrands ${tag}`]);
+  git(["push", "origin", tag]);
+  return tag;
+}
+
 async function main() {
   const [command, argument, outputDir, version] = process.argv.slice(2);
   if (command === "validate") {
-    const paths = ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"];
-    const [packageJson, tauriConfig, cargoToml, cargoLock] = await Promise.all(
-      paths.map((path) => readFile(resolve(root, path), "utf8")),
-    );
-    const metadata = releaseMetadata(argument, { packageJson, tauriConfig, cargoToml, cargoLock });
+    const metadata = releaseMetadata(argument, await readReleaseSources(root));
     if (process.env.GITHUB_OUTPUT) {
       await appendFile(process.env.GITHUB_OUTPUT, Object.entries(metadata)
         .map(([name, value]) => `${name}=${value}\n`).join(""));
@@ -95,8 +132,10 @@ async function main() {
     console.log(JSON.stringify(metadata));
   } else if (command === "prepare-assets" && argument && outputDir && version) {
     console.log((await prepareReleaseAssets(argument, outputDir, version)).join("\n"));
+  } else if (command === "tag") {
+    await tagRelease();
   } else {
-    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION");
+    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | tag");
   }
 }
 

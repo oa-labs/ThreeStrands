@@ -52,6 +52,25 @@ Linux release packages are built in the repository's reproducible Ubuntu
 devcontainer. It produces x86-64 Debian, RPM, and AppImage artifacts whether
 the host is Linux or Apple Silicon. See the [Linux build guide](docs/linux-builds.md).
 
+### Releases
+
+Commit the release changes on `master`, then run:
+
+```sh
+pnpm release
+```
+
+This reads the version from `package.json`, checks that it matches the Tauri
+configuration, Cargo manifest, and application entry in `src-tauri/Cargo.lock`,
+then pushes `master`, creates a signed `v<version>` tag, and pushes that tag.
+It requires a clean working tree and your configured Git signing key, and stops
+if any Git command fails. For example, version `0.56.0` produces tag `v0.56.0`;
+version `0.57.0-beta.1` produces a beta prerelease tag.
+
+The release workflow builds installers and attaches them to a draft GitHub
+Release for installation checks before publishing. If the final tag push fails,
+retry `git push origin v<version>`; the signed tag already exists locally.
+
 ### Marketing screenshots
 
 The browser preview can run against a fictional showcase mailbox instead of

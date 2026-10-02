@@ -19,6 +19,7 @@
     "site:og": "node site/scripts/render-og.mjs",
     "test:site": "node --test site/scripts/optimize-screenshots.test.mjs && tsc --noEmit -p site && playwright test --config playwright.site.config.ts",
     "build:linux": "./scripts/build-linux.sh",
+    "release": "node scripts/release.mjs tag",
     "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {
