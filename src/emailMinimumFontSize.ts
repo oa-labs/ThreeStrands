@@ -45,7 +45,7 @@ export function createEmailFontSizeController(doc: Document): (value: number) =>
       element.style.setProperty("font-size", `${Math.max(size, minimum)}px`, "important");
       if (size < minimum && Number.isFinite(lineHeight)) {
         element.style.setProperty("line-height", `${Math.max(
-          lineHeight * minimum / size,
+          lineHeight,
           minimum * EMAIL_MINIMUM_FONT_SIZE.minLineHeightRatio,
         )}px`, "important");
       }

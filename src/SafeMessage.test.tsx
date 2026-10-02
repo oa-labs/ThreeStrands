@@ -35,13 +35,14 @@ function loadFrame(frame: HTMLIFrameElement) {
 
 describe("SafeMessage", () => {
   it("enlarges small text, leaves larger text and spacers intact, and restores author styles", () => {
-    const html = '<p style="font-size:10px;line-height:12px">Small</p><h2 style="font-size:28px">Heading</h2><div style="font-size:1px;height:8px">&nbsp;</div>';
+    const html = '<p style="font-size:10px;line-height:12px">Small</p><h2 style="font-size:28px">Heading</h2><div style="font-size:1px;height:8px">&nbsp;</div><p style="font-size:0.1px;line-height:4096px">Tiny font</p>';
     const { rerender } = render(<SafeMessage html={html} emailMinimumFontSize={18} />);
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
     const doc = loadFrame(frame);
     expect(doc.querySelector("p")!.style.fontSize).toBe("18px");
-    expect(doc.querySelector("p")!.style.lineHeight).toBe("21.6px");
+    expect(Number.parseFloat(doc.querySelector("p")!.style.lineHeight)).toBeCloseTo(21.6);
     expect(doc.querySelector("h2")!.style.fontSize).toBe("28px");
+    expect(doc.querySelector<HTMLParagraphElement>("p:last-child")!.style.lineHeight).toBe("4096px");
     expect(doc.querySelector("div[style*=height]")!.getAttribute("style")).toBe("font-size: 1px; height: 8px");
     // A proxy-resolved background arriving after load survives font changes.
     doc.querySelector("p")!.style.backgroundImage = 'url("data:image/png;base64,aGVsbG8=")';

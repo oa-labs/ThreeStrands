@@ -22,8 +22,10 @@ computed typography in the already sanitized, CSP-scoped iframe; it adds no
 sender CSS capabilities or resource paths. The accessibility override deliberately
 raises small text above author sizes, while the existing fallback CSS stays
 unchanged. All baseline sizes are read before any writes so relative descendants
-and larger headings keep their intended sizes. Explicit line spacing scales with
-enlarged text. Empty, whitespace-only, and zero-font spacers retain their structure.
+and larger headings keep their intended sizes. Explicit line spacing grows to
+at least 1.2 times the new font size; existing generous spacing is preserved
+without multiplying it by a sender-controlled tiny font size. Empty,
+whitespace-only, and zero-font spacers retain their structure.
 Changes and responsive resizing restore author styles before recalculation; off
 restores author typography. Plain-text emails also respect the floor. Raster text
 inside images cannot be enlarged independently, and sender fixed-size boxes may
