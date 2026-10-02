@@ -1,0 +1,210 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+      - name: Test release validation and artifact collection
+        run: node --test scripts/release.test.mjs
+      - name: Check tag against all application versions
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release.mjs validate "$RELEASE_TAG"
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    needs: validate
+    # Xcode 26 supports the authored Icon Composer asset. Both targets can
+    # compile on Apple Silicon; Rust tests run natively on the runner.
+    runs-on: macos-26
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+            binary_arch: arm64
+          - target: x86_64-apple-darwin
+            arch: x86_64
+            binary_arch: x86_64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: ${{ matrix.target }}
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run JavaScript tests
+        run: pnpm test
+      - name: Run Rust tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build, sign, and notarize macOS installer
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          THREESTRANDS_GOOGLE_CLIENT_ID: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_ID }}
+          THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID THREESTRANDS_GOOGLE_CLIENT_ID THREESTRANDS_GOOGLE_CLIENT_SECRET; do
+            if [[ -z "${!name}" ]]; then
+              echo "error: repository secret $name is required" >&2
+              exit 1
+            fi
+          done
+          # Tauri imports the certificate into a temporary keychain and
+          # notarizes/staples the app. Use our CLI shim for Icon Composer.
+          pnpm tauri build --target "$BUILD_TARGET" --bundles app,dmg
+      - name: Verify signature, notarization, and architecture
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          BINARY_ARCH: ${{ matrix.binary_arch }}
+          ARTIFACT_ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="src-tauri/target/$BUILD_TARGET/release/bundle"
+          app="$bundle/macos/ThreeStrands.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --display --verbose=4 "$app" 2> "$RUNNER_TEMP/codesign-details.txt"
+          grep -Fq 'Authority=Developer ID Application:' "$RUNNER_TEMP/codesign-details.txt"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          actual_arch="$(lipo -archs "$app/Contents/MacOS/threestrands")"
+          if [[ "$actual_arch" != "$BINARY_ARCH" ]]; then
+            echo "error: expected $BINARY_ARCH executable; found $actual_arch" >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          installers=("$bundle"/dmg/*.dmg)
+          if [[ "${#installers[@]}" != 1 ]]; then
+            echo "error: expected exactly one macOS DMG" >&2
+            exit 1
+          fi
+          hdiutil verify "${installers[0]}"
+          mkdir -p "artifacts/macos-$ARTIFACT_ARCH"
+          cp "${installers[0]}" "artifacts/macos-$ARTIFACT_ARCH/"
+      - name: Upload verified installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: threestrands-release-macos-${{ matrix.arch }}
+          path: artifacts/macos-${{ matrix.arch }}/*.dmg
+          if-no-files-found: error
+
+  linux:
+    name: Linux x86-64 packages
+    needs: validate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and verify packages in the devcontainer
+        uses: devcontainers/ci@v0.3
+        env:
+          THREESTRANDS_GOOGLE_CLIENT_ID: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_ID }}
+          THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET }}
+          THREESTRANDS_RELEASE_BUILD: "1"
+        with:
+          platform: linux/amd64
+          push: never
+          runCmd: ./scripts/build-linux.sh
+          env: |
+            THREESTRANDS_GOOGLE_CLIENT_ID
+            THREESTRANDS_GOOGLE_CLIENT_SECRET
+            THREESTRANDS_RELEASE_BUILD
+      - name: Upload verified packages
+        uses: actions/upload-artifact@v6
+        with:
+          name: threestrands-release-linux-amd64
+          path: artifacts/linux-amd64/
+          if-no-files-found: error
+
+  release:
+    name: Create draft GitHub Release
+    needs: [validate, macos, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Only this job can write repository contents. It has no signing secrets.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+      - name: Download this run's build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: threestrands-release-*
+          path: artifacts/release-input
+      - name: Collect all installers and generate checksums
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: node scripts/release.mjs prepare-assets artifacts/release-input artifacts/release-assets "$RELEASE_VERSION"
+      - name: Create or update the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_CHANNEL: ${{ needs.validate.outputs.channel }}
+          RELEASE_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/release-is-draft"; then
+            if [[ "$(cat "$RUNNER_TEMP/release-is-draft")" != true ]]; then
+              echo "error: refusing to replace assets of published release $RELEASE_TAG" >&2
+              exit 1
+            fi
+            gh release edit "$RELEASE_TAG" --draft --prerelease="$RELEASE_PRERELEASE"
+          else
+            flags=()
+            if [[ "$RELEASE_PRERELEASE" == true ]]; then
+              flags+=(--prerelease --latest=false)
+            fi
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "ThreeStrands $RELEASE_TAG" --generate-notes "${flags[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" artifacts/release-assets/* --clobber
+          {
+            echo "### ThreeStrands $RELEASE_TAG ($RELEASE_CHANNEL)"
+            echo
+            echo "All five installers and SHA256SUMS are attached to a draft release."
+            echo "Verify installation, then publish the draft in GitHub Releases."
+            gh release view "$RELEASE_TAG" --json url --jq '.url'
+          } >> "$GITHUB_STEP_SUMMARY"

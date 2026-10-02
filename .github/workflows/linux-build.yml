@@ -9,9 +9,6 @@ on:
         required: true
         default: false
         type: boolean
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
@@ -29,9 +26,9 @@ jobs:
       - name: Build and verify packages in the devcontainer
         uses: devcontainers/ci@v0.3
         env:
-          THREESTRANDS_GOOGLE_CLIENT_ID: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && secrets.THREESTRANDS_GOOGLE_CLIENT_ID || '' }}
-          THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET || '' }}
-          THREESTRANDS_RELEASE_BUILD: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.release == true) && '1' || '0' }}
+          THREESTRANDS_GOOGLE_CLIENT_ID: ${{ inputs.release == true && secrets.THREESTRANDS_GOOGLE_CLIENT_ID || '' }}
+          THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ inputs.release == true && secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET || '' }}
+          THREESTRANDS_RELEASE_BUILD: ${{ inputs.release == true && '1' || '0' }}
         with:
           platform: linux/amd64
           push: never
