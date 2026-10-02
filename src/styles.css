@@ -2158,7 +2158,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .accounts-manager-header > div { min-width: 0; flex: 1 1 420px; }
 .accounts-manager-header > button { flex-shrink: 0; }
 .accounts-manager-header h3 { margin-top: 0; }
-.split-inbox-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; margin: 2px 0; }
+.split-inbox-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center; width: 100%; margin: 2px 0; }
+/* Name + account, then rule kind + value, then the submit on its own row: five
+   controls in a two-column grid never leave a ragged last row. */
+.split-inbox-add > button { grid-column: 1 / -1; justify-self: start; display: inline-flex; align-items: center; gap: 6px; }
 .split-inbox-add input, .split-inbox-add select {
   width: 100%;
   min-width: 0;
@@ -2311,7 +2314,7 @@ form.split-inbox-add select {
 .settings-field-inline { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
 .settings-field.settings-field-inline input { width: 76px; }
 .settings-row { display: flex; align-items: center; gap: 10px; }
-.settings-radio-row { display: flex; gap: 16px; font-size: var(--type-ui); }
+.settings-radio-row { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: var(--type-ui); }
 .settings-radio-row label, .settings-checkbox { display: flex; align-items: center; gap: 7px; font-size: var(--type-ui); }
 /* Swatches preview each accent choice in its own color, independent of the
    accent currently applied to the document. */
@@ -2411,6 +2414,9 @@ form.split-inbox-add select {
 .settings-field-row select, .settings-field-row input { width: 100%; max-width: 420px; }
 .ai-key-row { grid-template-columns: minmax(0, 1fr) auto; max-width: calc(var(--settings-label-width, 150px) + 14px + 420px + 90px); }
 .settings-field-detail { width: 100%; padding-left: calc(var(--settings-label-width, 150px) + 14px); }
+.wide-label-settings { --settings-label-width: 210px; }
+.settings-section .settings-field-offset { margin-left: calc(var(--settings-label-width, 150px) + 14px); }
+.settings-section p.settings-connection-status { margin: 0; }
 .settings-field-detail .settings-hint, p.settings-field-detail { display: block; margin-top: 4px; }
 .ai-key-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .settings-section button.settings-link-button { padding: 0; border: 0; background: none; color: var(--accent); font-size: var(--type-caption); }
@@ -2428,6 +2434,7 @@ form.split-inbox-add select {
   .settings-field.settings-field-row, .settings-field-row { grid-template-columns: minmax(0, 1fr); }
   .ai-key-row { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   .settings-field-detail { padding-left: 0; }
+  .settings-section .settings-field-offset { margin-left: 0; }
 }
 .font-search {
   display: flex;

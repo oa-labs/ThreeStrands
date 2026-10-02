@@ -45,6 +45,9 @@ describe("DiagnosticsSettings", () => {
 
     expect(screen.getByRole("heading", { name: "Crash Reports" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Share Sanitized Crash Reports" })).toBeInTheDocument();
+    // The policy is described in plain language, not as a repository path.
+    expect(screen.getByText(/nothing from your mail is included/)).toBeInTheDocument();
+    expect(screen.queryByText(/docs\//)).not.toBeInTheDocument();
   });
 
   it("reports a healthy sync without any issue cards", () => {

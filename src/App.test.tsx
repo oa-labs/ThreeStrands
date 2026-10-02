@@ -515,7 +515,7 @@ describe("read state and auto-read", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
     const settings = await screen.findByRole("dialog", { name: "Settings" });
-    fireEvent.click(within(settings).getByRole("button", { name: "Reading" }));
+    // The mark-read delay lives on the Appearance page, which Settings opens on.
     fireEvent.change(within(settings).getByRole("spinbutton", { name: "Auto-Read Delay" }), {
       target: { value: "1" },
     });

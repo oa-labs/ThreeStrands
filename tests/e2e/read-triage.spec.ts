@@ -297,7 +297,9 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
-  await settings.locator("li", { hasText: "demo-2@example.com" }).getByRole("button", { name: "Disconnect" }).click();
+  const cardSecond = settings.locator("li", { hasText: "demo-2@example.com" });
+  await cardSecond.getByRole("button", { name: "Disconnect…" }).click();
+  await cardSecond.getByRole("button", { name: "Disconnect this device" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
@@ -405,7 +407,9 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
-  await settings.locator("li", { hasText: "demo@example.com" }).getByRole("button", { name: "Disconnect" }).click();
+  const cardOnly = settings.locator("li", { hasText: "demo@example.com" });
+  await cardOnly.getByRole("button", { name: "Disconnect…" }).click();
+  await cardOnly.getByRole("button", { name: "Disconnect this device" }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
@@ -464,7 +468,7 @@ test("marks an unread conversation read after the configured delay", async ({ pa
 
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
-  await settings.getByRole("button", { name: "Reading", exact: true }).click();
+  await settings.getByRole("button", { name: "Appearance", exact: true }).click();
   await settings.getByRole("spinbutton", { name: "Auto-Read Delay" }).fill("1");
   await page.keyboard.press("Escape");
 
@@ -503,7 +507,8 @@ test("keeps sync diagnostics and crash reports together in Settings", async ({ p
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Diagnostics", exact: true }).click();
 
-  await expect(settings.getByRole("heading", { name: "Sync Diagnostics" })).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "Sync Health" })).toBeVisible();
+  await expect(settings.getByText("Sync is healthy")).toBeVisible();
   await expect(settings.getByRole("heading", { name: "Crash Reports" })).toBeVisible();
   await expect(settings.getByRole("checkbox", { name: "Share Sanitized Crash Reports" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sync diagnostics need attention" })).not.toBeVisible();

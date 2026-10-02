@@ -15,6 +15,7 @@ export function useCalendarAccounts({ onLastAccountRemoved }: { onLastAccountRem
   const [accounts, setAccounts] = useState<CalendarAccount[]>([]);
   const [calendars, setCalendars] = useState<CalendarOption[]>([]);
   const [calendarsError, setCalendarsError] = useState<string | null>(null);
+  const [calendarsLoaded, setCalendarsLoaded] = useState(false);
 
   const accountScope = useRef<string | null>(null);
   const selectionScope = useRef<string | null>(null);
@@ -40,6 +41,7 @@ export function useCalendarAccounts({ onLastAccountRemoved }: { onLastAccountRem
       selectionScope.current = scope;
       setCalendars(next);
       setCalendarsError(null);
+      setCalendarsLoaded(true);
       return next;
     } catch (reason) {
       setCalendarsError(errorMessage(reason));
@@ -88,6 +90,7 @@ export function useCalendarAccounts({ onLastAccountRemoved }: { onLastAccountRem
     accounts,
     calendars,
     calendarsError,
+    calendarsLoaded,
     refreshAccounts,
     refreshCalendars,
     add,

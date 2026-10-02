@@ -2,7 +2,6 @@ import {
   Activity,
   AlertCircle,
   ArrowLeftRight,
-  BookOpen,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -103,7 +102,7 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 import { AiUsageSummary } from "./AiUsageSummary";
 import { MIN_PROACTIVE_DWELL_SECONDS } from "./proactiveBrief";
 
-export type SettingsSection = "replicatedSync" | "appearance" | "reading" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
+export type SettingsSection = "replicatedSync" | "appearance" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
 function recoveryStatusMessage(recovery: RecoveryStatus): string {
   switch (recovery.kind) {
@@ -318,8 +317,9 @@ export function DiagnosticsSettings({
         />
       </label>
       <span className="settings-hint">
-        Disabled by default. Email addresses and URLs are redacted.{" "}
-        Policy: <code>docs/crash-reporting.md</code>
+        Disabled by default. A report holds the error message, stack trace, app
+        version, and browser engine. Email addresses, URLs, quoted text, and
+        message headers are redacted, and nothing from your mail is included.
       </span>
       <button
         disabled={reportCount === 0}
@@ -343,22 +343,23 @@ type SettingsSectionDefinition = {
   description: string;
   keywords: string;
   icon: LucideIcon;
+  /** Every control on the page saves as it changes, with no Save button. */
+  autosaves?: boolean;
 };
 
 const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Integrations", "System"];
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
-  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and reads.", keywords: "theme light dark accent color font size family", icon: Palette },
-  { id: "reading", label: "Reading", group: "General", description: "Control what happens when you open a conversation.", keywords: "mark read delay conversation", icon: BookOpen },
+  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and when conversations are marked read.", keywords: "theme light dark accent color font size family reading mark read delay conversation", icon: Palette, autosaves: true },
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail sender name color reconnect disconnect", icon: Mail },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
-  { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock },
+  { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock, autosaves: true },
   { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern", icon: Inbox },
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
   { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
   { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted", icon: Network },
-  { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache", icon: ShieldCheck },
-  { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect synchronization health and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting", icon: Activity },
+  { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache", icon: ShieldCheck, autosaves: true },
+  { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect synchronization health and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting", icon: Activity, autosaves: true },
   { id: "data", label: "Data Transfer", group: "System", description: "Move encrypted settings and account metadata between devices.", keywords: "import export backup password", icon: ArrowLeftRight },
 ];
 
@@ -402,6 +403,8 @@ export type CalendarAccountSettingsState = {
   accounts: CalendarAccount[];
   calendars: CalendarOption[];
   calendarsError: string | null;
+  /** True once the calendar list has loaded at least once. */
+  calendarsLoaded: boolean;
   add(): Promise<void>;
   reconnect(email: string): Promise<void>;
   remove(email: string): Promise<void>;
@@ -551,7 +554,9 @@ export function Settings({
               <h2>{visibleSections.length === 0 ? "Search settings" : selectedSection.label}</h2>
               <p>{visibleSections.length === 0 ? "No matching controls or sections are currently visible." : selectedSection.description}</p>
             </div>
-            <span className="settings-save-note"><Check size={13} aria-hidden="true" /> Preference changes save automatically</span>
+            {visibleSections.length > 0 && selectedSection.autosaves ? (
+              <span className="settings-save-note"><Check size={13} aria-hidden="true" /> Preference changes save automatically</span>
+            ) : null}
           </header>
           {visibleSections.length === 0 ? (
             <div className="settings-search-empty">
@@ -574,7 +579,7 @@ export function Settings({
               onFontFamilyChange={preferences.setFontFamily}
             />
           ) : null}
-          {section === "reading" ? (
+          {section === "appearance" ? (
             <ReadingSettings
               autoReadDelaySeconds={preferences.autoReadDelaySeconds}
               onAutoReadDelayChange={preferences.setAutoReadDelaySeconds}
@@ -599,6 +604,7 @@ export function Settings({
               accounts={calendarAccounts.accounts}
               calendars={calendarAccounts.calendars}
               calendarsError={calendarAccounts.calendarsError}
+              calendarsLoaded={calendarAccounts.calendarsLoaded}
               onAdd={calendarAccounts.add}
               onReconnect={calendarAccounts.reconnect}
               onRemove={calendarAccounts.remove}
@@ -1236,11 +1242,12 @@ function AvailabilitySettings({
   );
 }
 
-function CalendarAccountsSettings({
+export function CalendarAccountsSettings({
   authStatus,
   accounts,
   calendars,
   calendarsError,
+  calendarsLoaded,
   onAdd,
   onReconnect,
   onRemove,
@@ -1251,6 +1258,7 @@ function CalendarAccountsSettings({
   accounts: CalendarAccount[];
   calendars: CalendarOption[];
   calendarsError: string | null;
+  calendarsLoaded: boolean;
   onAdd(): Promise<void>;
   onReconnect(email: string): Promise<void>;
   onRemove(email: string): Promise<void>;
@@ -1297,7 +1305,9 @@ function CalendarAccountsSettings({
         </div>
       ) : (
         <ul className="accounts-list">
-          {accounts.map((account) => (
+          {accounts.map((account) => {
+            const accountCalendars = calendars.filter((calendar) => calendar.accountId === account.email);
+            return (
             <li className="account-card" key={account.email}>
               <div className="account-card-row">
                 <span className="account-card-avatar calendar-account-avatar" aria-hidden="true">
@@ -1351,11 +1361,15 @@ function CalendarAccountsSettings({
               {account.status === "connected" ? (
                 <fieldset className="calendar-picker">
                   <legend>Calendars shown in the sidebar</legend>
-                  {calendars.filter((calendar) => calendar.accountId === account.email).length === 0 ? (
-                    <p>Loading calendars…</p>
-                  ) : calendars
-                    .filter((calendar) => calendar.accountId === account.email)
-                    .map((calendar) => (
+                  {accountCalendars.length === 0 ? (
+                    <p>
+                      {calendarsError
+                        ? "Calendars couldn’t be loaded."
+                        : calendarsLoaded
+                          ? "No calendars found for this account."
+                          : "Loading calendars…"}
+                    </p>
+                  ) : accountCalendars.map((calendar) => (
                       <label key={calendar.id}>
                         <input
                           type="checkbox"
@@ -1379,7 +1393,8 @@ function CalendarAccountsSettings({
                 </fieldset>
               ) : null}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
       {calendarsError ? <p className="form-error" role="alert">{calendarsError}</p> : null}
@@ -2105,9 +2120,9 @@ function PrivacySettings({
   }, []);
 
   return (
-    <section className="settings-section" aria-label="Privacy">
+    <section className="settings-section wide-label-settings" aria-label="Privacy">
       <h3>Local Storage</h3>
-      <label className="settings-field">
+      <label className="settings-field settings-field-row">
         <span>Keep Mail on This Device For</span>
         <select
           value={retentionDays === null ? "forever" : String(retentionDays)}
@@ -2124,7 +2139,7 @@ function PrivacySettings({
           ))}
         </select>
       </label>
-      <span className="settings-hint">
+      <span className="settings-hint settings-field-detail">
         Mail older than this is removed from ThreeStrands's local cache to keep the
         database from growing without bound. It stays on the server.
       </span>
@@ -2146,7 +2161,7 @@ function PrivacySettings({
   );
 }
 
-function DataTransferSettings({
+export function DataTransferSettings({
   onImported,
 }: {
   onImported(result: SettingsImportResult): Promise<void>;
@@ -2155,23 +2170,23 @@ function DataTransferSettings({
   const [exportConfirmation, setExportConfirmation] = useState("");
   const [importPassword, setImportPassword] = useState("");
   const [busy, setBusy] = useState<"export" | "import" | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const isDesktop = "__TAURI_INTERNALS__" in window;
   const passwordsMatch = exportPassword.length >= 8 && exportPassword === exportConfirmation;
 
   const showError = (error: unknown) => {
-    setMessage(errorMessage(error));
+    setMessage({ text: errorMessage(error), tone: "error" });
   };
 
   return (
-    <section className="settings-section" aria-label="Data transfer">
+    <section className="settings-section wide-label-settings" aria-label="Data transfer">
       <h3>Export Settings and Accounts</h3>
       <p className="settings-hint">
         Creates a password-encrypted file containing your preferences, account
         list, Split Inboxes, and retention setting. Mail, OAuth credentials,
         API keys, and other keychain secrets are never exported.
       </p>
-      <label className="settings-field">
+      <label className="settings-field settings-field-row">
         <span>Export Password</span>
         <input
           type="password"
@@ -2181,7 +2196,7 @@ function DataTransferSettings({
           disabled={!isDesktop || busy !== null}
         />
       </label>
-      <label className="settings-field">
+      <label className="settings-field settings-field-row">
         <span>Confirm Password</span>
         <input
           type="password"
@@ -2191,9 +2206,14 @@ function DataTransferSettings({
           disabled={!isDesktop || busy !== null}
         />
       </label>
+      {exportPassword.length > 0 && exportPassword.length < 8 ? (
+        <span className="settings-hint settings-field-detail">Use at least 8 characters.</span>
+      ) : exportConfirmation.length > 0 && exportPassword !== exportConfirmation ? (
+        <span className="settings-hint settings-field-detail">Passwords don’t match.</span>
+      ) : null}
       <button
         type="button"
-        className="settings-transfer-action"
+        className="settings-transfer-action settings-field-offset"
         disabled={!isDesktop || !passwordsMatch || busy !== null}
         onClick={() => {
           setBusy("export");
@@ -2201,7 +2221,7 @@ function DataTransferSettings({
           void exportSettings(exportPassword)
             .then((path) => {
               if (path) {
-                setMessage(`Settings exported to ${path}`);
+                setMessage({ text: `Settings exported to ${path}`, tone: "success" });
                 setExportPassword("");
                 setExportConfirmation("");
               }
@@ -2220,7 +2240,7 @@ function DataTransferSettings({
         Existing connected accounts stay connected. Other imported accounts
         appear as “Connect on this device” and require Google authorization.
       </p>
-      <label className="settings-field">
+      <label className="settings-field settings-field-row">
         <span>Backup File Password</span>
         <input
           type="password"
@@ -2233,7 +2253,7 @@ function DataTransferSettings({
       </label>
       <button
         type="button"
-        className="settings-transfer-action"
+        className="settings-transfer-action settings-field-offset"
         disabled={!isDesktop || importPassword.length < 8 || busy !== null}
         onClick={() => {
           setBusy("import");
@@ -2255,7 +2275,12 @@ function DataTransferSettings({
           Settings transfer is available in the ThreeStrands desktop app.
         </p>
       ) : null}
-      {message ? <p className="settings-hint" role="status">{message}</p> : null}
+      {message?.tone === "error" ? <p className="form-error" role="alert">{message.text}</p> : null}
+      {message?.tone === "success" ? (
+        <p className="settings-connection-status configured" role="status">
+          <CheckCircle2 size={13} aria-hidden="true" /> {message.text}
+        </p>
+      ) : null}
     </section>
   );
 }

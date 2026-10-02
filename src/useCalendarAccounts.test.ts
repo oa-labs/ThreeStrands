@@ -96,6 +96,22 @@ describe("useCalendarAccounts", () => {
     expect(result.current.calendarsError).toBe("calendar offline");
 
     await act(async () => { await result.current.refreshCalendars(); });
-    expect(result.current.calendarsError).toBeNull();
+    expect(result.current.calendarsError).toBeNull();    expect(result.current.calendarsLoaded).toBe(true);
+  });
+
+  it("reports calendars as loaded only after the first successful listing", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([work]);
+    vi.spyOn(mailClient, "listCalendarOptions").mockRejectedValueOnce(new Error("calendar offline"));
+    const { result } = renderHook(() => useCalendarAccounts());
+    expect(result.current.calendarsLoaded).toBe(false);
+
+    await act(async () => {
+      await expect(result.current.refreshCalendars()).rejects.toThrow("calendar offline");
+    });
+    expect(result.current.calendarsLoaded).toBe(false);
+
+    vi.mocked(mailClient.listCalendarOptions).mockResolvedValueOnce([]);
+    await act(async () => { await result.current.refreshCalendars(); });
+    expect(result.current.calendarsLoaded).toBe(true);
   });
 });

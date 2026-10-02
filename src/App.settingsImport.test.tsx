@@ -130,12 +130,12 @@ describe("settings section keyboard navigation", () => {
     expect(appearanceButton).toHaveAttribute("aria-current", "true");
 
     fireEvent.keyDown(appearanceButton, { key: "ArrowDown" });
-    const readingButton = within(dialog).getByRole("button", { name: "Reading" });
-    expect(readingButton).toHaveAttribute("aria-current", "true");
-    expect(readingButton).toHaveFocus();
-    expect(within(dialog).getByRole("region", { name: "Reading" })).toBeInTheDocument();
+    const accountsButton = within(dialog).getByRole("button", { name: "Mail Accounts" });
+    expect(accountsButton).toHaveAttribute("aria-current", "true");
+    expect(accountsButton).toHaveFocus();
+    expect(within(dialog).getByRole("region", { name: "Mail Accounts" })).toBeInTheDocument();
 
-    fireEvent.keyDown(readingButton, { key: "ArrowUp" });
+    fireEvent.keyDown(accountsButton, { key: "ArrowUp" });
     expect(appearanceButton).toHaveAttribute("aria-current", "true");
     expect(appearanceButton).toHaveFocus();
 
@@ -154,7 +154,7 @@ describe("settings section keyboard navigation", () => {
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
-    expect(sectionButtons).toHaveLength(12);
+    expect(sectionButtons).toHaveLength(11);
     for (const button of sectionButtons) {
       const icon = button.querySelector("svg");
       expect(icon).not.toBeNull();
@@ -176,6 +176,13 @@ describe("settings section keyboard navigation", () => {
     expect(within(dialog).getByText("Accounts")).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
     expect(within(dialog).getByText("Preference changes save automatically")).toBeInTheDocument();
+    // Mark-read timing lives on the Appearance page rather than its own one.
+    expect(within(dialog).getByRole("spinbutton", { name: "Auto-Read Delay" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Reading" })).not.toBeInTheDocument();
+    // Pages with explicit Save buttons must not claim everything autosaves.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
+    expect(within(dialog).queryByText("Preference changes save automatically")).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Appearance" }));
 
     const search = within(dialog).getByRole("searchbox", { name: "Search Settings" });
     search.focus();
