@@ -174,10 +174,9 @@ impl Database {
     /// any one the graph has never seen. A no-op for anything already
     /// recorded, so it is safe and cheap to run on every sync cycle, not
     /// just at startup — `ReplicatedSync::sync_once` does exactly that.
-    /// Portable preferences are intentionally not covered here: unlike
-    /// every other entity type, their only local write *is* the enqueue
-    /// call itself (see `update_synced_preferences`), so there is no
-    /// separate app-table mutation for a crash to land between.
+    /// Portable preferences are intentionally not covered here: their
+    /// readable snapshot and replica write commit in one transaction (see
+    /// `update_synced_preferences`), so there is no gap to reconcile.
     ///
     /// Does not check [`enabled`] itself — like `record_replicated_write`,
     /// that is the caller's job (`ReplicatedSync::sync_once` already gates

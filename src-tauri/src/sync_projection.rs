@@ -279,14 +279,58 @@ impl Database {
         Ok(Some(preferences))
     }
 
-    pub fn synced_preferences_recorded(&self) -> Result<bool, String> {
-        self.with_connection(|connection| {
-            Ok(connection.query_row(
+    /// Saves a local portable preference edit. The replica and the snapshot
+    /// read by sync-status refreshes commit together, so a completed save
+    /// cannot be undone by reading the preceding materialized preferences.
+    /// Returns whether a replica write was needed.
+    pub fn update_synced_preferences(&self, preferences: Value) -> Result<bool, String> {
+        let incoming = preferences
+            .as_object()
+            .ok_or_else(|| "Synced preferences must be an object".to_string())?;
+        if !self.replicated_sync_active()? {
+            return Ok(false);
+        }
+        self.with_transaction(|tx| {
+            let stored: Option<String> = tx.query_row(
+                "SELECT value FROM synced_preferences WHERE key='portable'",
+                [],
+                |row| row.get(0),
+            ).optional()?;
+            let current: Value = stored
+                .map(|value| serde_json::from_str(&value))
+                .transpose()
+                .map_err(display)?
+                .unwrap_or_else(|| json!({}));
+            let has_synced_record: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable')",
                 [],
                 |row| row.get(0),
-            )?)
-        }).map_err(display)
+            )?;
+            let fields = incoming.iter()
+                .filter_map(|(key, value)| {
+                    (!has_synced_record || current.get(key) != Some(value)).then_some(key.clone())
+                })
+                .collect::<BTreeSet<_>>();
+            if fields.is_empty() {
+                return Ok(false);
+            }
+            // This is an explicit local edit, even if another thread is
+            // projecting remote entities. It must not be silently suppressed.
+            crate::sync_state::record_replicated_write_in_transaction(
+                tx, EntityType::Preferences, "portable", &fields, &preferences,
+            )?;
+            // Retain native-owned device names and fields from newer clients
+            // that this frontend does not include in its portable allowlist.
+            let mut updated = current.as_object().cloned().unwrap_or_default();
+            updated.extend(incoming.clone());
+            tx.execute(
+                "INSERT INTO synced_preferences(key,value,updated_at) VALUES('portable',?1,?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                params![Value::Object(updated).to_string(), Utc::now().to_rfc3339()],
+            )?;
+            Ok(true)
+        })
+        .map_err(String::from)
     }
 }
 
@@ -372,6 +416,122 @@ mod tests {
         db.set_beta_features_enabled(true).unwrap();
         // Active but never enrolled: nothing can reach another device yet.
         assert!(!db.cross_device_sync_enrolled().unwrap());
+    }
+
+    #[test]
+    fn local_font_edits_are_visible_to_the_next_synced_preference_read() {
+        let db = Database::open_memory();
+        db.set_beta_features_enabled(true).unwrap();
+        let original = json!({"fontFamily": "system", "fontScale": 100});
+        db.update_synced_preferences(original.clone()).unwrap();
+        // The stored snapshot from the preceding sync cycle.
+        db.materialize_entity(EntityType::Preferences, "portable", Some(&original), false).unwrap();
+
+        for family in ["Georgia", "Menlo", "system"] {
+            let edited = json!({"fontFamily": family, "fontScale": 100});
+            db.update_synced_preferences(edited.clone()).unwrap();
+            assert_eq!(db.synced_preferences().unwrap(), Some(edited.clone()));
+            assert_eq!(db.resolve_field_winner(EntityType::Preferences, "portable", "fontFamily").unwrap(), Some(json!(family)));
+            // A status refresh republishes the snapshot it just read. It must
+            // not create another write or restore the preceding font.
+            let before = db.load_replica_state().unwrap();
+            db.update_synced_preferences(db.synced_preferences().unwrap().unwrap()).unwrap();
+            assert_eq!(db.load_replica_state().unwrap(), before);
+            assert_eq!(db.synced_preferences().unwrap(), Some(edited));
+        }
+    }
+
+    #[test]
+    fn initial_local_preferences_are_readable_without_a_peer_sync_cycle() {
+        let db = Database::open_memory();
+        db.set_beta_features_enabled(true).unwrap();
+        let preferences = json!({"fontFamily": "Georgia", "fontScale": 120});
+        db.update_synced_preferences(preferences.clone()).unwrap();
+        assert_eq!(db.synced_preferences().unwrap(), Some(preferences));
+    }
+
+    #[test]
+    fn local_preferences_preserve_native_and_unknown_fields_and_write_only_changes() {
+        let db = Database::open_memory();
+        db.set_beta_features_enabled(true).unwrap();
+        let original = json!({
+            "fontFamily": "system", "fontScale": 100,
+            "deviceName:123": "Laptop", "futurePreference": true,
+        });
+        db.update_synced_preferences(original).unwrap();
+        let before = db.load_replica_state().unwrap();
+        let preferences = json!({"fontFamily": "Georgia", "fontScale": 100});
+        assert!(db.update_synced_preferences(preferences.clone()).unwrap());
+        assert_eq!(db.synced_preferences().unwrap(), Some(json!({
+            "fontFamily": "Georgia", "fontScale": 100, "futurePreference": true,
+        })));
+        let after = db.load_replica_state().unwrap();
+        for (key, values) in before.fields() {
+            if key.field != "fontFamily" {
+                assert_eq!(after.values(key), values, "unchanged field {}", key.field);
+            }
+        }
+        assert!(!db.update_synced_preferences(preferences).unwrap());
+        assert_eq!(db.load_replica_state().unwrap(), after);
+        let stored: String = db.connection().unwrap().query_row(
+            "SELECT value FROM synced_preferences WHERE key='portable'", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&stored).unwrap()["deviceName:123"], "Laptop");
+    }
+
+    #[test]
+    fn inactive_sync_does_not_record_or_materialize_local_preferences() {
+        let db = Database::open_memory();
+        assert!(!db.update_synced_preferences(json!({"fontFamily": "Georgia"})).unwrap());
+        assert_eq!(db.synced_preferences().unwrap(), None);
+        assert_eq!(operation_count(&db, "portable"), 0);
+    }
+
+    #[test]
+    fn explicit_local_preference_edits_are_not_suppressed_by_remote_projection() {
+        let db = Database::open_memory();
+        db.set_beta_features_enabled(true).unwrap();
+        db.with_remote_projection(|| {
+            assert!(db.update_synced_preferences(json!({"fontFamily": "Georgia"}))?);
+            Ok(())
+        }).unwrap();
+        assert_eq!(db.synced_preferences().unwrap(), Some(json!({"fontFamily": "Georgia"})));
+        assert_eq!(db.resolve_field_winner(EntityType::Preferences, "portable", "fontFamily").unwrap(), Some(json!("Georgia")));
+    }
+
+    #[test]
+    fn a_failed_preference_snapshot_save_rolls_back_the_replica_write() {
+        let db = Database::open_memory();
+        db.set_beta_features_enabled(true).unwrap();
+        db.update_synced_preferences(json!({"fontFamily": "system"})).unwrap();
+        let before = db.load_replica_state().unwrap();
+        db.connection().unwrap().execute_batch(
+            "CREATE TRIGGER reject_preference_snapshot BEFORE UPDATE ON synced_preferences
+             BEGIN SELECT RAISE(ABORT, 'snapshot write failed'); END;",
+        ).unwrap();
+
+        assert!(db.update_synced_preferences(json!({"fontFamily": "Georgia"})).is_err());
+        assert_eq!(db.synced_preferences().unwrap(), Some(json!({"fontFamily": "system"})));
+        assert_eq!(db.load_replica_state().unwrap(), before);
+    }
+
+    #[test]
+    fn a_peers_older_snapshot_does_not_restore_the_preceding_font() {
+        let db = Database::open_memory();
+        db.set_beta_features_enabled(true).unwrap();
+        db.update_synced_preferences(json!({"fontFamily": "system"})).unwrap();
+        let peer = Database::open_memory();
+        let touched = peer.merge_replica_state(&db.load_replica_state().unwrap()).unwrap();
+        peer.materialize_touched_entities(&touched).unwrap();
+        let older = peer.load_replica_state().unwrap();
+
+        db.update_synced_preferences(json!({"fontFamily": "Georgia"})).unwrap();
+        let touched = db.merge_replica_state(&older).unwrap();
+        db.materialize_touched_entities(&touched).unwrap();
+        assert_eq!(db.synced_preferences().unwrap(), Some(json!({"fontFamily": "Georgia"})));
+        let touched = peer.merge_replica_state(&db.load_replica_state().unwrap()).unwrap();
+        peer.materialize_touched_entities(&touched).unwrap();
+        assert_eq!(peer.synced_preferences().unwrap(), Some(json!({"fontFamily": "Georgia"})));
     }
 
     #[test]

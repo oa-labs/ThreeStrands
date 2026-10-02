@@ -136,6 +136,45 @@ pub(crate) fn snapshot_to_state(snapshot: &ReplicaSnapshot) -> Result<ReplicaSta
     ReplicaState::from_parts(context, fields).map_err(|error| format!("A peer's snapshot is malformed: {error:?}"))
 }
 
+/// Records a local write within the caller's transaction, allowing a native
+/// preference save to commit its replica and readable snapshot together.
+pub(crate) fn record_replicated_write_in_transaction(
+    tx: &Transaction,
+    entity_type: EntityType,
+    entity_id: &str,
+    fields: &BTreeSet<String>,
+    payload: &Value,
+) -> DbResult<()> {
+    let device_id = ensure_space_and_device(tx)?;
+    let device_hex = encode_id(&device_id);
+    let creating = !entity_has_values(tx, entity_type, entity_id)?;
+    tx.execute("INSERT OR IGNORE INTO sync_context(device_id, counter) VALUES (?1, 0)", params![device_hex])?;
+    let counter: i64 = tx.query_row(
+        "UPDATE sync_context SET counter = counter + 1 WHERE device_id=?1 RETURNING counter",
+        params![device_hex],
+        |row| row.get(0),
+    )?;
+    let lamport: i64 = tx.query_row(
+        "UPDATE sync_spaces SET lamport = lamport + 1 WHERE id=?1 RETURNING lamport",
+        params![crate::replicated_sync::SPACE_ID],
+        |row| row.get(0),
+    )?;
+    let dot = Dot { device_id, counter: counter as u64 };
+    let mut values: Vec<(String, Option<Value>)> = Vec::new();
+    if creating {
+        values.push((ENTITY_EXISTENCE_FIELD.to_string(), Some(Value::Bool(true))));
+    }
+    for field in fields.iter().filter(|field| *field != "*") {
+        values.push((field.clone(), payload.get(field).cloned()));
+    }
+    for (field, value) in values {
+        let key = FieldKey { entity_type, entity_id: entity_id.to_string(), field };
+        clear_field(tx, &key)?;
+        store_value(tx, &key, &StateValue { dot, lamport: lamport as u64, value })?;
+    }
+    mark_changed(tx, true)
+}
+
 impl Database {
     /// Records a local write (creation or update) into the replica, in one
     /// transaction: one new write whose value replaces each named field's
@@ -157,34 +196,7 @@ impl Database {
             return Ok(());
         }
         self.with_transaction(|tx| {
-            let device_id = ensure_space_and_device(tx)?;
-            let device_hex = encode_id(&device_id);
-            let creating = !entity_has_values(tx, entity_type, entity_id)?;
-            tx.execute("INSERT OR IGNORE INTO sync_context(device_id, counter) VALUES (?1, 0)", params![device_hex])?;
-            let counter: i64 = tx.query_row(
-                "UPDATE sync_context SET counter = counter + 1 WHERE device_id=?1 RETURNING counter",
-                params![device_hex],
-                |row| row.get(0),
-            )?;
-            let lamport: i64 = tx.query_row(
-                "UPDATE sync_spaces SET lamport = lamport + 1 WHERE id=?1 RETURNING lamport",
-                params![crate::replicated_sync::SPACE_ID],
-                |row| row.get(0),
-            )?;
-            let dot = Dot { device_id, counter: counter as u64 };
-            let mut values: Vec<(String, Option<Value>)> = Vec::new();
-            if creating {
-                values.push((ENTITY_EXISTENCE_FIELD.to_string(), Some(Value::Bool(true))));
-            }
-            for field in fields.iter().filter(|field| *field != "*") {
-                values.push((field.clone(), payload.get(field).cloned()));
-            }
-            for (field, value) in values {
-                let key = FieldKey { entity_type, entity_id: entity_id.to_string(), field };
-                clear_field(tx, &key)?;
-                store_value(tx, &key, &StateValue { dot, lamport: lamport as u64, value })?;
-            }
-            mark_changed(tx, true)
+            record_replicated_write_in_transaction(tx, entity_type, entity_id, fields, payload)
         })
         .map_err(String::from)
     }

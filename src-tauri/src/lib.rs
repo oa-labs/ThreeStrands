@@ -1304,26 +1304,9 @@ async fn synced_preferences(state: State<'_, AppState>) -> Result<Option<serde_j
 
 #[tauri::command(async)]
 fn update_synced_preferences(preferences: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
-    let current = state.database.synced_preferences()?;
-    let has_synced_record = state.database.synced_preferences_recorded()?;
-    let fields = preferences
-        .as_object()
-        .ok_or_else(|| "Synced preferences must be an object".to_string())?
-        .iter()
-        .filter_map(|(key, value)| {
-            (!has_synced_record || current.as_ref().and_then(|current| current.get(key)) != Some(value)).then_some(key.clone())
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    if fields.is_empty() {
-        return Ok(());
+    if state.database.update_synced_preferences(preferences)? {
+        kick_replicated_sync(&state);
     }
-    state.database.record_local_entity_write(
-        threestrands_sync_protocol::EntityType::Preferences,
-        "portable",
-        preferences,
-        Some(fields),
-    )?;
-    kick_replicated_sync(&state);
     Ok(())
 }
 
