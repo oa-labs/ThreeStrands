@@ -633,6 +633,23 @@ describe("TaskSidebar", () => {
     });
   });
 
+  it("closes the inline editor when another task is selected", async () => {
+    const tasks = [workspaceTask("task-1", { title: "First" }), workspaceTask("task-2", { title: "Second" })];
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
+    localStorage.setItem("threestrands.tasks.layout", "list");
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit title: First" }));
+    expect(screen.getByRole("textbox", { name: "Task title" })).toHaveValue("First");
+
+    fireEvent.click(screen.getByText("Second", { selector: "strong" }));
+    expect(screen.queryByRole("textbox", { name: "Task title" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit title: Second" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("First", { selector: "strong" }));
+    expect(screen.queryByRole("textbox", { name: "Task title" })).toBeNull();
+  });
+
   it("edits the task title, description, and due date in the detail pane", async () => {
     let saved = workspaceTask("plan", { title: "Plan launch", notes: "Draft outline" });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([saved]);

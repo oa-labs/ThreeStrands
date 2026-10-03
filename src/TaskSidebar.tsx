@@ -176,9 +176,13 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const orderedTasks = useMemo(() => displayedGroups.flatMap((group) => group.tasks), [displayedGroups]);
   const selectedTask = orderedTasks.find((task) => task.id === selectedTaskId) ?? null;
 
-  useEffect(() => {
+  // Close the editor in the render that changes selection. A passive effect could
+  // run after an edit click on the newly selected task and discard it.
+  const [editorSelection, setEditorSelection] = useState(selectedTaskId);
+  if (editorSelection !== selectedTaskId) {
+    setEditorSelection(selectedTaskId);
     setEditing(null);
-  }, [selectedTaskId]);
+  }
 
   useEffect(() => {
     if (orderedTasks.length === 0) {
