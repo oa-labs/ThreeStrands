@@ -553,6 +553,7 @@ impl Database {
     }
 
     /// Non-inline attachments on messages the person sent, newest first.
+    /// Calendar invitations are left out; the meetings section covers them.
     pub fn contact_files(&self, id: &str, limit: usize) -> DbResult<ContactFiles> {
         let addresses = self.contact_address_list(id)?;
         if addresses.is_empty() {
@@ -561,7 +562,7 @@ impl Database {
         self.with_connection(|connection|{
             let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
             let values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
-            let from=format!("FROM (SELECT DISTINCT message_id FROM contact_interactions WHERE direction='received' AND email IN ({marks})) sent JOIN messages m ON m.id=sent.message_id JOIN threads t ON t.id=m.thread_id, json_each(m.attachments_json) a WHERE COALESCE(json_extract(a.value,'$.inline'),0)=0");
+            let from=format!("FROM (SELECT DISTINCT message_id FROM contact_interactions WHERE direction='received' AND email IN ({marks})) sent JOIN messages m ON m.id=sent.message_id JOIN threads t ON t.id=m.thread_id, json_each(m.attachments_json) a WHERE COALESCE(json_extract(a.value,'$.inline'),0)=0 AND trim(lower(COALESCE(json_extract(a.value,'$.mimeType'),''))) NOT LIKE 'text/calendar%' AND lower(COALESCE(json_extract(a.value,'$.filename'),'')) NOT LIKE '%.ics'");
             let total=connection.query_row(&format!("SELECT COUNT(*) {from}"),rusqlite::params_from_iter(values.iter()),|row|row.get(0))?;
             let mut statement=connection.prepare(&format!("SELECT m.id,m.thread_id,t.subject,m.sent_at,a.value {from} ORDER BY m.sent_at DESC,m.id,a.key LIMIT {}",limit.clamp(1,MAX_CONTACT_FILES)))?;
             let rows=statement.query_map(rusqlite::params_from_iter(values.iter()),|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?)))?;

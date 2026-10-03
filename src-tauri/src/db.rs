@@ -3541,6 +3541,15 @@ pub(crate) mod tests {
         database.upsert_thread("you@example.com",&[older,mine]).unwrap();
         database.upsert_thread("you@example.com",&[newer]).unwrap();
         database.upsert_thread("you@example.com",&[bulk]).unwrap();
+        // Calendar invitations, recognized by type or by extension, stay out of the list and its total.
+        let mut invite=message("files-five","files-invite","2026-09-03T12:00:00Z","invitation");
+        invite.from="Jane <jane@example.com>".into();invite.to=vec!["you@example.com".into()];
+        invite.attachments=vec![
+            crate::models::MessageAttachment{mime_type:"text/calendar".into(),..attachment("invite-1","invite.ics",false)},
+            crate::models::MessageAttachment{mime_type:"application/octet-stream".into(),..attachment("invite-2","Meeting.ICS",false)},
+            crate::models::MessageAttachment{mime_type:"Text/Calendar; method=REQUEST".into(),..attachment("invite-3","event",false)},
+        ];
+        database.upsert_thread("you@example.com",&[invite]).unwrap();
 
         let files=database.contact_files("derived:jane@example.com",2).unwrap();
         assert_eq!(files.total,3);
@@ -3549,6 +3558,7 @@ pub(crate) mod tests {
         let all=database.contact_files("derived:jane@example.com",50).unwrap();
         assert_eq!(all.files.last().map(|file|file.attachment.id.as_str()),Some("report-1"));
         assert!(all.files.iter().all(|file|!file.attachment.inline));
+        assert!(all.files.iter().all(|file|file.message_id!="files-five"));
         assert_eq!(database.contact_files("derived:nobody@example.com",5).unwrap().total,0);
     }
 

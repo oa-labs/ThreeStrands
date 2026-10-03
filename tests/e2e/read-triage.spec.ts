@@ -51,13 +51,21 @@ test("keeps meeting titles and recent email subjects on one line in the context 
     meetings.className = "context-section context-meetings";
     meetings.innerHTML = `<button class="context-meeting"><svg width="14" height="14"></svg><span><strong>${"Momentum Prep Call - EO Pittsburgh - Week 7 and 8 ".repeat(3)}</strong><small class="context-meeting-meta"><span class="context-meeting-details">Mon, Oct 5 · with ${"Beth Goldstein ".repeat(8)}</span><span class="context-meeting-response"> · Going</span></small></span></button>`;
     const history = document.createElement("section");
-    history.className = "context-section contact-sidebar-history";
-    history.innerHTML = `<button><strong>${"Invitation: Call with Joel and McKenzie on Tuesday ".repeat(3)}</strong><small>9/21/2026 · beth@example.com</small></button>`;
+    history.className = "context-section context-collapsible context-history";
+    // Rows sit inside the collapsible body, as ContextSection renders them.
+    history.innerHTML = `<header class="context-section-header"><h3><button class="context-section-toggle"><span>Recent emails</span></button></h3></header><div><button class="context-history-row"><strong>${"Invitation: Call with Joel and McKenzie on Tuesday ".repeat(3)}</strong><small>9/21/2026 · beth@example.com</small></button></div>`;
     panel.append(meetings, history);
     const titles = [meetings, history].map((section) => {
       const title = section.querySelector("strong")!;
       const style = getComputedStyle(title);
-      return { whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, scrollWidth: title.scrollWidth, clientWidth: title.clientWidth };
+      const meta = getComputedStyle(section.querySelector("small")!);
+      const row = getComputedStyle(title.closest("button")!);
+      return {
+        whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, scrollWidth: title.scrollWidth, clientWidth: title.clientWidth,
+        font: `${style.fontFamily}|${style.fontSize}|${style.fontWeight}|${style.color}`,
+        metaFont: `${meta.fontFamily}|${meta.fontSize}|${meta.color}`,
+        rowBackground: row.backgroundColor, rowTextAlign: row.textAlign,
+      };
     });
     const meta = meetings.querySelector<HTMLElement>(".context-meeting-meta")!;
     const response = meetings.querySelector<HTMLElement>(".context-meeting-response")!;
@@ -68,7 +76,12 @@ test("keeps meeting titles and recent email subjects on one line in the context 
     expect(title.whiteSpace).toBe("nowrap");
     expect(title.textOverflow).toBe("ellipsis");
     expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
+    expect(title.rowBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(title.rowTextAlign).toBe("left");
   }
+  // Recent email rows use the same type as meeting rows, not browser button defaults.
+  expect(layout.titles[1].font).toBe(layout.titles[0].font);
+  expect(layout.titles[1].metaFont).toBe(layout.titles[0].metaFont);
   expect(layout.metaWhiteSpace).toBe("nowrap");
   expect(layout.metaHeight).toBeLessThanOrEqual(layout.responseHeight + 1);
   expect(layout.responseRight).toBeLessThanOrEqual(layout.metaRight + 1);

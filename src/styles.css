@@ -1831,10 +1831,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-suggestion-source { width:max-content; padding:0; border:0; color:var(--accent); background:transparent; font:inherit; font-size:var(--type-xs); text-decoration:underline; cursor:pointer; }
 .contact-suggestion-apply { flex-shrink:0; }
 .contact-timeline h2 { font-size:var(--type-ui); font-weight:600; }
-.contact-timeline > button,.contact-sidebar-history > button { width:100%; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 9px; border:0; border-bottom:1px solid var(--border); color:var(--text); background:transparent; text-align:left; cursor:pointer; }
-.contact-timeline > button span,.contact-sidebar-history > button { min-width:0; }
+.contact-timeline > button { width:100%; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 9px; border:0; border-bottom:1px solid var(--border); color:var(--text); background:transparent; text-align:left; cursor:pointer; }
+.contact-timeline > button span { min-width:0; }
 .contact-timeline > button span { display:grid; gap:4px; }
-.contact-timeline small,.contact-sidebar-history small { color:var(--muted); font-size:var(--type-xs); }
+.contact-timeline small { color:var(--muted); font-size:var(--type-xs); }
 .contact-sidebar-links { display:flex; flex-wrap:wrap; gap:2px 12px; margin:0; }
 .contact-sidebar-links a { color:var(--accent); font-size:var(--type-sm); overflow-wrap:anywhere; text-decoration:underline; text-underline-offset:2px; }
 .contact-sidebar-links a:hover { color:var(--text); }
@@ -1948,13 +1948,12 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-sidebar-copy-status { color:var(--muted); font-size:var(--type-xs); }
 .contact-sidebar-bio,.contact-sidebar-notes p { margin:0; color:var(--muted); line-height:1.5; }
 .contact-sidebar-bio { padding:12px 0; color:var(--secondary); }
-.contact-sidebar-notes,.contact-sidebar-history { margin-top:16px; }
-.contact-sidebar-notes h3,.contact-sidebar-history h3 { margin:0 0 8px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.06em; text-transform:uppercase; }
-.contact-sidebar-history > button { display:grid; grid-template-columns:minmax(0,1fr); gap:4px; }
-.contact-sidebar-history > button strong { min-width:0; overflow:hidden; color:var(--secondary); font-size:var(--type-caption); font-weight:500; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
-.context-section.contact-sidebar-history { margin-top:0; }
-.context-section.contact-sidebar-history > button { padding:8px 9px; }
-.context-section.contact-sidebar-history .context-section-header h3 { margin:0; }
+.contact-sidebar-notes { margin-top:16px; }
+.contact-sidebar-notes h3 { margin:0 0 8px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.06em; text-transform:uppercase; }
+.context-history-row { display:grid; grid-template-columns:minmax(0,1fr); gap:2px; width:100%; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
+.context-history-row:hover { background:var(--hover); }
+.context-history-row strong { min-width:0; overflow:hidden; font-size:var(--type-caption); font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
+.context-history-row small { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--type-xs); text-overflow:ellipsis; white-space:nowrap; }
 .context-contact-text p.context-contact-activity { color:var(--secondary); font-size:var(--type-xs); }
 .context-section-toggle { display:inline-flex; align-items:center; gap:6px; min-width:0; margin:0 0 0 -2px; padding:2px; border:0; border-radius:var(--radius-sm); color:inherit; background:transparent; font:inherit; letter-spacing:inherit; text-transform:inherit; text-align:left; cursor:pointer; }
 .context-section-toggle:hover { color:var(--text); }

@@ -4,6 +4,7 @@ import type { MailClient } from "./client";
 import { DEMO_ACCOUNT_ID, defaultDemoDataset, type DemoDataset } from "./demoDataset";
 import { buildShowcaseDataset } from "./showcaseDataset";
 import { parseAddress, splitAddressList } from "../emailAddress";
+import { isCalendarAttachment } from "../CalendarAttachment";
 import type {
   Account,
   ActionAnalysis,
@@ -592,7 +593,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         for (const message of (await client.getThread(thread.id)).messages) {
           if (!target.has(parseAddress(message.sender).email.toLocaleLowerCase())) continue;
           for (const attachment of message.attachments) {
-            if (!attachment.inline) files.push({ messageId: message.id, threadId: thread.id, subject: thread.subject, sentAt: message.sentAt, attachment });
+            if (!attachment.inline && !isCalendarAttachment(attachment)) files.push({ messageId: message.id, threadId: thread.id, subject: thread.subject, sentAt: message.sentAt, attachment });
           }
         }
       }

@@ -201,10 +201,10 @@ export function RecentEmailsSection({ items, name, onOpenThread }: {
   return (
     <ContextSection
       id="recent"
-      className="contact-sidebar-history"
+      className="context-history"
       title="Recent emails"
       rows={items.map((item) => (
-        <button type="button" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
+        <button type="button" className="context-history-row" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
           <strong>{item.subject || "(no subject)"}</strong>
           <small>{new Date(item.sentAt).toLocaleDateString()} · {item.contactEmail}</small>
         </button>
@@ -245,12 +245,12 @@ export function DomainSection({ email, addresses, accounts, hideThreadIds, onOpe
   return (
     <ContextSection
       id="organization"
-      className="contact-sidebar-history context-organization"
+      className="context-history context-organization"
       title={<>Others at <span className="context-domain">{domain}</span></>}
       count={context.people.length}
       note={<span title={context.people.map((person) => person.email).join(", ")}>{names.join(", ")}</span>}
       rows={threads.map((item) => (
-        <button type="button" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
+        <button type="button" className="context-history-row" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
           <strong>{item.subject || "(no subject)"}</strong>
           <small>{new Date(item.sentAt).toLocaleDateString()} · {item.contactEmail}</small>
         </button>
