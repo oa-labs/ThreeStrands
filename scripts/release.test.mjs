@@ -191,6 +191,22 @@ if (action === process.env.RELEASE_TEST_FAIL_AT) process.exit(7);
   };
 }
 
+describe("marketing site refresh", () => {
+  it("redeploys the site from master only after a stable release is built", async () => {
+    const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const jobBlock = workflow.split("\n  site:\n")[1]?.split(/\n  [\w-]+:\n/)[0];
+    assert.ok(jobBlock, "Missing site job");
+    assert.match(jobBlock, /^ {4}needs: \[validate, release\]$/m);
+    assert.match(jobBlock, /^ {4}if: needs\.validate\.outputs\.prerelease == 'false'$/m);
+    assert.match(jobBlock, /^ {6}actions: write$/m);
+    assert.doesNotMatch(jobBlock, /contents: write|secrets\./, "Site trigger needs no write or signing access");
+    assert.match(jobBlock, /run: gh workflow run site\.yml --ref master$/m);
+
+    const site = await readFile(new URL("../.github/workflows/site.yml", import.meta.url), "utf8");
+    assert.match(site, /^ {2}workflow_dispatch:$/m, "site.yml must accept the dispatch");
+  });
+});
+
 describe("pnpm release command", () => {
   const commands = (version) => [
     ["branch", "--show-current"], ["status", "--porcelain"],

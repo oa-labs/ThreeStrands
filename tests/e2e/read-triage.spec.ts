@@ -87,6 +87,27 @@ test("keeps meeting titles and recent email subjects on one line in the context 
   expect(layout.responseRight).toBeLessThanOrEqual(layout.metaRight + 1);
 });
 
+test("keeps the context contact card to three type sizes with details below the email address", async ({ page }) => {
+  await page.goto("/");
+  const text = page.locator(".context-contact-text").first();
+  await expect(text).toBeVisible();
+
+  const sizes = await text.evaluate((element) => {
+    element.insertAdjacentHTML("beforeend", '<p>Managing Director · Acme</p><p class="context-contact-activity">34 emails since Apr 2026</p><p>Phoenix, AZ</p>');
+    const size = (node: Element) => parseFloat(getComputedStyle(node).fontSize);
+    return {
+      name: size(element.querySelector("h2")!),
+      email: size(element.querySelector(".contact-sidebar-email-row a span")!),
+      details: [...element.querySelectorAll("p")].map(size),
+    };
+  });
+
+  expect(new Set([sizes.name, sizes.email, ...sizes.details]).size).toBeLessThanOrEqual(3);
+  expect(new Set(sizes.details).size).toBe(1);
+  expect(sizes.details[0]).toBeLessThan(sizes.email);
+  expect(sizes.email).toBeLessThan(sizes.name);
+});
+
 test("processes the inbox from the keyboard", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();

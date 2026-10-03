@@ -318,11 +318,13 @@ describe("ContextPanel",()=>{
   });
 
   it("shows the contact URL as a text hyperlink after the address instead of a button",async()=>{
-    const brian:ContactProfile={...bob,displayName:"Brian Anderson",role:"Vice President of IT",location:"3443 N. Central Ave., Phoenix, AZ 85012",links:["https://upwardprojects.com"]};
+    const brian:ContactProfile={...bob,displayName:"Brian Anderson",role:"Vice President of IT",location:"3443 N. Central Ave., Phoenix, AZ 85012",links:["https://upwardprojects.com"],bio:"Runs the quarterly IT steering review."};
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(brian);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     renderPanel();
     await screen.findByRole("heading",{name:"Brian Anderson"});
+    // The about text stays on the Contacts page; the panel card keeps to identity facts.
+    expect(screen.queryByText("Runs the quarterly IT steering review.")).not.toBeInTheDocument();
 
     const address=screen.getByText("3443 N. Central Ave., Phoenix, AZ 85012");
     const link=screen.getByRole("link",{name:"upwardprojects.com"});
@@ -394,12 +396,14 @@ describe("ContextPanel",()=>{
   });
 
   it("adds history facts to the contact card from local correspondence",async()=>{
-    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue({...bob,role:"Managing Director",company:"Acme"});
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     vi.mocked(mailClient.contactActivity).mockResolvedValue({...noActivity,sentCount:6,receivedCount:25,threadCount:1,firstAt:"2024-10-04T15:00:00Z",lastSentAt:"2025-06-10T15:00:00Z"});
     renderPanel();
     const card=await screen.findByRole("region",{name:"Contact"});
-    expect(await within(card).findByText("31 emails since Oct 2024 · You last wrote Jun 2025")).toBeInTheDocument();
+    const activity=await within(card).findByText("31 emails since Oct 2024 · You last wrote Jun 2025");
+    // The job title introduces the person, so it comes before the history line.
+    expect(within(card).getByText("Managing Director · Acme").compareDocumentPosition(activity)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(mailClient.contactActivity).toHaveBeenCalledWith(bob.id);
   });
 

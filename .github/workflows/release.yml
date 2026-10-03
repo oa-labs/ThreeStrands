@@ -224,3 +224,20 @@ jobs:
             echo "Verify installation, then publish the draft in GitHub Releases."
             gh release view "$RELEASE_TAG" --json url --jq '.url'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  site:
+    name: Redeploy marketing site
+    needs: [validate, release]
+    # Betas stay off the marketing site; it shows the latest stable version.
+    if: needs.validate.outputs.prerelease == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Unlike pushes, a workflow_dispatch sent with GITHUB_TOKEN starts a run.
+    permissions:
+      actions: write
+    steps:
+      - name: Rebuild the site from master with the released version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run site.yml --ref master

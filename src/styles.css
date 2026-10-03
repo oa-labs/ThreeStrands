@@ -1859,7 +1859,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-contact { padding:2px 0 12px; border-bottom:1px solid var(--border); }
 .context-contact-card { display:flex; align-items:flex-start; gap:10px; }
 .context-contact-text { display:grid; flex:1; gap:2px; min-width:0; }
-.context-contact-text p { margin:0; color:var(--muted); font-size:var(--type-sm); line-height:1.4; }
+/* Three type tiers: name, email address, then every detail line at one smaller size. */
+.context-contact-text p { margin:0; color:var(--muted); font-size:var(--type-xs); line-height:1.4; }
 .context-contact-name-row { display:flex; align-items:center; gap:2px; min-width:0; }
 .context-contact-name-row h2 { min-width:0; margin:0; color:var(--text); font-size:calc(var(--type-base) + 1px); font-weight:600; line-height:1.3; overflow-wrap:anywhere; }
 .context-contact-name { padding:0; border:0; color:inherit; background:transparent; font:inherit; text-align:left; cursor:pointer; }
@@ -1867,7 +1868,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-contact-favorite[aria-pressed="true"] { color:var(--accent); }
 .context-contact .contact-sidebar-email-row { justify-content:flex-start; }
 .context-contact .contact-sidebar-email-row a { font-size:var(--type-sm); }
-.context-contact .contact-sidebar-bio { padding:10px 0 0; }
 .context-contact .contact-sidebar-notes { margin-top:10px; }
 .context-section { padding:12px 0; border-bottom:1px solid var(--border); }
 .context-panel > .context-section:last-of-type { border-bottom:0; }
@@ -1946,15 +1946,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-sidebar-email-row:hover .contact-sidebar-email-copy,.contact-sidebar-email-row:focus-within .contact-sidebar-email-copy { opacity:1; }
 .contact-sidebar-email-copy:hover { color:var(--text); background:var(--hover); }
 .contact-sidebar-copy-status { color:var(--muted); font-size:var(--type-xs); }
-.contact-sidebar-bio,.contact-sidebar-notes p { margin:0; color:var(--muted); line-height:1.5; }
-.contact-sidebar-bio { padding:12px 0; color:var(--secondary); }
+.contact-sidebar-notes p { margin:0; color:var(--muted); line-height:1.5; }
 .contact-sidebar-notes { margin-top:16px; }
 .contact-sidebar-notes h3 { margin:0 0 8px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.06em; text-transform:uppercase; }
 .context-history-row { display:grid; grid-template-columns:minmax(0,1fr); gap:2px; width:100%; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
 .context-history-row:hover { background:var(--hover); }
 .context-history-row strong { min-width:0; overflow:hidden; font-size:var(--type-caption); font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
 .context-history-row small { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--type-xs); text-overflow:ellipsis; white-space:nowrap; }
-.context-contact-text p.context-contact-activity { color:var(--secondary); font-size:var(--type-xs); }
+.context-contact-text p.context-contact-activity { color:var(--secondary); }
 .context-section-toggle { display:inline-flex; align-items:center; gap:6px; min-width:0; margin:0 0 0 -2px; padding:2px; border:0; border-radius:var(--radius-sm); color:inherit; background:transparent; font:inherit; letter-spacing:inherit; text-transform:inherit; text-align:left; cursor:pointer; }
 .context-section-toggle:hover { color:var(--text); }
 .context-section-toggle > svg { flex:0 0 auto; color:var(--muted); }
