@@ -43,7 +43,10 @@ export function formatDisplayName(value: string): string {
 }
 
 // Splits an RFC-style address list without treating commas inside quoted
-// display names or angle brackets as recipient separators.
+// display names or angle brackets as recipient separators. Stored mail can
+// also carry an unquoted comma in a display name ("Daniel O'Connor, CFA®
+// <dan@example.com>"); a piece holding no address joins the "Name <address>"
+// piece after it rather than becoming a recipient of its own.
 export function splitAddressList(value: string): string[] {
   const result: string[] = [];
   let start = 0;
@@ -63,5 +66,20 @@ export function splitAddressList(value: string): string[] {
     }
   }
 
-  return result;
+  const merged: string[] = [];
+  let pendingName = "";
+  for (const piece of result) {
+    if (!piece.includes("@")) {
+      pendingName = pendingName ? `${pendingName}, ${piece}` : piece;
+    } else if (pendingName && piece.includes("<")) {
+      merged.push(`${pendingName}, ${piece}`);
+      pendingName = "";
+    } else {
+      if (pendingName) merged.push(pendingName);
+      merged.push(piece);
+      pendingName = "";
+    }
+  }
+  if (pendingName) merged.push(pendingName);
+  return merged;
 }

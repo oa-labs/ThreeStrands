@@ -81,4 +81,20 @@ describe("splitAddressList", () => {
       "bethgold@gmail.com",
     ]);
   });
+
+  it("keeps an unquoted comma in a display name with its address", () => {
+    expect(splitAddressList("Daniel O'Connor, CFA® <doconnor@wealth.example>, bethgold@gmail.com")).toEqual([
+      "Daniel O'Connor, CFA® <doconnor@wealth.example>",
+      "bethgold@gmail.com",
+    ]);
+    expect(splitAddressList("Jane Roe <jane@example.com>, Smith, Pat, PhD <pat@lab.example>").map(parseAddress)).toEqual([
+      { name: "Jane Roe", email: "jane@example.com" },
+      { name: "Smith, Pat, PhD", email: "pat@lab.example" },
+    ]);
+  });
+
+  it("does not attach a stray name to a bare address or invent one at the end", () => {
+    expect(splitAddressList("Team, bob@example.com")).toEqual(["Team", "bob@example.com"]);
+    expect(splitAddressList("bob@example.com, undisclosed-recipients:;")).toEqual(["bob@example.com", "undisclosed-recipients:;"]);
+  });
 });

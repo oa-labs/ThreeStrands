@@ -191,6 +191,18 @@ describe("ContextPanel",()=>{
     expect(mailClient.getContactProfile).toHaveBeenCalledWith("derived:andy@example.com");
   });
 
+  it("keeps an unquoted comma in a recipient's display name instead of naming them by the suffix",async()=>{
+    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({});
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(null);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    renderPanel({detail:{thread:{id:"thread-1"},messages:[
+      {id:"1",sender:"You <you@example.com>",recipients:["Daniel O'Connor, CFA® <dan@wealth.example>","Smith, Pat, PhD <pat@lab.example>"],sentAt:"2026-09-24T00:00:00Z"},
+    ]} as unknown as ThreadDetail});
+    expect(await screen.findByRole("heading",{name:"Daniel O'Connor, CFA®"})).toBeInTheDocument();
+    const participants=screen.getByRole("group",{name:"Conversation participants"});
+    expect(within(participants).getAllByRole("button").map((button)=>button.textContent)).toEqual(["DDaniel O'Connor, CFA®","SSmith, Pat, PhD"]);
+  });
+
   it("splits email-only participant chips into separately truncated local and domain parts",async()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
