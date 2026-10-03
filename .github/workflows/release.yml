@@ -133,6 +133,11 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+      # The hosted image's preinstalled SDKs leave too little disk for the
+      # devcontainer image, Cargo target, and AppImage staging.
+      - name: Free runner disk space
+        run: ./scripts/free-ci-disk.sh
+
       # devcontainers/ci exports an OCI archive when platform is specified.
       # The runner's default docker driver does not support this exporter.
       - name: Set up Docker Buildx for OCI export

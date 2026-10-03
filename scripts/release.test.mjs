@@ -23,6 +23,16 @@ describe("Linux CI container builds", () => {
       assert.match(steps[buildIndex], /^ {10}platform: linux\/amd64$/m);
     });
 
+    it(`${path} frees runner disk before building the devcontainer`, async () => {
+      const workflow = await readFile(new URL(`../.github/workflows/${path}`, import.meta.url), "utf8");
+      const jobBlock = workflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0];
+      const steps = jobBlock?.split(/\n {6}- /).slice(1) ?? [];
+      const cleanupIndex = steps.findIndex((step) => /^ {8}run: \.\/scripts\/free-ci-disk\.sh$/m.test(step));
+      const setupIndex = steps.findIndex((step) => /uses: docker\/setup-buildx-action@/.test(step));
+      assert.ok(cleanupIndex >= 0, "Missing disk cleanup step");
+      assert.ok(cleanupIndex < setupIndex, "Disk cleanup must run before the image is built");
+    });
+
     it(`${path} forwards resource limits into the Linux build container`, async () => {
       const workflow = await readFile(new URL(`../.github/workflows/${path}`, import.meta.url), "utf8");
       const jobBlock = workflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0];
@@ -36,6 +46,26 @@ describe("Linux CI container builds", () => {
         assert.match(buildStep, new RegExp(`^ {10}${name}: "${value}"$`, "m"));
         assert.match(buildStep, new RegExp(`^ {12}${name}$`, "m"), `${name} must reach the container`);
       }
+    });
+  }
+
+  for (const env of [{}, { GITHUB_ACTIONS: "true" }, { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "self-hosted" }]) {
+    it(`refuses to delete runner SDKs outside a GitHub-hosted runner (${JSON.stringify(env)})`, async (t) => {
+      const directory = await mkdtemp(join(tmpdir(), "threestrands disk test "));
+      t.after(() => rm(directory, { recursive: true, force: true }));
+      const log = join(directory, "commands.log");
+      for (const command of ["sudo", "df"]) {
+        await writeFile(join(directory, command), `#!/bin/sh\necho ${command} >> "${log}"\n`);
+        await chmod(join(directory, command), 0o755);
+      }
+      const { GITHUB_ACTIONS, RUNNER_ENVIRONMENT, ...base } = process.env;
+      const result = spawnSync("bash", [new URL("./free-ci-disk.sh", import.meta.url).pathname], {
+        encoding: "utf8",
+        env: { ...base, ...env, PATH: `${directory}${delimiter}${process.env.PATH}` },
+      });
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /only runs on GitHub-hosted Actions runners/);
+      await assert.rejects(readFile(log), { code: "ENOENT" }, "No command may run before the guard");
     });
   }
 
