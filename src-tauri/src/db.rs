@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::mime::{RawMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
-    Account, CalendarAccount, ContactSuggestion, FailedMutation, MailboxUnreadCounts, Message,
+    Account, CalendarAccount, ContactSuggestion, FailedMutation, MailProviderKind, MailboxUnreadCounts, Message,
     SearchThreadsRequest, QuarantinedMessage, Snippet, SplitInbox, SyncStatus, Thread, ThreadDetail,
     ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
     UnsubscribeMethod, UnsubscribeTarget,

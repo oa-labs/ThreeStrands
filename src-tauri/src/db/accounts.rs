@@ -10,7 +10,7 @@ impl Database {
     ///
     /// Derived rather than cached so it cannot drift from the account
     /// catalog — this is the same rule startup used when it built a distinct
-    /// "primary" `GoogleAuth` from `list_accounts().next()`.
+    /// "primary" credential from `list_accounts().next()`.
     pub fn primary_account_id(&self) -> String {
         self.list_accounts()
             .ok()
@@ -31,7 +31,14 @@ impl Database {
     }
 
     /// Ensures an account exists and folds pre-multi-account state onto it.
-    pub fn adopt_account(&self, email: &str) -> DbResult<Account> {
+    ///
+    /// `provider` is the service the account just authorized through, so
+    /// it is recorded on a new row and kept current on an existing one.
+    pub fn adopt_mail_account(
+        &self,
+        email: &str,
+        provider: MailProviderKind,
+    ) -> DbResult<Account> {
         self.with_transaction(|transaction| {
             let exists: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ?1)",
@@ -40,8 +47,8 @@ impl Database {
             )?;
             if exists {
                 transaction.execute(
-                    "UPDATE accounts SET status = 'connected' WHERE email = ?1",
-                    [email],
+                    "UPDATE accounts SET status = 'connected', provider = ?2 WHERE email = ?1",
+                    params![email, provider.as_str()],
                 )?;
             } else {
                 let sort_order: i64 = transaction.query_row(
@@ -51,11 +58,9 @@ impl Database {
                 )?;
                 let color = ACCOUNT_COLORS[(sort_order as usize) % ACCOUNT_COLORS.len()];
                 transaction.execute(
-                    // Every account adopted through this path today comes
-                    // from the Gmail OAuth flow.
                     "INSERT INTO accounts(email, color, status, provider, sort_order, connected_at)
-                     VALUES (?1, ?2, 'connected', 'gmail', ?3, ?4)",
-                    params![email, color, sort_order, Utc::now().to_rfc3339()],
+                     VALUES (?1, ?2, 'connected', ?3, ?4, ?5)",
+                    params![email, color, provider.as_str(), sort_order, Utc::now().to_rfc3339()],
                 )?;
             }
             for table in ["mutations", "threads", "triage_events"] {
@@ -90,6 +95,12 @@ impl Database {
         })?;
         self.get_account(email)?
             .ok_or_else(|| "Account not found".into())
+    }
+
+    /// Adopts a Gmail account — the shorthand most tests want.
+    #[cfg(test)]
+    pub fn adopt_account(&self, email: &str) -> DbResult<Account> {
+        self.adopt_mail_account(email, MailProviderKind::Gmail)
     }
 
     pub fn get_account(&self, email: &str) -> DbResult<Option<Account>> {

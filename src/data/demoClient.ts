@@ -690,14 +690,14 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async listAccounts() {
       return structuredClone(accounts);
     },
-    async addAccount() {
+    async addAccount(provider) {
       const palette = ["#4285F4", "#34A853", "#EA4335", "#FBBC05", "#9C27B0", "#00ACC1", "#FF7043", "#5C6BC0"];
       const account: Account = {
         email: `demo-${accounts.length + 1}@example.com`,
         displayName: null,
         color: palette[accounts.length % palette.length]!,
         status: "connected",
-        provider: "gmail",
+        provider,
         sortOrder: accounts.length,
         connectedAt: new Date().toISOString(),
         lastSyncedAt: null,

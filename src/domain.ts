@@ -521,13 +521,16 @@ export type AuthStatus = {
   connected: boolean;
 };
 
+/** A mail backend an account can authenticate and sync through. */
+export type MailProvider = "gmail";
+
 export type Account = {
   email: string;
   displayName: string | null;
   color: string;
   status: "connected" | "needs_reauth";
   /** Which backend this account authenticates and syncs through. */
-  provider: "gmail";
+  provider: MailProvider;
   sortOrder: number;
   connectedAt: string;
   lastSyncedAt: string | null;

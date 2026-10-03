@@ -42,3 +42,15 @@ describe("native AI request payloads", () => {
     }
   });
 });
+
+describe("native account requests", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue({});
+  });
+
+  it("names the mail provider a new account signs in through", async () => {
+    await client.addAccount("gmail");
+    expect(vi.mocked(invoke).mock.calls.find(([name]) => name === "add_account")?.[1]).toEqual({ provider: "gmail" });
+  });
+});

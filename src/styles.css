@@ -1842,8 +1842,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contacts-error { color:var(--danger,#b54747); font-size:var(--type-sm); }
 .contacts-empty-state { min-height:320px; display:grid; place-content:center; justify-items:center; gap:8px; color:var(--muted); }
 .context-panel { grid-column:4; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:auto; padding:12px 14px 16px; border-left:1px solid var(--border); background:var(--surface); }
-.context-participants-section { flex-shrink:0; min-width:0; padding-bottom:10px; margin-bottom:10px; border-bottom:1px solid var(--border); }
-.context-participants-label { margin-bottom:6px; color:var(--muted); font-size:var(--type-xs); }
+/* The picker and the card it drives read as one block: no rule between them. */
+.context-person { flex-shrink:0; min-width:0; padding:12px 0; border-bottom:1px solid var(--border); }
+.context-person:first-child { padding-top:2px; }
+.context-participants-section { flex-shrink:0; min-width:0; margin-bottom:12px; }
 /* Three whole badge rows plus two gaps. Share the row height with the badges
    so larger font preferences preserve the same limit without clipping text. */
 .context-participants { --participant-row-height:max(26px, calc(var(--type-xs) * 1.4 + 6px)); display:flex; flex-wrap:wrap; align-content:flex-start; gap:6px; max-height:calc(var(--participant-row-height) * 3 + 12px); overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; }
@@ -1856,7 +1858,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-participants button:hover { background:var(--hover); color:var(--text); }
 .context-participants button[aria-pressed="true"] { border-color:var(--accent); color:var(--text); background:color-mix(in srgb,var(--accent) 10%,var(--surface)); }
 .context-participant-initial { display:grid; flex:0 0 auto; place-items:center; width:20px; height:20px; border-radius:50%; color:var(--accent); background:color-mix(in srgb,var(--accent) 13%,var(--surface)); font-weight:600; }
-.context-contact { padding:2px 0 12px; border-bottom:1px solid var(--border); }
+.context-contact { min-width:0; }
 .context-contact-card { display:flex; align-items:flex-start; gap:10px; }
 .context-contact-text { display:grid; flex:1; gap:2px; min-width:0; }
 /* Three type tiers: name, email address, then every detail line at one smaller size. */
@@ -1872,10 +1874,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-section { padding:12px 0; border-bottom:1px solid var(--border); }
 .context-panel > .context-section:last-of-type { border-bottom:0; }
 .context-section-header { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:26px; margin-bottom:6px; }
-.context-section-header h3 { display:flex; align-items:center; gap:6px; margin:0; color:var(--muted); font-size:var(--type-xs); font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
-.context-section-header h3 svg { color:var(--accent); }
+.context-section-header h3 { display:flex; align-items:center; gap:6px; min-width:0; margin:0; color:var(--muted); font-size:var(--type-xs); font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
 .context-section-header-actions { display:flex; flex:0 0 auto; align-items:center; gap:2px; }
-.context-count { font-weight:500; letter-spacing:normal; }
+.context-count { padding:0 4px; color:var(--muted); font-size:var(--type-xs); font-weight:500; font-variant-numeric:tabular-nums; }
 .context-icon-button { display:grid; flex:0 0 auto; place-items:center; width:26px; height:26px; padding:0; border:0; border-radius:var(--radius-sm); color:var(--muted); background:transparent; cursor:pointer; }
 .context-icon-button:hover { color:var(--text); background:var(--hover); }
 .context-status { margin:0; color:var(--muted); font-size:var(--type-sm); line-height:1.45; }

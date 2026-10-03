@@ -37,7 +37,7 @@ describe("ContactMeetings", () => {
     ]);
 
     const section = await screen.findByRole("region", { name: "Upcoming meetings" });
-    const titles = within(section).getAllByRole("button").map((button) => button.querySelector("strong")?.textContent);
+    const titles = within(section).getAllByRole("button", { name: /^Meeting/ }).map((button) => button.querySelector("strong")?.textContent);
     expect(titles).toEqual(["Meeting soon", "Meeting later"]);
     const soon = within(section).getByRole("button", { name: /Meeting soon/ });
     expect(soon).toHaveTextContent(`${formatEventDate(meeting("soon", 2, ["jane@example.com"]))} · with Jane Doe`);
@@ -79,7 +79,9 @@ describe("ContactMeetings", () => {
       clearScheduleCache();
       renderMeetings(count(total));
       const section = await screen.findByRole("region", { name: "Upcoming meetings" });
-      expect(within(section).getAllByRole("button")).toHaveLength(Math.min(total, MAX_UPCOMING_MEETINGS));
+      expect(within(section).getAllByRole("button", { name: /^Meeting/ })).toHaveLength(Math.min(total, MAX_UPCOMING_MEETINGS));
+      // The heading counts what the section lists, like every other panel section.
+      expect(section.querySelector(".context-section-header .context-count")).toHaveTextContent(String(Math.min(total, MAX_UPCOMING_MEETINGS)));
       cleanup();
     }
   });

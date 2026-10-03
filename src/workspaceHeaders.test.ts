@@ -109,6 +109,8 @@ describe("conversation participant layout", () => {
     expect(lastDeclaration(".context-participants", "overflow-x")).toBe("hidden");
     expect(lastDeclaration(".context-participants", "scrollbar-width")).toBe("thin");
     expect(lastDeclaration(".context-participants-section", "flex-shrink")).toBe("0");
+    // The picker sits inside the person block, which must not shrink in the panel's flex column either.
+    expect(lastDeclaration(".context-person", "flex-shrink")).toBe("0");
     expect(lastDeclaration(".context-participants button:focus-visible", "outline-offset")).toBe("-2px");
   });
 });

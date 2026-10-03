@@ -116,7 +116,7 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
 
   return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-labelledby="thread-assist-heading">
     <header className="context-section-header">
-      <h3 id="thread-assist-heading"><Sparkles size={13} />{title}</h3>
+      <h3 id="thread-assist-heading">{title}</h3>
       {busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
         <div className="context-section-header-actions">
           {!failure && (missingSummary || missingSuggestions) ? (

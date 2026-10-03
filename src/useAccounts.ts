@@ -69,7 +69,8 @@ export function useAccounts(settingsOpen: boolean) {
   }, [accounts, refreshAccounts]);
 
   const addAccount = useCallback(async () => {
-    await mailClient.addAccount();
+    // Gmail is the only provider the account UI offers so far.
+    await mailClient.addAccount("gmail");
     setAuthStatus(await mailClient.googleAuthStatus());
     await refreshAccounts();
   }, [refreshAccounts]);

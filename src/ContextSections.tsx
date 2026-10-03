@@ -31,20 +31,56 @@ function saveCollapsed(id: string, collapsed: boolean) {
 }
 
 /**
+ * The one heading layout every context panel section shares: an uppercase
+ * label (optionally a collapse toggle) on the left, then the item count and
+ * any section actions on the right. Labels carry no icons.
+ */
+export function ContextSectionHeader({ title, titleId, count, toggle, actions }: {
+  title: ReactNode;
+  /** Id on the label, for a section labelled by its heading. */
+  titleId?: string;
+  count?: number;
+  /** Makes the label a collapse toggle for the element with id `controls`. */
+  toggle?: { collapsed: boolean; controls: string; onToggle(): void };
+  actions?: ReactNode;
+}) {
+  return (
+    <header className="context-section-header">
+      <h3>
+        {toggle ? (
+          <button type="button" className="context-section-toggle" aria-expanded={!toggle.collapsed} aria-controls={toggle.controls} onClick={toggle.onToggle}>
+            {toggle.collapsed ? <ChevronRight size={13} aria-hidden="true" /> : <ChevronDown size={13} aria-hidden="true" />}
+            <span id={titleId}>{title}</span>
+          </button>
+        ) : <span id={titleId}>{title}</span>}
+      </h3>
+      {(count !== undefined && count > 0) || actions ? (
+        <div className="context-section-header-actions">
+          {count !== undefined && count > 0 ? <span className="context-count">{count}</span> : null}
+          {actions}
+        </div>
+      ) : null}
+    </header>
+  );
+}
+
+/**
  * A context panel section whose heading collapses it (remembered per device)
  * and whose rows stop at a few with "Show more", so stacked sections stay
  * scannable instead of pushing everything else down.
  */
-export function ContextSection({ id, title, count, note, rows, empty, className }: {
+export function ContextSection({ id, title, label, count, actions, note, rows, className }: {
   /** Stable key for the remembered collapse state. */
   id: string;
   title: ReactNode;
+  /** An accessible region name, when it should differ from the visible title. */
+  label?: string;
   count?: number;
+  /** Buttons at the end of the heading, such as Add. */
+  actions?: ReactNode;
   /** A line under the heading, such as a date range. */
   note?: ReactNode;
   rows: ReactNode[];
-  /** Shown instead of rows when there are none. */
-  empty?: ReactNode;
   className?: string;
 }) {
   const [collapsed, setCollapsed] = useState(() => readCollapsed().has(id));
@@ -57,19 +93,10 @@ export function ContextSection({ id, title, count, note, rows, empty, className 
     saveCollapsed(id, !collapsed);
   };
   return (
-    <section className={`context-section context-collapsible${className ? ` ${className}` : ""}`} aria-labelledby={headingId}>
-      <header className="context-section-header">
-        <h3>
-          <button type="button" className="context-section-toggle" aria-expanded={!collapsed} aria-controls={bodyId} onClick={toggle}>
-            {collapsed ? <ChevronRight size={13} aria-hidden="true" /> : <ChevronDown size={13} aria-hidden="true" />}
-            <span id={headingId}>{title}</span>
-            {count !== undefined && count > 0 ? <span className="context-count">{count}</span> : null}
-          </button>
-        </h3>
-      </header>
+    <section className={`context-section context-collapsible${className ? ` ${className}` : ""}`} aria-label={label} aria-labelledby={label ? undefined : headingId}>
+      <ContextSectionHeader title={title} titleId={headingId} count={count} actions={actions} toggle={{ collapsed, controls: bodyId, onToggle: toggle }} />
       <div id={bodyId} hidden={collapsed}>
         {note ? <p className="context-section-note">{note}</p> : null}
-        {rows.length === 0 ? empty : null}
         {expanded || hidden <= 0 ? rows : rows.slice(0, CONTEXT_SECTION_ROWS)}
         {hidden > 0 ? (
           <button type="button" className="context-link-button" onClick={() => setExpanded(!expanded)}>
@@ -81,14 +108,9 @@ export function ContextSection({ id, title, count, note, rows, empty, className 
   );
 }
 
-function firstName(name: string) {
-  return name.split(/[\s,]+/)[0] || name;
-}
-
 /** Attachments the selected person sent, newest first. */
-export function ContactFilesSection({ contactId, name, onShowMessage }: {
+export function ContactFilesSection({ contactId, onShowMessage }: {
   contactId: string;
-  name: string;
   onShowMessage(threadId: string, messageId: string): void;
 }) {
   const [files, setFiles] = useState<ContactFiles | null>(null);
@@ -127,7 +149,7 @@ export function ContactFilesSection({ contactId, name, onShowMessage }: {
     <ContextSection
       id="files"
       className="context-files"
-      title={`Files from ${firstName(name)}`}
+      title="Files"
       count={files.total}
       note={files.total > files.files.length ? `Newest ${files.files.length} of ${files.total}` : undefined}
       rows={rows}
@@ -188,14 +210,9 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
   );
 }
 
-/**
- * Other conversations with the selected person. With none, it says that every
- * email with them is in the open conversation; callers show it empty only
- * when local history confirms that.
- */
-export function RecentEmailsSection({ items, name, onOpenThread }: {
+/** Other conversations with the selected person, newest first. */
+export function RecentEmailsSection({ items, onOpenThread }: {
   items: ContactTimelineItem[];
-  name: string;
   onOpenThread(id: string): void;
 }) {
   return (
@@ -203,13 +220,17 @@ export function RecentEmailsSection({ items, name, onOpenThread }: {
       id="recent"
       className="context-history"
       title="Recent emails"
-      rows={items.map((item) => (
-        <button type="button" className="context-history-row" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
-          <strong>{item.subject || "(no subject)"}</strong>
-          <small>{new Date(item.sentAt).toLocaleDateString()} · {item.contactEmail}</small>
-        </button>
-      ))}
-      empty={<p className="context-status">Every email with {firstName(name)} is in this conversation.</p>}
+      count={items.length}
+      rows={items.map((item) => {
+        // The section is about one person, so the row shows what was said rather than their address.
+        const snippet = item.snippet.replace(/\s+/g, " ").trim();
+        return (
+          <button type="button" className="context-history-row" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
+            <strong>{item.subject || "(no subject)"}</strong>
+            <small>{formatHistoryDate(item.sentAt)}{snippet ? ` · ${snippet}` : ""}</small>
+          </button>
+        );
+      })}
     />
   );
 }
@@ -252,7 +273,7 @@ export function DomainSection({ email, addresses, accounts, hideThreadIds, onOpe
       rows={threads.map((item) => (
         <button type="button" className="context-history-row" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
           <strong>{item.subject || "(no subject)"}</strong>
-          <small>{new Date(item.sentAt).toLocaleDateString()} · {item.contactEmail}</small>
+          <small>{formatHistoryDate(item.sentAt)} · {item.contactEmail}</small>
         </button>
       ))}
     />

@@ -939,10 +939,57 @@ pub struct Account {
     pub last_synced_at: Option<String>,
 }
 
+/// The mail providers this build can connect, i.e. the `accounts.provider`
+/// values it understands. [`Account::provider`] stays a plain string at the
+/// storage and transfer boundary; code that has to act on the provider —
+/// choosing a credential flow or a sync backend — parses it into this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MailProviderKind {
+    Gmail,
+}
+
+impl MailProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gmail => "gmail",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "gmail" => Some(Self::Gmail),
+            _ => None,
+        }
+    }
+}
+
 /// The `accounts.provider` values this build understands. Checked wherever a
 /// provider string reaches storage from outside the process — today that is
 /// only the settings-transfer import path, since every other writer sets it
-/// to a literal known value itself.
+/// from a [`MailProviderKind`] itself.
 pub fn is_known_account_provider(value: &str) -> bool {
-    matches!(value, "gmail")
+    MailProviderKind::parse(value).is_some()
+}
+
+#[cfg(test)]
+mod mail_provider_kind_tests {
+    use super::{is_known_account_provider, MailProviderKind};
+
+    #[test]
+    // One entry per provider; the list grows as providers are added.
+    #[allow(clippy::single_element_loop)]
+    fn stored_provider_strings_round_trip() {
+        for kind in [MailProviderKind::Gmail] {
+            assert_eq!(MailProviderKind::parse(kind.as_str()), Some(kind));
+            assert!(is_known_account_provider(kind.as_str()));
+            assert_eq!(
+                serde_json::to_value(kind).unwrap(),
+                serde_json::json!(kind.as_str()),
+                "the IPC spelling must match the stored one"
+            );
+        }
+        assert_eq!(MailProviderKind::parse("Gmail"), None);
+        assert_eq!(MailProviderKind::parse("imap"), None);
+    }
 }

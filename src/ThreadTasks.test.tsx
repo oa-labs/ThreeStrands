@@ -25,11 +25,24 @@ describe("ThreadTasks", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
   it("names its region apart from the Tasks workspace", async () => {
-    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task("mine")]);
     renderTasks();
-    expect(screen.getByRole("region", { name: "Conversation tasks" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Conversation tasks" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
-    await waitFor(() => expect(mailClient.listTasks).toHaveBeenCalled());
+  });
+
+  it("leaves the section out while there are no tasks and shows it once one is added", async () => {
+    const listTasks = vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    const { rerender, onAddTask, onEditTask, onDraftFollowUp, onTasksChanged } = renderTasks();
+    await waitFor(() => expect(listTasks).toHaveBeenCalled());
+    expect(screen.queryByRole("region", { name: "Conversation tasks" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add task" })).not.toBeInTheDocument();
+
+    listTasks.mockResolvedValue([task("added")]);
+    rerender(<ThreadTasks thread={thread} refreshKey={1} onAddTask={onAddTask} onEditTask={onEditTask} onDraftFollowUp={onDraftFollowUp} onTasksChanged={onTasksChanged} />);
+    const section = await screen.findByRole("region", { name: "Conversation tasks" });
+    expect(section.querySelector(".context-section-header-actions .context-count")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: "Add task" })).toBeInTheDocument();
   });
 
   it("lists only open tasks linked to this conversation", async () => {

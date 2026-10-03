@@ -39,12 +39,12 @@ mod unsubscribe_service;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use auth::{AccountAuth, GoogleAuthConfig};
+use auth::{AccountAuth, AuthConfig, OAuthProvider};
 use chrono::Utc;
 use db::Database;
 use models::{
     ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, CreateLabelRequest,
-    CreateSnippetRequest, CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
+    CreateSnippetRequest, CreateSplitInboxRequest, Label, MailProviderKind, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
     UpdateLabelRequest, UpdateSnippetRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
@@ -149,7 +149,7 @@ pub(crate) struct ConnectedAccount {
 pub(crate) type AccountRegistry = Arc<tokio::sync::Mutex<HashMap<String, ConnectedAccount>>>;
 
 /// Moves the pre-connect placeholder entry onto the real address once
-/// `accept_identity` has learned it. `GoogleAuth` and `SyncService` both read
+/// `accept_identity` has learned it. `AccountAuth` and `SyncService` both read
 /// their key through a shared cell, so the entry's contents already describe
 /// the real account — only the map key is stale.
 pub(crate) async fn rekey_placeholder_account(accounts: &AccountRegistry, identity: &str) {
@@ -168,8 +168,9 @@ struct AppState {
     /// Inert unless the beta toggle or `THREESTRANDS_REPLICATED_SYNC` turns
     /// it on — see `Database::replicated_sync_active`.
     replicated_sync: replicated_sync::ReplicatedSync,
-    /// Shared OAuth app credentials, used to authorize any account.
-    auth_config: Option<GoogleAuthConfig>,
+    /// Each identity service's shared OAuth app, used to authorize any
+    /// account connected through it.
+    auth_config: AuthConfig,
     /// Every connected account, keyed by account id — each with its own sync
     /// cursor and polling loop, independent of the others. Populated at
     /// startup from the `accounts` table and by `add_account`.
@@ -270,6 +271,79 @@ mod database_task_tests {
 }
 
 #[cfg(test)]
+mod account_startup_tests {
+    use super::{catalogued_mail_provider, startup_account_credentials};
+    use crate::{auth::{self, AuthConfig}, db::Database, models::MailProviderKind};
+
+    #[test]
+    fn a_fresh_install_starts_with_the_gmail_placeholder() {
+        let database = Database::open_memory();
+        let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
+        assert_eq!(credentials.len(), 1);
+        assert_eq!(credentials[0].0, auth::LEGACY_KEY);
+        assert_eq!(credentials[0].1.mail_provider(), MailProviderKind::Gmail);
+    }
+
+    #[test]
+    fn catalogued_accounts_start_through_their_recorded_provider() {
+        let database = Database::open_memory();
+        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
+        database.adopt_mail_account("home@example.com", MailProviderKind::Gmail).unwrap();
+        let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
+        let started = credentials
+            .iter()
+            .map(|(key, auth)| (key.as_str(), auth.key(), auth.mail_provider()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            started,
+            [
+                ("work@example.com", "work@example.com".to_string(), MailProviderKind::Gmail),
+                ("home@example.com", "home@example.com".to_string(), MailProviderKind::Gmail),
+            ]
+        );
+    }
+
+    #[test]
+    fn nothing_starts_without_a_configured_oauth_app() {
+        let database = Database::open_memory();
+        assert!(startup_account_credentials(&database, &AuthConfig::default()).is_empty());
+        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
+        assert!(startup_account_credentials(&database, &AuthConfig::default()).is_empty());
+    }
+
+    #[test]
+    fn an_account_with_an_unsupported_provider_is_skipped_without_blocking_others() {
+        let database = Database::open_memory();
+        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
+        database.adopt_mail_account("future@example.com", MailProviderKind::Gmail).unwrap();
+        database
+            .with_connection(|connection| {
+                connection.execute(
+                    "UPDATE accounts SET provider = 'from-a-newer-build' WHERE email = 'future@example.com'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
+        let keys = credentials.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+        assert_eq!(keys, ["work@example.com"]);
+        assert!(catalogued_mail_provider(&database, "future@example.com")
+            .unwrap_err()
+            .contains("unsupported mail provider"));
+    }
+
+    #[test]
+    fn an_uncatalogued_address_is_treated_as_gmail() {
+        let database = Database::open_memory();
+        assert_eq!(
+            catalogued_mail_provider(&database, "gone@example.com").unwrap(),
+            MailProviderKind::Gmail
+        );
+    }
+}
+
+#[cfg(test)]
 mod background_failure_tests {
     use super::{force_full_resync, log_failure, run_storage_maintenance};
     use crate::db::Database;
@@ -340,7 +414,10 @@ impl AuthorizeSlot {
 
 /// Runs `auth.authorize()` behind the app-wide sign-in slot, canceling
 /// whichever attempt it replaces and always releasing the slot afterward.
-async fn authorize_interactively(state: &AppState, auth: &AccountAuth) -> Result<String, String> {
+async fn authorize_interactively(
+    state: &AppState,
+    auth: &auth::OAuthCredential,
+) -> Result<String, String> {
     let token = state.authorize_slot.claim().await;
     let result = auth.authorize(&token).await;
     state.authorize_slot.release(&token).await;
@@ -1678,8 +1755,8 @@ async fn connect_google(state: State<'_, AppState>) -> Result<SyncStatus, String
         (account.auth.clone(), account.sync.clone())
     })
     .await
-    .map_err(|_| not_configured())?;
-    authorize_interactively(&state, &auth).await?;
+    .map_err(|_| OAuthProvider::Google.not_configured())?;
+    authorize_interactively(&state, auth.credential()).await?;
     // Rekeys the placeholder registry entry onto the real address as a side
     // effect, so the account is addressable by email from here on.
     log_failure(
@@ -1701,12 +1778,19 @@ async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, Strin
     run_database_task(move || database.list_accounts()).await
 }
 
+/// Signs in a new mail account through `provider`'s OAuth flow. Callers
+/// that predate provider choice omit it and get Gmail, the only provider
+/// they could have meant.
 #[tauri::command]
-async fn add_account(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<Account, String> {
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
-    let auth = AccountAuth::Google(config.pending_account());
-    let email = authorize_interactively(&state, &auth).await?;
-    let account = state.database.adopt_account(&email)?;
+async fn add_account(
+    provider: Option<MailProviderKind>,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Account, String> {
+    let provider = provider.unwrap_or(MailProviderKind::Gmail);
+    let auth = state.auth_config.pending_mail_account(provider)?;
+    let email = authorize_interactively(&state, auth.credential()).await?;
+    let account = state.database.adopt_mail_account(&email, provider)?;
     let connected = spawn_synced_account(state.database.clone(), auth, true, app);
     state.accounts.lock().await.insert(email, connected);
     record_mail_account(&state, &account)?;
@@ -1729,7 +1813,11 @@ async fn remove_account_internal(
     remove_catalog: bool,
 ) -> Result<(), String> {
     let _guard = state.correspondence.gate.lock().await;
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    // Resolved before any local data is purged, so an unconfigured provider
+    // fails the removal while the account is still intact.
+    let fallback = state
+        .auth_config
+        .mail_account(catalogued_mail_provider(&state.database, &email)?, &email)?;
     state.database.pause_ready_sends_for(&email)?;
     // Purge local data first: if this fails, the account is untouched and
     // its credentials are still live, so the caller can safely retry rather
@@ -1745,7 +1833,7 @@ async fn remove_account_internal(
             connected.poll_task.abort();
             connected.auth.disconnect()
         }
-        None => AccountAuth::Google(config.account(&email)).disconnect(),
+        None => fallback.disconnect(),
     };
     // Removing the last account returns the app to its pre-connect state, so
     // restore the placeholder entry `connect_google` authorizes against —
@@ -1782,19 +1870,19 @@ async fn remove_synced_mail_account(
 /// Seeds the pre-connect placeholder entry when no account is connected, so
 /// the registry is never empty while OAuth is configured.
 async fn ensure_placeholder_account(state: &AppState, app: tauri::AppHandle) {
-    let Some(config) = state.auth_config.as_ref() else {
+    // First-run connect (`connect_google`) authorizes against this entry,
+    // so it is a Gmail placeholder.
+    let Ok(auth) = state
+        .auth_config
+        .mail_account(MailProviderKind::Gmail, auth::LEGACY_KEY)
+    else {
         return;
     };
     let mut accounts = state.accounts.lock().await;
     if accounts.is_empty() {
         accounts.insert(
             auth::LEGACY_KEY.to_string(),
-            spawn_synced_account(
-                state.database.clone(),
-                AccountAuth::Google(config.legacy_account()),
-                false,
-                app,
-            ),
+            spawn_synced_account(state.database.clone(), auth, false, app),
         );
     }
 }
@@ -1805,16 +1893,18 @@ async fn reconnect_account(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Account, String> {
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let fallback = state
+        .auth_config
+        .mail_account(catalogued_mail_provider(&state.database, &email)?, &email)?;
     let auth = match state.accounts.lock().await.get(&email) {
         Some(connected) => connected.auth.clone(),
-        None => AccountAuth::Google(config.account(&email)),
+        None => fallback,
     };
-    authorize_interactively(&state, &auth).await?;
+    authorize_interactively(&state, auth.credential()).await?;
     // Make the persisted status authoritative before any newly spawned
     // service checks it. Previously the service could observe needs_reauth,
     // skip its initial sync, and sleep until the first polling interval.
-    let account = state.database.adopt_account(&email)?;
+    let account = state.database.adopt_mail_account(&email, auth.mail_provider())?;
     state.database.ensure_compose_identity(&email)?;
     let service = {
         // Self-heal: an account already in the `accounts` table should
@@ -1842,7 +1932,7 @@ async fn reconnect_account(
 
 #[tauri::command(async)]
 fn list_calendar_accounts(state: State<'_, AppState>) -> Result<Vec<CalendarAccount>, String> {
-    let config = state.auth_config.as_ref();
+    let config = state.auth_config.google().ok();
     let mut accounts = state.database.list_calendar_accounts()?;
     for account in &mut accounts {
         if !config.is_some_and(|config| config.calendar_account(&account.email).available()) {
@@ -1854,9 +1944,9 @@ fn list_calendar_accounts(state: State<'_, AppState>) -> Result<Vec<CalendarAcco
 
 #[tauri::command]
 async fn add_calendar_account(state: State<'_, AppState>) -> Result<CalendarAccount, String> {
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let config = state.auth_config.google()?;
     let auth = config.pending_calendar_account();
-    let email = authorize_interactively(&state, &AccountAuth::Google(auth)).await?;
+    let email = authorize_interactively(&state, &auth).await?;
     state.database.adopt_calendar_account(&email)?;
     let account = state
         .database
@@ -1873,9 +1963,9 @@ async fn reconnect_calendar_account(
     email: String,
     state: State<'_, AppState>,
 ) -> Result<CalendarAccount, String> {
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let config = state.auth_config.google()?;
     let auth = config.calendar_account(&email);
-    authorize_interactively(&state, &AccountAuth::Google(auth)).await?;
+    authorize_interactively(&state, &auth).await?;
     state.database.adopt_calendar_account(&email)?;
     let account = state
         .database
@@ -1888,7 +1978,7 @@ async fn reconnect_calendar_account(
 }
 
 async fn calendar_options_for_account(
-    config: &GoogleAuthConfig,
+    config: &auth::OAuthApp,
     database: &Database,
     email: &str,
 ) -> Result<Vec<CalendarOption>, String> {
@@ -1914,7 +2004,7 @@ async fn calendar_options_for_account(
 }
 
 async fn selected_calendar_ids(
-    config: &GoogleAuthConfig,
+    config: &auth::OAuthApp,
     database: &Database,
     email: &str,
 ) -> Result<Vec<String>, String> {
@@ -1935,7 +2025,7 @@ async fn freebusy_coverage(
     time_zone: &str,
     state: &AppState,
 ) -> Result<(Vec<BusyInterval>, usize, usize, Vec<String>), String> {
-    let Some(config) = state.auth_config.as_ref() else {
+    let Ok(config) = state.auth_config.google() else {
         return Ok((Vec::new(), 0, 0, Vec::new()));
     };
     let mut busy = Vec::new();
@@ -1983,7 +2073,7 @@ async fn freebusy_coverage(
 async fn list_calendar_options(
     state: State<'_, AppState>,
 ) -> Result<Vec<CalendarOption>, String> {
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let config = state.auth_config.google()?;
     let mut options = Vec::new();
     for account in state.database.list_calendar_accounts()? {
         options.extend(
@@ -2053,7 +2143,7 @@ async fn create_calendar_event(
     let account = state.database.list_calendar_accounts()?.into_iter()
         .find(|account| account.email == request.account_id && account.status == "connected")
         .ok_or_else(|| "Connect this calendar account in Settings first".to_string())?;
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let config = state.auth_config.google()?;
     let options = calendar::list_calendar_options(config.calendar_account(&account.email), &account.email).await?;
     if !options.iter().any(|option| option.id == request.calendar_id && option.writable) {
         return Err("Choose a calendar where you can create events".into());
@@ -2067,7 +2157,7 @@ async fn set_calendar_selection(
     calendar_ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<CalendarOption>, String> {
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let config = state.auth_config.google()?;
     let mut available =
         calendar::list_calendar_options(config.calendar_account(&account_id), &account_id).await?;
     let available_ids = available
@@ -2100,7 +2190,7 @@ async fn set_calendar_selection(
 
 #[tauri::command(async)]
 fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let config = state.auth_config.google()?;
     config.calendar_account(&email).disconnect()?;
     if state.database.cross_device_sync_enrolled()? {
         database_result(state.database.disconnect_calendar_account_locally(&email))
@@ -2116,7 +2206,7 @@ async fn remove_synced_calendar_account(email: String, state: State<'_, AppState
     }
     state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase())?;
     state.replicated_sync.sync_once().await?;
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let config = state.auth_config.google()?;
     config.calendar_account(&email).disconnect()?;
     database_result(state.database.remove_calendar_account(&email))
 }
@@ -2128,7 +2218,7 @@ async fn list_schedule_events(
     time_zone: String,
     state: State<'_, AppState>,
 ) -> Result<ScheduleResult, String> {
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let config = state.auth_config.google()?;
     let accounts = state.database.list_calendar_accounts()?;
     if accounts.is_empty() {
         return Err("Connect a Google Calendar account in Settings first.".to_string());
@@ -2190,7 +2280,7 @@ async fn update_calendar_response(
     response_status: String,
     state: State<'_, AppState>,
 ) -> Result<models::ScheduleEvent, String> {
-    let config = state.auth_config.as_ref().ok_or_else(not_configured)?;
+    let config = state.auth_config.google()?;
     if !state.database.list_calendar_accounts()?.iter().any(|account| account.email == account_id) {
         return Err("Calendar account is not connected".into());
     }
@@ -3191,12 +3281,6 @@ fn reconcile_tasks(state: State<'_, AppState>) -> Result<usize, String> {
     Ok(count)
 }
 
-fn not_configured() -> String {
-    "Google OAuth is not configured. Set THREESTRANDS_GOOGLE_CLIENT_ID and \
-     THREESTRANDS_GOOGLE_CLIENT_SECRET from a Desktop app credential."
-        .into()
-}
-
 /// Resolves the sync engine for a given account, falling back to the primary
 /// account when `account_id` is `None`. Label mutations must run against the
 /// account that actually owns the label, not always the primary account.
@@ -3264,7 +3348,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if recovery.is_some() {
         force_full_resync(&database);
     }
-    let auth_config = GoogleAuthConfig::from_environment().ok();
+    let auth_config = AuthConfig::from_environment();
     spawn_badge_loop(database.clone(), app.handle().clone());
     spawn_storage_maintenance(database.clone());
     let root = data_dir.join("attachments");
@@ -3273,7 +3357,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let attachment_reader = attachment_reader::ReaderCache::new(root.join("reader"))?;
     // Built before `manage` so the registry is never observed empty by a
     // command racing startup.
-    let registry = startup_account_registry(&database, auth_config.as_ref(), app.handle());
+    let registry = startup_account_registry(&database, &auth_config, app.handle());
     let accounts: AccountRegistry = Arc::new(tokio::sync::Mutex::new(registry));
     let correspondence = correspondence::Correspondence {
         database: database.clone(),
@@ -3438,32 +3522,64 @@ fn run_storage_maintenance(database: &Database) -> Vec<&'static str> {
 /// address once the identity is known.
 fn startup_account_registry(
     database: &Arc<Database>,
-    auth_config: Option<&GoogleAuthConfig>,
+    auth_config: &AuthConfig,
     handle: &tauri::AppHandle,
 ) -> HashMap<String, ConnectedAccount> {
     let mut registry = HashMap::new();
-    let Some(config) = auth_config else {
-        return registry;
-    };
-    let catalog = log_failure("listing accounts at startup", database.list_accounts())
-        .unwrap_or_default();
-    let keys = if catalog.is_empty() {
-        vec![auth::LEGACY_KEY.to_string()]
-    } else {
-        catalog.into_iter().map(|account| account.email).collect()
-    };
-    for key in keys {
-        let auth = AccountAuth::Google(if key == auth::LEGACY_KEY {
-            config.legacy_account()
-        } else {
-            config.account(&key)
-        });
+    for (key, auth) in startup_account_credentials(database, auth_config) {
         registry.insert(
             key,
             spawn_synced_account(database.clone(), auth, true, handle.clone()),
         );
     }
     registry
+}
+
+/// The credential each catalogued account starts with, keyed by account
+/// id — or, before the first connect, the Gmail placeholder. An account
+/// whose provider has no configured OAuth app is left out rather than
+/// failing the others.
+fn startup_account_credentials(
+    database: &Database,
+    auth_config: &AuthConfig,
+) -> Vec<(String, AccountAuth)> {
+    let catalog = log_failure("listing accounts at startup", database.list_accounts())
+        .unwrap_or_default();
+    if catalog.is_empty() {
+        return auth_config
+            .mail_account(MailProviderKind::Gmail, auth::LEGACY_KEY)
+            .map(|auth| vec![(auth::LEGACY_KEY.to_string(), auth)])
+            .unwrap_or_default();
+    }
+    catalog
+        .into_iter()
+        .filter_map(|account| {
+            let provider = MailProviderKind::parse(&account.provider).or_else(|| {
+                log::warn!(
+                    "skipping {}: unsupported mail provider {:?}",
+                    account.email,
+                    account.provider
+                );
+                None
+            })?;
+            let auth = log_failure(
+                "starting a catalogued account",
+                auth_config.mail_account(provider, &account.email),
+            )?;
+            Some((account.email, auth))
+        })
+        .collect()
+}
+
+/// The provider a catalogued account was connected through. An address no
+/// longer in the catalog (e.g. a retried removal) is treated as Gmail, the
+/// only provider that existed before the column did.
+fn catalogued_mail_provider(database: &Database, email: &str) -> Result<MailProviderKind, String> {
+    match database.get_account(email)? {
+        None => Ok(MailProviderKind::Gmail),
+        Some(account) => MailProviderKind::parse(&account.provider)
+            .ok_or_else(|| format!("{email} uses an unsupported mail provider: {}", account.provider)),
+    }
 }
 
 /// Every IPC command the frontend may invoke, grouped by feature area.

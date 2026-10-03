@@ -51,6 +51,7 @@ import type {
   UnsubscribeResult,
   UpdateTaskRequest,
   ProposedTimeCheck,
+  MailProvider,
 } from "../domain";
 import type { AiProvider, AiReasoning } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
@@ -153,7 +154,8 @@ export interface MailClient extends CorrespondenceClient {
   connectGoogle(): Promise<SyncStatus>;
   disconnectGoogle(): Promise<void>;
   listAccounts(): Promise<Account[]>;
-  addAccount(): Promise<Account>;
+  /** Signs in a new account through `provider`'s OAuth flow. */
+  addAccount(provider: MailProvider): Promise<Account>;
   removeAccount(email: string): Promise<void>;
   reconnectAccount(email: string): Promise<Account>;
   setAccountDisplayName(email: string, displayName: string | null): Promise<void>;
@@ -263,7 +265,7 @@ const tauriClient: MailClient = {
   connectGoogle: () => complete("connect_google"),
   disconnectGoogle: () => complete("disconnect_google"),
   listAccounts: () => read("list_accounts"),
-  addAccount: () => complete("add_account"),
+  addAccount: (provider) => complete("add_account", { provider }),
   removeAccount: (email) => complete("remove_account", { email }),
   reconnectAccount: (email) => complete("reconnect_account", { email }),
   setAccountDisplayName: (email, displayName) => complete("set_account_display_name", { email, displayName }),

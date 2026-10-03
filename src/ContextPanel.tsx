@@ -4,7 +4,7 @@ import { mailClient } from "./data/client";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { describeActivity } from "./contactContext";
-import { ContactFilesSection, DomainSection, RecentEmailsSection, ThreadOutlineSection } from "./ContextSections";
+import { ContactFilesSection, ContextSectionHeader, DomainSection, RecentEmailsSection, ThreadOutlineSection } from "./ContextSections";
 import { parseAddress, splitAddressList } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 
@@ -17,11 +17,12 @@ export type ContextPerson = {
 };
 
 /**
- * The single right-side panel for a conversation: a compact card for the
- * selected participant with a line of history facts, then the AI brief and
- * suggestions, related tasks and meetings, files the person sent, an outline
- * of a long conversation, other emails with the person, and other people at
- * their organization. Sections without content are left out.
+ * The single right-side panel for a conversation, in two groups. First what
+ * is about the conversation: the AI brief and suggestions, related tasks and
+ * meetings, and an outline of a long conversation. Then what is about one
+ * person: the participant picker joined to a compact card for whoever is
+ * picked, files they sent, other emails with them, and other people at their
+ * organization. Sections without content are left out.
  */
 export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, onShowMessage, assist, related, chat }: {
   detail: ThreadDetail | null;
@@ -183,9 +184,6 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, on
   }, [personId]);
   const currentActivity = activity && activity.contactId === personId ? activity.value : null;
   const facts = currentActivity ? describeActivity(currentActivity) : [];
-  // Local history confirms every email with the person is in this conversation.
-  const everythingHere = Boolean(currentActivity && currentActivity.threadCount === 1
-    && timeline.some((item) => item.threadId === detail?.thread.id));
   const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   const save = async () => {
@@ -220,67 +218,69 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, on
 
   return (
     <aside className="context-panel" aria-label="Conversation context">
-      {chips.length > 1 ? (
-        <div className="context-participants-section">
-          <div id={participantCountId} className="context-participants-label">Participants · {chips.length}</div>
-          <div ref={participantListRef} className="context-participants" role="group" aria-label="Conversation participants" aria-describedby={participantCountId}
-            onFocusCapture={(event) => {
-              if (event.target instanceof HTMLButtonElement) revealParticipant(event.currentTarget, event.target);
-            }}>
-            {chips.map((chip) => (
-              <button key={chip.key} type="button" aria-pressed={chip.emails.includes(email)} title={chip.emails.join(", ")} onClick={() => { if (!chip.emails.includes(email)) setEmail(chip.emails[0]); }}>
-                <span className="context-participant-initial" aria-hidden="true">{(chip.name || chip.emails[0]).slice(0, 1).toLocaleUpperCase()}</span>
-                {chip.name ? <span>{chip.name}</span> : <ParticipantAddress email={chip.emails[0]} />}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {email ? (
-        <section className="context-contact" aria-label="Contact">
-          <div className="context-contact-card">
-            <div className="contact-avatar small">
-              {profile?.photoData ? <img src={`data:image/jpeg;base64,${profile.photoData}`} alt="" /> : <span>{displayName.slice(0, 1).toLocaleUpperCase()}</span>}
-            </div>
-            <div className="context-contact-text">
-              <div className="context-contact-name-row">
-                <h2>{profile
-                  ? <button type="button" className="context-contact-name" aria-describedby={openHintId} onClick={() => onOpenContact(profile.id)}>{displayName}</button>
-                  : displayName}</h2>
-                {profile ? (
-                  <button type="button" className="context-icon-button context-contact-favorite" aria-label={profile.favorite ? "Remove favorite" : "Add favorite"} aria-pressed={profile.favorite} title={profile.favorite ? "Remove favorite" : "Add favorite"} onClick={() => void toggleFavorite()}>
-                    <Heart size={15} fill={profile.favorite ? "currentColor" : "none"} />
-                  </button>
-                ) : (
-                  <button type="button" className="context-icon-button" aria-label="Save to contacts" title="Save to contacts" onClick={() => void save()}>
-                    <UserPlus size={15} />
-                  </button>
-                )}
-                <span id={openHintId} hidden>Opens in Contacts</span>
-              </div>
-              <div className="contact-sidebar-email-row">
-                <a href={`mailto:${email}`}><Mail size={13} /><span>{email}</span></a>
-                <button type="button" className="contact-sidebar-email-copy" aria-label={emailCopied ? "Copied email address" : "Copy email address"} onClick={() => void copyEmail()}>
-                  {emailCopied ? <Check size={13} /> : <Copy size={13} />}
-                </button>
-              </div>
-              {emailCopyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}
-              {profile?.role || profile?.company ? <p>{[profile.role, profile.company].filter(Boolean).join(" · ")}</p> : null}
-              {facts.length > 0 ? <p className="context-contact-activity">{facts.join(" · ")}</p> : null}
-              {profile?.location ? <p>{profile.location}</p> : null}
-              {profile?.links.length ? <nav className="contact-sidebar-links" aria-label="Contact links">{profile.links.map((link) => <a key={link} href={link} onClick={(event) => { event.preventDefault(); void openUrl(link); }}>{new URL(link).hostname}</a>)}</nav> : null}
-            </div>
-          </div>
-          {profile?.notes ? <section className="contact-sidebar-notes"><h3>Notes</h3><p>{profile.notes}</p></section> : null}
-        </section>
-      ) : <p className="contacts-status">Select a conversation participant.</p>}
       {detail ? assist : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
-      {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} name={displayName} onShowMessage={showMessage} /> : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
-      {person && (otherEmails.length > 0 || everythingHere) ? (
-        <RecentEmailsSection items={otherEmails} name={displayName} onOpenThread={onOpenThread} />
-      ) : null}
+      {/* The picker and the card it drives form one block, set apart from the conversation sections above. */}
+      <div className="context-person">
+        {chips.length > 1 ? (
+          <div className="context-participants-section">
+            <ContextSectionHeader title="Participants" count={chips.length} />
+            <span id={participantCountId} hidden>{chips.length} participants</span>
+            <div ref={participantListRef} className="context-participants" role="group" aria-label="Conversation participants" aria-describedby={participantCountId}
+              onFocusCapture={(event) => {
+                if (event.target instanceof HTMLButtonElement) revealParticipant(event.currentTarget, event.target);
+              }}>
+              {chips.map((chip) => (
+                <button key={chip.key} type="button" aria-pressed={chip.emails.includes(email)} title={chip.emails.join(", ")} onClick={() => { if (!chip.emails.includes(email)) setEmail(chip.emails[0]); }}>
+                  <span className="context-participant-initial" aria-hidden="true">{(chip.name || chip.emails[0]).slice(0, 1).toLocaleUpperCase()}</span>
+                  {chip.name ? <span>{chip.name}</span> : <ParticipantAddress email={chip.emails[0]} />}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {email ? (
+          <section className="context-contact" aria-label="Contact">
+            <div className="context-contact-card">
+              <div className="contact-avatar small">
+                {profile?.photoData ? <img src={`data:image/jpeg;base64,${profile.photoData}`} alt="" /> : <span>{displayName.slice(0, 1).toLocaleUpperCase()}</span>}
+              </div>
+              <div className="context-contact-text">
+                <div className="context-contact-name-row">
+                  <h2>{profile
+                    ? <button type="button" className="context-contact-name" aria-describedby={openHintId} onClick={() => onOpenContact(profile.id)}>{displayName}</button>
+                    : displayName}</h2>
+                  {profile ? (
+                    <button type="button" className="context-icon-button context-contact-favorite" aria-label={profile.favorite ? "Remove favorite" : "Add favorite"} aria-pressed={profile.favorite} title={profile.favorite ? "Remove favorite" : "Add favorite"} onClick={() => void toggleFavorite()}>
+                      <Heart size={15} fill={profile.favorite ? "currentColor" : "none"} />
+                    </button>
+                  ) : (
+                    <button type="button" className="context-icon-button" aria-label="Save to contacts" title="Save to contacts" onClick={() => void save()}>
+                      <UserPlus size={15} />
+                    </button>
+                  )}
+                  <span id={openHintId} hidden>Opens in Contacts</span>
+                </div>
+                <div className="contact-sidebar-email-row">
+                  <a href={`mailto:${email}`}><Mail size={13} /><span>{email}</span></a>
+                  <button type="button" className="contact-sidebar-email-copy" aria-label={emailCopied ? "Copied email address" : "Copy email address"} onClick={() => void copyEmail()}>
+                    {emailCopied ? <Check size={13} /> : <Copy size={13} />}
+                  </button>
+                </div>
+                {emailCopyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}
+                {profile?.role || profile?.company ? <p>{[profile.role, profile.company].filter(Boolean).join(" · ")}</p> : null}
+                {facts.length > 0 ? <p className="context-contact-activity">{facts.join(" · ")}</p> : null}
+                {profile?.location ? <p>{profile.location}</p> : null}
+                {profile?.links.length ? <nav className="contact-sidebar-links" aria-label="Contact links">{profile.links.map((link) => <a key={link} href={link} onClick={(event) => { event.preventDefault(); void openUrl(link); }}>{new URL(link).hostname}</a>)}</nav> : null}
+              </div>
+            </div>
+            {profile?.notes ? <section className="contact-sidebar-notes"><h3>Notes</h3><p>{profile.notes}</p></section> : null}
+          </section>
+        ) : <p className="contacts-status">Select a conversation participant.</p>}
+      </div>
+      {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} onShowMessage={showMessage} /> : null}
+      {person && otherEmails.length > 0 ? <RecentEmailsSection items={otherEmails} onOpenThread={onOpenThread} /> : null}
       {person ? (
         <DomainSection
           email={person.email}

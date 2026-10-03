@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use crate::{
-    auth::{AccessTokenError, GoogleAuth},
+    auth::{AccessTokenError, OAuthCredential},
     mime::RawMessage,
     models::Label,
     provider::{
@@ -27,15 +27,15 @@ const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 #[derive(Clone)]
 pub struct GmailClient {
     http: reqwest::Client,
-    auth: GoogleAuth,
+    auth: OAuthCredential,
     next_thread_fetch: Arc<Mutex<Instant>>,
-    /// The Gmail API base. Always `API` outside tests; tests point the
-    /// delivery and sent-copy verification paths at a loopback stand-in.
+    /// The Gmail API base every request is built from. Always `API` outside
+    /// tests; tests point it at a loopback stand-in.
     api: Arc<str>,
 }
 
 impl GmailClient {
-    pub fn new(auth: GoogleAuth) -> Self {
+    pub fn new(auth: OAuthCredential) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
@@ -266,11 +266,11 @@ struct BatchModifyRequest<'a> {
     remove_label_ids: &'a [String],
 }
 
-fn message_modify_url(ids: &[String]) -> Option<String> {
+fn message_modify_url(api: &str, ids: &[String]) -> Option<String> {
     match ids {
         [] => None,
-        [id] => Some(format!("{API}/messages/{id}/modify")),
-        _ => Some(format!("{API}/messages/batchModify")),
+        [id] => Some(format!("{api}/messages/{id}/modify")),
+        _ => Some(format!("{api}/messages/batchModify")),
     }
 }
 
@@ -303,7 +303,7 @@ impl From<GmailLabel> for Label {
 #[async_trait]
 impl MailSync for GmailClient {
     async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
-        let request = self.request(Method::GET, format!("{API}/profile")).await?;
+        let request = self.request(Method::GET, format!("{}/profile", self.api)).await?;
         Ok(SyncCursor::new(
             self.json::<Profile>(request, false).await?.history_id,
         ))
@@ -313,7 +313,7 @@ impl MailSync for GmailClient {
         let mut request = self
             .request(
                 Method::GET,
-                format!("{API}/threads?maxResults=100&labelIds=INBOX"),
+                format!("{}/threads?maxResults=100&labelIds=INBOX", self.api),
             )
             .await?;
         if let Some(page) = page {
@@ -328,7 +328,7 @@ impl MailSync for GmailClient {
 
     async fn search(&self, query: &str, page: Option<&str>) -> ProviderResult<ThreadPage> {
         let mut request = self
-            .request(Method::GET, format!("{API}/threads"))
+            .request(Method::GET, format!("{}/threads", self.api))
             .await?
             .query(&[
                 ("maxResults", "100"),
@@ -348,7 +348,7 @@ impl MailSync for GmailClient {
     async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
         self.pace_thread_fetch().await;
         let request = self
-            .request(Method::GET, format!("{API}/threads/{id}?format=full"))
+            .request(Method::GET, format!("{}/threads/{id}?format=full", self.api))
             .await?;
         Ok(self.json::<GmailThread>(request, false).await?.messages)
     }
@@ -359,8 +359,8 @@ impl MailSync for GmailClient {
             .request(
                 Method::GET,
                 format!(
-                    "{API}/history?startHistoryId={}&maxResults=100",
-                    position.history_id
+                    "{}/history?startHistoryId={}&maxResults=100",
+                    self.api, position.history_id
                 ),
             )
             .await?;
@@ -412,7 +412,7 @@ impl MailFetch for GmailClient {
         let request = self
             .request(
                 Method::GET,
-                format!("{API}/messages/{message}/attachments/{handle}"),
+                format!("{}/messages/{message}/attachments/{handle}", self.api),
             )
             .await?;
         let body: Body = self.json(request, false).await?;
@@ -480,7 +480,7 @@ impl MailMutate for GmailClient {
         remove: &[String],
     ) -> ProviderResult<()> {
         let request = self
-            .request(Method::POST, format!("{API}/threads/{id}/modify"))
+            .request(Method::POST, format!("{}/threads/{id}/modify", self.api))
             .await?
             .json(&ModifyRequest {
                 add_label_ids: add,
@@ -496,7 +496,7 @@ impl MailMutate for GmailClient {
         add: &[String],
         remove: &[String],
     ) -> ProviderResult<()> {
-        let url = message_modify_url(ids).ok_or_else(|| {
+        let url = message_modify_url(&self.api, ids).ok_or_else(|| {
             ProviderError::InvalidOperation("No Gmail messages to modify".into())
         })?;
         let request = self.request(Method::POST, url).await?;
@@ -517,7 +517,7 @@ impl MailMutate for GmailClient {
     }
 
     async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
-        let request = self.request(Method::GET, format!("{API}/labels")).await?;
+        let request = self.request(Method::GET, format!("{}/labels", self.api)).await?;
         Ok(self
             .json::<LabelList>(request, false)
             .await?
@@ -529,7 +529,7 @@ impl MailMutate for GmailClient {
 
     async fn create_label(&self, name: &str) -> ProviderResult<Label> {
         let request = self
-            .request(Method::POST, format!("{API}/labels"))
+            .request(Method::POST, format!("{}/labels", self.api))
             .await?
             .json(&serde_json::json!({ "name": name }));
         Ok(self.json::<GmailLabel>(request, false).await?.into())
@@ -537,7 +537,7 @@ impl MailMutate for GmailClient {
 
     async fn update_label(&self, id: &str, name: &str) -> ProviderResult<Label> {
         let request = self
-            .request(Method::PATCH, format!("{API}/labels/{id}"))
+            .request(Method::PATCH, format!("{}/labels/{id}", self.api))
             .await?
             .json(&serde_json::json!({ "name": name }));
         Ok(self.json::<GmailLabel>(request, false).await?.into())
@@ -545,7 +545,7 @@ impl MailMutate for GmailClient {
 
     async fn delete_label(&self, id: &str) -> ProviderResult<()> {
         let request = self
-            .request(Method::DELETE, format!("{API}/labels/{id}"))
+            .request(Method::DELETE, format!("{}/labels/{id}", self.api))
             .await?;
         self.send(request, false).await?;
         Ok(())
@@ -688,7 +688,7 @@ mod tests {
         }
 
         fn client(base: &str, cached_access_token: &str) -> GmailClient {
-            GmailClient::new(GoogleAuth::in_memory_for_test(
+            GmailClient::new(OAuthCredential::in_memory_for_test(
                 &format!("{base}/token"),
                 Tokens {
                     access_token: cached_access_token.into(),
@@ -739,6 +739,72 @@ mod tests {
 
             assert!(error.requires_reauthentication(), "unexpected error: {error}");
             assert_eq!(seen.api.lock().unwrap().len(), 2, "replays at most once");
+        }
+    }
+
+    /// Sync and label requests go to the configured API base like delivery
+    /// does, so a stand-in server can observe every Gmail call.
+    mod api_base {
+        use std::sync::{Arc, Mutex as StdMutex};
+
+        use axum::{extract::{RawQuery, State}, routing::get, Json, Router};
+        use serde_json::json;
+
+        use super::*;
+        use crate::auth::Tokens;
+
+        async fn serve() -> (String, Arc<StdMutex<Vec<String>>>) {
+            let seen = Arc::new(StdMutex::new(Vec::new()));
+            let router = Router::new()
+                .route(
+                    "/threads",
+                    get(|State(seen): State<Arc<StdMutex<Vec<String>>>>, RawQuery(query): RawQuery| async move {
+                        seen.lock().unwrap().push(format!("/threads?{}", query.unwrap_or_default()));
+                        Json(json!({"threads": [{"id": "t1"}, {"id": "t2"}], "nextPageToken": "p2"}))
+                    }),
+                )
+                .route(
+                    "/labels",
+                    get(|State(seen): State<Arc<StdMutex<Vec<String>>>>| async move {
+                        seen.lock().unwrap().push("/labels".into());
+                        Json(json!({"labels": [{"id": "Label_1", "name": "Receipts", "type": "user"}]}))
+                    }),
+                )
+                .with_state(seen.clone());
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            (format!("http://{address}"), seen)
+        }
+
+        fn client(base: &str) -> GmailClient {
+            GmailClient::new(OAuthCredential::in_memory_for_test(
+                &format!("{base}/token"),
+                Tokens {
+                    access_token: "access".into(),
+                    refresh_token: Some("refresh".into()),
+                    expires_at: u64::MAX,
+                },
+            ))
+            .with_api_base(base)
+        }
+
+        #[tokio::test]
+        async fn inbox_listing_and_labels_use_the_configured_api_base() {
+            let (base, seen) = serve().await;
+            let client = client(&base);
+
+            let page = client.list_inbox(None).await.unwrap();
+            let labels = client.list_labels().await.unwrap();
+
+            assert_eq!(page.thread_ids, ["t1", "t2"]);
+            assert_eq!(page.next.as_deref(), Some("p2"));
+            assert_eq!(labels[0].id, "Label_1");
+            assert_eq!(labels[0].kind, "user");
+            assert_eq!(
+                *seen.lock().unwrap(),
+                ["/threads?maxResults=100&labelIds=INBOX", "/labels"]
+            );
         }
     }
 
@@ -817,7 +883,7 @@ mod tests {
         }
 
         fn client(base: &str) -> GmailClient {
-            GmailClient::new(GoogleAuth::in_memory_for_test(
+            GmailClient::new(OAuthCredential::in_memory_for_test(
                 &format!("{base}/token"),
                 Tokens {
                     access_token: "token".into(),
@@ -1122,17 +1188,17 @@ mod tests {
                 "removeLabelIds": ["INBOX"],
             }),
         );
-        assert!(message_modify_url(&ids)
+        assert!(message_modify_url(API, &ids)
             .unwrap()
             .ends_with("/messages/batchModify"));
-        assert!(message_modify_url(&ids[..1])
+        assert!(message_modify_url(API, &ids[..1])
             .unwrap()
             .ends_with("/messages/message-1/modify"));
     }
 
     #[test]
     fn empty_message_batch_has_no_modify_url() {
-        assert_eq!(message_modify_url(&[]), None);
+        assert_eq!(message_modify_url(API, &[]), None);
     }
 }
 
@@ -1216,7 +1282,7 @@ impl MailSend for GmailClient {
         struct Identity {
             email_address: String,
         }
-        let request = self.request(Method::GET, format!("{API}/profile")).await?;
+        let request = self.request(Method::GET, format!("{}/profile", self.api)).await?;
         Ok(self.json::<Identity>(request, false).await?.email_address)
     }
 

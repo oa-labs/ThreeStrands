@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::{
-    auth::GoogleAuth,
+    auth::OAuthCredential,
     models::{BusyInterval, CalendarOption, CreateCalendarEventRequest, ScheduleEvent},
 };
 
@@ -240,7 +240,7 @@ fn calendar_client() -> Result<reqwest::Client, String> {
 }
 
 pub async fn list_calendar_options(
-    auth: GoogleAuth,
+    auth: OAuthCredential,
     account_id: &str,
 ) -> Result<Vec<CalendarOption>, String> {
     let access_token = auth
@@ -281,7 +281,7 @@ fn calendar_options(
 }
 
 pub async fn create_event(
-    auth: GoogleAuth,
+    auth: OAuthCredential,
     request: &CreateCalendarEventRequest,
 ) -> Result<ScheduleEvent, String> {
     let url = events_url(&request.calendar_id)?
@@ -311,7 +311,7 @@ pub async fn create_event(
 }
 
 pub async fn fetch_schedule(
-    auth: GoogleAuth,
+    auth: OAuthCredential,
     account_id: &str,
     calendar_ids: &[String],
     time_min: &str,
@@ -354,7 +354,7 @@ pub async fn fetch_schedule(
 /// account. Calendar-level errors are returned as partial failures so callers
 /// never mistake an incomplete response for confirmed availability.
 pub async fn fetch_freebusy(
-    auth: GoogleAuth,
+    auth: OAuthCredential,
     calendar_ids: &[String],
     time_min: &str,
     time_max: &str,
@@ -436,7 +436,7 @@ fn event_url(calendar_id: &str, event_id: &str) -> Result<url::Url, String> {
 }
 
 pub async fn update_response(
-    auth: GoogleAuth,
+    auth: OAuthCredential,
     account_id: &str,
     calendar_id: &str,
     schedule_id: &str,

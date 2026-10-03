@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 type DismissEntry = {
   id: symbol;
@@ -21,7 +21,9 @@ export function useEscapeDismiss(onDismiss: () => void, enabled = true) {
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
 
-  useEffect(() => {
+  // Register during commit, not after paint: once an overlay is in the DOM,
+  // Escape must reach it even if passive effects have not flushed yet.
+  useLayoutEffect(() => {
     if (!enabled) return;
     const entry: DismissEntry = {
       id: Symbol("escape-dismiss"),

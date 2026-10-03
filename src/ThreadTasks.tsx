@@ -4,11 +4,13 @@ import type { Thread, ThreadTask } from "./domain";
 import { mailClient } from "./data/client";
 import { HoverTooltip } from "./AppChrome";
 import { errorMessage } from "./errors";
+import { ContextSection } from "./ContextSections";
 import { formatDue, isActiveTaskStatus, isDue, isOverdue } from "./taskViews";
 
 /**
  * Open tasks linked to the conversation, followed by open tasks from other
- * conversations with the selected person (`contactId`, when known).
+ * conversations with the selected person (`contactId`, when known). Renders
+ * nothing while there are none.
  */
 export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, onEditTask, onDraftFollowUp, onTasksChanged }: {
   thread: Thread;
@@ -51,26 +53,31 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
     }
   };
 
-  return <section className="context-section context-tasks" aria-label="Conversation tasks">
-    <header className="context-section-header">
-      <h3>Tasks{tasks.length > 0 ? <span className="context-count">{tasks.length}</span> : null}</h3>
-      <HoverTooltip title="Add task" shortcut="d" placement="bottom">
+  // An empty list is left out; adding a task (d) brings the section back. A
+  // load failure keeps it so the error and the add control stay visible.
+  return <>
+    {tasks.length > 0 || error ? <ContextSection
+      id="tasks"
+      className="context-tasks"
+      title="Tasks"
+      label="Conversation tasks"
+      count={tasks.length}
+      actions={<HoverTooltip title="Add task" shortcut="d" placement="bottom">
         <button type="button" className="context-icon-button" aria-label="Add task" onClick={onAddTask}><Plus size={15} /></button>
-      </HoverTooltip>
-    </header>
-    {tasks.map((task) => {
-      const due = formatDue(task);
-      return <article className="context-task" key={task.id}>
-        <button type="button" className="task-status-button" aria-label={`Complete ${task.title}`} onClick={() => void complete(task)}><Check size={15} /></button>
-        <button type="button" className="context-task-main" onClick={() => onEditTask(task)}>
-          <strong>{task.title}</strong>
-          {task.threadId !== thread.id && task.subjectSnapshot ? <span className="context-task-source">{task.subjectSnapshot}</span> : null}
-          {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
-        </button>
-        {task.kind === "follow_up" && isDue(task) ? <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button> : null}
-      </article>;
-    })}
-    {error ? <p className="form-error" role="alert">{error}</p> : null}
+      </HoverTooltip>}
+      rows={tasks.map((task) => {
+        const due = formatDue(task);
+        return <article className="context-task" key={task.id}>
+          <button type="button" className="task-status-button" aria-label={`Complete ${task.title}`} onClick={() => void complete(task)}><Check size={15} /></button>
+          <button type="button" className="context-task-main" onClick={() => onEditTask(task)}>
+            <strong>{task.title}</strong>
+            {task.threadId !== thread.id && task.subjectSnapshot ? <span className="context-task-source">{task.subjectSnapshot}</span> : null}
+            {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
+          </button>
+          {task.kind === "follow_up" && isDue(task) ? <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button> : null}
+        </article>;
+      }).concat(error ? [<p className="form-error" role="alert" key="error">{error}</p>] : [])}
+    /> : null}
     <p className="sr-only" aria-live="polite">{announcement}</p>
-  </section>;
+  </>;
 }

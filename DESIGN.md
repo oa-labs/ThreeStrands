@@ -82,25 +82,34 @@ boundary appropriate to their risk.
 
 ## Workspaces
 
-Mail has one right-side context panel for the open conversation. It stacks a
-compact card for the selected participant (the name opens the contact, a heart
-toggles favorite, and a line of facts from local history covers how much mail,
-since when, any regular cadence, and when the user last wrote), the AI brief
-and suggestions, open tasks from this conversation and the person's other
-conversations, upcoming meetings that include the person, files the person
-sent, an outline of conversations with six or more messages, recent emails
-with them, and other people at their organization's domain (never for
-personal mail providers or the user's own domains). Do not add a second
-always-on panel beside it; new conversation context belongs in this panel as
-a section.
+Mail has one right-side context panel for the open conversation. It stacks
+two groups. First, what is about the conversation: the AI brief and
+suggestions, open tasks from this conversation and the selected person's other
+conversations, upcoming meetings that include a participant, and an outline of
+conversations with six or more messages. Then, what is about one person: the
+participant picker joined to a compact card for whoever is picked (the name
+opens the contact, a heart toggles favorite, and a line of facts from local
+history covers how much mail, since when, any regular cadence, and when the
+user last wrote), files the person sent, recent emails with them, and other
+people at their organization's domain (never for personal mail providers or
+the user's own domains). The picker and card form one block with no rule
+between them. Do not add a second always-on panel beside it; new conversation
+context belongs in this panel as a section, in the group that matches its
+subject.
+
+Every section heading follows one rule: an uppercase label with no icon,
+then the item count and any actions (such as Add) at the right edge. List
+sections collapse from the label. Dates in the panel use one short form
+("Oct 1", with the year only outside the current year); upcoming meetings add
+the weekday. Rows do not repeat what the section already establishes, such as
+the selected person's address under each of their emails.
 
 Keep the panel short by construction rather than by available height: a
-section without content is left out, lists show three rows before "Show
-more", and a section heading collapses it, remembered per device. Do not
-show or hide sections based on measured space; that makes content appear and
-disappear as the window resizes. An empty state is stated only when local
-history confirms it, such as "Every email with Daniel is in this
-conversation".
+section without content is left out, including Tasks (added with `d`) and
+Recent emails, lists show three rows before "Show more", and a section
+heading collapses it, remembered per device. Do not show or hide sections
+based on measured space; that makes content appear and disappear as the
+window resizes.
 The Calendar sidebar may open beside it so meeting suggestions and candidate
 times stay visible together.
 

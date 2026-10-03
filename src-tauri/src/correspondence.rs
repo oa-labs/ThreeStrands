@@ -810,7 +810,7 @@ impl Correspondence {
         let auth = self
             .primary_auth()
             .await
-            .ok_or("Google OAuth is not configured")?;
+            .ok_or("No mail account is configured")?;
         let identity = auth
             .provider()
             .sender_identity()
@@ -818,7 +818,7 @@ impl Correspondence {
             .map_err(error)?;
         self.database.set_compose_identity(&identity)?;
         auth.accept_identity(&identity)?;
-        self.database.adopt_account(&identity)?;
+        self.database.adopt_mail_account(&identity, auth.mail_provider())?;
         // `accept_identity` rekeyed `auth` onto the real address; move its
         // registry entry so the map is keyed by that address too. Doing it
         // here covers every caller — startup, `connect_google`, and each

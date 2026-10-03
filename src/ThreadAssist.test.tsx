@@ -99,8 +99,10 @@ describe("ThreadAssist", () => {
   it("offers one Get Brief action before anything has run and refreshes everything afterwards", () => {
     const onRun = vi.fn();
     const { rerender } = render(<ThreadAssist {...props({ onRun })} />);
-    expect(screen.getByRole("heading", { name: "Brief" })).toBeInTheDocument();
+    // Section labels carry no icons; the AI mark stays on the action.
+    expect(screen.getByRole("heading", { name: "Brief" }).querySelector("svg")).toBeNull();
     const getBrief = screen.getByRole("button", { name: "Get Brief" });
+    expect(getBrief.querySelector("svg")).not.toBeNull();
     expect(getBrief).toHaveAttribute("aria-keyshortcuts", "i");
     const briefTooltip = within(getBrief.parentElement as HTMLElement).getByRole("tooltip");
     expect(within(briefTooltip).getByText("Get Brief")).toBeInTheDocument();

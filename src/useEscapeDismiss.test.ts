@@ -1,4 +1,5 @@
-import { renderHook } from "@testing-library/react";
+import { render, renderHook } from "@testing-library/react";
+import { createElement, Fragment, useLayoutEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
@@ -36,6 +37,31 @@ describe("useEscapeDismiss", () => {
 
     expect(dismiss).not.toHaveBeenCalled();
     hook.unmount();
+  });
+
+  it("claims Escape as soon as the overlay is committed, before passive effects run", () => {
+    // An overlay is on screen once React commits it. Escape pressed before
+    // passive effects flush (a slow machine, or a test that finds the DOM
+    // first) must still reach that overlay, not whatever sits beneath it.
+    const beneath = vi.fn();
+    const overlay = vi.fn();
+    const base = renderHook(() => useEscapeDismiss(beneath));
+    function Overlay() {
+      useEscapeDismiss(overlay);
+      return null;
+    }
+    function PressEscapeOnCommit() {
+      useLayoutEffect(() => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+      }, []);
+      return null;
+    }
+    const view = render(createElement(Fragment, null, createElement(Overlay), createElement(PressEscapeOnCommit)));
+
+    expect(beneath).not.toHaveBeenCalled();
+    expect(overlay).toHaveBeenCalledTimes(1);
+    view.unmount();
+    base.unmount();
   });
 
   it("uses the newest callback without replacing the listener", () => {
