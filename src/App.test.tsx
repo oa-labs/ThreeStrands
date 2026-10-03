@@ -333,6 +333,46 @@ describe("conversation labels", () => {
 describe("message cards", () => {
   useConversationFixture();
 
+  it("expands, activates, and scrolls to a message picked from the context panel's thread outline", async () => {
+    const originalDetail = await mailClient.getThread("welcome");
+    const latest = originalDetail.messages[0]!;
+    const getThread = vi.spyOn(mailClient, "getThread").mockResolvedValue({
+      ...originalDetail,
+      messages: [
+        ...Array.from({ length: 5 }, (_, index) => ({
+          ...latest,
+          id: `outline-${index}`,
+          sentAt: `2026-03-0${index + 1}T16:30:00Z`,
+          bodyHtml: `<p>Outline body ${index}</p>`,
+          bodyText: `Outline snippet ${index}`,
+          unread: false,
+        })),
+        { ...latest, unread: false },
+      ],
+    });
+    const scrollIntoView = vi.fn();
+    const originalScroll = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+    try {
+      const { container } = render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const outline = await screen.findByRole("region", { name: "This thread" });
+      fireEvent.click(within(outline).getByRole("button", { name: "Show 3 more" }));
+      const target = container.querySelector<HTMLElement>('[data-message-id="outline-0"]')!;
+      expect(target).toHaveClass("message-card-collapsed");
+      scrollIntoView.mockClear();
+
+      fireEvent.click(within(outline).getByRole("button", { name: /Outline snippet 0/ }));
+
+      await waitFor(() => expect(container.querySelector('[data-message-id="outline-0"]')).toHaveClass("message-card-expanded", "message-active"));
+      await waitFor(() => expect(scrollIntoView.mock.contexts).toContain(container.querySelector('[data-message-id="outline-0"]')));
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScroll;
+      getThread.mockRestore();
+    }
+  });
+
   it("toggles only the prior message card whose header was clicked", async () => {
     const originalDetail = await mailClient.getThread("welcome");
     const latest = originalDetail.messages[0]!;

@@ -84,10 +84,23 @@ boundary appropriate to their risk.
 
 Mail has one right-side context panel for the open conversation. It stacks a
 compact card for the selected participant (the name opens the contact, a heart
-toggles favorite), the AI brief and suggestions, open tasks from this
-conversation and the person's other conversations, upcoming meetings that
-include the person, and recent emails with them. Do not add a second always-on
-panel beside it; new conversation context belongs in this panel as a section.
+toggles favorite, and a line of facts from local history covers how much mail,
+since when, any regular cadence, and when the user last wrote), the AI brief
+and suggestions, open tasks from this conversation and the person's other
+conversations, upcoming meetings that include the person, files the person
+sent, an outline of conversations with six or more messages, recent emails
+with them, and other people at their organization's domain (never for
+personal mail providers or the user's own domains). Do not add a second
+always-on panel beside it; new conversation context belongs in this panel as
+a section.
+
+Keep the panel short by construction rather than by available height: a
+section without content is left out, lists show three rows before "Show
+more", and a section heading collapses it, remembered per device. Do not
+show or hide sections based on measured space; that makes content appear and
+disappear as the window resizes. An empty state is stated only when local
+history confirms it, such as "Every email with Daniel is in this
+conversation".
 The Calendar sidebar may open beside it so meeting suggestions and candidate
 times stay visible together.
 

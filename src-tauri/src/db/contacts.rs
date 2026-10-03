@@ -1,11 +1,18 @@
 //! Address book profiles and mail-derived contacts.
 
 use super::*;
-use crate::models::{ContactProfile, ContactTimelineItem, SaveContactRequest};
+use crate::models::{
+    ContactActivity, ContactFile, ContactFiles, ContactProfile, ContactTimelineItem, DomainContext,
+    DomainPerson, SaveContactRequest,
+};
 use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
 
 const MAX_CONTACTS: usize = 5_000;
+/// Arrivals kept for estimating how often someone writes.
+const MAX_ACTIVITY_ARRIVALS: usize = 24;
+pub(crate) const MAX_CONTACT_FILES: usize = 100;
+pub(crate) const MAX_DOMAIN_CONTEXT: usize = 20;
 
 pub(super) fn index_contact_message(
     tx: &rusqlite::Transaction<'_>,
@@ -36,12 +43,12 @@ fn index_contact_addresses(
     sent_at: &str,
 ) -> DbResult<()> {
     let owner = account_id.trim().to_ascii_lowercase();
-    let from = crate::correspondence::addresses(sender).unwrap_or_default();
+    let from = crate::correspondence::stored_addresses(sender);
     if let Some((name, email)) = from.into_iter().next() {
         let email = email.to_ascii_lowercase();
         if email == owner {
             for raw in recipients {
-                for (name, address) in crate::correspondence::addresses(raw).unwrap_or_default() {
+                for (name, address) in crate::correspondence::stored_addresses(raw) {
                     let address = address.to_ascii_lowercase();
                     if address.is_empty() || address == owner {
                         continue;
@@ -493,17 +500,109 @@ impl Database {
         if addresses.is_empty() {
             return Ok(Vec::new());
         }
+        let marks = std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
+        let mut values = addresses
+            .iter()
+            .map(|email| rusqlite::types::Value::Text(email.to_ascii_lowercase()))
+            .collect::<Vec<_>>();
+        for _ in 0..2 {
+            values.push(account_id.map(|id| rusqlite::types::Value::Text(id.to_string())).unwrap_or(rusqlite::types::Value::Null));
+        }
+        self.interaction_threads(&format!("ci.email IN ({marks}) AND (? IS NULL OR ci.account_id=?)"), values, offset, limit)
+    }
+
+    /// One row per conversation whose interactions match `filter`, newest
+    /// matching interaction first.
+    fn interaction_threads(
+        &self,
+        filter: &str,
+        mut values: Vec<rusqlite::types::Value>,
+        offset: usize,
+        limit: usize,
+    ) -> DbResult<Vec<ContactTimelineItem>> {
         self.with_connection(|connection|{
-            let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
-            let sql=format!("WITH matched AS (SELECT ci.thread_id,ci.account_id,ci.email,ci.sent_at,ROW_NUMBER() OVER (PARTITION BY ci.thread_id ORDER BY ci.sent_at DESC,ci.message_id DESC,ci.email) AS position FROM contact_interactions ci WHERE ci.email IN ({marks}) AND (? IS NULL OR ci.account_id=?)) SELECT t.id,t.account_id,matched.email,t.subject,t.snippet,matched.sent_at,t.labels_json FROM matched JOIN threads t ON t.id=matched.thread_id WHERE matched.position=1 ORDER BY matched.sent_at DESC LIMIT ? OFFSET ?");
-            let mut values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
-            for _ in 0..2 { values.push(account_id.map(|id| rusqlite::types::Value::Text(id.to_string())).unwrap_or(rusqlite::types::Value::Null)); }
+            let sql=format!("WITH matched AS (SELECT ci.thread_id,ci.account_id,ci.email,ci.sent_at,ROW_NUMBER() OVER (PARTITION BY ci.thread_id ORDER BY ci.sent_at DESC,ci.message_id DESC,ci.email) AS position FROM contact_interactions ci WHERE {filter}) SELECT t.id,t.account_id,matched.email,t.subject,t.snippet,matched.sent_at,t.labels_json FROM matched JOIN threads t ON t.id=matched.thread_id WHERE matched.position=1 ORDER BY matched.sent_at DESC LIMIT ? OFFSET ?");
             values.push(rusqlite::types::Value::Integer(limit.clamp(1,100) as i64));
             values.push(rusqlite::types::Value::Integer(offset.min(i64::MAX as usize) as i64));
             let mut statement=connection.prepare(&sql)?;
             let rows=statement.query_map(rusqlite::params_from_iter(values),|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,String>(5)?,row.get::<_,String>(6)?)))?;
             rows.map(|row|{let(thread_id,account_id,contact_email,subject,snippet,sent_at,labels)=row?;Ok(ContactTimelineItem{thread_id,account_id,contact_email,subject,snippet,sent_at,labels:serde_json::from_str(&labels).unwrap_or_default()})}).collect()
         })
+    }
+
+    /// Counts, first contact, the user's latest message, and recent arrival
+    /// times for a saved contact id or a `derived:<email>` id.
+    pub fn contact_activity(&self, id: &str) -> DbResult<ContactActivity> {
+        let addresses = self.contact_address_list(id)?;
+        let empty = ContactActivity { sent_count: 0, received_count: 0, thread_count: 0, first_at: None, last_sent_at: None, recent_received_at: Vec::new() };
+        if addresses.is_empty() {
+            return Ok(empty);
+        }
+        self.with_connection(|connection|{
+            let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
+            let values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
+            let (sent_count,received_count,thread_count,first_at,last_sent_at)=connection.query_row(
+                &format!("SELECT COUNT(DISTINCT CASE WHEN direction='sent' THEN message_id END),COUNT(DISTINCT CASE WHEN direction='received' THEN message_id END),COUNT(DISTINCT thread_id),MIN(sent_at),MAX(CASE WHEN direction='sent' THEN sent_at END) FROM contact_interactions WHERE email IN ({marks})"),
+                rusqlite::params_from_iter(values.iter()),
+                |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+            )?;
+            let mut statement=connection.prepare(&format!("SELECT MAX(sent_at) AS at FROM contact_interactions WHERE direction='received' AND email IN ({marks}) GROUP BY message_id ORDER BY at DESC LIMIT {MAX_ACTIVITY_ARRIVALS}"))?;
+            let recent_received_at=statement.query_map(rusqlite::params_from_iter(values.iter()),|row|row.get(0))?.collect::<Result<Vec<String>,_>>()?;
+            Ok(ContactActivity{sent_count,received_count,thread_count,first_at,last_sent_at,recent_received_at})
+        })
+    }
+
+    /// Non-inline attachments on messages the person sent, newest first.
+    pub fn contact_files(&self, id: &str, limit: usize) -> DbResult<ContactFiles> {
+        let addresses = self.contact_address_list(id)?;
+        if addresses.is_empty() {
+            return Ok(ContactFiles { files: Vec::new(), total: 0 });
+        }
+        self.with_connection(|connection|{
+            let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
+            let values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
+            let from=format!("FROM (SELECT DISTINCT message_id FROM contact_interactions WHERE direction='received' AND email IN ({marks})) sent JOIN messages m ON m.id=sent.message_id JOIN threads t ON t.id=m.thread_id, json_each(m.attachments_json) a WHERE COALESCE(json_extract(a.value,'$.inline'),0)=0");
+            let total=connection.query_row(&format!("SELECT COUNT(*) {from}"),rusqlite::params_from_iter(values.iter()),|row|row.get(0))?;
+            let mut statement=connection.prepare(&format!("SELECT m.id,m.thread_id,t.subject,m.sent_at,a.value {from} ORDER BY m.sent_at DESC,m.id,a.key LIMIT {}",limit.clamp(1,MAX_CONTACT_FILES)))?;
+            let rows=statement.query_map(rusqlite::params_from_iter(values.iter()),|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?)))?;
+            let mut files=Vec::new();
+            for row in rows {
+                let (message_id,thread_id,subject,sent_at,attachment)=row?;
+                // A malformed stored attachment is skipped rather than failing the list.
+                if let Ok(attachment)=serde_json::from_str(&attachment) {
+                    files.push(ContactFile{message_id,thread_id,subject,sent_at,attachment});
+                }
+            }
+            Ok(ContactFiles{files,total})
+        })
+    }
+
+    /// Other correspondents at `domain` and their latest conversations,
+    /// leaving out `exclude` (the selected person's own addresses).
+    pub fn domain_context(&self, domain: &str, exclude: &[String], limit: usize) -> DbResult<DomainContext> {
+        let domain = domain.trim().trim_start_matches('@').to_ascii_lowercase();
+        if domain.is_empty() || !domain.contains('.') {
+            return Ok(DomainContext { people: Vec::new(), threads: Vec::new() });
+        }
+        let suffix = format!("@{domain}");
+        let excluded = exclude.iter().map(|email| email.trim().to_ascii_lowercase()).filter(|email| !email.is_empty()).collect::<Vec<_>>();
+        let mut filter = "substr(ci.email,-?)=?".to_string();
+        let mut values = vec![
+            rusqlite::types::Value::Integer(suffix.len() as i64),
+            rusqlite::types::Value::Text(suffix.clone()),
+        ];
+        if !excluded.is_empty() {
+            filter.push_str(&format!(" AND ci.email NOT IN ({})", std::iter::repeat("?").take(excluded.len()).collect::<Vec<_>>().join(",")));
+            values.extend(excluded.iter().map(|email| rusqlite::types::Value::Text(email.clone())));
+        }
+        let limit = limit.clamp(1, MAX_DOMAIN_CONTEXT);
+        let people = self.with_connection(|connection|{
+            let mut statement=connection.prepare(&format!("SELECT ci.email,(SELECT display_name FROM contact_interactions named WHERE named.email=ci.email AND named.display_name IS NOT NULL ORDER BY named.sent_at DESC LIMIT 1),MAX(ci.sent_at) AS last_at FROM contact_interactions ci WHERE {filter} GROUP BY ci.email ORDER BY last_at DESC LIMIT {limit}"))?;
+            let rows=statement.query_map(rusqlite::params_from_iter(values.iter()),|row|Ok(DomainPerson{email:row.get(0)?,display_name:row.get(1)?,last_at:row.get(2)?}))?;
+            rows.collect::<Result<Vec<_>,_>>().map_err(Into::into)
+        })?;
+        let threads = self.interaction_threads(&filter, values, 0, limit)?;
+        Ok(DomainContext { people, threads })
     }
 
     /// Maps each address that belongs to a saved contact to that contact's id.

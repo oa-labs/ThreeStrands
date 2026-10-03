@@ -43,7 +43,7 @@ use auth::{AccountAuth, GoogleAuthConfig};
 use chrono::Utc;
 use db::Database;
 use models::{
-    ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateCalendarEventRequest, CreateLabelRequest,
+    ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
@@ -1003,6 +1003,29 @@ async fn contact_timeline(
 ) -> Result<Vec<ContactTimelineItem>, String> {
     let database = state.database.clone();
     run_database_task(move || database.contact_timeline_for_account(&id, offset, limit, account_id.as_deref())).await
+}
+
+#[tauri::command]
+async fn contact_activity(id: String, state: State<'_, AppState>) -> Result<ContactActivity, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.contact_activity(&id)).await
+}
+
+#[tauri::command]
+async fn contact_files(id: String, limit: usize, state: State<'_, AppState>) -> Result<ContactFiles, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.contact_files(&id, limit)).await
+}
+
+#[tauri::command]
+async fn domain_context(
+    domain: String,
+    exclude: Vec<String>,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<DomainContext, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.domain_context(&domain, &exclude, limit)).await
 }
 
 #[tauri::command]
@@ -2998,13 +3021,11 @@ async fn ai_enrich_contact(
     for item in timeline {
         let detail = state.database.get_thread(&item.thread_id)?;
         for (index, message) in detail.messages.into_iter().enumerate() {
-            let sender_matches = crate::correspondence::addresses(&message.sender)
-                .unwrap_or_default()
+            let sender_matches = crate::correspondence::stored_addresses(&message.sender)
                 .iter()
                 .any(|(_, email)| addresses.contains(&email.to_ascii_lowercase()));
             let recipient_matches = message.recipients.iter().any(|raw| {
-                crate::correspondence::addresses(raw)
-                    .unwrap_or_default()
+                crate::correspondence::stored_addresses(raw)
                     .iter()
                     .any(|(_, email)| addresses.contains(&email.to_ascii_lowercase()))
             });
@@ -3523,6 +3544,9 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         save_contact_profile,
         delete_contact_profile,
         contact_timeline,
+        contact_activity,
+        contact_files,
+        domain_context,
         list_contact_tasks,
         pin_contact,
         unpin_contact,

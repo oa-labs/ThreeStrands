@@ -161,6 +161,30 @@ pub enum Request {
     },
 }
 
+/// Reads addresses already stored from received mail, where a display name
+/// may hold an unquoted comma (`Daniel O'Connor, CFA® <dan@example.com>`)
+/// that strict parsing rejects. Falls back to the one bracketed or bare
+/// address in the value; anything else yields nothing. Never use this to
+/// validate addresses the user enters.
+pub fn stored_addresses(value: &str) -> Vec<(String, String)> {
+    if let Ok(list) = addresses(value) {
+        return list;
+    }
+    let value = value.trim();
+    if value.contains(['\r', '\n']) {
+        return vec![];
+    }
+    let (name, address) = match value.strip_suffix('>').and_then(|rest| rest.rsplit_once('<')) {
+        Some((name, address)) => (name.trim().trim_matches('"').trim(), address.trim()),
+        None => ("", value),
+    };
+    let valid = address
+        .rsplit_once('@')
+        .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.') && !domain.starts_with('.'))
+        && !address.contains([' ', '\t', '<', '>', ',', '"']);
+    if valid { vec![(name.to_string(), address.to_string())] } else { vec![] }
+}
+
 pub fn addresses(value: &str) -> Result<Vec<(String, String)>, String> {
     if value.trim().is_empty() {
         return Ok(vec![]);
@@ -1356,6 +1380,23 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].0, "Doe, Jane");
     }
+    #[test]
+    fn stored_addresses_accept_unquoted_commas_that_strict_parsing_rejects() {
+        let raw = "Daniel O'Connor, CFA® <doconnor@wealth.example>";
+        assert!(addresses(raw).is_err());
+        assert_eq!(stored_addresses(raw), vec![("Daniel O'Connor, CFA®".to_string(), "doconnor@wealth.example".to_string())]);
+        assert_eq!(stored_addresses("Smith, Pat, PhD <pat@lab.example>"), vec![("Smith, Pat, PhD".to_string(), "pat@lab.example".to_string())]);
+        assert_eq!(stored_addresses("\"Doe, Jane\" <jane@example.com>"), vec![("Doe, Jane".to_string(), "jane@example.com".to_string())]);
+        assert_eq!(stored_addresses("bare@example.com"), vec![(String::new(), "bare@example.com".to_string())]);
+    }
+
+    #[test]
+    fn stored_addresses_yield_nothing_for_values_without_one_clear_address() {
+        for raw in ["", "Daniel, CFA", "Name <not-an-address>", "Name <a b@example.com>", "Name <@example.com>", "a@example.com\r\nBcc: victim@example.com"] {
+            assert!(stored_addresses(raw).is_empty(), "{raw}");
+        }
+    }
+
     #[test]
     fn queue_is_durable_unique_and_cancel_restores_the_snapshot() {
         let db = database();

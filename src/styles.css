@@ -1955,6 +1955,31 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-section.contact-sidebar-history { margin-top:0; }
 .context-section.contact-sidebar-history > button { padding:8px 9px; }
 .context-section.contact-sidebar-history .context-section-header h3 { margin:0; }
+.context-contact-text p.context-contact-activity { color:var(--secondary); font-size:var(--type-xs); }
+.context-section-toggle { display:inline-flex; align-items:center; gap:6px; min-width:0; margin:0 0 0 -2px; padding:2px; border:0; border-radius:var(--radius-sm); color:inherit; background:transparent; font:inherit; letter-spacing:inherit; text-transform:inherit; text-align:left; cursor:pointer; }
+.context-section-toggle:hover { color:var(--text); }
+.context-section-toggle > svg { flex:0 0 auto; color:var(--muted); }
+.context-section-toggle > span:first-of-type { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.context-domain { text-transform:none; letter-spacing:normal; }
+.context-section-note { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 8px; margin:0 0 6px; color:var(--muted); font-size:var(--type-xs); line-height:1.4; }
+.context-organization .context-section-note > span { min-width:0; overflow-wrap:anywhere; }
+.context-file { display:flex; align-items:center; gap:2px; }
+.context-file-main { display:flex; flex:1; align-items:flex-start; gap:8px; min-width:0; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
+.context-file-main:hover { background:var(--hover); }
+.context-file-main > svg { flex:0 0 auto; margin-top:2px; color:var(--muted); }
+.context-file-text { display:grid; gap:2px; min-width:0; }
+.context-file-text strong { display:flex; min-width:0; font-size:var(--type-caption); font-weight:500; white-space:nowrap; }
+.context-file-base { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.context-file-text small { color:var(--muted); font-size:var(--type-xs); }
+.context-outline-filter { display:inline-flex; gap:2px; }
+.context-outline-filter button { padding:1px 7px; border:1px solid transparent; border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; cursor:pointer; }
+.context-outline-filter button[aria-pressed="true"] { border-color:var(--border-strong); color:var(--text); background:var(--hover); }
+.context-outline-row { display:grid; width:100%; gap:2px; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
+.context-outline-row:hover { background:var(--hover); }
+.context-outline-meta { display:flex; justify-content:space-between; gap:8px; min-width:0; }
+.context-outline-meta strong { min-width:0; overflow:hidden; font-size:var(--type-caption); font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
+.context-outline-meta small { flex:0 0 auto; color:var(--muted); font-size:var(--type-xs); }
+.context-outline-preview { overflow:hidden; color:var(--muted); font-size:var(--type-xs); text-overflow:ellipsis; white-space:nowrap; }
 .tasks-sidebar-header {
   min-height: 90px;
   display: flex;

@@ -11,8 +11,11 @@ import type {
   AvailabilityPreferences,
   AvailabilityResult,
   CalendarAccount,
+  ContactActivity,
+  ContactFile,
   ContactProfile,
   ContactTimelineItem,
+  DomainPerson,
   SaveContactRequest,
   CreateTaskRequest,
   Label,
@@ -554,6 +557,71 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       }
       items.sort((a,b) => b.sentAt.localeCompare(a.sentAt));
       return structuredClone(items.slice(offset, offset + limit));
+    },
+    async contactActivity(id): Promise<ContactActivity> {
+      const profile = await client.getContactProfile(id);
+      const target = new Set((profile?.addresses ?? []).map((address) => address.toLocaleLowerCase()));
+      const sent: string[] = [];
+      const received: string[] = [];
+      const threadIds = new Set<string>();
+      for (const thread of threads) {
+        for (const message of (await client.getThread(thread.id)).messages) {
+          const sender = parseAddress(message.sender).email.toLocaleLowerCase();
+          const toTarget = message.recipients.flatMap(splitAddressList).some((raw) => target.has(parseAddress(raw).email.toLocaleLowerCase()));
+          if (target.has(sender)) received.push(message.sentAt);
+          else if (sender === thread.accountId.toLocaleLowerCase() && toTarget) sent.push(message.sentAt);
+          else continue;
+          threadIds.add(thread.id);
+        }
+      }
+      const all = [...sent, ...received].sort();
+      return {
+        sentCount: sent.length,
+        receivedCount: received.length,
+        threadCount: threadIds.size,
+        firstAt: all[0] ?? null,
+        lastSentAt: sent.sort().at(-1) ?? null,
+        recentReceivedAt: received.sort().reverse().slice(0, 24),
+      };
+    },
+    async contactFiles(id, limit) {
+      const profile = await client.getContactProfile(id);
+      const target = new Set((profile?.addresses ?? []).map((address) => address.toLocaleLowerCase()));
+      const files: ContactFile[] = [];
+      for (const thread of threads) {
+        for (const message of (await client.getThread(thread.id)).messages) {
+          if (!target.has(parseAddress(message.sender).email.toLocaleLowerCase())) continue;
+          for (const attachment of message.attachments) {
+            if (!attachment.inline) files.push({ messageId: message.id, threadId: thread.id, subject: thread.subject, sentAt: message.sentAt, attachment });
+          }
+        }
+      }
+      files.sort((left, right) => right.sentAt.localeCompare(left.sentAt));
+      return structuredClone({ files: files.slice(0, limit), total: files.length });
+    },
+    async domainContext(domain, exclude, limit) {
+      const suffix = `@${domain.toLocaleLowerCase()}`;
+      const excluded = new Set(exclude.map((email) => email.toLocaleLowerCase()));
+      const people = new Map<string, DomainPerson>();
+      const items: ContactTimelineItem[] = [];
+      for (const thread of threads) {
+        let latest: ContactTimelineItem | null = null;
+        for (const message of (await client.getThread(thread.id)).messages) {
+          for (const raw of [message.sender, ...message.recipients.flatMap(splitAddressList)]) {
+            const address = parseAddress(raw);
+            const email = address.email.toLocaleLowerCase();
+            if (!email.endsWith(suffix) || excluded.has(email)) continue;
+            const known = people.get(email);
+            if (!known || known.lastAt < message.sentAt) people.set(email, { email, displayName: address.name && address.name !== address.email ? address.name : known?.displayName ?? null, lastAt: message.sentAt });
+            if (!latest || latest.sentAt < message.sentAt) latest = { threadId: thread.id, accountId: thread.accountId, contactEmail: email, subject: thread.subject, snippet: thread.snippet, sentAt: message.sentAt, labels: thread.labels };
+          }
+        }
+        if (latest) items.push(latest);
+      }
+      return structuredClone({
+        people: [...people.values()].sort((left, right) => right.lastAt.localeCompare(left.lastAt)).slice(0, limit),
+        threads: items.sort((left, right) => right.sentAt.localeCompare(left.sentAt)).slice(0, limit),
+      });
     },
     async enrichContact() { return { suggestions: [], messagesReviewed: 0, hasMore: false }; },
     async pinContact(_accountId, email, displayName) {

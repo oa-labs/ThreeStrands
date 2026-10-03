@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 43;
+pub(crate) const LATEST_VERSION: i64 = 44;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1286,6 +1286,12 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
              WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = message_metadata.id);
             PRAGMA user_version=43;",
         ).map_err(error)?;
+    }
+    if version < 44 {
+        // No schema change. Opening a database from before this version
+        // rebuilds `contact_interactions` (see `Database::open`) so stored
+        // recipients with unquoted commas in display names are indexed.
+        tx.execute_batch("PRAGMA user_version=44;").map_err(error)?;
     }
     tx.commit().map_err(error)?;
 

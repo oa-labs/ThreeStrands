@@ -444,7 +444,8 @@ impl Database {
             path: Some(path.to_path_buf()),
             replicated_sync_projecting: AtomicBool::new(false),
         };
-        if version_before_migration<39 { database.rebuild_contact_interactions().map_err(|error|OpenError::Other(error.to_string()))?; }
+        // v44 reindexes stored recipients that strict address parsing skipped.
+        if version_before_migration<44 { database.rebuild_contact_interactions().map_err(|error|OpenError::Other(error.to_string()))?; }
         Ok(database)
     }
 
@@ -3465,6 +3466,114 @@ pub(crate) mod tests {
         let timeline=database.contact_timeline(&saved.id,0,10).unwrap();
         assert_eq!(timeline.len(),1);
         assert_eq!(timeline[0].contact_email,"jane@work.example.com");
+    }
+
+    #[test]
+    fn contact_index_reads_display_names_with_unquoted_commas() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        let mut to_dan=message("comma-one","comma-thread","2026-03-04T01:35:42Z","thanks");
+        to_dan.from="You <you@example.com>".into();to_dan.to=vec!["Daniel O'Connor, CFA® <doconnor@wealth.example>".into()];
+        let mut from_pat=message("comma-two","comma-other","2026-03-05T12:00:00Z","results");
+        from_pat.from="Smith, Pat, PhD <pat@lab.example>".into();from_pat.to=vec!["you@example.com".into()];
+        database.upsert_thread("you@example.com",&[to_dan]).unwrap();
+        database.upsert_thread("you@example.com",&[from_pat]).unwrap();
+
+        let dan=database.contact_activity("derived:doconnor@wealth.example").unwrap();
+        assert_eq!((dan.sent_count,dan.last_sent_at.as_deref()),(1,Some("2026-03-04T01:35:42Z")));
+        let pat=database.contact_activity("derived:pat@lab.example").unwrap();
+        assert_eq!(pat.received_count,1);
+
+        database.rebuild_contact_interactions().unwrap();
+        assert_eq!(database.contact_activity("derived:doconnor@wealth.example").unwrap().sent_count,1);
+    }
+
+    #[test]
+    fn contact_activity_counts_every_address_and_lists_arrivals_newest_first() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        let mut first=message("activity-one","activity-thread","2026-07-01T12:00:00Z","report");
+        first.from="Jane <jane@example.com>".into();first.to=vec!["you@example.com".into()];
+        let mut reply=message("activity-two","activity-thread","2026-07-02T12:00:00Z","thanks");
+        reply.from="you@example.com".into();reply.to=vec!["Jane <jane@example.com>".into()];
+        let mut work=message("activity-three","activity-other","2026-08-01T12:00:00Z","report");
+        work.from="Jane <jane@work.example.com>".into();work.to=vec!["you@example.com".into()];
+        let mut newsletter=message("activity-four","activity-news","2026-09-01T12:00:00Z","news");
+        newsletter.from="Jane <jane@example.com>".into();newsletter.to=vec!["you@example.com".into()];
+        newsletter.unsubscribe=Some(crate::mime::UnsubscribeMetadata{one_click_url:None,mailto_url:Some("mailto:leave@example.com".into()),web_url:None,list_id:None});
+        database.upsert_thread("you@example.com",&[first,reply]).unwrap();
+        database.upsert_thread("you@example.com",&[work]).unwrap();
+        database.upsert_thread("you@example.com",&[newsletter]).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"jane@work.example.com".into()]}).unwrap();
+
+        let activity=database.contact_activity(&saved.id).unwrap();
+        assert_eq!((activity.sent_count,activity.received_count,activity.thread_count),(1,2,2));
+        assert_eq!(activity.first_at.as_deref(),Some("2026-07-01T12:00:00Z"));
+        assert_eq!(activity.last_sent_at.as_deref(),Some("2026-07-02T12:00:00Z"));
+        assert_eq!(activity.recent_received_at,vec!["2026-08-01T12:00:00Z","2026-07-01T12:00:00Z"]);
+
+        let derived=database.contact_activity("derived:jane@example.com").unwrap();
+        assert_eq!((derived.sent_count,derived.received_count,derived.thread_count),(1,1,1));
+        let stranger=database.contact_activity("derived:nobody@example.com").unwrap();
+        assert_eq!((stranger.sent_count,stranger.received_count,stranger.thread_count),(0,0,0));
+        assert!(stranger.first_at.is_none());
+        assert!(database.contact_activity("contact:unknown").unwrap().recent_received_at.is_empty());
+    }
+
+    #[test]
+    fn contact_files_list_attachments_the_person_sent_without_inline_images() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        let attachment=|id:&str,filename:&str,inline:bool|crate::models::MessageAttachment{id:id.into(),filename:filename.into(),mime_type:if inline {"image/png".into()} else {"application/pdf".into()},size:1200,content_id:inline.then(||format!("{id}@cid")),inline};
+        let mut older=message("files-one","files-thread","2026-08-01T12:00:00Z","report");
+        older.from="Jane <jane@example.com>".into();older.to=vec!["you@example.com".into()];
+        older.attachments=vec![attachment("logo-1","image001.png",true),attachment("report-1","August.pdf",false)];
+        let mut mine=message("files-two","files-thread","2026-08-02T12:00:00Z","my notes");
+        mine.from="you@example.com".into();mine.to=vec!["Jane <jane@example.com>".into()];
+        mine.attachments=vec![attachment("mine-1","Notes.pdf",false)];
+        let mut newer=message("files-three","files-other","2026-09-01T12:00:00Z","report");
+        newer.from="Jane <jane@example.com>".into();newer.to=vec!["you@example.com".into()];
+        newer.attachments=vec![attachment("report-2","September.pdf",false),attachment("data-2","September.csv",false)];
+        let mut bulk=message("files-four","files-bulk","2026-09-02T12:00:00Z","promo");
+        bulk.from="Jane <jane@example.com>".into();bulk.to=vec!["you@example.com".into()];
+        bulk.unsubscribe=Some(crate::mime::UnsubscribeMetadata{one_click_url:None,mailto_url:Some("mailto:leave@example.com".into()),web_url:None,list_id:None});
+        bulk.attachments=vec![attachment("promo-1","Promo.pdf",false)];
+        database.upsert_thread("you@example.com",&[older,mine]).unwrap();
+        database.upsert_thread("you@example.com",&[newer]).unwrap();
+        database.upsert_thread("you@example.com",&[bulk]).unwrap();
+
+        let files=database.contact_files("derived:jane@example.com",2).unwrap();
+        assert_eq!(files.total,3);
+        assert_eq!(files.files.iter().map(|file|file.attachment.filename.as_str()).collect::<Vec<_>>(),vec!["September.pdf","September.csv"]);
+        assert!(files.files.iter().all(|file|file.message_id=="files-three"&&file.thread_id.ends_with("files-other")));
+        let all=database.contact_files("derived:jane@example.com",50).unwrap();
+        assert_eq!(all.files.last().map(|file|file.attachment.id.as_str()),Some("report-1"));
+        assert!(all.files.iter().all(|file|!file.attachment.inline));
+        assert_eq!(database.contact_files("derived:nobody@example.com",5).unwrap().total,0);
+    }
+
+    #[test]
+    fn domain_context_lists_other_people_at_the_domain_and_their_conversations() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        let mut jane=message("domain-one","domain-jane","2026-09-01T12:00:00Z","report");
+        jane.from="Jane <jane@acme.example>".into();jane.to=vec!["you@example.com".into()];
+        let mut sam=message("domain-two","domain-sam","2026-09-02T12:00:00Z","lunch?");
+        sam.from="Sam Lee <sam@acme.example>".into();sam.to=vec!["you@example.com".into(),"Jane <jane@acme.example>".into()];
+        let mut to_pat=message("domain-three","domain-pat","2026-09-03T12:00:00Z","agenda");
+        to_pat.from="you@example.com".into();to_pat.to=vec!["Pat <pat@acme.example>".into()];
+        let mut lookalike=message("domain-four","domain-lookalike","2026-09-04T12:00:00Z","hi");
+        lookalike.from="Kim <kim@notacme.example>".into();lookalike.to=vec!["you@example.com".into()];
+        let mut sub=message("domain-five","domain-sub","2026-09-05T12:00:00Z","hi");
+        sub.from="Lee <lee@mail.acme.example>".into();sub.to=vec!["you@example.com".into()];
+        for item in [jane,sam,to_pat,lookalike,sub] { database.upsert_thread("you@example.com",&[item]).unwrap(); }
+
+        let context=database.domain_context("ACME.example",&["Jane@acme.example".into()],10).unwrap();
+        assert_eq!(context.people.iter().map(|person|(person.email.as_str(),person.display_name.as_deref())).collect::<Vec<_>>(),vec![("pat@acme.example",Some("Pat")),("sam@acme.example",Some("Sam Lee"))]);
+        assert_eq!(context.threads.iter().map(|thread|thread.thread_id.rsplit(':').next().unwrap()).collect::<Vec<_>>(),vec!["domain-pat","domain-sam"]);
+        assert_eq!(database.domain_context("acme.example",&[],1).unwrap().people.len(),1);
+        assert!(database.domain_context("localhost",&[],10).unwrap().people.is_empty());
+        assert!(database.domain_context("",&[],10).unwrap().threads.is_empty());
     }
 
     #[test]

@@ -279,6 +279,33 @@ export type ContactTimelineItem = {
   labels: string[];
 };
 
+/** Local correspondence history with one person; automated mail is excluded. */
+export type ContactActivity = {
+  sentCount: number;
+  receivedCount: number;
+  threadCount: number;
+  firstAt: string | null;
+  lastSentAt: string | null;
+  /** Newest first, one entry per received message. */
+  recentReceivedAt: string[];
+};
+
+/** One attachment a person sent, with the message it arrived on. */
+export type ContactFile = {
+  messageId: string;
+  threadId: string;
+  subject: string;
+  sentAt: string;
+  attachment: MessageAttachment;
+};
+
+export type ContactFiles = { files: ContactFile[]; total: number };
+
+export type DomainPerson = { email: string; displayName: string | null; lastAt: string };
+
+/** Other correspondents at an email domain and their latest conversations. */
+export type DomainContext = { people: DomainPerson[]; threads: ContactTimelineItem[] };
+
 export type SaveContactRequest = Omit<ContactProfile, "sentCount" | "receivedCount" | "lastInteractedAt" | "id"> & { id: string | null };
 export type ContactFieldSuggestion = { field: "displayName" | "role" | "company" | "location" | "bio" | "link"; value: string; sourceMessageId: string; sourceThreadId: string; excerpt: string };
 export type ContactEnrichmentResult = { suggestions: ContactFieldSuggestion[]; messagesReviewed: number; hasMore: boolean };

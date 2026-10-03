@@ -2,7 +2,9 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Reac
 import { Check, Copy, Heart, Mail, UserPlus } from "lucide-react";
 import { mailClient } from "./data/client";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
+import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
+import { describeActivity } from "./contactContext";
+import { ContactFilesSection, DomainSection, RecentEmailsSection, ThreadOutlineSection } from "./ContextSections";
 import { parseAddress, splitAddressList } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 
@@ -16,14 +18,18 @@ export type ContextPerson = {
 
 /**
  * The single right-side panel for a conversation: a compact card for the
- * selected participant, then the AI brief and suggestions, then related
- * tasks, meetings, and recent emails with that person.
+ * selected participant with a line of history facts, then the AI brief and
+ * suggestions, related tasks and meetings, files the person sent, an outline
+ * of a long conversation, other emails with the person, and other people at
+ * their organization. Sections without content are left out.
  */
-export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, assist, related, chat }: {
+export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, onShowMessage, assist, related, chat }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   onOpenThread(id: string): void;
   onOpenContact(id: string): void;
+  /** Reveals a message: in the reader when it belongs to the open conversation, otherwise by opening its conversation. */
+  onShowMessage?(threadId: string, messageId: string): void;
   assist?: ReactNode;
   /** Sections about the conversation and the selected person. */
   related?(person: ContextPerson | null, meetingPeople: { email: string; name: string }[]): ReactNode;
@@ -165,7 +171,23 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
       meetingPeople.set(address.toLocaleLowerCase(), { email: address, name: displayName });
     }
   }
+  const [activity, setActivity] = useState<{ contactId: string; value: ContactActivity } | null>(null);
+  const personId = person?.contactId ?? null;
+  useEffect(() => {
+    if (!personId) return;
+    let active = true;
+    mailClient.contactActivity(personId)
+      .then((value) => { if (active) setActivity({ contactId: personId, value }); })
+      .catch(logBackgroundFailure("Contact activity lookup"));
+    return () => { active = false; };
+  }, [personId]);
+  const currentActivity = activity && activity.contactId === personId ? activity.value : null;
+  const facts = currentActivity ? describeActivity(currentActivity) : [];
+  // Local history confirms every email with the person is in this conversation.
+  const everythingHere = Boolean(currentActivity && currentActivity.threadCount === 1
+    && timeline.some((item) => item.threadId === detail?.thread.id));
   const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
+  const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   const save = async () => {
     try {
       const saved = await mailClient.saveContactProfile({
@@ -243,6 +265,7 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
                 </button>
               </div>
               {emailCopyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}
+              {facts.length > 0 ? <p className="context-contact-activity">{facts.join(" · ")}</p> : null}
               {profile?.role || profile?.company ? <p>{[profile.role, profile.company].filter(Boolean).join(" · ")}</p> : null}
               {profile?.location ? <p>{profile.location}</p> : null}
               {profile?.links.length ? <nav className="contact-sidebar-links" aria-label="Contact links">{profile.links.map((link) => <a key={link} href={link} onClick={(event) => { event.preventDefault(); void openUrl(link); }}>{new URL(link).hostname}</a>)}</nav> : null}
@@ -254,16 +277,19 @@ export function ContextPanel({ detail, accounts, onOpenThread, onOpenContact, as
       ) : <p className="contacts-status">Select a conversation participant.</p>}
       {detail ? assist : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
-      {otherEmails.length > 0 ? (
-        <section className="context-section contact-sidebar-history" aria-labelledby="context-history-heading">
-          <header className="context-section-header"><h3 id="context-history-heading">Recent emails</h3></header>
-          {otherEmails.map((item) => (
-            <button type="button" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
-              <strong>{item.subject || "(no subject)"}</strong>
-              <small>{new Date(item.sentAt).toLocaleDateString()} · {item.contactEmail}</small>
-            </button>
-          ))}
-        </section>
+      {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} name={displayName} onShowMessage={showMessage} /> : null}
+      {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
+      {person && (otherEmails.length > 0 || everythingHere) ? (
+        <RecentEmailsSection items={otherEmails} name={displayName} onOpenThread={onOpenThread} />
+      ) : null}
+      {person ? (
+        <DomainSection
+          email={person.email}
+          addresses={person.addresses}
+          accounts={accounts}
+          hideThreadIds={[...(detail ? [detail.thread.id] : []), ...otherEmails.map((item) => item.threadId)]}
+          onOpenThread={onOpenThread}
+        />
       ) : null}
       {error ? <p className="contacts-error" role="alert">{error}</p> : null}
       {detail && chat ? <div className="context-chat-dock">{chat(person)}</div> : null}

@@ -2094,6 +2094,19 @@ export function App() {
       return next;
     });
   }, [activateMessage, pendingMessageToggleFocusRef, setMessageExpansionOverrides]);
+  // Context panel links reveal a message: expanded, active, and scrolled into
+  // view when it is in the open conversation, otherwise by opening its thread.
+  const showMessage = useCallback((threadId: string, messageId: string) => {
+    if (threadId !== visibleDetail?.thread.id) {
+      openTaskThread(threadId);
+      return;
+    }
+    activateMessage(messageId);
+    setMessageExpansionOverrides((current) => new Map(current).set(messageId, true));
+    requestAnimationFrame(() => {
+      messageRefs.current.get(messageId)?.scrollIntoView?.({ block: "start", behavior: scrollBehavior() });
+    });
+  }, [activateMessage, messageRefs, openTaskThread, setMessageExpansionOverrides, visibleDetail?.thread.id]);
   const registerMessageNode = useCallback((messageId: string, isLatest: boolean, node: HTMLElement | null) => {
     if (isLatest) latestMessageRef.current = node;
     if (node) messageRefs.current.set(messageId, node);
@@ -2585,6 +2598,7 @@ export function App() {
           accounts={accounts}
           onOpenThread={openTaskThread}
           onOpenContact={openContactInAddressBook}
+          onShowMessage={showMessage}
           assist={visibleDetail ? (
             <ThreadAssist
               detail={visibleDetail}
