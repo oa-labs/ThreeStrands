@@ -98,19 +98,17 @@ describe("mail workspace with the calendar schedule open", () => {
 });
 
 describe("conversation participant layout", () => {
-  it("bounds the badges to three font-aware rows while allowing shorter lists to size naturally", () => {
-    expect(lastDeclaration(".context-participants", "max-height")).toBe("calc(var(--participant-row-height) * 3 + 12px)");
-    expect(lastDeclaration(".context-participants", "gap")).toBe("6px");
-    expect(lastDeclaration(".context-participants", "height")).toBeUndefined();
-    expect(lastDeclaration(".context-participants", "min-height")).toBeUndefined();
-    expect(lastDeclaration(".context-participants", "--participant-row-height")).toBe("max(26px, calc(var(--type-xs) * 1.4 + 6px))");
-    expect(lastDeclaration(".context-participants button", "height")).toBe("var(--participant-row-height)");
-    expect(lastDeclaration(".context-participants", "overflow-y")).toBe("auto");
-    expect(lastDeclaration(".context-participants", "overflow-x")).toBe("hidden");
-    expect(lastDeclaration(".context-participants", "scrollbar-width")).toBe("thin");
-    expect(lastDeclaration(".context-participants-section", "flex-shrink")).toBe("0");
-    // The picker sits inside the person block, which must not shrink in the panel's flex column either.
-    expect(lastDeclaration(".context-person", "flex-shrink")).toBe("0");
-    expect(lastDeclaration(".context-participants button:focus-visible", "outline-offset")).toBe("-2px");
+  // People are picked from message headers now, so the panel's person card
+  // must hold its height in the panel's flex column without a picker above it.
+  it("keeps the context panel person card from shrinking and draws counts as badges", () => {
+    expect(lastDeclaration(".context-contact", "flex-shrink")).toBe("0");
+    expect(lastDeclaration(".context-count", "border")).toBe("1px solid var(--border)");
+    expect(lastDeclaration(".context-count", "border-radius")).toBe("var(--radius-xs)");
+  });
+
+  it("opens a reader contact card that fits narrow windows and keeps keyboard focus visible", () => {
+    expect(lastDeclaration(".address-popover.address-card", "width")).toBe("min(320px, calc(100vw - 32px))");
+    expect(lastDeclaration(".address-popover.address-card", "white-space")).toBe("normal");
+    expect(lastDeclaration(".address-contact .address-name:focus-visible", "outline")).toBe("2px solid var(--accent)");
   });
 });

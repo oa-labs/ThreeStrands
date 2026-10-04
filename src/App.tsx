@@ -86,6 +86,7 @@ import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSi
 import { isActiveTaskStatus } from "./taskViews";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { ContextPanel } from "./ContextPanel";
+import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { ThreadTasks } from "./ThreadTasks";
 import { ContactMeetings } from "./ContactMeetings";
@@ -1774,6 +1775,21 @@ export function App() {
 
   const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
   const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setRightWorkspace("contacts"); }, []);
+  // The participant picked from a message header, kept per conversation so
+  // opening another conversation returns the panel to its latest sender.
+  const [contextPersonPick, setContextPersonPick] = useState<{ threadId: string; email: string } | null>(null);
+  const contextPersonEmail = visibleDetail && contextPersonPick?.threadId === visibleDetail.thread.id ? contextPersonPick.email : null;
+  const visibleThreadId = visibleDetail?.thread.id ?? null;
+  const contactCardActions = useMemo<ContactCardActions>(() => ({
+    onOpenContact: openContactInAddressBook,
+    onSelectPerson: (email) => {
+      if (!visibleThreadId) return;
+      setContextPersonPick({ threadId: visibleThreadId, email });
+      // Picking a person asks to see them, so bring the context panel back from another workspace.
+      setRightWorkspace((current) => current === "tasks" || current === "week" || current === "contacts" ? null : current);
+    },
+    selectedEmail: contextPersonEmail,
+  }), [openContactInAddressBook, visibleThreadId, contextPersonEmail]);
   const openCalendarView = useCallback((day?: Date, event?: ScheduleEvent) => {
     setCalendarWeekAnchor((current) => day ? startOfLocalDay(day) : current ?? startOfLocalDay(new Date()));
     setCalendarEventToOpen(event ?? null);
@@ -2498,6 +2514,7 @@ export function App() {
             moving the composer between separate branches would remount its
             browser-owned contenteditable DOM and erase unsaved keystrokes. */}
         {correspondence.activeDraft || visibleDetail ? (
+          <ContactCardContext.Provider value={contactCardActions}>
           <div
             className={`message-stack${correspondence.activeDraft && !composerBelongsToVisibleThread ? " draft-message-stack" : ""}`}
             ref={visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? messageStackRef : undefined}
@@ -2532,6 +2549,7 @@ export function App() {
             }) : null}
             {correspondence.activeDraft ? correspondence.composer : null}
           </div>
+          </ContactCardContext.Provider>
         ) : detailLoading ? (
           <div className="reader-empty" role="status">
             <p>Loading conversation…</p>
@@ -2596,6 +2614,7 @@ export function App() {
         <ContextPanel
           detail={visibleDetail}
           accounts={accounts}
+          selectedEmail={contextPersonEmail}
           onOpenThread={openTaskThread}
           onOpenContact={openContactInAddressBook}
           onShowMessage={showMessage}

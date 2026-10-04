@@ -1,7 +1,8 @@
 import { Check, ChevronDown, ChevronUp, Copy, Download, ExternalLink, Forward, Paperclip, Reply, ReplyAll } from "lucide-react";
-import { memo, useCallback, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useCallback, useContext, useId, useMemo, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { HoverTooltip } from "./AppChrome";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
+import { ContactCard, ContactCardContext, useContactLookup, type ContactCardActions } from "./ContactCard";
 import type { OutboxItem } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Account, Message } from "./domain";
@@ -129,10 +130,11 @@ export const MessageCard = memo(function MessageCard({
   }
 
   const recipients = splitAddressList(message.recipients.join(", "));
+  const ownEmails = new Set(accounts.map((account) => account.email.toLocaleLowerCase()));
   const headerDetails = (
     <div className="message-header-details">
       <div className="message-sender-row">
-        <strong><AddressWithCopy address={message.sender} displayName={senderDisplayName} /></strong>
+        <strong><MessageAddress address={message.sender} displayName={senderDisplayName} own={ownEmails} /></strong>
         {queuedItem ? null : (
           <div className="message-header-actions">
             <HoverTooltip label="Reply" placement="bottom">
@@ -174,9 +176,10 @@ export const MessageCard = memo(function MessageCard({
         {recipients.map((recipient, recipientIndex) => (
           <span key={recipient}>
             {recipientListSeparator(recipientIndex, recipients.length)}
-            <AddressWithCopy
+            <MessageAddress
               address={recipient}
               displayName={formatDisplayName(parseAddress(recipient).name)}
+              own={ownEmails}
             />
           </span>
         ))}
@@ -278,6 +281,63 @@ export const MessageCard = memo(function MessageCard({
 function CollapsedSnippet({ bodyText }: { bodyText: string }) {
   const snippet = useMemo(() => messageSnippet(bodyText), [bodyText]);
   return <span className="message-card-snippet">{snippet}</span>;
+}
+
+/**
+ * A From or To name. For other people it opens a contact card on hover or
+ * focus, and clicking it makes them the subject of the context panel. The
+ * user's own addresses, and readers without the panel, keep the plain
+ * address-and-copy popover.
+ */
+function MessageAddress({ address, displayName, own }: { address: string; displayName?: string; own: Set<string> }) {
+  const actions = useContext(ContactCardContext);
+  const email = parseAddress(address).email.toLocaleLowerCase();
+  if (!actions || !email.includes("@") || own.has(email)) return <AddressWithCopy address={address} displayName={displayName} />;
+  return <AddressWithCard email={email} displayName={displayName} actions={actions} />;
+}
+
+function AddressWithCard({ email, displayName, actions }: {
+  email: string;
+  displayName?: string;
+  actions: ContactCardActions;
+}) {
+  const [open, setOpen] = useState(false);
+  const hintId = useId();
+  const lookup = useContactLookup(email, open);
+  const name = displayName || email;
+  const selected = actions.selectedEmail === email;
+  const closeOnFocusOut = (event: FocusEvent<HTMLSpanElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+  };
+  return (
+    <span
+      className={`address address-contact${selected ? " address-selected" : ""}`}
+      onClick={(event) => event.stopPropagation()}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={closeOnFocusOut}
+    >
+      <button type="button" className="address-name" aria-describedby={hintId} onClick={() => actions.onSelectPerson(email)}>{name}</button>
+      <span id={hintId} hidden>Shows this person in the context panel</span>
+      <span className="address-popover address-card" role="group" aria-label={`Contact card for ${name}`}>
+        {open ? <>
+          <ContactCard
+            email={email}
+            fallbackName={displayName}
+            profile={lookup.profile}
+            loaded={lookup.loaded}
+            facts={lookup.facts}
+            titleAs="div"
+            onOpenContact={actions.onOpenContact}
+            onProfileSaved={(saved) => { lookup.setError(null); lookup.setProfile(saved); }}
+            onError={lookup.setError}
+          />
+          {lookup.error ? <span className="contacts-error" role="alert">{lookup.error}</span> : null}
+        </> : null}
+      </span>
+    </span>
+  );
 }
 
 function AddressWithCopy({ address, displayName }: { address: string; displayName?: string }) {

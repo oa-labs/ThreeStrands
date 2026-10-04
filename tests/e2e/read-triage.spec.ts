@@ -127,7 +127,7 @@ test("processes the inbox from the keyboard", async ({ page }) => {
   await expect(page.getByRole("status")).toBeHidden({ timeout: 10_000 });
 });
 
-test("keeps an email address popover open while moving to its copy button", async ({ page }) => {
+test("keeps a sender contact card open while moving to its copy button", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -139,10 +139,12 @@ test("keeps an email address popover open while moving to its copy button", asyn
 
   const address = page.locator(".message-sender-row .address").first();
   const popover = address.locator(".address-popover");
-  const copy = address.getByRole("button", { name: "Copy hello@threestrands.local" });
+  // Other people's addresses open the contact card, whose copy button names the action.
+  const copy = popover.getByRole("button", { name: "Copy email address" });
 
   await address.hover();
   await expect(popover).toBeVisible();
+  await expect(popover).toContainText("hello@threestrands.local");
 
   const addressBox = await address.boundingBox();
   const popoverBox = await popover.boundingBox();
@@ -154,7 +156,7 @@ test("keeps an email address popover open while moving to its copy button", asyn
   await expect(popover).toBeVisible();
   await copy.hover();
   await copy.click();
-  await expect(address.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect(popover.getByRole("button", { name: "Copied email address" })).toBeVisible();
 });
 
 test("confirms unsubscribe with Cmd/Ctrl+U when the message advertises one-click support", async ({ page }) => {

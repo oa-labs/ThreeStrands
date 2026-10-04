@@ -1,7 +1,9 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Message } from "./domain";
+import { ContactCardContext, type ContactCardActions } from "./ContactCard";
+import { mailClient } from "./data/client";
+import type { Account, ContactProfile, Message } from "./domain";
 import * as inlineAttachments from "./inlineAttachments";
 import { MessageCard } from "./MessageCard";
 
@@ -79,5 +81,78 @@ describe("MessageCard", () => {
     render(<MessageCard message={{ ...message, bodyText: "Hello&nbsp;there   friend" }} isExpanded={false} {...stableProps} />);
     expect(screen.queryByTestId("message-body")).not.toBeInTheDocument();
     expect(screen.getByText("Hello there friend")).toBeInTheDocument();
+  });
+
+  describe("address contact cards", () => {
+    const ada: ContactProfile = {
+      id: "contact:ada", displayName: "Ada Lovelace", role: "Analyst", company: "Engines Ltd", location: null, bio: null,
+      notes: null, links: [], photoData: null, favorite: false, addresses: ["ada@example.com"], sentCount: 3, receivedCount: 4, lastInteractedAt: null,
+    };
+    const own = [{ email: "me@example.com" } as Account];
+    function renderWithCard(actions: Partial<ContactCardActions> = {}) {
+      const value: ContactCardActions = { onOpenContact: vi.fn(), onSelectPerson: vi.fn(), selectedEmail: null, ...actions };
+      render(<ContactCardContext.Provider value={value}><MessageCard message={message} isExpanded {...stableProps} accounts={own} /></ContactCardContext.Provider>);
+      return value;
+    }
+    function mockLookup() {
+      vi.spyOn(mailClient, "resolveContactIds").mockResolvedValue({ "ada@example.com": ada.id });
+      vi.spyOn(mailClient, "getContactProfile").mockResolvedValue(ada);
+      vi.spyOn(mailClient, "contactActivity").mockResolvedValue({
+        sentCount: 3, receivedCount: 4, threadCount: 2, firstAt: "2026-06-01T00:00:00Z", lastSentAt: null, recentReceivedAt: [],
+      });
+    }
+
+    it("shows the contact card for a sender on hover, looked up only when opened", async () => {
+      mockLookup();
+      renderWithCard();
+      const sender = screen.getByRole("button", { name: "Ada Lovelace" });
+      expect(mailClient.resolveContactIds).not.toHaveBeenCalled();
+
+      fireEvent.mouseEnter(sender.parentElement!);
+      const card = screen.getByRole("group", { name: "Contact card for Ada Lovelace" });
+      expect(await within(card).findByText("Analyst · Engines Ltd")).toBeInTheDocument();
+      expect(within(card).getByText(/7 emails since/)).toBeInTheDocument();
+      expect(within(card).getByRole("button", { name: "Copy email address" })).toBeInTheDocument();
+      expect(within(card).getByRole("button", { name: "Add favorite" })).toBeInTheDocument();
+      // The card names the person without adding a heading to the reader.
+      expect(within(card).queryByRole("heading")).not.toBeInTheDocument();
+
+      fireEvent.mouseLeave(sender.parentElement!);
+      expect(within(card).queryByText("Analyst · Engines Ltd")).not.toBeInTheDocument();
+    });
+
+    it("opens the card on keyboard focus and opens the saved contact from it", async () => {
+      mockLookup();
+      const actions = renderWithCard();
+      fireEvent.focus(screen.getByRole("button", { name: "Ada Lovelace" }));
+      const card = screen.getByRole("group", { name: "Contact card for Ada Lovelace" });
+      fireEvent.click(await within(card).findByRole("button", { name: "Ada Lovelace" }));
+      expect(actions.onOpenContact).toHaveBeenCalledWith(ada.id);
+    });
+
+    it("makes a clicked name the subject of the context panel and marks it", () => {
+      mockLookup();
+      const actions = renderWithCard({ selectedEmail: "ada@example.com" });
+      const sender = screen.getByRole("button", { name: "Ada Lovelace" });
+      expect(sender).toHaveAccessibleDescription("Shows this person in the context panel");
+      expect(sender.parentElement).toHaveClass("address-selected");
+      fireEvent.click(sender);
+      expect(actions.onSelectPerson).toHaveBeenCalledWith("ada@example.com");
+      // Selecting stays inside the header instead of toggling the message.
+      expect(stableProps.onToggle).not.toHaveBeenCalled();
+    });
+
+    it("keeps the plain address popover for the user's own address and without the panel", () => {
+      const lookup = vi.spyOn(mailClient, "resolveContactIds");
+      renderWithCard();
+      expect(screen.getByRole("button", { name: "Copy me@example.com" })).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: /Contact card for me@example.com/ })).not.toBeInTheDocument();
+      cleanup();
+
+      render(<MessageCard message={message} isExpanded {...stableProps} accounts={own} />);
+      expect(screen.getByRole("button", { name: "Copy ada@example.com" })).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: /Contact card/ })).not.toBeInTheDocument();
+      expect(lookup).not.toHaveBeenCalled();
+    });
   });
 });

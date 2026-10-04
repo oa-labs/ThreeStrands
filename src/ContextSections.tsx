@@ -6,6 +6,7 @@ import { parseAddress } from "./emailAddress";
 import { errorMessage } from "./errors";
 import { CONTACT_FILE_LIMIT, CONTEXT_SECTION_ROWS, DOMAIN_CONTEXT_LIMIT, formatHistoryDate, organizationDomain, THREAD_OUTLINE_MIN_MESSAGES } from "./contactContext";
 import { formatAttachmentSize, splitAttachmentName } from "./threadPresentation";
+import { decodeHtmlEntities } from "./SafeMessage";
 
 /** Per-device, per-section collapse choices. Transient layout, so not exported with settings. */
 const COLLAPSED_KEY = "threestrands.contextPanel.collapsedSections";
@@ -223,7 +224,7 @@ export function RecentEmailsSection({ items, onOpenThread }: {
       count={items.length}
       rows={items.map((item) => {
         // The section is about one person, so the row shows what was said rather than their address.
-        const snippet = item.snippet.replace(/\s+/g, " ").trim();
+        const snippet = decodeHtmlEntities(item.snippet).replace(/\s+/g, " ").trim();
         return (
           <button type="button" className="context-history-row" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
             <strong>{item.subject || "(no subject)"}</strong>
