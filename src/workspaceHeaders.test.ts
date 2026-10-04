@@ -44,9 +44,8 @@ describe("primary workspace headers", () => {
 });
 
 describe("task detail heading", () => {
-  it("uses the compact heading size in both display and edit modes", () => {
-    expect(lastDeclaration(".task-detail h2", "font-size")).toBe("var(--type-heading-sm)");
-    expect(lastDeclaration(".task-inline-title input", "font-size")).toBe("var(--type-heading-sm)");
+  it("edits the title in the detail dialog at the compact heading size", () => {
+    expect(lastDeclaration(".modal-form .task-detail-title-field input", "font-size")).toBe("var(--type-heading-sm)");
   });
 });
 

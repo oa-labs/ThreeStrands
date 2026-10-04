@@ -44,7 +44,7 @@ export type CommandContext = {
   selectNextTask(): void;
   selectPreviousTask(): void;
   openSelectedTask(): void;
-  editSelectedTask(): void;
+  openTaskDetails(): void;
   completeSelectedTask(): void;
   reopenSelectedTask(): void;
   moveSelectedTask(direction: -1 | 1): void;
@@ -194,12 +194,12 @@ export const commands: Command[] = [
     run: (context) => complete(context.selectPreviousTask),
   },
   {
-    id: "tasks.editSelected",
-    title: "Edit Selected Task",
+    id: "tasks.openDetails",
+    title: "Open Task Details",
     keys: ["Enter"],
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
-    run: (context) => complete(context.editSelectedTask),
+    run: (context) => complete(context.openTaskDetails),
   },
   {
     id: "tasks.openSelected",

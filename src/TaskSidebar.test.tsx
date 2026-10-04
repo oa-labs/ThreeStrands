@@ -21,6 +21,11 @@ function localDate(offsetDays: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+async function openTask(title: string) {
+  fireEvent.click(await screen.findByText(title, { selector: "strong" }));
+  return within(await screen.findByRole("dialog", { name: "Task details" }));
+}
+
 describe("TaskSidebar", () => {
   afterEach(() => {
     cleanup();
@@ -67,7 +72,6 @@ describe("TaskSidebar", () => {
     render(<TaskSidebar accountId={null} onOpenThread={vi.fn()} />);
 
     const card = (await screen.findByText("Set up the website", { selector: "strong" })).closest("article")!;
-    expect(await within(screen.getByRole("region", { name: "Task details" })).findByText("Task", { selector: ".eyebrow" })).toBeInTheDocument();
     fireEvent.click(within(card).getByRole("button", { name: "Complete Set up the website" }));
     await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-1", "completed"));
   });
@@ -129,7 +133,7 @@ describe("TaskSidebar", () => {
     expect(within(yesterdayCard).getByText("Yesterday")).toBeInTheDocument();
   });
 
-  it("lets the inline due editor set a custom timezone and rejects an invalid one", async () => {
+  it("saves a due date and timezone from the dialog and holds back an invalid timezone", async () => {
     let saved = workspaceTask("plan", { title: "Plan launch" });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([saved]);
     const updateTask = vi.spyOn(mailClient, "updateTask").mockImplementation(async (request) => {
@@ -138,33 +142,36 @@ describe("TaskSidebar", () => {
     });
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add a due date" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Due type" }), { target: { value: "datetime" } });
-    fireEvent.change(screen.getByLabelText("Due date and time"), { target: { value: "2030-10-02T14:30" } });
-    fireEvent.change(screen.getByRole("combobox", { name: "Timezone" }), { target: { value: "America/New Yok" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const dialog = await openTask("Plan launch");
+    fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "datetime" } });
+    fireEvent.change(dialog.getByLabelText("Due date and time"), { target: { value: "2030-10-02T14:30" } });
+    fireEvent.change(dialog.getByRole("combobox", { name: "Timezone" }), { target: { value: "America/New Yok" } });
+    fireEvent.blur(dialog.getByRole("combobox", { name: "Timezone" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a valid timezone");
+    expect(await dialog.findByRole("alert")).toHaveTextContent("Choose a valid timezone");
     expect(updateTask).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Timezone" }), { target: { value: "Asia/Tokyo" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.change(dialog.getByRole("combobox", { name: "Timezone" }), { target: { value: "Asia/Tokyo" } });
+    fireEvent.blur(dialog.getByRole("combobox", { name: "Timezone" }));
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({
       id: "plan", dueKind: "datetime", dueValue: new Date("2030-10-02T14:30").toISOString(), timeZone: "Asia/Tokyo",
     }));
+    expect(dialog.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("preserves the entered date when switching the inline due editor between date and date-and-time", async () => {
+  it("preserves the entered date when switching the dialog's due type between date and date-and-time", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("plan", { title: "Plan launch" })]);
+    vi.spyOn(mailClient, "updateTask").mockImplementation(async (request) => ({ ...workspaceTask("plan", { title: "Plan launch" }), ...request }));
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add a due date" }));
-    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2030-10-01" } });
-    fireEvent.change(screen.getByRole("combobox", { name: "Due type" }), { target: { value: "datetime" } });
-    expect(screen.getByLabelText("Due date and time")).toHaveValue("2030-10-01T09:00");
+    const dialog = await openTask("Plan launch");
+    fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
+    fireEvent.change(dialog.getByLabelText("Due date"), { target: { value: "2030-10-01" } });
+    fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "datetime" } });
+    expect(dialog.getByLabelText("Due date and time")).toHaveValue("2030-10-01T09:00");
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Due type" }), { target: { value: "date" } });
-    expect(screen.getByLabelText("Due date")).toHaveValue("2030-10-01");
+    fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
+    expect(dialog.getByLabelText("Due date")).toHaveValue("2030-10-01");
   });
 
   it("hides completed tasks older than a few days from the board's Done column", async () => {
@@ -323,11 +330,11 @@ describe("TaskSidebar", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
-  it("creates a task from its title first and opens it in the detail pane", async () => {
+  it("creates a task from its title and selects it without opening the dialog, so batch entry continues", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     const created = workspaceTask("new-task", { title: "Call the contractor" });
     const onCreateTask = vi.fn().mockResolvedValue(created);
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
     const form = screen.getByRole("textbox", { name: "Task title" }).closest("form");
@@ -336,10 +343,9 @@ describe("TaskSidebar", () => {
     fireEvent.click(within(form!).getByRole("button", { name: "Add task" }));
 
     await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Call the contractor"));
-    expect(await screen.findByRole("heading", { name: "Call the contractor" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add a description" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add a due date" })).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector("#task-new-task")).toHaveAttribute("aria-current", "true"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Task title" })).toHaveFocus();
   });
 
   it("filters the task list by date, waiting status, and completion without repeating email subjects", async () => {
@@ -365,7 +371,7 @@ describe("TaskSidebar", () => {
       fireEvent.click(within(views).getByRole("button", { name }));
       expect(container.querySelectorAll(".task-card")).toHaveLength(1);
       expect(container.querySelector(".task-card")).toHaveAttribute("id", `task-${expected}`);
-      if (name === "Waiting") expect(within(screen.getByRole("region", { name: "Task details" })).getByText("Waiting for reply", { selector: ".eyebrow" })).toBeInTheDocument();
+      if (name === "Waiting") expect(container.querySelector(".task-card .task-card-kind")).toHaveTextContent("Waiting");
     }
     fireEvent.click(within(views).getByRole("button", { name: "Overdue" }));
     expect(container.querySelector(".task-card")).toHaveAttribute("id", "task-overdue");
@@ -405,55 +411,18 @@ describe("TaskSidebar", () => {
     expect(await screen.findByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("resizes the board detail panel from the divider and persists the width", async () => {
+  it("gives the board the full workspace and opens task details in a dialog instead of a side pane", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("todo", { title: "Draft agenda" })]);
-    const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
-    Object.defineProperty(window, "innerWidth", { value: 1600, configurable: true });
-    try {
-      const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
-      await screen.findByRole("region", { name: "To Do" });
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
-      const handle = screen.getByRole("separator", { name: "Resize task detail" });
-      expect(handle).toHaveAttribute("aria-controls", "task-detail-panel");
-      expect(handle).toHaveAttribute("aria-valuemax", "720");
-      const body = container.querySelector(".tasks-workspace-body") as HTMLElement;
-      const appliedWidth = () => body.style.getPropertyValue("--task-detail-width");
-      expect(appliedWidth()).toBe("440px");
+    await screen.findByRole("region", { name: "To Do" });
+    expect(screen.queryByRole("region", { name: "Task details" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "Resize task detail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-      // The detail panel sits to the right of the handle, so ArrowLeft widens it.
-      fireEvent.keyDown(handle, { key: "ArrowLeft" });
-      expect(appliedWidth()).toBe("450px");
-      fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
-      expect(appliedWidth()).toBe("410px");
-      await waitFor(() => expect(localStorage.getItem("threestrands.taskDetailWidth")).toBe("410"));
-
-      // Dragging measures from where the drag began, so successive moves do not compound.
-      handle.setPointerCapture = vi.fn();
-      handle.releasePointerCapture = vi.fn();
-      fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 1000 });
-      fireEvent.pointerMove(handle, { pointerId: 1, clientX: 980 });
-      expect(appliedWidth()).toBe("430px");
-      fireEvent.pointerMove(handle, { pointerId: 1, clientX: 960 });
-      expect(appliedWidth()).toBe("450px");
-      fireEvent.pointerUp(handle, { pointerId: 1, clientX: 960 });
-      fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
-      expect(appliedWidth()).toBe("410px");
-      await waitFor(() => expect(localStorage.getItem("threestrands.taskDetailWidth")).toBe("410"));
-
-      cleanup();
-      const remount = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
-      expect(await screen.findByRole("region", { name: "To Do" })).toBeInTheDocument();
-      const remountedBody = remount.container.querySelector(".tasks-workspace-body") as HTMLElement;
-      expect(remountedBody.style.getPropertyValue("--task-detail-width")).toBe("410px");
-
-      fireEvent.dblClick(screen.getByRole("separator", { name: "Resize task detail" }));
-      expect(remountedBody.style.getPropertyValue("--task-detail-width")).toBe("440px");
-      await waitFor(() => expect(localStorage.getItem("threestrands.taskDetailWidth")).toBe("440"));
-    } finally {
-      cleanup();
-      if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth);
-      localStorage.removeItem("threestrands.taskDetailWidth");
-    }
+    const dialog = await openTask("Draft agenda");
+    expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Draft agenda");
+    expect(screen.getByRole("dialog", { name: "Task details" })).toHaveAttribute("aria-modal", "true");
   });
 
   it("moves cards between columns with buttons and keyboard handles, and undo restores the prior column", async () => {
@@ -472,7 +441,6 @@ describe("TaskSidebar", () => {
     await waitFor(() => expect(setTaskStatus).toHaveBeenLastCalledWith("plan", "in_progress"));
     expect(await within(screen.getByRole("region", { name: "In Progress" })).findByText("Plan launch")).toBeInTheDocument();
     expect(screen.getByText("Started: Plan launch")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Task details" })).toHaveTextContent("In progress");
     expect(screen.getByRole("button", { name: "Move Plan launch to To Do" })).toHaveTextContent("To Do");
     expect(screen.getByRole("button", { name: "Move Plan launch to Done" })).toHaveTextContent("Done");
 
@@ -645,6 +613,8 @@ describe("TaskSidebar", () => {
       const { container, main, point, setTaskStatus } = await renderDraggableBoard();
       fireEvent.click(screen.getByText("Other", { selector: "strong" }));
       expect(container.querySelector("#task-other")).toHaveClass("selected");
+      expect(screen.getByRole("dialog", { name: "Task details" })).toBeInTheDocument();
+      fireEvent.keyDown(window, { key: "Escape" });
 
       point("Done");
       fireEvent.pointerDown(main, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
@@ -653,6 +623,8 @@ describe("TaskSidebar", () => {
       fireEvent.pointerUp(main, { pointerId: 1, clientX: 12, clientY: 11 });
       fireEvent.click(main);
       expect(container.querySelector("#task-plan")).toHaveClass("selected");
+      expect(within(screen.getByRole("dialog", { name: "Task details" })).getByRole("textbox", { name: "Title" })).toHaveValue("Plan launch");
+      fireEvent.keyDown(window, { key: "Escape" });
 
       point("To Do");
       fireEvent.pointerDown(main, { button: 0, pointerId: 2, clientX: 10, clientY: 10 });
@@ -670,24 +642,44 @@ describe("TaskSidebar", () => {
     });
   });
 
-  it("closes the inline editor when another task is selected", async () => {
-    const tasks = [workspaceTask("task-1", { title: "First" }), workspaceTask("task-2", { title: "Second" })];
+  it("steps between tasks with j and k outside a field, saving the edit in progress first", async () => {
+    let tasks = [workspaceTask("task-1", { title: "First" }), workspaceTask("task-2", { title: "Second" }), workspaceTask("task-3", { title: "Third" })];
     vi.spyOn(mailClient, "listTasks").mockResolvedValue(tasks);
+    const updateTask = vi.spyOn(mailClient, "updateTask").mockImplementation(async (request) => {
+      tasks = tasks.map((task) => task.id === request.id ? { ...task, ...request } : task);
+      return tasks.find((task) => task.id === request.id)!;
+    });
     localStorage.setItem("threestrands.tasks.layout", "list");
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit title: First" }));
-    expect(screen.getByRole("textbox", { name: "Task title" })).toHaveValue("First");
+    const dialog = await openTask("First");
+    const body = screen.getByRole("dialog", { name: "Task details" }).querySelector(".task-detail-form") as HTMLElement;
+    expect(body).toHaveFocus();
+    const position = screen.getByRole("dialog", { name: "Task details" }).querySelector(".task-detail-hints")!;
+    expect(position).toHaveTextContent("1 of 3");
 
-    fireEvent.click(screen.getByText("Second", { selector: "strong" }));
-    expect(screen.queryByRole("textbox", { name: "Task title" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Edit title: Second" })).toBeInTheDocument();
+    // Letters typed into a field are text, not navigation.
+    fireEvent.keyDown(dialog.getByRole("textbox", { name: "Title" }), { key: "j" });
+    expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("First");
 
-    fireEvent.click(screen.getByText("First", { selector: "strong" }));
-    expect(screen.queryByRole("textbox", { name: "Task title" })).toBeNull();
+    fireEvent.change(dialog.getByRole("textbox", { name: "Description" }), { target: { value: "Notes for first" } });
+    fireEvent.keyDown(body, { key: "j" });
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "task-1", notes: "Notes for first" }));
+    expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Second");
+    expect(dialog.getByRole("textbox", { name: "Description" })).toHaveValue("");
+    expect(container.querySelector("#task-task-2")).toHaveAttribute("aria-current", "true");
+    expect(position).toHaveTextContent("2 of 3");
+
+    fireEvent.keyDown(body, { key: "ArrowDown" });
+    expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Third");
+    fireEvent.keyDown(body, { key: "k" });
+    fireEvent.keyDown(body, { key: "ArrowUp" });
+    expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("First");
+    expect(dialog.getByRole("textbox", { name: "Description" })).toHaveValue("Notes for first");
+    expect(updateTask).toHaveBeenCalledTimes(1);
   });
 
-  it("edits the task title, description, and due date in the detail pane", async () => {
+  it("saves each field as the user leaves it, without a Save button", async () => {
     let saved = workspaceTask("plan", { title: "Plan launch", notes: "Draft outline" });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([saved]);
     const updateTask = vi.spyOn(mailClient, "updateTask").mockImplementation(async (request) => {
@@ -697,49 +689,120 @@ describe("TaskSidebar", () => {
     const onTasksChanged = vi.fn();
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onTasksChanged={onTasksChanged} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit title: Plan launch" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Task title" }), { target: { value: "Plan product launch" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const dialog = await openTask("Plan launch");
+    expect(dialog.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    const title = dialog.getByRole("textbox", { name: "Title" });
+    fireEvent.change(title, { target: { value: "Plan product launch" } });
+    fireEvent.blur(title);
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", title: "Plan product launch" }));
-    expect(await screen.findByRole("heading", { name: "Plan product launch" })).toBeInTheDocument();
+    expect(await screen.findByText("Plan product launch", { selector: "strong" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Draft outline" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Description" }), { target: { value: "Prepare launch checklist" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const description = dialog.getByRole("textbox", { name: "Description" });
+    fireEvent.change(description, { target: { value: "Prepare launch checklist" } });
+    fireEvent.blur(description);
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", notes: "Prepare launch checklist" }));
-    expect(screen.getByRole("button", { name: "Prepare launch checklist" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add a due date" }));
-    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2030-10-01" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
+    expect(updateTask).toHaveBeenCalledTimes(2);
+    fireEvent.change(dialog.getByLabelText("Due date"), { target: { value: "2030-10-01" } });
+    // Enter in an input saves it in place.
+    fireEvent.keyDown(dialog.getByLabelText("Due date"), { key: "Enter" });
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", dueKind: "date", dueValue: "2030-10-01", timeZone: null }));
-    expect(onTasksChanged).toHaveBeenCalledTimes(3);
 
-    fireEvent.click(screen.getByRole("button", { name: "Oct 1, 2030" }));
-    fireEvent.click(screen.getByRole("button", { name: "Clear date" }));
+    fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "none" } });
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", dueKind: "none", dueValue: null, timeZone: null }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Add a due date" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Due type" }), { target: { value: "datetime" } });
-    fireEvent.change(screen.getByLabelText("Due date and time"), { target: { value: "2030-10-02T14:30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(updateTask).toHaveBeenCalledWith({
-      id: "plan", dueKind: "datetime", dueValue: new Date("2030-10-02T14:30").toISOString(),
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    }));
+    fireEvent.change(dialog.getByRole("combobox", { name: "Type" }), { target: { value: "follow_up" } });
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", kind: "follow_up" }));
+    const repeat = dialog.getByRole("spinbutton", { name: "Repeat every (days)" });
+    fireEvent.change(repeat, { target: { value: "0" } });
+    fireEvent.blur(repeat);
+    expect(await dialog.findByRole("alert")).toHaveTextContent("Repeat every 1 to 3650 days.");
+    fireEvent.change(repeat, { target: { value: "7" } });
+    fireEvent.blur(repeat);
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", repeatIntervalDays: 7 }));
+    expect(onTasksChanged).toHaveBeenCalledTimes(6);
+
+    // An emptied title is never saved; the last good title stays.
+    fireEvent.change(title, { target: { value: "  " } });
+    fireEvent.blur(title);
+    expect(await dialog.findByRole("alert")).toHaveTextContent("A task needs a title.");
+    expect(updateTask).toHaveBeenCalledTimes(6);
   });
 
-  it("keeps an inline edit open when saving fails", async () => {
+  it("saves the field being edited when Escape or Cmd+Enter closes the dialog", async () => {
+    let saved = workspaceTask("plan", { title: "Plan launch" });
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([saved]);
+    const updateTask = vi.spyOn(mailClient, "updateTask").mockImplementation(async (request) => {
+      saved = { ...saved, ...request };
+      return saved;
+    });
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    let dialog = await openTask("Plan launch");
+    const description = dialog.getByRole("textbox", { name: "Description" });
+    description.focus();
+    fireEvent.change(description, { target: { value: "Typed then escaped" } });
+    fireEvent.keyDown(description, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", notes: "Typed then escaped" }));
+
+    dialog = await openTask("Plan launch");
+    expect(dialog.getByRole("textbox", { name: "Description" })).toHaveValue("Typed then escaped");
+    fireEvent.change(dialog.getByRole("textbox", { name: "Title" }), { target: { value: "Plan the launch" } });
+    fireEvent.keyDown(dialog.getByRole("textbox", { name: "Title" }), { key: "Enter", metaKey: true });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", title: "Plan the launch" }));
+
+    // Closing with nothing changed saves nothing.
+    await openTask("Plan the launch");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(updateTask).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends saves one at a time so a slow earlier save cannot overwrite a later one", async () => {
+    let saved = workspaceTask("plan", { title: "Plan launch" });
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([saved]);
+    const pending: Array<() => void> = [];
+    const updateTask = vi.spyOn(mailClient, "updateTask").mockImplementation((request) => new Promise((resolve) => {
+      pending.push(() => {
+        saved = { ...saved, ...request };
+        resolve(saved);
+      });
+    }));
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const dialog = await openTask("Plan launch");
+    fireEvent.change(dialog.getByRole("textbox", { name: "Title" }), { target: { value: "Plan launch v2" } });
+    fireEvent.blur(dialog.getByRole("textbox", { name: "Title" }));
+    fireEvent.change(dialog.getByRole("combobox", { name: "Type" }), { target: { value: "waiting_for" } });
+    await waitFor(() => expect(updateTask).toHaveBeenCalledTimes(1));
+    // The type change waits for the title save to finish before it is sent.
+    await act(async () => { await Promise.resolve(); });
+    expect(updateTask).toHaveBeenCalledTimes(1);
+    await act(async () => pending[0]());
+    await waitFor(() => expect(updateTask).toHaveBeenCalledTimes(2));
+    expect(updateTask).toHaveBeenLastCalledWith(expect.objectContaining({ id: "plan", kind: "waiting_for" }));
+    await act(async () => pending[1]());
+    expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Plan launch v2");
+    expect(dialog.getByRole("combobox", { name: "Type" })).toHaveValue("waiting_for");
+  });
+
+  it("keeps the typed value and reports the error when a save fails, then shows it in the banner once closed", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("plan", { title: "Plan launch" })]);
     vi.spyOn(mailClient, "updateTask").mockRejectedValue(new Error("Could not save task"));
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit title: Plan launch" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Task title" }), { target: { value: "Prepare launch" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const dialog = await openTask("Plan launch");
+    fireEvent.change(dialog.getByRole("textbox", { name: "Title" }), { target: { value: "Prepare launch" } });
+    fireEvent.blur(dialog.getByRole("textbox", { name: "Title" }));
 
+    expect(await dialog.findByRole("alert")).toHaveTextContent("Could not save task");
+    expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Prepare launch");
+
+    fireEvent.keyDown(window, { key: "Escape" });
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save task");
-    expect(screen.getByRole("textbox", { name: "Task title" })).toHaveValue("Prepare launch");
   });
 
   it("has no close control, like the contacts manager", async () => {
@@ -753,118 +816,93 @@ describe("TaskSidebar", () => {
   });
 
   it("keeps the linked email below task details with its excerpt collapsed", async () => {
-    const task: ThreadTask = {
-      id: "task-1",
-      accountId: "you@example.com",
-      threadId: "thread-1",
-      sourceMessageId: "message-1",
-      subjectSnapshot: "Website setup",
-      title: "Set up the website",
-      notes: null,
-      kind: "action",
-      dueKind: "none",
-      dueValue: null,
-      timeZone: null,
-      repeatIntervalDays: null,
-      status: "open",
-      completionSource: null,
-      evidenceText: "Please set up the website by Friday.",
-      waitAfter: null,
-      createdAt: "2026-09-19T10:01:00Z",
-      updatedAt: "2026-09-19T10:01:00Z",
-      completedAt: null,
-    };
+    const task = workspaceTask("task-1", {
+      threadId: "thread-1", sourceMessageId: "message-1", subjectSnapshot: "Website setup",
+      title: "Set up the website", evidenceText: "Please set up the website by Friday.",
+    });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
     const onOpenThread = vi.fn();
     render(<TaskSidebar accountId="you@example.com" onOpenThread={onOpenThread} />);
 
-    await screen.findByRole("heading", { name: "Set up the website" });
-    const source = screen.getByRole("region", { name: "Source conversation" });
+    const dialog = await openTask("Set up the website");
+    const source = dialog.getByRole("region", { name: "Source conversation" });
     expect(source.querySelector("details")).not.toHaveAttribute("open");
     expect(source).toHaveTextContent("Website setup");
-    fireEvent.click(screen.getByText("Source excerpt"));
+    fireEvent.click(dialog.getByText("Source excerpt"));
     expect(source).toHaveTextContent("Please set up the website by Friday.");
-    fireEvent.click(screen.getByRole("button", { name: "Open conversation" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Open conversation" }));
     expect(onOpenThread).toHaveBeenCalledWith("thread-1");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("completes a task from its title and keeps other details editable", async () => {
-    const task: ThreadTask = {
-      id: "task-1",
-      accountId: "you@example.com",
-      threadId: "thread-1",
-      sourceMessageId: "message-1",
-      subjectSnapshot: "Website setup",
-      title: "Set up the website",
-      notes: null,
-      kind: "action",
-      dueKind: "none",
-      dueValue: null,
-      timeZone: null,
-      repeatIntervalDays: null,
-      status: "open",
-      completionSource: null,
-      evidenceText: null,
-      waitAfter: null,
-      createdAt: "2026-09-19T10:01:00Z",
-      updatedAt: "2026-09-19T10:01:00Z",
-      completedAt: null,
-    };
+  it("opens the source conversation with o from outside a field", async () => {
+    const task = workspaceTask("task-1", { threadId: "thread-1", subjectSnapshot: "Website setup", title: "Set up the website" });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
-    const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue({ ...task, status: "completed", completedAt: "2026-09-19T11:00:00Z" });
     const onOpenThread = vi.fn();
-    const onEditTask = vi.fn();
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={onOpenThread} onEditTask={onEditTask} />);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={onOpenThread} />);
 
-    const edit = await screen.findByRole("button", { name: "Task Options" });
-    const done = within(screen.getByRole("region", { name: "Task details" })).getByRole("button", { name: "Complete Set up the website" });
-    const open = screen.getByRole("button", { name: "Open conversation" });
-    expect(edit).toHaveClass("action-button");
-    expect(done.querySelector("svg")).not.toBeNull();
-    const tooltips = screen.getAllByRole("tooltip", { hidden: true }).map((tooltip) => tooltip.textContent);
-    expect(tooltips).toEqual(["Edit type, repeat, and all fields"]);
-
-    fireEvent.click(edit);
-    expect(onEditTask).toHaveBeenCalledWith(task);
-    fireEvent.click(open);
+    const dialog = await openTask("Set up the website");
+    fireEvent.keyDown(dialog.getByRole("textbox", { name: "Description" }), { key: "o" });
+    expect(onOpenThread).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Task details" }).querySelector(".task-detail-form")!, { key: "o" });
     expect(onOpenThread).toHaveBeenCalledWith("thread-1");
-    fireEvent.click(done);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("changes status from the dialog and keeps the dialog on the task after it moves to Done", async () => {
+    let task = workspaceTask("task-1", { threadId: "thread-1", subjectSnapshot: "Website setup", title: "Set up the website" });
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (_id, status) => {
+      task = { ...task, status, completedAt: status === "completed" ? new Date().toISOString() : null };
+      return task;
+    });
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const dialog = await openTask("Set up the website");
+    const status = dialog.getByRole("combobox", { name: "Status" });
+    expect(status).toHaveValue("open");
+    expect(dialog.queryByRole("option", { name: "Cancelled" })).not.toBeInTheDocument();
+    fireEvent.change(status, { target: { value: "in_progress" } });
+    await waitFor(() => expect(setTaskStatus).toHaveBeenCalledWith("task-1", "in_progress"));
+    expect(await within(screen.getByRole("region", { name: "In Progress", hidden: true })).findByText("Set up the website")).toBeInTheDocument();
+    fireEvent.change(status, { target: { value: "completed" } });
     await waitFor(() => expect(setTaskStatus).toHaveBeenCalledWith("task-1", "completed"));
-    // The board shows finished work in its Done column; the Completed view lives in the list layout.
-    fireEvent.click(screen.getByRole("button", { name: "List" }));
-    fireEvent.click(screen.getByRole("button", { name: "Completed" }));
-    expect(await within(screen.getByRole("region", { name: "Task details" })).findByRole("button", { name: "Reopen Set up the website" })).toBeInTheDocument();
+    expect(await within(screen.getByRole("region", { name: "Done", hidden: true })).findByText("Set up the website")).toBeInTheDocument();
+    expect(dialog.getByRole("combobox", { name: "Status" })).toHaveValue("completed");
+    expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Set up the website");
+  });
+
+  it("shows a cancelled task's status without offering Cancelled for other tasks", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("task-1", { title: "Dropped", status: "cancelled", completedAt: new Date().toISOString() })]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const dialog = await openTask("Dropped");
+    expect(dialog.getByRole("combobox", { name: "Status" })).toHaveValue("cancelled");
   });
 
   it("shows no conversation controls for a standalone task", async () => {
-    const task: ThreadTask = {
-      id: "standalone-1",
-      accountId: "you@example.com",
-      threadId: null,
-      sourceMessageId: null,
-      subjectSnapshot: null,
-      title: "Buy printer paper",
-      notes: null,
-      kind: "action",
-      dueKind: "none",
-      dueValue: null,
-      timeZone: null,
-      repeatIntervalDays: null,
-      status: "open",
-      completionSource: null,
-      evidenceText: null,
-      waitAfter: null,
-      createdAt: "2026-09-20T10:01:00Z",
-      updatedAt: "2026-09-20T10:01:00Z",
-      completedAt: null,
-    };
-    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("standalone-1", { title: "Buy printer paper" })]);
     const onOpenThread = vi.fn();
     render(<TaskSidebar accountId="you@example.com" onOpenThread={onOpenThread} />);
 
-    expect(await screen.findByRole("heading", { name: "Buy printer paper" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Source conversation" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open conversation" })).not.toBeInTheDocument();
+    const dialog = await openTask("Buy printer paper");
+    expect(dialog.queryByRole("region", { name: "Source conversation" })).not.toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Open conversation" })).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Task details" }).querySelector(".task-detail-form")!, { key: "o" });
     expect(onOpenThread).not.toHaveBeenCalled();
   });
+
+  it("opens the selected task's details through the workspace handle", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("task-1", { title: "First" }), workspaceTask("task-2", { title: "Second" })]);
+    localStorage.setItem("threestrands.tasks.layout", "list");
+    const ref = createRef<TaskWorkspaceHandle>();
+    render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    await screen.findByText("Second", { selector: "strong" });
+    act(() => ref.current!.selectNext());
+    act(() => ref.current!.openDetails());
+    const dialog = within(await screen.findByRole("dialog", { name: "Task details" }));
+    expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Second");
+  });
+
 });

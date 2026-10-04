@@ -1954,7 +1954,7 @@ export function App() {
     selectNextTask: () => taskWorkspaceRef.current?.selectNext(),
     selectPreviousTask: () => taskWorkspaceRef.current?.selectPrevious(),
     openSelectedTask: () => taskWorkspaceRef.current?.openSelected(),
-    editSelectedTask: () => taskWorkspaceRef.current?.editSelected(),
+    openTaskDetails: () => taskWorkspaceRef.current?.openDetails(),
     completeSelectedTask: () => taskWorkspaceRef.current?.completeSelected(),
     reopenSelectedTask: () => taskWorkspaceRef.current?.reopenSelected(),
     moveSelectedTask: (direction) => taskWorkspaceRef.current?.moveSelected(direction),
@@ -2778,7 +2778,6 @@ export function App() {
           onDraftFollowUp={(task) => void draftFollowUp(task)}
           refreshKey={taskRevision}
           onCreateTask={createWorkspaceTask}
-          onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
           onLayoutChange={setTaskLayout}
           onSelectedTaskChange={(task) => {
             setSelectedTaskStatus(task?.status ?? null);

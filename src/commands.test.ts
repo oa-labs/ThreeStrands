@@ -46,7 +46,7 @@ function noopContext(): CommandContext {
     selectNextTask: () => {},
     selectPreviousTask: () => {},
     openSelectedTask: () => {},
-    editSelectedTask: () => {},
+    openTaskDetails: () => {},
     completeSelectedTask: () => {},
     reopenSelectedTask: () => {},
     selectedTaskStatus: null,
@@ -152,7 +152,7 @@ describe("command registry", () => {
     const taskContext = { ...noopContext(), focusedPane: "tasks" as const };
     expect(commands.find((command) => command.id === "tasks.next")?.enabled(taskContext)).toBe(true);
     expect(commands.find((command) => command.id === "thread.next")?.enabled(taskContext)).toBe(false);
-    expect(commands.find((command) => command.id === "tasks.editSelected")?.keys).toEqual(["Enter"]);
+    expect(commands.find((command) => command.id === "tasks.openDetails")?.keys).toEqual(["Enter"]);
     expect(commands.find((command) => command.id === "tasks.completeSelected")?.keys).toEqual(["e"]);
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.keys).toEqual(["Shift+e"]);
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.enabled({ ...taskContext, selectedTaskStatus: "cancelled" })).toBe(true);

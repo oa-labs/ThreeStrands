@@ -693,7 +693,8 @@ describe("keyboard-first task and action workspaces", () => {
     await waitFor(() => expect(createTask).toHaveBeenCalledWith({
       accountId: "demo@example.com", threadId: null, subjectSnapshot: null, title: "Prepare launch notes", kind: "action",
     }));
-    expect(await within(workspace).findByRole("heading", { name: "Prepare launch notes" })).toBeInTheDocument();
+    await waitFor(() => expect(workspace.querySelector("#task-task-title-first")).toHaveAttribute("aria-current", "true"));
+    expect(within(workspace).getByText("Prepare launch notes", { selector: "strong" })).toBeInTheDocument();
     expect(workspace.querySelector(".task-add-button")).not.toHaveAttribute("title");
 
     fireEvent.keyDown(window, { key: "0" });
@@ -838,7 +839,6 @@ describe("keyboard-first task and action workspaces", () => {
 
       fireEvent.keyDown(window, { key: "ArrowDown" });
       await waitFor(() => expect(workspace.querySelector("#task-task-roadmap")).toHaveAttribute("aria-current", "true"));
-      expect(within(screen.getByRole("region", { name: "Task details" })).getByRole("heading", { name: "Review the roadmap" })).toBeInTheDocument();
 
       fireEvent.keyDown(window, { key: "e" });
       await waitFor(() => expect(setStatus).toHaveBeenCalledWith("task-roadmap", "completed"));
@@ -846,18 +846,27 @@ describe("keyboard-first task and action workspaces", () => {
       // The board keeps finished work in its Done column instead of a Completed view.
       fireEvent.click(await within(within(workspace).getByRole("region", { name: "Done" })).findByText("Review the roadmap", { selector: "strong" }));
       await waitFor(() => expect(workspace.querySelector("#task-task-roadmap")).toHaveAttribute("aria-current", "true"));
-      fireEvent.keyDown(window, { key: "Enter" });
-      const details = within(screen.getByRole("region", { name: "Task details" }));
-      const titleField = await details.findByRole("textbox", { name: "Task title" });
+      // Close the dialog the click opened; Enter reopens it from the keyboard.
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Task details" })).not.toBeInTheDocument());
+      fireEvent.keyDown(document.body, { key: "Enter" });
+      const details = within(await screen.findByRole("dialog", { name: "Task details" }));
+      const titleField = details.getByRole("textbox", { name: "Title" });
+      // App shortcuts stay out of the dialog's fields: "e" and "v" are text here.
+      fireEvent.keyDown(titleField, { key: "e" });
+      fireEvent.keyDown(titleField, { key: "v" });
+      expect(setStatus).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "Board", hidden: true })).toHaveAttribute("aria-pressed", "true");
       fireEvent.change(titleField, { target: { value: "Review the project roadmap" } });
-      fireEvent.click(details.getByRole("button", { name: "Save" }));
+      fireEvent.blur(titleField);
       await waitFor(() => expect(updateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "task-roadmap", title: "Review the project roadmap" })));
-      fireEvent.click(details.getByRole("button", { name: "Add a due date" }));
+      fireEvent.change(details.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
       fireEvent.change(details.getByLabelText("Due date"), { target: { value: "2026-09-30" } });
-      fireEvent.click(details.getByRole("button", { name: "Save" }));
+      fireEvent.keyDown(details.getByLabelText("Due date"), { key: "Escape" });
       await waitFor(() => expect(updateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "task-roadmap", dueKind: "date", dueValue: "2026-09-30" })));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Task details" })).not.toBeInTheDocument());
 
-      fireEvent.keyDown(window, { key: "o" });
+      fireEvent.keyDown(document.body, { key: "o" });
       await screen.findByRole("heading", { name: "Phase 1: read and triage" });
       expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
     } finally {

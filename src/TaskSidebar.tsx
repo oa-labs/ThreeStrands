@@ -1,12 +1,10 @@
-import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, MessageSquare, Pencil, Plus, RotateCcw, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { ThreadTask, UpdateTaskRequest, TaskDueKind, TaskStatus } from "./domain";
+import type { ThreadTask, UpdateTaskRequest, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
-import { ActionButton, HoverTooltip } from "./AppChrome";
-import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
-import { PanelResizeHandle, useTaskDetailWidth } from "./PanelResizeHandle";
+import { TaskDetailDialog } from "./TaskDetailDialog";
 import { errorMessage } from "./errors";
-import { adjacentTaskStatus, compareTasksForDisplay, formatDue, formatRelativeDate, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll, type TaskBoardColumn, type TaskView } from "./taskViews";
+import { adjacentTaskStatus, compareTasksForDisplay, formatDue, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll, type TaskBoardColumn, type TaskView } from "./taskViews";
 
 export type TaskLayout = "board" | "list";
 const TASK_LAYOUT_KEY = "threestrands.tasks.layout";
@@ -31,22 +29,7 @@ function readTaskView(): TaskView {
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = { open: "To Do", in_progress: "In Progress", completed: "Done", cancelled: "Done" };
-const TASK_DETAIL_KIND_LABELS: Record<ThreadTask["kind"], string> = { action: "Task", follow_up: "Follow up", waiting_for: "Waiting for reply" };
 const TASK_CARD_KIND_LABELS: Partial<Record<ThreadTask["kind"], string>> = { follow_up: "Follow up", waiting_for: "Waiting" };
-
-function formatDueDetail(task: ThreadTask): string | null {
-  if (!task.dueValue) return null;
-  const value = task.dueKind === "date" ? new Date(`${task.dueValue}T12:00:00`) : new Date(task.dueValue);
-  const relative = formatRelativeDate(value);
-  return task.dueKind === "datetime" ? `${relative}, ${value.toLocaleTimeString(undefined, { timeStyle: "short" })}` : relative;
-}
-
-function dateTimeInputValue(value: string | null | undefined): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.slice(0, 16);
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-}
 
 // The board's Done column already holds finished work, so it has no Completed view.
 const BOARD_TASK_VIEWS = TASK_VIEWS.filter((name) => name !== "Completed");
@@ -83,7 +66,7 @@ export type TaskWorkspaceHandle = {
   selectNext(): void;
   selectPrevious(): void;
   openSelected(): void;
-  editSelected(): void;
+  openDetails(): void;
   completeSelected(): void;
   reopenSelected(): void;
   moveSelected(direction: -1 | 1): void;
@@ -92,7 +75,7 @@ export type TaskWorkspaceHandle = {
   cycleView(direction: -1 | 1): void;
 };
 
-/** The Tasks workspace: a list or board of tasks beside a detail pane. */
+/** The Tasks workspace: a list or board of tasks; each task opens in a detail dialog. */
 export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   accountId: string | null;
   accountOptions?: string[];
@@ -100,7 +83,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onTasksChanged?(): void;
   onDraftFollowUp?(task: ThreadTask): void;
   onCreateTask?(title: string, accountId?: string): Promise<ThreadTask>;
-  onEditTask?(task: ThreadTask): void;
   onSelectedTaskChange?(task: ThreadTask | null): void;
   onLayoutChange?(layout: TaskLayout): void;
   refreshKey?: number;
@@ -111,7 +93,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onTasksChanged,
   onDraftFollowUp,
   onCreateTask,
-  onEditTask,
   onSelectedTaskChange,
   onLayoutChange,
   refreshKey = 0,
@@ -125,16 +106,10 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [showOlderDone, setShowOlderDone] = useState(false);
   const [layout, setLayout] = useState<TaskLayout>(readTaskLayout);
   const board = layout === "board";
-  const detailSize = useTaskDetailWidth();
-  const [editing, setEditing] = useState<"title" | "description" | "due" | null>(null);
-  const [titleDraft, setTitleDraft] = useState("");
-  const [descriptionDraft, setDescriptionDraft] = useState("");
-  const [dueKindDraft, setDueKindDraft] = useState<TaskDueKind>("date");
-  const [dueValueDraft, setDueValueDraft] = useState("");
-  const [timeZoneDraft, setTimeZoneDraft] = useState("");
-  const [timeZoneError, setTimeZoneError] = useState<string | null>(null);
-  const timeZones = useMemo(() => listSupportedTimeZones(), []);
-  const [saving, setSaving] = useState(false);
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+  const detailOpen = useRef(false);
+  detailOpen.current = detailTaskId !== null;
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const [addingTask, setAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskAccountId, setNewTaskAccountId] = useState("");
@@ -187,14 +162,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const displayedGroups = board ? boardColumns : workspaceGroups;
   const orderedTasks = useMemo(() => displayedGroups.flatMap((group) => group.tasks), [displayedGroups]);
   const selectedTask = orderedTasks.find((task) => task.id === selectedTaskId) ?? null;
-
-  // Close the editor in the render that changes selection. A passive effect could
-  // run after an edit click on the newly selected task and discard it.
-  const [editorSelection, setEditorSelection] = useState(selectedTaskId);
-  if (editorSelection !== selectedTaskId) {
-    setEditorSelection(selectedTaskId);
-    setEditing(null);
-  }
 
   useEffect(() => {
     if (orderedTasks.length === 0) {
@@ -253,33 +220,20 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     }
   }, [clearCompletionToast, onTasksChanged, tasks]);
 
-  const saveTask = async (request: Omit<UpdateTaskRequest, "id">) => {
-    if (!selectedTask || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const updated = await mailClient.updateTask({ id: selectedTask.id, ...request });
+  // Saves run one at a time so a slower earlier response cannot overwrite a later edit.
+  const updateTask = useCallback((taskId: string, request: Omit<UpdateTaskRequest, "id">) => {
+    const save = saveQueue.current.then(async () => {
+      const updated = await mailClient.updateTask({ id: taskId, ...request });
       setTasks((current) => current.map((task) => task.id === updated.id ? updated : task));
-      setEditing(null);
       onTasksChanged?.();
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const startEditing = useCallback((field: "title" | "description" | "due") => {
-    if (!selectedTask) return;
-    setError(null);
-    setTitleDraft(selectedTask.title);
-    setDescriptionDraft(selectedTask.notes ?? "");
-    setDueKindDraft(selectedTask.dueKind === "none" ? "date" : selectedTask.dueKind);
-    setDueValueDraft(selectedTask.dueKind === "datetime" ? dateTimeInputValue(selectedTask.dueValue) : selectedTask.dueValue ?? "");
-    setTimeZoneDraft(selectedTask.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC");
-    setTimeZoneError(null);
-    setEditing(field);
-  }, [selectedTask]);
+    });
+    saveQueue.current = save.catch(() => undefined);
+    return save.catch((reason) => {
+      // The dialog reports its own failures; once it has closed, the banner does.
+      if (!detailOpen.current) setError(errorMessage(reason));
+      throw reason;
+    });
+  }, [onTasksChanged]);
 
   const startNew = useCallback(() => {
     setView("All");
@@ -310,23 +264,29 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     }
   };
 
-  const moveSelection = useCallback((direction: -1 | 1) => {
-    if (orderedTasks.length === 0) return;
+  const adjacentTaskId = useCallback((direction: -1 | 1): string | null => {
+    if (orderedTasks.length === 0) return null;
     if (board) {
       // On the board, up and down stay inside the selected card's column and stop at its ends.
       const column = boardColumns.find((candidate) => candidate.tasks.some((task) => task.id === selectedTaskId));
-      if (!column) {
-        setSelectedTaskId(orderedTasks[0].id);
-        return;
-      }
+      if (!column) return orderedTasks[0].id;
       const index = column.tasks.findIndex((task) => task.id === selectedTaskId);
-      setSelectedTaskId(column.tasks[Math.max(0, Math.min(column.tasks.length - 1, index + direction))].id);
-      return;
+      return column.tasks[Math.max(0, Math.min(column.tasks.length - 1, index + direction))].id;
     }
     const currentIndex = orderedTasks.findIndex((task) => task.id === selectedTaskId);
     const from = currentIndex === -1 ? 0 : currentIndex;
-    setSelectedTaskId(orderedTasks[(from + direction + orderedTasks.length) % orderedTasks.length].id);
+    return orderedTasks[(from + direction + orderedTasks.length) % orderedTasks.length].id;
   }, [board, boardColumns, orderedTasks, selectedTaskId]);
+
+  const moveSelection = useCallback((direction: -1 | 1) => {
+    const next = adjacentTaskId(direction);
+    if (next) setSelectedTaskId(next);
+  }, [adjacentTaskId]);
+
+  const openDetails = useCallback((taskId: string) => {
+    setSelectedTaskId(taskId);
+    setDetailTaskId(taskId);
+  }, []);
 
   useEffect(() => {
     if (!cardDrag?.active) return;
@@ -355,7 +315,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     openSelected: () => {
       if (selectedTask?.threadId) onOpenThread(selectedTask.threadId);
     },
-    editSelected: () => { if (selectedTask) startEditing("title"); },
+    openDetails: () => { if (selectedTask) openDetails(selectedTask.id); },
     completeSelected: () => { if (selectedTask && isActiveTaskStatus(selectedTask.status)) void setStatus(selectedTask, "completed"); },
     reopenSelected: () => { if (selectedTask && !isActiveTaskStatus(selectedTask.status)) void setStatus(selectedTask, "open"); },
     moveSelected: (direction) => {
@@ -379,7 +339,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       const views: readonly TaskView[] = board ? BOARD_TASK_VIEWS : TASK_VIEWS;
       setView((current) => views[(Math.max(0, views.indexOf(current)) + direction + views.length) % views.length]);
     },
-  }), [board, boardColumns, changeLayout, layout, moveSelection, onOpenThread, selectedTask, setStatus, startEditing, startNew]);
+  }), [board, boardColumns, changeLayout, layout, moveSelection, onOpenThread, openDetails, selectedTask, setStatus, startNew]);
 
   const renderCard = (task: ThreadTask) => {
     const active = isActiveTaskStatus(task.status);
@@ -405,7 +365,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             suppressCardClick.current = false;
             return;
           }
-          setSelectedTaskId(task.id);
+          openDetails(task.id);
         }}
         onPointerDown={board ? (event) => {
           if (event.button !== 0) return;
@@ -456,6 +416,13 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       </>}
     </article>;
   };
+
+  const detailTask = detailTaskId ? tasks.find((task) => task.id === detailTaskId) ?? null : null;
+  // A reload that drops the open task (another account, a sync delete) closes its dialog.
+  if (detailTaskId && !loading && !detailTask) setDetailTaskId(null);
+  const detailColumn = board ? boardColumns.find((column) => column.tasks.some((task) => task.id === detailTaskId))?.tasks : orderedTasks;
+  const detailIndex = detailColumn?.findIndex((task) => task.id === detailTaskId) ?? -1;
+  const detailPosition = detailColumn && detailIndex !== -1 ? { index: detailIndex, total: detailColumn.length } : null;
 
   const draggedTask = cardDrag?.active ? tasks.find((task) => task.id === cardDrag.taskId) ?? null : null;
   const taskList = board ? <div className="task-board" style={{ "--task-board-columns": visibleBoardColumns.length } as CSSProperties}>
@@ -514,9 +481,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
       {!loading && tasks.length === 0 && !addingTask ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
-      <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`} style={board ? { "--task-detail-width": `${detailSize.width}px` } as CSSProperties : undefined}>
+      <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`}>
         <div className={board ? "tasks-board-pane" : "tasks-list-pane"}>
-          {board ? <PanelResizeHandle {...detailSize} panelSide="right" label="Resize task detail" controlsId="task-detail-panel" title="Drag to resize the task detail. Use arrow keys to adjust; double-click to reset." /> : null}
           <nav className="task-view-nav" aria-label="Task views">
             {(board ? BOARD_TASK_VIEWS : TASK_VIEWS).map((name) => {
               const count = tasks.filter((task) => taskMatchesView(task, name, now)).length;
@@ -537,80 +503,19 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             <strong>{draggedTask.title}</strong>
           </div> : null}
         </div>
-        <section id="task-detail-panel" className="task-detail" aria-label="Task details">
-          {selectedTask ? <>
-            <header>
-              <div className="task-detail-heading">
-                <span className="eyebrow">{TASK_DETAIL_KIND_LABELS[selectedTask.kind]}{selectedTask.status === "in_progress" ? " · In progress" : ""}</span>
-                <div className="task-detail-title-row">
-                  <button type="button" className="task-detail-complete" aria-label={isActiveTaskStatus(selectedTask.status) ? `Complete ${selectedTask.title}` : `Reopen ${selectedTask.title}`} onClick={() => void setStatus(selectedTask, isActiveTaskStatus(selectedTask.status) ? "completed" : "open")}>
-                    {isActiveTaskStatus(selectedTask.status) ? <Check size={20} /> : <RotateCcw size={20} />}
-                  </button>
-                  {editing === "title" ? <form className="task-inline-title" data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); if (titleDraft.trim()) void saveTask({ title: titleDraft.trim() }); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(null); } }}>
-                    <input autoFocus aria-label="Task title" value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} maxLength={240} />
-                    <button type="submit" disabled={saving || !titleDraft.trim()}>Save</button><button type="button" onClick={() => setEditing(null)}>Cancel</button>
-                  </form> : <h2><button type="button" className="task-detail-title-button" aria-label={`Edit title: ${selectedTask.title}`} onClick={() => startEditing("title")}>{selectedTask.title}</button></h2>}
-                </div>
-              </div>
-              <div className="task-detail-actions">
-                {onEditTask ? <HoverTooltip label="Edit type, repeat, and all fields" placement="bottom">
-                  <ActionButton label="Task Options" onClick={() => onEditTask(selectedTask)}><Pencil size={17} /></ActionButton>
-                </HoverTooltip> : null}
-              </div>
-            </header>
-            <section className="task-detail-description" aria-label="Description">
-              <h3>Description</h3>
-              {editing === "description" ? <form data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); void saveTask({ notes: descriptionDraft.trim() || null }); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(null); } }}>
-                <textarea autoFocus aria-label="Description" value={descriptionDraft} onChange={(event) => setDescriptionDraft(event.target.value)} rows={5} maxLength={8000} />
-                <div className="task-inline-actions"><button type="submit" disabled={saving}>Save</button><button type="button" onClick={() => setEditing(null)}>Cancel</button></div>
-              </form> : <button type="button" className="task-detail-description-button" onClick={() => startEditing("description")}>{selectedTask.notes || "Add a description"}</button>}
-            </section>
-            <section className="task-detail-schedule" aria-label="Schedule">
-              <h3>Due date</h3>
-              {editing === "due" ? <form data-shortcut-scope="modal" onSubmit={(event) => {
-                event.preventDefault();
-                if (!dueValueDraft) return;
-                const trimmedZone = timeZoneDraft.trim();
-                if (dueKindDraft === "datetime" && trimmedZone && !isValidTimeZone(trimmedZone)) {
-                  setTimeZoneError("Choose a valid timezone, such as America/New_York.");
-                  return;
-                }
-                void saveTask({
-                  dueKind: dueKindDraft,
-                  dueValue: dueKindDraft === "datetime" ? new Date(dueValueDraft).toISOString() : dueValueDraft,
-                  timeZone: dueKindDraft === "datetime" ? (trimmedZone || Intl.DateTimeFormat().resolvedOptions().timeZone) : null,
-                });
-              }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(null); } }}>
-                <select aria-label="Due type" value={dueKindDraft} onChange={(event) => {
-                  const nextKind = event.target.value as "date" | "datetime";
-                  setDueKindDraft(nextKind);
-                  setDueValueDraft((current) => convertDueInputValue(current, nextKind));
-                }}><option value="date">Date</option><option value="datetime">Date and time</option></select>
-                <input aria-label={dueKindDraft === "datetime" ? "Due date and time" : "Due date"} type={dueKindDraft === "datetime" ? "datetime-local" : "date"} value={dueValueDraft} onChange={(event) => setDueValueDraft(event.target.value)} required />
-                {dueKindDraft === "datetime" ? <input
-                  list="task-detail-timezones"
-                  aria-label="Timezone"
-                  aria-invalid={timeZoneError ? "true" : undefined}
-                  value={timeZoneDraft}
-                  onChange={(event) => { setTimeZoneDraft(event.target.value); setTimeZoneError(null); }}
-                  onBlur={(event) => { const value = event.target.value.trim(); if (value && !isValidTimeZone(value)) setTimeZoneError("Choose a valid timezone, such as America/New_York."); }}
-                  placeholder="America/New_York"
-                /> : null}
-                <datalist id="task-detail-timezones">{timeZones.map((zone) => <option key={zone} value={zone} />)}</datalist>
-                {timeZoneError ? <p className="form-error" role="alert">{timeZoneError}</p> : null}
-                <div className="task-inline-actions"><button type="submit" disabled={saving || !dueValueDraft}>Save</button>{selectedTask.dueKind !== "none" ? <button type="button" disabled={saving} onClick={() => void saveTask({ dueKind: "none", dueValue: null, timeZone: null })}>Clear date</button> : null}<button type="button" onClick={() => setEditing(null)}>Cancel</button></div>
-              </form> : <button type="button" className={`task-detail-due-button${isOverdue(selectedTask) ? " task-due-overdue" : ""}`} onClick={() => startEditing("due")}>{formatDueDetail(selectedTask) ?? "Add a due date"}</button>}
-              {selectedTask.repeatIntervalDays ? <p>Repeats every {selectedTask.repeatIntervalDays} days</p> : null}
-            </section>
-            {selectedTask.threadId ? <section className="task-detail-source" aria-label="Source conversation">
-              <h3>Source conversation</h3>
-              {selectedTask.subjectSnapshot ? <p>{selectedTask.subjectSnapshot}</p> : null}
-              <button type="button" onClick={() => onOpenThread(selectedTask.threadId!)}><MessageSquare size={16} /> Open conversation</button>
-              {selectedTask.evidenceText ? <details><summary>Source excerpt</summary><blockquote>{selectedTask.evidenceText}</blockquote></details> : null}
-            </section> : null}
-          </> : <p className="tasks-status">Select a task to see its details.</p>}
-        </section>
       </div>
+      {detailTask ? <TaskDetailDialog
+        task={detailTask}
+        position={detailPosition}
+        onUpdate={(request) => updateTask(detailTask.id, request)}
+        onSetStatus={(status) => void setStatus(detailTask, status)}
+        onNavigate={(direction) => {
+          const next = adjacentTaskId(direction);
+          if (next) openDetails(next);
+        }}
+        onOpenThread={onOpenThread}
+        onClose={() => setDetailTaskId(null)}
+      /> : null}
     </section>
   );
 });
