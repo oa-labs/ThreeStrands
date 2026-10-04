@@ -160,6 +160,26 @@ export function hasWorkingHoursOnDate(
   return preferences.workingWindows.some((window) => window.weekday === date.getDay());
 }
 
+const locationUrlPattern = /(https?:\/\/[^\s<>"]+)/;
+
+/** Renders a location with its http(s) URLs opened in the system browser. */
+function EventLocation({ location }: { location: string }) {
+  return location.split(locationUrlPattern).map((part, index) => {
+    // Odd indexes are captured URLs; trailing punctuation stays plain text.
+    const text = index % 2 === 1 ? part.replace(/[.,;:!?)\]]+$/, "") : part;
+    const url = index % 2 === 1 ? safeWebUrl(text) : null;
+    if (!url) return part;
+    return (
+      <span key={index}>
+        <a className="calendar-event-location-link" href={url} onClick={(clickEvent) => {
+          clickEvent.preventDefault();
+          void openUrl(url);
+        }}>{text}</a>{part.slice(text.length)}
+      </span>
+    );
+  });
+}
+
 export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEvent; onDismiss(): void; onUpdated(event: ScheduleEvent): void }) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const conferenceUrl = safeWebUrl(event.conferenceUrl);
@@ -219,7 +239,7 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
             }}>Join video meeting</a>
           </p>
         ) : null}
-        {event.location ? <p><MapPin size={17} /><span>{event.location}</span></p> : null}
+        {event.location ? <p><MapPin size={17} /><span><EventLocation location={event.location} /></span></p> : null}
         <p><CalendarDays size={17} /><span>{event.accountId}</span></p>
         {label ? <div className="calendar-event-response">
           <span>Your response: <strong>{label}</strong></span>

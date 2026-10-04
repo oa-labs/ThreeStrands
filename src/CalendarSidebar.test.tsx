@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, hasWorkingHoursOnDate, scheduleRequestFor } from "./CalendarSidebar";
+import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, EventViewer, hasWorkingHoursOnDate, scheduleRequestFor } from "./CalendarSidebar";
 import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { UPCOMING_MEETING_DAYS } from "./ContactMeetings";
@@ -31,6 +31,29 @@ describe("calendar sidebar", () => {
     const preferences = { workingWindows: [{ weekday: 1, start: "09:00", end: "17:00" }] };
     expect(hasWorkingHoursOnDate(new Date(2026, 8, 21), preferences)).toBe(true);
     expect(hasWorkingHoursOnDate(new Date(2026, 8, 20), preferences)).toBe(false);
+  });
+
+  it("opens http(s) URLs in an event location in the system browser", () => {
+    const event = {
+      id: "prep",
+      accountId: "calendar@example.com",
+      title: "Prep call",
+      start: "2026-10-05T14:00:00-04:00",
+      end: "2026-10-05T14:45:00-04:00",
+      allDay: false,
+    };
+    const { rerender } = render(<EventViewer event={{ ...event, location: "https://example.zoom.us/j/926?from=addon" }} onDismiss={() => {}} onUpdated={() => {}} />);
+    fireEvent.click(screen.getByRole("link", { name: "https://example.zoom.us/j/926?from=addon" }));
+    expect(openUrl).toHaveBeenCalledWith("https://example.zoom.us/j/926?from=addon");
+
+    rerender(<EventViewer event={{ ...event, location: "Room 4B (https://example.com/rooms/4b), floor 2" }} onDismiss={() => {}} onUpdated={() => {}} />);
+    const viewer = screen.getByRole("dialog", { name: "Prep call details" });
+    expect(viewer).toHaveTextContent("Room 4B (https://example.com/rooms/4b), floor 2");
+    expect(screen.getByRole("link", { name: "https://example.com/rooms/4b" })).toHaveAttribute("href", "https://example.com/rooms/4b");
+
+    rerender(<EventViewer event={{ ...event, location: "javascript:alert(1) or Room 4B" }} onDismiss={() => {}} onUpdated={() => {}} />);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Prep call details" })).toHaveTextContent("javascript:alert(1) or Room 4B");
   });
 
   it("routes T to Calendar Accounts until a calendar is connected", async () => {

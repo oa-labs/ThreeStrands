@@ -1706,6 +1706,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .calendar-event-viewer-details > p { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 9px; margin: 0; color: var(--secondary); font-size: var(--type-ui); line-height: 1.45; }
 .calendar-event-viewer-details svg { margin-top: 1px; color: var(--muted); }
 .calendar-event-viewer-details a { width: fit-content; border-radius: var(--radius-sm); padding: 5px 9px; background: var(--accent); color: #fff; font-weight: 600; text-decoration: none; }
+.calendar-event-viewer-details a.calendar-event-location-link { width: auto; border-radius: 0; padding: 0; background: none; color: var(--accent); font-weight: inherit; text-decoration: underline; overflow-wrap: anywhere; }
 .calendar-event-viewer-description span { max-height: 8.7em; overflow: auto; white-space: pre-wrap; }
 .calendar-event-response { display: grid; min-width: 0; gap: 8px; color: var(--secondary); font-size: var(--type-ui); }
 .calendar-event-response strong { color: var(--text); font-weight: 600; }
