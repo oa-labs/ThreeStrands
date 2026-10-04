@@ -297,7 +297,12 @@ export function CalendarWeekView({
       if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing || event.defaultPrevented) return;
       if (event.target instanceof HTMLElement && event.target.closest("[data-shortcut-scope='modal'], [data-shortcut-scope='palette']")) return;
       if (isEditableTarget(event.target)) return;
-      if (event.key === "-") {
+      if (event.key === "Tab") {
+        // A focused control keeps native Tab traversal, matching the mail and task Tab shortcuts.
+        if (event.target instanceof HTMLElement && event.target !== document.body && event.target.matches("button, a[href], [tabindex]")) return;
+        event.preventDefault();
+        moveWeek(event.shiftKey ? -1 : 1);
+      } else if (event.key === "-") {
         event.preventDefault();
         moveWeek(-1);
       } else if (event.key === "=") {

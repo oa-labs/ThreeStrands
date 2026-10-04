@@ -53,7 +53,9 @@ function noopContext(): CommandContext {
     moveSelectedTask: () => {},
     selectAdjacentTaskColumn: () => {},
     toggleTaskLayout: () => {},
+    cycleTaskView: () => {},
     taskBoardActive: false,
+    calendarWeekActive: false,
     selectedTaskHasThread: false,
     selectNextMessage: () => {},
     selectPreviousMessage: () => {},
@@ -122,6 +124,8 @@ describe("command registry", () => {
       arrowright: ["tasks.nextColumn", "message.next"],
       arrowleft: ["tasks.previousColumn", "message.previous"],
       "mod+j": ["draft.replyAssist", "chat.open"],
+      tab: ["mailbox.nextSplit", "tasks.nextView"],
+      "shift+tab": ["mailbox.previousSplit", "tasks.previousView"],
     });
 
     for (const focusedPane of ["mail", "tasks", "contacts"] as const) {
@@ -408,6 +412,31 @@ describe("command registry", () => {
     expect(next?.enabled({ ...context, mailbox: "trash" })).toBe(false);
     expect(next?.enabled({ ...context, composerActive: true })).toBe(false);
     expect(next?.enabled({ ...context, mailbox: "split" })).toBe(true);
+    expect(next?.enabled({ ...context, focusedPane: "tasks" })).toBe(false);
+    expect(previous?.enabled({ ...context, focusedPane: "tasks" })).toBe(false);
+    // The address book leaves Tab alone, and the calendar week view uses it for week navigation.
+    expect(next?.enabled({ ...context, focusedPane: "contacts" })).toBe(false);
+    expect(previous?.enabled({ ...context, focusedPane: "contacts" })).toBe(false);
+    expect(next?.enabled({ ...context, calendarWeekActive: true })).toBe(false);
+    expect(previous?.enabled({ ...context, calendarWeekActive: true })).toBe(false);
+  });
+
+  it("cycles task views with Tab/Shift+Tab only while the Tasks pane is focused", () => {
+    const next = commands.find((command) => command.id === "tasks.nextView");
+    const previous = commands.find((command) => command.id === "tasks.previousView");
+    expect(next?.keys).toEqual(["Tab"]);
+    expect(previous?.keys).toEqual(["Shift+Tab"]);
+
+    const taskContext = { ...noopContext(), focusedPane: "tasks" as const, splitInboxCount: 2 };
+    expect(next?.enabled(taskContext)).toBe(true);
+    expect(previous?.enabled(taskContext)).toBe(true);
+    expect(next?.enabled({ ...taskContext, composerActive: true })).toBe(false);
+    expect(next?.enabled({ ...taskContext, focusedPane: "mail" })).toBe(false);
+
+    const cycleTaskView = vi.fn();
+    void next?.run({ ...taskContext, cycleTaskView });
+    void previous?.run({ ...taskContext, cycleTaskView });
+    expect(cycleTaskView.mock.calls).toEqual([[1], [-1]]);
   });
 
   it("splits sequential shortcuts into independently matchable steps", () => {

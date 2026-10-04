@@ -97,6 +97,23 @@ describe("CalendarWeekView", () => {
     await screen.findByText("Sun 20");
   });
 
+  it("navigates weeks with Tab and Shift+Tab unless a control has focus", async () => {
+    renderWeek();
+    await screen.findByText("Sun 20");
+
+    fireEvent.keyDown(window, { key: "Tab" });
+    await screen.findByText("Sun 27");
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+    await screen.findByText("Sun 20");
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+    await screen.findByText("Sun 13");
+
+    const today = screen.getByRole("button", { name: "Today" });
+    today.focus();
+    expect(fireEvent.keyDown(today, { key: "Tab" })).toBe(true);
+    expect(screen.getByText("Sun 13")).toBeInTheDocument();
+  });
+
   it("renders preloaded events while refreshing a newly displayed week", async () => {
     const nextStart = new Date(2026, 8, 27).toISOString();
     const preloaded = event("preloaded", "2026-09-28T09:00:00", "2026-09-28T10:00:00", "Cached planning");

@@ -518,6 +518,43 @@ describe("TaskSidebar", () => {
     expect(screen.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("cycles task views in both directions, wrapping and skipping Completed on the board, and restores the last view", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("todo-1")]);
+    const ref = createRef<TaskWorkspaceHandle>();
+    const { unmount } = render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const views = () => within(screen.getByRole("navigation", { name: "Task views" }));
+    const active = () => views().getAllByRole("button").find((button) => button.getAttribute("aria-pressed") === "true")?.textContent;
+
+    await screen.findByText("todo-1");
+    expect(active()).toBe("All1");
+    act(() => ref.current?.cycleView(1));
+    expect(views().getByRole("button", { name: "Overdue" })).toHaveAttribute("aria-pressed", "true");
+    act(() => ref.current?.cycleView(-1));
+    act(() => ref.current?.cycleView(-1));
+    // The board has no Completed view, so cycling back from All wraps to Waiting.
+    expect(views().getByRole("button", { name: "Waiting" })).toHaveAttribute("aria-pressed", "true");
+    act(() => ref.current?.cycleView(1));
+    expect(active()).toBe("All1");
+    act(() => ref.current?.toggleLayout());
+    act(() => ref.current?.cycleView(-1));
+    expect(views().getByRole("button", { name: "Completed" })).toHaveAttribute("aria-pressed", "true");
+    act(() => ref.current?.cycleView(-1));
+    expect(views().getByRole("button", { name: "Waiting" })).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("threestrands.tasks.view")).toBe("Waiting");
+    unmount();
+
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    await waitFor(() => expect(views().getByRole("button", { name: "Waiting" })).toHaveAttribute("aria-pressed", "true"));
+  });
+
+  it("falls back to All when the stored task view is unknown", async () => {
+    localStorage.setItem("threestrands.tasks.view", "Someday");
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    await screen.findByText("0 tasks");
+    expect(within(screen.getByRole("navigation", { name: "Task views" })).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("drops the Completed view and the Done column on the board when a date filter narrows open work", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([
       workspaceTask("overdue", { title: "Pay invoice", dueKind: "date", dueValue: localDate(-1) }),

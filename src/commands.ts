@@ -50,7 +50,10 @@ export type CommandContext = {
   moveSelectedTask(direction: -1 | 1): void;
   selectAdjacentTaskColumn(direction: -1 | 1): void;
   toggleTaskLayout(): void;
+  cycleTaskView(direction: -1 | 1): void;
   taskBoardActive: boolean;
+  /** The full-width calendar week view owns Tab for week navigation. */
+  calendarWeekActive: boolean;
   selectedTaskStatus: TaskStatus | null;
   selectedTaskHasThread: boolean;
   selectNextMessage(): void;
@@ -139,7 +142,7 @@ export const commands: Command[] = [
     title: "Next Split Inbox",
     keys: ["Tab"],
     group: "Navigation",
-    enabled: (c) => !c.composerActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
+    enabled: (c) => !c.composerActive && c.focusedPane === "mail" && !c.calendarWeekActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
     run: (c) => complete(c.goToNextSplitTab),
   },
   {
@@ -147,7 +150,7 @@ export const commands: Command[] = [
     title: "Previous Split Inbox",
     keys: ["Shift+Tab"],
     group: "Navigation",
-    enabled: (c) => !c.composerActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
+    enabled: (c) => !c.composerActive && c.focusedPane === "mail" && !c.calendarWeekActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
     run: (c) => complete(c.goToPreviousSplitTab),
   },
   { id: "draft.send", title: "Send Draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
@@ -261,6 +264,22 @@ export const commands: Command[] = [
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
     run: (context) => complete(context.toggleTaskLayout),
+  },
+  {
+    id: "tasks.nextView",
+    title: "Next Task View",
+    keys: ["Tab"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
+    run: (context) => complete(() => context.cycleTaskView(1)),
+  },
+  {
+    id: "tasks.previousView",
+    title: "Previous Task View",
+    keys: ["Shift+Tab"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
+    run: (context) => complete(() => context.cycleTaskView(-1)),
   },
   {
     id: "message.next",

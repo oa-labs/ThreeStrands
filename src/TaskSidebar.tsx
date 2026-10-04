@@ -19,6 +19,17 @@ function readTaskLayout(): TaskLayout {
   }
 }
 
+const TASK_VIEW_KEY = "threestrands.tasks.view";
+
+function readTaskView(): TaskView {
+  try {
+    const stored = localStorage.getItem(TASK_VIEW_KEY);
+    return TASK_VIEWS.find((name) => name === stored) ?? "All";
+  } catch {
+    return "All";
+  }
+}
+
 const STATUS_LABELS: Record<TaskStatus, string> = { open: "To Do", in_progress: "In Progress", completed: "Done", cancelled: "Done" };
 const TASK_DETAIL_KIND_LABELS: Record<ThreadTask["kind"], string> = { action: "Task", follow_up: "Follow up", waiting_for: "Waiting for reply" };
 const TASK_CARD_KIND_LABELS: Partial<Record<ThreadTask["kind"], string>> = { follow_up: "Follow up", waiting_for: "Waiting" };
@@ -78,6 +89,7 @@ export type TaskWorkspaceHandle = {
   moveSelected(direction: -1 | 1): void;
   selectAdjacentColumn(direction: -1 | 1): void;
   toggleLayout(): void;
+  cycleView(direction: -1 | 1): void;
 };
 
 /** The Tasks workspace: a list or board of tasks beside a detail pane. */
@@ -109,7 +121,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [view, setView] = useState<TaskView>("All");
+  const [view, setView] = useState<TaskView>(readTaskView);
   const [showOlderDone, setShowOlderDone] = useState(false);
   const [layout, setLayout] = useState<TaskLayout>(readTaskLayout);
   const board = layout === "board";
@@ -199,6 +211,13 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   useEffect(() => { onSelectedTaskChange?.(selectedTask); }, [onSelectedTaskChange, selectedTask]);
   useEffect(() => { onLayoutChange?.(layout); }, [layout, onLayoutChange]);
   useEffect(() => { if (board && view === "Completed") setView("All"); }, [board, view]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(TASK_VIEW_KEY, view);
+    } catch {
+      // The chosen view still applies for this session.
+    }
+  }, [view]);
 
   const changeLayout = useCallback((next: TaskLayout) => {
     setLayout(next);
@@ -356,6 +375,10 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       }
     },
     toggleLayout: () => changeLayout(layout === "board" ? "list" : "board"),
+    cycleView: (direction) => {
+      const views: readonly TaskView[] = board ? BOARD_TASK_VIEWS : TASK_VIEWS;
+      setView((current) => views[(Math.max(0, views.indexOf(current)) + direction + views.length) % views.length]);
+    },
   }), [board, boardColumns, changeLayout, layout, moveSelection, onOpenThread, selectedTask, setStatus, startEditing, startNew]);
 
   const renderCard = (task: ThreadTask) => {
