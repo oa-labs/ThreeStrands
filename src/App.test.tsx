@@ -942,6 +942,31 @@ describe("trash and batch actions", () => {
     expect(screen.queryByRole("heading", { name: "Phase 1: read and triage" })).not.toBeInTheDocument();
   });
 
+  it("multi-selects rows with Command-click and Shift-click, and a plain click resets", async () => {
+    const { container } = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const rows = () => [...container.querySelectorAll<HTMLButtonElement>(".thread-row")];
+    expect(rows().length).toBeGreaterThanOrEqual(3);
+
+    fireEvent.click(rows()[0]);
+    fireEvent.click(rows()[2], { metaKey: true });
+    expect(await screen.findByText("2 selected")).toBeInTheDocument();
+    expect(rows()[1]).not.toHaveTextContent("Selected for batch actions");
+
+    fireEvent.click(rows()[2], { metaKey: true });
+    expect(await screen.findByText("1 selected")).toBeInTheDocument();
+
+    fireEvent.click(rows()[0]);
+    expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
+
+    fireEvent.click(rows()[2], { shiftKey: true });
+    expect(await screen.findByText("3 selected")).toBeInTheDocument();
+
+    fireEvent.click(rows()[1]);
+    expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Phase 1: read and triage" })).toBeInTheDocument();
+  });
+
   it("shows one state-aware star action and hover help for every batch action", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

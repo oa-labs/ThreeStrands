@@ -74,6 +74,7 @@ import type {
 import { PanelResizeHandle, useInboxWidth } from "./PanelResizeHandle";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { ThreadRow } from "./ThreadList";
+import { applySelectionGesture, type SelectionGesture } from "./threadSelection";
 import { MessageCard, type MessageResponseKind } from "./MessageCard";
 import { SearchField } from "./SearchField";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
@@ -1109,11 +1110,34 @@ export function App() {
     () => new Map(accounts.map((account) => [account.email, account.color] as const)),
     [accounts],
   );
+  const selectionAnchorRef = useRef<string | null>(null);
+  const visibleThreadIdsRef = useRef<string[]>([]);
+  visibleThreadIdsRef.current = visibleThreads.map((thread) => thread.id);
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  useEffect(() => {
+    selectionAnchorRef.current = selectedId;
+  }, [selectedId]);
   const selectThread = useCallback((id: string) => {
     contextOpenedThreadRef.current = null;
+    selectionAnchorRef.current = id;
+    setCheckedIds((current) => (current.size > 0 ? new Set() : current));
     setSelectedId(id);
   }, []);
+  const applyThreadSelectionGesture = useCallback((id: string, gesture: SelectionGesture) => {
+    const anchorId = selectionAnchorRef.current;
+    if (gesture === "toggle") selectionAnchorRef.current = id;
+    setCheckedIds((current) => applySelectionGesture({
+      gesture,
+      targetId: id,
+      anchorId,
+      openId: selectedIdRef.current,
+      orderedIds: visibleThreadIdsRef.current,
+      checked: current,
+    }));
+  }, []);
   const toggleChecked = useCallback((id: string) => {
+    selectionAnchorRef.current = id;
     setCheckedIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -1969,6 +1993,7 @@ export function App() {
     },
     toggleCheckedSelected: () => {
       if (!selected) return;
+      selectionAnchorRef.current = selected.id;
       setCheckedIds((current) => {
         const next = new Set(current);
         if (next.has(selected.id)) next.delete(selected.id);
@@ -2419,6 +2444,7 @@ export function App() {
               accountColor={accountColors.get(thread.accountId)}
               onSelect={selectThread}
               onToggleCheck={toggleChecked}
+              onSelectionGesture={applyThreadSelectionGesture}
               rowRef={thread.id === selectedId ? selectedThreadRowRef : undefined}
               hasTask={openTaskThreadIds.has(thread.id)}
             />

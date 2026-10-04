@@ -4,6 +4,7 @@ import type { Thread } from "./domain";
 import { formatDisplayName, parseAddress } from "./emailAddress";
 import { formatMailTimestamp } from "./threadPresentation";
 import { decodeHtmlEntities } from "./SafeMessage";
+import { selectionGestureFor, type SelectionGesture } from "./threadSelection";
 
 const MATCH_START = "\u0001";
 const MATCH_END = "\u0002";
@@ -36,6 +37,7 @@ export const ThreadRow = memo(function ThreadRow({
   showAccount,
   onSelect,
   onToggleCheck,
+  onSelectionGesture,
   rowRef,
   hasTask = false,
 }: {
@@ -46,6 +48,7 @@ export const ThreadRow = memo(function ThreadRow({
   showAccount: boolean;
   onSelect(id: string): void;
   onToggleCheck(id: string): void;
+  onSelectionGesture?(id: string, gesture: SelectionGesture): void;
   rowRef?: RefObject<HTMLButtonElement | null>;
   hasTask?: boolean;
 }) {
@@ -55,7 +58,15 @@ export const ThreadRow = memo(function ThreadRow({
       role="option"
       aria-selected={selected}
       className={`thread-row ${selected ? "selected" : ""}`}
-      onClick={() => onSelect(thread.id)}
+      onMouseDown={(event) => {
+        // Keep Shift-click from extending a text selection across rows.
+        if (event.shiftKey && onSelectionGesture) event.preventDefault();
+      }}
+      onClick={(event) => {
+        const gesture = onSelectionGesture ? selectionGestureFor(event) : null;
+        if (gesture) onSelectionGesture!(thread.id, gesture);
+        else onSelect(thread.id);
+      }}
     >
       <span className="row-leading">
         <span
