@@ -2195,7 +2195,16 @@ export function App() {
               <CheckSquare size={19} />
             </button>
           </HoverTooltip>
-          <HoverTooltip title="Contacts"><button className={`nav-button ${rightWorkspace === "contacts" ? "active" : ""}`} aria-label="Contacts" onClick={openContactsView}><ContactRound size={19}/></button></HoverTooltip>
+          <HoverTooltip label="Contacts" shortcut="4">
+            <button
+              className={`nav-button ${rightWorkspace === "contacts" ? "active" : ""}`}
+              aria-label="Contacts (4)"
+              onClick={openContactsView}
+            >
+              <ContactRound size={19} />
+            </button>
+          </HoverTooltip>
+          <hr className="sidebar-nav-separator" aria-hidden="true" />
           <HoverTooltip title="Refresh mail"><button className="nav-button" aria-label="Refresh mail" onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={19} className={syncStatus?.state === "syncing" ? "spin" : ""} />
           </button></HoverTooltip>

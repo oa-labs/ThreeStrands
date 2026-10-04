@@ -482,7 +482,7 @@ it("opens archived contact timeline email in All Mail and keeps it selected afte
   try {
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
-    fireEvent.click(screen.getByRole("button", { name: "Contacts" }));
+    fireEvent.click(screen.getByRole("button", { name: "Contacts (4)" }));
     await screen.findByDisplayValue("Product Team");
     fireEvent.click(screen.getByRole("button", { name: /Phase 1: read and triage/ }));
 

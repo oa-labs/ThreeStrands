@@ -750,6 +750,19 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.getByText("Address book")).toBeInTheDocument();
   });
 
+  it("labels the navbar Contacts button with its 4 shortcut and separates it from utility actions", async () => {
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    const navbar = screen.getByRole("navigation", { name: "Mailboxes" });
+    const contactsButton = within(navbar).getByRole("button", { name: "Contacts (4)" });
+    expect(within(navbar).getByRole("tooltip", { name: /Contacts/ })).toHaveTextContent("Contacts4");
+
+    const separator = contactsButton.parentElement?.nextElementSibling;
+    expect(separator).toHaveClass("sidebar-nav-separator");
+    expect(separator?.nextElementSibling).toContainElement(within(navbar).getByRole("button", { name: "Refresh mail" }));
+  });
+
   it("sends the navbar Calendar button to the week calendar view", async () => {
     const { container } = render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
@@ -1143,7 +1156,7 @@ describe("account selection persistence", () => {
     expect(firstRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("work@example.com");
     fireEvent.click(screen.getByRole("button", { name: "Tasks (3)" }));
     expect(firstRun.container.querySelector(".tasks-sidebar-header")).toHaveTextContent("work@example.com");
-    fireEvent.click(screen.getByRole("button", { name: "Contacts" }));
+    fireEvent.click(screen.getByRole("button", { name: "Contacts (4)" }));
     expect(firstRun.container.querySelector(".contacts-header")).toHaveTextContent("work@example.com");
     firstRun.unmount();
 
