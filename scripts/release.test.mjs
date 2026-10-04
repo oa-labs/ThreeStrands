@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { describe, it } from "node:test";
@@ -117,6 +117,56 @@ else if (["df", "free", "du"].includes(name)) {
       }
     });
   }
+
+  // build-linux.sh relies on bash 4 (mapfile); it only ever runs inside the Linux devcontainer.
+  const bashHasMapfile = spawnSync("bash", ["-c", "type mapfile"]).status === 0;
+  it("keeps the copied AppImage executable so it can be extract-verified", { skip: !bashHasMapfile && "bash lacks mapfile" }, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "threestrands linux test "));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    for (const folder of ["scripts", "bin"]) {
+      await mkdir(join(directory, folder), { recursive: true });
+    }
+    await writeFile(join(directory, "scripts/build-linux.sh"), await readFile(new URL("./build-linux.sh", import.meta.url)));
+    const fakeTool = join(directory, "bin/tool");
+    await writeFile(fakeTool, `#!${process.execPath}
+const { chmodSync, mkdirSync, writeFileSync } = require("node:fs");
+const { basename, join } = require("node:path");
+const name = basename(process.argv[1]);
+const args = process.argv.slice(2);
+if (name === "uname") console.log(args[0] === "-s" ? "Linux" : "x86_64");
+else if (name === "pnpm" && args[0] === "tauri" && args[1] === "build") {
+  const bundle = join(process.cwd(), "src-tauri/target/release/bundle");
+  for (const [folder, file] of [["deb", "app.deb"], ["rpm", "app.rpm"], ["appimage", "app.AppImage"]]) {
+    mkdirSync(join(bundle, folder), { recursive: true });
+    const path = join(bundle, folder, file);
+    writeFileSync(path, folder === "appimage" ? "#!/bin/sh\\nmkdir -p squashfs-root && touch squashfs-root/AppRun\\n" : "package");
+    chmodSync(path, folder === "appimage" ? 0o755 : 0o644);
+  }
+  mkdirSync(join(process.cwd(), "src-tauri/target/release"), { recursive: true });
+} else if (name === "dpkg-deb" && args[0] === "-f") console.log("amd64");
+else if (name === "rpm" && args[0] === "-qp" && args[1] === "--queryformat") process.stdout.write("x86_64");
+else if (name === "file") console.log(args[0] + ": ELF 64-bit LSB executable, x86-64");
+else console.log("test tool " + name);
+`);
+    await chmod(fakeTool, 0o755);
+    for (const name of ["uname", "node", "pnpm", "rustc", "cargo", "df", "free", "du", "dpkg-deb", "rpm", "file", "ldd"]) {
+      await symlink(fakeTool, join(directory, "bin", name));
+    }
+    const result = spawnSync("bash", ["scripts/build-linux.sh"], {
+      cwd: directory, encoding: "utf8",
+      env: {
+        ...process.env, PATH: `${join(directory, "bin")}${delimiter}${process.env.PATH}`,
+        THREESTRANDS_RELEASE_BUILD: "0", THREESTRANDS_LINUX_BUNDLES: "deb,rpm,appimage",
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const artifacts = join(directory, "artifacts/linux-amd64");
+    const mode = async (file) => (await stat(join(artifacts, file))).mode & 0o777;
+    assert.equal(await mode("app.AppImage"), 0o755);
+    assert.equal(await mode("app.deb"), 0o644);
+    assert.equal(await mode("app.rpm"), 0o644);
+    assert.match(await readFile(join(artifacts, "SHA256SUMS"), "utf8"), /app\.AppImage/);
+  });
 });
 
 function sources(version = "0.56.0") {

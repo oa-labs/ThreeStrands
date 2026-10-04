@@ -237,6 +237,68 @@ describe("conversation brief", () => {
     });
   });
 
+  describe("task suggestions", () => {
+    const taskProposal = {
+      type: "task" as const, kind: "action" as const, title: "Try the command palette", notes: null,
+      dueKind: "none" as const, dueValue: null, timeZone: null, repeatIntervalDays: null, confidence: 0.9,
+      evidence: { sourceMessageId: "welcome-message", excerpt: "command palette" },
+    };
+
+    it("removes a suggestion once its task is added and lists the task under Tasks", async () => {
+      await enableAi({ actionExtraction: true });
+      vi.spyOn(mailClient, "analyzeThread").mockResolvedValue({ proposals: [taskProposal, { ...taskProposal, title: "Star a conversation" }], hiddenCount: 0 });
+      const createTask = vi.spyOn(mailClient, "createTask");
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+      fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
+      const card = (await within(panel).findByText("Try the command palette")).closest("article")!;
+
+      fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Review & Add Task" }));
+      const dialog = await screen.findByRole("dialog", { name: "Add Task" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Add Task" }));
+
+      await waitFor(() => expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ title: "Try the command palette", threadId: "welcome" })));
+      expect(await screen.findByText("Task added from suggestion")).toBeInTheDocument();
+      // The handled card leaves Suggested; the others stay to be worked through.
+      const suggestions = within(panel).getByRole("region", { name: "Suggestions" });
+      await waitFor(() => expect(within(suggestions).queryByText("Try the command palette")).not.toBeInTheDocument());
+      expect(within(suggestions).getByText("Star a conversation")).toBeInTheDocument();
+      const tasks = await within(panel).findByRole("region", { name: "Conversation tasks" });
+      expect(within(tasks).getByText("Try the command palette")).toBeInTheDocument();
+    });
+
+    it("drops discarded and added suggestions from the saved copy, matching the original after an edit", async () => {
+      await enableAi({ actionExtraction: true });
+      const discardMe = { ...taskProposal, title: "Star a conversation" };
+      vi.spyOn(mailClient, "analyzeThread").mockResolvedValue({ proposals: [taskProposal, discardMe], hiddenCount: 0 });
+      const remove = vi.spyOn(mailClient, "removeThreadSuggestion").mockResolvedValue(true);
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+      const revision = (await mailClient.getThread("welcome")).thread.lastMessageAt;
+      fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
+
+      const discardCard = (await within(panel).findByText("Star a conversation")).closest("article") as HTMLElement;
+      const suggestions = within(panel).getByRole("region", { name: "Suggestions" });
+      fireEvent.click(within(discardCard).getByRole("button", { name: "Discard" }));
+      await waitFor(() => expect(remove).toHaveBeenCalledWith("welcome", revision, discardMe));
+
+      // Edit first, then add: the saved copy still holds the provider's original wording.
+      const card = within(suggestions).getByText("Try the command palette").closest("article") as HTMLElement;
+      fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+      const editor = await screen.findByRole("dialog", { name: "Edit Task Proposal" });
+      fireEvent.change(within(editor).getByLabelText("Task"), { target: { value: "Open the palette with Cmd+K" } });
+      fireEvent.click(within(editor).getByRole("button", { name: "Save Proposal" }));
+      const edited = (await within(suggestions).findByText("Open the palette with Cmd+K")).closest("article") as HTMLElement;
+      fireEvent.click(within(edited).getByRole("button", { name: "Review & Add Task" }));
+      fireEvent.click(within(await screen.findByRole("dialog", { name: "Add Task" })).getByRole("button", { name: "Add Task" }));
+
+      await waitFor(() => expect(remove).toHaveBeenLastCalledWith("welcome", revision, taskProposal));
+      expect(remove).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe("thread chat", () => {
     const chatProposal = {
       type: "task" as const, kind: "action" as const, title: "Try the command palette", notes: null,

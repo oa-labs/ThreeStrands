@@ -257,6 +257,36 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       .map(eventRange);
   }
 
+  /** Thread id to the suggestions saved for its newest message, as the native client keeps them. */
+  const savedAnalyses = new Map<string, { revision: string; analysis: ActionAnalysis }>();
+  const saveAnalysis = (threadId: string, revision: string, analysis: ActionAnalysis) => {
+    savedAnalyses.set(threadId, { revision, analysis: structuredClone(analysis) });
+    return analysis;
+  };
+  const generateAnalysis = async (threadId: string): Promise<ActionAnalysis> => {
+    const detail = await client.getThread(threadId);
+    const latest = detail.messages.at(-1);
+    if (!latest) return { proposals: [], hiddenCount: 0 };
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const fixture = seed.aiFixtures?.[threadId]?.analysis;
+    if (fixture) return structuredClone(fixture);
+    return { hiddenCount: 0, proposals: [{
+      type: "task",
+      kind: "action",
+      title: `Review: ${detail.thread.subject}`,
+      notes: detail.thread.snippet,
+      dueKind: "none",
+      dueValue: null,
+      timeZone: null,
+      repeatIntervalDays: null,
+      confidence: 0.72,
+      evidence: {
+        sourceMessageId: latest.id,
+        excerpt: latest.bodyText.slice(0, 240),
+      },
+    }] };
+  };
+
   const client: MailClient = {
     ...demoCorrespondence(threadForMessage, () => accounts[0]?.email ?? DEMO_ACCOUNT_ID),
     async listThreads(accountId) {
@@ -361,27 +391,20 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       return { summary, generatedAt };
     },
     async analyzeThread(threadId): Promise<ActionAnalysis> {
+      // Like the native client, reuse suggestions saved for the thread's newest message.
       const detail = await this.getThread(threadId);
-      const latest = detail.messages.at(-1);
-      if (!latest) return { proposals: [], hiddenCount: 0 };
-      await new Promise((resolve) => setTimeout(resolve, 400));
-      const fixture = seed.aiFixtures?.[threadId]?.analysis;
-      if (fixture) return structuredClone(fixture);
-      return { hiddenCount: 0, proposals: [{
-        type: "task",
-        kind: "action",
-        title: `Review: ${detail.thread.subject}`,
-        notes: detail.thread.snippet,
-        dueKind: "none",
-        dueValue: null,
-        timeZone: null,
-        repeatIntervalDays: null,
-        confidence: 0.72,
-        evidence: {
-          sourceMessageId: latest.id,
-          excerpt: latest.bodyText.slice(0, 240),
-        },
-      }] };
+      const saved = savedAnalyses.get(threadId);
+      if (saved && saved.revision === detail.thread.lastMessageAt) return structuredClone(saved.analysis);
+      return saveAnalysis(threadId, detail.thread.lastMessageAt, await generateAnalysis(threadId));
+    },
+    async removeThreadSuggestion(threadId, revision, proposal): Promise<boolean> {
+      const saved = savedAnalyses.get(threadId);
+      if (!saved || saved.revision !== revision) return false;
+      const target = JSON.stringify(proposal);
+      const index = saved.analysis.proposals.findIndex((candidate) => JSON.stringify(candidate) === target);
+      if (index < 0) return false;
+      saved.analysis.proposals.splice(index, 1);
+      return true;
     },
     async threadChat(request): Promise<ThreadChatReply> {
       const detail = await this.getThread(request.threadId);
@@ -411,12 +434,14 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       // The demo never calls a provider, so there is no usage to report.
       return [];
     },
-    async briefThread(threadId, userTimeZone, provider, model, endpoint): Promise<ThreadBriefResult> {
-      const [summary, analysis] = await Promise.all([
+    async briefThread(threadId, _userTimeZone, provider, model, endpoint): Promise<ThreadBriefResult> {
+      // A brief always asks again and replaces the saved suggestions, as the native client does.
+      const [summary, analysis, detail] = await Promise.all([
         this.summarizeThread(threadId, provider, model, endpoint),
-        this.analyzeThread(threadId, userTimeZone, provider, model, endpoint),
+        generateAnalysis(threadId),
+        this.getThread(threadId),
       ]);
-      return { summary, analysis };
+      return { summary, analysis: saveAnalysis(threadId, detail.thread.lastMessageAt, analysis) };
     },
     async replyAssistContext(draftId): Promise<ReplyAssistContext> {
       const replyDraft = (await this.listDrafts()).find((candidate) => candidate.id === draftId);

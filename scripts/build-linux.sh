@@ -119,7 +119,11 @@ for extension in "${expected_extensions[@]}"; do
 done
 
 for package in "${packages[@]}"; do
-  install -m 0644 "$package" "$artifact_dir/"
+  if [[ "$package" == *.AppImage ]]; then
+    install -m 0755 "$package" "$artifact_dir/"
+  else
+    install -m 0644 "$package" "$artifact_dir/"
+  fi
 done
 
 deb_package="$(find "$artifact_dir" -maxdepth 1 -type f -name '*.deb' -print -quit)"

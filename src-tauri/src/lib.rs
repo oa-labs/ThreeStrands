@@ -43,7 +43,7 @@ use auth::{AccountAuth, AuthConfig, OAuthProvider};
 use chrono::Utc;
 use db::Database;
 use models::{
-    ActionAnalysis, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, CreateLabelRequest,
+    ActionAnalysis, ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailProviderKind, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
@@ -2729,6 +2729,19 @@ async fn ai_analyze_thread(
     Ok(analysis)
 }
 
+/// Drops a handled suggestion from the thread's saved suggestions for
+/// `revision` (the thread's newest message time when it was shown).
+#[tauri::command]
+async fn remove_thread_suggestion(
+    thread_id: String,
+    revision: String,
+    proposal: ActionProposal,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.remove_thread_suggestion(&thread_id, &revision, &proposal)).await
+}
+
 /// One line per open task for chat context: its title and due value.
 fn chat_task_line(task: &ThreadTask) -> String {
     match &task.due_value {
@@ -3724,6 +3737,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         ai_test_connection,
         ai_summarize_thread,
         ai_analyze_thread,
+        remove_thread_suggestion,
         ai_brief_thread,
         ai_usage_summary,
         ai_thread_chat,

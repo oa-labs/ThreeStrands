@@ -2,7 +2,7 @@ use chrono::{Days, NaiveDate};
 use rusqlite::{params, OptionalExtension};
 
 use super::{Database, DbResult};
-use crate::models::{ActionAnalysis, AiUsageDay};
+use crate::models::{ActionAnalysis, ActionProposal, AiUsageDay};
 
 /// Daily usage rows older than this are pruned when new usage is recorded.
 pub(crate) const AI_USAGE_RETENTION_DAYS: u64 = 90;
@@ -50,6 +50,47 @@ impl Database {
                 params![thread_id, last_message_at, json, generated_at],
             )?;
             Ok(())
+        })
+    }
+
+    /// Removes one handled suggestion (discarded, or turned into a task or
+    /// event) from the thread's saved suggestions, so reopening the thread
+    /// doesn't offer it again. Only the saved set for `last_message_at` is
+    /// changed. Returns false when nothing matched, as for a suggestion that
+    /// came from chat and was never saved.
+    pub fn remove_thread_suggestion(
+        &self,
+        thread_id: &str,
+        last_message_at: &str,
+        proposal: &ActionProposal,
+    ) -> DbResult<bool> {
+        let target = serde_json::to_value(proposal).map_err(|error| error.to_string())?;
+        self.with_transaction(|transaction| {
+            let saved: Option<String> = transaction
+                .query_row(
+                    "SELECT analysis_json FROM ai_thread_analyses WHERE thread_id = ?1 AND last_message_at = ?2",
+                    params![thread_id, last_message_at],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(mut analysis) = saved.and_then(|json| serde_json::from_str::<ActionAnalysis>(&json).ok()) else {
+                return Ok(false);
+            };
+            // Compare normalized JSON so defaults filled in on either side still match.
+            let Some(position) = analysis
+                .proposals
+                .iter()
+                .position(|candidate| serde_json::to_value(candidate).ok().as_ref() == Some(&target))
+            else {
+                return Ok(false);
+            };
+            analysis.proposals.remove(position);
+            let json = serde_json::to_string(&analysis).map_err(|error| error.to_string())?;
+            transaction.execute(
+                "UPDATE ai_thread_analyses SET analysis_json = ?3 WHERE thread_id = ?1 AND last_message_at = ?2",
+                params![thread_id, last_message_at, json],
+            )?;
+            Ok(true)
         })
     }
 
@@ -245,6 +286,67 @@ mod tests {
                 .hidden_count,
             0
         );
+    }
+
+    fn task(title: &str) -> ActionProposal {
+        serde_json::from_value(serde_json::json!({
+            "type": "task", "kind": "action", "title": title, "notes": null,
+            "dueKind": "none", "dueValue": null, "timeZone": null, "repeatIntervalDays": null,
+            "confidence": 0.9, "evidence": {"sourceMessageId": "m1", "excerpt": title},
+        }))
+        .unwrap()
+    }
+
+    fn saved_titles(database: &Database, revision: &str) -> Option<Vec<String>> {
+        database.thread_analysis("account:thread", revision).unwrap().map(|analysis| {
+            analysis
+                .proposals
+                .into_iter()
+                .map(|proposal| match proposal {
+                    ActionProposal::Task(task) => task.title,
+                    ActionProposal::Meeting(meeting) => meeting.title,
+                })
+                .collect()
+        })
+    }
+
+    #[test]
+    fn removing_a_handled_suggestion_keeps_the_rest_for_the_same_revision() {
+        let database = database_with_thread();
+        let revision = "2026-09-19T10:00:00Z";
+        database
+            .save_thread_analysis(
+                "account:thread",
+                revision,
+                &ActionAnalysis { proposals: vec![task("Send the deck"), task("Book the room")], hidden_count: 2 },
+                "2026-09-19T11:00:00Z",
+            )
+            .unwrap();
+
+        assert!(database.remove_thread_suggestion("account:thread", revision, &task("Send the deck")).unwrap());
+        assert_eq!(saved_titles(&database, revision), Some(vec!["Book the room".to_string()]));
+        assert_eq!(database.thread_analysis("account:thread", revision).unwrap().unwrap().hidden_count, 2);
+
+        // A suggestion that was never saved, such as one from chat, changes nothing.
+        assert!(!database.remove_thread_suggestion("account:thread", revision, &task("From chat")).unwrap());
+        assert_eq!(saved_titles(&database, revision), Some(vec!["Book the room".to_string()]));
+    }
+
+    #[test]
+    fn removing_a_suggestion_ignores_other_revisions_and_missing_rows() {
+        let database = database_with_thread();
+        assert!(!database
+            .remove_thread_suggestion("account:thread", "2026-09-19T10:00:00Z", &task("Send the deck"))
+            .unwrap());
+
+        database
+            .save_thread_analysis("account:thread", "2026-09-20T10:00:00Z", &analysis(0), "2026-09-20T11:00:00Z")
+            .unwrap();
+        // A removal for the older revision leaves the newer saved set alone.
+        assert!(!database
+            .remove_thread_suggestion("account:thread", "2026-09-19T10:00:00Z", &task("Send the deck"))
+            .unwrap());
+        assert_eq!(saved_titles(&database, "2026-09-20T10:00:00Z"), Some(vec!["Send the deck".to_string()]));
     }
 
     #[test]

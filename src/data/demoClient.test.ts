@@ -115,6 +115,23 @@ describe("showcase dataset", () => {
     expect(again.proposals[0]?.title).toBe("Send Marcus pricing for 35 seats");
   });
 
+  it("keeps a handled suggestion out of saved suggestions until a brief asks again", async () => {
+    const dataset = defaultDemoDataset();
+    const client = createDemoClient(dataset);
+    const thread = dataset.threads[0]!;
+    const [suggestion] = (await client.analyzeThread(thread.id, "UTC", "openai", "fictional-model", null)).proposals;
+
+    expect(await client.removeThreadSuggestion(thread.id, "2000-01-01T00:00:00Z", suggestion!)).toBe(false);
+    expect(await client.removeThreadSuggestion(thread.id, thread.lastMessageAt, { ...suggestion!, title: "Never saved" })).toBe(false);
+    expect(await client.removeThreadSuggestion(thread.id, thread.lastMessageAt, suggestion!)).toBe(true);
+    expect((await client.analyzeThread(thread.id, "UTC", "openai", "fictional-model", null)).proposals).toEqual([]);
+
+    // A brief always asks again and replaces what was saved.
+    const brief = await client.briefThread(thread.id, "UTC", "openai", "fictional-model", null);
+    expect(brief.analysis.proposals).toHaveLength(1);
+    expect((await client.analyzeThread(thread.id, "UTC", "openai", "fictional-model", null)).proposals).toHaveLength(1);
+  });
+
   it("shares only selected attachments and returns other-mail sources only for a requested search", async () => {
     const client = createDemoClient(buildShowcaseDataset(now));
     const request = {

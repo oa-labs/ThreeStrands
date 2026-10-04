@@ -6,6 +6,7 @@ import {
 import type {
   Account,
   ActionAnalysis,
+  ActionProposal,
   AiUsageDay,
   AuthStatus,
   AvailabilityPreferences,
@@ -94,6 +95,12 @@ export interface MailClient extends CorrespondenceClient {
     endpoint: string | null,
   ): Promise<ActionAnalysis>;
   threadChat(request: ThreadChatRequest, provider: AiProvider, model: string, endpoint: string | null): Promise<ThreadChatReply>;
+  /**
+   * Drops a handled suggestion from the thread's saved suggestions for
+   * `revision` (its newest message time), so it isn't offered again. Resolves
+   * false when nothing saved matched, as for a suggestion from chat.
+   */
+  removeThreadSuggestion(threadId: string, revision: string, proposal: ActionProposal): Promise<boolean>;
   /** AI provider usage for the last `days` local days, including today. */
   aiUsageSummary(days: number): Promise<AiUsageDay[]>;
   briefThread(
@@ -229,6 +236,7 @@ const tauriClient: MailClient = {
     complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
   aiUsageSummary: (days) => read("ai_usage_summary", { days }),
   threadChat: (request, provider, model, endpoint) => complete("ai_thread_chat", { request, provider, model, endpoint }),
+  removeThreadSuggestion: (threadId, revision, proposal) => complete("remove_thread_suggestion", { threadId, revision, proposal }),
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),

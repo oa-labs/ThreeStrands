@@ -148,10 +148,21 @@ import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
 type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | null;
+/** Where a suggestion set lives: its state key, and the thread revision its saved copy is stored under. */
+type ProposalSource = { key: string; threadId: string; revision: string };
+
 type TaskEditorState =
   | { kind: "new"; thread: ThreadDetail }
   | { kind: "edit"; task: ThreadTask }
-  | { kind: "proposal"; thread: ThreadDetail; index: number; proposal: TaskProposal; intent: "edit" | "accept" };
+  | {
+    kind: "proposal";
+    thread: ThreadDetail;
+    /** The suggestion set it came from, so it can be removed once the task exists. */
+    source: ProposalSource;
+    index: number;
+    proposal: TaskProposal;
+    intent: "edit" | "accept";
+  };
 type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
 export { formatMailTimestamp } from "./threadPresentation";
@@ -1445,6 +1456,9 @@ export function App() {
   const actionProposalKey = visibleDetail
     ? `${visibleDetail.thread.id}:${visibleDetail.thread.lastMessageAt}`
     : null;
+  const actionProposalSource = useMemo<ProposalSource | null>(() => visibleDetail && actionProposalKey
+    ? { key: actionProposalKey, threadId: visibleDetail.thread.id, revision: visibleDetail.thread.lastMessageAt }
+    : null, [actionProposalKey, visibleDetail]);
   const actionProposals = actionProposalKey ? actionProposalSets[actionProposalKey] ?? [] : [];
   const actionHiddenCount = actionProposalKey ? actionHiddenCounts[actionProposalKey] ?? 0 : 0;
   const actionAnalysisRequested = Boolean(
@@ -1650,30 +1664,44 @@ export function App() {
     void runBrief({ only: "suggestions" });
   }, [runBrief]);
 
+  // An edited suggestion is a new object; remember the one it replaced, back
+  // to the copy the provider returned, so the saved copy can still be matched.
+  const proposalOrigins = useRef(new WeakMap<ActionProposal, ActionProposal>());
   const updateActionProposal = useCallback((index: number, proposal: ActionProposal) => {
     if (!actionProposalKey) return;
     setActionProposalSets((current) => ({
       ...current,
-      [actionProposalKey]: (current[actionProposalKey] ?? []).map((item, itemIndex) => itemIndex === index ? proposal : item),
+      [actionProposalKey]: (current[actionProposalKey] ?? []).map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        proposalOrigins.current.set(proposal, proposalOrigins.current.get(item) ?? item);
+        return proposal;
+      }),
     }));
   }, [actionProposalKey]);
+
+  // Removes a handled suggestion by identity, so it still matches if the list
+  // changed while a dialog was open, and drops it from the saved suggestions
+  // so reopening the thread doesn't offer it again.
+  const removeActionProposal = useCallback((source: ProposalSource, proposal: ActionProposal) => {
+    setActionProposalSets((current) => ({ ...current, [source.key]: (current[source.key] ?? []).filter((item) => item !== proposal) }));
+    const saved = proposalOrigins.current.get(proposal) ?? proposal;
+    mailClient.removeThreadSuggestion(source.threadId, source.revision, saved)
+      .catch(logBackgroundFailure("Saving a handled suggestion"));
+  }, []);
 
   const discardActionProposal = useCallback((index: number) => {
-    if (!actionProposalKey) return;
-    setActionProposalSets((current) => ({
-      ...current,
-      [actionProposalKey]: (current[actionProposalKey] ?? []).filter((_, itemIndex) => itemIndex !== index),
-    }));
-  }, [actionProposalKey]);
+    const proposal = actionProposals[index];
+    if (actionProposalSource && proposal) removeActionProposal(actionProposalSource, proposal);
+  }, [actionProposalSource, actionProposals, removeActionProposal]);
 
   const reviewActionProposal = useCallback((index: number, proposal: ActionProposal, intent: "edit" | "accept") => {
-    if (!visibleDetail) return;
+    if (!visibleDetail || !actionProposalSource) return;
     if (proposal.type === "task") {
-      setTaskEditor({ kind: "proposal", thread: visibleDetail, index, proposal, intent });
+      setTaskEditor({ kind: "proposal", thread: visibleDetail, source: actionProposalSource, index, proposal, intent });
     } else {
       setMeetingEditor({ index, proposal });
     }
-  }, [visibleDetail]);
+  }, [actionProposalSource, visibleDetail]);
 
   const submitTaskEditor = useCallback(async (values: TaskEditorValues) => {
     if (!taskEditor) return;
@@ -1705,14 +1733,14 @@ export function App() {
       ...values,
       evidenceText,
     });
-    if (taskEditor.kind === "proposal") {
-      updateActionProposal(taskEditor.index, { ...taskEditor.proposal, ...values });
-    }
+    // A suggestion that became a task is done: it leaves Suggested, like a
+    // meeting added to the calendar, and the task shows under Tasks instead.
+    if (taskEditor.kind === "proposal") removeActionProposal(taskEditor.source, taskEditor.proposal);
     setTaskEditor(null);
     setTaskRevision((current) => current + 1);
     await refreshTaskIndicators();
     setNotice({ message: taskEditor.kind === "proposal" ? "Task added from suggestion" : "Task added" });
-  }, [refreshTaskIndicators, setNotice, taskEditor, updateActionProposal]);
+  }, [refreshTaskIndicators, removeActionProposal, setNotice, taskEditor, updateActionProposal]);
 
   // Add to Calendar from a meeting suggestion or a chat answer: the event
   // dialog opens prefilled and nothing is created until the user submits.
@@ -1723,9 +1751,9 @@ export function App() {
     invitees: string[];
     description: string;
     /** The suggestion this event comes from; it is removed once the event exists. */
-    source: { key: string; proposal: ActionProposal } | null;
+    source: { from: ProposalSource; proposal: ActionProposal } | null;
   } | null>(null);
-  const addMeetingToCalendar = useCallback((slot: ScheduleSlot, meeting: { title: string; participants: string[]; excerpt: string | null }, source: { key: string; proposal: ActionProposal } | null) => {
+  const addMeetingToCalendar = useCallback((slot: ScheduleSlot, meeting: { title: string; participants: string[]; excerpt: string | null }, source: { from: ProposalSource; proposal: ActionProposal } | null) => {
     if (!visibleDetail) return;
     const invitees = meeting.participants.filter((participant) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(participant.trim())).map((participant) => participant.trim());
     const sender = proactiveBriefSender(visibleDetail, ownAddresses);
@@ -1742,13 +1770,11 @@ export function App() {
   }, [ownAddresses, refreshCalendarOptions, visibleDetail]);
   const meetingCreated = useCallback(() => {
     const source = meetingEventDraft?.source;
-    if (source) {
-      setActionProposalSets((current) => ({ ...current, [source.key]: (current[source.key] ?? []).filter((proposal) => proposal !== source.proposal) }));
-    }
+    if (source) removeActionProposal(source.from, source.proposal);
     setMeetingEventDraft(null);
     clearScheduleCache();
     setNotice({ message: "Added to calendar" });
-  }, [meetingEventDraft, setNotice]);
+  }, [meetingEventDraft, removeActionProposal, setNotice]);
   const confirmMeetingTime = useCallback((slot: ScheduleSlot) => {
     correspondence.replyWithText(formatConfirmationText(slot, availabilityPreferences.timeZone), visibleDetail?.messages.at(-1)?.id);
   }, [availabilityPreferences.timeZone, correspondence, visibleDetail]);
@@ -2679,7 +2705,7 @@ export function App() {
                 onAddToCalendar: (_index, proposal, slot) => addMeetingToCalendar(
                   slot,
                   { title: proposal.title, participants: proposal.participants, excerpt: proposal.evidence.excerpt },
-                  actionProposalKey ? { key: actionProposalKey, proposal } : null,
+                  actionProposalSource ? { from: actionProposalSource, proposal } : null,
                 ),
               }}
               loading={actionAnalysisLoading}
