@@ -309,4 +309,5 @@ const tauriClient: MailClient = {
   reconcileTasks: () => complete("reconcile_tasks"),
 };
 
-export const mailClient = isTauri() ? tauriClient : demoClient;
+// Release builds compile `__DEMO_CLIENT__` to false, which drops the demo client.
+export const mailClient = __DEMO_CLIENT__ && !isTauri() ? demoClient : tauriClient;

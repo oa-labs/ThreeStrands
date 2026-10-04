@@ -20,7 +20,8 @@ describe("settings import navigation", () => {
       value: {
         transformCallback: vi.fn(() => 1),
         unregisterCallback: vi.fn(),
-        invoke: vi.fn().mockResolvedValue(1),
+        // Font lookup is cached per module, so answer it with a real list.
+        invoke: vi.fn(async (command: string) => (command === "list_system_font_families" ? [] : 1)),
       },
     });
     Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
@@ -74,7 +75,7 @@ describe("settings import navigation", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Data Transfer" }));
 
     const dataTransfer = within(dialog).getByRole("region", { name: "Data transfer" });
@@ -106,7 +107,8 @@ describe("settings section keyboard navigation", () => {
       value: {
         transformCallback: vi.fn(() => 1),
         unregisterCallback: vi.fn(),
-        invoke: vi.fn().mockResolvedValue(1),
+        // Font lookup is cached per module, so answer it with a real list.
+        invoke: vi.fn(async (command: string) => (command === "list_system_font_families" ? [] : 1)),
       },
     });
     Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
@@ -125,7 +127,7 @@ describe("settings section keyboard navigation", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
     expect(within(dialog).getByRole("button", { name: "Replicated Sync" })).toBeInTheDocument();
     const appearanceButton = within(dialog).getByRole("button", { name: "Appearance" });
     expect(appearanceButton).toHaveAttribute("aria-current", "true");
@@ -152,7 +154,7 @@ describe("settings section keyboard navigation", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
     expect(sectionButtons).toHaveLength(11);
@@ -172,7 +174,7 @@ describe("settings section keyboard navigation", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
     expect(within(dialog).getByText("General")).toBeInTheDocument();
     expect(within(dialog).getByText("Accounts")).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
@@ -205,7 +207,7 @@ describe("settings section keyboard navigation", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
     fireEvent.click(await within(dialog).findByRole("button", { name: "Disconnect…" }));
 

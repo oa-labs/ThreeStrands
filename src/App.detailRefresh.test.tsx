@@ -717,7 +717,7 @@ it("reloads the inbox after reconnecting an imported account", async () => {
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
   expect((await screen.findByRole("radio", { name: /demo@example\.com.*Needs reconnect/ })).querySelector(".account-reconnect-badge")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-  const dialog = screen.getByRole("dialog", { name: "Settings" });
+  const dialog = await screen.findByRole("dialog", { name: "Settings" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
   const callsBeforeReconnect = listCalls;
 
@@ -746,7 +746,7 @@ it("reloads the inbox and reports the error when reconnecting an account fails",
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
   fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-  const dialog = screen.getByRole("dialog", { name: "Settings" });
+  const dialog = await screen.findByRole("dialog", { name: "Settings" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
   const callsBeforeReconnect = listCalls;
 

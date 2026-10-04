@@ -1071,6 +1071,6 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
  * `VITE_DEMO_DATASET=showcase` swaps in the marketing dataset. Vite inlines
  * the variable at build time, so a normal build drops the showcase module.
  */
-export const demoClient = createDemoClient(
+export const demoClient = /* @__PURE__ */ createDemoClient(
   import.meta.env.VITE_DEMO_DATASET === "showcase" ? buildShowcaseDataset() : defaultDemoDataset(),
 );

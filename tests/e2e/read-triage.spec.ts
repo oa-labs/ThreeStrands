@@ -146,13 +146,22 @@ test("keeps a sender contact card open while moving to its copy button", async (
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
 
   const address = page.locator(".message-sender-row .address").first();
-  const popover = address.locator(".address-popover");
+  // The card renders at the top of the page, so find it there rather than inside the address.
+  const popover = page.locator(".address-card");
   // Other people's addresses open the contact card, whose copy button names the action.
   const copy = popover.getByRole("button", { name: "Copy email address" });
 
   await address.hover();
   await expect(popover).toBeVisible();
   await expect(popover).toContainText("hello@threestrands.local");
+  // Nothing covers or clips the card: its far corner is the card itself and it fits in the window.
+  const onTop = await popover.evaluate((card) => {
+    const box = card.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.right - 4, box.bottom - 4);
+    return { covered: !card.contains(hit), right: box.right, width: window.innerWidth };
+  });
+  expect(onTop.covered).toBe(false);
+  expect(onTop.right).toBeLessThanOrEqual(onTop.width);
 
   const addressBox = await address.boundingBox();
   const popoverBox = await popover.boundingBox();

@@ -1,11 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, Message } from "./domain";
 import * as inlineAttachments from "./inlineAttachments";
-import { MessageCard } from "./MessageCard";
+import { MessageCard, placeHoverCard } from "./MessageCard";
 
 vi.mock("./inlineAttachments", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./inlineAttachments")>();
@@ -117,8 +117,17 @@ describe("MessageCard", () => {
       // The card names the person without adding a heading to the reader.
       expect(within(card).queryByRole("heading")).not.toBeInTheDocument();
 
+      // The card renders at the top of the page, outside the reader's scroll area.
+      expect(card.parentElement).toBe(document.body);
+      expect(sender.closest(".message-card")).not.toContainElement(card);
+
+      // Leaving the name gives the pointer a moment to cross into the card.
       fireEvent.mouseLeave(sender.parentElement!);
-      expect(within(card).queryByText("Analyst · Engines Ltd")).not.toBeInTheDocument();
+      fireEvent.mouseEnter(card);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(screen.getByRole("group", { name: "Contact card for Ada Lovelace" })).toBeInTheDocument();
+      fireEvent.mouseLeave(card);
+      await waitFor(() => expect(screen.queryByRole("group", { name: "Contact card for Ada Lovelace" })).not.toBeInTheDocument());
     });
 
     it("opens the card on keyboard focus and opens the saved contact from it", async () => {
@@ -153,6 +162,24 @@ describe("MessageCard", () => {
       expect(screen.getByRole("button", { name: "Copy ada@example.com" })).toBeInTheDocument();
       expect(screen.queryByRole("group", { name: /Contact card/ })).not.toBeInTheDocument();
       expect(lookup).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("placeHoverCard", () => {
+    const viewport = { width: 1000, height: 800 };
+    const card = { width: 300, height: 120 };
+
+    it("opens below the name, aligned to its left edge", () => {
+      expect(placeHoverCard({ top: 100, bottom: 120, left: 200 }, card, viewport)).toEqual({ top: 128, left: 200 });
+    });
+
+    it("moves left to stay inside the window instead of running under the next pane", () => {
+      expect(placeHoverCard({ top: 100, bottom: 120, left: 900 }, card, viewport)).toEqual({ top: 128, left: 692 });
+      expect(placeHoverCard({ top: 100, bottom: 120, left: 0 }, card, viewport).left).toBe(8);
+    });
+
+    it("opens above the name near the bottom of the window", () => {
+      expect(placeHoverCard({ top: 740, bottom: 760, left: 200 }, card, viewport)).toEqual({ top: 612, left: 200 });
     });
   });
 });

@@ -25,6 +25,8 @@ import {
 } from "lucide-react";
 import {
   type CSSProperties,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -79,12 +81,10 @@ import type { Draft, OutboxItem } from "./correspondence";
 import { decodeHtmlEntities } from "./SafeMessage";
 import { selectedMessageQuote } from "./selectedMessageQuote";
 import { CalendarSidebar } from "./CalendarSidebar";
-import { CalendarWeekView } from "./CalendarWeekView";
 import { eventDate, startOfLocalDay } from "./calendarTime";
 import { formatAvailabilityText, formatConfirmationText } from "./actionDrafting";
 import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { isActiveTaskStatus } from "./taskViews";
-import { ContactsWorkspace } from "./ContactsWorkspace";
 import { ContextPanel } from "./ContextPanel";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
@@ -142,7 +142,7 @@ import {
   resumeTriageSession,
   type TriageSession,
 } from "./triage";
-import { Settings, type MailAccountSettings, type SettingsSection, type SyncDiagnosticsActions } from "./SettingsPanel";
+import type { MailAccountSettings, SettingsSection, SyncDiagnosticsActions } from "./SettingsPanel";
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
@@ -154,6 +154,11 @@ type TaskEditorState =
 type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
 export { formatMailTimestamp } from "./threadPresentation";
+
+// Rarely opened workspaces load on demand so they stay off the startup bundle.
+const Settings = lazy(() => import("./SettingsPanel").then((m) => ({ default: m.Settings })));
+const CalendarWeekView = lazy(() => import("./CalendarWeekView").then((m) => ({ default: m.CalendarWeekView })));
+const ContactsWorkspace = lazy(() => import("./ContactsWorkspace").then((m) => ({ default: m.ContactsWorkspace })));
 
 type Notice = { message: string; undo?: () => void };
 
@@ -2570,30 +2575,32 @@ export function App() {
       </> : null}
 
       {rightWorkspace === "week" ? (
-        <CalendarWeekView
-          anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
-          initialEvent={calendarEventToOpen}
-          onAnchorChange={setCalendarWeekAnchor}
-          accounts={calendar.accounts}
-          calendars={calendar.calendars}
-          onToggleCalendar={(accountId, calendarId, selected) => {
-            const next = calendar.calendars
-              .filter((option) => option.accountId === accountId && option.selected && option.id !== calendarId)
-              .map((option) => option.id);
-            if (selected) next.push(calendarId);
-            void calendar.setSelection(accountId, next).catch((reason: unknown) => {
-              setNotice({ message: errorMessage(reason) });
-            });
-          }}
-          onAddCalendarAccount={() => {
-            setRightWorkspace(null);
-            openSettingsAt("calendarAccounts");
-          }}
-          onOpenSettings={() => {
-            setRightWorkspace(null);
-            openSettingsAt("calendarAccounts");
-          }}
-        />
+        <Suspense fallback={null}>
+          <CalendarWeekView
+            anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
+            initialEvent={calendarEventToOpen}
+            onAnchorChange={setCalendarWeekAnchor}
+            accounts={calendar.accounts}
+            calendars={calendar.calendars}
+            onToggleCalendar={(accountId, calendarId, selected) => {
+              const next = calendar.calendars
+                .filter((option) => option.accountId === accountId && option.selected && option.id !== calendarId)
+                .map((option) => option.id);
+              if (selected) next.push(calendarId);
+              void calendar.setSelection(accountId, next).catch((reason: unknown) => {
+                setNotice({ message: errorMessage(reason) });
+              });
+            }}
+            onAddCalendarAccount={() => {
+              setRightWorkspace(null);
+              openSettingsAt("calendarAccounts");
+            }}
+            onOpenSettings={() => {
+              setRightWorkspace(null);
+              openSettingsAt("calendarAccounts");
+            }}
+          />
+        </Suspense>
       ) : null}
       {rightWorkspace === "calendar" ? (
         <CalendarSidebar
@@ -2696,7 +2703,7 @@ export function App() {
           </> : null}
         />
       ) : null}
-      {rightWorkspace === "contacts" ? <ContactsWorkspace key={activeAccountId ?? "all"} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /> : null}
+      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={activeAccountId ?? "all"} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /></Suspense> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
           ref={taskWorkspaceRef}
@@ -2819,22 +2826,24 @@ export function App() {
         />
       ) : null}
       {settingsOpen ? (
-        <Settings
-          section={settingsSection}
-          onSectionChange={setSettingsSection}
-          onClose={() => setSettingsOpen(false)}
-          preferences={preferences}
-          mailAccounts={mailAccountSettings}
-          calendarAccounts={calendar}
-          splitInboxes={splitInboxCatalog}
-          labelsByAccount={labelsByAccount}
-          snippets={snippetLibrary}
-          syncStatus={syncStatus}
-          recoveryStatus={recoveryStatus}
-          syncDiagnostics={syncDiagnostics}
-          onAiConfigChange={refreshAiAvailability}
-          onSettingsImported={applyImportedSettings}
-        />
+        <Suspense fallback={null}>
+          <Settings
+            section={settingsSection}
+            onSectionChange={setSettingsSection}
+            onClose={() => setSettingsOpen(false)}
+            preferences={preferences}
+            mailAccounts={mailAccountSettings}
+            calendarAccounts={calendar}
+            splitInboxes={splitInboxCatalog}
+            labelsByAccount={labelsByAccount}
+            snippets={snippetLibrary}
+            syncStatus={syncStatus}
+            recoveryStatus={recoveryStatus}
+            syncDiagnostics={syncDiagnostics}
+            onAiConfigChange={refreshAiAvailability}
+            onSettingsImported={applyImportedSettings}
+          />
+        </Suspense>
       ) : null}
       <EnrollmentRequestNotice
         suppressed={settingsOpen && settingsSection === "replicatedSync"}

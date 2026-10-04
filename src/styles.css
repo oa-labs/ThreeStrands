@@ -930,9 +930,10 @@ kbd {
 .address-contact .address-name:hover { text-decoration: underline; text-underline-offset: 2px; }
 .address-contact .address-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .address-selected .address-name { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; }
-/* Sized to the card so the history line stays on one line, up to a cap that still fits narrow windows. */
-.address-popover.address-card { display: block; width: max-content; min-width: min(280px, calc(100vw - 32px)); max-width: min(440px, calc(100vw - 32px)); padding: 12px; font-size: var(--type-ui); line-height: normal; white-space: normal; }
-.address-card:empty { display: none; }
+/* Rendered at the top of the page, above every pane, and placed beside its
+   name in script. Sized to the card so the history line stays on one line, up
+   to a cap that still fits narrow windows. */
+.address-card { position: fixed; z-index: var(--z-popover); box-sizing: border-box; width: max-content; min-width: min(280px, calc(100vw - 32px)); max-width: min(440px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--raised); box-shadow: 0 8px 24px var(--shadow); color: var(--text); font-size: var(--type-ui); font-weight: 400; line-height: normal; white-space: normal; }
 .address-copy {
   display: inline-flex;
   align-items: center;
