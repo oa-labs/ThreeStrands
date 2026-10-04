@@ -662,7 +662,7 @@ test("resizes the inbox with pointer and keyboard and restores the preferred wid
   await expect(divider).toHaveAttribute("aria-valuenow", "400");
 });
 
-test("wraps batch actions and shows their help at the minimum inbox width", async ({ page }) => {
+test("lays batch actions out in two even right-aligned rows and shows their help at the minimum inbox width", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   const divider = page.getByRole("separator", { name: "Resize Inbox" });
@@ -680,23 +680,36 @@ test("wraps batch actions and shows their help at the minimum inbox width", asyn
   await expect(toolbar.locator(".batch-count")).toHaveCSS("white-space", "nowrap");
 
   const actionLayout = await toolbar.evaluate((toolbarElement) => {
-    const buttons = [...toolbarElement.querySelectorAll("button")];
+    const buttons = [...toolbarElement.querySelectorAll(".batch-actions button")];
+    const checkboxBounds = toolbarElement.querySelector(".select-all input")!.getBoundingClientRect();
     const countBounds = toolbarElement.querySelector(".batch-count")!.getBoundingClientRect();
-    const firstButtonBounds = buttons[0].getBoundingClientRect();
+    const actionsBounds = toolbarElement.querySelector(".batch-actions")!.getBoundingClientRect();
     const toolbarBounds = toolbarElement.getBoundingClientRect();
+    const rows = new Map<number, DOMRect[]>();
+    for (const button of buttons) {
+      const bounds = button.getBoundingClientRect();
+      const top = Math.round(bounds.top);
+      rows.set(top, [...(rows.get(top) ?? []), bounds]);
+    }
     return {
-      rows: new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top))).size,
+      rowSizes: [...rows.values()].map((row) => row.length),
+      rowRights: [...rows.values()].map((row) => Math.round(Math.max(...row.map((bounds) => bounds.right)))),
       overflows: buttons.some((button) => {
         const buttonBounds = button.getBoundingClientRect();
         return buttonBounds.left < toolbarBounds.left || buttonBounds.right > toolbarBounds.right;
       }),
+      toolbarRight: Math.round(toolbarBounds.right),
+      checkboxCenter: checkboxBounds.top + checkboxBounds.height / 2,
       countCenter: countBounds.top + countBounds.height / 2,
-      firstRowCenter: firstButtonBounds.top + firstButtonBounds.height / 2,
+      actionsCenter: actionsBounds.top + actionsBounds.height / 2,
     };
   });
-  expect(actionLayout.rows).toBeGreaterThan(1);
+  expect(actionLayout.rowSizes).toEqual([4, 4]);
+  expect(actionLayout.rowRights[0]).toBe(actionLayout.rowRights[1]);
+  expect(actionLayout.rowRights[0]).toBe(actionLayout.toolbarRight);
   expect(actionLayout.overflows).toBe(false);
-  expect(actionLayout.countCenter).toBeCloseTo(actionLayout.firstRowCenter, 0);
+  expect(actionLayout.countCenter).toBeCloseTo(actionLayout.actionsCenter, 0);
+  expect(actionLayout.checkboxCenter).toBeCloseTo(actionLayout.actionsCenter, 0);
 
   await toolbar.getByRole("button", { name: "Archive" }).hover();
   await expect(toolbar.getByRole("tooltip", { name: "Archive" })).toBeVisible();

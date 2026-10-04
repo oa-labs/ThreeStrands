@@ -461,7 +461,7 @@ button { color: inherit; }
 
 .batch-toolbar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   min-width: 0;
   width: 100%;
@@ -476,17 +476,22 @@ button { color: inherit; }
   color: var(--muted);
   white-space: nowrap;
 }
+/* Always two even rows, right-aligned against the header edge. */
 .batch-actions {
   min-width: 0;
   margin-left: auto;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(var(--batch-columns, 4), 1fr);
+  justify-items: center;
+  justify-content: end;
   gap: 4px;
-  overflow: visible;
-  scrollbar-width: none;
 }
-.batch-actions::-webkit-scrollbar { display: none; }
-.batch-actions .action-button, .batch-actions .icon-button { flex: 0 0 auto; }
+.batch-actions .action-button, .batch-actions .icon-button {
+  width: 34px;
+  height: 34px;
+  justify-content: center;
+  padding: 0;
+}
 .batch-toolbar .action-button span { display: none; }
 
 .eyebrow {

@@ -2269,7 +2269,8 @@ export function App() {
                 />
               </label>
               <span className="batch-count">{checkedIds.size} selected</span>
-              <div className="batch-actions">
+              {/* Trash swaps Archive/Trash/Spam for Restore: 6 actions -> 3 columns, otherwise 8 -> 4. */}
+              <div className="batch-actions" style={{ "--batch-columns": mailbox === "trash" ? 3 : 4 } as CSSProperties}>
                 {mailbox === "trash" ? (
                   <HoverTooltip label="Restore" placement="bottom">
                     <ActionButton label="Restore" onClick={() => runOnSelection("Restore", { kind: "trash", value: false })}>
