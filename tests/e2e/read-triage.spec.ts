@@ -87,18 +87,24 @@ test("keeps meeting titles and recent email subjects on one line in the context 
   expect(layout.responseRight).toBeLessThanOrEqual(layout.metaRight + 1);
 });
 
-test("keeps the context contact card to three type sizes with details below the email address", async ({ page }) => {
+test("keeps the sender contact card to three type sizes with details below the email address", async ({ page }) => {
   await page.goto("/");
-  const text = page.locator(".context-contact-text").first();
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+  // The context panel no longer has a contact card; the reader shows it on hover.
+  await expect(page.locator(".context-panel .context-contact-text")).toHaveCount(0);
+  await page.locator(".message-sender-row .address").first().hover();
+  const text = page.locator(".address-card .context-contact-text").first();
   await expect(text).toBeVisible();
 
   const sizes = await text.evaluate((element) => {
-    element.insertAdjacentHTML("beforeend", '<p>Managing Director · Acme</p><p class="context-contact-activity">34 emails since Apr 2026</p><p>Phoenix, AZ</p>');
+    element.insertAdjacentHTML("beforeend", '<p>Managing Director · Acme</p><p class="context-contact-activity">10 emails since Jun 2026 · You last wrote Sep 29</p><p>Phoenix, AZ</p>');
     const size = (node: Element) => parseFloat(getComputedStyle(node).fontSize);
+    const activity = element.querySelector<HTMLElement>("p.context-contact-activity")!;
     return {
-      name: size(element.querySelector("h2")!),
+      name: size(element.querySelector(".context-contact-title")!),
       email: size(element.querySelector(".contact-sidebar-email-row a span")!),
       details: [...element.querySelectorAll("p")].map(size),
+      activityLines: Math.round(activity.getBoundingClientRect().height / parseFloat(getComputedStyle(activity).lineHeight)),
     };
   });
 
@@ -106,6 +112,8 @@ test("keeps the context contact card to three type sizes with details below the 
   expect(new Set(sizes.details).size).toBe(1);
   expect(sizes.details[0]).toBeLessThan(sizes.email);
   expect(sizes.email).toBeLessThan(sizes.name);
+  // The card widens for a typical history line instead of wrapping it.
+  expect(sizes.activityLines).toBe(1);
 });
 
 test("processes the inbox from the keyboard", async ({ page }) => {

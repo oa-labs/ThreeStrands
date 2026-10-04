@@ -86,17 +86,18 @@ Mail has one right-side context panel for the open conversation. It stacks
 two groups. First, what is about the conversation: the AI brief and
 suggestions, open tasks from this conversation and the selected person's other
 conversations, upcoming meetings that include a participant, and an outline of
-conversations with six or more messages. Then, what is about one person: a
-compact card for the selected participant (the name opens the contact, a heart
-toggles favorite, and a line of facts from local history covers how much mail,
-since when, any regular cadence, and when the user last wrote), files the
-person sent, recent emails with them, and other people at their
-organization's domain (never for personal mail providers or the user's own
-domains). The selected participant is the latest external sender until the
-user clicks another person's name in a message header. Hovering or focusing
-that name shows the same card in the reader; the user's own addresses keep a
-plain address-and-copy popover. The panel has no participant picker of its
-own. Do not add a second always-on panel beside it; new conversation
+conversations with six or more messages. Then, what is about the selected
+participant: files the person sent, recent emails with them, and other people
+at their organization's domain (never for personal mail providers or the
+user's own domains). The selected participant is the latest external sender
+until the user clicks another person's name in a message header. The panel
+shows no contact card and no participant picker; hovering or focusing a name
+in a message header shows the contact card in the reader (the name opens the
+contact, a heart toggles favorite, and a line of facts from local history
+covers how much mail, since when, any regular cadence, and when the user last
+wrote). The card sizes to its content so that line does not wrap, up to a
+cap. The user's own addresses keep a plain address-and-copy popover. Do not
+add a second always-on panel beside it; new conversation
 context belongs in this panel as a section, in the group that matches its
 subject.
 

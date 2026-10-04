@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { mailClient } from "./data/client";
-import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
-import { describeActivity } from "./contactContext";
-import { ContactCard } from "./ContactCard";
+import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { ContactFilesSection, DomainSection, RecentEmailsSection, ThreadOutlineSection } from "./ContextSections";
 import { parseAddress, splitAddressList } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
@@ -18,10 +16,10 @@ export type ContextPerson = {
 /**
  * The single right-side panel for a conversation, in two groups. First what
  * is about the conversation: the AI brief and suggestions, related tasks and
- * meetings, and an outline of a long conversation. Then what is about one
- * person: a compact card for the selected participant, files they sent, other
- * emails with them, and other people at their organization. Sections without
- * content are left out.
+ * meetings, and an outline of a long conversation. Then what is about the
+ * selected participant: files they sent, other emails with them, and other
+ * people at their organization. Their contact card lives in the reader, on
+ * hover over their name. Sections without content are left out.
  *
  * The selected participant is the latest external sender unless the reader
  * picked someone else by clicking their name in a message header.
@@ -154,18 +152,6 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, onOpenThr
       meetingPeople.set(address.toLocaleLowerCase(), { email: address, name: displayName });
     }
   }
-  const [activity, setActivity] = useState<{ contactId: string; value: ContactActivity } | null>(null);
-  const personId = person?.contactId ?? null;
-  useEffect(() => {
-    if (!personId) return;
-    let active = true;
-    mailClient.contactActivity(personId)
-      .then((value) => { if (active) setActivity({ contactId: personId, value }); })
-      .catch(logBackgroundFailure("Contact activity lookup"));
-    return () => { active = false; };
-  }, [personId]);
-  const currentActivity = activity && activity.contactId === personId ? activity.value : null;
-  const facts = currentActivity ? describeActivity(currentActivity) : [];
   const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   return (
@@ -173,22 +159,6 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, onOpenThr
       {detail ? assist : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
-      {email ? (
-        <section className="context-contact" aria-label="Contact">
-          <ContactCard
-            key={email}
-            email={email}
-            fallbackName={selected?.name}
-            profile={profile}
-            loaded={loadedEmail === email}
-            facts={facts}
-            showNotes
-            onOpenContact={onOpenContact}
-            onProfileSaved={(saved) => { setError(null); setProfile(saved); }}
-            onError={setError}
-          />
-        </section>
-      ) : <p className="contacts-status">Select a conversation participant.</p>}
       {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} onShowMessage={showMessage} /> : null}
       {person && otherEmails.length > 0 ? <RecentEmailsSection items={otherEmails} onOpenThread={onOpenThread} /> : null}
       {person ? (

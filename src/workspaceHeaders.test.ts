@@ -98,16 +98,16 @@ describe("mail workspace with the calendar schedule open", () => {
 });
 
 describe("conversation participant layout", () => {
-  // People are picked from message headers now, so the panel's person card
-  // must hold its height in the panel's flex column without a picker above it.
-  it("keeps the context panel person card from shrinking and draws counts as badges", () => {
-    expect(lastDeclaration(".context-contact", "flex-shrink")).toBe("0");
+  it("draws section counts as badges", () => {
     expect(lastDeclaration(".context-count", "border")).toBe("1px solid var(--border)");
     expect(lastDeclaration(".context-count", "border-radius")).toBe("var(--radius-xs)");
   });
 
   it("opens a reader contact card that fits narrow windows and keeps keyboard focus visible", () => {
-    expect(lastDeclaration(".address-popover.address-card", "width")).toBe("min(320px, calc(100vw - 32px))");
+    // The card grows with its longest line, such as the history facts, instead of wrapping it at a fixed width.
+    expect(lastDeclaration(".address-popover.address-card", "width")).toBe("max-content");
+    expect(lastDeclaration(".address-popover.address-card", "max-width")).toBe("min(440px, calc(100vw - 32px))");
+    expect(lastDeclaration(".address-popover.address-card", "min-width")).toBe("min(280px, calc(100vw - 32px))");
     expect(lastDeclaration(".address-popover.address-card", "white-space")).toBe("normal");
     expect(lastDeclaration(".address-contact .address-name:focus-visible", "outline")).toBe("2px solid var(--accent)");
   });
