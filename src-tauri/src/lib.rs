@@ -20,6 +20,7 @@ mod mime;
 mod models;
 mod net_safety;
 mod provider;
+mod quoted_history;
 mod replicated_sync;
 mod s3_transport;
 mod schema;

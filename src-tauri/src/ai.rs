@@ -974,14 +974,16 @@ fn brief_output_schema() -> OutputSchema {
 }
 
 fn action_context(messages: &[ActionMessageInput]) -> Vec<ActionMessageInput> {
-    let start = messages.len().saturating_sub(MAX_MESSAGES);
-    messages[start..]
+    let window = &messages[messages.len().saturating_sub(MAX_MESSAGES)..];
+    let bodies = bounded_bodies(window.iter().map(|message| message.body_text.as_str()), MAX_BODY_CHARS);
+    window
         .iter()
-        .map(|message| ActionMessageInput {
+        .zip(bodies)
+        .map(|(message, body_text)| ActionMessageInput {
             id: message.id.clone(),
             sender: message.sender.clone(),
             sent_at: message.sent_at.clone(),
-            body_text: message.body_text.chars().take(MAX_BODY_CHARS).collect(),
+            body_text,
         })
         .collect()
 }
@@ -1454,6 +1456,25 @@ fn truncate_chars(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
 }
 
+/// Bodies for a window of thread messages, oldest first, exactly as the
+/// provider receives them. Quoted history is dropped only where it repeats
+/// text that an earlier body in this same window already sends — after that
+/// body's own capping — so the model never loses content it would otherwise
+/// have seen. Each body is then capped at `max_chars`.
+fn bounded_bodies<'a>(bodies: impl IntoIterator<Item = &'a str>, max_chars: usize) -> Vec<String> {
+    let mut history = crate::quoted_history::ThreadHistory::default();
+    bodies
+        .into_iter()
+        .map(|body| {
+            let new_len = history.new_text_len(body);
+            let new_text = if new_len < body.len() { body[..new_len].trim_end() } else { body };
+            let sent = truncate_chars(new_text, max_chars);
+            history.remember(&sent);
+            sent
+        })
+        .collect()
+}
+
 /// The most recent earlier turns, each bounded; anything but a user or
 /// assistant turn is dropped.
 fn bounded_history(history: &[ChatTurn]) -> Vec<ChatTurn> {
@@ -1522,17 +1543,22 @@ fn build_chat_prompt(
                 body_text: &message.body_text,
             }).collect::<Vec<_>>(),
         },
-        "otherThreads": request.other_threads.iter().take(MAX_MAILBOX_CHAT_THREADS).map(|thread| OtherThread {
-            thread_id: &thread.thread_id,
-            subject: truncate_chars(&thread.subject, 300),
-            messages: thread.messages[thread.messages.len().saturating_sub(MAX_MAILBOX_CHAT_MESSAGES)..]
-                .iter()
-                .map(|message| OtherMessage {
-                    sender: &message.sender,
-                    sent_at: &message.sent_at,
-                    body_text: truncate_chars(&message.body_text, MAX_MAILBOX_CHAT_BODY_CHARS),
-                })
-                .collect(),
+        "otherThreads": request.other_threads.iter().take(MAX_MAILBOX_CHAT_THREADS).map(|thread| {
+            let window = &thread.messages[thread.messages.len().saturating_sub(MAX_MAILBOX_CHAT_MESSAGES)..];
+            let bodies = bounded_bodies(window.iter().map(|message| message.body_text.as_str()), MAX_MAILBOX_CHAT_BODY_CHARS);
+            OtherThread {
+                thread_id: &thread.thread_id,
+                subject: truncate_chars(&thread.subject, 300),
+                messages: window
+                    .iter()
+                    .zip(bodies)
+                    .map(|(message, body_text)| OtherMessage {
+                        sender: &message.sender,
+                        sent_at: &message.sent_at,
+                        body_text,
+                    })
+                    .collect(),
+            }
         }).collect::<Vec<_>>(),
         "attachments": request.attachments.iter().take(MAX_CHAT_ATTACHMENTS).map(|attachment| PromptAttachment {
             filename: &attachment.filename,
@@ -1764,15 +1790,17 @@ pub async fn summarize(request: SummarizeRequest, api_key: &str) -> Result<Strin
 /// Reduces a locally cached thread to the exact content shown in the consent
 /// preview and later sent to the configured provider.
 pub fn reply_context(subject: String, messages: Vec<ThreadMessageInput>) -> ReplyAssistContext {
-    let start = messages.len().saturating_sub(MAX_MESSAGES);
+    let window = &messages[messages.len().saturating_sub(MAX_MESSAGES)..];
+    let bodies = bounded_bodies(window.iter().map(|message| message.body_text.as_str()), MAX_BODY_CHARS);
     ReplyAssistContext {
         subject,
-        messages: messages[start..]
+        messages: window
             .iter()
-            .map(|message| ReplyAssistMessage {
+            .zip(bodies)
+            .map(|(message, body_text)| ReplyAssistMessage {
                 sender: message.sender.clone(),
                 sent_at: message.sent_at.clone(),
-                body_text: message.body_text.chars().take(MAX_BODY_CHARS).collect(),
+                body_text,
             })
             .collect(),
     }
@@ -1837,9 +1865,9 @@ fn build_reply_prompt(context: &ReplyAssistContext, instruction: &str) -> Result
 
 fn build_prompt(subject: &str, messages: &[ThreadMessageInput]) -> String {
     let mut out = format!("Subject: {subject}\n\n");
-    let start = messages.len().saturating_sub(MAX_MESSAGES);
-    for message in &messages[start..] {
-        let body: String = message.body_text.chars().take(MAX_BODY_CHARS).collect();
+    let window = &messages[messages.len().saturating_sub(MAX_MESSAGES)..];
+    let bodies = bounded_bodies(window.iter().map(|message| message.body_text.as_str()), MAX_BODY_CHARS);
+    for (message, body) in window.iter().zip(bodies) {
         out.push_str(&format!(
             "From: {}\nDate: {}\n{}\n\n---\n\n",
             message.sender,
@@ -2946,6 +2974,82 @@ mod tests {
         // Each over-long body is cut to exactly MAX_BODY_CHARS characters.
         assert!(prompt.contains(&"x".repeat(MAX_BODY_CHARS)));
         assert!(!prompt.contains(&"x".repeat(MAX_BODY_CHARS + 1)));
+    }
+
+    fn quoting_thread() -> Vec<ThreadMessageInput> {
+        let original = "Can you check whether the nightly feed import still fails for the west region accounts?";
+        vec![
+            ThreadMessageInput {
+                sender: "a@example.com".into(),
+                sent_at: "2026-10-01T09:00:00Z".into(),
+                body_text: format!("{original}\n\nAshlyn"),
+            },
+            ThreadMessageInput {
+                sender: "b@example.com".into(),
+                sent_at: "2026-10-02T09:00:00Z".into(),
+                body_text: format!("It is fixed now.\n\nOn Thu, Oct 1, 2026 at 9:00 AM, A <a@example.com> wrote:\n> {original}\n>\n> Ashlyn"),
+            },
+        ]
+    }
+
+    #[test]
+    fn every_thread_payload_drops_quoted_history_the_model_already_has() {
+        let messages = quoting_thread();
+
+        let summary = build_prompt("Feed", &messages);
+        assert_eq!(summary.matches("nightly feed import").count(), 1);
+        assert!(summary.contains("It is fixed now."));
+        assert!(!summary.contains("wrote:"));
+
+        let context = reply_context("Feed".into(), quoting_thread());
+        assert_eq!(context.messages[1].body_text, "It is fixed now.");
+        // Generating a reply re-applies the bounds to the reviewed context; the
+        // result must not change.
+        let reapplied = reply_context("Feed".into(), context.messages.iter().map(|message| ThreadMessageInput {
+            sender: message.sender.clone(),
+            sent_at: message.sent_at.clone(),
+            body_text: message.body_text.clone(),
+        }).collect());
+        assert_eq!(reapplied.messages[1].body_text, "It is fixed now.");
+
+        let actions: Vec<ActionMessageInput> = messages.iter().enumerate().map(|(index, message)| ActionMessageInput {
+            id: format!("m{index}"),
+            sender: message.sender.clone(),
+            sent_at: message.sent_at.clone(),
+            body_text: message.body_text.clone(),
+        }).collect();
+        assert_eq!(action_context(&actions)[1].body_text, "It is fixed now.");
+
+        let mut request = chat_request("Is it fixed?");
+        request.other_threads = vec![ChatThreadInput { thread_id: "other".into(), subject: "Feed".into(), messages }];
+        let prompt: serde_json::Value = serde_json::from_str(&build_chat_prompt(&request, &[]).unwrap()).unwrap();
+        assert_eq!(prompt["otherThreads"][0]["messages"][1]["bodyText"], "It is fixed now.");
+    }
+
+    #[test]
+    fn keeps_quoted_text_the_model_would_not_otherwise_receive() {
+        // The original sits outside the message window, so its quote is the only copy sent.
+        let mut messages = quoting_thread();
+        let reply = messages.pop().unwrap();
+        let reply_body = reply.body_text.clone();
+        messages.extend((0..MAX_MESSAGES - 1).map(|index| ThreadMessageInput {
+            sender: "c@example.com".into(),
+            sent_at: format!("2026-10-01T1{index}:00:00Z"),
+            body_text: format!("Unrelated note {index}."),
+        }));
+        messages.push(reply);
+        let context = reply_context("Feed".into(), messages);
+        assert_eq!(context.messages.last().unwrap().body_text, reply_body);
+
+        // The quoted tail of an earlier message lies past that message's cap.
+        let tail = "The west region import fails only when the partner file arrives after midnight.";
+        let long = format!("{}\n{tail}", "x".repeat(MAX_BODY_CHARS));
+        let quote_of_tail = format!("Noted.\n\nOn Mon, A wrote:\n> {tail}");
+        let context = reply_context("Feed".into(), vec![
+            ThreadMessageInput { sender: "a@example.com".into(), sent_at: "1".into(), body_text: long },
+            ThreadMessageInput { sender: "b@example.com".into(), sent_at: "2".into(), body_text: quote_of_tail.clone() },
+        ]);
+        assert_eq!(context.messages[1].body_text, quote_of_tail);
     }
 
     #[test]
