@@ -6,6 +6,7 @@ import { mailClient } from "./data/client";
 import type { Account, ContactProfile, Message } from "./domain";
 import * as inlineAttachments from "./inlineAttachments";
 import { MessageCard, placeHoverCard } from "./MessageCard";
+import { threadTextIndex } from "./threadTextIndex";
 
 vi.mock("./inlineAttachments", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./inlineAttachments")>();
@@ -75,6 +76,19 @@ describe("MessageCard", () => {
 
     expect(stableProps.onRespond).toHaveBeenCalledWith("replyAll", "m1");
     expect(stableProps.onToggle).toHaveBeenCalledWith("m1", true);
+  });
+
+  it("folds a signature repeated from an earlier message in the conversation", () => {
+    const earlier: Message = { ...message, id: "m0", bodyHtml: "", bodyText: "First question?\n\nAda Lovelace\nAnalytical Engine Society\nLondon office" };
+    const latest: Message = {
+      ...message,
+      bodyHtml: "<p>Answer.</p><p>Ada Lovelace<br>Analytical Engine Society<br>London office</p><div>On Mon, B wrote:</div><blockquote>First question?</blockquote>",
+    };
+    const threadText = threadTextIndex([earlier, latest]);
+    render(<MessageCard message={latest} isExpanded {...stableProps} index={1} threadText={threadText} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    expect(frame.srcdoc).toContain("Answer.");
+    expect(frame.srcdoc).not.toContain("Analytical Engine Society");
   });
 
   it("renders a collapsed card with a snippet and no message frame", () => {

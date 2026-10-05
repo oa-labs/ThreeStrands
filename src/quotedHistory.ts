@@ -209,11 +209,91 @@ function trailingQuoteRunStart(lines: Line[]): number {
 }
 
 /**
+ * Text already seen earlier in the thread, as 4-word shingles. Repeated text
+ * is fill-in evidence only: it extends a structural fold upward over a
+ * repeated signature, confirms a lone citation, or — with a larger minimum —
+ * folds a trailing run that carries no structural markers at all.
+ */
+export type PriorThreadText = { has(shingle: string): boolean };
+
+/** Every earlier message's shingles, so position k sees only messages before k. */
+export type ThreadTextIndex = { before(position: number): PriorThreadText };
+
+const quoteWord = /[\p{L}\p{N}]+/gu;
+
+/** Normalized words of one line: quote markers, case and punctuation are ignored. */
+function lineWords(line: string): string[] {
+  return line.replace(/^(?:\s*>)+/, "").toLowerCase().match(quoteWord) ?? [];
+}
+
+function shingleAt(words: readonly string[], start: number): string {
+  return words.slice(start, start + LIMITS.shingleWords).join(" ");
+}
+
+/** Indexes each message's text in thread order; texts are plain text, oldest first. */
+export function buildThreadTextIndex(texts: readonly string[]): ThreadTextIndex {
+  const firstSeen = new Map<string, number>();
+  texts.forEach((text, position) => {
+    const words = text.split(/\r?\n/).flatMap(lineWords);
+    for (let start = 0; start + LIMITS.shingleWords <= words.length; start++) {
+      const shingle = shingleAt(words, start);
+      if (!firstSeen.has(shingle)) firstSeen.set(shingle, position);
+    }
+  });
+  return {
+    before: (position) => ({ has: (shingle) => (firstSeen.get(shingle) ?? Infinity) < position }),
+  };
+}
+
+type RepeatedLine = { kind: "neutral" | "seen" | "new"; matched: number };
+
+/**
+ * Classifies each line against earlier thread text. Shingles run across line
+ * breaks, so a short line ("Joel") or a rewrapped quote still matches. A line
+ * with no words is neutral; otherwise it is seen when matched shingles cover
+ * at least `minSeenLineCoverage` of its words.
+ */
+function classifyRepeatedLines(lines: readonly string[], prior: PriorThreadText): RepeatedLine[] {
+  const words: Array<{ word: string; line: number }> = [];
+  lines.forEach((line, index) => lineWords(line).forEach((word) => words.push({ word, line: index })));
+  const plain = words.map(({ word }) => word);
+  const covered = new Array<boolean>(words.length).fill(false);
+  const matched = new Array<number>(lines.length).fill(0);
+  for (let start = 0; start + LIMITS.shingleWords <= words.length; start++) {
+    if (!prior.has(shingleAt(plain, start))) continue;
+    matched[words[start].line]++;
+    covered.fill(true, start, start + LIMITS.shingleWords);
+  }
+  const totals = new Array<number>(lines.length).fill(0);
+  const coveredCounts = new Array<number>(lines.length).fill(0);
+  words.forEach(({ line }, index) => {
+    totals[line]++;
+    if (covered[index]) coveredCounts[line]++;
+  });
+  return lines.map((_, index) => ({
+    kind: totals[index] === 0 ? "neutral"
+      : coveredCounts[index] / totals[index] >= LIMITS.minSeenLineCoverage ? "seen" : "new",
+    matched: matched[index],
+  }));
+}
+
+/** The contiguous run of seen or wordless lines ending just above `end`. */
+function repeatedRunAbove(lines: readonly RepeatedLine[], end: number): { top: number; matched: number } {
+  let top = end;
+  let matched = 0;
+  for (let index = end - 1; index >= 0 && lines[index].kind !== "new"; index--) {
+    top = index;
+    matched += lines[index].matched;
+  }
+  return { top, matched };
+}
+
+/**
  * Returns the message HTML before a mail client's quoted-reply section.
  * The full sanitized HTML remains available to reveal after the reader asks
  * for it; only this shorter copy is placed in the iframe initially.
  */
-export function collapseQuotedHistoryHtml(html: string): string | null {
+export function collapseQuotedHistoryHtml(html: string, prior?: PriorThreadText): string | null {
   const container = document.createElement("div");
   container.innerHTML = html;
   const flat = flatten(container);
@@ -272,20 +352,50 @@ export function collapseQuotedHistoryHtml(html: string): string | null {
     })),
   ].sort((left, right) => left.offset - right.offset);
 
-  for (const candidate of candidates) {
-    if (!candidate.boundary || candidate.score + SCORE.currentContent < LIMITS.foldScoreThreshold) continue;
+  const visibleBefore = (boundary: QuotedHistoryBoundary | null): string | null => {
+    if (!boundary) return null;
     const range = document.createRange();
     range.setStart(container, 0);
-    if (candidate.boundary.kind === "text") range.setEnd(candidate.boundary.node, candidate.boundary.offset);
-    else range.setEndBefore(candidate.boundary.node);
+    if (boundary.kind === "text") range.setEnd(boundary.node, boundary.offset);
+    else range.setEndBefore(boundary.node);
 
     const visibleContainer = document.createElement("div");
     visibleContainer.append(range.cloneContents());
     const hasVisibleContent = Boolean(visibleContainer.textContent?.trim())
       || visibleContainer.querySelector("img") !== null;
-    if (hasVisibleContent) return visibleContainer.innerHTML;
+    return hasVisibleContent ? visibleContainer.innerHTML : null;
+  };
+  const lineAt = (offset: number) => {
+    let index = 0;
+    while (index + 1 < lines.length && lines[index + 1].start <= offset) index++;
+    return index;
+  };
+
+  let structural: { line: number; visible: string } | null = null;
+  for (const candidate of candidates) {
+    if (candidate.score + SCORE.currentContent < LIMITS.foldScoreThreshold) continue;
+    const visible = visibleBefore(candidate.boundary);
+    if (visible !== null) {
+      structural = { line: lineAt(candidate.offset), visible };
+      break;
+    }
   }
-  return null;
+  if (!prior) return structural?.visible ?? null;
+
+  const repeated = classifyRepeatedLines(lines.map((line) => line.text), prior);
+  const foldAtLine = (line: number) => visibleBefore(boundaryAt(flat, container, lines[line].start));
+  if (structural) {
+    const run = repeatedRunAbove(repeated, structural.line);
+    if (run.top < structural.line && run.matched >= LIMITS.minCorroboratingShingles) {
+      return foldAtLine(run.top) ?? structural.visible;
+    }
+    return structural.visible;
+  }
+  const run = repeatedRunAbove(repeated, lines.length);
+  if (run.top >= lines.length) return null;
+  const confirmsCitation = regions.some((region) => region.start >= lines[run.top].start);
+  const needed = confirmsCitation ? LIMITS.minCorroboratingShingles : LIMITS.minRepeatedRegionShingles;
+  return run.matched >= needed ? foldAtLine(run.top) : null;
 }
 
 /** Index of the first line starting a run of minQuoteRunLines+ consecutive `>`-quoted lines, or -1. */
@@ -305,18 +415,13 @@ function findQuoteRunStart(lines: string[]): number {
   return -1;
 }
 
-/** Returns the part of a plain-text reply before its quoted history. */
-export function collapseQuotedHistoryText(text: string): string | null {
-  const lines = text.split(/\r?\n/);
+/** Line index where a plain-text reply's quoted history starts, from structure alone, or -1. */
+function structuralTextCut(lines: string[]): number {
   const plainLines = lines.map((line) => ({ text: line, start: 0, end: 0, blank: !line.trim() }));
   const markerIndex = lines.findIndex((_, index) => isAttributionLine(plainLines, index));
   const quoteRunIndex = findQuoteRunStart(lines);
   const cutCandidates = [markerIndex, quoteRunIndex].filter((index) => index >= 0);
-  if (cutCandidates.length > 0) {
-    const cutIndex = Math.min(...cutCandidates);
-    const visible = lines.slice(0, cutIndex).join("\n").trimEnd();
-    return visible.trim() ? visible : null;
-  }
+  if (cutCandidates.length > 0) return Math.min(...cutCandidates);
   const headerStart = lines.findIndex((_, index) => {
     const block = lines.slice(index, index + LIMITS.maxHeaderClusterLines).map((line) => line.trim()).filter(Boolean);
     const fields = new Set(block.filter((line) => headerField.test(line)).map((line) => line.match(headerField)?.[1].toLowerCase()));
@@ -324,7 +429,29 @@ export function collapseQuotedHistoryText(text: string): string | null {
   });
   if (headerStart > 0 && lines.slice(0, headerStart).some((line) => line.trim())) {
     const separator = lines.slice(0, headerStart).some((line) => /^\s*[-—_]{2,}\s*$/.test(line));
-    if (separator) return lines.slice(0, headerStart).join("\n").trimEnd();
+    if (separator) return headerStart;
   }
-  return null;
+  return -1;
+}
+
+/** Returns the part of a plain-text reply before its quoted history. */
+export function collapseQuotedHistoryText(text: string, prior?: PriorThreadText): string | null {
+  const lines = text.split(/\r?\n/);
+  const visibleBefore = (cut: number) => {
+    const visible = lines.slice(0, cut).join("\n").trimEnd();
+    return visible.trim() ? visible : null;
+  };
+  const cut = structuralTextCut(lines);
+  if (!prior) return cut >= 0 ? visibleBefore(cut) : null;
+
+  const repeated = classifyRepeatedLines(lines, prior);
+  if (cut >= 0) {
+    const run = repeatedRunAbove(repeated, cut);
+    if (run.top < cut && run.matched >= LIMITS.minCorroboratingShingles) {
+      return visibleBefore(run.top) ?? visibleBefore(cut);
+    }
+    return visibleBefore(cut);
+  }
+  const run = repeatedRunAbove(repeated, lines.length);
+  return run.top < lines.length && run.matched >= LIMITS.minRepeatedRegionShingles ? visibleBefore(run.top) : null;
 }

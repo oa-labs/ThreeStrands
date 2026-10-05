@@ -16,7 +16,7 @@ import {
 } from "./emailRenderingPolicy";
 import { createEmailFontSizeController } from "./emailMinimumFontSize";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
-import { collapseQuotedHistoryHtml, collapseQuotedHistoryText } from "./quotedHistory";
+import { collapseQuotedHistoryHtml, collapseQuotedHistoryText, type PriorThreadText } from "./quotedHistory";
 import { LINKIFY_PATTERN, linkHrefFor, trimTrailingPunctuation } from "./linkify";
 import { fontFamilyStack, type FontFamily } from "./settings";
 
@@ -41,6 +41,8 @@ type SafeMessageProps = {
   emailMinimumFontSize?: number;
   fontFamily?: FontFamily;
   tone?: "default" | "current" | "muted";
+  /** Text from earlier messages in the conversation; lets repeated text (such as a signature) fold. */
+  priorThreadText?: PriorThreadText;
   /** Called with an image's resolved `src` when the reader clicks it in the message body. */
   onImageClick?: (src: string) => void;
   /**
@@ -475,6 +477,7 @@ export function SafeMessage({
   emailMinimumFontSize = 0,
   fontFamily = "system",
   tone = "default",
+  priorThreadText,
   onImageClick,
   onEnterKey,
 }: SafeMessageProps) {
@@ -495,8 +498,8 @@ export function SafeMessage({
   const [quotedHistoryExpanded, setQuotedHistoryExpanded] = useState(false);
   const imagesAllowed = loadImages || imagesAllowedForMessage;
   const sanitized = useMemo(() => sanitizeMessageHtml(html), [html]);
-  const collapsedHtml = useMemo(() => collapseQuotedHistoryHtml(sanitized), [sanitized]);
-  const collapsedText = useMemo(() => collapseQuotedHistoryText(text), [text]);
+  const collapsedHtml = useMemo(() => collapseQuotedHistoryHtml(sanitized, priorThreadText), [sanitized, priorThreadText]);
+  const collapsedText = useMemo(() => collapseQuotedHistoryText(text, priorThreadText), [text, priorThreadText]);
   const hasCollapsedHistory = collapsedHtml !== null || (!sanitized.trim() && collapsedText !== null);
   const renderedHtml = !quotedHistoryExpanded && collapsedHtml !== null ? collapsedHtml : sanitized;
   const blockedUrls = useMemo(() => extractBlockedImageUrls(renderedHtml), [renderedHtml]);

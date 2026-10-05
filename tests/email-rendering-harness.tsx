@@ -2,6 +2,7 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { SafeMessage } from "../src/SafeMessage";
 import { emailRenderingFixtures } from "../src/test/emailRenderingFixtures";
+import { threadTextIndex } from "../src/threadTextIndex";
 import "../src/styles.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -11,6 +12,14 @@ if (!fixtureName || !Object.hasOwn(emailRenderingFixtures, fixtureName)) {
   throw new Error(`Unknown email rendering fixture: ${fixtureName ?? "(missing)"}`);
 }
 const fixture = emailRenderingFixtures[fixtureName as keyof typeof emailRenderingFixtures];
+// `prior` names a fixture to index as the conversation's earlier message.
+const priorName = params.get("prior");
+if (priorName && !Object.hasOwn(emailRenderingFixtures, priorName)) {
+  throw new Error(`Unknown prior message fixture: ${priorName}`);
+}
+const priorThreadText = priorName
+  ? threadTextIndex([{ bodyText: "", bodyHtml: emailRenderingFixtures[priorName as keyof typeof emailRenderingFixtures] }]).before(1)
+  : undefined;
 
 document.documentElement.dataset.theme = theme;
 document.body.style.margin = "0";
@@ -28,7 +37,7 @@ function RenderingHarness() {
       {params.has("minimumFontSize") ? <select aria-label="Minimum email font size" value={minimum} onChange={(event) => setMinimum(Number(event.target.value))}>
         <option value={0}>Off</option><option value={18}>18 px</option><option value={22}>22 px</option>
       </select> : null}
-      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={false} emailMinimumFontSize={minimum} />
+      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={false} emailMinimumFontSize={minimum} priorThreadText={priorThreadText} />
     </div>
   );
 }

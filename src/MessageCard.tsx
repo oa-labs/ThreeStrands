@@ -11,6 +11,7 @@ import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddres
 import { errorMessage } from "./errors";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
+import type { ThreadTextIndex } from "./quotedHistory";
 import type { FontFamily } from "./settings";
 import { formatAttachmentSize, formatMailTimestamp, splitAttachmentName } from "./threadPresentation";
 
@@ -30,6 +31,8 @@ type MessageCardProps = {
   fontScale: number;
   fontFamily: FontFamily;
   emailMinimumFontSize?: number;
+  /** The conversation's text index; this card folds text repeated from messages before `index`. */
+  threadText?: ThreadTextIndex;
   onActivate: (messageId: string) => void;
   onToggle: (messageId: string, isExpanded: boolean) => void;
   onRespond: (kind: MessageResponseKind, messageId: string) => void;
@@ -56,6 +59,7 @@ export const MessageCard = memo(function MessageCard({
   fontScale,
   fontFamily,
   emailMinimumFontSize = 0,
+  threadText,
   onActivate,
   onToggle,
   onRespond,
@@ -68,6 +72,7 @@ export const MessageCard = memo(function MessageCard({
     (account) => account.email.toLocaleLowerCase() === parsedSender.email.toLocaleLowerCase(),
   );
   const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
+  const priorThreadText = useMemo(() => threadText?.before(index), [threadText, index]);
   const senderDisplayName = formatDisplayName(senderName);
   const downloadableAttachments = useMemo(() => {
     const referencedContentIds = referencedImageContentIds(message.bodyHtml);
@@ -225,6 +230,7 @@ export const MessageCard = memo(function MessageCard({
           fontFamily={fontFamily}
           emailMinimumFontSize={emailMinimumFontSize}
           tone={isLatest ? "current" : message.unread ? "default" : "muted"}
+          priorThreadText={priorThreadText}
         />
         {downloadableAttachments.length > 0 ? (
           <div className="message-attachments" aria-label="Attachments">

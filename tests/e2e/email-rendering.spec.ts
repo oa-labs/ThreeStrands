@@ -88,4 +88,16 @@ test.describe("email rendering fixtures", () => {
       await expect(body).toContainText("Earlier message content.");
     });
   }
+
+  test("folds a signature repeated from an earlier message along with the quoted history", async ({ page }) => {
+    await page.goto("/tests/email-rendering.html?theme=light&fixture=replyRepeatingSignature&prior=earlierMessageWithSignature");
+    const body = page.locator("iframe.message-body").contentFrame().locator("body");
+    await expect(body).toContainText("Fixed now.");
+    await expect(body).not.toContainText("Engineering Lead");
+    await expect(body).not.toContainText("Earlier message content.");
+
+    await page.getByRole("button", { name: "Show quoted content" }).click();
+    await expect(body).toContainText("Engineering Lead");
+    await expect(body).toContainText("Earlier message content.");
+  });
 });

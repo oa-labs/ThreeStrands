@@ -13,6 +13,7 @@ import {
   sanitizeMessageHtml,
 } from "./SafeMessage";
 import { EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, EMAIL_QUOTE_FOLDING_LIMITS } from "./emailRenderingPolicy";
+import { buildThreadTextIndex, type PriorThreadText } from "./quotedHistory";
 import { emailRenderingFixtures } from "./test/emailRenderingFixtures";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -460,6 +461,7 @@ describe("SafeMessage", () => {
   // These go through the real sanitize pass, which linkifies bare addresses
   // and so splits an attribution line across text nodes and an <a>.
   const foldSanitized = (html: string) => collapseQuotedHistoryHtml(sanitizeMessageHtml(html));
+  const foldSanitizedWith = (html: string, prior?: PriorThreadText) => collapseQuotedHistoryHtml(sanitizeMessageHtml(html), prior);
 
   it.each([
     { fixture: "replyAttributionWithLinkedAddress", current: "Thanks, that works.", quoted: "Earlier message content." },
@@ -512,6 +514,119 @@ describe("SafeMessage", () => {
     const folded = foldSanitized(`<p>Current answer</p><p>On ${"x".repeat(length)} wrote:</p><p>Earlier message content.</p>`);
     if (folds) expect(folded).toContain("Current answer");
     else expect(folded).toBeNull();
+  });
+
+  describe("repeated thread text", () => {
+    const signature = "Joel Reed<br>Engineering Lead, Example Co<br>555-0100";
+    const earlier = "Can you check the feed?\n\nJoel Reed\nEngineering Lead, Example Co\n555-0100";
+    const priorTo = (...texts: string[]) => buildThreadTextIndex(texts).before(texts.length);
+    const reply = (sig: string) => `Fixed now.<br><br>${sig}<br><br>On Mon, A. Sender wrote:<blockquote>Is the feed fixed?</blockquote>`;
+
+    it("extends a structural fold over a signature repeated from an earlier message", () => {
+      const folded = foldSanitizedWith(reply(signature), priorTo(earlier));
+      expect(folded).toContain("Fixed now.");
+      expect(folded).not.toMatch(/Engineering Lead|wrote:/);
+      expect(foldSanitizedWith(reply(signature))).toContain("Engineering Lead");
+    });
+
+    it("keeps a signature the thread has not shown before", () => {
+      expect(foldSanitizedWith(reply(signature), priorTo("Can you check the feed?"))).toContain("Engineering Lead");
+    });
+
+    it("only sees messages earlier than the one being folded", () => {
+      const index = buildThreadTextIndex(["Can you check the feed?", earlier]);
+      expect(foldSanitizedWith(reply(signature), index.before(1))).toContain("Engineering Lead");
+      expect(foldSanitizedWith(reply(signature), index.before(2))).not.toContain("Engineering Lead");
+    });
+
+    it("normalizes quote markers, case, punctuation and line wrapping", () => {
+      const index = buildThreadTextIndex(["> Alpha, BRAVO!\n> charlie\ndelta"]);
+      expect(index.before(1).has("alpha bravo charlie delta")).toBe(true);
+      expect(index.before(0).has("alpha bravo charlie delta")).toBe(false);
+    });
+
+    const words = (count: number, prefix = "w") => Array.from({ length: count }, (_, index) => `${prefix}${index}`).join(" ");
+
+    it.each([
+      { sigWords: EMAIL_QUOTE_FOLDING_LIMITS.minCorroboratingShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords - 2, folds: false },
+      { sigWords: EMAIL_QUOTE_FOLDING_LIMITS.minCorroboratingShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords - 1, folds: true },
+      { sigWords: EMAIL_QUOTE_FOLDING_LIMITS.minCorroboratingShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords, folds: true },
+    ])("extends over a $sigWords-word repeated signature: $folds", ({ sigWords, folds }) => {
+      const sig = words(sigWords, "sig");
+      const folded = foldSanitizedWith(reply(sig), priorTo(`Earlier question?\n\n${sig}`));
+      expect(folded).toContain("Fixed now.");
+      if (folds) expect(folded).not.toContain("sig0");
+      else expect(folded).toContain("sig0");
+    });
+
+    it.each([
+      { extraWords: 1, folds: true },
+      { extraWords: 2, folds: true },
+      { extraWords: 3, folds: false },
+    ])("treats a line as repeated at the coverage limit ($extraWords new words beside 8 repeated): $folds", ({ extraWords, folds }) => {
+      // 8 repeated words with 2 new ones is exactly the 0.8 coverage limit.
+      expect(EMAIL_QUOTE_FOLDING_LIMITS.minSeenLineCoverage).toBe(0.8);
+      const repeated = words(8, "sig");
+      const folded = foldSanitizedWith(reply(`${repeated} ${words(extraWords, "new")}`), priorTo(`Earlier question?\n\n${repeated}`));
+      if (folds) expect(folded).not.toContain("sig0");
+      else expect(folded).toContain("sig0");
+    });
+
+    it.each([
+      { copiedWords: EMAIL_QUOTE_FOLDING_LIMITS.minRepeatedRegionShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords - 2, folds: false },
+      { copiedWords: EMAIL_QUOTE_FOLDING_LIMITS.minRepeatedRegionShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords - 1, folds: true },
+      { copiedWords: EMAIL_QUOTE_FOLDING_LIMITS.minRepeatedRegionShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords, folds: true },
+    ])("folds an unmarked trailing copy of $copiedWords earlier words: $folds", ({ copiedWords, folds }) => {
+      const copied = words(copiedWords, "old");
+      const html = `<p>Agreed, ship it.</p><div>${copied}</div>`;
+      const folded = foldSanitizedWith(html, priorTo(copied));
+      if (folds) expect(folded).toBe("<p>Agreed, ship it.</p>");
+      else expect(folded).toBeNull();
+    });
+
+    it("confirms a lone trailing citation whose text came from the thread", () => {
+      const html = "<p>Sounds right.</p><blockquote>we should move the launch to Friday</blockquote>";
+      expect(foldSanitizedWith(html)).toBeNull();
+      expect(foldSanitizedWith(html, priorTo("I think we should move the launch to Friday."))).toBe("<p>Sounds right.</p>");
+    });
+
+    it("keeps a citation of text the thread never contained", () => {
+      const html = "<p>As the manual says:</p><blockquote>measure twice and cut once every time</blockquote>";
+      expect(foldSanitizedWith(html, priorTo("Unrelated earlier message about budgets and timelines."))).toBeNull();
+    });
+
+    it("keeps repeated text that is followed by new text", () => {
+      const copied = words(16, "old");
+      expect(foldSanitizedWith(`<p>Intro.</p><div>${copied}</div><p>But here is my new answer.</p>`, priorTo(copied))).toBeNull();
+    });
+
+    it("falls back to the structural fold when the whole current message repeats earlier text", () => {
+      const body = "Fixed now.<br><br>On Mon, A. Sender wrote:<blockquote>Is the feed fixed?</blockquote>";
+      expect(foldSanitizedWith(body, priorTo("Fixed now.\n\nOn Mon, A. Sender wrote:\nIs the feed fixed?")))
+        .toBe("Fixed now.<br><br>");
+    });
+
+    it("applies the same evidence to plain-text messages", () => {
+      const prior = priorTo(earlier);
+      const text = "Fixed now.\n\nJoel Reed\nEngineering Lead, Example Co\n555-0100\n\nOn Mon, A. Sender wrote:\n> Is the feed fixed?";
+      expect(collapseQuotedHistoryText(text, prior)).toBe("Fixed now.");
+      expect(collapseQuotedHistoryText(text)).toContain("Engineering Lead");
+
+      const copied = words(12, "old");
+      expect(collapseQuotedHistoryText(`Agreed.\n\n${copied}`, priorTo(copied))).toBe("Agreed.");
+      expect(collapseQuotedHistoryText(`Agreed.\n\n${copied}\nNew closing thought.`, priorTo(copied))).toBeNull();
+    });
+
+    it("folds repeated text in the rendered frame and keeps it sanitized", () => {
+      const html = `Fixed now.<img src="x" onerror="alert(1)"><br><br>${signature}<br><br>On Mon, A. Sender wrote:<blockquote>Is the feed fixed?</blockquote>`;
+      render(<SafeMessage html={html} priorThreadText={priorTo(earlier)} />);
+      const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+      expect(frame.srcdoc).toContain("Fixed now.");
+      expect(frame.srcdoc).not.toContain("Engineering Lead");
+      expect(frame.srcdoc).not.toMatch(/onerror|<script/);
+      fireEvent.click(screen.getByRole("button", { name: "Show quoted content" }));
+      expect(frame.srcdoc).toContain("Engineering Lead");
+    });
   });
 
   it("keeps sanitized output sanitized in both folded and expanded views", () => {

@@ -66,6 +66,14 @@ export const EMAIL_QUOTE_FOLDING_LIMITS = {
   maxHeaderClusterLines: 12,
   /** Evidence points a boundary needs, including the point for current content. */
   foldScoreThreshold: 4,
+  /** Words per shingle when matching text repeated from earlier messages in the thread. */
+  shingleWords: 4,
+  /** Fraction of a line's words that matched shingles must cover for the line to count as repeated. */
+  minSeenLineCoverage: 0.8,
+  /** Matched shingles that let a trailing run of repeated thread text fold on its own. */
+  minRepeatedRegionShingles: 8,
+  /** Matched shingles that let repeated text extend a structural fold or confirm a lone citation. */
+  minCorroboratingShingles: 3,
 } as const;
 
 const colorValue ="(#[0-9a-f]{3,8}|rgba?\\([\\d.\\s,%]+\\)|hsla?\\([\\d.\\s,%]+\\)|transparent|currentcolor|[a-z]+)";

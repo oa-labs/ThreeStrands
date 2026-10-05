@@ -77,6 +77,7 @@ import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { ThreadRow } from "./ThreadList";
 import { applySelectionGesture, type SelectionGesture } from "./threadSelection";
 import { MessageCard, type MessageResponseKind } from "./MessageCard";
+import { threadTextIndex } from "./threadTextIndex";
 import { SearchField } from "./SearchField";
 import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
 import type { Draft, OutboxItem } from "./correspondence";
@@ -307,6 +308,7 @@ export function App() {
     () => visibleDetail ? messagesWithQueuedReplies(visibleDetail, correspondence.outbox) : [],
     [visibleDetail, correspondence.outbox],
   );
+  const displayedThreadText = useMemo(() => threadTextIndex(displayedMessages), [displayedMessages]);
   const {
     messageExpansionOverrides,
     setMessageExpansionOverrides,
@@ -2626,6 +2628,7 @@ export function App() {
                     fontScale={fontScale / 100}
                     fontFamily={fontFamily}
                     emailMinimumFontSize={emailMinimumFontSize}
+                    threadText={displayedThreadText}
                     onActivate={activateMessage}
                     onToggle={toggleMessage}
                     onRespond={respondToMessage}

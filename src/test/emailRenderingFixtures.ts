@@ -112,6 +112,18 @@ export const emailRenderingFixtures = {
     "<div>My inline answer.</div>",
     "<div>&gt; Second question?</div>",
   ].join(""),
+  // Repeated-text folding: the earlier message carries the same signature
+  // the reply repeats above its quoted history.
+  earlierMessageWithSignature: `
+    <p>Can you check the feed?</p>
+    <p>A. Sender<br>Engineering Lead, Example Co<br>555-0100</p>
+  `,
+  replyRepeatingSignature: `
+    <p>Fixed now.</p>
+    <p>A. Sender<br>Engineering Lead, Example Co<br>555-0100</p>
+    <div>On Mon, Oct 5, 2026 at 9:00 AM, B. Reader &lt;reader@example.com&gt; wrote:</div>
+    <blockquote><p>Earlier message content.</p></blockquote>
+  `,
   malformed: `
     <div style="position:fixed;top:0;left:0;z-index:99;animation:spin 1s;cursor:pointer">No overlay</div>
     <img src="javascript:alert(1)"><form action="https://example.com"><input value="bad"></form>
