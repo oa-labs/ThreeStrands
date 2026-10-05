@@ -1794,7 +1794,8 @@ impl Database {
     }
 
     /// Rewrites a bounded batch of search rows queued by schema v46 so their
-    /// `body` drops quoted history repeated within the thread (see
+    /// `body` drops quoted history repeated within the thread and their
+    /// `snippet` previews the latest message without its quote (see
     /// [`crate::quoted_history::searchable_thread_text`]). Returns the number
     /// of queued threads handled; call repeatedly until it returns 0. A queued
     /// thread that no longer has a search row is simply dequeued.
@@ -1820,10 +1821,15 @@ impl Database {
                         )?
                         .query_map([thread_id], |row| resolve_body(0, row.get(0)?, row.get(1)?))?
                         .collect::<Result<_, _>>()?;
-                    let body = crate::quoted_history::searchable_thread_text(bodies.iter().map(String::as_str));
+                    let provider_snippet: String = transaction.query_row(
+                        "SELECT snippet FROM threads WHERE id = ?1",
+                        [thread_id],
+                        |row| row.get(0),
+                    )?;
+                    let text = crate::quoted_history::searchable_thread_text(bodies.iter().map(String::as_str));
                     transaction.execute(
-                        "UPDATE thread_search SET body = ?1 WHERE rowid = ?2",
-                        params![body, rowid],
+                        "UPDATE thread_search SET body = ?1, snippet = ?2 WHERE rowid = ?3",
+                        params![text.body, search_preview(&text, &provider_snippet), rowid],
                     )?;
                 }
                 transaction.execute("DELETE FROM pending_search_reindex WHERE thread_id = ?1", [thread_id])?;
@@ -2031,7 +2037,7 @@ impl Database {
         }
         let mut chronological: Vec<&NormalizedMessage> = messages.iter().collect();
         chronological.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)));
-        let body = crate::quoted_history::searchable_thread_text(
+        let text = crate::quoted_history::searchable_thread_text(
             chronological.iter().map(|message| message.body_text.as_str()),
         );
         transaction
@@ -2041,9 +2047,9 @@ impl Database {
                 params![
                     thread_id,
                     latest.subject,
-                    latest.snippet,
+                    search_preview(&text, &latest.snippet),
                     search_participants.join(" "),
-                    body
+                    text.body
                 ],
             )?;
         transaction.execute(
@@ -2779,6 +2785,16 @@ fn decode_json(value: String) -> rusqlite::Result<Vec<String>> {
     })
 }
 
+/// The search row's `snippet`: the latest message before any quoted history,
+/// or the provider's snippet when that message has no body text.
+fn search_preview(text: &crate::quoted_history::ThreadSearchText, provider_snippet: &str) -> String {
+    if text.latest_preview.is_empty() {
+        provider_snippet.to_string()
+    } else {
+        text.latest_preview.clone()
+    }
+}
+
 /// zstd-compresses message body text for the `body_html_z`/`body_text_z`
 /// columns. Encoding an in-memory byte slice cannot meaningfully fail.
 fn compress_body(text: &str) -> Vec<u8> {
@@ -3106,12 +3122,16 @@ pub(crate) mod tests {
         ]
     }
 
-    fn search_body(database: &Database, thread_id: &str) -> String {
+    fn search_column(database: &Database, column: &str, thread_id: &str) -> String {
         database
             .connection()
             .unwrap()
-            .query_row("SELECT body FROM thread_search WHERE thread_id = ?1", [thread_id], |row| row.get(0))
+            .query_row(&format!("SELECT {column} FROM thread_search WHERE thread_id = ?1"), [thread_id], |row| row.get(0))
             .unwrap()
+    }
+
+    fn search_body(database: &Database, thread_id: &str) -> String {
+        search_column(database, "body", thread_id)
     }
 
     fn search_ids(database: &Database, query: &str) -> Vec<String> {
@@ -3135,6 +3155,23 @@ pub(crate) mod tests {
         for query in ["nightly", "\"west region accounts\"", "hourly"] {
             assert_eq!(search_ids(&database, query), vec![thread_id.clone()], "{query}");
         }
+        // The provider snippet of the reply would run into its quote.
+        assert_eq!(search_column(&database, "snippet", &thread_id), "Fixed now, the hourly retry handles it.");
+        let found = database
+            .search_threads(&SearchThreadsRequest { query: "nightly".into(), limit: None, offset: None, include_archived: None }, None)
+            .unwrap();
+        assert!(found[0].match_snippet.as_deref().is_some_and(|snippet| snippet.contains("\u{1}nightly\u{2}")));
+    }
+
+    #[test]
+    fn search_snippet_falls_back_to_the_provider_snippet_for_a_message_without_text() {
+        let database = database();
+        let mut latest = message("blank", "blank-thread", "2026-10-02T09:00:00Z", "");
+        latest.snippet = "Provider preview text".into();
+        database.upsert_thread("you@example.com", &[latest]).unwrap();
+        let thread_id = local_thread_id("you@example.com", "blank-thread");
+        assert_eq!(search_column(&database, "snippet", &thread_id), "Provider preview text");
+        assert_eq!(search_ids(&database, "preview"), vec![thread_id]);
     }
 
     #[test]
@@ -3147,13 +3184,14 @@ pub(crate) mod tests {
             // Simulate a row written before v46, queued by the migration, plus
             // a queued thread whose row is gone.
             let connection = database.connection().unwrap();
-            connection.execute("UPDATE thread_search SET body = ?1 WHERE thread_id = ?2", params![full, thread_id]).unwrap();
+            connection.execute("UPDATE thread_search SET body = ?1, snippet = ?1 WHERE thread_id = ?2", params![full, thread_id]).unwrap();
             connection.execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1), ('deleted-thread')", [&thread_id]).unwrap();
         }
         assert_eq!(database.reindex_next_search_batch(1).unwrap(), 1);
         assert_eq!(database.reindex_next_search_batch(10).unwrap(), 1);
         assert_eq!(database.reindex_next_search_batch(10).unwrap(), 0);
         assert_eq!(search_body(&database, &thread_id).matches("nightly feed import").count(), 1);
+        assert_eq!(search_column(&database, "snippet", &thread_id), "Fixed now, the hourly retry handles it.");
         assert_eq!(search_ids(&database, "nightly"), vec![thread_id.clone()]);
 
         database.connection().unwrap().execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1)", [&thread_id]).unwrap();

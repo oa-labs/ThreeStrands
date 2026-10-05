@@ -3,6 +3,7 @@ import "@fontsource-variable/fraunces/full.css";
 import "@fontsource-variable/fraunces/full-italic.css";
 import "./styles.css";
 import { initKeyboardDemo } from "./keys";
+import { initNav } from "./nav";
 import { initStrands } from "./strands";
 import { initTour } from "./tour";
 
@@ -19,14 +20,6 @@ function localizeModifierKeys() {
   for (const element of document.querySelectorAll<HTMLElement>("[data-mod-enter]")) {
     element.textContent = "Ctrl ↩";
   }
-}
-
-function initNav() {
-  const nav = document.querySelector<HTMLElement>("[data-nav]");
-  if (!nav) return;
-  const update = () => nav.toggleAttribute("data-scrolled", window.scrollY > 24);
-  update();
-  window.addEventListener("scroll", update, { passive: true });
 }
 
 function initHeroThemeSwitch() {

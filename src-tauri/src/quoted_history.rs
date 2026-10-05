@@ -19,6 +19,9 @@ pub const MIN_QUOTE_RUN_LINES: usize = 5;
 pub const WRAPPED_ATTRIBUTION_LOOKAHEAD_LINES: usize = 3;
 pub const MAX_ATTRIBUTION_LENGTH: usize = 500;
 pub const MAX_HEADER_CLUSTER_LINES: usize = 12;
+/// Characters of a search row's preview of the latest message, about the
+/// length of a provider snippet.
+pub const SEARCH_PREVIEW_CHARS: usize = 200;
 
 /// Shingles of the text already recorded for a thread, oldest message first.
 #[derive(Default)]
@@ -81,6 +84,20 @@ impl ThreadHistory {
             .map_or(body.len(), |line| lines[line].0)
     }
 
+    /// Byte length of `body` before any quoted history, for a preview: the
+    /// shorter of [`Self::new_text_len`] and a structural boundary (an
+    /// attribution, `>` run or header block) with text above it. Unlike
+    /// `new_text_len` this also cuts at a quote with no recorded copy, so it
+    /// suits text that is always kept in full somewhere else.
+    pub fn preview_text_len(&self, body: &str) -> usize {
+        let new_len = self.new_text_len(body);
+        let lines = split_lines(body);
+        let texts: Vec<&str> = lines.iter().map(|(_, text)| *text).collect();
+        structural_cut(&texts)
+            .filter(|(cut, _)| texts[..*cut].iter().any(|text| !line_words(text).is_empty()))
+            .map_or(new_len, |(cut, _)| new_len.min(lines[cut].0))
+    }
+
     fn classify(&self, lines: &[&str]) -> Vec<Repeated> {
         let mut words: Vec<(String, usize)> = Vec::new();
         for (index, line) in lines.iter().enumerate() {
@@ -122,17 +139,31 @@ impl ThreadHistory {
     }
 }
 
-/// A thread's message bodies, oldest first, as its search row indexes them:
-/// each body minus a trailing region that repeats an earlier body in the same
-/// thread. The earliest copy of any text is never removed — nothing precedes
-/// it — so the row loses no phrase it held before. Words in a removed region
-/// that the thread has not used yet (a line counts as repeated at
-/// `MIN_SEEN_LINE_COVERAGE`, not 100%) are kept, so every word stays searchable.
-pub fn searchable_thread_text<'a>(bodies: impl IntoIterator<Item = &'a str>) -> String {
+/// What a thread's search row indexes from its message bodies.
+pub struct ThreadSearchText {
+    /// Each body minus a trailing region that repeats an earlier body in the
+    /// same thread. The earliest copy of any text is never removed — nothing
+    /// precedes it — so the row loses no phrase it held before. Words in a
+    /// removed region that the thread has not used yet (a line counts as
+    /// repeated at `MIN_SEEN_LINE_COVERAGE`, not 100%) are kept, so every
+    /// word stays searchable.
+    pub body: String,
+    /// The latest message before any quoted history, whitespace collapsed and
+    /// capped at `SEARCH_PREVIEW_CHARS`; empty when that message has no text.
+    /// Everything here is also in `body`, so cutting at an unconfirmed quote
+    /// loses no matches.
+    pub latest_preview: String,
+}
+
+/// Search text for a thread's message bodies, oldest first.
+pub fn searchable_thread_text<'a>(bodies: impl IntoIterator<Item = &'a str>) -> ThreadSearchText {
     let mut history = ThreadHistory::default();
     let mut used: HashSet<String> = HashSet::new();
     let mut out = String::new();
+    let mut latest_preview = String::new();
     for body in bodies {
+        let preview = &body[..history.preview_text_len(body)];
+        latest_preview = preview.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(SEARCH_PREVIEW_CHARS).collect();
         let new_len = history.new_text_len(body);
         let (new_text, removed) = body.split_at(new_len);
         out.push_str(new_text);
@@ -147,7 +178,7 @@ pub fn searchable_thread_text<'a>(bodies: impl IntoIterator<Item = &'a str>) -> 
         history.remember(body);
         used.extend(body.lines().flat_map(line_words));
     }
-    out
+    ThreadSearchText { body: out, latest_preview }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -213,7 +244,9 @@ fn is_separator_marker(line: &str) -> bool {
 
 fn opens_attribution(line: &str) -> bool {
     let trimmed = line.trim_start();
-    trimmed.len() > 3 && trimmed[..3].eq_ignore_ascii_case("on ") && trimmed[3..].chars().next().is_some_and(|c| !c.is_whitespace())
+    // `get` rather than indexing: a line may start with a multibyte character.
+    trimmed.get(..3).is_some_and(|prefix| prefix.eq_ignore_ascii_case("on "))
+        && trimmed.get(3..).and_then(|rest| rest.chars().next()).is_some_and(|c| !c.is_whitespace())
 }
 
 /// When an attribution or separator starts at `index`, the line after it.
@@ -397,6 +430,16 @@ mod tests {
     }
 
     #[test]
+    fn handles_lines_that_start_with_multibyte_characters() {
+        let recorded = "日本語のメッセージ 本文 です 確認 お願い します 今日 明日 来週";
+        for line in ["é", "éé", "日本", "🙂 ok", "Oñ Monday"] {
+            let body = format!("{line}\n\nOn Mon, A wrote:\n> {recorded}");
+            assert!(history(&[recorded]).new_text_len(&body) <= body.len(), "{line}");
+            assert!(history(&[recorded]).preview_text_len(&body) <= body.len(), "{line}");
+        }
+    }
+
+    #[test]
     fn treats_crlf_bodies_like_lf_bodies() {
         let recorded = words(12, "old");
         let body = format!("Reply.\r\n\r\nOn Mon, A wrote:\r\n> {recorded}\r\n");
@@ -443,7 +486,7 @@ mod tests {
         let reply = format!("Fixed now.\n\nOn Mon, A wrote:\n> {original}");
         // A quote with one word edited still counts as repeated (at least 80% covered).
         let edited = format!("Thanks!\n\nOn Tue, B wrote:\n> Fixed now.\n>\n> On Mon, A wrote:\n> > {}", original.replace("nightly", "hourly"));
-        let text = searchable_thread_text([original, reply.as_str(), edited.as_str()]);
+        let text = searchable_thread_text([original, reply.as_str(), edited.as_str()]).body;
         assert_eq!(text.matches("nightly feed import").count(), 1);
         assert!(text.contains("Fixed now."));
         assert!(text.contains("Thanks!"));
@@ -454,7 +497,34 @@ mod tests {
     #[test]
     fn search_text_keeps_quotes_with_no_earlier_copy() {
         let reply = "Fixed now.\n\nOn Mon, A wrote:\n> The only copy of a message that is not stored here.";
-        assert_eq!(searchable_thread_text([reply]), format!("{reply} "));
+        assert_eq!(searchable_thread_text([reply]).body, format!("{reply} "));
+    }
+
+    #[test]
+    fn search_preview_is_the_latest_message_before_any_quote() {
+        let original = "Can you check whether the nightly feed import still fails?";
+        let reply = format!("Fixed   now,\nthe hourly retry handles it.\n\nOn Mon, A wrote:\n> {original}");
+        assert_eq!(searchable_thread_text([original, reply.as_str()]).latest_preview, "Fixed now, the hourly retry handles it.");
+        // A quote with no earlier copy stays in `body` but not in the preview.
+        let lone = "Thanks!\n\nOn Mon, A wrote:\n> The only copy of a message that is not stored here.";
+        let text = searchable_thread_text([lone]);
+        assert_eq!(text.latest_preview, "Thanks!");
+        assert!(text.body.contains("The only copy"));
+        // A body that is only a quote keeps it, so the preview is never empty for a message with text.
+        assert_eq!(searchable_thread_text(["On Mon, A wrote:\n> hello"]).latest_preview, "On Mon, A wrote: > hello");
+        assert_eq!(searchable_thread_text([original, ""]).latest_preview, "");
+    }
+
+    #[test]
+    fn search_preview_is_capped_at_the_preview_length() {
+        for (length, kept) in [
+            (SEARCH_PREVIEW_CHARS - 1, SEARCH_PREVIEW_CHARS - 1),
+            (SEARCH_PREVIEW_CHARS, SEARCH_PREVIEW_CHARS),
+            (SEARCH_PREVIEW_CHARS + 1, SEARCH_PREVIEW_CHARS),
+        ] {
+            let body = "é".repeat(length);
+            assert_eq!(searchable_thread_text([body.as_str()]).latest_preview.chars().count(), kept);
+        }
     }
 
     #[test]

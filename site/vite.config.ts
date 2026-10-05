@@ -102,6 +102,11 @@ export default defineConfig({
     emptyOutDir: true,
     target: "es2022",
     assetsInlineLimit: 0,
-    rollupOptions: { input: path.join(siteRoot, "index.html") },
+    rollupOptions: {
+      input: {
+        index: path.join(siteRoot, "index.html"),
+        privacy: path.join(siteRoot, "privacy.html"),
+      },
+    },
   },
 });
