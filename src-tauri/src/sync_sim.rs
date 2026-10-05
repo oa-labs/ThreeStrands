@@ -142,10 +142,22 @@ impl Sim {
     async fn sync(&self, index: usize) -> Option<String> {
         let device = &self.devices[index];
         let transports = &self.transports;
-        if let Err(error) = run_enrollment_sweep(&device.database, &device.identity, &device.epoch_keys, transports).await {
+        let must_rotate = match run_enrollment_sweep(&device.database, &device.identity, &device.epoch_keys, transports).await {
+            Ok(must_rotate) => must_rotate,
             // An injected outage can fail a sweep; it simply runs again next round.
-            if !error.contains("transient") {
-                self.fail(format!("{} sweep: {error}", device.name));
+            Err(error) => {
+                if !error.contains("transient") {
+                    self.fail(format!("{} sweep: {error}", device.name));
+                }
+                false
+            }
+        };
+        if must_rotate {
+            let keys = local_keys_for(&device.database, &device.identity, &device.epoch_keys);
+            if let Err(error) = rotate_epoch(&device.database, &device.identity, &keys, &device.epoch_keys, transports, None).await {
+                if !error.contains("transient") {
+                    self.fail(format!("{} collision rotation: {error}", device.name));
+                }
             }
         }
         let keys = local_keys_for(&device.database, &device.identity, &device.epoch_keys);

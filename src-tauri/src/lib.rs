@@ -1350,10 +1350,16 @@ fn reconcile_account_registry(handle: &tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let Some(state) = handle.try_state::<AppState>() else { return; };
         let catalog = state.database.list_accounts().unwrap_or_default().into_iter().map(|account| account.email).collect::<HashSet<_>>();
-        let mut accounts = state.accounts.lock().await;
-        let removed = accounts.keys().filter(|email| *email != auth::LEGACY_KEY && !catalog.contains(*email)).cloned().collect::<Vec<_>>();
-        for email in removed {
-            if let Some(account) = accounts.remove(&email) { account.poll_task.abort(); }
+        let removed = {
+            let mut accounts = state.accounts.lock().await;
+            let emails = accounts.keys().filter(|email| *email != auth::LEGACY_KEY && !catalog.contains(*email)).cloned().collect::<Vec<_>>();
+            emails.into_iter().filter_map(|email| accounts.remove(&email)).collect::<Vec<_>>()
+        };
+        // The deletion already purged local data, so also stop runs started
+        // outside the polling loop before they write any more of it back.
+        for account in removed {
+            account.poll_task.abort();
+            account.sync.retire().await;
         }
     });
 }
@@ -1824,14 +1830,31 @@ async fn remove_account_internal(
         .auth_config
         .mail_account(catalogued_mail_provider(&state.database, &email)?, &email)?;
     state.database.pause_ready_sends_for(&email)?;
+    // Stop every sync run for the account before purging, including ones
+    // started outside the polling loop (foreground, backfill, manual
+    // refresh): a run still waiting on the provider would otherwise write
+    // the account's threads and cursor back after the purge.
+    let service = state.accounts.lock().await.get(&email).map(|connected| connected.sync.clone());
+    if let Some(service) = &service {
+        service.retire().await;
+    }
     // Purge local data first: if this fails, the account is untouched and
     // its credentials are still live, so the caller can safely retry rather
     // than being left with a still-listed account whose credentials are
     // already gone.
-    if !remove_catalog && state.database.cross_device_sync_enrolled()? {
-        state.database.disconnect_account_locally(&email)?;
-    } else {
-        state.database.remove_account(&email)?;
+    let purged = (|| -> Result<(), String> {
+        if !remove_catalog && state.database.cross_device_sync_enrolled()? {
+            state.database.disconnect_account_locally(&email)?;
+        } else {
+            state.database.remove_account(&email)?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = purged {
+        if let Some(service) = &service {
+            service.resume();
+        }
+        return Err(error);
     }
     let result = match state.accounts.lock().await.remove(&email) {
         Some(connected) => {

@@ -18,7 +18,6 @@
 //! `Database::record_local_entity_deletion` in `sync_projection.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -244,23 +243,42 @@ impl Database {
         Ok(repaired)
     }
 
-    /// True while an already-authenticated remote (or conflict-resolution)
-    /// operation is being applied. A shared materializer checks this before
-    /// calling [`Self::record_replicated_write`] / [`Self::record_replicated_deletion`]
-    /// so projecting a remote write never re-enqueues it as a new local
-    /// write — the echo-prevention the plan calls for.
+    /// True while the calling thread is applying an already-authenticated
+    /// remote (or conflict-resolution) operation. A shared materializer
+    /// checks this before calling [`Self::record_replicated_write`] /
+    /// [`Self::record_replicated_deletion`] so projecting a remote write
+    /// never re-enqueues it as a new local write — the echo-prevention the
+    /// plan calls for. Other threads are unaffected, so a local edit made
+    /// while a projection runs is still recorded.
     pub(crate) fn is_projecting_remote_operation(&self) -> bool {
-        self.replicated_sync_projecting.load(Ordering::SeqCst)
+        projecting_threads(self).contains_key(&std::thread::current().id())
     }
 
-    /// Runs `work` with remote-projection suppression engaged. Always
-    /// restores the flag afterward, including when `work` returns an error.
+    /// Runs `work` with remote-projection suppression engaged for the
+    /// calling thread. `work` is synchronous, so the projection cannot hop
+    /// threads. Always restores the previous state afterward, including
+    /// when `work` returns an error or panics.
     /// Wraps `materialize_touched_entities`'s projection of a merged snapshot.
     pub(crate) fn with_remote_projection<R>(&self, work: impl FnOnce() -> Result<R, String>) -> Result<R, String> {
-        self.replicated_sync_projecting.store(true, Ordering::SeqCst);
-        let result = work();
-        self.replicated_sync_projecting.store(false, Ordering::SeqCst);
-        result
+        struct Projection<'a> {
+            database: &'a Database,
+            thread: std::thread::ThreadId,
+        }
+        impl Drop for Projection<'_> {
+            fn drop(&mut self) {
+                let mut threads = projecting_threads(self.database);
+                if let Some(depth) = threads.get_mut(&self.thread) {
+                    *depth -= 1;
+                    if *depth == 0 {
+                        threads.remove(&self.thread);
+                    }
+                }
+            }
+        }
+        let thread = std::thread::current().id();
+        *projecting_threads(self).entry(thread).or_insert(0) += 1;
+        let _projection = Projection { database: self, thread };
+        work()
     }
 
     /// Validates a fully resolved entity payload and checks any known
@@ -488,6 +506,30 @@ impl Database {
             connection.execute(
                 "INSERT INTO sync_devices(device_id, public_key, x25519_public, status) VALUES (?1,?2,?3,'active')
                  ON CONFLICT(device_id) DO UPDATE SET public_key=excluded.public_key, x25519_public=excluded.x25519_public, status='active'",
+                params![encode_id(device_id), verifying_key.to_bytes().to_vec(), x25519_public.to_vec()],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Adopts one device from a peer's roster snapshot. Like
+    /// [`Self::trust_device_keys`], except that a device this database has
+    /// already revoked stays revoked with its keys untouched. Revocation is
+    /// permanent for a device id (leaving a sync group discards the id), and
+    /// rosters can arrive out of order: an older rotation or a lagging key
+    /// share still lists the device as active and must not undo a newer
+    /// revocation.
+    pub(crate) fn trust_roster_device_keys(
+        &self,
+        device_id: &[u8; 16],
+        verifying_key: &VerifyingKey,
+        x25519_public: &[u8; 32],
+    ) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO sync_devices(device_id, public_key, x25519_public, status) VALUES (?1,?2,?3,'active')
+                 ON CONFLICT(device_id) DO UPDATE SET public_key=excluded.public_key, x25519_public=excluded.x25519_public, status='active'
+                 WHERE sync_devices.status <> 'revoked'",
                 params![encode_id(device_id), verifying_key.to_bytes().to_vec(), x25519_public.to_vec()],
             )?;
             Ok(())
@@ -1135,6 +1177,12 @@ async fn publish_local_head(database: &Database, keys: &LocalKeys, transports: &
             ),
         }
     }
+}
+
+/// The per-thread projection depths. The map holds plain counters that are
+/// always left consistent, so a poisoned lock is safe to recover.
+fn projecting_threads(database: &Database) -> std::sync::MutexGuard<'_, std::collections::HashMap<std::thread::ThreadId, usize>> {
+    database.replicated_sync_projecting.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Database {
@@ -1820,7 +1868,7 @@ impl ReplicatedSync {
             return Ok(());
         }
         let identity = self.database.local_device_identity()?;
-        if let Err(error) = crate::enrollment::run_enrollment_sweep(
+        let must_rotate = match crate::enrollment::run_enrollment_sweep(
             &self.database,
             &identity,
             &crate::enrollment::KeychainEpochKeyStore,
@@ -1828,8 +1876,12 @@ impl ReplicatedSync {
         )
         .await
         {
-            log::warn!(target: "replicated_sync", "enrollment sweep failed: {error}");
-        }
+            Ok(must_rotate) => must_rotate,
+            Err(error) => {
+                log::warn!(target: "replicated_sync", "enrollment sweep failed: {error}");
+                false
+            }
+        };
 
         // A device that has not finished enrollment yet (no epoch key)
         // still benefits from the sweep above; it just has nothing to
@@ -1844,6 +1896,16 @@ impl ReplicatedSync {
                 return Ok(());
             }
         };
+        // Another device created our active epoch with a different key at
+        // the same moment, and this device is the one that resolves it. If
+        // the rotation fails, the colliding object stays unseen and the next
+        // cycle tries again.
+        if must_rotate {
+            match crate::enrollment::rotate_epoch(&self.database, &identity, &keys, &crate::enrollment::KeychainEpochKeyStore, &transports, None).await {
+                Ok(()) => keys = self.database.local_replicated_keys()?,
+                Err(error) => log::warn!(target: "replicated_sync", "rotating to resolve an epoch collision failed: {error}"),
+            }
+        }
         // Admit or refuse join-code redemptions and expire old codes; a
         // closed invitation rotates the epoch, so reload the keys after.
         match crate::enrollment::process_join_codes(
@@ -1895,6 +1957,7 @@ impl ReplicatedSync {
     /// configured transport already holds a space, unless the user
     /// explicitly chose to start a separate one.
     pub async fn begin_genesis(&self, allow_existing_space: bool) -> Result<String, String> {
+        let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
         crate::enrollment::begin_genesis(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports, allow_existing_space).await
@@ -1910,6 +1973,7 @@ impl ReplicatedSync {
     /// Publishes a signed enrollment request for this (new) device and
     /// returns its fingerprint for display.
     pub async fn request_enrollment(&self) -> Result<String, String> {
+        let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
         crate::enrollment::publish_enrollment_request(&self.database, &identity, &transports).await
@@ -1917,6 +1981,7 @@ impl ReplicatedSync {
 
     /// Approves a pending incoming request, publishing a grant.
     pub async fn approve_enrollment_request(&self, request_id_hex: &str) -> Result<(), String> {
+        let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let keys = self.database.local_replicated_keys()?;
         let transports = build_configured_transports(&self.database).await;
@@ -1926,6 +1991,7 @@ impl ReplicatedSync {
     /// Rejects an incoming request and publishes the signed group-wide
     /// decision to every configured connector.
     pub async fn reject_enrollment_request(&self, request_id_hex: &str) -> Result<(), String> {
+        let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
         crate::enrollment::reject_enrollment_request(&self.database, &identity, request_id_hex, &transports).await
@@ -1933,12 +1999,17 @@ impl ReplicatedSync {
 
     /// Imports a staged grant after the user confirms its fingerprint.
     pub async fn confirm_enrollment(&self, request_id_hex: &str) -> Result<(), String> {
+        let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         crate::enrollment::confirm_and_import_grant(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, request_id_hex).await
     }
 
-    /// Rotates the active epoch, optionally revoking a device.
+    /// Rotates the active epoch, optionally revoking a device. This and the
+    /// other commands that change enrollment or keys hold the sync gate, so
+    /// they never interleave with a cycle that has already loaded the
+    /// current epoch's keys (or with that cycle's own rotations).
     pub async fn rotate_epoch(&self, revoke_device_id_hex: Option<&str>) -> Result<(), String> {
+        let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let keys = self.database.local_replicated_keys()?;
         let transports = build_configured_transports(&self.database).await;
@@ -1962,6 +2033,7 @@ impl ReplicatedSync {
         connectors: &[crate::enrollment::JoinCodeConnectorChoice],
         expires_in_hours: u32,
     ) -> Result<String, String> {
+        let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let keys = self
             .database
@@ -2022,6 +2094,7 @@ impl ReplicatedSync {
 
     /// Joins an existing sync space using only a recovery phrase.
     pub async fn join_with_recovery_phrase(&self, phrase: &str) -> Result<(), String> {
+        let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
         crate::enrollment::join_with_recovery_phrase(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, phrase, &transports).await
@@ -2201,6 +2274,54 @@ mod tests {
         assert_eq!(known, vec![ENTITY_EXISTENCE_FIELD.to_string(), "name".to_string()]);
         assert!(db.entity_recorded(EntityType::Snippet, "one").unwrap());
         assert!(!db.entity_recorded(EntityType::Snippet, "two").unwrap());
+    }
+
+    #[test]
+    fn remote_projection_does_not_suppress_a_local_write_on_another_thread() {
+        let db = Arc::new(Database::open_memory());
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let projecting = {
+            let db = Arc::clone(&db);
+            std::thread::spawn(move || {
+                db.with_remote_projection(|| {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    db.record_replicated_write(EntityType::Snippet, "remote", &fields(&["name"]), &json!({"name": "r"}))
+                })
+                .unwrap();
+            })
+        };
+        entered_rx.recv().unwrap();
+        // A local command on another thread, mid-projection.
+        assert!(!db.is_projecting_remote_operation());
+        db.record_replicated_write(EntityType::Snippet, "local", &fields(&["name"]), &json!({"name": "l"})).unwrap();
+        release_tx.send(()).unwrap();
+        projecting.join().unwrap();
+        assert!(!values(&db, "local").is_empty());
+        assert!(values(&db, "remote").is_empty());
+    }
+
+    #[test]
+    fn nested_remote_projection_stays_engaged_until_the_outer_call_ends() {
+        let db = Database::open_memory();
+        db.with_remote_projection(|| {
+            db.with_remote_projection(|| Ok(()))?;
+            assert!(db.is_projecting_remote_operation());
+            Ok(())
+        })
+        .unwrap();
+        assert!(!db.is_projecting_remote_operation());
+    }
+
+    #[test]
+    fn remote_projection_flag_is_restored_after_a_panic() {
+        let db = Database::open_memory();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            db.with_remote_projection::<()>(|| panic!("boom"))
+        }));
+        assert!(result.is_err());
+        assert!(!db.is_projecting_remote_operation());
     }
 
     #[test]

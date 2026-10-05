@@ -1,7 +1,8 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard},
+    thread::ThreadId,
 };
 
 use chrono::Utc;
@@ -403,13 +404,14 @@ pub struct Database {
     /// `None` only for the in-memory test database, which has no file to
     /// snapshot or checkpoint alongside.
     path: Option<PathBuf>,
-    /// Set for the duration of applying an already-authenticated remote (or
-    /// conflict-resolution) operation into local tables, so the shared
-    /// materializer path used by both local commands and that projection
-    /// does not re-enqueue the projected write as a new local event. See
-    /// `replicated_sync.rs`. Unused while nothing calls
-    /// `with_remote_projection`.
-    pub(crate) replicated_sync_projecting: AtomicBool,
+    /// Threads currently applying an already-authenticated remote (or
+    /// conflict-resolution) operation into local tables, with their nesting
+    /// depth, so the shared materializer path used by both local commands
+    /// and that projection does not re-enqueue the projected write as a new
+    /// local event. Scoped per thread: a local command running on another
+    /// thread while a projection is in progress must still be recorded. See
+    /// `replicated_sync.rs`.
+    pub(crate) replicated_sync_projecting: Mutex<HashMap<ThreadId, usize>>,
 }
 
 impl Database {
@@ -443,7 +445,7 @@ impl Database {
         let database=Self {
             connection: Mutex::new(connection),
             path: Some(path.to_path_buf()),
-            replicated_sync_projecting: AtomicBool::new(false),
+            replicated_sync_projecting: Mutex::new(HashMap::new()),
         };
         // v44 reindexes stored recipients that strict address parsing skipped.
         if version_before_migration<44 { database.rebuild_contact_interactions().map_err(|error|OpenError::Other(error.to_string()))?; }
@@ -462,7 +464,7 @@ impl Database {
         let database=Self {
             connection: Mutex::new(connection),
             path: None,
-            replicated_sync_projecting: AtomicBool::new(false),
+            replicated_sync_projecting: Mutex::new(HashMap::new()),
         };
         database.rebuild_contact_interactions().unwrap();
         database

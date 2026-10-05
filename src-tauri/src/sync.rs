@@ -1,11 +1,12 @@
 use std::{
     collections::HashSet,
+    future::Future,
     sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
 
 use rand::Rng;
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 
 use crate::{
     auth::AccountAuth,
@@ -51,8 +52,14 @@ pub struct SyncService {
     database: Arc<Database>,
     auth: AccountAuth,
     gate: Arc<Mutex<()>>,
+    /// Set while the account is being removed; see [`Self::retire`]. Shared
+    /// by every clone, so it reaches runs started outside the polling loop.
+    retired: Arc<watch::Sender<bool>>,
     last_attempt: Arc<StdMutex<Option<Instant>>>,
 }
+
+/// Returned by a sync attempt on an account that is being removed.
+pub(crate) const ACCOUNT_REMOVED: &str = "This account was removed";
 
 pub fn should_skip_stale_sync(
     last_attempt: Option<Instant>,
@@ -68,8 +75,43 @@ impl SyncService {
             database,
             auth,
             gate: Arc::new(Mutex::new(())),
+            retired: Arc::new(watch::Sender::new(false)),
             last_attempt: Arc::new(StdMutex::new(None)),
         }
+    }
+
+    /// Runs `work` holding the account's sync gate, unless the account is
+    /// retired: then it returns `None` without starting, or drops `work` at
+    /// its next await if retirement arrives mid-run. Every database write is
+    /// its own synchronous transaction, so a dropped run leaves nothing
+    /// half-applied. All work that writes the account's mail goes through
+    /// here.
+    async fn exclusive<T>(&self, work: impl Future<Output = T>) -> Option<T> {
+        let mut retired = self.retired.subscribe();
+        tokio::select! {
+            _ = retired.wait_for(|retired| *retired) => None,
+            result = async {
+                let _guard = self.gate.lock().await;
+                if *self.retired.borrow() {
+                    return None;
+                }
+                Some(work.await)
+            } => result,
+        }
+    }
+
+    /// Stops sync work for this account across every clone of the service,
+    /// and returns once no run is in progress. Account removal calls this
+    /// before purging local data, so a run that was waiting on the provider
+    /// cannot write the account's threads or cursor back afterwards.
+    pub(crate) async fn retire(&self) {
+        self.retired.send_replace(true);
+        let _guard = self.gate.lock().await;
+    }
+
+    /// Undoes [`Self::retire`] when removal fails and the account stays.
+    pub(crate) fn resume(&self) {
+        self.retired.send_replace(false);
     }
 
     /// Whether this service's account currently has usable Google credentials.
@@ -105,7 +147,12 @@ impl SyncService {
     /// any local mail, so the polling loop can skip notifying the UI after a
     /// poll that found nothing new.
     async fn sync_provider_reporting_changes(&self) -> ProviderResult<(SyncStatus, bool)> {
-        let _guard = self.gate.lock().await;
+        self.exclusive(self.sync_provider_reporting_changes_locked())
+            .await
+            .unwrap_or_else(|| Err(ProviderError::Other(ACCOUNT_REMOVED.into())))
+    }
+
+    async fn sync_provider_reporting_changes_locked(&self) -> ProviderResult<(SyncStatus, bool)> {
         let account_id = self.account_id();
         let provider = self.auth.provider();
         let result = sync_with(self.database.as_ref(), &account_id, provider.as_ref()).await;
@@ -147,11 +194,14 @@ impl SyncService {
         if !self.auth.available() {
             return Ok(self.database.sync_status(&account_id)?);
         }
-        let _guard = self.gate.lock().await;
-        let provider = self.auth.provider();
-        if let Err(error) =
-            flush_pending_with(self.database.as_ref(), &account_id, provider.as_ref()).await
-        {
+        let flushed = self
+            .exclusive(async {
+                let provider = self.auth.provider();
+                flush_pending_with(self.database.as_ref(), &account_id, provider.as_ref()).await
+            })
+            .await
+            .ok_or_else(|| ACCOUNT_REMOVED.to_string())?;
+        if let Err(error) = flushed {
             let message = error.to_string();
             self.database.fail_sync(&account_id, &message)?;
             return Err(message);
@@ -166,24 +216,27 @@ impl SyncService {
         if query.trim().is_empty() || !self.is_connected() {
             return Ok(());
         }
-        let _guard = self.gate.lock().await;
-        let account_id = self.account_id();
-        let provider = self.auth.provider();
-        // Local search still works without this; a provider that cannot look
-        // past the local index simply has nothing to contribute, so asking is
-        // a guaranteed round trip to an error.
-        if !provider.capabilities().server_search {
-            return Ok(());
-        }
-        search_and_ingest_missing(
-            self.database.as_ref(),
-            &account_id,
-            provider.as_ref(),
-            query,
-            REMOTE_SEARCH_SCAN_LIMIT,
-        )
+        self.exclusive(async {
+            let account_id = self.account_id();
+            let provider = self.auth.provider();
+            // Local search still works without this; a provider that cannot
+            // look past the local index simply has nothing to contribute, so
+            // asking is a guaranteed round trip to an error.
+            if !provider.capabilities().server_search {
+                return Ok(());
+            }
+            search_and_ingest_missing(
+                self.database.as_ref(),
+                &account_id,
+                provider.as_ref(),
+                query,
+                REMOTE_SEARCH_SCAN_LIMIT,
+            )
+            .await
+            .map_err(|error| error.to_string())
+        })
         .await
-        .map_err(|error| error.to_string())
+        .unwrap_or(Ok(()))
     }
 
     pub async fn create_label(&self, name: &str) -> Result<Label, String> {
@@ -263,9 +316,11 @@ impl SyncService {
         if !due {
             return;
         }
-        let _guard = self.gate.lock().await;
-        let provider = self.auth.provider();
-        let _ = reconcile_and_mark(self.database.as_ref(), &account_id, provider.as_ref()).await;
+        self.exclusive(async {
+            let provider = self.auth.provider();
+            let _ = reconcile_and_mark(self.database.as_ref(), &account_id, provider.as_ref()).await;
+        })
+        .await;
     }
 }
 
@@ -852,6 +907,57 @@ mod tests {
         mime::{MimeBody, MimeHeader, MimePart, RawMessage},
         provider::{SyncBatch, ThreadPage},
     };
+
+    fn offline_service() -> SyncService {
+        let credential = crate::auth::OAuthCredential::in_memory_for_test(
+            "http://127.0.0.1:9/token",
+            crate::auth::Tokens { access_token: "token".into(), refresh_token: Some("refresh".into()), expires_at: u64::MAX },
+        );
+        SyncService::new(Arc::new(Database::open_memory()), AccountAuth::Gmail(credential))
+    }
+
+    #[tokio::test]
+    async fn retiring_an_account_drops_a_run_in_flight_on_another_clone_before_it_writes() {
+        let service = offline_service();
+        let foreground = service.clone();
+        let writes = Arc::new(AtomicUsize::new(0));
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (provider_tx, provider_rx) = tokio::sync::oneshot::channel::<()>();
+        let run = tokio::spawn({
+            let writes = Arc::clone(&writes);
+            async move {
+                foreground
+                    .exclusive(async {
+                        entered_tx.send(()).unwrap();
+                        // Waiting on the provider, then writing what it returned.
+                        let _ = provider_rx.await;
+                        writes.fetch_add(1, Ordering::SeqCst);
+                    })
+                    .await
+            }
+        });
+        entered_rx.await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), service.retire()).await.expect("retire waits only for the run to stop");
+        let _ = provider_tx.send(());
+        assert_eq!(run.await.unwrap(), None);
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+
+        // Later runs on any clone don't start.
+        let later = service.clone().exclusive(async { writes.fetch_add(1, Ordering::SeqCst) }).await;
+        assert_eq!(later, None);
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+        let error = service.sync().await.unwrap_err();
+        assert!(error.contains(ACCOUNT_REMOVED), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_removal_resumes_sync_for_the_account() {
+        let service = offline_service();
+        service.retire().await;
+        service.resume();
+        assert_eq!(service.clone().exclusive(async { 7 }).await, Some(7));
+    }
 
     struct ContractProvider {
         invalidate_stale_cursor: AtomicBool,

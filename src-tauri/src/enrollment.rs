@@ -72,6 +72,7 @@ fn now_ms() -> i64 {
 /// from a test.
 pub(crate) trait EpochKeyStore: Send + Sync {
     fn store(&self, key_epoch: u32, key: &[u8; 32]) -> Result<(), String>;
+    fn load(&self, key_epoch: u32) -> Result<Option<[u8; 32]>, String>;
 }
 
 pub(crate) struct KeychainEpochKeyStore;
@@ -79,6 +80,28 @@ pub(crate) struct KeychainEpochKeyStore;
 impl EpochKeyStore for KeychainEpochKeyStore {
     fn store(&self, key_epoch: u32, key: &[u8; 32]) -> Result<(), String> {
         crate::replicated_sync::store_epoch_key(key_epoch, key)
+    }
+
+    fn load(&self, key_epoch: u32) -> Result<Option<[u8; 32]>, String> {
+        crate::replicated_sync::load_epoch_key(key_epoch)
+    }
+}
+
+/// Stores a key for an epoch received from a peer, unless this device
+/// already holds a *different* key for that epoch. Returns whether the key
+/// is now the one held. Two devices that rotate at the same moment can both
+/// create epoch N with different keys; replacing ours would strand
+/// everything already sealed under it, and the two devices would simply
+/// swap keys. The first key held stays, and the collision is resolved by a
+/// fresh rotation instead (see [`RotationOutcome::Collision`]).
+fn adopt_epoch_key(epoch_keys: &dyn EpochKeyStore, key_epoch: u32, key: &[u8; 32]) -> Result<bool, String> {
+    match epoch_keys.load(key_epoch)? {
+        Some(existing) if existing != *key => Ok(false),
+        Some(_) => Ok(true),
+        None => {
+            epoch_keys.store(key_epoch, key)?;
+            Ok(true)
+        }
     }
 }
 
@@ -189,8 +212,9 @@ pub(crate) fn store_earlier_epoch_keys(
     source_cid: &str,
 ) -> Result<(), String> {
     for (key_epoch, key) in earlier {
-        epoch_keys.store(*key_epoch, key)?;
-        database.record_epoch_activation(*key_epoch, source_cid)?;
+        if adopt_epoch_key(epoch_keys, *key_epoch, key)? {
+            database.record_epoch_activation(*key_epoch, source_cid)?;
+        }
     }
     Ok(())
 }
@@ -532,6 +556,12 @@ impl Database {
         Ok(())
     }
 
+    fn active_epoch(&self) -> Result<u32, String> {
+        self.connection()?
+            .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
+            .map_err(display)
+    }
+
     fn advance_active_epoch(&self, key_epoch: u32) -> Result<(), String> {
         self.connection()?
             .execute(
@@ -540,6 +570,31 @@ impl Database {
             )
             .map_err(display)?;
         Ok(())
+    }
+
+    /// Whether this device should rotate to resolve a collision at
+    /// `key_epoch` with the rotation `incoming_cid`: it initiated the
+    /// rotation it holds for that epoch, that rotation's content address is
+    /// the greater of the two, and nothing has rotated past the epoch yet.
+    fn must_rotate_after_collision(&self, identity: &DeviceIdentity, key_epoch: u32, incoming_cid: &str) -> Result<bool, String> {
+        if self.active_epoch()? != key_epoch {
+            return Ok(false);
+        }
+        let own_rotation: Option<(String, Vec<u8>)> = self
+            .connection()?
+            .query_row(
+                "SELECT h.source_cid, o.bytes FROM sync_epoch_history h
+                 JOIN sync_objects o ON o.cid=h.source_cid AND o.object_kind='control'
+                 WHERE h.key_epoch=?1",
+                params![key_epoch],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(display)?;
+        let Some((own_cid, bytes)) = own_rotation else { return Ok(false) };
+        let initiated_here = decode_signed_key_rotation(&bytes)
+            .is_ok_and(|signed| signed.rotation.initiator_device_id == identity.device_id && signed.rotation.key_epoch == key_epoch);
+        Ok(initiated_here && own_cid.as_str() > incoming_cid)
     }
 
     fn set_recovery_public_keys(&self, ed25519_public: &[u8; 32], x25519_public: &[u8; 32]) -> Result<(), String> {
@@ -572,7 +627,7 @@ impl Database {
             let verifying_key = roster_entry_verifying_key(entry)?;
             let x25519_public = roster_entry_x25519(entry)?;
             let device_id = *entry.device_id.as_bytes();
-            self.trust_device_keys(&device_id, &verifying_key, &x25519_public)?;
+            self.trust_roster_device_keys(&device_id, &verifying_key, &x25519_public)?;
             if entry.status == "revoked" {
                 self.revoke_device(&device_id)?;
             }
@@ -934,11 +989,16 @@ pub async fn publish_enrollment_request(database: &Database, identity: &DeviceId
 /// - A rotation signed by a device we already trust is applied immediately
 ///   — no new trust decision is involved, since the signer is already
 ///   authenticated by our existing roster.
-pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
+///
+/// Returns whether this device must rotate to resolve an epoch collision
+/// (see [`RotationOutcome::Collision`]); the caller does so once it has
+/// loaded its keys.
+pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, transports: &[Arc<dyn SyncTransport>]) -> Result<bool, String> {
     // Objects arrive in content-address order, so a join-code redemption
     // can come before the invitation it names. Those are retried once the
     // whole sweep has run, rather than waiting for the next cycle.
     let mut deferred: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut must_rotate = false;
     for transport in transports {
         let mut cursor: Option<String> = None;
         loop {
@@ -958,6 +1018,10 @@ pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity
                     // arrived yet: retry after this sweep, and leave it
                     // unseen if it still can't be applied.
                     ControlObject::RetryLater => deferred.push((locator.cid.0.clone(), bytes)),
+                    // Left unseen until this device has rotated past the
+                    // colliding epoch, so a crash before the rotation is
+                    // published can't lose it.
+                    ControlObject::RotateToResolve => must_rotate = true,
                 }
             }
             cursor = page.next_cursor;
@@ -967,17 +1031,20 @@ pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity
         }
     }
     for (cid, bytes) in deferred {
-        if matches!(try_apply_control_object(database, identity, epoch_keys, &cid, &bytes)?, ControlObject::Applied) {
-            database.mark_control_object_seen(&cid, "control")?;
+        match try_apply_control_object(database, identity, epoch_keys, &cid, &bytes)? {
+            ControlObject::Applied => database.mark_control_object_seen(&cid, "control")?,
+            ControlObject::RotateToResolve => must_rotate = true,
+            ControlObject::NotControl | ControlObject::RetryLater => {}
         }
     }
-    Ok(())
+    Ok(must_rotate)
 }
 
 enum ControlObject {
     Applied,
     NotControl,
     RetryLater,
+    RotateToResolve,
 }
 
 fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, cid: &str, bytes: &[u8]) -> Result<ControlObject, String> {
@@ -1001,6 +1068,7 @@ fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoc
         return Ok(match apply_incoming_rotation(database, identity, epoch_keys, signed, cid)? {
             RotationOutcome::Done => ControlObject::Applied,
             RotationOutcome::UnknownInitiator => ControlObject::RetryLater,
+            RotationOutcome::Collision => ControlObject::RotateToResolve,
         });
     }
     if let Ok(signed) = threestrands_sync_envelope::decode_signed_invitation(bytes) {
@@ -1283,8 +1351,9 @@ fn apply_key_share(
         return Ok(KeyShare::Applied);
     }
     database.adopt_roster(&grant.roster)?;
-    epoch_keys.store(grant.key_epoch, &current)?;
-    database.record_epoch_activation(grant.key_epoch, cid)?;
+    if adopt_epoch_key(epoch_keys, grant.key_epoch, &current)? {
+        database.record_epoch_activation(grant.key_epoch, cid)?;
+    }
     store_earlier_epoch_keys(database, epoch_keys, &earlier, cid)?;
     database.advance_active_epoch(grant.key_epoch)?;
     Ok(KeyShare::Applied)
@@ -1448,6 +1517,13 @@ pub async fn reject_enrollment_request(
 enum RotationOutcome {
     Done,
     UnknownInitiator,
+    /// Another device created this epoch with a different key at the same
+    /// time as this one, and this device is the one that resolves it: it
+    /// rotates again, sealing a fresh key to the merged roster, so every
+    /// device converges on the next epoch (and reseals under it). Exactly
+    /// one of the two initiators does this — the one whose rotation has the
+    /// greater content address — so they don't collide again.
+    Collision,
 }
 
 fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedKeyRotation, cid: &str) -> Result<RotationOutcome, String> {
@@ -1477,11 +1553,10 @@ fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch
     if verify_key_rotation(verifying_key, &signed).is_err() {
         return Ok(RotationOutcome::Done);
     }
-    apply_rotation_common(database, identity, epoch_keys, &signed, cid)?;
-    Ok(RotationOutcome::Done)
+    apply_rotation_common(database, identity, epoch_keys, &signed, cid)
 }
 
-fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: &SignedKeyRotation, cid: &str) -> Result<(), String> {
+fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: &SignedKeyRotation, cid: &str) -> Result<RotationOutcome, String> {
     database.adopt_roster(&signed.rotation.roster)?;
     join_codes::note_admission_if_listed(database, identity, &signed.rotation.roster)?;
     database.set_recovery_public_keys(
@@ -1502,7 +1577,13 @@ fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_k
         }
     }
     if let Some(k_epoch) = opened {
-        epoch_keys.store(signed.rotation.key_epoch, &k_epoch)?;
+        if !adopt_epoch_key(epoch_keys, signed.rotation.key_epoch, &k_epoch)? {
+            return Ok(if database.must_rotate_after_collision(identity, signed.rotation.key_epoch, cid)? {
+                RotationOutcome::Collision
+            } else {
+                RotationOutcome::Done
+            });
+        }
         // Rotations are scanned in content-address order, not epoch order,
         // so a device catching up can meet an older rotation after a newer
         // one. Keep its key for opening that epoch's history, but never move
@@ -1510,7 +1591,7 @@ fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_k
         database.advance_active_epoch(signed.rotation.key_epoch)?;
         database.record_epoch_activation(signed.rotation.key_epoch, cid)?;
     }
-    Ok(())
+    Ok(RotationOutcome::Done)
 }
 
 /// The joining device's explicit action after visually comparing
@@ -1628,6 +1709,11 @@ pub async fn rotate_epoch(
     transports: &[Arc<dyn SyncTransport>],
     revoke_device_id_hex: Option<&str>,
 ) -> Result<(), String> {
+    // Keys loaded before another rotation landed would build the epoch that
+    // rotation already created, under a different key.
+    if database.active_epoch()? != keys.key_epoch {
+        return Err("This device's sync keys changed while rotating. Try again.".to_string());
+    }
     let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or_else(|| "No recovery keys on record for this sync group".to_string())?;
 
     if let Some(hex) = revoke_device_id_hex {
@@ -1668,7 +1754,7 @@ pub async fn rotate_epoch(
     database.mark_control_object_seen(&cid, "key_rotation")?;
 
     epoch_keys.store(next_epoch, &k_epoch)?;
-    database.set_active_epoch(next_epoch)?;
+    database.advance_active_epoch(next_epoch)?;
     database.record_epoch_activation(next_epoch, &cid)?;
     Ok(())
 }
@@ -1829,6 +1915,10 @@ pub(crate) mod test_support {
         fn store(&self, key_epoch: u32, key: &[u8; 32]) -> Result<(), String> {
             self.0.lock().unwrap().insert(key_epoch, *key);
             Ok(())
+        }
+
+        fn load(&self, key_epoch: u32) -> Result<Option<[u8; 32]>, String> {
+            Ok(self.get(key_epoch))
         }
     }
 
@@ -2596,6 +2686,142 @@ mod tests {
         let outcome = c.pull(&transports).await;
         assert_eq!((outcome.merged_states, outcome.failed_transports), (1, 0));
         assert_eq!(c.snippet("after-rotation").as_deref(), Some("after-rotation"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_rotations_to_the_same_epoch_converge_on_a_fresh_epoch_without_the_revoked_device() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        let b = Member::new();
+        join_with_recovery_phrase(&b.database, &b.identity, &b.epoch_keys, &phrase, &transports).await.unwrap();
+        let x = Member::new();
+        join_with_recovery_phrase(&x.database, &x.identity, &x.epoch_keys, &phrase, &transports).await.unwrap();
+        for member in [&a, &b, &x] {
+            member.sweep(&transports).await;
+        }
+        let start = a.active_epoch();
+        assert_eq!(b.active_epoch(), start);
+
+        // A revokes X while B, not having seen that yet, rotates too: both
+        // create the same epoch number under different keys, and B's key is
+        // sealed to X.
+        let x_hex = encode_id(x.identity.device_id.as_bytes());
+        rotate_epoch(&a.database, &a.identity, &a.keys(), &a.epoch_keys, &transports, Some(&x_hex)).await.unwrap();
+        b.rotate(&transports).await;
+        let collided = start + 1;
+        let a_key = a.epoch_keys.get(collided).unwrap();
+        let b_key = b.epoch_keys.get(collided).unwrap();
+        assert_ne!(a_key, b_key);
+
+        let a_resolves = run_enrollment_sweep(&a.database, &a.identity, &a.epoch_keys, &transports).await.unwrap();
+        let b_resolves = run_enrollment_sweep(&b.database, &b.identity, &b.epoch_keys, &transports).await.unwrap();
+        assert!(a_resolves != b_resolves, "exactly one initiator resolves the collision");
+        // Neither device swaps its key for the other's.
+        assert_eq!(a.epoch_keys.get(collided), Some(a_key));
+        assert_eq!(b.epoch_keys.get(collided), Some(b_key));
+        // A sweep without a rotation in between still asks to resolve it.
+        let resolver = if a_resolves { &a } else { &b };
+        assert!(run_enrollment_sweep(&resolver.database, &resolver.identity, &resolver.epoch_keys, &transports).await.unwrap());
+
+        resolver.rotate(&transports).await;
+        assert!(!run_enrollment_sweep(&resolver.database, &resolver.identity, &resolver.epoch_keys, &transports).await.unwrap());
+        for member in [&a, &b, &x] {
+            member.sweep(&transports).await;
+        }
+        let fresh = collided + 1;
+        assert_eq!(a.active_epoch(), fresh);
+        assert_eq!(b.active_epoch(), fresh);
+        assert!(a.epoch_keys.get(fresh).is_some());
+        assert_eq!(a.epoch_keys.get(fresh), b.epoch_keys.get(fresh));
+        assert!(x.epoch_keys.get(fresh).is_none(), "the revoked device never receives the fresh key");
+
+        // Data written under the fresh epoch reaches the other device.
+        a.write_snippet("after-collision");
+        a.push(&transports).await;
+        b.pull(&transports).await;
+        assert_eq!(b.snippet("after-collision").as_deref(), Some("after-collision"));
+    }
+
+    #[tokio::test]
+    async fn rotating_from_stale_keys_is_refused_without_touching_the_newer_epoch() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        let stale = a.keys();
+        a.rotate(&transports).await;
+        let current = a.active_epoch();
+        let current_key = a.epoch_keys.get(current);
+
+        let error = rotate_epoch(&a.database, &a.identity, &stale, &a.epoch_keys, &transports, None).await.unwrap_err();
+        assert!(error.contains("changed while rotating"));
+        assert_eq!(a.active_epoch(), current);
+        assert_eq!(a.epoch_keys.get(current), current_key);
+    }
+
+    #[test]
+    fn a_peer_key_never_replaces_a_different_key_held_for_the_same_epoch() {
+        let store = FakeEpochKeyStore::default();
+        assert!(adopt_epoch_key(&store, 3, &[1; 32]).unwrap());
+        assert!(adopt_epoch_key(&store, 3, &[1; 32]).unwrap());
+        assert!(!adopt_epoch_key(&store, 3, &[2; 32]).unwrap());
+        assert_eq!(store.get(3), Some([1; 32]));
+    }
+
+    #[tokio::test]
+    async fn a_stale_roster_cannot_reactivate_a_revoked_device() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        let phrase = begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+        let b = Member::new();
+        join_with_recovery_phrase(&b.database, &b.identity, &b.epoch_keys, &phrase, &transports).await.unwrap();
+        let c = Member::new();
+        join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await.unwrap();
+        a.sweep(&transports).await;
+        c.sweep(&transports).await;
+        let b_hex = encode_id(b.identity.device_id.as_bytes());
+        let status_on_c = || -> String {
+            c.database
+                .connection()
+                .unwrap()
+                .query_row("SELECT status FROM sync_devices WHERE device_id=?1", params![b_hex], |row| row.get(0))
+                .unwrap()
+        };
+        // A roster snapshot taken while B was still active.
+        let stale_roster = a.database.full_roster_snapshot().unwrap();
+        assert!(stale_roster.iter().any(|entry| entry.device_id == b.identity.device_id && entry.status == "active"));
+
+        rotate_epoch(&a.database, &a.identity, &a.keys(), &a.epoch_keys, &transports, Some(&b_hex)).await.unwrap();
+        c.sweep(&transports).await;
+        assert_eq!(status_on_c(), "revoked");
+
+        // A lagging key share from A, still carrying the pre-revocation
+        // roster, reaches C after the revocation.
+        let keys = a.keys();
+        let c_x25519 = x25519_public_bytes(&c.identity.x25519_secret);
+        let (recovery_ed25519, recovery_x25519) = a.database.recovery_public_keys().unwrap().unwrap();
+        let lagging = sign_enrollment_grant(
+            &a.identity.signing_key,
+            EnrollmentGrant {
+                request_id: RequestId::from_bytes(random_id()),
+                approver_device_id: a.identity.device_id,
+                signed_by_recovery: false,
+                key_epoch: a.active_epoch(),
+                sealed_epoch_key: ByteBuf::from(seal_to_x25519(&c_x25519, &a.epoch_keys.get(a.active_epoch()).unwrap())),
+                roster: stale_roster,
+                recovery_ed25519_public: ByteBuf::from(recovery_ed25519.to_vec()),
+                recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
+                created_at_ms: now_ms(),
+                earlier_epoch_keys: seal_earlier_epoch_keys(&keys, &c_x25519).unwrap(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            apply_key_share(&c.database, &c.identity, &c.epoch_keys, &lagging, "lagging-share").unwrap(),
+            KeyShare::Applied
+        ));
+        assert_eq!(status_on_c(), "revoked");
+        assert!(!c.database.full_roster_snapshot().unwrap().iter().any(|entry| entry.device_id == b.identity.device_id && entry.status == "active"));
     }
 
     #[tokio::test]
