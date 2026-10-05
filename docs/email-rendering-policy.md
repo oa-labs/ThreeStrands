@@ -31,6 +31,8 @@ Repeated text followed by new text never folds, a signature the conversation has
 
 Folding requires `foldScoreThreshold` (four) points. When the boundary line begins one or more wrapper elements, the cut moves before the outermost wrapper so the visible copy does not end in an empty blockquote or rule. A lone trailing blockquote (3) and a mid-message header cluster without a rule or complete fields (3) stay visible. Ambiguous content remains visible and can be expanded when folded. All folding limits are in `EMAIL_QUOTE_FOLDING_LIMITS`. This is visual normalization, not a security decision: the security stages still sanitize and contain the complete message.
 
+The reader's fold toggle stays outside the message document. After sanitization, ThreeStrands inserts one empty `span[data-quoted-history-fold]` marker where the visible part ends, in both the folded and expanded documents. The iframe stylesheet gives that span a fixed height to make room, and the parent places the toggle over it. The toggle therefore stays in the same place when the quoted part is shown and can fold it again. Sanitization drops sender data attributes, and folding removes any existing marker attribute before inserting its own, so sender markup cannot supply or move the marker.
+
 When changing this policy, add structurally distinct fixtures, security-negative cases, numeric-boundary tests, and visual coverage at narrow/wide widths and light/dark themes. Do not encode a sender-specific workaround in production logic.
 
 ## Reader minimum font size

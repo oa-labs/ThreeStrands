@@ -16,7 +16,14 @@ import {
 } from "./emailRenderingPolicy";
 import { createEmailFontSizeController } from "./emailMinimumFontSize";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
-import { collapseQuotedHistoryHtml, collapseQuotedHistoryText, type PriorThreadText } from "./quotedHistory";
+import {
+  collapseQuotedHistoryHtml,
+  collapseQuotedHistoryText,
+  foldQuotedHistoryHtml,
+  foldQuotedHistoryText,
+  QUOTED_HISTORY_FOLD_ATTRIBUTE,
+  type PriorThreadText,
+} from "./quotedHistory";
 import { LINKIFY_PATTERN, linkHrefFor, trimTrailingPunctuation } from "./linkify";
 import { fontFamilyStack, type FontFamily } from "./settings";
 
@@ -74,6 +81,9 @@ async function defaultResolveImage(): Promise<string> {
 // letting the column render slightly wider than its width hint.
 // break-word doesn't touch intrinsic sizing, so the column just widens
 // instead, matching what other mail clients render.
+/** Room reserved at the fold for the quoted-history toggle: its height plus vertical margins in styles.css. */
+const QUOTED_HISTORY_FOLD_HEIGHT = 28;
+
 const MESSAGE_DOCUMENT_STYLES = `
 :root {
   color-scheme: dark;
@@ -122,6 +132,16 @@ body[data-tone="muted"] { color: var(--muted); }
 :where(hr) { border: 0; border-top: 1px solid var(--border); }
 :where(table) { max-width: 100%; }
 :where(.email-root) { max-width: 100%; overflow-wrap: break-word; }
+/* Reserves room for the reader's quoted-history toggle, which the parent
+   overlays here. The marker is inserted by ThreeStrands after sanitization
+   (senders cannot emit data attributes), is empty, and only takes up space. */
+span[${QUOTED_HISTORY_FOLD_ATTRIBUTE}] {
+  display: block !important;
+  height: ${QUOTED_HISTORY_FOLD_HEIGHT}px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
 `;
 
 const MESSAGE_DOCUMENT_CSP = [
@@ -498,10 +518,10 @@ export function SafeMessage({
   const [quotedHistoryExpanded, setQuotedHistoryExpanded] = useState(false);
   const imagesAllowed = loadImages || imagesAllowedForMessage;
   const sanitized = useMemo(() => sanitizeMessageHtml(html), [html]);
-  const collapsedHtml = useMemo(() => collapseQuotedHistoryHtml(sanitized, priorThreadText), [sanitized, priorThreadText]);
-  const collapsedText = useMemo(() => collapseQuotedHistoryText(text, priorThreadText), [text, priorThreadText]);
-  const hasCollapsedHistory = collapsedHtml !== null || (!sanitized.trim() && collapsedText !== null);
-  const renderedHtml = !quotedHistoryExpanded && collapsedHtml !== null ? collapsedHtml : sanitized;
+  const htmlFold = useMemo(() => foldQuotedHistoryHtml(sanitized, priorThreadText), [sanitized, priorThreadText]);
+  const textFold = useMemo(() => foldQuotedHistoryText(text, priorThreadText), [text, priorThreadText]);
+  const hasCollapsedHistory = htmlFold !== null || (!sanitized.trim() && textFold !== null);
+  const renderedHtml = htmlFold ? (quotedHistoryExpanded ? htmlFold.expanded : htmlFold.visible) : sanitized;
   const blockedUrls = useMemo(() => extractBlockedImageUrls(renderedHtml), [renderedHtml]);
   const resolvableUrls = useMemo(
     () => imagesAllowed ? blockedUrls : blockedUrls.filter((url) => /^cid:/i.test(url)),
@@ -571,6 +591,7 @@ export function SafeMessage({
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const [frameHeight, setFrameHeight] = useState(0);
+  const [foldTop, setFoldTop] = useState<number | null>(null);
 
   const handleLoad = useCallback(() => {
     cleanupRef.current?.();
@@ -590,6 +611,11 @@ export function SafeMessage({
       const height = frameDoc.documentElement?.scrollHeight ?? frameDoc.body?.scrollHeight ?? 0;
       const nextHeight = emailFrameHeight(height);
       setFrameHeight((previous) => previous === nextHeight ? previous : nextHeight);
+      // The toggle lives outside the untrusted document; follow the marker
+      // so it stays at the fold whether the quoted part is shown or hidden.
+      const marker = frameDoc.querySelector(`span[${QUOTED_HISTORY_FOLD_ATTRIBUTE}]`);
+      const nextFoldTop = marker ? Math.round(marker.getBoundingClientRect().top + (frameDoc.defaultView?.scrollY ?? 0)) : null;
+      setFoldTop((previous) => previous === nextFoldTop ? previous : nextFoldTop);
     };
     resize();
     const onResize = () => {
@@ -668,32 +694,42 @@ export function SafeMessage({
     setQuotedHistoryExpanded(false);
   }, [html, text]);
 
-  const quotedHistoryButton = hasCollapsedHistory && !quotedHistoryExpanded ? (
+  const quotedHistoryLabel = quotedHistoryExpanded ? "Hide quoted content" : "Show quoted content";
+  const renderQuotedHistoryButton = (top: number | null) => hasCollapsedHistory ? (
     <button
       type="button"
       className="quoted-history-toggle"
-      aria-label="Show quoted content"
-      title="Show quoted content"
-      onClick={() => setQuotedHistoryExpanded(true)}
+      aria-label={quotedHistoryLabel}
+      aria-expanded={quotedHistoryExpanded}
+      title={quotedHistoryLabel}
+      style={top === null ? undefined : { position: "absolute", top }}
+      onClick={() => setQuotedHistoryExpanded((expanded) => !expanded)}
     >
-      &hellip;
+      <svg viewBox="0 0 16 4" width="16" height="4" aria-hidden="true" focusable="false">
+        <circle cx="2" cy="2" r="1.6" />
+        <circle cx="8" cy="2" r="1.6" />
+        <circle cx="14" cy="2" r="1.6" />
+      </svg>
     </button>
   ) : null;
 
   if (!hasContent) {
     const decoded = decodeHtmlEntities(text);
-    const visibleText = !quotedHistoryExpanded && collapsedText !== null ? collapsedText : decoded;
+    const plainFold = !sanitized.trim() ? textFold : null;
     return (
-      <>
-        <div
-          className="message-body message-body-plain"
-          data-testid="message-body"
-          style={minimumFontSize ? { fontSize: `max(${minimumFontSize}px, var(--type-reading))` } : undefined}
-        >
-          {visibleText ? linkifyText(visibleText) : "No message content."}
-        </div>
-        {quotedHistoryButton}
-      </>
+      <div
+        className="message-body message-body-plain"
+        data-testid="message-body"
+        style={minimumFontSize ? { fontSize: `max(${minimumFontSize}px, var(--type-reading))` } : undefined}
+      >
+        {plainFold ? (
+          <>
+            {linkifyText(decodeHtmlEntities(plainFold.visible))}
+            {renderQuotedHistoryButton(null)}
+            {quotedHistoryExpanded ? linkifyText(decodeHtmlEntities(plainFold.quoted)) : null}
+          </>
+        ) : decoded ? linkifyText(decoded) : "No message content."}
+      </div>
     );
   }
 
@@ -707,28 +743,30 @@ export function SafeMessage({
           </button>
         </div>
       ) : null}
-      <iframe
-        ref={frameRef}
-        data-testid="message-body"
-        className="message-body"
-        title="Message content"
-        // allow-scripts sounds dangerous for untrusted email HTML, but the
-        // document's own CSP above (script-src 'none') independently blocks
-        // every script in it from running — DOMPurify has also already
-        // stripped <script>, event-handler attributes, and javascript:
-        // URLs. What this flag actually enables is the click/keydown
-        // listeners handleLoad attaches from the parent below: WebKit
-        // refuses to invoke ANY listener bound to a document whose sandbox
-        // omits allow-scripts, including ones added by the parent, which
-        // silently broke every shortcut once the reader clicked or
-        // selected text in the message body (see #handleLoad).
-        sandbox="allow-same-origin allow-scripts"
-        referrerPolicy="no-referrer"
-        srcDoc={doc}
-        onLoad={handleLoad}
-        style={{ height: frameHeight }}
-      />
-      {quotedHistoryButton}
+      <div className="message-frame">
+        <iframe
+          ref={frameRef}
+          data-testid="message-body"
+          className="message-body"
+          title="Message content"
+          // allow-scripts sounds dangerous for untrusted email HTML, but the
+          // document's own CSP above (script-src 'none') independently blocks
+          // every script in it from running — DOMPurify has also already
+          // stripped <script>, event-handler attributes, and javascript:
+          // URLs. What this flag actually enables is the click/keydown
+          // listeners handleLoad attaches from the parent below: WebKit
+          // refuses to invoke ANY listener bound to a document whose sandbox
+          // omits allow-scripts, including ones added by the parent, which
+          // silently broke every shortcut once the reader clicked or
+          // selected text in the message body (see #handleLoad).
+          sandbox="allow-same-origin allow-scripts"
+          referrerPolicy="no-referrer"
+          srcDoc={doc}
+          onLoad={handleLoad}
+          style={{ height: frameHeight }}
+        />
+        {renderQuotedHistoryButton(foldTop)}
+      </div>
     </>
   );
 }

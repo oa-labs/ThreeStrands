@@ -13,7 +13,7 @@ import {
   sanitizeMessageHtml,
 } from "./SafeMessage";
 import { EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, EMAIL_QUOTE_FOLDING_LIMITS } from "./emailRenderingPolicy";
-import { buildThreadTextIndex, type PriorThreadText } from "./quotedHistory";
+import { buildThreadTextIndex, foldQuotedHistoryHtml, QUOTED_HISTORY_FOLD_ATTRIBUTE, type PriorThreadText } from "./quotedHistory";
 import { emailRenderingFixtures } from "./test/emailRenderingFixtures";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -399,16 +399,65 @@ describe("SafeMessage", () => {
       current: "FYI, see below.",
       quoted: "Original details.",
     },
-  ])("collapses a $name behind an ellipsis until clicked", ({ html, current, quoted }) => {
+  ])("collapses a $name behind an ellipsis that toggles it open and closed", ({ html, current, quoted }) => {
     render(<SafeMessage html={html} />);
 
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
     expect(frame.srcdoc).toContain(current);
     expect(frame.srcdoc).not.toContain(quoted);
+    const toggle = screen.getByRole("button", { name: "Show quoted content" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
 
-    fireEvent.click(screen.getByRole("button", { name: "Show quoted content" }));
+    fireEvent.click(toggle);
     expect(frame.srcdoc).toContain(quoted);
     expect(screen.queryByRole("button", { name: "Show quoted content" })).not.toBeInTheDocument();
+    expect(toggle).toHaveAccessibleName("Hide quoted content");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(toggle);
+    expect(frame.srcdoc).toContain(current);
+    expect(frame.srcdoc).not.toContain(quoted);
+    expect(toggle).toHaveAccessibleName("Show quoted content");
+  });
+
+  it("marks the fold at the same place in the folded and expanded documents", () => {
+    const html = `<p>Current reply</p><div>On Mon, A. Sender wrote:</div><blockquote>Earlier message</blockquote>`;
+    const fold = foldQuotedHistoryHtml(sanitizeMessageHtml(html));
+    expect(fold).not.toBeNull();
+    const marker = `<span ${QUOTED_HISTORY_FOLD_ATTRIBUTE}="" aria-hidden="true"></span>`;
+    expect(fold!.visible).toBe(`<p>Current reply</p>${marker}`);
+    expect(fold!.expanded.startsWith(`<p>Current reply</p>${marker}<div>On Mon, A. Sender wrote:</div>`)).toBe(true);
+    expect(fold!.expanded.split(QUOTED_HISTORY_FOLD_ATTRIBUTE)).toHaveLength(2);
+
+    const textOffset = foldQuotedHistoryHtml("Fixed now.<br><br>On Mon, A. Sender wrote:<blockquote>Earlier message</blockquote>");
+    expect(textOffset!.expanded.indexOf(QUOTED_HISTORY_FOLD_ATTRIBUTE)).toBeLessThan(textOffset!.expanded.indexOf("On Mon"));
+    expect(textOffset!.expanded.indexOf(QUOTED_HISTORY_FOLD_ATTRIBUTE)).toBeGreaterThan(textOffset!.expanded.indexOf("Fixed now."));
+  });
+
+  it("does not let sender markup supply or move the fold marker", () => {
+    const html = `<p data-quoted-history-fold>Current reply</p><span data-quoted-history-fold></span>
+      <div>On Mon, A. Sender wrote:</div><blockquote>Earlier message</blockquote>`;
+    const sanitized = sanitizeMessageHtml(html);
+    expect(sanitized).not.toContain(QUOTED_HISTORY_FOLD_ATTRIBUTE);
+
+    // Even unsanitized input cannot add a second marker or place one early.
+    const fold = foldQuotedHistoryHtml(html);
+    expect(fold!.expanded.split(QUOTED_HISTORY_FOLD_ATTRIBUTE)).toHaveLength(2);
+    expect(fold!.expanded.indexOf(QUOTED_HISTORY_FOLD_ATTRIBUTE)).toBeGreaterThan(fold!.expanded.indexOf("Current reply"));
+
+    render(<SafeMessage html={html} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    fireEvent.click(screen.getByRole("button", { name: "Show quoted content" }));
+    const body = new DOMParser().parseFromString(frame.srcdoc, "text/html").body;
+    expect(body.querySelectorAll(`[${QUOTED_HISTORY_FOLD_ATTRIBUTE}]`)).toHaveLength(1);
+    expect(body.querySelector(`[${QUOTED_HISTORY_FOLD_ATTRIBUTE}]`)!.textContent).toBe("");
+  });
+
+  it("omits the fold marker and toggle for messages without quoted history", () => {
+    render(<SafeMessage html="<p>Just a note.</p>" />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    expect(frame.srcdoc.split(QUOTED_HISTORY_FOLD_ATTRIBUTE)).toHaveLength(2); // the stylesheet rule only
+    expect(screen.queryByRole("button", { name: /quoted content/ })).not.toBeInTheDocument();
   });
 
   it("collapses generic original-message separators while preserving the current HTML", () => {
@@ -818,6 +867,11 @@ it("collapses and reveals quoted history in a plain-text reply", () => {
   expect(screen.getByTestId("message-body")).not.toHaveTextContent("Earlier message");
   fireEvent.click(screen.getByRole("button", { name: "Show quoted content" }));
   expect(screen.getByTestId("message-body")).toHaveTextContent("Earlier message");
+  expect(screen.getByTestId("message-body")).toHaveTextContent("Current answer");
+
+  fireEvent.click(screen.getByRole("button", { name: "Hide quoted content" }));
+  expect(screen.getByTestId("message-body")).not.toHaveTextContent("Earlier message");
+  expect(screen.getByTestId("message-body")).toHaveTextContent("Current answer");
 });
 
 it("collapses an 'On ... wrote:' opener whose 'wrote:' hard-wrapped onto the next line", () => {

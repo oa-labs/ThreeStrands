@@ -1216,23 +1216,25 @@ kbd {
 .message-images-notice button:hover { background: var(--hover); border-color: var(--border-strong); }
 iframe.message-body { display: block; width: 100%; border: 0; background: transparent; }
 div.message-body-plain { color: var(--body-text); font-size: var(--type-reading); line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
+.message-frame { position: relative; }
+/* Height plus vertical margins must equal QUOTED_HISTORY_FOLD_HEIGHT in SafeMessage.tsx. */
 .quoted-history-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: fit-content;
-  min-width: 34px;
-  height: 22px;
-  margin: 8px 0 0;
-  padding: 0 9px;
+  width: 28px;
+  height: 12px;
+  margin: 8px 0;
+  padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xs);
+  border-radius: 6px;
   background: var(--hover);
   color: var(--muted);
-  font: 700 var(--type-base) / 1 var(--font-family);
   cursor: pointer;
 }
+.quoted-history-toggle svg { display: block; fill: currentColor; }
 .quoted-history-toggle:hover { color: var(--text); background: var(--raised); }
+.quoted-history-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .reader-empty { height: 100%; display: grid; place-content: center; justify-items: center; color: var(--muted); }
 
 .calendar-sidebar {

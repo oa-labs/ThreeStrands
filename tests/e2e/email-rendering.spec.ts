@@ -89,6 +89,32 @@ test.describe("email rendering fixtures", () => {
     });
   }
 
+  test("keeps the quoted-history toggle at the fold so it can refold", async ({ page }) => {
+    await page.goto("/tests/email-rendering.html?theme=light&fixture=replyAttributionInsideCitation");
+    const frame = page.locator("iframe.message-body");
+    const body = frame.contentFrame().locator("body");
+    const marker = frame.contentFrame().locator("span[data-quoted-history-fold]");
+    const show = page.getByRole("button", { name: "Show quoted content" });
+    await expect(body).toContainText("Sounds good.");
+
+    const toggleTop = async (name: string) => (await page.getByRole("button", { name }).boundingBox())!.y;
+    const markerTop = async () => (await marker.boundingBox())!.y;
+    const collapsedTop = await toggleTop("Show quoted content");
+    expect(Math.abs(collapsedTop - (await markerTop()) - 8)).toBeLessThanOrEqual(1);
+    const collapsedFrameHeight = (await frame.boundingBox())!.height;
+
+    await show.click();
+    await expect(body).toContainText("Earlier message content.");
+    await expect.poll(async () => (await frame.boundingBox())!.height).toBeGreaterThan(collapsedFrameHeight);
+    expect(Math.abs((await toggleTop("Hide quoted content")) - collapsedTop)).toBeLessThanOrEqual(2);
+    const quotedTop = await body.getByText("Earlier message content.").boundingBox();
+    expect(quotedTop!.y).toBeGreaterThan(collapsedTop);
+
+    await page.getByRole("button", { name: "Hide quoted content" }).click();
+    await expect(body).not.toContainText("Earlier message content.");
+    expect(Math.abs((await toggleTop("Show quoted content")) - collapsedTop)).toBeLessThanOrEqual(2);
+  });
+
   test("folds a signature repeated from an earlier message along with the quoted history", async ({ page }) => {
     await page.goto("/tests/email-rendering.html?theme=light&fixture=replyRepeatingSignature&prior=earlierMessageWithSignature");
     const body = page.locator("iframe.message-body").contentFrame().locator("body");

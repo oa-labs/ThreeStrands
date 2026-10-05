@@ -288,6 +288,19 @@ function repeatedRunAbove(lines: readonly RepeatedLine[], end: number): { top: n
   return { top, matched };
 }
 
+/** Marks where the folded part begins so the reader can position the fold toggle. */
+export const QUOTED_HISTORY_FOLD_ATTRIBUTE = "data-quoted-history-fold";
+
+type Fold = { boundary: QuotedHistoryBoundary; visible: string };
+
+/**
+ * The two renderings of a reply with quoted history: `visible` is the HTML
+ * before the quoted section and `expanded` is the full HTML. Both end the
+ * visible part with the same fold marker, so the toggle the reader clicks
+ * sits at the same place whether the quoted section is shown or hidden.
+ */
+export type QuotedHistoryFold = { visible: string; expanded: string };
+
 /**
  * Returns the message HTML before a mail client's quoted-reply section.
  * The full sanitized HTML remains available to reveal after the reader asks
@@ -296,6 +309,36 @@ function repeatedRunAbove(lines: readonly RepeatedLine[], end: number): { top: n
 export function collapseQuotedHistoryHtml(html: string, prior?: PriorThreadText): string | null {
   const container = document.createElement("div");
   container.innerHTML = html;
+  return findQuotedHistoryFold(container, prior)?.visible ?? null;
+}
+
+/** Like collapseQuotedHistoryHtml, plus the full HTML with a fold marker at the boundary. */
+export function foldQuotedHistoryHtml(html: string, prior?: PriorThreadText): QuotedHistoryFold | null {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  container.querySelectorAll(`[${QUOTED_HISTORY_FOLD_ATTRIBUTE}]`).forEach((node) => node.removeAttribute(QUOTED_HISTORY_FOLD_ATTRIBUTE));
+  const fold = findQuotedHistoryFold(container, prior);
+  if (!fold) return null;
+
+  const createMarker = () => {
+    const marker = document.createElement("span");
+    marker.setAttribute(QUOTED_HISTORY_FOLD_ATTRIBUTE, "");
+    marker.setAttribute("aria-hidden", "true");
+    return marker;
+  };
+  const visible = document.createElement("div");
+  visible.innerHTML = fold.visible;
+  visible.append(createMarker());
+
+  const { boundary } = fold;
+  const marker = createMarker();
+  if (boundary.kind === "element") boundary.node.before(marker);
+  else if (boundary.offset > 0) boundary.node.splitText(boundary.offset).before(marker);
+  else boundary.node.before(marker);
+  return { visible: visible.innerHTML, expanded: container.innerHTML };
+}
+
+function findQuotedHistoryFold(container: Element, prior?: PriorThreadText): Fold | null {
   const flat = flatten(container);
   const lines = splitLines(flat.text);
   const rules = Array.from(container.querySelectorAll("hr"))
@@ -352,7 +395,7 @@ export function collapseQuotedHistoryHtml(html: string, prior?: PriorThreadText)
     })),
   ].sort((left, right) => left.offset - right.offset);
 
-  const visibleBefore = (boundary: QuotedHistoryBoundary | null): string | null => {
+  const visibleBefore = (boundary: QuotedHistoryBoundary | null): Fold | null => {
     if (!boundary) return null;
     const range = document.createRange();
     range.setStart(container, 0);
@@ -363,7 +406,7 @@ export function collapseQuotedHistoryHtml(html: string, prior?: PriorThreadText)
     visibleContainer.append(range.cloneContents());
     const hasVisibleContent = Boolean(visibleContainer.textContent?.trim())
       || visibleContainer.querySelector("img") !== null;
-    return hasVisibleContent ? visibleContainer.innerHTML : null;
+    return hasVisibleContent ? { boundary, visible: visibleContainer.innerHTML } : null;
   };
   const lineAt = (offset: number) => {
     let index = 0;
@@ -371,25 +414,25 @@ export function collapseQuotedHistoryHtml(html: string, prior?: PriorThreadText)
     return index;
   };
 
-  let structural: { line: number; visible: string } | null = null;
+  let structural: { line: number; fold: Fold } | null = null;
   for (const candidate of candidates) {
     if (candidate.score + SCORE.currentContent < LIMITS.foldScoreThreshold) continue;
-    const visible = visibleBefore(candidate.boundary);
-    if (visible !== null) {
-      structural = { line: lineAt(candidate.offset), visible };
+    const fold = visibleBefore(candidate.boundary);
+    if (fold !== null) {
+      structural = { line: lineAt(candidate.offset), fold };
       break;
     }
   }
-  if (!prior) return structural?.visible ?? null;
+  if (!prior) return structural?.fold ?? null;
 
   const repeated = classifyRepeatedLines(lines.map((line) => line.text), prior);
   const foldAtLine = (line: number) => visibleBefore(boundaryAt(flat, container, lines[line].start));
   if (structural) {
     const run = repeatedRunAbove(repeated, structural.line);
     if (run.top < structural.line && run.matched >= LIMITS.minCorroboratingShingles) {
-      return foldAtLine(run.top) ?? structural.visible;
+      return foldAtLine(run.top) ?? structural.fold;
     }
-    return structural.visible;
+    return structural.fold;
   }
   const run = repeatedRunAbove(repeated, lines.length);
   if (run.top >= lines.length) return null;
@@ -436,10 +479,15 @@ function structuralTextCut(lines: string[]): number {
 
 /** Returns the part of a plain-text reply before its quoted history. */
 export function collapseQuotedHistoryText(text: string, prior?: PriorThreadText): string | null {
+  return foldQuotedHistoryText(text, prior)?.visible ?? null;
+}
+
+/** Splits a plain-text reply into the part before its quoted history and the quoted part. */
+export function foldQuotedHistoryText(text: string, prior?: PriorThreadText): { visible: string; quoted: string } | null {
   const lines = text.split(/\r?\n/);
   const visibleBefore = (cut: number) => {
     const visible = lines.slice(0, cut).join("\n").trimEnd();
-    return visible.trim() ? visible : null;
+    return visible.trim() ? { visible, quoted: lines.slice(cut).join("\n").replace(/^\n+/, "") } : null;
   };
   const cut = structuralTextCut(lines);
   if (!prior) return cut >= 0 ? visibleBefore(cut) : null;
