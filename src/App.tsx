@@ -1308,11 +1308,11 @@ export function App() {
       });
   }, [rightWorkspace, selectedId, setNotice, visibleDetail]);
 
-  const createWorkspaceTask = useCallback(async (title: string, selectedAccountId?: string) => {
+  const createWorkspaceTask = useCallback(async (title: string, selectedAccountId?: string, goalId?: string) => {
     const accountId = activeAccountId ?? selectedAccountId ?? (accounts.length === 1 ? accounts[0]?.email : undefined);
     if (!accountId) throw new Error(accounts.length ? "Choose an account before adding a task" : "Connect an account before adding a task");
     if (!accounts.some((account) => account.email === accountId)) throw new Error("Choose a connected account for this task");
-    return mailClient.createTask({ accountId, threadId: null, subjectSnapshot: null, title, kind: "action" });
+    return mailClient.createTask({ accountId, threadId: null, subjectSnapshot: null, title, kind: "action", ...(goalId ? { goalId } : {}) });
   }, [accounts, activeAccountId]);
 
   const openTaskThread = useCallback((threadId: string) => {
@@ -1961,6 +1961,7 @@ export function App() {
     selectAdjacentTaskColumn: (direction) => taskWorkspaceRef.current?.selectAdjacentColumn(direction),
     toggleTaskLayout: () => taskWorkspaceRef.current?.toggleLayout(),
     cycleTaskView: (direction) => taskWorkspaceRef.current?.cycleView(direction),
+    focusGoals: () => taskWorkspaceRef.current?.focusGoals(),
     taskBoardActive: rightWorkspace === "tasks" && taskLayout === "board",
     calendarWeekActive: rightWorkspace === "week",
     selectedTaskStatus,

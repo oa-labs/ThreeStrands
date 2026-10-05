@@ -173,9 +173,14 @@ plus the group's key changes and join records.
 
 ## Data boundary
 
-Replicated entities are tasks, snippets, Split Inboxes, mail-account display
-metadata, calendar-account metadata and selections, retention, and the
-portable preference allowlist. Device roster names are also synchronized so
+Replicated entities are tasks (including the goal each one supports), goals,
+snippets, Split Inboxes, mail-account display metadata, calendar-account
+metadata and selections, retention, and the portable preference allowlist.
+
+A device reads only the entity types its version knows. Goals arrived in
+0.62.0: a device on an earlier version can't open a snapshot that holds a goal,
+so it stops receiving changes from updated devices until it is updated too.
+Nothing is lost meanwhile, because a snapshot it can't open is never merged. Device roster names are also synchronized so
 each device has the same name in every roster; the hostname is used as the
 initial name. Cached mail and bodies, attachments, drafts, queued mail,
 provider mutations, OAuth tokens, AI API keys, crash reports, telemetry

@@ -21,6 +21,8 @@ pub enum EntityType {
     Preferences,
     Retention,
     Contact,
+    // New variants go last: the derived order is the snapshots' canonical field order.
+    Goal,
 }
 
 impl EntityType {
@@ -35,6 +37,7 @@ impl EntityType {
             Self::Preferences => "preferences",
             Self::Retention => "retention",
             Self::Contact => "contact",
+            Self::Goal => "goal",
         }
     }
 
@@ -50,9 +53,10 @@ impl EntityType {
                 required_string(object, "title", 240)?;
                 enum_string(object, "kind", &["action", "follow_up", "waiting_for"])?;
                 enum_string(object, "dueKind", &["none", "date", "datetime"])?;
-                enum_string(object, "status", &["open", "completed", "cancelled"])?;
+                enum_string(object, "status", &["open", "in_progress", "completed", "cancelled"])?;
                 optional_string(object, "notes", 8_000)?;
                 optional_string(object, "evidenceText", 4_000)?;
+                optional_string(object, "goalId", 128)?;
             }
             Self::Snippet => {
                 required_string(object, "name", 200)?;
@@ -89,6 +93,18 @@ impl EntityType {
                 if !matches!(object.get("days"), Some(Value::Null) | Some(Value::Number(_))) {
                     return Err("Retention days must be a number or null".to_string());
                 }
+            }
+            Self::Goal => {
+                required_string(object, "title", 240)?;
+                required_string(object, "accountId", 320)?;
+                enum_string(object, "status", &["active", "achieved", "dropped"])?;
+                let horizon = object.get("horizon").and_then(Value::as_str).unwrap_or_default();
+                let period = object.get("period").and_then(Value::as_str).unwrap_or_default();
+                if !goal_period_matches(horizon, period) {
+                    return Err("The goal horizon or period is invalid".to_string());
+                }
+                optional_string(object, "notes", 8_000)?;
+                optional_string(object, "parentGoalId", 128)?;
             }
             Self::Contact => {
                 required_string(object, "id", 128)?;
@@ -127,8 +143,22 @@ impl std::str::FromStr for EntityType {
             "preferences" => Ok(Self::Preferences),
             "retention" => Ok(Self::Retention),
             "contact" => Ok(Self::Contact),
+            "goal" => Ok(Self::Goal),
             _ => Err("Unknown synchronized entity type".to_string()),
         }
+    }
+}
+
+/// Whether `period` names one period of `horizon`: `2026` for a year,
+/// `2026-H2` for a half, `2026-Q4` for a quarter.
+pub fn goal_period_matches(horizon: &str, period: &str) -> bool {
+    let bytes = period.as_bytes();
+    let year = bytes.len() >= 4 && bytes[..4].iter().all(u8::is_ascii_digit);
+    match horizon {
+        "year" => year && bytes.len() == 4,
+        "half" => year && bytes.len() == 7 && &bytes[4..6] == b"-H" && matches!(bytes[6], b'1' | b'2'),
+        "quarter" => year && bytes.len() == 7 && &bytes[4..6] == b"-Q" && matches!(bytes[6], b'1'..=b'4'),
+        _ => false,
     }
 }
 
@@ -215,7 +245,8 @@ mod tests {
             | EntityType::CalendarSelection
             | EntityType::Preferences
             | EntityType::Retention
-            | EntityType::Contact => entity_type,
+            | EntityType::Contact
+            | EntityType::Goal => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -227,6 +258,7 @@ mod tests {
             EntityType::Preferences,
             EntityType::Retention,
             EntityType::Contact,
+            EntityType::Goal,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));
@@ -245,6 +277,56 @@ mod tests {
         assert!(EntityType::Task.validate_payload(&valid).is_ok());
         let invalid = json!({ "title": "x", "kind": "action", "dueKind": "none", "status": "lost" });
         assert!(EntityType::Task.validate_payload(&invalid).is_err());
+    }
+
+    #[test]
+    fn accepts_in_progress_tasks_and_an_optional_goal_link() {
+        let in_progress = json!({ "title": "Draft", "kind": "action", "dueKind": "none", "status": "in_progress" });
+        assert!(EntityType::Task.validate_payload(&in_progress).is_ok());
+        // Payloads from versions before goals have no goalId at all.
+        let linked = json!({ "title": "Draft", "kind": "action", "dueKind": "none", "status": "open", "goalId": "goal-1" });
+        assert!(EntityType::Task.validate_payload(&linked).is_ok());
+        let unlinked = json!({ "title": "Draft", "kind": "action", "dueKind": "none", "status": "open", "goalId": null });
+        assert!(EntityType::Task.validate_payload(&unlinked).is_ok());
+        let oversized = json!({ "title": "Draft", "kind": "action", "dueKind": "none", "status": "open", "goalId": "g".repeat(129) });
+        assert!(EntityType::Task.validate_payload(&oversized).is_err());
+    }
+
+    #[test]
+    fn validates_goal_contract() {
+        let valid = json!({
+            "id": "goal-1", "accountId": "you@example.com", "title": "Ship the IMAP provider",
+            "horizon": "quarter", "period": "2026-Q4", "status": "active", "notes": null, "parentGoalId": null
+        });
+        assert!(EntityType::Goal.validate_payload(&valid).is_ok());
+        for (field, value) in [
+            ("title", json!(" ")),
+            ("accountId", json!(null)),
+            ("status", json!("done")),
+            ("horizon", json!("month")),
+            ("period", json!("2026-H2")),
+            ("notes", json!("x".repeat(8_001))),
+            ("parentGoalId", json!(7)),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            assert!(EntityType::Goal.validate_payload(&invalid).is_err(), "{field} should be rejected");
+        }
+    }
+
+    #[test]
+    fn goal_periods_match_their_horizon() {
+        assert!(goal_period_matches("year", "2026"));
+        assert!(goal_period_matches("half", "2026-H1"));
+        assert!(goal_period_matches("half", "2026-H2"));
+        assert!(goal_period_matches("quarter", "2026-Q1"));
+        assert!(goal_period_matches("quarter", "2026-Q4"));
+        for (horizon, period) in [
+            ("year", "26"), ("year", "2026-Q1"), ("half", "2026-H0"), ("half", "2026-H3"),
+            ("quarter", "2026-Q0"), ("quarter", "2026-Q5"), ("quarter", "2026-q4"), ("quarter", "20x6-Q4"), ("week", "2026"),
+        ] {
+            assert!(!goal_period_matches(horizon, period), "{horizon} {period}");
+        }
     }
 
     #[test]

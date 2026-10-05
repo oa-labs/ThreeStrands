@@ -3,7 +3,8 @@ import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { mailClient } from "./data/client";
-import type { ThreadTask } from "./domain";
+import type { Goal, ThreadTask } from "./domain";
+import { formatPeriod, periodFor } from "./goals";
 
 function workspaceTask(id: string, overrides: Partial<ThreadTask> = {}): ThreadTask {
   return {
@@ -717,7 +718,7 @@ describe("TaskSidebar", () => {
     const repeat = dialog.getByRole("spinbutton", { name: "Repeat every (days)" });
     fireEvent.change(repeat, { target: { value: "0" } });
     fireEvent.blur(repeat);
-    expect(await dialog.findByRole("alert")).toHaveTextContent("Repeat every 1 to 3650 days.");
+    expect(await dialog.findByRole("alert")).toHaveTextContent("Repeat every 1 to 365 days.");
     fireEvent.change(repeat, { target: { value: "7" } });
     fireEvent.blur(repeat);
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", repeatIntervalDays: 7 }));
@@ -905,4 +906,268 @@ describe("TaskSidebar", () => {
     expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Second");
   });
 
+});
+
+describe("TaskSidebar goals", () => {
+  const quarter = periodFor("quarter");
+  const year = periodFor("year");
+
+  function workspaceGoal(id: string, overrides: Partial<Goal> = {}): Goal {
+    return {
+      id, accountId: "you@example.com", title: id, notes: null, horizon: "quarter", period: quarter, status: "active",
+      parentGoalId: null, createdAt: "2026-09-19T10:00:00Z", updatedAt: "2026-09-19T10:00:00Z", closedAt: null,
+      ...overrides,
+    };
+  }
+
+  function setup(tasks: ThreadTask[], goals: Goal[]) {
+    let taskStore = [...tasks];
+    let goalStore = [...goals];
+    vi.spyOn(mailClient, "listTasks").mockImplementation(async () => taskStore);
+    vi.spyOn(mailClient, "listGoals").mockImplementation(async () => goalStore);
+    const updateTask = vi.spyOn(mailClient, "updateTask").mockImplementation(async (request) => {
+      taskStore = taskStore.map((task) => task.id === request.id ? { ...task, ...request } : task);
+      return taskStore.find((task) => task.id === request.id)!;
+    });
+    const createGoal = vi.spyOn(mailClient, "createGoal").mockImplementation(async (request) => {
+      const created = workspaceGoal("created-goal", { ...request, notes: request.notes ?? null, parentGoalId: request.parentGoalId ?? null });
+      goalStore = [...goalStore, created];
+      return created;
+    });
+    const updateGoal = vi.spyOn(mailClient, "updateGoal").mockImplementation(async (request) => {
+      goalStore = goalStore.map((goal) => goal.id === request.id ? { ...goal, ...request } : goal);
+      return goalStore.find((goal) => goal.id === request.id)!;
+    });
+    const deleteGoal = vi.spyOn(mailClient, "deleteGoal").mockImplementation(async (id) => {
+      goalStore = goalStore.filter((goal) => goal.id !== id);
+      taskStore = taskStore.map((task) => task.goalId === id ? { ...task, goalId: null } : task);
+    });
+    return { updateTask, createGoal, updateGoal, deleteGoal };
+  }
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it("lists the current quarter's and year's goals with linked task counts, hiding an empty half and older periods", async () => {
+    setup([
+      workspaceTask("a", { goalId: "ship" }), workspaceTask("b", { goalId: "ship", status: "completed", completedAt: new Date().toISOString() }),
+      workspaceTask("c"),
+    ], [
+      workspaceGoal("ship", { title: "Ship IMAP", parentGoalId: "grow" }),
+      workspaceGoal("grow", { title: "Grow the practice", horizon: "year", period: year }),
+      workspaceGoal("old", { title: "Old quarter", period: "2020-Q1", status: "achieved" }),
+    ]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const pane = await screen.findByRole("complementary", { name: "Goals" });
+    const quarterGoals = within(pane).getByRole("region", { name: "Quarter goals" });
+    expect(await within(quarterGoals).findByRole("button", { name: /^Ship IMAP/ })).toHaveTextContent("1 open · 1 done");
+    expect(within(quarterGoals).getByRole("button", { name: /^Ship IMAP/ })).toHaveTextContent("↳ Grow the practice");
+    expect(within(within(pane).getByRole("region", { name: "Year goals" })).getByRole("button", { name: /^Grow the practice/ })).toHaveTextContent("0 open · 0 done");
+    expect(within(pane).queryByRole("region", { name: "Half goals" })).not.toBeInTheDocument();
+    const other = within(pane).getByText("Other periods (1)").closest("details")!;
+    expect(other).not.toHaveAttribute("open");
+    expect(other).toHaveTextContent("Achieved");
+    expect(within(pane).getByRole("button", { name: /No goal/ })).toHaveTextContent("1 open");
+  });
+
+  it("filters tasks to a goal and the goals supporting it, to tasks with no goal, and clears from the header chip", async () => {
+    setup([
+      workspaceTask("direct", { title: "Direct", goalId: "grow" }),
+      workspaceTask("through", { title: "Through quarter", goalId: "ship" }),
+      workspaceTask("loose", { title: "Loose" }),
+    ], [
+      workspaceGoal("grow", { title: "Grow", horizon: "year", period: year }),
+      workspaceGoal("ship", { title: "Ship", parentGoalId: "grow" }),
+    ]);
+    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const titles = () => [...container.querySelectorAll(".task-card strong")].map((node) => node.textContent);
+    await waitFor(() => expect(titles()).toHaveLength(3));
+    const pane = screen.getByRole("complementary", { name: "Goals" });
+
+    fireEvent.click(within(pane).getByRole("button", { name: /^Grow/ }));
+    expect(titles()).toEqual(expect.arrayContaining(["Direct", "Through quarter"]));
+    expect(titles()).toHaveLength(2);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("2 tasks");
+    expect(within(pane).getByRole("button", { name: /^Grow/ })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(within(pane).getByRole("button", { name: /^Ship/ }));
+    expect(titles()).toEqual(["Through quarter"]);
+    // Choosing the selected goal again shows every task.
+    fireEvent.click(within(pane).getByRole("button", { name: /^Ship/ }));
+    expect(titles()).toHaveLength(3);
+
+    fireEvent.click(within(pane).getByRole("button", { name: /No goal/ }));
+    expect(titles()).toEqual(["Loose"]);
+    fireEvent.click(screen.getByRole("button", { name: "Show all tasks, not only those with no goal" }));
+    expect(titles()).toHaveLength(3);
+    expect(within(pane).getByRole("button", { name: /All tasks/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the supported goal on cards and links a task added while one goal is in view", async () => {
+    setup([workspaceTask("linked", { title: "Linked", goalId: "ship" })], [workspaceGoal("ship", { title: "Ship IMAP", accountId: "work@example.com" })]);
+    const onCreateTask = vi.fn().mockResolvedValue(workspaceTask("new", { title: "Write tests", goalId: "ship" }));
+    const { container } = render(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+
+    const card = (await screen.findByText("Linked", { selector: "strong" })).closest("article")!;
+    await waitFor(() => expect(card.querySelector(".task-card-goal")).toHaveTextContent("Supports Ship IMAP"));
+
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Goals" })).getByRole("button", { name: /^Ship IMAP/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    const form = container.querySelector(".task-quick-add") as HTMLElement;
+    expect(form).toHaveTextContent("Supports Ship IMAP");
+    expect(within(form).queryByRole("combobox", { name: "Account" })).not.toBeInTheDocument();
+    fireEvent.change(within(form).getByRole("textbox", { name: "Task title" }), { target: { value: "Write tests" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Add task" }));
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Write tests", "work@example.com", "ship"));
+  });
+
+  it("links a task to one of its account's active goals from the task dialog", async () => {
+    const { updateTask } = setup([workspaceTask("plan", { title: "Plan launch" })], [
+      workspaceGoal("ship", { title: "Ship IMAP" }),
+      workspaceGoal("grow", { title: "Grow", horizon: "year", period: year }),
+      workspaceGoal("done", { title: "Finished goal", status: "achieved" }),
+      workspaceGoal("theirs", { title: "Other account goal", accountId: "other@example.com" }),
+    ]);
+    render(<TaskSidebar accountId={null} onOpenThread={vi.fn()} />);
+
+    const dialog = await openTask("Plan launch");
+    const select = dialog.getByRole("combobox", { name: "Goal" });
+    expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "No goal", `Ship IMAP (${formatPeriod(quarter)})`, `Grow (${year})`,
+    ]);
+    fireEvent.change(select, { target: { value: "ship" } });
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", goalId: "ship" }));
+    fireEvent.change(select, { target: { value: "" } });
+    await waitFor(() => expect(updateTask).toHaveBeenLastCalledWith({ id: "plan", goalId: null }));
+  });
+
+  it("adds a goal that supports a longer one and shows its tasks", async () => {
+    const { createGoal } = setup([], [workspaceGoal("grow", { title: "Grow", horizon: "year", period: year })]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await within(await screen.findByRole("complementary", { name: "Goals" })).findByRole("button", { name: "Add goal" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Add goal" }));
+    expect(dialog.getByRole("combobox", { name: "Horizon" })).toHaveValue("quarter");
+    expect(dialog.getByRole("combobox", { name: "Period" })).toHaveValue(quarter);
+    expect(dialog.getByRole("button", { name: "Add goal" })).toBeDisabled();
+    fireEvent.change(dialog.getByRole("textbox", { name: "Goal" }), { target: { value: "  Ship IMAP  " } });
+    fireEvent.change(dialog.getByRole("combobox", { name: "Supports" }), { target: { value: "grow" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Add goal" }));
+
+    await waitFor(() => expect(createGoal).toHaveBeenCalledWith({
+      accountId: "you@example.com", title: "Ship IMAP", notes: null, horizon: "quarter", period: quarter, parentGoalId: "grow",
+    }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Show all tasks, not only those supporting/ })).toBeInTheDocument();
+  });
+
+  it("discards a new goal on Escape", async () => {
+    const { createGoal } = setup([], []);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    fireEvent.click(await within(await screen.findByRole("complementary", { name: "Goals" })).findByRole("button", { name: "Add goal" }));
+    fireEvent.change(within(screen.getByRole("dialog", { name: "Add goal" })).getByRole("textbox", { name: "Goal" }), { target: { value: "Half typed" } });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(createGoal).not.toHaveBeenCalled();
+  });
+
+  it("saves goal edits as the user leaves each field and unlinks a supported goal the new horizon cannot support", async () => {
+    const { updateGoal } = setup([], [
+      workspaceGoal("grow", { title: "Grow", horizon: "year", period: year }),
+      workspaceGoal("ship", { title: "Ship", parentGoalId: "grow" }),
+    ]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit goal Ship" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Goal" }));
+    expect(dialog.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    const title = dialog.getByRole("textbox", { name: "Goal" });
+    fireEvent.change(title, { target: { value: "Ship the IMAP provider" } });
+    fireEvent.blur(title);
+    await waitFor(() => expect(updateGoal).toHaveBeenCalledWith({ id: "ship", title: "Ship the IMAP provider" }));
+
+    fireEvent.change(dialog.getByRole("combobox", { name: "Status" }), { target: { value: "achieved" } });
+    await waitFor(() => expect(updateGoal).toHaveBeenLastCalledWith({ id: "ship", status: "achieved" }));
+
+    // A year goal cannot support another year goal, so the link goes with the move.
+    fireEvent.change(dialog.getByRole("combobox", { name: "Horizon" }), { target: { value: "year" } });
+    await waitFor(() => expect(updateGoal).toHaveBeenLastCalledWith({ id: "ship", horizon: "year", period: year, parentGoalId: null }));
+    expect(dialog.queryByRole("combobox", { name: "Supports" })).not.toBeInTheDocument();
+
+    fireEvent.change(dialog.getByRole("textbox", { name: "Notes" }), { target: { value: "Escape keeps this" } });
+    fireEvent.keyDown(dialog.getByRole("textbox", { name: "Notes" }), { key: "Escape" });
+    await waitFor(() => expect(updateGoal).toHaveBeenLastCalledWith({ id: "ship", notes: "Escape keeps this" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("deletes a goal only after confirmation and unlinks its tasks", async () => {
+    const { deleteGoal } = setup([workspaceTask("linked", { title: "Linked", goalId: "ship" })], [workspaceGoal("ship", { title: "Ship" })]);
+    const onTasksChanged = vi.fn();
+    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onTasksChanged={onTasksChanged} />);
+
+    await waitFor(() => expect(container.querySelector(".task-card-goal")).toHaveTextContent("Ship"));
+    fireEvent.click(screen.getByRole("button", { name: /^Ship/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit goal Ship" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Goal" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Delete goal" }));
+    expect(deleteGoal).not.toHaveBeenCalled();
+    expect(dialog.getByText(/Its tasks stay and are unlinked/)).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(deleteGoal).toHaveBeenCalledWith("ship"));
+    await waitFor(() => expect(container.querySelector(".task-card-goal")).toBeNull());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show all tasks/ })).not.toBeInTheDocument();
+    expect(onTasksChanged).toHaveBeenCalled();
+  });
+
+  it("resizes the goals pane from its divider and remembers the width", async () => {
+    setup([workspaceTask("todo", { title: "Draft agenda" })], []);
+    const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    Object.defineProperty(window, "innerWidth", { value: 1600, configurable: true });
+    try {
+      const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+      const handle = await screen.findByRole("separator", { name: "Resize goals" });
+      expect(handle).toHaveAttribute("aria-controls", "goals-pane");
+      expect(container.querySelector("#goals-pane")).toBeInTheDocument();
+      const body = container.querySelector(".tasks-workspace-body") as HTMLElement;
+      expect(body.style.getPropertyValue("--goals-pane-width")).toBe("320px");
+      // The pane sits right of the divider, so ArrowLeft widens it.
+      fireEvent.keyDown(handle, { key: "ArrowLeft" });
+      expect(body.style.getPropertyValue("--goals-pane-width")).toBe("330px");
+      await waitFor(() => expect(localStorage.getItem("threestrands.goalsPaneWidth")).toBe("330"));
+      fireEvent.dblClick(handle);
+      expect(body.style.getPropertyValue("--goals-pane-width")).toBe("320px");
+    } finally {
+      if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth);
+    }
+  });
+
+  it("moves focus into the goals with the handle, steps with j and k without moving the task selection, and returns on Escape", async () => {
+    setup([workspaceTask("first", { title: "First" }), workspaceTask("second", { title: "Second" })], [workspaceGoal("ship", { title: "Ship" })]);
+    localStorage.setItem("threestrands.tasks.layout", "list");
+    const ref = createRef<TaskWorkspaceHandle>();
+    const { container } = render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
+    await screen.findByRole("button", { name: /^Ship/ });
+    await waitFor(() => expect(container.querySelector("#task-first")).toHaveAttribute("aria-current", "true"));
+
+    act(() => ref.current!.focusGoals());
+    const allTasks = screen.getByRole("button", { name: /All tasks/ });
+    expect(allTasks).toHaveFocus();
+    const down = new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true });
+    act(() => { allTasks.dispatchEvent(down); });
+    expect(down.defaultPrevented).toBe(true);
+    expect(screen.getByRole("button", { name: /No goal/ })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    expect(screen.getByRole("button", { name: /^Ship/ })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "k" });
+    expect(screen.getByRole("button", { name: /No goal/ })).toHaveFocus();
+
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(container.querySelector("#task-first .task-card-main")).toHaveFocus();
+  });
 });

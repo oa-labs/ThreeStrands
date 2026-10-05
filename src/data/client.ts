@@ -25,6 +25,8 @@ import type {
   ContactEnrichmentResult,
   ContactFieldSuggestion,
   CreateTaskRequest,
+  CreateGoalRequest,
+  Goal,
   Label,
   MailboxUnreadCounts,
   RecoveryStatus,
@@ -51,6 +53,7 @@ import type {
   UnreadCounts,
   UnsubscribeResult,
   UpdateTaskRequest,
+  UpdateGoalRequest,
   ProposedTimeCheck,
   MailProvider,
 } from "../domain";
@@ -203,6 +206,11 @@ export interface MailClient extends CorrespondenceClient {
   setTaskStatus(id: string, status: ThreadTask["status"], source?: "user" | "reply" | "external"): Promise<ThreadTask>;
   recordFollowUp(id: string): Promise<ThreadTask>;
   reconcileTasks(): Promise<number>;
+  listGoals(accountId?: string): Promise<Goal[]>;
+  createGoal(request: CreateGoalRequest): Promise<Goal>;
+  updateGoal(request: UpdateGoalRequest): Promise<Goal>;
+  /** Deletes the goal and unlinks the tasks and goals that supported it. */
+  deleteGoal(id: string): Promise<void>;
 }
 
 function isTauri(): boolean {
@@ -315,6 +323,10 @@ const tauriClient: MailClient = {
   setTaskStatus: (id, status, source = "user") => complete("set_task_status", { id, status, source }),
   recordFollowUp: (id) => complete("record_follow_up", { id }),
   reconcileTasks: () => complete("reconcile_tasks"),
+  listGoals: (accountId) => read("list_goals", { accountId }),
+  createGoal: (request) => complete("create_goal", { request }),
+  updateGoal: (request) => complete("update_goal", { request }),
+  deleteGoal: (id) => complete("delete_goal", { id }),
 };
 
 // Release builds compile `__DEMO_CLIENT__` to false, which drops the demo client.

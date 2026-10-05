@@ -21,6 +21,7 @@ mod accounts;
 mod ai;
 mod calendar_accounts;
 mod contacts;
+mod goals;
 mod snippets;
 mod split_inboxes;
 mod tasks;
@@ -3601,7 +3602,7 @@ pub(crate) mod tests {
         from_taylor.from="Taylor <taylor@example.com>".into();from_taylor.to=vec!["you@example.com".into()];
         database.upsert_thread("you@example.com",&[from_taylor]).unwrap();
         let thread_for=|contact:&str|database.contact_timeline(contact,0,10).unwrap().into_iter().map(|item|(item.thread_id,item.account_id,item.subject)).collect::<Vec<_>>();
-        let add_task=|(thread_id,account_id,subject):&(String,String,String),title:&str|database.create_task(&crate::models::CreateTaskRequest{account_id:account_id.clone(),thread_id:Some(thread_id.clone()),source_message_id:None,subject_snapshot:Some(subject.clone()),title:title.into(),notes:None,kind:"action".into(),due_kind:"none".into(),due_value:None,time_zone:None,repeat_interval_days:None,evidence_text:None}).unwrap();
+        let add_task=|(thread_id,account_id,subject):&(String,String,String),title:&str|database.create_task(&crate::models::CreateTaskRequest{account_id:account_id.clone(),thread_id:Some(thread_id.clone()),source_message_id:None,subject_snapshot:Some(subject.clone()),title:title.into(),notes:None,kind:"action".into(),due_kind:"none".into(),due_value:None,time_zone:None,repeat_interval_days:None,evidence_text:None,goal_id:None}).unwrap();
         let jane_primary=thread_for("derived:jane@example.com");
         let jane_work=thread_for("derived:jane@work.example.com");
         let taylor=thread_for("derived:taylor@example.com");

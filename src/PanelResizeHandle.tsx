@@ -61,6 +61,19 @@ export function useInboxWidth() {
   return useResizableWidth(inboxWidthConfig);
 }
 
+// Icon rail plus three board columns at their minimum width.
+const goalsPaneWidthConfig: ResizableWidthConfig = {
+  storageKey: "threestrands.goalsPaneWidth",
+  minimumWidth: 240,
+  defaultWidth: 320,
+  maximumWidth: 560,
+  reservedWidth: 58 + 626,
+};
+
+export function useGoalsPaneWidth() {
+  return useResizableWidth(goalsPaneWidthConfig);
+}
+
 // Icon rail plus room for the contact details pane.
 const contactListWidthConfig: ResizableWidthConfig = {
   storageKey: "threestrands.contactListWidth",

@@ -47,7 +47,7 @@ use models::{
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailProviderKind, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
-    UpdateLabelRequest, UpdateSnippetRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest,
+    UpdateLabelRequest, UpdateSnippetRequest, UpdateSplitInboxRequest, CreateTaskRequest, UpdateTaskRequest, Goal, CreateGoalRequest, UpdateGoalRequest,
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -1860,6 +1860,9 @@ async fn remove_synced_mail_account(
     for task in state.database.list_tasks(Some(&email), None)? {
         state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::Task, &task.id)?;
     }
+    for goal in state.database.list_goals(Some(&email))? {
+        state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::Goal, &goal.id)?;
+    }
     for split in state.database.list_split_inboxes()?.into_iter().filter(|split| split.account_id == email) {
         state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::SplitInbox, &split.id)?;
     }
@@ -3255,10 +3258,54 @@ fn update_task(request: UpdateTaskRequest, state: State<'_, AppState>) -> Result
     if request.due_value.is_some() { fields.insert("dueValue".to_string()); }
     if request.time_zone.is_some() { fields.insert("timeZone".to_string()); }
     if request.repeat_interval_days.is_some() { fields.insert("repeatIntervalDays".to_string()); }
+    if request.goal_id.is_some() { fields.insert("goalId".to_string()); }
     fields.insert("updatedAt".to_string());
     let task = state.database.update_task(&request)?;
     record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task, Some(fields))?;
     Ok(task)
+}
+
+#[tauri::command]
+async fn list_goals(account_id: Option<String>, state: State<'_, AppState>) -> Result<Vec<Goal>, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_goals(account_id.as_deref())).await
+}
+
+#[tauri::command(async)]
+fn create_goal(request: CreateGoalRequest, state: State<'_, AppState>) -> Result<Goal, String> {
+    let goal = state.database.create_goal(&request)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::Goal, &goal.id, &goal, None)?;
+    Ok(goal)
+}
+
+#[tauri::command(async)]
+fn update_goal(request: UpdateGoalRequest, state: State<'_, AppState>) -> Result<Goal, String> {
+    let mut fields = std::collections::BTreeSet::from(["updatedAt".to_string()]);
+    if request.title.is_some() { fields.insert("title".to_string()); }
+    if request.notes.is_some() { fields.insert("notes".to_string()); }
+    if request.horizon.is_some() { fields.insert("horizon".to_string()); }
+    if request.period.is_some() { fields.insert("period".to_string()); }
+    if request.status.is_some() { fields.extend(["status".to_string(), "closedAt".to_string()]); }
+    if request.parent_goal_id.is_some() { fields.insert("parentGoalId".to_string()); }
+    let goal = state.database.update_goal(&request)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::Goal, &goal.id, &goal, Some(fields))?;
+    Ok(goal)
+}
+
+#[tauri::command(async)]
+fn delete_goal(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let deletion = state.database.delete_goal(&id)?;
+    state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::Goal, &id)?;
+    for task in &deletion.tasks {
+        record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, task,
+            Some(std::collections::BTreeSet::from(["goalId".to_string(), "updatedAt".to_string()])))?;
+    }
+    for goal in &deletion.children {
+        record_synced_value(&state, threestrands_sync_protocol::EntityType::Goal, &goal.id, goal,
+            Some(std::collections::BTreeSet::from(["parentGoalId".to_string(), "updatedAt".to_string()])))?;
+    }
+    kick_replicated_sync(&state);
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -3748,6 +3795,10 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         list_tasks,
         create_task,
         update_task,
+        list_goals,
+        create_goal,
+        update_goal,
+        delete_goal,
         set_task_status,
         record_follow_up,
         reconcile_tasks,

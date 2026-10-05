@@ -3,7 +3,7 @@ use chrono_tz::Tz;
 use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
-use super::{display_error, Database, DbResult};
+use super::{display_error, goals::ensure_goal_link, Database, DbResult};
 use crate::models::{CreateTaskRequest, ThreadTask, UpdateTaskRequest};
 
 const MAX_TITLE: usize = 240;
@@ -66,6 +66,7 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadTask> {
         created_at: row.get(16)?,
         updated_at: row.get(17)?,
         completed_at: row.get(18)?,
+        goal_id: row.get(19)?,
     })
 }
 
@@ -73,7 +74,7 @@ fn select_sql() -> &'static str {
     "SELECT id, account_id, thread_id, source_message_id, subject_snapshot,
             title, notes, kind, due_kind, due_value, time_zone,
             repeat_interval_days, status, completion_source, evidence_text,
-            wait_after, created_at, updated_at, completed_at
+            wait_after, created_at, updated_at, completed_at, goal_id
      FROM tasks"
 }
 
@@ -168,6 +169,7 @@ impl Database {
             return Err(format!("Task evidence exceeds {MAX_EVIDENCE} characters").into());
         }
         self.with_connection(|connection| {
+            ensure_goal_link(connection, &request.account_id, request.goal_id.as_deref())?;
             let wait_after: Option<String> = match request.thread_id.as_deref() {
                 Some(thread_id) => connection
                     .query_row(
@@ -187,9 +189,9 @@ impl Database {
                         id, account_id, thread_id, source_message_id, subject_snapshot,
                         title, notes, kind, due_kind, due_value, time_zone,
                         repeat_interval_days, status, evidence_text, wait_after,
-                        created_at, updated_at
+                        created_at, updated_at, goal_id
                      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                               'open', ?13, ?14, ?15, ?15)",
+                               'open', ?13, ?14, ?15, ?15, ?16)",
                     params![
                         id,
                         request.account_id,
@@ -206,6 +208,7 @@ impl Database {
                         request.evidence_text.as_deref().map(str::trim),
                         wait_after,
                         now,
+                        request.goal_id,
                     ],
                 )?;
             Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?)
@@ -235,6 +238,13 @@ impl Database {
                 .time_zone
                 .as_ref()
                 .map_or(current.time_zone.as_deref(), |value| value.as_deref());
+            let goal_id = request
+                .goal_id
+                .as_ref()
+                .map_or(current.goal_id.as_deref(), |value| value.as_deref());
+            if request.goal_id.is_some() {
+                ensure_goal_link(connection, &current.account_id, goal_id)?;
+            }
             if notes.is_some_and(|value| value.chars().count() > MAX_NOTES) {
                 return Err(format!("Task notes exceed {MAX_NOTES} characters").into());
             }
@@ -242,10 +252,10 @@ impl Database {
             connection
                 .execute(
                     "UPDATE tasks SET title=?1, notes=?2, kind=?3, due_kind=?4, due_value=?5,
-                        time_zone=?6, repeat_interval_days=?7, updated_at=?8 WHERE id=?9",
+                        time_zone=?6, repeat_interval_days=?7, updated_at=?8, goal_id=?10 WHERE id=?9",
                     params![
                         title.trim(), notes.map(str::trim), kind, due_kind, due_value,
-                        time_zone, repeat_interval_days, now, request.id
+                        time_zone, repeat_interval_days, now, request.id, goal_id
                     ],
                 )?;
             Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [&request.id], task_from_row)?)
@@ -388,6 +398,7 @@ mod tests {
                 time_zone: Some("America/New_York".into()),
                 repeat_interval_days: None,
                 evidence_text: Some("Please reply".into()),
+                goal_id: None,
             })
             .unwrap();
         assert_eq!(task.status, "open");
@@ -424,6 +435,7 @@ mod tests {
                 time_zone: None,
                 repeat_interval_days: None,
                 evidence_text: None,
+                goal_id: None,
             })
             .unwrap();
 
@@ -467,6 +479,7 @@ mod tests {
                 time_zone: None,
                 repeat_interval_days: None,
                 evidence_text: None,
+                goal_id: None,
             })
             .unwrap();
 
@@ -493,6 +506,7 @@ mod tests {
             time_zone: None,
             repeat_interval_days: None,
             evidence_text: None,
+            goal_id: None,
         };
         assert!(database.create_task(&request).is_err());
         request.kind = "action".into();
@@ -516,6 +530,7 @@ mod tests {
                 time_zone: Some("America/New_York".into()),
                 repeat_interval_days: Some(7),
                 evidence_text: None,
+                goal_id: None,
             })
             .unwrap();
 
@@ -542,6 +557,7 @@ mod tests {
                 time_zone: Some("America/New_York".into()),
                 repeat_interval_days: Some(7),
                 evidence_text: None,
+                goal_id: None,
             })
             .unwrap();
 
@@ -581,6 +597,7 @@ mod tests {
                 time_zone: Some("America/New_York".into()),
                 repeat_interval_days: Some(7),
                 evidence_text: None,
+                goal_id: None,
             })
             .unwrap();
         let unrelated = database
@@ -597,6 +614,7 @@ mod tests {
                 time_zone: None,
                 repeat_interval_days: None,
                 evidence_text: None,
+                goal_id: None,
             })
             .unwrap();
         database

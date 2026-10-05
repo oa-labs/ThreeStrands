@@ -1,5 +1,6 @@
 import { demoCorrespondence } from "./demoCorrespondence";
 import { isActiveTaskStatus } from "../taskViews";
+import { goalPeriodMatches, parentCandidates } from "../goals";
 import type { MailClient } from "./client";
 import { DEMO_ACCOUNT_ID, defaultDemoDataset, type DemoDataset } from "./demoDataset";
 import { buildShowcaseDataset } from "./showcaseDataset";
@@ -19,6 +20,8 @@ import type {
   DomainPerson,
   SaveContactRequest,
   CreateTaskRequest,
+  CreateGoalRequest,
+  Goal,
   Label,
   Message,
   ReplyAssistContext,
@@ -40,6 +43,7 @@ import type {
   TriageSenderStats,
   UnsubscribeResult,
   UpdateTaskRequest,
+  UpdateGoalRequest,
 } from "../domain";
 
 export { DEMO_ACCOUNT_ID };
@@ -54,6 +58,20 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   let labels = seed.labels;
   let splitInboxes = seed.splitInboxes;
   let tasks = seed.tasks;
+  let goals = seed.goals ?? [];
+  const ensureGoalLink = (accountId: string, goalId: string | null | undefined) => {
+    if (!goalId) return;
+    const goal = goals.find((candidate) => candidate.id === goalId);
+    if (!goal) throw new Error("Goal not found");
+    if (goal.accountId !== accountId) throw new Error("A task can only support a goal in its own account");
+  };
+  const validateGoal = (goal: Goal) => {
+    if (!goal.title.trim() || goal.title.trim().length > 240) throw new Error("Goal title must be between 1 and 240 characters");
+    if (!goalPeriodMatches(goal.horizon, goal.period)) throw new Error("Choose a period that matches the goal's horizon, such as 2026, 2026-H2, or 2026-Q4");
+    if (goal.parentGoalId && !parentCandidates(goals, goal).some((candidate) => candidate.id === goal.parentGoalId)) {
+      throw new Error("A goal can only support a longer-term goal whose period includes it");
+    }
+  };
   let snippets = seed.snippets;
   let contacts = seed.contacts;
   let savedContactProfiles = seed.contactProfiles;
@@ -903,6 +921,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         : null;
       if (request.threadId && !thread) throw new Error("Source thread not found");
       if (!request.title.trim()) throw new Error("Task title is required");
+      ensureGoalLink(request.accountId, request.goalId);
       const now = new Date().toISOString();
       const task: ThreadTask = {
         id: `demo-task-${crypto.randomUUID()}`,
@@ -924,6 +943,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         createdAt: now,
         updatedAt: now,
         completedAt: null,
+        goalId: request.goalId ?? null,
       };
       tasks = [...tasks, task];
       return structuredClone(task);
@@ -932,6 +952,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const index = tasks.findIndex((task) => task.id === request.id);
       if (index === -1) throw new Error("Task not found");
       const current = tasks[index];
+      if (request.goalId !== undefined) ensureGoalLink(current.accountId, request.goalId);
       const next: ThreadTask = {
         ...current,
         title: request.title?.trim() || current.title,
@@ -941,6 +962,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         dueValue: request.dueValue === undefined ? current.dueValue : request.dueValue,
         timeZone: request.timeZone === undefined ? current.timeZone : request.timeZone,
         repeatIntervalDays: request.repeatIntervalDays === undefined ? current.repeatIntervalDays : request.repeatIntervalDays,
+        goalId: request.goalId === undefined ? current.goalId ?? null : request.goalId,
         updatedAt: new Date().toISOString(),
       };
       tasks = tasks.map((task, candidateIndex) => candidateIndex === index ? next : task);
@@ -984,6 +1006,53 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     async reconcileTasks() {
       return 0;
+    },
+    async listGoals(accountId) {
+      return structuredClone(goals.filter((goal) => !accountId || accountId === "all" || goal.accountId === accountId));
+    },
+    async createGoal(request: CreateGoalRequest) {
+      const now = new Date().toISOString();
+      const goal: Goal = {
+        id: `demo-goal-${crypto.randomUUID()}`,
+        accountId: request.accountId,
+        title: request.title.trim(),
+        notes: request.notes?.trim() || null,
+        horizon: request.horizon,
+        period: request.period,
+        status: "active",
+        parentGoalId: request.parentGoalId ?? null,
+        createdAt: now,
+        updatedAt: now,
+        closedAt: null,
+      };
+      validateGoal(goal);
+      goals = [...goals, goal];
+      return structuredClone(goal);
+    },
+    async updateGoal(request: UpdateGoalRequest) {
+      const current = goals.find((goal) => goal.id === request.id);
+      if (!current) throw new Error("Goal not found");
+      const status = request.status ?? current.status;
+      const next: Goal = {
+        ...current,
+        title: request.title?.trim() ?? current.title,
+        notes: request.notes === undefined ? current.notes : request.notes?.trim() || null,
+        horizon: request.horizon ?? current.horizon,
+        period: request.period ?? current.period,
+        status,
+        parentGoalId: request.parentGoalId === undefined ? current.parentGoalId : request.parentGoalId,
+        closedAt: status === "active" ? null : status === current.status ? current.closedAt : new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      validateGoal(next);
+      goals = goals.map((goal) => goal.id === next.id ? next : goal);
+      return structuredClone(next);
+    },
+    async deleteGoal(id) {
+      const now = new Date().toISOString();
+      goals = goals.filter((goal) => goal.id !== id)
+        .map((goal) => goal.parentGoalId === id ? { ...goal, parentGoalId: null, updatedAt: now } : goal);
+      tasks = tasks.map((task) => task.goalId === id ? { ...task, goalId: null, updatedAt: now } : task);
     },
     async listLabels() {
       return structuredClone(labels);

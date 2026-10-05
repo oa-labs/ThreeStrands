@@ -1,7 +1,10 @@
-import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, Target, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { ThreadTask, UpdateTaskRequest, TaskStatus } from "./domain";
+import type { Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
+import { GoalDialog } from "./GoalDialog";
+import { goalWithSupporters, GoalsPane, type GoalFilter, type GoalsPaneHandle } from "./GoalsPane";
+import { PanelResizeHandle, useGoalsPaneWidth } from "./PanelResizeHandle";
 import { TaskDetailDialog } from "./TaskDetailDialog";
 import { errorMessage } from "./errors";
 import { adjacentTaskStatus, compareTasksForDisplay, formatDue, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll, type TaskBoardColumn, type TaskView } from "./taskViews";
@@ -73,16 +76,17 @@ export type TaskWorkspaceHandle = {
   selectAdjacentColumn(direction: -1 | 1): void;
   toggleLayout(): void;
   cycleView(direction: -1 | 1): void;
+  focusGoals(): void;
 };
 
-/** The Tasks workspace: a list or board of tasks; each task opens in a detail dialog. */
+/** The Tasks workspace: a list or board of tasks beside the account's goals; each task opens in a detail dialog. */
 export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   accountId: string | null;
   accountOptions?: string[];
   onOpenThread(threadId: string): void;
   onTasksChanged?(): void;
   onDraftFollowUp?(task: ThreadTask): void;
-  onCreateTask?(title: string, accountId?: string): Promise<ThreadTask>;
+  onCreateTask?(title: string, accountId?: string, goalId?: string): Promise<ThreadTask>;
   onSelectedTaskChange?(task: ThreadTask | null): void;
   onLayoutChange?(layout: TaskLayout): void;
   refreshKey?: number;
@@ -98,6 +102,11 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   refreshKey = 0,
 }, ref) {
   const [tasks, setTasks] = useState<ThreadTask[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalFilter, setGoalFilter] = useState<GoalFilter>(null);
+  const [goalDialog, setGoalDialog] = useState<null | { goalId: string | null }>(null);
+  const goalsPane = useRef<GoalsPaneHandle>(null);
+  const goalsPaneSize = useGoalsPaneWidth();
   const [now, setNow] = useState(() => new Date());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +140,12 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     setLoading(true);
     setError(null);
     try {
-      setTasks(await mailClient.listTasks(accountId ?? undefined));
+      const [nextTasks, nextGoals] = await Promise.all([
+        mailClient.listTasks(accountId ?? undefined),
+        mailClient.listGoals(accountId ?? undefined),
+      ]);
+      setTasks(nextTasks);
+      setGoals(nextGoals);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -144,7 +158,19 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     const interval = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(interval);
   }, []);
-  const sortedTasks = useMemo(() => [...tasks].sort(compareTasksForDisplay), [tasks]);
+  const goalsById = useMemo(() => new Map(goals.map((goal) => [goal.id, goal])), [goals]);
+  // A goal filter that no longer matches a goal (deleted, another account) falls back to all tasks.
+  if (goalFilter?.goalId && !loading && !goalsById.has(goalFilter.goalId)) setGoalFilter(null);
+  const filteredTasks = useMemo(() => {
+    if (!goalFilter) return tasks;
+    if (goalFilter.goalId === null) return tasks.filter((task) => !task.goalId || !goalsById.has(task.goalId));
+    const supporting = goalWithSupporters(goals, goalFilter.goalId);
+    return tasks.filter((task) => task.goalId && supporting.has(task.goalId));
+  }, [goalFilter, goals, goalsById, tasks]);
+  // An edited goal removed meanwhile (sync, another window) closes its dialog instead of turning it into "Add goal".
+  if (goalDialog?.goalId && !loading && !goalsById.has(goalDialog.goalId)) setGoalDialog(null);
+  const filterGoal = goalFilter?.goalId ? goalsById.get(goalFilter.goalId) ?? null : null;
+  const sortedTasks = useMemo(() => [...filteredTasks].sort(compareTasksForDisplay), [filteredTasks]);
   const workspaceGroups = useMemo(() => TASK_VIEWS.filter((name) => name !== "All")
     .map((name) => ({ name, tasks: sortedTasks.filter((task) =>
       view === "All" ? taskViewForAll(task, now) === name && isActiveTaskStatus(task.status) : name === view && taskMatchesView(task, view, now),
@@ -158,7 +184,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const visibleBoardColumns = view === "All" ? boardColumns : boardColumns.filter((column) => column.name !== "Done");
   const [cardDrag, setCardDrag] = useState<CardDrag | null>(null);
   const suppressCardClick = useRef(false);
-  const olderDoneCount = useMemo(() => view === "All" ? tasks.filter(isStaleCompleted).length : 0, [tasks, view]);
+  const olderDoneCount = useMemo(() => view === "All" ? filteredTasks.filter(isStaleCompleted).length : 0, [filteredTasks, view]);
   const displayedGroups = board ? boardColumns : workspaceGroups;
   const orderedTasks = useMemo(() => displayedGroups.flatMap((group) => group.tasks), [displayedGroups]);
   const selectedTask = orderedTasks.find((task) => task.id === selectedTaskId) ?? null;
@@ -246,11 +272,13 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   const createTask = async () => {
     const title = newTaskTitle.trim();
-    if (!onCreateTask || !title || creatingTask || (!accountId && accountOptions.length > 1 && !newTaskAccountId)) return;
+    if (!onCreateTask || !title || creatingTask || (!accountId && !filterGoal && accountOptions.length > 1 && !newTaskAccountId)) return;
     setCreatingTask(true);
     setError(null);
     try {
-      const created = accountId ? await onCreateTask(title) : await onCreateTask(title, newTaskAccountId || accountOptions[0]);
+      // Adding while one goal is in view links the task to it, in the goal's account.
+      const created = filterGoal ? await onCreateTask(title, filterGoal.accountId, filterGoal.id)
+        : accountId ? await onCreateTask(title) : await onCreateTask(title, newTaskAccountId || accountOptions[0]);
       setTasks((current) => [created, ...current]);
       setView("All");
       setSelectedTaskId(created.id);
@@ -263,6 +291,16 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       setCreatingTask(false);
     }
   };
+
+  // Like task saves, goal saves run one at a time in the order they were made.
+  const updateGoal = useCallback((goalId: string, request: Omit<UpdateGoalRequest, "id">) => {
+    const save = saveQueue.current.then(async () => {
+      const updated = await mailClient.updateGoal({ id: goalId, ...request });
+      setGoals((current) => current.map((goal) => goal.id === updated.id ? updated : goal));
+    });
+    saveQueue.current = save.catch(() => undefined);
+    return save;
+  }, []);
 
   const adjacentTaskId = useCallback((direction: -1 | 1): string | null => {
     if (orderedTasks.length === 0) return null;
@@ -335,6 +373,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       }
     },
     toggleLayout: () => changeLayout(layout === "board" ? "list" : "board"),
+    focusGoals: () => goalsPane.current?.focus(),
     cycleView: (direction) => {
       const views: readonly TaskView[] = board ? BOARD_TASK_VIEWS : TASK_VIEWS;
       setView((current) => views[(Math.max(0, views.indexOf(current)) + direction + views.length) % views.length]);
@@ -347,6 +386,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     const forward = board ? adjacentTaskStatus(task.status, 1) : null;
     const due = formatDue(task);
     const kindLabel = TASK_CARD_KIND_LABELS[task.kind];
+    const cardGoal = task.goalId ? goalsById.get(task.goalId) ?? null : null;
     const followUp = onDraftFollowUp && task.threadId && task.kind === "follow_up" && isDue(task) ? (
       <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button>
     ) : null;
@@ -397,11 +437,12 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       >
         <strong>{task.title}</strong>
         {!board && task.status === "in_progress" ? <span className="task-progress-badge">In progress</span> : null}
-        {due || kindLabel || task.threadId || task.status === "cancelled" ? <span className="task-card-meta">
+        {due || kindLabel || task.threadId || task.status === "cancelled" || cardGoal ? <span className="task-card-meta">
           {task.status === "cancelled" ? <small className="task-card-kind">Cancelled</small> : null}
           {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
           {kindLabel ? <small className="task-card-kind">{kindLabel}</small> : null}
           {task.threadId ? <small className="task-card-source" title="From an email"><Mail size={12} aria-hidden="true" /><span className="sr-only">From an email</span></small> : null}
+          {cardGoal ? <small className="task-card-goal" title={`Supports ${cardGoal.title}`}><Target size={12} aria-hidden="true" /><span className="sr-only">Supports </span>{cardGoal.title}</small> : null}
         </span> : null}
       </button>
       {board ? (back || forward || followUp) ? <div className="task-board-moves">
@@ -458,6 +499,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               <span className="eyebrow-account"> · {accountId ?? "All accounts"}</span>
             </span>
             <h1>{orderedTasks.length} {orderedTasks.length === 1 ? "task" : "tasks"}</h1>
+            {goalFilter ? <button type="button" className="task-goal-filter-chip" aria-label={`Show all tasks, not only ${filterGoal ? `those supporting ${filterGoal.title}` : "those with no goal"}`} onClick={() => setGoalFilter(null)}>
+              <Target size={12} aria-hidden="true" /><span>{filterGoal ? `Supports ${filterGoal.title}` : "No goal"}</span><X size={12} aria-hidden="true" />
+            </button> : null}
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
@@ -481,11 +525,11 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
       {!loading && tasks.length === 0 && !addingTask ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
-      <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`}>
+      <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`} style={{ "--goals-pane-width": `${goalsPaneSize.width}px` } as CSSProperties}>
         <div className={board ? "tasks-board-pane" : "tasks-list-pane"}>
           <nav className="task-view-nav" aria-label="Task views">
             {(board ? BOARD_TASK_VIEWS : TASK_VIEWS).map((name) => {
-              const count = tasks.filter((task) => taskMatchesView(task, name, now)).length;
+              const count = filteredTasks.filter((task) => taskMatchesView(task, name, now)).length;
               return <button key={name} type="button" aria-pressed={view === name} onClick={() => setView(name)}>
                 <span>{name}</span>{count > 0 ? <span className="task-view-count" aria-hidden="true">{count}</span> : null}
               </button>;
@@ -494,18 +538,52 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {addingTask ? <form className="task-quick-add" data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); void createTask(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!creatingTask) setAddingTask(false); } }}>
             <label htmlFor="quick-add-task-title">Task title</label>
             <input id="quick-add-task-title" ref={newTaskInput} autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="What needs doing?" maxLength={240} />
-            {!accountId && accountOptions.length > 1 ? <><label htmlFor="quick-add-task-account">Account</label><select id="quick-add-task-account" value={newTaskAccountId} onChange={(event) => setNewTaskAccountId(event.target.value)} required><option value="">Choose an account</option>{accountOptions.map((email) => <option key={email} value={email}>{email}</option>)}</select></> : null}
-            <div><button type="submit" disabled={creatingTask || !newTaskTitle.trim() || (!accountId && accountOptions.length > 1 && !newTaskAccountId)}>{creatingTask ? "Adding…" : "Add task"}</button><button type="button" disabled={creatingTask} onClick={() => setAddingTask(false)}>Cancel</button></div>
+            {filterGoal ? <p className="task-quick-add-goal"><Target size={12} aria-hidden="true" /> Supports {filterGoal.title}</p> : null}
+            {!accountId && !filterGoal && accountOptions.length > 1 ? <><label htmlFor="quick-add-task-account">Account</label><select id="quick-add-task-account" value={newTaskAccountId} onChange={(event) => setNewTaskAccountId(event.target.value)} required><option value="">Choose an account</option>{accountOptions.map((email) => <option key={email} value={email}>{email}</option>)}</select></> : null}
+            <div><button type="submit" disabled={creatingTask || !newTaskTitle.trim() || (!accountId && !filterGoal && accountOptions.length > 1 && !newTaskAccountId)}>{creatingTask ? "Adding…" : "Add task"}</button><button type="button" disabled={creatingTask} onClick={() => setAddingTask(false)}>Cancel</button></div>
           </form> : null}
           {!board && !loading && tasks.length > 0 && displayedGroups.length === 0 ? <p className="tasks-status">{view === "All" ? "No open tasks. Add a task or view completed work." : `No tasks in ${view.toLowerCase()}.`}</p> : null}
           {taskList}
           {draggedTask && cardDrag ? <div className="task-drag-preview" aria-hidden="true" style={{ left: cardDrag.x - cardDrag.offsetX, top: cardDrag.y - cardDrag.offsetY, width: cardDrag.width }}>
             <strong>{draggedTask.title}</strong>
           </div> : null}
+          <PanelResizeHandle {...goalsPaneSize} panelSide="right" label="Resize goals" controlsId="goals-pane" title="Drag to resize the goals. Use arrow keys to adjust; double-click to reset." />
         </div>
+        <GoalsPane
+          ref={goalsPane}
+          goals={goals}
+          tasks={tasks}
+          filter={goalFilter}
+          onFilterChange={setGoalFilter}
+          onAddGoal={() => setGoalDialog({ goalId: null })}
+          onEditGoal={(goal) => setGoalDialog({ goalId: goal.id })}
+          onLeave={() => (selectedTaskId ? taskCards.current.get(selectedTaskId)?.querySelector<HTMLElement>(".task-card-main") : null)?.focus()}
+        />
       </div>
+      {goalDialog ? <GoalDialog
+        goal={goalDialog.goalId ? goalsById.get(goalDialog.goalId) ?? null : null}
+        goals={goals}
+        accountOptions={accountOptions}
+        defaultAccountId={accountId}
+        onCreate={async (request) => {
+          const created = await mailClient.createGoal(request);
+          setGoals((current) => [...current, created]);
+          setGoalDialog(null);
+          setGoalFilter({ goalId: created.id });
+        }}
+        onUpdate={(request) => updateGoal(goalDialog.goalId!, request)}
+        onDelete={async () => {
+          const goalId = goalDialog.goalId!;
+          await mailClient.deleteGoal(goalId);
+          setGoalDialog(null);
+          await load();
+          onTasksChanged?.();
+        }}
+        onClose={() => setGoalDialog(null)}
+      /> : null}
       {detailTask ? <TaskDetailDialog
         task={detailTask}
+        goals={goals}
         position={detailPosition}
         onUpdate={(request) => updateTask(detailTask.id, request)}
         onSetStatus={(status) => void setStatus(detailTask, status)}

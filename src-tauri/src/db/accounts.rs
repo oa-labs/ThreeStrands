@@ -168,6 +168,7 @@ impl Database {
             transaction.execute("DELETE FROM threads WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM mutations WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM tasks WHERE account_id = ?1", [email])?;
+            transaction.execute("DELETE FROM goals WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM sync_state WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM pinned_contacts WHERE account_id = ?1", [email])?;
             transaction.execute(

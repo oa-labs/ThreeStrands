@@ -1725,8 +1725,42 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   background: var(--background);
 }
 .tasks-workspace .tasks-sidebar-header { padding-right: clamp(24px, 5vw, 72px); }
-.tasks-workspace-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); }
-.tasks-list-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+.tasks-workspace-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, var(--goals-pane-width, 320px)); }
+.tasks-list-pane { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+.goals-pane { min-width: 0; min-height: 0; overflow-y: auto; padding: 14px 12px 28px; background: var(--surface); }
+.goals-pane-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 10px; }
+.goals-pane-header h2 { margin: 0; color: var(--muted); font-size: var(--type-xs); letter-spacing: .08em; text-transform: uppercase; }
+.goal-add-button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; font-size: var(--type-sm); cursor: pointer; }
+.goal-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.goal-filters { padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.goal-group { margin-top: 16px; }
+.goal-group h3, .goal-other summary { margin: 0 4px 6px; color: var(--muted); font-size: var(--type-xs); font-weight: 650; }
+.goal-other summary { cursor: pointer; }
+.goal-empty { margin: 0 4px; color: var(--muted); font-size: var(--type-sm); }
+.goal-item { display: flex; align-items: flex-start; gap: 2px; }
+.goal-row { min-width: 0; flex: 1; display: grid; gap: 2px; padding: 7px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.goal-row:hover { background: var(--hover); }
+.goal-row[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); }
+.goal-title { overflow-wrap: anywhere; font-size: var(--type-sm); font-weight: 600; }
+.goal-meta { display: flex; flex-wrap: wrap; gap: 2px 8px; color: var(--muted); font-size: var(--type-xs); }
+.goal-parent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-status { color: var(--secondary); font-weight: 650; }
+.goal-achieved .goal-title, .goal-dropped .goal-title { color: var(--muted); }
+.goal-dropped .goal-title { text-decoration: line-through; }
+.goal-edit { flex: 0 0 auto; margin-top: 4px; padding: 5px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
+.goal-edit:hover { background: var(--hover); color: var(--text); }
+.task-goal-filter-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; margin-top: 6px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--text); font: inherit; font-size: var(--type-xs); cursor: pointer; }
+.task-goal-filter-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-quick-add-goal { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--secondary); font-size: var(--type-sm); }
+.task-card-main small.task-card-goal { max-width: 100%; overflow: hidden; color: var(--secondary); text-overflow: ellipsis; white-space: nowrap; }
+.goal-dialog-footer { align-items: center; }
+.goal-delete-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.goal-dialog-footer button { padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; font-size: var(--type-xs); cursor: pointer; }
+.goal-dialog-footer .goal-delete-button { border-color: color-mix(in srgb, var(--error) 50%, var(--border-strong)); color: var(--error); }
+@media (max-width: 900px) {
+  .tasks-workspace-body { grid-template-columns: minmax(0, 1fr); }
+  .goals-pane, .tasks-workspace-body .panel-resizer { display: none; }
+}
 .task-view-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 14px; border-bottom: 1px solid var(--border); }
 .task-view-nav button { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--secondary); font: inherit; font-size: var(--type-sm); text-align: left; cursor: pointer; }
 .task-view-nav button:hover { background: var(--hover); color: var(--text); }

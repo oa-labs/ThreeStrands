@@ -3,6 +3,7 @@ import { Modal } from "./AppChrome";
 import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import type { TaskDueKind, TaskKind } from "./domain";
 import { errorMessage } from "./errors";
+import { MAX_REPEAT_INTERVAL_DAYS } from "./TaskDetailDialog";
 
 export type TaskEditorValues = {
   title: string;
@@ -125,7 +126,7 @@ export function TaskEditorDialog({
           </datalist>
         </label> : null}
         {timeZoneError ? <p className="form-error" role="alert">{timeZoneError}</p> : null}
-        {kind === "follow_up" ? <label><span>Repeat Every (Days)</span><input type="number" min="1" max="3650" value={repeatIntervalDays} onChange={(event) => setRepeatIntervalDays(event.target.value)} placeholder="Optional" /></label> : null}
+        {kind === "follow_up" ? <label><span>Repeat Every (Days)</span><input type="number" min="1" max={MAX_REPEAT_INTERVAL_DAYS} value={repeatIntervalDays} onChange={(event) => setRepeatIntervalDays(event.target.value)} placeholder="Optional" /></label> : null}
         <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional details" /></label>
         {evidence ? <div className="modal-form-evidence"><span>Evidence</span><blockquote>{evidence}</blockquote></div> : null}
         {error ? <p className="form-error" role="alert">{error}</p> : null}

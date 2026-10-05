@@ -82,6 +82,10 @@ impl Database {
                 EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
                 EntityType::Contact => self.delete_contact_profile(entity_id)?,
+                // Unlinks local tasks and goals the same way the deleting device did.
+                EntityType::Goal => {
+                    self.delete_goal(entity_id)?;
+                }
                 EntityType::MailAccount => {
                     clear_provider_credential("app.threestrands.mail", entity_id)?;
                     if self.get_account(entity_id)?.is_some() {
@@ -108,6 +112,9 @@ impl Database {
                     self.upsert_synced_split(serde_json::from_value(payload.clone()).map_err(display)?)?
                 }
                 EntityType::Contact => self.upsert_synced_contact(payload)?,
+                EntityType::Goal => {
+                    self.upsert_synced_goal(&serde_json::from_value(payload.clone()).map_err(display)?)?
+                }
                 EntityType::MailAccount => self.upsert_synced_account(payload)?,
                 EntityType::CalendarAccount => self.upsert_synced_calendar(payload)?,
                 EntityType::CalendarSelection => self.upsert_synced_calendar_selection(payload)?,
@@ -143,7 +150,7 @@ impl Database {
     fn upsert_synced_task(&self, task: ThreadTask) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
-                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
+                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at,goal_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20) ON CONFLICT(id) DO UPDATE SET goal_id=excluded.goal_id, account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
                 params![
                     task.id,
                     task.account_id,
@@ -163,7 +170,8 @@ impl Database {
                     task.wait_after,
                     task.created_at,
                     task.updated_at,
-                    task.completed_at
+                    task.completed_at,
+                    task.goal_id
                 ],
             )?;
             Ok(())
@@ -532,6 +540,58 @@ mod tests {
         let touched = peer.merge_replica_state(&db.load_replica_state().unwrap()).unwrap();
         peer.materialize_touched_entities(&touched).unwrap();
         assert_eq!(peer.synced_preferences().unwrap(), Some(json!({"fontFamily": "Georgia"})));
+    }
+
+    fn record_full(db: &Database, entity_type: EntityType, id: &str, payload: Value) {
+        let fields = payload.as_object().unwrap().keys().cloned().collect();
+        db.record_replicated_write(entity_type, id, &fields, &payload).unwrap();
+    }
+
+    fn sync_into(peer: &Database, from: &Database) {
+        let touched = peer.merge_replica_state(&from.load_replica_state().unwrap()).unwrap();
+        peer.materialize_touched_entities(&touched).unwrap();
+    }
+
+    #[test]
+    fn goals_and_task_goal_links_sync_and_a_goal_deletion_unlinks_its_tasks_on_peers() {
+        let db = Database::open_memory();
+        let goal = db.create_goal(&crate::models::CreateGoalRequest {
+            account_id: "you@example.com".into(), title: "Ship IMAP".into(), notes: Some("Phase 2".into()),
+            horizon: "quarter".into(), period: "2026-Q4".into(), parent_goal_id: None,
+        }).unwrap();
+        record_full(&db, EntityType::Goal, &goal.id, serde_json::to_value(&goal).unwrap());
+        let task = db.create_task(&crate::models::CreateTaskRequest {
+            account_id: "you@example.com".into(), thread_id: None, source_message_id: None, subject_snapshot: None,
+            title: "Write the design".into(), notes: None, kind: "action".into(), due_kind: "none".into(),
+            due_value: None, time_zone: None, repeat_interval_days: None, evidence_text: None, goal_id: Some(goal.id.clone()),
+        }).unwrap();
+        let task = db.set_task_status(&task.id, "in_progress", "user").unwrap();
+        record_full(&db, EntityType::Task, &task.id, serde_json::to_value(&task).unwrap());
+        // A task written by a version from before goals carries no goalId at all.
+        let mut legacy = serde_json::to_value(&task).unwrap();
+        legacy.as_object_mut().unwrap().remove("goalId");
+        legacy["id"] = json!("legacy-task");
+        record_full(&db, EntityType::Task, "legacy-task", legacy);
+
+        let peer = Database::open_memory();
+        sync_into(&peer, &db);
+        assert_eq!(peer.list_goals(Some("you@example.com")).unwrap(), vec![goal.clone()]);
+        let peer_tasks = peer.list_tasks(None, None).unwrap();
+        let synced = peer_tasks.iter().find(|candidate| candidate.id == task.id).unwrap();
+        assert_eq!(synced.goal_id.as_deref(), Some(goal.id.as_str()));
+        assert_eq!(synced.status, "in_progress");
+        assert_eq!(peer_tasks.iter().find(|candidate| candidate.id == "legacy-task").unwrap().goal_id, None);
+
+        let deletion = db.delete_goal(&goal.id).unwrap();
+        db.record_replicated_deletion(EntityType::Goal, &goal.id).unwrap();
+        for unlinked in &deletion.tasks {
+            let payload = serde_json::to_value(unlinked).unwrap();
+            db.record_replicated_write(EntityType::Task, &unlinked.id, &["goalId".to_string(), "updatedAt".to_string()].into(), &payload).unwrap();
+        }
+        sync_into(&peer, &db);
+        assert!(peer.list_goals(None).unwrap().is_empty());
+        assert_eq!(peer.list_tasks(None, None).unwrap().iter().find(|candidate| candidate.id == task.id).unwrap().goal_id, None);
+        assert!(peer.list_frontier_conflicts().unwrap().is_empty());
     }
 
     #[test]

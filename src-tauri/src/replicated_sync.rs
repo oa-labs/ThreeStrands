@@ -189,6 +189,11 @@ impl Database {
                 repaired += 1;
             }
         }
+        for goal in self.list_goals(None)? {
+            if self.reconcile_one_entity(EntityType::Goal, &goal.id, serde_json::to_value(&goal).map_err(display)?)? {
+                repaired += 1;
+            }
+        }
         for snippet in self.list_snippets()? {
             if self.reconcile_one_entity(EntityType::Snippet, &snippet.id, serde_json::to_value(&snippet).map_err(display)?)? {
                 repaired += 1;
@@ -3641,6 +3646,7 @@ mod reconciliation_tests {
                 time_zone: None,
                 repeat_interval_days: None,
                 evidence_text: None,
+                goal_id: None,
             })
             .unwrap();
         database.save_contact_profile(&crate::models::SaveContactRequest{
@@ -3649,10 +3655,21 @@ mod reconciliation_tests {
             favorite:false,addresses:vec!["sweep@example.com".into()],
         }).unwrap();
 
+        database
+            .create_goal(&crate::models::CreateGoalRequest {
+                account_id: "you@example.com".into(),
+                title: "Travel lighter".into(),
+                notes: None,
+                horizon: "year".into(),
+                period: "2026".into(),
+                parent_goal_id: None,
+            })
+            .unwrap();
+
         let repaired = database.reconcile_replicated_sync_backlog().unwrap();
-        // Task, snippet, contact, split inbox, mail account, and the
+        // Task, goal, snippet, contact, split inbox, mail account, and the
         // explicitly chosen retention setting.
-        assert_eq!(repaired, 6);
+        assert_eq!(repaired, 7);
         // A contact in the sweep must not break the snapshot that follows.
         database.load_replica_state().unwrap();
 

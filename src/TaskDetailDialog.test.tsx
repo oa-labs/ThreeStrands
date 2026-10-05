@@ -16,12 +16,12 @@ describe("taskDetailChanges", () => {
     expect(taskDetailChanges(dated, taskDetailDrafts(dated))).toEqual({ request: {}, errors: [] });
   });
 
-  it("accepts repeat intervals from 1 through 3650 days and rejects values outside them", () => {
+  it("accepts repeat intervals from 1 through 365 days, the task store's limit, and rejects values outside them", () => {
     const repeat = (value: string) => taskDetailChanges(task, { ...taskDetailDrafts(task), repeatIntervalDays: value });
-    expect(repeat("0").errors).toEqual(["Repeat every 1 to 3650 days."]);
+    expect(repeat("0").errors).toEqual(["Repeat every 1 to 365 days."]);
     expect(repeat("1").request).toEqual({ repeatIntervalDays: 1 });
-    expect(repeat("3650").request).toEqual({ repeatIntervalDays: 3650 });
-    expect(repeat("3651").errors).toEqual(["Repeat every 1 to 3650 days."]);
+    expect(repeat("365").request).toEqual({ repeatIntervalDays: 365 });
+    expect(repeat("366").errors).toEqual(["Repeat every 1 to 365 days."]);
     expect(repeat("2.5").request).toEqual({});
     expect(repeat("").request).toEqual({});
   });

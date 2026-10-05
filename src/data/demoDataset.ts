@@ -1,4 +1,5 @@
 import type {
+  Goal,
   Account,
   ActionAnalysis,
   ThreadChatReply,
@@ -44,6 +45,7 @@ export type DemoDataset = {
   contactProfiles: ContactProfile[];
   splitInboxes: SplitInbox[];
   tasks: ThreadTask[];
+  goals?: Goal[];
   snippets: Snippet[];
   calendarAccounts: CalendarAccount[];
   calendarOptions: CalendarOption[];

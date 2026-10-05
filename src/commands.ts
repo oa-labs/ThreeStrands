@@ -51,6 +51,7 @@ export type CommandContext = {
   selectAdjacentTaskColumn(direction: -1 | 1): void;
   toggleTaskLayout(): void;
   cycleTaskView(direction: -1 | 1): void;
+  focusGoals(): void;
   taskBoardActive: boolean;
   /** The full-width calendar week view owns Tab for week navigation. */
   calendarWeekActive: boolean;
@@ -272,6 +273,14 @@ export const commands: Command[] = [
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
     run: (context) => complete(() => context.cycleTaskView(1)),
+  },
+  {
+    id: "tasks.focusGoals",
+    title: "Go to Goals",
+    keys: ["g then g"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
+    run: (context) => complete(context.focusGoals),
   },
   {
     id: "tasks.previousView",

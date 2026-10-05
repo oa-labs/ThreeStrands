@@ -154,6 +154,8 @@ export type ThreadTask = {
   createdAt: string;
   updatedAt: string;
   completedAt?: string | null;
+  /** The goal this task supports, in the same account. */
+  goalId?: string | null;
 };
 
 export type CreateTaskRequest = {
@@ -169,6 +171,7 @@ export type CreateTaskRequest = {
   timeZone?: string | null;
   repeatIntervalDays?: number | null;
   evidenceText?: string | null;
+  goalId?: string | null;
 };
 
 export type UpdateTaskRequest = {
@@ -180,6 +183,45 @@ export type UpdateTaskRequest = {
   dueValue?: string | null;
   timeZone?: string | null;
   repeatIntervalDays?: number | null;
+  goalId?: string | null;
+};
+
+export type GoalHorizon = "year" | "half" | "quarter";
+export type GoalStatus = "active" | "achieved" | "dropped";
+
+/** A long-term goal for one account. `period` is one period of its horizon: `2026`, `2026-H2`, or `2026-Q4`. */
+export type Goal = {
+  id: string;
+  accountId: string;
+  title: string;
+  notes: string | null;
+  horizon: GoalHorizon;
+  period: string;
+  status: GoalStatus;
+  /** A goal of a longer horizon, in an enclosing period, that this one supports. */
+  parentGoalId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+};
+
+export type CreateGoalRequest = {
+  accountId: string;
+  title: string;
+  notes?: string | null;
+  horizon: GoalHorizon;
+  period: string;
+  parentGoalId?: string | null;
+};
+
+export type UpdateGoalRequest = {
+  id: string;
+  title?: string;
+  notes?: string | null;
+  horizon?: GoalHorizon;
+  period?: string;
+  status?: GoalStatus;
+  parentGoalId?: string | null;
 };
 
 export type Message = {

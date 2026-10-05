@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 44;
+pub(crate) const LATEST_VERSION: i64 = 45;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1211,8 +1211,10 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
     }
     if version < 41 {
         // SQLite cannot alter a CHECK constraint, so rebuild the table to admit
-        // the board's in-progress column.
-        tx.execute_batch(
+        // the board's in-progress column. Columns are copied by name, and a
+        // later version's goal_id is kept when a partial upgrade re-runs this.
+        let goal_column = has_column(&tx, "tasks", "goal_id")?;
+        tx.execute_batch(&format!(
             "DROP INDEX tasks_status_due;
             DROP INDEX tasks_account_status;
             DROP INDEX tasks_thread;
@@ -1236,15 +1238,22 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
                 wait_after TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                completed_at TEXT
+                completed_at TEXT{goal_definition}
             );
-            INSERT INTO tasks SELECT * FROM tasks_v40;
+            INSERT INTO tasks({columns}) SELECT {columns} FROM tasks_v40;
             DROP TABLE tasks_v40;
             CREATE INDEX tasks_status_due ON tasks(status, due_value, updated_at);
             CREATE INDEX tasks_account_status ON tasks(account_id, status, updated_at);
             CREATE INDEX tasks_thread ON tasks(thread_id, status);
             PRAGMA user_version=41;",
-        ).map_err(error)?;
+            goal_definition = if goal_column { ",\n                goal_id TEXT" } else { "" },
+            columns = format!(
+                "id, account_id, thread_id, source_message_id, subject_snapshot, title, notes, kind, due_kind, \
+                 due_value, time_zone, repeat_interval_days, status, completion_source, evidence_text, wait_after, \
+                 created_at, updated_at, completed_at{}",
+                if goal_column { ", goal_id" } else { "" },
+            ),
+        )).map_err(error)?;
     }
     if version < 42 {
         // Local-only AI bookkeeping: verified suggestions per thread revision,
@@ -1292,6 +1301,36 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         // rebuilds `contact_interactions` (see `Database::open`) so stored
         // recipients with unquoted commas in display names are indexed.
         tx.execute_batch("PRAGMA user_version=44;").map_err(error)?;
+    }
+    if version < 45 {
+        // Long-term goals, one account each like tasks. A goal names one
+        // period of its horizon ('2026', '2026-H2', '2026-Q4') and may
+        // support one goal of a longer horizon. Neither link is a foreign
+        // key: synced rows can arrive in any order, and a link to a goal
+        // that is not here reads as no link.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS goals (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                notes TEXT,
+                horizon TEXT NOT NULL CHECK(horizon IN ('year', 'half', 'quarter')),
+                period TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('active', 'achieved', 'dropped')),
+                parent_goal_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                closed_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS goals_account_period ON goals(account_id, period, status);",
+        ).map_err(error)?;
+        if !has_column(&tx, "tasks", "goal_id")? {
+            tx.execute_batch("ALTER TABLE tasks ADD COLUMN goal_id TEXT;").map_err(error)?;
+        }
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS tasks_goal ON tasks(goal_id);
+            PRAGMA user_version=45;",
+        ).map_err(error)?;
     }
     tx.commit().map_err(error)?;
 
@@ -1449,6 +1488,51 @@ mod tests {
             .query_row("SELECT payload FROM message_metadata WHERE id='live'", [], |row| row.get(0))
             .unwrap();
         assert_eq!(legacy, "{\"id\":\"live\"}", "legacy plaintext stays readable until backfilled");
+    }
+
+    #[test]
+    fn v45_adds_goals_and_an_unlinked_goal_column_to_existing_tasks() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch(
+            "DROP INDEX tasks_goal;
+            ALTER TABLE tasks DROP COLUMN goal_id;
+            DROP TABLE goals;
+            INSERT INTO tasks(id,account_id,thread_id,subject_snapshot,title,kind,due_kind,status,created_at,updated_at)
+                VALUES('t1','you@example.com',NULL,NULL,'Existing task','action','none','in_progress','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');",
+        ).unwrap();
+        connection.pragma_update(None, "user_version", 44).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let (title, goal): (String, Option<String>) = connection
+            .query_row("SELECT title, goal_id FROM tasks WHERE id='t1'", [], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap();
+        assert_eq!((title.as_str(), goal), ("Existing task", None));
+        connection.execute(
+            "INSERT INTO goals(id,account_id,title,horizon,period,status,created_at,updated_at)
+                VALUES('g1','you@example.com','Grow','quarter','2026-Q4','active','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        assert!(connection.execute(
+            "INSERT INTO goals(id,account_id,title,horizon,period,status,created_at,updated_at)
+                VALUES('g2','you@example.com','Grow','month','2026-10','active','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
+            [],
+        ).is_err());
+    }
+
+    #[test]
+    fn re_running_the_v41_task_rebuild_keeps_goal_links() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute(
+            "INSERT INTO tasks(id,account_id,thread_id,subject_snapshot,title,kind,due_kind,status,created_at,updated_at,goal_id)
+                VALUES('t1','you@example.com',NULL,NULL,'Linked','action','none','open','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','g1')",
+            [],
+        ).unwrap();
+        connection.pragma_update(None, "user_version", 40).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let goal: Option<String> = connection.query_row("SELECT goal_id FROM tasks WHERE id='t1'", [], |row| row.get(0)).unwrap();
+        assert_eq!(goal.as_deref(), Some("g1"));
+        assert!(connection.query_row("SELECT 1 FROM sqlite_master WHERE name='tasks_goal'", [], |_| Ok(())).is_ok());
     }
 
     #[test]

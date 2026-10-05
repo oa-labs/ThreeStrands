@@ -229,6 +229,9 @@ pub struct ThreadTask {
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
+    /// Absent from tasks written before goals existed.
+    #[serde(default)]
+    pub goal_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -255,6 +258,8 @@ pub struct CreateTaskRequest {
     pub repeat_interval_days: Option<i64>,
     #[serde(default)]
     pub evidence_text: Option<String>,
+    #[serde(default)]
+    pub goal_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -275,6 +280,59 @@ pub struct UpdateTaskRequest {
     pub time_zone: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_field")]
     pub repeat_interval_days: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub goal_id: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Goal {
+    pub id: String,
+    pub account_id: String,
+    pub title: String,
+    pub notes: Option<String>,
+    /// `year`, `half`, or `quarter`.
+    pub horizon: String,
+    /// One period of the horizon: `2026`, `2026-H2`, or `2026-Q4`.
+    pub period: String,
+    /// `active`, `achieved`, or `dropped`.
+    pub status: String,
+    /// A goal of a longer horizon, in an enclosing period, that this one supports.
+    pub parent_goal_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub closed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGoalRequest {
+    pub account_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+    pub horizon: String,
+    pub period: String,
+    #[serde(default)]
+    pub parent_goal_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGoalRequest {
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub notes: Option<Option<String>>,
+    #[serde(default)]
+    pub horizon: Option<String>,
+    #[serde(default)]
+    pub period: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub parent_goal_id: Option<Option<String>>,
 }
 
 fn default_task_due_kind() -> String {

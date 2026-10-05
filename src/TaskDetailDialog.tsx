@@ -3,8 +3,12 @@ import { useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
 import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import { isEditableTarget } from "./commands";
-import type { TaskDueKind, TaskKind, TaskStatus, ThreadTask, UpdateTaskRequest } from "./domain";
+import type { Goal, TaskDueKind, TaskKind, TaskStatus, ThreadTask, UpdateTaskRequest } from "./domain";
 import { errorMessage } from "./errors";
+import { formatPeriod, GOAL_HORIZON_LABELS, GOAL_HORIZONS, goalOptionsForTask } from "./goals";
+
+/** The longest repeat interval the task store accepts. */
+export const MAX_REPEAT_INTERVAL_DAYS = 365;
 
 export type TaskDetailDrafts = {
   title: string;
@@ -14,6 +18,8 @@ export type TaskDetailDrafts = {
   dueValue: string;
   timeZone: string;
   repeatIntervalDays: string;
+  /** "" for no goal. */
+  goalId: string;
 };
 
 function localTimeZone(): string {
@@ -36,6 +42,7 @@ export function taskDetailDrafts(task: ThreadTask): TaskDetailDrafts {
     dueValue: task.dueKind === "datetime" ? dateTimeInputValue(task.dueValue) : task.dueValue ?? "",
     timeZone: task.timeZone ?? localTimeZone(),
     repeatIntervalDays: task.repeatIntervalDays?.toString() ?? "",
+    goalId: task.goalId ?? "",
   };
 }
 
@@ -56,12 +63,13 @@ export function taskDetailChanges(task: ThreadTask, drafts: TaskDetailDrafts): {
   if (notes !== (task.notes ?? null)) request.notes = notes;
 
   if (drafts.kind !== task.kind) request.kind = drafts.kind;
+  if ((drafts.goalId || null) !== (task.goalId ?? null)) request.goalId = drafts.goalId || null;
 
   if (drafts.kind === "follow_up") {
     const raw = drafts.repeatIntervalDays.trim();
     const repeat = raw ? Number(raw) : null;
-    if (repeat !== null && (!Number.isInteger(repeat) || repeat < 1 || repeat > 3650)) {
-      errors.push("Repeat every 1 to 3650 days.");
+    if (repeat !== null && (!Number.isInteger(repeat) || repeat < 1 || repeat > MAX_REPEAT_INTERVAL_DAYS)) {
+      errors.push(`Repeat every 1 to ${MAX_REPEAT_INTERVAL_DAYS} days.`);
     } else if (repeat !== (task.repeatIntervalDays ?? null)) {
       request.repeatIntervalDays = repeat;
     }
@@ -99,6 +107,7 @@ const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
  */
 export function TaskDetailDialog({
   task,
+  goals = [],
   position,
   onUpdate,
   onSetStatus,
@@ -107,6 +116,8 @@ export function TaskDetailDialog({
   onClose,
 }: {
   task: ThreadTask;
+  /** Goals the task may support; only active goals in its account are offered. */
+  goals?: readonly Goal[];
   position?: { index: number; total: number } | null;
   onUpdate(request: Omit<UpdateTaskRequest, "id">): Promise<void>;
   onSetStatus(status: TaskStatus): void;
@@ -181,6 +192,7 @@ export function TaskDetailDialog({
     }
   };
 
+  const goalOptions = goalOptionsForTask(goals, task);
   const messages = [...errors, ...(saveError ? [saveError] : [])];
   const statusOptions = task.status === "cancelled" ? [...STATUS_OPTIONS, { value: "cancelled" as const, label: "Cancelled" }] : STATUS_OPTIONS;
 
@@ -205,6 +217,15 @@ export function TaskDetailDialog({
             <option value="action">Action</option><option value="follow_up">Follow up</option><option value="waiting_for">Waiting for reply</option>
           </select></label>
         </div>
+        <label><span>Goal</span><select value={drafts.goalId} onChange={(event) => change("goalId", event.target.value, true)}>
+          <option value="">No goal</option>
+          {GOAL_HORIZONS.map((horizon) => {
+            const options = goalOptions.filter((goal) => goal.horizon === horizon);
+            return options.length ? <optgroup key={horizon} label={GOAL_HORIZON_LABELS[horizon]}>
+              {options.map((goal) => <option key={goal.id} value={goal.id}>{goal.title} ({formatPeriod(goal.period)})</option>)}
+            </optgroup> : null;
+          })}
+        </select></label>
         <div className="task-detail-row">
           <label><span>Due</span><select value={drafts.dueKind} onChange={(event) => {
             const nextKind = event.target.value as TaskDueKind;
@@ -225,7 +246,7 @@ export function TaskDetailDialog({
         </label> : null}
         {drafts.kind === "follow_up" ? <label>
           <span>Repeat every (days)</span>
-          <input type="number" min="1" max="3650" value={drafts.repeatIntervalDays} onChange={(event) => change("repeatIntervalDays", event.target.value)} onBlur={() => commit()} placeholder="Optional" />
+          <input type="number" min="1" max={MAX_REPEAT_INTERVAL_DAYS} value={drafts.repeatIntervalDays} onChange={(event) => change("repeatIntervalDays", event.target.value)} onBlur={() => commit()} placeholder="Optional" />
         </label> : null}
         <label>
           <span>Description</span>

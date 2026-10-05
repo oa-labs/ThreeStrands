@@ -451,18 +451,19 @@ impl Database {
     }
 }
 
-/// Task optionals are materialized as JSON `null`, while older or partial
-/// writes can leave the same unset field as a replica tombstone (`None`).
-/// They have identical task semantics and should not create a user-facing
-/// conflict. Keep this scoped to nullable task fields so a missing required
-/// value on another entity remains visible as a real conflict.
+/// Task and goal optionals are materialized as JSON `null`, while older or
+/// partial writes can leave the same unset field as a replica tombstone
+/// (`None`). They have identical semantics and should not create a
+/// user-facing conflict. Keep this scoped to nullable task and goal fields so
+/// a missing required value on another entity remains visible as a real
+/// conflict.
 fn same_frontier_value(
     entity_type: &str,
     field: &str,
     left: &Option<Value>,
     right: &Option<Value>,
 ) -> bool {
-    if entity_type == EntityType::Task.as_str()
+    if (entity_type == EntityType::Task.as_str()
         && matches!(
             field,
             "threadId"
@@ -476,7 +477,9 @@ fn same_frontier_value(
                 | "evidenceText"
                 | "waitAfter"
                 | "completedAt"
+                | "goalId"
         )
+        || entity_type == EntityType::Goal.as_str() && matches!(field, "notes" | "parentGoalId" | "closedAt"))
         && left.as_ref().is_none_or(Value::is_null)
         && right.as_ref().is_none_or(Value::is_null)
     {

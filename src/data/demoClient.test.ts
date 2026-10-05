@@ -253,3 +253,27 @@ describe("showcase dataset", () => {
     await expect(client.unsubscribe("dinner-message")).rejects.toThrow("no unsubscribe option");
   });
 });
+
+describe("demoClient goals", () => {
+  it("links tasks only to goals in their own account and unlinks them when the goal is deleted", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    const year = await client.createGoal({ accountId: DEMO_ACCOUNT_ID, title: "Grow", horizon: "year", period: "2026" });
+    const quarter = await client.createGoal({ accountId: DEMO_ACCOUNT_ID, title: "Ship", horizon: "quarter", period: "2026-Q4", parentGoalId: year.id });
+    await expect(client.createGoal({ accountId: DEMO_ACCOUNT_ID, title: "Wrong", horizon: "quarter", period: "2026" })).rejects.toThrow("matches the goal's horizon");
+    await expect(client.createGoal({ accountId: DEMO_ACCOUNT_ID, title: "Next year", horizon: "quarter", period: "2027-Q1", parentGoalId: year.id })).rejects.toThrow("longer-term goal");
+
+    const task = await client.createTask({ accountId: DEMO_ACCOUNT_ID, threadId: null, subjectSnapshot: null, title: "Draft", kind: "action", goalId: year.id });
+    expect(task.goalId).toBe(year.id);
+    await expect(client.createTask({ accountId: OTHER_ACCOUNT_ID, threadId: null, subjectSnapshot: null, title: "Elsewhere", kind: "action", goalId: year.id }))
+      .rejects.toThrow("its own account");
+    expect((await client.updateTask({ id: task.id, title: "Draft plan" })).goalId).toBe(year.id);
+
+    const achieved = await client.updateGoal({ id: quarter.id, status: "achieved" });
+    expect(achieved.closedAt).not.toBeNull();
+    expect((await client.updateGoal({ id: quarter.id, status: "active" })).closedAt).toBeNull();
+
+    await client.deleteGoal(year.id);
+    expect((await client.listGoals()).map((goal) => [goal.id, goal.parentGoalId])).toEqual([[quarter.id, null]]);
+    expect((await client.listTasks()).find((candidate) => candidate.id === task.id)?.goalId).toBeNull();
+  });
+});
