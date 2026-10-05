@@ -340,3 +340,77 @@ test.describe("without JavaScript", () => {
     await expect.poll(() => step.evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
   });
 });
+
+test.describe("privacy policy page", () => {
+  test("is linked from the home page footer and links back home", async ({ page }) => {
+    await page.goto("./");
+    await page.locator("footer").getByRole("link", { name: "Privacy Policy" }).click();
+    await expect(page).toHaveURL(/privacy\.html$/);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Privacy Policy");
+    await expect(page.locator(".brand-mark")).toHaveCSS("width", "32px");
+    await page.getByRole("link", { name: "ThreeStrands home" }).click();
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Email at the Speed of");
+  });
+
+  test("states the local-first data commitments", async ({ page }) => {
+    await page.goto("./privacy.html");
+    const body = page.locator(".legal-body");
+    await expect(body).toContainText("There is no ThreeStrands account, backend, or relay");
+    await expect(body).toContainText("does not send usage analytics, telemetry, or crash reports to us");
+    await expect(body).toContainText("Google API Services User Data Policy, including the Limited Use requirements");
+    await expect(body).toContainText("AI is off until you choose a provider");
+    await expect(body).toContainText("Remote images in email are blocked by default");
+    await expect(body).toContainText("Removing an account in the app does not revoke the grant with Google");
+    for (const scope of ["gmail.modify", "gmail.labels", "calendar.readonly", "calendar.events"]) {
+      await expect(body.locator("code", { hasText: scope })).toHaveCount(1);
+    }
+  });
+
+  test("every contents entry jumps to a section on the page", async ({ page }) => {
+    await page.goto("./privacy.html");
+    const targets = await page.locator(".legal-toc a").evaluateAll((links) => links.map((link) => link.getAttribute("href")!));
+    expect(targets.length).toBeGreaterThan(10);
+    for (const target of targets) await expect(page.locator(`.legal-body section${target}`)).toHaveCount(1);
+  });
+
+  test("makes no third-party requests and keeps external links safe", async ({ page, baseURL }) => {
+    const origin = new URL(baseURL!).origin;
+    const foreign: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.protocol.startsWith("http") && url.origin !== origin) foreign.push(request.url());
+    });
+    await page.goto("./privacy.html");
+    await page.waitForLoadState("networkidle");
+    expect(foreign).toEqual([]);
+    const unsafe = await page.locator('a[href^="http"]').evaluateAll((links) =>
+      links.filter((link) => !(link.getAttribute("rel") ?? "").split(/\s+/).includes("noopener")).map((link) => link.outerHTML),
+    );
+    expect(unsafe).toEqual([]);
+  });
+
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`has no serious or critical axe violations in ${colorScheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await page.goto("./privacy.html");
+      await page.addScriptTag({ path: path.resolve("node_modules/axe-core/axe.min.js") });
+      const violations = await page.evaluate(async () => {
+        const axe = (window as unknown as { axe: { run: (context: Document) => Promise<{ violations: { id: string; impact: string; nodes: { target: string[] }[] }[] }> } }).axe;
+        const result = await axe.run(document);
+        return result.violations
+          .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
+          .map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target.join(" ")).slice(0, 5) }));
+      });
+      expect(violations).toEqual([]);
+    });
+  }
+
+  for (const width of [360, 390, 768, 1440]) {
+    test(`never scrolls horizontally at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("./privacy.html");
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+    });
+  }
+});

@@ -1,5 +1,5 @@
 import { CalendarDays, Download, ExternalLink, MapPin, Repeat2, Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { calendarDescriptionText } from "./calendarDescription";
 import { mailClient } from "./data/client";
 import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from "./domain";
@@ -34,8 +34,15 @@ type GroupProps = {
 export function CalendarAttachmentGroup({ messageId, attachments, onError }: GroupProps) {
   const [visibleIds, setVisibleIds] = useState<Set<string> | null>(null);
   const [loadedPreviews, setLoadedPreviews] = useState<Map<string, CalendarPreview | null> | null>(null);
+  // Parents rebuild the attachment array on every render (e.g. after a background sync), so
+  // reload only when the attachments themselves change; otherwise the card flashes back to
+  // its loading state and the conversation jumps.
+  const attachmentsKey = attachments.map((attachment) => `${attachment.id}:${attachment.size}`).join("|");
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   useEffect(() => {
     let active = true;
+    const attachments = attachmentsRef.current;
     setVisibleIds(null);
     setLoadedPreviews(null);
     const previewable = attachments.filter((attachment) => attachment.size <= MAX_PREVIEWABLE_SIZE);
@@ -67,7 +74,7 @@ export function CalendarAttachmentGroup({ messageId, attachments, onError }: Gro
       setVisibleIds(kept);
     });
     return () => { active = false; };
-  }, [attachments, messageId]);
+  }, [attachmentsKey, messageId]);
 
   if (!visibleIds) {
     return (

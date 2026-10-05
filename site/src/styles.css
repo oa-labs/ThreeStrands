@@ -1617,6 +1617,203 @@ button.keycap:active {
   color: var(--ink-soft);
 }
 
+/* Legal pages ----------------------------------------------------------- */
+
+.legal-hero {
+  padding-block: clamp(132px, 16vh, 176px) clamp(64px, 8vw, 96px);
+  overflow: hidden;
+  background:
+    radial-gradient(1000px 520px at 20% -20%, rgb(78 72 170 / 0.7), transparent 62%),
+    radial-gradient(700px 420px at 92% 110%, rgb(253 173 129 / 0.16), transparent 62%),
+    var(--dusk);
+}
+
+.legal-hero .eyebrow {
+  color: var(--on-dusk-soft);
+}
+
+.legal-hero .display-2 {
+  color: var(--on-dusk);
+}
+
+.legal-hero .display-2 em {
+  background: linear-gradient(95deg, #c4b5f0 0%, var(--shell) 45%, var(--peach) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  padding-right: 0.06em;
+}
+
+.legal-hero .lead {
+  margin-top: 22px;
+}
+
+.legal {
+  padding-block: clamp(56px, 7vw, 96px) clamp(84px, 11vw, 150px);
+}
+
+.legal-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 720px);
+  justify-content: space-between;
+  gap: clamp(32px, 6vw, 96px);
+}
+
+.legal-toc {
+  position: sticky;
+  top: 100px;
+  align-self: start;
+  font-size: 0.9rem;
+}
+
+.legal-toc-title {
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 14px;
+}
+
+.legal-toc ol {
+  list-style: none;
+  padding: 0 0 0 14px;
+  border-left: 2px solid var(--paper-line);
+  display: grid;
+  gap: 8px;
+}
+
+.legal-toc a {
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.legal-toc a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.legal-body {
+  color: var(--ink-soft);
+  font-size: 1.02rem;
+  line-height: 1.7;
+}
+
+.legal-body section + section {
+  margin-top: clamp(44px, 5vw, 60px);
+}
+
+.legal-body h2 {
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 72, "SOFT" 100;
+  font-weight: 560;
+  font-size: clamp(1.5rem, 1.25rem + 1vw, 1.95rem);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  margin-bottom: 16px;
+}
+
+.legal-body p + p,
+.legal-body p + ul,
+.legal-body ul + p,
+.legal-body p + dl,
+.legal-body dl + p {
+  margin-top: 14px;
+}
+
+.legal-body ul {
+  padding-left: 1.25em;
+  display: grid;
+  gap: 8px;
+}
+
+.legal-body strong {
+  color: var(--ink);
+  font-weight: 620;
+}
+
+.legal-body code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 0.08em 0.36em;
+  border-radius: 5px;
+  background: var(--paper-raised);
+  border: 1px solid var(--paper-line);
+  overflow-wrap: anywhere;
+}
+
+.legal-body .legal-summary {
+  list-style: none;
+  padding: 0;
+  gap: 12px;
+}
+
+.legal-summary li {
+  display: flex;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  border: 1.5px dashed var(--paper-line);
+  background: var(--paper-raised);
+}
+
+.legal-summary .icon {
+  width: 1.35em;
+  height: 1.35em;
+  margin-top: 0.15em;
+  color: var(--strand-mail-ink);
+}
+
+.legal-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 11em) minmax(0, 1fr);
+  border-top: 1px solid var(--paper-line);
+}
+
+.legal-list dt,
+.legal-list dd {
+  margin: 0;
+  padding-block: 14px;
+  border-bottom: 1px solid var(--paper-line);
+}
+
+.legal-list dt {
+  font-weight: 620;
+  color: var(--ink);
+  padding-right: 16px;
+}
+
+@media (max-width: 900px) {
+  .legal-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .legal-toc {
+    position: static;
+  }
+
+  .legal-toc ol {
+    grid-template-columns: repeat(auto-fill, minmax(min(170px, 100%), 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .legal-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .legal-list dt {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+
+  .legal-list dd {
+    padding-top: 4px;
+  }
+}
+
 /* Finale & footer ------------------------------------------------------- */
 
 .finale {
@@ -1674,7 +1871,8 @@ button.keycap:active {
 
 .footer nav {
   display: flex;
-  gap: 22px;
+  flex-wrap: wrap;
+  gap: 8px 22px;
 }
 
 .footer a {

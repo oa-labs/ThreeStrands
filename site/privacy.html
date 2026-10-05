@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy — ThreeStrands</title>
+    <meta name="description" content="How ThreeStrands handles your data: mail stays on your computer, there are no ThreeStrands servers, and optional features connect only to services you choose." />
+    <meta name="theme-color" content="#1f1b5c" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="ThreeStrands Privacy Policy" />
+    <meta property="og:description" content="Mail stays on your computer. There are no ThreeStrands servers, accounts, or analytics." />
+    <meta property="og:url" content="%SITE_URL%privacy.html" />
+    <meta property="og:image" content="%OG_IMAGE%" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script type="module" src="/src/privacy.ts"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to Content</a>
+
+    <header class="nav" data-nav>
+      <div class="nav-inner">
+        <a class="brand" href="./" aria-label="ThreeStrands home">
+          <svg class="brand-mark" viewBox="80 80 864 864" aria-hidden="true" focusable="false">
+            <rect x="80" y="80" width="864" height="864" rx="196" fill="#333183" />
+            <g fill="none" stroke-linecap="round" transform="translate(80 80) scale(.84375)">
+              <circle cx="512" cy="512" r="372" stroke="#f3eae9" stroke-width="48" />
+              <circle cx="512" cy="512" r="322" stroke="#f3eae9" stroke-width="28" />
+              <path d="M 340 380 Q 426 286 512 380 T 684 380" stroke="#9f8bcb" stroke-width="42" />
+              <path d="M 340 512 Q 426 418 512 512 T 684 512" stroke="#f3eae9" stroke-width="42" />
+              <path d="M 340 644 Q 426 550 512 644 T 684 644" stroke="#fdad81" stroke-width="42" />
+            </g>
+          </svg>
+          <span class="brand-name">ThreeStrands</span>
+        </a>
+        <nav class="nav-links" aria-label="Sections">
+          <a href="./#features">Features</a>
+          <a href="./#privacy">Privacy</a>
+          <a href="./#roadmap">Roadmap</a>
+        </nav>
+        <a class="button button-small button-glow" href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener" data-download>
+          <ts-icon name="github"></ts-icon>Download
+        </a>
+      </div>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <section class="legal-hero dusk" aria-labelledby="policy-title">
+        <div class="container">
+          <p class="eyebrow">Legal</p>
+          <h1 id="policy-title" class="display-2">Privacy <em>Policy</em></h1>
+          <p class="lead">
+            ThreeStrands is built so that your mail never passes through us. This policy explains what the
+            app keeps on your computer, which services it talks to on your behalf, and how to remove it all.
+          </p>
+          <p class="fine-print">Effective <time datetime="2026-10-05">October 5, 2026</time></p>
+        </div>
+      </section>
+
+      <section class="legal paper" aria-label="Policy">
+        <div class="container legal-grid">
+          <nav class="legal-toc" aria-label="On this page">
+            <p class="legal-toc-title">On This Page</p>
+            <ol>
+              <li><a href="#summary">In Short</a></li>
+              <li><a href="#scope">Who We Are</a></li>
+              <li><a href="#collect">What We Collect</a></li>
+              <li><a href="#device">Stored on Your Device</a></li>
+              <li><a href="#connections">Services the App Contacts</a></li>
+              <li><a href="#google">Google User Data</a></li>
+              <li><a href="#ai">Optional AI Features</a></li>
+              <li><a href="#sync">Export and Sync</a></li>
+              <li><a href="#website">This Website</a></li>
+              <li><a href="#deletion">Removing Your Data</a></li>
+              <li><a href="#security">Security</a></li>
+              <li><a href="#children">Children</a></li>
+              <li><a href="#changes">Changes</a></li>
+              <li><a href="#contact">Contact</a></li>
+            </ol>
+          </nav>
+
+          <article class="legal-body">
+            <section id="summary" aria-labelledby="summary-title">
+              <h2 id="summary-title">In Short</h2>
+              <ul class="legal-summary">
+                <li><ts-icon name="server-off"></ts-icon><span><strong>No ThreeStrands servers.</strong> There is no ThreeStrands account, backend, or relay. Your mail goes directly between your computer and Google.</span></li>
+                <li><ts-icon name="chart-no-axes-column"></ts-icon><span><strong>No analytics or telemetry.</strong> The app and this website send us nothing about you or how you use them.</span></li>
+                <li><ts-icon name="laptop"></ts-icon><span><strong>Your data lives on your computer.</strong> Mail is cached locally, and sign-in credentials are kept in your operating system's credential store.</span></li>
+                <li><ts-icon name="toggle-left"></ts-icon><span><strong>Optional features start off.</strong> AI, encrypted sync, and remote images connect only to services you choose, after you turn them on.</span></li>
+              </ul>
+            </section>
+
+            <section id="scope" aria-labelledby="scope-title">
+              <h2 id="scope-title">Who We Are</h2>
+              <p>
+                ThreeStrands is an open-source desktop email client published by OpenArc LLC (“we”, “us”). This policy
+                covers the ThreeStrands application and this website. Because the source code is public, you can
+                <a href="https://github.com/oa-labs/dispatch" rel="noopener">review exactly how the app handles data</a>.
+              </p>
+            </section>
+
+            <section id="collect" aria-labelledby="collect-title">
+              <h2 id="collect-title">What We Collect</h2>
+              <p>
+                We do not collect, receive, or store your personal information. ThreeStrands has no account system
+                and does not send usage analytics, telemetry, or crash reports to us. Everything described below
+                stays on your computer or travels directly between your computer and a service you connect.
+              </p>
+              <p>
+                If you contact us — for example by opening a GitHub issue — we receive whatever you choose to
+                include, and GitHub's privacy terms apply to that platform.
+              </p>
+            </section>
+
+            <section id="device" aria-labelledby="device-title">
+              <h2 id="device-title">Stored on Your Device</h2>
+              <p>To work quickly and offline, the app keeps the following in its local data folder:</p>
+              <ul>
+                <li><strong>Mail cache</strong> — conversations, message bodies, labels, attachment details, and a search index, in a local SQLite database.</li>
+                <li><strong>Your work</strong> — drafts, queued outgoing mail, tasks, goals, snippets, Split Inboxes, and settings.</li>
+                <li><strong>Contacts</strong> — profiles you save or edit, including notes and photos you add, plus a record of who you have corresponded with, built from your mail.</li>
+                <li><strong>Attachments</strong> — files you attach while composing, and temporary copies of attachments you open, which are cleared after 24 hours.</li>
+                <li><strong>AI records</strong> — cached AI results and daily request, token, and estimated-cost totals. Usage totals do not contain message content.</li>
+                <li><strong>Reading activity</strong> — local signals, such as which senders you open and archive, that tune the app on your computer. They are never sent anywhere.</li>
+                <li><strong>Backups and logs</strong> — automatic database backups used for recovery, and diagnostic logs. Logs can include email addresses, error messages, and fragments of AI responses.</li>
+                <li><strong>Crash reports</strong> — if you opt in, redacted crash reports are stored locally so you can review and share them yourself.</li>
+              </ul>
+              <p>
+                Google sign-in tokens, AI provider keys, and sync keys are stored in your operating system's credential
+                store (Keychain on macOS, Credential Manager on Windows, or Secret Service on Linux) — never in a plain
+                file. You can set a retention period in Settings to remove older cached mail automatically.
+              </p>
+            </section>
+
+            <section id="connections" aria-labelledby="connections-title">
+              <h2 id="connections-title">Services the App Contacts</h2>
+              <p>
+                ThreeStrands connects directly from your computer to the services below, and only to do what you ask.
+                Each service handles your data under its own privacy policy.
+              </p>
+              <dl class="legal-list">
+                <dt>Google</dt>
+                <dd>Gmail, to sync, search, and send your mail, and Google Calendar if you connect it. Searches that reach beyond your local cache send your query to Gmail.</dd>
+                <dt>Your AI provider</dt>
+                <dd>Only if you configure one. See <a href="#ai">Optional AI Features</a>.</dd>
+                <dt>Image hosts</dt>
+                <dd>Remote images in email are blocked by default. When you load them, your computer fetches them directly from the sender's image host, which can see your IP address. No cookies or browser identifiers are sent.</dd>
+                <dt>Mailing list senders</dt>
+                <dd>When you choose Unsubscribe, the app sends the sender's standard one-click unsubscribe request, or opens your mail app or browser to complete it.</dd>
+                <dt>Your sync storage</dt>
+                <dd>Only if you enable encrypted sync. See <a href="#sync">Export and Sync</a>.</dd>
+              </dl>
+              <p>Links you open in an email open in your default browser. The app does not fetch link previews, avatars, or favicons, and it does not check for updates in the background.</p>
+            </section>
+
+            <section id="google" aria-labelledby="google-title">
+              <h2 id="google-title">Google User Data</h2>
+              <p>When you add a Gmail account, you grant ThreeStrands these permissions:</p>
+              <ul>
+                <li><strong>Gmail</strong> (<code>gmail.modify</code>, <code>gmail.labels</code>) — read, send, label, archive, and trash your mail, and manage labels.</li>
+                <li><strong>Google Calendar</strong> (<code>calendar.readonly</code>, <code>calendar.events</code>) — an optional, separate grant to show your calendars and free time, create events you review, and reply to invitations. When you create an event with invitees, Google emails them the invitation.</li>
+                <li><strong>Basic profile</strong> (<code>openid</code>, <code>email</code>) — your email address, to identify the account.</li>
+              </ul>
+              <p>
+                Google user data is used only to provide the features you see in the app. It is stored on your computer,
+                is never transferred to us, and is never sold or used for advertising. It reaches a third party only when
+                you direct it there — for example, by using an AI feature with a provider you configured. No person
+                at OpenArc reads your Google data.
+              </p>
+              <p>
+                ThreeStrands' use and transfer of information received from Google APIs adheres to the
+                <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener">Google API Services User Data Policy</a>,
+                including the Limited Use requirements.
+              </p>
+            </section>
+
+            <section id="ai" aria-labelledby="ai-title">
+              <h2 id="ai-title">Optional AI Features</h2>
+              <p>
+                AI is off until you choose a provider (such as OpenAI, Anthropic, OpenRouter, Fireworks, or a compatible
+                endpoint you specify), enter your own API key, and turn features on. Requests go directly from your
+                computer to that provider under your account and its terms. We never see them.
+              </p>
+              <p>Depending on the feature you use, a request can include:</p>
+              <ul>
+                <li>The subject, senders, dates, and text of the conversation you are working in, for summaries, briefs, reply drafts, and Thread Chat.</li>
+                <li>Your time zone, and the titles of your goals and open tasks, so suggestions fit your plans.</li>
+                <li>Other conversations from your mailbox, only when you choose Search all mail in Thread Chat.</li>
+                <li>Text from attachments you select.</li>
+                <li>Up to a dozen recent emails with a person, when you ask to enrich their contact profile.</li>
+              </ul>
+              <p>
+                Proactive briefs are a separate opt-in. When enabled, qualifying conversations are sent to your
+                provider after you stay on them. Suggested tasks, events, contact changes, and drafts are never applied
+                or sent until you review them.
+              </p>
+            </section>
+
+            <section id="sync" aria-labelledby="sync-title">
+              <h2 id="sync-title">Export and Sync</h2>
+              <p>
+                <strong>Settings export</strong> creates a file encrypted with a password you choose. It contains preferences,
+                account display details, Split Inboxes, snippets, and saved contacts. It never includes mail, drafts,
+                queued sends, or credentials.
+              </p>
+              <p>
+                <strong>Encrypted sync (beta)</strong> is off by default. When you enable it, tasks, goals, saved contacts,
+                snippets, Split Inboxes, portable preferences, account display details, and device names are encrypted
+                on your computer before being stored in a location you choose: a shared folder, S3-compatible storage, or
+                an IPFS service. That provider stores only encrypted data, but can see file sizes and timing. Mail,
+                drafts, queued sends, and credentials never sync. Keep your recovery phrase safe — we cannot recover it.
+              </p>
+            </section>
+
+            <section id="website" aria-labelledby="website-title">
+              <h2 id="website-title">This Website</h2>
+              <p>
+                This website uses no cookies, analytics, or third-party scripts, and its fonts are served from the site
+                itself. It is hosted on GitHub Pages, and GitHub may log technical information such as your IP address
+                for security and operations, as described in the
+                <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement" rel="noopener">GitHub Privacy Statement</a>.
+                Downloads are served by GitHub Releases.
+              </p>
+            </section>
+
+            <section id="deletion" aria-labelledby="deletion-title">
+              <h2 id="deletion-title">Removing Your Data</h2>
+              <p>You are in control of all of it:</p>
+              <ul>
+                <li><strong>Remove an account</strong> in Settings to delete its cached mail, tasks, and sign-in token from your computer.</li>
+                <li><strong>Revoke access</strong> at any time from your <a href="https://myaccount.google.com/permissions" rel="noopener">Google Account permissions</a>. Removing an account in the app does not revoke the grant with Google.</li>
+                <li><strong>Remove everything</strong> by deleting the app's data and log folders after uninstalling. This removes saved contacts, backups, and logs, which can outlive a removed account. Credentials can be removed from your operating system's credential store under entries beginning with <code>app.threestrands</code>.</li>
+                <li><strong>Remove synced data</strong> by leaving the sync group and deleting the files in your chosen storage location.</li>
+              </ul>
+              <p>Since we hold no personal data about you, there is nothing for us to export or delete on request — but we are happy to help you remove data from your own devices.</p>
+            </section>
+
+            <section id="security" aria-labelledby="security-title">
+              <h2 id="security-title">Security</h2>
+              <p>
+                Connections use TLS. Email content is displayed in a locked-down sandbox that cannot run scripts or load
+                remote content on its own. Exports and sync use modern authenticated encryption. No system is
+                perfectly secure, so keep your computer and its user account protected.
+              </p>
+            </section>
+
+            <section id="children" aria-labelledby="children-title">
+              <h2 id="children-title">Children</h2>
+              <p>ThreeStrands is not directed to children under 13, and we do not knowingly collect information from anyone.</p>
+            </section>
+
+            <section id="changes" aria-labelledby="changes-title">
+              <h2 id="changes-title">Changes</h2>
+              <p>
+                If the app's data handling changes, we will update this page and its effective date before the change ships.
+                The page's history is public in the project repository.
+              </p>
+            </section>
+
+            <section id="contact" aria-labelledby="contact-title">
+              <h2 id="contact-title">Contact</h2>
+              <p>
+                Questions about this policy? <a href="https://github.com/oa-labs/dispatch/issues" rel="noopener">Open an issue on GitHub</a>
+                or reach OpenArc LLC through the project repository.
+              </p>
+            </section>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer dusk">
+      <div class="container footer-inner">
+        <p class="footer-brand"><span class="brand-name">ThreeStrands</span> <span>v%APP_VERSION%</span></p>
+        <nav aria-label="Project">
+          <a href="https://github.com/oa-labs/dispatch" rel="noopener">GitHub</a>
+          <a href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener">Releases</a>
+          <a href="https://github.com/oa-labs/dispatch#readme" rel="noopener">README</a>
+          <a href="privacy.html" aria-current="page">Privacy Policy</a>
+        </nav>
+        <p class="footer-note">© 2026 OpenArc LLC.</p>
+      </div>
+    </footer>
+  </body>
+</html>

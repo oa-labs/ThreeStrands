@@ -33,6 +33,12 @@ describe("ThreadList", () => {
 
     rerender(<HighlightedSnippet thread={{ ...thread, matchSnippet: null }} />);
     expect(screen.getByText("Plain & safe")).toBeInTheDocument();
+
+    // The native inbox preview encodes every character the reader decodes
+    // (see `list_preview` in src-tauri/src/db.rs).
+    const { container } = render(<HighlightedSnippet thread={{ ...thread, matchSnippet: null, snippet: "Fixed &lt;now&gt; &amp; &quot;done&quot; — it&#39;s live." }} />);
+    expect(container).toHaveTextContent('Fixed <now> & "done" — it\'s live.');
+    expect(container.querySelector("now")).toBeNull();
   });
 
   it("separates row selection from the checkbox action", () => {

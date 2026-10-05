@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CalendarAttachment, CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { mailClient } from "./data/client";
@@ -123,6 +123,43 @@ describe("CalendarAttachmentGroup", () => {
 
     expect(await screen.findByRole("heading", { name: "Morning standup" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Lunch" })).toBeVisible();
+    expect(mailClient.previewCalendarAttachment).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the loaded card when re-rendered with an equivalent attachment list", async () => {
+    const inlineIcs = { ...attachment, id: "calendar-inline" };
+    const icsFile = { ...attachment, id: "calendar-file" };
+    vi.spyOn(mailClient, "previewCalendarAttachment").mockResolvedValue({
+      truncated: false,
+      events: [{
+        uid: "outlook-20261006@calendar.example.com",
+        title: "Economic outlook",
+        start: "2026-10-06T17:00:00",
+        end: "2026-10-06T20:00:00",
+        allDay: false,
+        timeZone: "America/New_York",
+        location: null,
+        description: null,
+        organizer: null,
+        attendeeCount: 1,
+        recurring: false,
+        status: "CONFIRMED",
+      }],
+    });
+
+    const { rerender } = render(
+      <CalendarAttachmentGroup messageId="message-1" attachments={[inlineIcs, icsFile]} onError={vi.fn()} />,
+    );
+    expect(await screen.findByRole("heading", { name: "Economic outlook" })).toBeVisible();
+
+    await act(async () => {
+      rerender(
+        <CalendarAttachmentGroup messageId="message-1" attachments={[{ ...inlineIcs }, { ...icsFile }]} onError={vi.fn()} />,
+      );
+    });
+
+    expect(screen.queryByText("Loading calendar invitation…")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Economic outlook" })).toBeVisible();
     expect(mailClient.previewCalendarAttachment).toHaveBeenCalledTimes(2);
   });
 });

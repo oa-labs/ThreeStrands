@@ -1793,9 +1793,10 @@ impl Database {
         })
     }
 
-    /// Rewrites a bounded batch of search rows queued by schema v46 so their
-    /// `body` drops quoted history repeated within the thread and their
-    /// `snippet` previews the latest message without its quote (see
+    /// Rewrites a bounded batch of threads queued by schema v46 so their
+    /// search `body` drops quoted history repeated within the thread, and
+    /// both the search `snippet` and the inbox preview (`threads.snippet`)
+    /// show the latest message without its quote (see
     /// [`crate::quoted_history::searchable_thread_text`]). Returns the number
     /// of queued threads handled; call repeatedly until it returns 0. A queued
     /// thread that no longer has a search row is simply dequeued.
@@ -1821,6 +1822,8 @@ impl Database {
                         )?
                         .query_map([thread_id], |row| resolve_body(0, row.get(0)?, row.get(1)?))?
                         .collect::<Result<_, _>>()?;
+                    // The stored preview is still the provider's until this
+                    // rewrite; it remains the fallback for a body without text.
                     let provider_snippet: String = transaction.query_row(
                         "SELECT snippet FROM threads WHERE id = ?1",
                         [thread_id],
@@ -1830,6 +1833,10 @@ impl Database {
                     transaction.execute(
                         "UPDATE thread_search SET body = ?1, snippet = ?2 WHERE rowid = ?3",
                         params![text.body, search_preview(&text, &provider_snippet), rowid],
+                    )?;
+                    transaction.execute(
+                        "UPDATE threads SET snippet = ?1 WHERE id = ?2",
+                        params![list_preview(&text, &provider_snippet), thread_id],
                     )?;
                 }
                 transaction.execute("DELETE FROM pending_search_reindex WHERE thread_id = ?1", [thread_id])?;
@@ -1966,6 +1973,11 @@ impl Database {
             .max_by(|a, b| a.date.cmp(&b.date))
             .map(|message| message.date.clone())
             .unwrap_or_else(|| latest.date.clone());
+        let mut chronological: Vec<&NormalizedMessage> = messages.iter().collect();
+        chronological.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)));
+        let text = crate::quoted_history::searchable_thread_text(
+            chronological.iter().map(|message| message.body_text.as_str()),
+        );
         transaction
             .execute(
                 "INSERT INTO threads(
@@ -1986,7 +1998,7 @@ impl Database {
                     account_id,
                     provider_thread_id,
                     latest.subject,
-                    latest.snippet,
+                    list_preview(&text, &latest.snippet),
                     serde_json::to_string(&participants).map_err(serialization_error)?,
                     latest.date,
                     unread,
@@ -2035,11 +2047,6 @@ impl Database {
                 )?;
             contacts::index_contact_message(transaction, account_id, &thread_id, message)?;
         }
-        let mut chronological: Vec<&NormalizedMessage> = messages.iter().collect();
-        chronological.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)));
-        let text = crate::quoted_history::searchable_thread_text(
-            chronological.iter().map(|message| message.body_text.as_str()),
-        );
         transaction
             .execute(
                 "INSERT INTO thread_search(thread_id, subject, snippet, participants, body)
@@ -2795,6 +2802,28 @@ fn search_preview(text: &crate::quoted_history::ThreadSearchText, provider_snipp
     }
 }
 
+/// The inbox preview (`threads.snippet`): the latest message before any
+/// quoted history, HTML-entity-encoded like the provider snippets the reader
+/// decodes for display, or the provider's snippet when that message has no
+/// body text.
+fn list_preview(text: &crate::quoted_history::ThreadSearchText, provider_snippet: &str) -> String {
+    if text.latest_preview.is_empty() {
+        return provider_snippet.to_string();
+    }
+    let mut encoded = String::with_capacity(text.latest_preview.len());
+    for character in text.latest_preview.chars() {
+        match character {
+            '&' => encoded.push_str("&amp;"),
+            '<' => encoded.push_str("&lt;"),
+            '>' => encoded.push_str("&gt;"),
+            '"' => encoded.push_str("&quot;"),
+            '\'' => encoded.push_str("&#39;"),
+            other => encoded.push(other),
+        }
+    }
+    encoded
+}
+
 /// zstd-compresses message body text for the `body_html_z`/`body_text_z`
 /// columns. Encoding an in-memory byte slice cannot meaningfully fail.
 fn compress_body(text: &str) -> Vec<u8> {
@@ -3163,6 +3192,35 @@ pub(crate) mod tests {
         assert!(found[0].match_snippet.as_deref().is_some_and(|snippet| snippet.contains("\u{1}nightly\u{2}")));
     }
 
+    fn list_snippet(database: &Database, thread_id: &str) -> String {
+        database
+            .connection()
+            .unwrap()
+            .query_row("SELECT snippet FROM threads WHERE id = ?1", [thread_id], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn inbox_preview_shows_the_latest_message_without_its_quote_entity_encoded() {
+        let database = database();
+        let mut messages = quoting_thread_messages();
+        messages[0].body_text = format!("Fixed <now> & \"done\" — it's live.\n\nOn Thu, A wrote:\n> {QUOTED_ORIGINAL}");
+        messages[0].snippet = "Provider preview that runs into On Thu, A wrote: &gt; Can you".into();
+        database.upsert_thread("you@example.com", &messages).unwrap();
+        let thread_id = local_thread_id("you@example.com", "quoting");
+        assert_eq!(
+            list_snippet(&database, &thread_id),
+            "Fixed &lt;now&gt; &amp; &quot;done&quot; — it&#39;s live."
+        );
+        let listed = database.list_all_mail(Some("you@example.com")).unwrap();
+        assert_eq!(listed.iter().find(|thread| thread.id == thread_id).unwrap().snippet, list_snippet(&database, &thread_id));
+
+        let mut blank = message("blank", "blank-thread", "2026-10-02T09:00:00Z", "");
+        blank.snippet = "Provider &amp; preview".into();
+        database.upsert_thread("you@example.com", &[blank]).unwrap();
+        assert_eq!(list_snippet(&database, &local_thread_id("you@example.com", "blank-thread")), "Provider &amp; preview");
+    }
+
     #[test]
     fn search_snippet_falls_back_to_the_provider_snippet_for_a_message_without_text() {
         let database = database();
@@ -3185,6 +3243,7 @@ pub(crate) mod tests {
             // a queued thread whose row is gone.
             let connection = database.connection().unwrap();
             connection.execute("UPDATE thread_search SET body = ?1, snippet = ?1 WHERE thread_id = ?2", params![full, thread_id]).unwrap();
+            connection.execute("UPDATE threads SET snippet = ?1 WHERE id = ?2", params![full, thread_id]).unwrap();
             connection.execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1), ('deleted-thread')", [&thread_id]).unwrap();
         }
         assert_eq!(database.reindex_next_search_batch(1).unwrap(), 1);
@@ -3192,6 +3251,7 @@ pub(crate) mod tests {
         assert_eq!(database.reindex_next_search_batch(10).unwrap(), 0);
         assert_eq!(search_body(&database, &thread_id).matches("nightly feed import").count(), 1);
         assert_eq!(search_column(&database, "snippet", &thread_id), "Fixed now, the hourly retry handles it.");
+        assert_eq!(list_snippet(&database, &thread_id), "Fixed now, the hourly retry handles it.");
         assert_eq!(search_ids(&database, "nightly"), vec![thread_id.clone()]);
 
         database.connection().unwrap().execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1)", [&thread_id]).unwrap();

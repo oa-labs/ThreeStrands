@@ -2199,12 +2199,14 @@ mod tests {
         let mut stale_common = ContractProvider::message();
         stale_common.id = "common-message".into();
         stale_common.thread_id = "common-thread".into();
-        stale_common.snippet = "stale snippet".into();
+        // The inbox preview comes from the latest message's body, so the body
+        // marks which copy of the thread is cached.
+        stale_common.payload.body.data = Some(URL_SAFE_NO_PAD.encode("stale body"));
         database
             .upsert_thread(account, &[crate::mime::normalize(&stale_common).unwrap()])
             .unwrap();
         let mut fresh_common = stale_common;
-        fresh_common.snippet = "fresh snippet".into();
+        fresh_common.payload.body.data = Some(URL_SAFE_NO_PAD.encode("fresh body"));
 
         let mut inbox_message = ContractProvider::message();
         inbox_message.id = "inbox-message".into();
@@ -2242,7 +2244,7 @@ mod tests {
                 .find(|thread| thread.id == format!("{account}:common-thread"))
                 .unwrap()
                 .snippet,
-            "fresh snippet",
+            "fresh body",
             "cursor recovery must refresh threads common to both inbox snapshots"
         );
     }
