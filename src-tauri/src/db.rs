@@ -1726,10 +1726,15 @@ impl Database {
     /// Returns freed pages to the OS. Cheap as long as `auto_vacuum` is
     /// already `INCREMENTAL` (see `vacuum_to_incremental`); otherwise a
     /// harmless no-op.
+    ///
+    /// SQLite frees one page per step of `incremental_vacuum`, so the
+    /// statement must be stepped to completion; `execute_batch` steps once.
     pub fn reclaim_space(&self) -> DbResult<()> {
         self.with_connection(|connection| {
-            Ok(connection
-                .execute_batch("PRAGMA incremental_vacuum;")?)
+            let mut statement = connection.prepare("PRAGMA incremental_vacuum")?;
+            let mut rows = statement.query([])?;
+            while rows.next()?.is_some() {}
+            Ok(())
         })
     }
 
@@ -4070,6 +4075,38 @@ pub(crate) mod tests {
         let reopened = Database::open(&path).unwrap();
         assert_eq!(reopened.claim_mutations("default", 10).unwrap().len(), 1);
         drop(reopened);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    }
+
+    #[test]
+    fn reclaim_space_returns_every_free_page() {
+        let path = std::env::temp_dir().join(format!("dispatch-{}.sqlite", Uuid::new_v4()));
+        {
+            let database = Database::open(&path).unwrap();
+            database.vacuum_to_incremental().unwrap();
+            let connection = database.connection().unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE reclaim_probe (body BLOB);
+                     WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
+                     INSERT INTO reclaim_probe SELECT zeroblob(16384) FROM n;
+                     DROP TABLE reclaim_probe;",
+                )
+                .unwrap();
+            let free_pages = |connection: &Connection| -> i64 {
+                connection
+                    .query_row("PRAGMA freelist_count", [], |row| row.get(0))
+                    .unwrap()
+            };
+            assert!(free_pages(&connection) > 100);
+            drop(connection);
+
+            database.reclaim_space().unwrap();
+
+            assert_eq!(free_pages(&database.connection().unwrap()), 0);
+        }
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
         let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
