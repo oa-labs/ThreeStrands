@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 46;
+pub(crate) const LATEST_VERSION: i64 = 47;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1344,6 +1344,15 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             PRAGMA user_version=46;",
         ).map_err(error)?;
     }
+    if version < 47 {
+        // A plain-text body holding an HTML document is now read as HTML, so
+        // previews written from that markup are rewritten by the same
+        // background reindex.
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO pending_search_reindex(thread_id) SELECT thread_id FROM thread_search;
+            PRAGMA user_version=47;",
+        ).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1438,6 +1447,29 @@ mod tests {
             .unwrap();
         assert_eq!(queued, 2);
         super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
+    fn v47_requeues_search_rows_already_reindexed_by_v46() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DELETE FROM pending_search_reindex;
+                INSERT INTO thread_search(thread_id, subject, snippet, participants, body)
+                VALUES ('you@gmail.com:t1', 's', '&lt;html&gt;', 'p', 'body');
+                PRAGMA user_version=46;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let queued: Vec<String> = connection
+            .prepare("SELECT thread_id FROM pending_search_reindex")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(queued, vec!["you@gmail.com:t1".to_string()]);
     }
 
     #[test]

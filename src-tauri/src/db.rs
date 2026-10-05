@@ -8,7 +8,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, Transaction};
 use uuid::Uuid;
 
-use crate::mime::{RawMessage, NormalizedMessage, UnsubscribeMetadata};
+use crate::mime::{readable_body_text, RawMessage, NormalizedMessage, UnsubscribeMetadata};
 use crate::models::{
     Account, CalendarAccount, ContactSuggestion, FailedMutation, MailProviderKind, MailboxUnreadCounts, Message,
     SearchThreadsRequest, QuarantinedMessage, Snippet, SplitInbox, SyncStatus, Thread, ThreadDetail,
@@ -684,7 +684,7 @@ impl Database {
                         recipients: decode_json(row.get::<_, String>(3)?)?,
                         sent_at: row.get(4)?,
                         body_html: resolve_body(7, row.get(5)?, row.get(7)?)?,
-                        body_text: resolve_body(8, row.get(6)?, row.get(8)?)?,
+                        body_text: readable_body_text(resolve_body(8, row.get(6)?, row.get(8)?)?),
                         unsubscribe: row
                             .get::<_, Option<String>>(9)?
                             .and_then(|value| serde_json::from_str::<UnsubscribeMetadata>(&value).ok())
@@ -1820,7 +1820,7 @@ impl Database {
                             "SELECT body_text, body_text_z FROM messages
                              WHERE thread_id = ?1 ORDER BY sent_at, id",
                         )?
-                        .query_map([thread_id], |row| resolve_body(0, row.get(0)?, row.get(1)?))?
+                        .query_map([thread_id], |row| Ok(readable_body_text(resolve_body(0, row.get(0)?, row.get(1)?)?)))?
                         .collect::<Result<_, _>>()?;
                     // The stored preview is still the provider's until this
                     // rewrite; it remains the fallback for a body without text.
@@ -3257,6 +3257,26 @@ pub(crate) mod tests {
         database.connection().unwrap().execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1)", [&thread_id]).unwrap();
         database.upsert_thread("you@example.com", &quoting_thread_messages()).unwrap();
         assert_eq!(database.reindex_next_search_batch(10).unwrap(), 0);
+    }
+
+    #[test]
+    fn html_stored_as_plain_text_is_read_and_previewed_as_text() {
+        // Rows synced before plain-text parts holding HTML were flattened.
+        let fixtures = [
+            ("document", "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html\"></head><body><p style=\"color: red\">Hi Parents, we need help Saturday.</p></body></html>", "Hi Parents, we need help Saturday."),
+            ("fragment", "<div dir=\"ltr\">Lunch at <b>noon</b> &amp; after?</div>", "Lunch at noon &amp; after?"),
+        ];
+        let database = database();
+        for (thread, body, preview) in fixtures {
+            database.upsert_thread("you@example.com", &[message(thread, thread, "2026-10-02T09:00:00Z", body)]).unwrap();
+            let thread_id = local_thread_id("you@example.com", thread);
+            database.connection().unwrap().execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1)", [&thread_id]).unwrap();
+            while database.reindex_next_search_batch(10).unwrap() > 0 {}
+            assert_eq!(list_snippet(&database, &thread_id), preview, "{thread}");
+            assert!(!search_body(&database, &thread_id).contains('<'), "{thread}");
+            let detail = database.get_thread(&thread_id).unwrap();
+            assert!(!detail.messages[0].body_text.contains('<'), "{thread}");
+        }
     }
 
     #[test]

@@ -151,7 +151,10 @@ pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
     }
     // Some messages (newsletters, marketing mail) omit the text/plain alternative
     // entirely, so fall back to deriving plain text from the HTML body.
-    let body_text = text.unwrap_or_else(|| html_to_text(&body_html));
+    let body_text = match text {
+        Some(text) => readable_body_text(text),
+        None => html_to_text(&body_html),
+    };
     Ok(NormalizedMessage {
         id: message.id.clone(),
         thread_id: message.thread_id.clone(),
@@ -442,6 +445,40 @@ pub fn provider_attachment_id_from_payload(
 ) -> Result<Option<String>, String> {
     find_attachment_part(message, attachment_reference)
         .map(|(_, part)| part.body.attachment_id.clone())
+}
+
+/// Tags that open an HTML document or fragment. A plain-text body that
+/// begins with one of them is markup, not text the sender wrote.
+const HTML_OPENING_TAGS: &[&str] = &[
+    "!doctype", "html", "head", "body", "meta", "style", "div", "p", "table", "span", "font",
+    "center", "br",
+];
+
+/// Whether a plain-text body is really HTML: it opens with an HTML tag and
+/// the tag closes. Text that merely starts with `<` (an address such as
+/// `<ann@example.com>`) is not.
+fn is_html_markup(text: &str) -> bool {
+    let Some(rest) = text.trim_start().strip_prefix('<') else {
+        return false;
+    };
+    let name_end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '!'))
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(name_end);
+    HTML_OPENING_TAGS.iter().any(|tag| tag.eq_ignore_ascii_case(name))
+        && after.starts_with(|c: char| c == '>' || c == '/' || c.is_ascii_whitespace())
+        && after.contains('>')
+}
+
+/// A message's plain-text body as text. Some senders put an HTML document in
+/// the text/plain part; that body is flattened like an HTML-only message so
+/// previews, search, quoting, and AI context never show raw markup.
+pub fn readable_body_text(text: String) -> String {
+    if is_html_markup(&text) {
+        html_to_text(&text)
+    } else {
+        text
+    }
 }
 
 fn select_bodies(
@@ -793,6 +830,42 @@ mod tests {
         };
         let normalized = normalize(&message).unwrap();
         assert_eq!(normalized.body_text.trim(), "Joel, this is the math.");
+    }
+
+    #[test]
+    fn reads_an_html_document_in_the_plain_part_as_html() {
+        let document = "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html\"><style>p { color: red; }</style></head><body><p>Hi Parents, we need help.</p></body></html>";
+        let fragment = "\n<div dir=\"ltr\">Lunch at <b>noon</b>?<br>Thanks</div>";
+        for (plain, expected) in [(document, "Hi Parents, we need help."), (fragment, "Lunch at noon?")] {
+            let mut payload = part("multipart/alternative", "");
+            payload.parts = vec![part("text/plain", plain), part("text/html", "<p>html part</p>")];
+            let message = RawMessage {
+                id: "m".into(),
+                thread_id: "t".into(),
+                label_ids: vec![],
+                snippet: String::new(),
+                internal_date: "0".into(),
+                payload,
+            };
+            let text = normalize(&message).unwrap().body_text;
+            assert!(text.contains(expected), "{text}");
+            assert!(!text.contains('<') && !text.contains("color: red"), "{text}");
+        }
+    }
+
+    #[test]
+    fn keeps_plain_text_that_only_looks_like_markup() {
+        for text in [
+            "<ann@example.com> wrote:\n> hi",
+            "<p is a paragraph tag",
+            "Use <div> for blocks.",
+            "<pre-approved> list attached",
+            "",
+        ] {
+            assert_eq!(readable_body_text(text.to_string()), text);
+        }
+        assert!(is_html_markup("  <!DOCTYPE html><html><body>x</body></html>"));
+        assert!(is_html_markup("<BR/>x"));
     }
 
     #[test]

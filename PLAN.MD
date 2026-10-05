@@ -5,10 +5,14 @@
 
 ## Product direction
 
-ThreeStrands is a keyboard-first desktop email client for people
+ThreeStrands is a source-available, keyboard-first desktop email client for people
 who spend much of their day in their inbox. Its aim is to make important
 conversations easy to process while keeping follow-ups, scheduling context, and
 control of personal data close to the mail itself.
+
+Project licensing is governed by the [PolyForm Perimeter License 1.0.1](LICENSE).
+The source can be inspected, built, used, and modified for permitted purposes;
+providing others with a competing product built from it is prohibited.
 
 The product is local-first. The desktop app connects directly to Gmail; it does
 not require a ThreeStrands account or an application-operated mail backend.

@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 const RELEASES = "https://github.com/oa-labs/dispatch/releases/latest";
+const LICENSE_URL = "https://github.com/oa-labs/dispatch/blob/master/LICENSE";
 const TOUR_SCENES = ["inbox", "split-inbox", "reply", "tasks", "today-schedule", "calendar-week", "calendar-create", "contacts"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
@@ -44,6 +45,18 @@ test.describe("links", () => {
 });
 
 test.describe("feature claims", () => {
+  test("explains source availability and the restriction on competing products", async ({ page }) => {
+    await page.goto("./");
+    await expect(page.locator(".hero .fine-print")).toContainText("Source available");
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", /source-available/);
+    await expect(page.locator('meta[property="og:description"]')).toHaveAttribute("content", /source-available/);
+    const privacy = page.locator("#privacy");
+    await expect(privacy.getByRole("link", { name: "Inspect the source" })).toHaveAttribute("href", "https://github.com/oa-labs/dispatch");
+    await expect(privacy.getByRole("link", { name: "PolyForm Perimeter License 1.0.1" })).toHaveAttribute("href", LICENSE_URL);
+    await expect(privacy).toContainText("personal or internal business use");
+    await expect(privacy).toContainText("prohibits providing others with a competing product built from this software, even for free");
+  });
+
   test("presents contacts and event creation as shipped features", async ({ page }) => {
     await page.goto("./");
     const tour = page.locator("[data-tour-steps]");
@@ -425,12 +438,23 @@ test.describe("legal pages", () => {
     }
   });
 
-  test("the terms reserve ownership, disclaim warranties, limit liability, and choose Pennsylvania law", async ({ page }) => {
+  test("the terms license the app under Perimeter, reserve ownership, and retain liability protections", async ({ page }) => {
     await page.goto("./terms.html");
     const body = page.locator(".legal-body");
-    await expect(body.locator("#license")).toContainText("ThreeStrands is proprietary software");
+    const license = body.locator("#license");
+    await expect(license).toContainText("ThreeStrands is source available under the PolyForm Perimeter License 1.0.1");
     await expect(body.locator("#license")).toContainText("Copyright © 2026 OpenArc LLC. All rights reserved.");
-    await expect(body.locator("#license")).toContainText("Reverse engineer, decompile, or disassemble");
+    await expect(license.getByRole("link", { name: "PolyForm Perimeter License 1.0.1" })).toHaveAttribute("href", LICENSE_URL);
+    await expect(license).toContainText("You can inspect, build, use, and modify the software");
+    await expect(license).toContainText("Copying and redistribution are allowed subject to the license's conditions");
+    await expect(license).toContainText("prohibits providing others with a competing product built from this software, even if that product is free");
+    await expect(license).toContainText("These Terms do not narrow permissions granted by the software license");
+    await expect(license).not.toContainText("revocable");
+    await expect(license).not.toContainText("Reverse engineer, decompile, or disassemble");
+    await expect(license).not.toContainText("any purpose other than reviewing it");
+    await expect(body.locator("#termination")).toContainText("Termination of these Terms does not itself terminate your rights under the PolyForm Perimeter License");
+    await expect(body.locator("#termination")).toContainText("including its provisions for correcting violations");
+    await expect(body.locator("#general")).toContainText("Updates to these Terms do not change permissions already granted under the software license");
     await expect(body.locator("#warranty .legal-caps")).toContainText("provided “as is” and “as available”");
     await expect(body.locator("#liability .legal-caps").first()).toContainText("will not be liable for any indirect");
     await expect(body.locator("#liability")).toContainText("fifty U.S. dollars (US$50)");
@@ -439,11 +463,12 @@ test.describe("legal pages", () => {
     await expect(body.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute("href", "privacy.html");
   });
 
-  test("every page is copyright OpenArc LLC and makes no open-source claim", async ({ page }) => {
+  test("every page credits OpenArc, links to the license, and makes no open-source claim", async ({ page }) => {
     for (const file of ["", ...LEGAL_PAGES.map((legal) => legal.file)]) {
       await page.goto(`./${file}`);
       await expect(page.locator(".footer-note")).toContainText("© 2026 OpenArc LLC. All rights reserved.");
-      expect(await page.locator("html").innerHTML()).not.toMatch(/open[- ]source|view source/i);
+      await expect(page.locator("footer").getByRole("link", { name: "License", exact: true })).toHaveAttribute("href", LICENSE_URL);
+      expect(await page.locator("html").innerHTML()).not.toMatch(/open[- ]source/i);
     }
   });
 });
