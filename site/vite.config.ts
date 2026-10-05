@@ -106,6 +106,7 @@ export default defineConfig({
       input: {
         index: path.join(siteRoot, "index.html"),
         privacy: path.join(siteRoot, "privacy.html"),
+        terms: path.join(siteRoot, "terms.html"),
       },
     },
   },

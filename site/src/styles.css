@@ -1743,6 +1743,14 @@ button.keycap:active {
   overflow-wrap: anywhere;
 }
 
+/* Conspicuous disclaimers, set in caps as warranty and liability terms expect. */
+.legal-body .legal-caps {
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
 .legal-body .legal-summary {
   list-style: none;
   padding: 0;

@@ -5,7 +5,7 @@
 
 ## Product direction
 
-ThreeStrands is an open-source, keyboard-first desktop email client for people
+ThreeStrands is a keyboard-first desktop email client for people
 who spend much of their day in their inbox. Its aim is to make important
 conversations easy to process while keeping follow-ups, scheduling context, and
 control of personal data close to the mail itself.

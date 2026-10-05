@@ -1,6 +1,6 @@
 # ThreeStrands
 
-ThreeStrands is an open-source, keyboard-first, local-first email client inspired
+ThreeStrands is a keyboard-first, local-first email client inspired
 by some of the best email clients available. It is designed for people who
 spend significant time in email and want to process important conversations
 quickly without losing follow-ups, context, or control of their data.
@@ -149,3 +149,8 @@ mail, provider credentials, or AI keys.
 ThreeStrands uses its own name, visual identity, product language, and
 implementation. It learns from established interaction patterns across the
 email category without copying proprietary code, assets, or trademarks.
+
+## License
+
+Copyright © 2026 OpenArc LLC. All rights reserved. ThreeStrands is proprietary
+software; see [LICENSE](LICENSE).

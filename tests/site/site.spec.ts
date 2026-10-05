@@ -341,18 +341,77 @@ test.describe("without JavaScript", () => {
   });
 });
 
-test.describe("privacy policy page", () => {
-  test("is linked from the home page footer and links back home", async ({ page }) => {
-    await page.goto("./");
-    await page.locator("footer").getByRole("link", { name: "Privacy Policy" }).click();
-    await expect(page).toHaveURL(/privacy\.html$/);
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Privacy Policy");
-    await expect(page.locator(".brand-mark")).toHaveCSS("width", "32px");
-    await page.getByRole("link", { name: "ThreeStrands home" }).click();
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("Email at the Speed of");
-  });
+const LEGAL_PAGES = [
+  { file: "privacy.html", link: "Privacy Policy" },
+  { file: "terms.html", link: "Terms of Service" },
+];
 
-  test("states the local-first data commitments", async ({ page }) => {
+test.describe("legal pages", () => {
+  for (const { file, link } of LEGAL_PAGES) {
+    test(`${file} is linked from every page footer and links back home`, async ({ page }) => {
+      for (const from of ["./", ...LEGAL_PAGES.map((other) => `./${other.file}`)]) {
+        await page.goto(from);
+        await page.locator("footer").getByRole("link", { name: link }).click();
+        await expect(page).toHaveURL(new RegExp(`${file.replace(".", "\\.")}$`));
+        await expect(page.getByRole("heading", { level: 1 })).toHaveText(link);
+      }
+      await expect(page.locator(".brand-mark")).toHaveCSS("width", "32px");
+      await expect(page.locator("footer").getByRole("link", { name: link })).toHaveAttribute("aria-current", "page");
+      await page.getByRole("link", { name: "ThreeStrands home" }).click();
+      await expect(page.getByRole("heading", { level: 1 })).toContainText("Email at the Speed of");
+    });
+
+    test(`${file}: every contents entry jumps to a section on the page`, async ({ page }) => {
+      await page.goto(`./${file}`);
+      const targets = await page.locator(".legal-toc a").evaluateAll((links) => links.map((link) => link.getAttribute("href")!));
+      expect(targets.length).toBeGreaterThan(10);
+      const sections = await page.locator(".legal-body > section").evaluateAll((elements) => elements.map((element) => `#${element.id}`));
+      expect(targets).toEqual(sections);
+    });
+
+    test(`${file} makes no third-party requests and keeps external links safe`, async ({ page, baseURL }) => {
+      const origin = new URL(baseURL!).origin;
+      const foreign: string[] = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.protocol.startsWith("http") && url.origin !== origin) foreign.push(request.url());
+      });
+      await page.goto(`./${file}`);
+      await page.waitForLoadState("networkidle");
+      expect(foreign).toEqual([]);
+      const unsafe = await page.locator('a[href^="http"]').evaluateAll((links) =>
+        links.filter((link) => !(link.getAttribute("rel") ?? "").split(/\s+/).includes("noopener")).map((link) => link.outerHTML),
+      );
+      expect(unsafe).toEqual([]);
+    });
+
+    for (const colorScheme of ["light", "dark"] as const) {
+      test(`${file} has no serious or critical axe violations in ${colorScheme} mode`, async ({ page }) => {
+        await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+        await page.goto(`./${file}`);
+        await page.addScriptTag({ path: path.resolve("node_modules/axe-core/axe.min.js") });
+        const violations = await page.evaluate(async () => {
+          const axe = (window as unknown as { axe: { run: (context: Document) => Promise<{ violations: { id: string; impact: string; nodes: { target: string[] }[] }[] }> } }).axe;
+          const result = await axe.run(document);
+          return result.violations
+            .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
+            .map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target.join(" ")).slice(0, 5) }));
+        });
+        expect(violations).toEqual([]);
+      });
+    }
+
+    for (const width of [360, 390, 768, 1440]) {
+      test(`${file} never scrolls horizontally at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`./${file}`);
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        expect(overflow).toBeLessThanOrEqual(0);
+      });
+    }
+  }
+
+  test("the privacy policy states the local-first data commitments", async ({ page }) => {
     await page.goto("./privacy.html");
     const body = page.locator(".legal-body");
     await expect(body).toContainText("There is no ThreeStrands account, backend, or relay");
@@ -366,51 +425,25 @@ test.describe("privacy policy page", () => {
     }
   });
 
-  test("every contents entry jumps to a section on the page", async ({ page }) => {
-    await page.goto("./privacy.html");
-    const targets = await page.locator(".legal-toc a").evaluateAll((links) => links.map((link) => link.getAttribute("href")!));
-    expect(targets.length).toBeGreaterThan(10);
-    for (const target of targets) await expect(page.locator(`.legal-body section${target}`)).toHaveCount(1);
+  test("the terms reserve ownership, disclaim warranties, limit liability, and choose Pennsylvania law", async ({ page }) => {
+    await page.goto("./terms.html");
+    const body = page.locator(".legal-body");
+    await expect(body.locator("#license")).toContainText("ThreeStrands is proprietary software");
+    await expect(body.locator("#license")).toContainText("Copyright © 2026 OpenArc LLC. All rights reserved.");
+    await expect(body.locator("#license")).toContainText("Reverse engineer, decompile, or disassemble");
+    await expect(body.locator("#warranty .legal-caps")).toContainText("provided “as is” and “as available”");
+    await expect(body.locator("#liability .legal-caps").first()).toContainText("will not be liable for any indirect");
+    await expect(body.locator("#liability")).toContainText("fifty U.S. dollars (US$50)");
+    await expect(body.locator("#law")).toContainText("laws of the Commonwealth of Pennsylvania");
+    await expect(body.locator("#ai")).toContainText("AI output can be inaccurate");
+    await expect(body.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute("href", "privacy.html");
   });
 
-  test("makes no third-party requests and keeps external links safe", async ({ page, baseURL }) => {
-    const origin = new URL(baseURL!).origin;
-    const foreign: string[] = [];
-    page.on("request", (request) => {
-      const url = new URL(request.url());
-      if (url.protocol.startsWith("http") && url.origin !== origin) foreign.push(request.url());
-    });
-    await page.goto("./privacy.html");
-    await page.waitForLoadState("networkidle");
-    expect(foreign).toEqual([]);
-    const unsafe = await page.locator('a[href^="http"]').evaluateAll((links) =>
-      links.filter((link) => !(link.getAttribute("rel") ?? "").split(/\s+/).includes("noopener")).map((link) => link.outerHTML),
-    );
-    expect(unsafe).toEqual([]);
+  test("every page is copyright OpenArc LLC and makes no open-source claim", async ({ page }) => {
+    for (const file of ["", ...LEGAL_PAGES.map((legal) => legal.file)]) {
+      await page.goto(`./${file}`);
+      await expect(page.locator(".footer-note")).toContainText("© 2026 OpenArc LLC. All rights reserved.");
+      expect(await page.locator("html").innerHTML()).not.toMatch(/open[- ]source|view source/i);
+    }
   });
-
-  for (const colorScheme of ["light", "dark"] as const) {
-    test(`has no serious or critical axe violations in ${colorScheme} mode`, async ({ page }) => {
-      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-      await page.goto("./privacy.html");
-      await page.addScriptTag({ path: path.resolve("node_modules/axe-core/axe.min.js") });
-      const violations = await page.evaluate(async () => {
-        const axe = (window as unknown as { axe: { run: (context: Document) => Promise<{ violations: { id: string; impact: string; nodes: { target: string[] }[] }[] }> } }).axe;
-        const result = await axe.run(document);
-        return result.violations
-          .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
-          .map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target.join(" ")).slice(0, 5) }));
-      });
-      expect(violations).toEqual([]);
-    });
-  }
-
-  for (const width of [360, 390, 768, 1440]) {
-    test(`never scrolls horizontally at ${width}px`, async ({ page }) => {
-      await page.setViewportSize({ width, height: 900 });
-      await page.goto("./privacy.html");
-      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-      expect(overflow).toBeLessThanOrEqual(0);
-    });
-  }
 });
