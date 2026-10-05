@@ -55,6 +55,7 @@ import {
 } from "./messageFilters";
 import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, Modal, ShortcutHelp } from "./AppChrome";
 import type {
+  Goal,
   Account,
   ActionProposal,
   AvailabilityCandidate,
@@ -1459,7 +1460,10 @@ export function App() {
   const actionProposalSource = useMemo<ProposalSource | null>(() => visibleDetail && actionProposalKey
     ? { key: actionProposalKey, threadId: visibleDetail.thread.id, revision: visibleDetail.thread.lastMessageAt }
     : null, [actionProposalKey, visibleDetail]);
-  const actionProposals = actionProposalKey ? actionProposalSets[actionProposalKey] ?? [] : [];
+  const actionProposals = useMemo(
+    () => actionProposalKey ? actionProposalSets[actionProposalKey] ?? [] : [],
+    [actionProposalKey, actionProposalSets],
+  );
   const actionHiddenCount = actionProposalKey ? actionHiddenCounts[actionProposalKey] ?? 0 : 0;
   const actionAnalysisRequested = Boolean(
     actionAnalysisLoading
@@ -1702,6 +1706,19 @@ export function App() {
       setMeetingEditor({ index, proposal });
     }
   }, [actionProposalSource, visibleDetail]);
+
+  // The task account's goals, loaded when the editor opens so the Goal field can offer them.
+  const taskEditorAccountId = taskEditor ? taskEditor.kind === "edit" ? taskEditor.task.accountId : taskEditor.thread.thread.accountId : null;
+  const [taskEditorGoals, setTaskEditorGoals] = useState<{ accountId: string; goals: Goal[] } | null>(null);
+  useEffect(() => {
+    if (!taskEditorAccountId) return;
+    let current = true;
+    mailClient.listGoals(taskEditorAccountId)
+      .then((goals) => { if (current) setTaskEditorGoals({ accountId: taskEditorAccountId, goals }); })
+      // Without goals the editor still works; it just offers no Goal field.
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, [taskEditorAccountId]);
 
   const submitTaskEditor = useCallback(async (values: TaskEditorValues) => {
     if (!taskEditor) return;
@@ -1962,6 +1979,7 @@ export function App() {
     toggleTaskLayout: () => taskWorkspaceRef.current?.toggleLayout(),
     cycleTaskView: (direction) => taskWorkspaceRef.current?.cycleView(direction),
     focusGoals: () => taskWorkspaceRef.current?.focusGoals(),
+    linkTaskToGoal: () => taskWorkspaceRef.current?.linkSelectedToGoal(),
     taskBoardActive: rightWorkspace === "tasks" && taskLayout === "board",
     calendarWeekActive: rightWorkspace === "week",
     selectedTaskStatus,
@@ -2688,7 +2706,6 @@ export function App() {
           accounts={accounts}
           selectedEmail={contextPersonEmail}
           onOpenThread={openTaskThread}
-          onOpenContact={openContactInAddressBook}
           onShowMessage={showMessage}
           assist={visibleDetail ? (
             <ThreadAssist
@@ -2803,6 +2820,9 @@ export function App() {
       ) : null}
       {taskEditor ? (
         <TaskEditorDialog
+          goals={taskEditorGoals?.accountId === taskEditorAccountId ? taskEditorGoals.goals : null}
+          accountId={taskEditorAccountId ?? undefined}
+          goalSuggested={taskEditor.kind === "proposal" && Boolean(taskEditor.proposal.goalId)}
           initial={taskEditor.kind === "proposal" ? taskEditor.proposal : taskEditor.kind === "edit" ? taskEditor.task : {
             title: taskEditor.thread.thread.subject,
             kind: "action",

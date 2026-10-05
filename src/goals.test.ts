@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Goal, ThreadTask } from "./domain";
-import { currentGoalGroups, formatPeriod, goalOptionsForTask, goalPeriodMatches, goalProgress, parentCandidates, periodEncloses, periodFor, shiftPeriod } from "./goals";
+import { carryForwardRequest, currentGoalGroups, formatPeriod, GOAL_STALE_AFTER_DAYS, goalIsStale, goalOptionsForTask, goalPeriodMatches, goalProgress, goalsToReview, parentCandidates, periodEncloses, periodEnded, periodFor, shiftPeriod } from "./goals";
 
 function goal(id: string, overrides: Partial<Goal> = {}): Goal {
   return {
@@ -90,5 +90,54 @@ describe("goal links", () => {
       ["half", "2026-H2", ["half"]],
       ["year", "2026", ["year"]],
     ]);
+  });
+});
+
+describe("goal reviews and staleness", () => {
+  const now = new Date(2026, 9, 4);
+  const days = (count: number) => new Date(now.getTime() - count * 24 * 60 * 60 * 1000).toISOString();
+
+  it("ends a period only once the current period of its horizon has moved past it", () => {
+    expect(periodEnded("quarter", "2026-Q3", now)).toBe(true);
+    expect(periodEnded("quarter", "2026-Q4", now)).toBe(false);
+    expect(periodEnded("half", "2026-H1", now)).toBe(true);
+    expect(periodEnded("half", "2026-H2", now)).toBe(false);
+    expect(periodEnded("year", "2025", now)).toBe(true);
+    expect(periodEnded("year", "2026", now)).toBe(false);
+    expect(periodEnded("quarter", "2027-Q1", now)).toBe(false);
+  });
+
+  it("flags an active current goal stale only after the threshold with no activity on it or its supporters", () => {
+    const year = goal("year", { horizon: "year", period: "2026", createdAt: days(60) });
+    const quarter = goal("q4", { parentGoalId: "year", createdAt: days(60) });
+    const atLimit = [task("t", { goalId: "q4", updatedAt: days(GOAL_STALE_AFTER_DAYS - 1) })];
+    expect(goalIsStale(year, [year, quarter], atLimit, now)).toBe(false);
+    const past = [task("t", { goalId: "q4", updatedAt: days(GOAL_STALE_AFTER_DAYS + 1) })];
+    expect(goalIsStale(year, [year, quarter], past, now)).toBe(true);
+    expect(goalIsStale(quarter, [year, quarter], past, now)).toBe(true);
+    // A new goal counts from its creation; closed and ended goals are never stale.
+    expect(goalIsStale(goal("new", { createdAt: days(2) }), [], [], now)).toBe(false);
+    expect(goalIsStale(goal("done", { status: "achieved", createdAt: days(60) }), [], [], now)).toBe(false);
+    expect(goalIsStale(goal("ended", { period: "2026-Q3", createdAt: days(60) }), [], [], now)).toBe(false);
+  });
+
+  it("lists ended active goals for review shortest horizon first", () => {
+    const review = goalsToReview([
+      goal("h1", { horizon: "half", period: "2026-H1" }),
+      goal("q3", { period: "2026-Q3" }),
+      goal("q2", { period: "2026-Q2" }),
+      goal("y", { horizon: "year", period: "2025" }),
+      goal("done", { period: "2026-Q3", status: "dropped" }),
+      goal("now", { period: "2026-Q4" }),
+    ], now);
+    expect(review.map((item) => item.id)).toEqual(["q2", "q3", "h1", "y"]);
+  });
+
+  it("carries a goal into the current period and drops a supported goal that no longer encloses it", () => {
+    const year = goal("year", { horizon: "year", period: "2026" });
+    const firstHalf = goal("h1", { horizon: "half", period: "2026-H1" });
+    expect(carryForwardRequest(goal("q3", { period: "2026-Q3", parentGoalId: "year" }), [year], now)).toEqual({ period: "2026-Q4" });
+    expect(carryForwardRequest(goal("q2", { period: "2026-Q2", parentGoalId: "h1" }), [firstHalf], now)).toEqual({ period: "2026-Q4", parentGoalId: null });
+    expect(carryForwardRequest(goal("old", { horizon: "year", period: "2025" }), [], now)).toEqual({ period: "2026" });
   });
 });

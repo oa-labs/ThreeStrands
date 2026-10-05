@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
 import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
-import type { TaskDueKind, TaskKind } from "./domain";
+import type { Goal, TaskDueKind, TaskKind } from "./domain";
 import { errorMessage } from "./errors";
+import { formatPeriod, GOAL_HORIZON_LABELS, GOAL_HORIZONS, goalOptionsForTask } from "./goals";
 import { MAX_REPEAT_INTERVAL_DAYS } from "./TaskDetailDialog";
 
 export type TaskEditorValues = {
@@ -13,6 +14,8 @@ export type TaskEditorValues = {
   dueValue: string | null;
   timeZone: string | null;
   repeatIntervalDays: number | null;
+  /** Present only when the dialog offers goals. */
+  goalId?: string | null;
 };
 
 type TaskEditorInitial = Partial<TaskEditorValues> & Pick<TaskEditorValues, "title">;
@@ -37,10 +40,18 @@ export function TaskEditorDialog({
   sourceSubject,
   evidence,
   submitLabel = "Add Task",
+  goals,
+  accountId,
+  goalSuggested = false,
   onClose,
   onSubmit,
 }: {
   initial: TaskEditorInitial;
+  /** The task account's goals; the Goal field shows once they are loaded. */
+  goals?: readonly Goal[] | null;
+  accountId?: string;
+  /** Marks the initial goal as the assistant's suggestion for the user to confirm. */
+  goalSuggested?: boolean;
   sourceSubject?: string | null;
   evidence?: string | null;
   submitLabel?: string;
@@ -58,6 +69,10 @@ export function TaskEditorDialog({
   const [timeZoneError, setTimeZoneError] = useState<string | null>(null);
   const timeZones = useMemo(() => listSupportedTimeZones(), []);
   const [repeatIntervalDays, setRepeatIntervalDays] = useState(initial.repeatIntervalDays?.toString() ?? "");
+  const [goalId, setGoalId] = useState(initial.goalId ?? "");
+  const goalOptions = goals && accountId ? goalOptionsForTask(goals, { accountId, goalId: initial.goalId ?? null }) : [];
+  // A suggested goal that is gone or closed by now is not offered.
+  const offeredGoalId = goalOptions.some((goal) => goal.id === goalId) ? goalId : "";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -87,6 +102,7 @@ export function TaskEditorDialog({
         dueValue: normalizedDueValue(dueKind, dueValue),
         timeZone: dueKind === "none" ? null : timeZone.trim() || null,
         repeatIntervalDays: repeatIntervalDays ? Number(repeatIntervalDays) : null,
+        ...(goals ? { goalId: offeredGoalId || null } : {}),
       });
     } catch (reason) {
       setError(errorMessage(reason));
@@ -127,6 +143,18 @@ export function TaskEditorDialog({
         </label> : null}
         {timeZoneError ? <p className="form-error" role="alert">{timeZoneError}</p> : null}
         {kind === "follow_up" ? <label><span>Repeat Every (Days)</span><input type="number" min="1" max={MAX_REPEAT_INTERVAL_DAYS} value={repeatIntervalDays} onChange={(event) => setRepeatIntervalDays(event.target.value)} placeholder="Optional" /></label> : null}
+        {goals && goalOptions.length ? <label>
+          <span>Goal{goalSuggested && offeredGoalId && offeredGoalId === initial.goalId ? <small className="task-goal-suggested"> · Suggested</small> : null}</span>
+          <select value={offeredGoalId} onChange={(event) => setGoalId(event.target.value)}>
+            <option value="">No goal</option>
+            {GOAL_HORIZONS.map((horizon) => {
+              const options = goalOptions.filter((goal) => goal.horizon === horizon);
+              return options.length ? <optgroup key={horizon} label={GOAL_HORIZON_LABELS[horizon]}>
+                {options.map((goal) => <option key={goal.id} value={goal.id}>{goal.title} ({formatPeriod(goal.period)})</option>)}
+              </optgroup> : null;
+            })}
+          </select>
+        </label> : null}
         <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional details" /></label>
         {evidence ? <div className="modal-form-evidence"><span>Evidence</span><blockquote>{evidence}</blockquote></div> : null}
         {error ? <p className="form-error" role="alert">{error}</p> : null}

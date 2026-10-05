@@ -81,3 +81,57 @@ export function currentGoalGroups(goals: readonly Goal[], now = new Date()): { h
     return { horizon, period, goals: goals.filter((goal) => goal.horizon === horizon && goal.period === period) };
   });
 }
+
+/** An active goal with no task activity for this long, its own or its supporting goals', is flagged as stale. */
+export const GOAL_STALE_AFTER_DAYS = 21;
+
+/** Whether `period` ended before the current period of its horizon. */
+export function periodEnded(horizon: GoalHorizon, period: string, now = new Date()): boolean {
+  // Periods of one horizon share a fixed-width format, so they order as strings.
+  return period < periodFor(horizon, now);
+}
+
+/** The ids of `goalId` and every goal that supports it, directly or through another goal. */
+export function goalWithSupporters(goals: readonly Goal[], goalId: string): Set<string> {
+  const ids = new Set([goalId]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const goal of goals) {
+      if (goal.parentGoalId && ids.has(goal.parentGoalId) && !ids.has(goal.id)) {
+        ids.add(goal.id);
+        grew = true;
+      }
+    }
+  }
+  return ids;
+}
+
+/**
+ * An active goal in a current period whose tasks, its own or its supporting
+ * goals', have gone untouched for `GOAL_STALE_AFTER_DAYS`. A new goal counts
+ * from when it was created. Ended goals are for review, not stale.
+ */
+export function goalIsStale(goal: Goal, goals: readonly Goal[], tasks: readonly ThreadTask[], now = new Date()): boolean {
+  if (goal.status !== "active" || periodEnded(goal.horizon, goal.period, now)) return false;
+  const supporting = goalWithSupporters(goals, goal.id);
+  const lastActivity = Math.max(
+    new Date(goal.createdAt).getTime(),
+    ...tasks.filter((task) => task.goalId && supporting.has(task.goalId)).map((task) => new Date(task.updatedAt).getTime()),
+  );
+  return now.getTime() - lastActivity > GOAL_STALE_AFTER_DAYS * 24 * 60 * 60 * 1000;
+}
+
+/** Active goals whose period has ended, shortest horizon first so supporting goals are settled before the goals they support. */
+export function goalsToReview(goals: readonly Goal[], now = new Date()): Goal[] {
+  const rank: Record<GoalHorizon, number> = { quarter: 0, half: 1, year: 2 };
+  return goals
+    .filter((goal) => goal.status === "active" && periodEnded(goal.horizon, goal.period, now))
+    .sort((left, right) => rank[left.horizon] - rank[right.horizon] || left.period.localeCompare(right.period) || left.title.localeCompare(right.title));
+}
+
+/** Moves an ended goal into the current period of its horizon, unlinking a supported goal that no longer encloses it. */
+export function carryForwardRequest(goal: Goal, goals: readonly Goal[], now = new Date()): { period: string; parentGoalId?: null } {
+  const period = periodFor(goal.horizon, now);
+  const parent = goal.parentGoalId ? goals.find((candidate) => candidate.id === goal.parentGoalId) : null;
+  return parent && !periodEncloses(parent.period, period) ? { period, parentGoalId: null } : { period };
+}

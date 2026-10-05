@@ -1757,6 +1757,23 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .goal-delete-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .goal-dialog-footer button { padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; font-size: var(--type-xs); cursor: pointer; }
 .goal-dialog-footer .goal-delete-button { border-color: color-mix(in srgb, var(--error) 50%, var(--border-strong)); color: var(--error); }
+.goal-stale { color: var(--warning); font-weight: 650; }
+.goal-review-prompt { display: grid; gap: 8px; margin: 0 0 12px; padding: 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); color: var(--text); font-size: var(--type-sm); }
+.goal-review-actions { display: flex; gap: 6px; }
+.goal-review-actions button, .goal-review-choices button { padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; font-size: var(--type-xs); cursor: pointer; }
+.goal-review-actions .goal-review-button { border-color: var(--primary-border); background: var(--primary); }
+.goal-review-choices button:disabled { cursor: default; opacity: .55; }
+.goal-review-intro { margin: 0; color: var(--secondary); font-size: var(--type-sm); }
+.goal-review-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.goal-review-list > li { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.goal-review-goal { display: grid; gap: 2px; }
+.goal-review-goal strong { overflow-wrap: anywhere; font-size: var(--type-ui); }
+.goal-review-goal span { color: var(--muted); font-size: var(--type-xs); }
+.goal-review-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.task-goal-suggested { color: var(--accent); font-weight: 650; }
+.goal-link-modal { width: min(520px, calc(100vw - 40px)); }
+.goal-link-period { color: var(--muted); font-size: var(--type-xs); white-space: nowrap; }
+.goal-link-error { margin: 0 14px 14px; }
 @media (max-width: 900px) {
   .tasks-workspace-body { grid-template-columns: minmax(0, 1fr); }
   .goals-pane, .tasks-workspace-body .panel-resizer { display: none; }

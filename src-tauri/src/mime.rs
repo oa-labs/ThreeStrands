@@ -280,11 +280,7 @@ fn collect_attachments(
     let inline = referenced_by_html || declared_inline_image;
     if !part.filename.is_empty() || inline {
         attachments.push(crate::models::MessageAttachment {
-            id: part
-                .body
-                .attachment_id
-                .clone()
-                .unwrap_or_else(|| format!("part:{path}")),
+            id: part_reference(path),
             filename: if part.filename.is_empty() {
                 "inline-image".into()
             } else {
@@ -388,47 +384,28 @@ pub(crate) fn decode_attachment_data(data: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-pub fn attachment_bytes_from_payload(
-    message: &RawMessage,
-    attachment_id: &str,
-) -> Result<Option<Vec<u8>>, String> {
-    fn find<'a>(part: &'a MimePart, path: &str, id: &str) -> Option<&'a MimePart> {
-        let part_id = part
-            .body
-            .attachment_id
-            .clone()
-            .unwrap_or_else(|| format!("part:{path}"));
-        if (!part.filename.is_empty() || header(part, "Content-ID").is_some()) && part_id == id {
-            return Some(part);
-        }
-        part.parts
-            .iter()
-            .enumerate()
-            .find_map(|(index, child)| find(child, &format!("{path}.{index}"), id))
-    }
-
-    let Some(part) = find(&message.payload, "0", attachment_id) else {
-        return Err("Attachment not found".into());
-    };
-    part.body
-        .data
-        .as_deref()
-        .map(decode_attachment_data)
-        .transpose()
+/// The stable local reference for the attachment at MIME `path`.
+///
+/// Gmail mints a new `attachmentId` every time a message is fetched, and sync
+/// refetches a whole thread on any label change (including marking it read),
+/// so a provider ID shown to the reader can be gone from the cache by the time
+/// they click it. The part path is fixed for the life of the message.
+fn part_reference(path: &str) -> String {
+    format!("part:{path}")
 }
 
-/// Resolves either a Gmail attachment ID or the synthetic MIME-part reference
-/// used by older cached messages to the current provider attachment ID.
-pub fn provider_attachment_id_from_payload(
-    message: &RawMessage,
-    attachment_reference: &str,
-) -> Result<Option<String>, String> {
-    fn find(part: &MimePart, path: &str, reference: &str) -> Option<Option<String>> {
+/// Finds the attachment part named by `reference`: its stable part reference,
+/// or a Gmail attachment ID handed out by builds that exposed provider IDs.
+fn find_attachment_part<'a>(
+    message: &'a RawMessage,
+    reference: &str,
+) -> Result<(String, &'a MimePart), String> {
+    fn find<'a>(part: &'a MimePart, path: &str, reference: &str) -> Option<(String, &'a MimePart)> {
         if (!part.filename.is_empty() || header(part, "Content-ID").is_some())
             && (part.body.attachment_id.as_deref() == Some(reference)
-                || format!("part:{path}") == reference)
+                || part_reference(path) == reference)
         {
-            return Some(part.body.attachment_id.clone());
+            return Some((part_reference(path), part));
         }
         part.parts
             .iter()
@@ -436,8 +413,35 @@ pub fn provider_attachment_id_from_payload(
             .find_map(|(index, child)| find(child, &format!("{path}.{index}"), reference))
     }
 
-    find(&message.payload, "0", attachment_reference)
-        .ok_or_else(|| "Attachment not found".to_string())
+    find(&message.payload, "0", reference).ok_or_else(|| "Attachment not found".to_string())
+}
+
+/// Resolves any accepted attachment reference to its stable part reference,
+/// the ID `normalize` reports for it.
+pub fn attachment_part_reference(message: &RawMessage, reference: &str) -> Result<String, String> {
+    find_attachment_part(message, reference).map(|(reference, _)| reference)
+}
+
+pub fn attachment_bytes_from_payload(
+    message: &RawMessage,
+    attachment_reference: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let (_, part) = find_attachment_part(message, attachment_reference)?;
+    part.body
+        .data
+        .as_deref()
+        .map(decode_attachment_data)
+        .transpose()
+}
+
+/// Resolves an attachment reference to the provider attachment ID in this
+/// copy of the message, or `None` when the payload carries no provider ID.
+pub fn provider_attachment_id_from_payload(
+    message: &RawMessage,
+    attachment_reference: &str,
+) -> Result<Option<String>, String> {
+    find_attachment_part(message, attachment_reference)
+        .map(|(_, part)| part.body.attachment_id.clone())
 }
 
 fn select_bodies(
@@ -803,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_gmail_attachment_ids_and_resolves_legacy_part_references() {
+    fn exposes_stable_part_references_and_resolves_gmail_attachment_ids() {
         let message: RawMessage = serde_json::from_value(serde_json::json!({
             "id": "m",
             "threadId": "t",
@@ -822,11 +826,58 @@ mod tests {
         .unwrap();
 
         let normalized = normalize(&message).unwrap();
-        assert_eq!(normalized.attachments[0].id, "gmail-token");
+        assert_eq!(normalized.attachments[0].id, "part:0.0");
         assert_eq!(
             provider_attachment_id_from_payload(&message, "part:0.0").unwrap(),
             Some("gmail-token".into())
         );
+        // A Gmail ID handed out by earlier builds still names the same part.
+        assert_eq!(
+            attachment_part_reference(&message, "gmail-token").unwrap(),
+            "part:0.0"
+        );
+        assert_eq!(
+            attachment_part_reference(&message, "unknown").unwrap_err(),
+            "Attachment not found"
+        );
+    }
+
+    #[test]
+    fn attachment_references_survive_a_refetch_that_rotates_gmail_ids() {
+        // Gmail mints new attachment IDs on every fetch. A reference the
+        // reader saw before sync refetched the thread must still resolve,
+        // to the provider ID in the refreshed copy.
+        let fetch = |token: &str| -> RawMessage {
+            serde_json::from_value(serde_json::json!({
+                "id": "m",
+                "threadId": "t",
+                "payload": {
+                    "mimeType": "multipart/mixed",
+                    "parts": [{
+                        "mimeType": "multipart/alternative",
+                        "parts": [
+                            { "mimeType": "text/plain", "body": { "data": URL_SAFE_NO_PAD.encode("Memo attached") } },
+                            { "mimeType": "text/html", "body": { "data": URL_SAFE_NO_PAD.encode("<p>Memo attached</p>") } }
+                        ]
+                    }, {
+                        "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "filename": "Memo Oct 6.docx",
+                        "body": { "attachmentId": token, "size": 23397 }
+                    }]
+                }
+            }))
+            .unwrap()
+        };
+        let first = fetch("gmail-token-first");
+        let refreshed = fetch("gmail-token-second");
+
+        let shown = normalize(&first).unwrap().attachments[0].id.clone();
+        assert_eq!(normalize(&refreshed).unwrap().attachments[0].id, shown);
+        assert_eq!(
+            provider_attachment_id_from_payload(&refreshed, &shown).unwrap(),
+            Some("gmail-token-second".into())
+        );
+        assert_eq!(attachment_bytes_from_payload(&refreshed, &shown).unwrap(), None);
     }
 
     #[test]
@@ -895,7 +946,7 @@ mod tests {
         let normalized = normalize(&message).unwrap();
         assert_eq!(normalized.attachments.len(), 1);
         assert!(normalized.attachments[0].inline);
-        assert_eq!(normalized.attachments[0].id, "inline-chart");
+        assert_eq!(normalized.attachments[0].id, "part:0.1");
         assert_eq!(
             normalized.body_html,
             "<p>See chart</p><img src=\"cid:chart.one\" alt=\"chart.png\">"

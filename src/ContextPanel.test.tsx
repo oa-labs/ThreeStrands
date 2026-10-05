@@ -21,7 +21,7 @@ async function personLoaded(contactId:string){
 }
 
 function renderPanel(overrides:Partial<Parameters<typeof ContextPanel>[0]>={}){
-  return render(<ContextPanel detail={detail} accounts={[account]} onOpenThread={vi.fn()} onOpenContact={vi.fn()} {...overrides}/>);
+  return render(<ContextPanel detail={detail} accounts={[account]} onOpenThread={vi.fn()} {...overrides}/>);
 }
 
 describe("ContextPanel",()=>{
@@ -46,12 +46,12 @@ describe("ContextPanel",()=>{
     expect(screen.queryByRole("group",{name:"Conversation participants"})).not.toBeInTheDocument();
     expect(screen.queryByRole("heading",{name:"Participants"})).not.toBeInTheDocument();
 
-    rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="Jane@Example.com" onOpenThread={vi.fn()} onOpenContact={vi.fn()}/>);
+    rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="Jane@Example.com" onOpenThread={vi.fn()}/>);
     await personLoaded(jane.id);
     expect(mailClient.resolveContactIds).toHaveBeenCalledWith(["jane@example.com"]);
 
     // Someone who is not on this conversation falls back to the latest sender.
-    rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="stranger@example.com" onOpenThread={vi.fn()} onOpenContact={vi.fn()}/>);
+    rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="stranger@example.com" onOpenThread={vi.fn()}/>);
     await personLoaded(bob.id);
   });
 
@@ -197,7 +197,7 @@ describe("ContextPanel",()=>{
       ]),
     ));
 
-    rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="jane@example.com" related={related} onOpenThread={vi.fn()} onOpenContact={vi.fn()}/>);
+    rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="jane@example.com" related={related} onOpenThread={vi.fn()}/>);
     await waitFor(()=>expect(related).toHaveBeenLastCalledWith(
       {contactId:"derived:jane@example.com",email:"jane@example.com",addresses:["jane@example.com"]},
       expect.arrayContaining([

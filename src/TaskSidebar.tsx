@@ -3,7 +3,10 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import type { Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
 import { GoalDialog } from "./GoalDialog";
-import { goalWithSupporters, GoalsPane, type GoalFilter, type GoalsPaneHandle } from "./GoalsPane";
+import { GoalLinkPicker } from "./GoalLinkPicker";
+import { GoalReviewDialog } from "./GoalReviewDialog";
+import { goalWithSupporters } from "./goals";
+import { GoalsPane, type GoalFilter, type GoalsPaneHandle } from "./GoalsPane";
 import { PanelResizeHandle, useGoalsPaneWidth } from "./PanelResizeHandle";
 import { TaskDetailDialog } from "./TaskDetailDialog";
 import { errorMessage } from "./errors";
@@ -77,6 +80,8 @@ export type TaskWorkspaceHandle = {
   toggleLayout(): void;
   cycleView(direction: -1 | 1): void;
   focusGoals(): void;
+  /** Opens the goal picker for the selected task. */
+  linkSelectedToGoal(): void;
 };
 
 /** The Tasks workspace: a list or board of tasks beside the account's goals; each task opens in a detail dialog. */
@@ -105,6 +110,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [goalFilter, setGoalFilter] = useState<GoalFilter>(null);
   const [goalDialog, setGoalDialog] = useState<null | { goalId: string | null }>(null);
+  const [reviewingGoals, setReviewingGoals] = useState(false);
+  const [goalLinkTaskId, setGoalLinkTaskId] = useState<string | null>(null);
   const goalsPane = useRef<GoalsPaneHandle>(null);
   const goalsPaneSize = useGoalsPaneWidth();
   const [now, setNow] = useState(() => new Date());
@@ -374,6 +381,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     },
     toggleLayout: () => changeLayout(layout === "board" ? "list" : "board"),
     focusGoals: () => goalsPane.current?.focus(),
+    linkSelectedToGoal: () => { if (selectedTask) setGoalLinkTaskId(selectedTask.id); },
     cycleView: (direction) => {
       const views: readonly TaskView[] = board ? BOARD_TASK_VIEWS : TASK_VIEWS;
       setView((current) => views[(Math.max(0, views.indexOf(current)) + direction + views.length) % views.length]);
@@ -459,6 +467,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   };
 
   const detailTask = detailTaskId ? tasks.find((task) => task.id === detailTaskId) ?? null : null;
+  const goalLinkTask = goalLinkTaskId ? tasks.find((task) => task.id === goalLinkTaskId) ?? null : null;
   // A reload that drops the open task (another account, a sync delete) closes its dialog.
   if (detailTaskId && !loading && !detailTask) setDetailTaskId(null);
   const detailColumn = board ? boardColumns.find((column) => column.tasks.some((task) => task.id === detailTaskId))?.tasks : orderedTasks;
@@ -557,9 +566,27 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           onFilterChange={setGoalFilter}
           onAddGoal={() => setGoalDialog({ goalId: null })}
           onEditGoal={(goal) => setGoalDialog({ goalId: goal.id })}
+          onReview={() => setReviewingGoals(true)}
           onLeave={() => (selectedTaskId ? taskCards.current.get(selectedTaskId)?.querySelector<HTMLElement>(".task-card-main") : null)?.focus()}
         />
       </div>
+      {reviewingGoals ? <GoalReviewDialog
+        goals={goals}
+        tasks={tasks}
+        onUpdate={updateGoal}
+        onClose={() => setReviewingGoals(false)}
+      /> : null}
+      {goalLinkTask ? <GoalLinkPicker
+        task={goalLinkTask}
+        goals={goals}
+        onLink={(goalId) => updateTask(goalLinkTask.id, { goalId })}
+        onCreateAndLink={async (title, period) => {
+          const created = await mailClient.createGoal({ accountId: goalLinkTask.accountId, title, horizon: "quarter", period });
+          setGoals((current) => [...current, created]);
+          await updateTask(goalLinkTask.id, { goalId: created.id });
+        }}
+        onClose={() => setGoalLinkTaskId(null)}
+      /> : null}
       {goalDialog ? <GoalDialog
         goal={goalDialog.goalId ? goalsById.get(goalDialog.goalId) ?? null : null}
         goals={goals}

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { mailClient } from "./data/client";
 import type { Goal, ThreadTask } from "./domain";
-import { formatPeriod, periodFor } from "./goals";
+import { formatPeriod, periodFor, shiftPeriod } from "./goals";
 
 function workspaceTask(id: string, overrides: Partial<ThreadTask> = {}): ThreadTask {
   return {
@@ -1169,5 +1169,97 @@ describe("TaskSidebar goals", () => {
 
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(container.querySelector("#task-first .task-card-main")).toHaveFocus();
+  });
+  it("flags a current goal stale after three weeks without task activity", async () => {
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    setup([workspaceTask("quiet", { goalId: "quiet-goal", updatedAt: old })], [
+      workspaceGoal("quiet-goal", { title: "Quiet", createdAt: old }),
+      workspaceGoal("fresh", { title: "Fresh" , createdAt: new Date().toISOString() }),
+    ]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const quiet = await screen.findByRole("button", { name: /^Quiet/ });
+    expect(within(quiet).getByText("Stale")).toHaveAttribute("title", "No task activity in 21 days");
+    expect(within(screen.getByRole("button", { name: /^Fresh/ })).queryByText("Stale")).not.toBeInTheDocument();
+  });
+
+  it("prompts to review ended goals and settles each as achieved, dropped, or carried forward", async () => {
+    const lastQuarter = shiftPeriod("quarter", quarter, -1);
+    const { updateGoal } = setup([workspaceTask("linked", { goalId: "carry" })], [
+      workspaceGoal("win", { title: "Win", period: lastQuarter }),
+      workspaceGoal("drop", { title: "Drop", period: lastQuarter }),
+      workspaceGoal("carry", { title: "Carry", period: lastQuarter }),
+      workspaceGoal("current", { title: "Current" }),
+    ]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const prompt = await screen.findByText("3 goals from a past period need review.");
+    fireEvent.click(within(prompt.closest(".goal-review-prompt") as HTMLElement).getByRole("button", { name: "Review" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Review goals" }));
+    expect(dialog.getAllByRole("listitem").map((item) => item.getAttribute("aria-label"))).toEqual(["Carry", "Drop", "Win"]);
+
+    fireEvent.click(within(dialog.getByRole("listitem", { name: "Win" })).getByRole("button", { name: "Achieved" }));
+    await waitFor(() => expect(updateGoal).toHaveBeenCalledWith({ id: "win", status: "achieved" }));
+    fireEvent.click(within(await dialog.findByRole("listitem", { name: "Drop" })).getByRole("button", { name: "Dropped" }));
+    await waitFor(() => expect(updateGoal).toHaveBeenCalledWith({ id: "drop", status: "dropped" }));
+    fireEvent.click(within(await dialog.findByRole("listitem", { name: "Carry" })).getByRole("button", { name: `Carry to ${formatPeriod(quarter)}` }));
+    await waitFor(() => expect(updateGoal).toHaveBeenCalledWith({ id: "carry", period: quarter }));
+
+    expect(await dialog.findByText(/All caught up/)).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("button", { name: "Done" }));
+    expect(screen.queryByText(/need review/)).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Quarter goals" })).getByRole("button", { name: /^Carry/ })).toHaveTextContent("1 open");
+  });
+
+  it("shows a failed settle on its row and defers the prompt for the quarter with Later", async () => {
+    const lastQuarter = shiftPeriod("quarter", quarter, -1);
+    const { updateGoal } = setup([], [workspaceGoal("stuck", { title: "Stuck", period: lastQuarter })]);
+    updateGoal.mockRejectedValueOnce(new Error("Some goals that support this one fall outside its new period. Unlink them first."));
+    const view = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    const row = within(screen.getByRole("dialog", { name: "Review goals" }).querySelector("li")!);
+    fireEvent.click(row.getByRole("button", { name: `Carry to ${formatPeriod(quarter)}` }));
+    expect(await row.findByRole("alert")).toHaveTextContent("Unlink them first");
+    fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    expect(screen.queryByText(/needs review/)).not.toBeInTheDocument();
+    expect(localStorage.getItem("threestrands.goals.reviewDeferredUntil")).toBe(quarter);
+    view.unmount();
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    await screen.findByRole("button", { name: /^Stuck/ });
+    expect(screen.queryByText(/needs review/)).not.toBeInTheDocument();
+  });
+
+  it("links the selected task to a goal from the picker, creates a quarter goal from a new name, and unlinks", async () => {
+    const { updateTask, createGoal } = setup([workspaceTask("plan", { title: "Plan launch" })], [
+      workspaceGoal("ship", { title: "Ship IMAP" }),
+      workspaceGoal("closed", { title: "Closed goal", status: "achieved" }),
+    ]);
+    const ref = createRef<TaskWorkspaceHandle>();
+    render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
+    await screen.findByRole("button", { name: /^Ship IMAP/ });
+    await waitFor(() => expect(screen.getByText("Plan launch", { selector: "strong" }).closest("article")).toHaveAttribute("aria-current", "true"));
+
+    act(() => ref.current!.linkSelectedToGoal());
+    let picker = within(screen.getByRole("dialog", { name: "Link “Plan launch” to a goal" }));
+    expect(picker.getAllByRole("option").map((option) => option.getAttribute("aria-label"))).toEqual(["No goal, current", "Ship IMAP"]);
+    fireEvent.change(picker.getByRole("combobox", { name: "Find or create a goal" }), { target: { value: "ship" } });
+    fireEvent.keyDown(picker.getByRole("combobox", { name: "Find or create a goal" }), { key: "Enter" });
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", goalId: "ship" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    act(() => ref.current!.linkSelectedToGoal());
+    picker = within(screen.getByRole("dialog", { name: "Link “Plan launch” to a goal" }));
+    fireEvent.change(picker.getByRole("combobox", { name: "Find or create a goal" }), { target: { value: "Hire a designer" } });
+    fireEvent.click(picker.getByText(`Create ${formatPeriod(quarter)} goal “Hire a designer”`));
+    await waitFor(() => expect(createGoal).toHaveBeenCalledWith({ accountId: "you@example.com", title: "Hire a designer", horizon: "quarter", period: quarter }));
+    await waitFor(() => expect(updateTask).toHaveBeenLastCalledWith({ id: "plan", goalId: "created-goal" }));
+
+    act(() => ref.current!.linkSelectedToGoal());
+    picker = within(screen.getByRole("dialog", { name: "Link “Plan launch” to a goal" }));
+    fireEvent.click(picker.getByRole("option", { name: "No goal" }));
+    await waitFor(() => expect(updateTask).toHaveBeenLastCalledWith({ id: "plan", goalId: null }));
   });
 });

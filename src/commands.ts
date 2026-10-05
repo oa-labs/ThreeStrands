@@ -52,6 +52,7 @@ export type CommandContext = {
   toggleTaskLayout(): void;
   cycleTaskView(direction: -1 | 1): void;
   focusGoals(): void;
+  linkTaskToGoal(): void;
   taskBoardActive: boolean;
   /** The full-width calendar week view owns Tab for week navigation. */
   calendarWeekActive: boolean;
@@ -281,6 +282,14 @@ export const commands: Command[] = [
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
     run: (context) => complete(context.focusGoals),
+  },
+  {
+    id: "tasks.linkGoal",
+    title: "Link Task to a Goal",
+    keys: ["Shift+g"],
+    group: "Triage",
+    enabled: (context) => context.focusedPane === "tasks" && context.selectedTaskStatus !== null && !context.composerActive,
+    run: (context) => complete(context.linkTaskToGoal),
   },
   {
     id: "tasks.previousView",

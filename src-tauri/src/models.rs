@@ -146,6 +146,9 @@ pub struct TaskProposal {
     pub time_zone: Option<String>,
     #[serde(default)]
     pub repeat_interval_days: Option<u32>,
+    /// A goal the task would support; absent from suggestions saved before goals.
+    #[serde(default)]
+    pub goal_id: Option<String>,
     pub confidence: f32,
     pub evidence: ProposalEvidence,
 }

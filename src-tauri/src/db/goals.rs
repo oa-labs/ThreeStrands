@@ -168,7 +168,8 @@ impl Database {
                     .prepare(&format!("{SELECT_GOALS} WHERE parent_goal_id = ?1"))?
                     .query_map([&current.id], goal_from_row)?
                     .collect::<Result<_, _>>()?;
-                if children.iter().any(|child| horizon_rank(horizon) >= horizon_rank(&child.horizon) || !period_encloses(period, &child.period)) {
+                // Closed supporting goals keep their link as history; only active ones must still fit.
+                if children.iter().any(|child| child.status == "active" && (horizon_rank(horizon) >= horizon_rank(&child.horizon) || !period_encloses(period, &child.period))) {
                     return Err("Some goals that support this one fall outside its new period. Unlink them first.".into());
                 }
             }
@@ -326,6 +327,22 @@ mod tests {
         let error = database.update_goal(&update(&year.id, serde_json::json!({ "period": "2027" }))).unwrap_err();
         assert!(error.to_string().contains("Unlink them first"));
         assert!(database.update_goal(&update(&year.id, serde_json::json!({ "title": "Renamed year" }))).is_ok());
+    }
+
+    #[test]
+    fn carrying_a_goal_forward_keeps_closed_supporting_goals_linked_as_history() {
+        let database = Database::open_memory();
+        let half = create(&database, "H1", "half", "2026-H1", None).unwrap();
+        let done = create(&database, "Q1", "quarter", "2026-Q1", Some(&half.id)).unwrap();
+        let active = create(&database, "Q2", "quarter", "2026-Q2", Some(&half.id)).unwrap();
+        database.update_goal(&update(&done.id, serde_json::json!({ "status": "achieved" }))).unwrap();
+
+        assert!(database.update_goal(&update(&half.id, serde_json::json!({ "period": "2026-H2" }))).is_err());
+        database.update_goal(&update(&active.id, serde_json::json!({ "status": "dropped" }))).unwrap();
+        let carried = database.update_goal(&update(&half.id, serde_json::json!({ "period": "2026-H2" }))).unwrap();
+        assert_eq!(carried.period, "2026-H2");
+        let goals = database.list_goals(None).unwrap();
+        assert!(goals.iter().filter(|goal| goal.horizon == "quarter").all(|goal| goal.parent_goal_id.as_deref() == Some(half.id.as_str())));
     }
 
     #[test]

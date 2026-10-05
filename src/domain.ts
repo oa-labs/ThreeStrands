@@ -453,6 +453,8 @@ export type TaskProposal = {
   dueValue: string | null;
   timeZone: string | null;
   repeatIntervalDays: number | null;
+  /** A goal the suggested task would support; only a goal of the thread's account that the app listed. */
+  goalId?: string | null;
   confidence: number;
   evidence: ProposalEvidence;
 };

@@ -802,33 +802,37 @@ async fn load_attachment(
     let database = state.database.clone();
     let stored_message_id = message_id.to_string();
     let stored_attachment_id = attachment_id.to_string();
-    let (account_id, attachment, payload_bytes) = run_database_task(move || {
+    let (account_id, attachment, payload_bytes, cached_provider_id) = run_database_task(move || {
         let (account_id, message) = database.attachment_message(&stored_message_id)?;
+        let reference = mime::attachment_part_reference(&message, &stored_attachment_id)?;
         let attachment = mime::normalize(&message)?
             .attachments
             .into_iter()
-            .find(|attachment| attachment.id == stored_attachment_id)
+            .find(|attachment| attachment.id == reference)
             .ok_or("Attachment not found")?;
-        let bytes = mime::attachment_bytes_from_payload(&message, &stored_attachment_id)?;
-        Ok::<_, String>((account_id, attachment, bytes))
+        let bytes = mime::attachment_bytes_from_payload(&message, &reference)?;
+        let provider_id = mime::provider_attachment_id_from_payload(&message, &reference)?;
+        Ok::<_, String>((account_id, attachment, bytes, provider_id))
     })
     .await?;
     let bytes = match payload_bytes {
         Some(bytes) => bytes,
         None => {
             let provider = state.correspondence.provider_for(&account_id).await?;
-            // Builds before MimeBody's Gmail camelCase mapping was fixed cached
-            // remote attachments as `part:<mime path>`. Refresh that message on
-            // demand so those existing rows keep working after an upgrade.
-            let provider_id = if attachment_id.starts_with("part:") {
-                let fresh = provider
-                    .fetch_message(message_id)
-                    .await
-                    .map_err(|error| error.to_string())?;
-                mime::provider_attachment_id_from_payload(&fresh, attachment_id)?
-                    .ok_or("Attachment data is unavailable")?
-            } else {
-                attachment_id.to_string()
+            // The attachment ID is the stable part reference; the provider ID
+            // comes from the cached payload. Builds before MimeBody's Gmail
+            // camelCase mapping was fixed cached payloads without one, so
+            // refresh such a message on demand.
+            let provider_id = match cached_provider_id {
+                Some(provider_id) => provider_id,
+                None => {
+                    let fresh = provider
+                        .fetch_message(message_id)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    mime::provider_attachment_id_from_payload(&fresh, &attachment.id)?
+                        .ok_or("Attachment data is unavailable")?
+                }
             };
             provider
                 .attachment_bytes(message_id, &provider_id)
@@ -2657,6 +2661,14 @@ async fn thread_analysis_request(
     let database_thread_id = thread_id.to_string();
     let detail = run_database_task(move || database.get_thread(&database_thread_id)).await?;
     let revision = detail.thread.last_message_at.clone();
+    let goals = state
+        .database
+        .list_goals(Some(&detail.thread.account_id))?
+        .into_iter()
+        .filter(|goal| goal.status == "active")
+        .take(ai::MAX_PROMPT_GOALS)
+        .map(|goal| ai::GoalPromptInput { id: goal.id, title: goal.title, horizon: goal.horizon, period: goal.period })
+        .collect();
     let request = ai::AnalyzeRequest {
         provider,
         model,
@@ -2674,6 +2686,7 @@ async fn thread_analysis_request(
             .collect(),
         current_time: Utc::now().to_rfc3339(),
         user_time_zone,
+        goals,
     };
     Ok((revision, request))
 }

@@ -48,6 +48,7 @@ function noopContext(): CommandContext {
     openSelectedTask: () => {},
     openTaskDetails: () => {},
     focusGoals: () => {},
+    linkTaskToGoal: () => {},
     completeSelectedTask: () => {},
     reopenSelectedTask: () => {},
     selectedTaskStatus: null,
@@ -157,6 +158,11 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "tasks.focusGoals")?.keys).toEqual(["g then g"]);
     expect(commands.find((command) => command.id === "tasks.focusGoals")?.enabled(taskContext)).toBe(true);
     expect(commands.find((command) => command.id === "tasks.focusGoals")?.enabled(noopContext())).toBe(false);
+    expect(commands.find((command) => command.id === "tasks.linkGoal")?.keys).toEqual(["Shift+g"]);
+    expect(commands.find((command) => command.id === "tasks.linkGoal")?.enabled({ ...taskContext, selectedTaskStatus: "open" })).toBe(true);
+    expect(commands.find((command) => command.id === "tasks.linkGoal")?.enabled(taskContext)).toBe(false);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "G", shiftKey: true }), "Shift+g")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "G", shiftKey: true }), "g")).toBe(false);
     expect(commands.find((command) => command.id === "tasks.completeSelected")?.keys).toEqual(["e"]);
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.keys).toEqual(["Shift+e"]);
     expect(commands.find((command) => command.id === "tasks.reopenSelected")?.enabled({ ...taskContext, selectedTaskStatus: "cancelled" })).toBe(true);

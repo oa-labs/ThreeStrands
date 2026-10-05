@@ -24,13 +24,12 @@ export type ContextPerson = {
  * The selected participant is the latest external sender unless the reader
  * picked someone else by clicking their name in a message header.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, onOpenThread, onOpenContact, onShowMessage, assist, related, chat }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, onOpenThread, onShowMessage, assist, related, chat }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
   selectedEmail?: string | null;
   onOpenThread(id: string): void;
-  onOpenContact(id: string): void;
   /** Reveals a message: in the reader when it belongs to the open conversation, otherwise by opening its conversation. */
   onShowMessage?(threadId: string, messageId: string): void;
   assist?: ReactNode;
