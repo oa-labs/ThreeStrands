@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sanitizeMessageHtml } from "./SafeMessage";
+import { collapseQuotedHistoryHtml } from "./quotedHistory";
 import {
   applyAsteriskListShortcut,
+  composeHtmlToText,
+  draftTextToComposeHtml,
   applyFormattingShortcut,
   formattingShortcutFor,
   formattingShortcuts,
@@ -231,8 +235,68 @@ it("derives the draft's HTML and plain text from a single clone without image co
 
   expect(cloneNode).toHaveBeenCalledTimes(1);
   expect(html).toBe('Before <img src="cid:image-1@threestrands.local" alt="Screenshot"> after<br>&gt; quoted');
-  expect(text).toBe("Before  after> quoted");
+  expect(text).toBe("Before  after\n> quoted");
   expect(text).not.toContain("×");
+});
+
+describe("reply citations", () => {
+  const reply = "\n\nOn Mon, Oct 5, 2026 at 10:32 AM, A. Sender <sender@example.com> wrote:\n> Is this still happening?\n> > Earlier thread line";
+  const editorFor = (html: string) => {
+    const editor = document.createElement("div");
+    editor.innerHTML = sanitizeComposeHtml(html);
+    return editor;
+  };
+
+  it("turns a native reply body into a nested citation under its attribution", () => {
+    const editor = editorFor(draftTextToComposeHtml(reply));
+    const citation = editor.querySelector(':scope > blockquote[type="cite"]');
+    expect(editor.innerHTML.startsWith("<br><br>On Mon, Oct 5, 2026 at 10:32 AM, A. Sender &lt;sender@example.com&gt; wrote:")).toBe(true);
+    expect(citation?.firstChild?.textContent).toBe("Is this still happening?");
+    expect(citation?.querySelector('blockquote[type="cite"]')).toHaveTextContent("Earlier thread line");
+    expect(citation?.getAttribute("style")).toContain("border-left");
+  });
+
+  it("round-trips a reply body through the editor to the same quoted text", () => {
+    expect(composeHtmlToText(editorFor(draftTextToComposeHtml(reply)))).toBe(reply);
+    expect(composeHtmlToText(editorFor(draftTextToComposeHtml("\n\nOn Mon, A wrote:\n> one\n> \n> two"))))
+      .toBe("\n\nOn Mon, A wrote:\n> one\n>\n> two");
+  });
+
+  it("keeps quoted markup as text rather than HTML", () => {
+    const editor = editorFor(draftTextToComposeHtml('\n\nOn Mon, A wrote:\n> <img src=x onerror="alert(1)"><script>alert(2)</script>'));
+    expect(editor.querySelector("img, script")).toBeNull();
+    expect(editor.querySelector("blockquote")).toHaveTextContent('<img src=x onerror="alert(1)"><script>alert(2)</script>');
+  });
+
+  it("leaves non-reply text and replies followed by unquoted text as plain lines", () => {
+    expect(draftTextToComposeHtml("Hello\n> not a reply")).toBe("Hello<br>&gt; not a reply");
+    expect(draftTextToComposeHtml("On Mon, A wrote:\n> quoted\nmy inline answer")).not.toContain("blockquote");
+    expect(draftTextToComposeHtml("\n\nOn Mon, A wrote:\n")).not.toContain("blockquote");
+  });
+
+  it("allows type only as a blockquote citation and replaces a citation's own style", () => {
+    const html = sanitizeComposeHtml('<div type="cite">a</div><blockquote type="text/javascript">b</blockquote><blockquote type="CITE" style="background-image:url(https://tracker.invalid);position:fixed">c</blockquote>');
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    expect(container.querySelector("div")?.hasAttribute("type")).toBe(false);
+    expect(container.querySelectorAll("blockquote")[0].hasAttribute("type")).toBe(false);
+    expect(container.querySelectorAll("blockquote")[1].getAttribute("type")).toBe("cite");
+    expect(html).not.toMatch(/url\(|position|tracker/);
+    expect(sanitizeComposeHtml(html)).toBe(html);
+  });
+
+  it("serializes editor blocks, line breaks and nested quotes as a plain-text alternative", () => {
+    const editor = document.createElement("div");
+    editor.innerHTML = "Hi<div>there</div><div><br></div><div>a&nbsp;b</div><blockquote>q1<br>q2<blockquote><div>deep</div></blockquote></blockquote><div>after</div>";
+    expect(composeHtmlToText(editor)).toBe("Hi\nthere\n\na b\n> q1\n> q2\n> > deep\nafter");
+  });
+
+  it("produces a reply the reader folds at its attribution", () => {
+    const editor = editorFor(`Friday works.${draftTextToComposeHtml(reply)}`);
+    const folded = collapseQuotedHistoryHtml(sanitizeMessageHtml(serializeComposeBody(editor).html));
+    expect(folded).toContain("Friday works.");
+    expect(folded).not.toMatch(/wrote:|Is this still happening/);
+  });
 });
 
 describe("insertHtmlAtRange", () => {

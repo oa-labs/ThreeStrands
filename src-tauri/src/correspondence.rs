@@ -230,6 +230,23 @@ fn reference_ids(value: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .collect()
 }
+/// Renders a source message's normalized RFC 3339 date the way a reader
+/// expects to see it in a reply attribution ("Mon, Oct 5, 2026 at 9:32 AM"),
+/// in the reader's time zone. An unparseable date is quoted as-is rather than
+/// dropped, so the attribution line keeps its shape.
+fn attribution_date<Tz: chrono::TimeZone>(rfc3339: &str, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    chrono::DateTime::parse_from_rfc3339(rfc3339)
+        .map(|date| {
+            date.with_timezone(zone)
+                .format("%a, %b %-d, %Y at %-I:%M %p")
+                .to_string()
+        })
+        .unwrap_or_else(|_| rfc3339.to_string())
+}
+
 fn forward_attachments(part: &MimePart, message_id: &str, result: &mut Vec<Attachment>) {
     if !part.filename.is_empty() {
         result.push(Attachment {
@@ -378,9 +395,10 @@ impl Database {
             } else {
                 normalized.body_text
             };
+            let date = attribution_date(&normalized.date, &chrono::Local);
             d.body = format!(
                 "\n\nOn {}, {} wrote:\n{}",
-                normalized.date,
+                date,
                 from,
                 quote
                     .lines()
@@ -390,7 +408,7 @@ impl Database {
             );
             if mode == "forward" {
                 d.subject = format!("Fwd: {}", d.subject);
-                d.body=format!("\n\n---------- Forwarded message ----------\nFrom: {from}\nDate: {}\nSubject: {}\nTo: {}\n\n{quote}",normalized.date,normalized.subject,header(part,"To"));
+                d.body=format!("\n\n---------- Forwarded message ----------\nFrom: {from}\nDate: {date}\nSubject: {}\nTo: {}\n\n{quote}",normalized.subject,header(part,"To"));
                 forward_attachments(part, &source.id, &mut d.attachments);
             } else {
                 let reply = header(part, "Reply-To");
@@ -1657,6 +1675,44 @@ mod tests {
         assert!(forward.reply_id.is_none());
         assert!(forward.thread_id.is_none());
         assert_eq!(forward.subject, "Fwd: Topic");
+    }
+    #[test]
+    fn reply_attribution_dates_are_readable_in_the_reader_time_zone() {
+        let eastern = chrono::FixedOffset::west_opt(4 * 3600).unwrap();
+        assert_eq!(
+            attribution_date("2026-10-05T14:32:48+00:00", &eastern),
+            "Mon, Oct 5, 2026 at 10:32 AM"
+        );
+        assert_eq!(
+            attribution_date("2026-10-05T00:05:00+00:00", &chrono::Utc),
+            "Mon, Oct 5, 2026 at 12:05 AM"
+        );
+        assert_eq!(attribution_date("not a date", &chrono::Utc), "not a date");
+    }
+    #[test]
+    fn reply_and_forward_bodies_quote_the_source_with_a_readable_date() {
+        let db = database();
+        let source = serde_json::json!({"id":"source-q","threadId":"thread-q","internalDate":"1791210768000","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<source-q@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello\n> earlier")}}});
+        db.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO message_metadata(id, payload) VALUES ('source-q',?1)",
+                [source.to_string()],
+            )
+            .unwrap();
+        let date = attribution_date("2026-10-05T14:32:48+00:00", &chrono::Local);
+        let reply = db
+            .create_draft("reply", Some("source-q".into()), "you@example.com")
+            .unwrap();
+        assert_eq!(
+            reply.body,
+            format!("\n\nOn {date}, Other <other@example.com> wrote:\n> Hello\n> > earlier")
+        );
+        assert!(!reply.body.contains("T14:32:48"));
+        let forward = db
+            .create_draft("forward", Some("source-q".into()), "you@example.com")
+            .unwrap();
+        assert!(forward.body.contains(&format!("\nDate: {date}\n")));
     }
     #[test]
     fn reply_drafts_are_stamped_with_the_passed_account_not_the_global_compose_identity() {

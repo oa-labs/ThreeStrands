@@ -86,7 +86,7 @@ for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"]] as const) {
     const reply = page.getByRole("dialog", { name: "Reply Message" });
     await expect(reply.getByRole("heading", { name: heading, exact: true })).toBeVisible();
     const editor = reply.getByRole("textbox", { name: "Message Body" });
-    await expect(editor).toContainText(`> ${selected}`);
+    await expect(editor.locator('blockquote[type="cite"]')).toContainText(selected);
     await expect(editor).not.toContainText("A keyboard-first inbox that keeps your mail on this device.");
   });
 }

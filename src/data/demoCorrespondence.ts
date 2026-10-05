@@ -8,6 +8,14 @@ function read(): Store {
   const saved = localStorage.getItem(key);
   return saved ? JSON.parse(saved) as Store : { drafts: [], outbox: [] };
 }
+/** Same readable shape the native draft builder writes ("Mon, Oct 5, 2026 at 9:32 AM"). */
+function attributionDate(sentAt: string): string {
+  const date = new Date(sentAt);
+  if (Number.isNaN(date.getTime())) return sentAt;
+  const day = date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return `${day} at ${time}`;
+}
 function write(store: Store) { localStorage.setItem(key, JSON.stringify(store)); }
 function draft(store: Store, id: string) {
   const result = store.drafts.find((d) => d.id === id);
@@ -42,7 +50,7 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
         if (mode !== "new") d.account = account ?? detail.thread.accountId;
         const message = detail.messages.find((m) => m.id === sourceId)!;
         d.subject = detail.thread.subject;
-        d.body = `\n\nOn ${message.sentAt}, ${message.sender} wrote:\n> ${message.bodyText}`;
+        d.body = `\n\nOn ${attributionDate(message.sentAt)}, ${message.sender} wrote:\n${message.bodyText.split("\n").map((line) => `> ${line}`).join("\n")}`;
         if (mode === "forward") {
           d.subject = `Fwd: ${d.subject}`;
           d.body = `\n\n---------- Forwarded message ----------\nFrom: ${message.sender}\nSubject: ${detail.thread.subject}\n\n${message.bodyText}`;

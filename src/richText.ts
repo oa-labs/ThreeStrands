@@ -176,6 +176,95 @@ export function plainTextToHtml(text: string): string {
   return container.innerHTML;
 }
 
+const replyAttributionLine = /^On .+ wrote:$/;
+
+/**
+ * Inline style ThreeStrands writes on a reply's citation so recipients that do
+ * not style `<blockquote type="cite">` themselves still show a quote bar. It is
+ * a fixed value set by the compose sanitizer, never copied from content.
+ */
+const CITATION_STYLE = "margin: 0px 0px 0px 0.8ex; border-left: 1px solid rgb(204, 204, 204); padding-left: 1ex;";
+
+function appendCitation(parent: Element, lines: string[]) {
+  const quote = document.createElement("blockquote");
+  quote.setAttribute("type", "cite");
+  let continuesLine = false;
+  for (let index = 0; index < lines.length;) {
+    if (lines[index].startsWith(">")) {
+      const nested: string[] = [];
+      while (index < lines.length && lines[index].startsWith(">")) nested.push(lines[index++].replace(/^> ?/, ""));
+      appendCitation(quote, nested);
+      continuesLine = false;
+      continue;
+    }
+    if (continuesLine) quote.append(document.createElement("br"));
+    quote.append(document.createTextNode(lines[index++]));
+    continuesLine = true;
+  }
+  parent.append(quote);
+}
+
+/**
+ * Converts a native draft's text body to compose HTML. A reply body — an
+ * "On … wrote:" attribution followed only by `>`-quoted lines — becomes a real
+ * `<blockquote type="cite">` (nested for deeper `>` levels) so recipients'
+ * mail clients, and ThreeStrands' own reader, recognize and fold the quoted
+ * history. Any other text converts line for line.
+ */
+export function draftTextToComposeHtml(text: string): string {
+  const lines = text.split("\n");
+  const attribution = lines.findIndex((line) => replyAttributionLine.test(line));
+  const quoted = attribution >= 0 ? lines.slice(attribution + 1) : [];
+  if (!quoted.length || !quoted.every((line) => line.startsWith(">"))) return plainTextToHtml(text);
+  const container = document.createElement("div");
+  container.innerHTML = plainTextToHtml(lines.slice(0, attribution + 1).join("\n"));
+  appendCitation(container, quoted.map((line) => line.replace(/^> ?/, "")));
+  return container.innerHTML;
+}
+
+const TEXT_BLOCK_ELEMENTS = new Set(["BLOCKQUOTE", "DIV", "LI", "OL", "P", "UL"]);
+
+/**
+ * Plain-text alternative for compose HTML. `innerText` cannot be used: the
+ * editor is serialized from a detached clone, where engines fall back to
+ * `textContent` and drop the line breaks that blocks and (in Chromium) `<br>`
+ * render. Blocks and `<br>` break lines the way the editor shows them, and
+ * each blockquote level prefixes its lines with "> ".
+ */
+export function composeHtmlToText(root: Node): string {
+  let text = "";
+  let pendingBreak = false;
+  const emit = (value: string) => {
+    if (pendingBreak && text && !text.endsWith("\n")) text += "\n";
+    pendingBreak = false;
+    text += value;
+  };
+  root.childNodes.forEach(function visit(node: Node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const data = (node as Text).data;
+      if (data) emit(data.replace(/ /g, " "));
+      return;
+    }
+    if (!(node instanceof Element)) return;
+    if (node.tagName === "BR") {
+      emit("\n");
+      return;
+    }
+    if (node.tagName === "BLOCKQUOTE") {
+      const inner = composeHtmlToText(node).replace(/\n+$/, "");
+      pendingBreak = true;
+      emit(inner.split("\n").map((line) => (line ? `> ${line}` : ">")).join("\n"));
+      pendingBreak = true;
+      return;
+    }
+    const block = TEXT_BLOCK_ELEMENTS.has(node.tagName);
+    if (block) pendingBreak = true;
+    node.childNodes.forEach(visit);
+    if (block) pendingBreak = true;
+  });
+  return text;
+}
+
 /** Turns bare URLs/emails pasted into the composer into real <a> tags. */
 export function linkifyPlainText(text: string): string {
   const container = document.createElement("div");
@@ -202,7 +291,7 @@ export function linkifyPlainText(text: string): string {
 export function sanitizeComposeHtml(html: string): string {
   const clean = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: ["a", "b", "blockquote", "br", "div", "em", "font", "i", "img", "li", "ol", "p", "span", "strike", "strong", "u", "ul"],
-    ALLOWED_ATTR: ["alt", "color", "face", "href", "src", "style", "width"],
+    ALLOWED_ATTR: ["alt", "color", "face", "href", "src", "style", "type", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
   });
@@ -234,6 +323,16 @@ export function sanitizeComposeHtml(html: string): string {
     // compose surface; the shared policy grammar bounds what counts as one.
     const safeFamily = sanitizeCssDeclaration("font-family", family);
     if (safeFamily) element.style.fontFamily = safeFamily;
+  });
+  // `type` exists only to mark a reply citation. A citation gets ThreeStrands'
+  // fixed quote-bar style in place of whatever style it carried.
+  container.querySelectorAll<HTMLElement>("[type]").forEach((element) => {
+    if (element.tagName !== "BLOCKQUOTE" || element.getAttribute("type")?.toLowerCase() !== "cite") {
+      element.removeAttribute("type");
+      return;
+    }
+    element.setAttribute("type", "cite");
+    element.setAttribute("style", CITATION_STYLE);
   });
   container.querySelectorAll<HTMLAnchorElement>("a").forEach((link) => {
     if (!/^(https?:\/\/|mailto:|tel:)/i.test(link.getAttribute("href") ?? "")) {
@@ -297,7 +396,7 @@ export function serializeComposeBody(editor: HTMLElement): { html: string; text:
   });
   return {
     html: sanitizeComposeHtml(clone.innerHTML),
-    text: clone.innerText ?? clone.textContent ?? "",
+    text: composeHtmlToText(clone),
   };
 }
 

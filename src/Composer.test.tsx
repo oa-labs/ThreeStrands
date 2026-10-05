@@ -416,6 +416,24 @@ describe("Composer Reply Assist", () => {
     expect(editor).toHaveTextContent("Can we meet Friday?");
   });
 
+  it("opens a reply with the quoted source as a citation and saves a quoted text alternative", async () => {
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    const citation = editor.querySelector('blockquote[type="cite"]');
+    expect(citation).toHaveTextContent("Can we meet Friday?");
+    expect(citation?.textContent).not.toContain(">");
+
+    editor.insertBefore(document.createTextNode("Friday works."), editor.firstChild);
+    fireEvent.input(editor);
+
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled());
+    const saved = saveDraft.mock.calls.at(-1)![0];
+    expect(saved.bodyHtml).toContain('<blockquote type="cite"');
+    expect(saved.body).toBe("Friday works.\n\nOn Sep 16, Sender wrote:\n> Can we meet Friday?");
+  });
+
   it("inserts selected availability text above the editable quoted reply", async () => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
     render(

@@ -17,6 +17,7 @@ import {
   formattingShortcutFor,
   insertHtmlAtRange,
   linkifyPlainText,
+  draftTextToComposeHtml,
   plainTextToHtml,
   sanitizeComposeHtml,
   serializeComposeBody,
@@ -69,7 +70,7 @@ export const Composer = forwardRef<ComposerHandle, {
   const pendingRecipientFocus = useRef<"cc" | "bcc" | null>(null);
   // Lazy initializer: `useRef(expr)` would evaluate `expr` on every render, so
   // each status change re-sanitized the whole quoted thread before the next paint.
-  const [initialBodyHtml] = useState(() => sanitizeComposeHtml(initial.bodyHtml || plainTextToHtml(initial.body)));
+  const [initialBodyHtml] = useState(() => sanitizeComposeHtml(initial.bodyHtml || draftTextToComposeHtml(initial.body)));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
 
