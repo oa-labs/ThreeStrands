@@ -10,7 +10,18 @@ All inline declarations, embedded stylesheet declarations, and HTML dimensions u
 
 The allowlisted CSS capability families are typography, box model, table layout, flex layout, flow, visibility, and cosmetic effects. They are admitted as complete safe families so a button or table does not become a partial layout. Embedded stylesheets are parsed with PostCSS and a selector parser. Retained selectors are scoped under `[data-email-root]`; `html`, `body`, and `:root` are rewritten to that root. Safe responsive media queries may use `screen`/`all`, bounded width features, orientation, and the reader-selected color scheme. Unsupported at-rules are removed.
 
-Quoted-history folding is independent of provider markup. It scores standalone reply separators or reply-introduction lines (3), trailing blockquotes/citations (2), compact header clusters with an address or timestamp (2), and non-empty current content (1). Folding requires at least four points; ambiguous content remains visible and can be expanded when folded. This is visual normalization, not a security decision: the security stages still sanitize and contain the complete message.
+Quoted-history folding is independent of provider markup and lives in `src/quotedHistory.ts`. It runs on the already sanitized (and linkified) HTML, which it first flattens into reader-visible lines: block elements and `<br>` start lines, inline elements such as links and bold labels do not, and source-formatting whitespace is ignored. Matching lines rather than individual text nodes is what lets an attribution like `On …, A. Sender <sender@example.com> wrote:` survive its address becoming a link.
+
+Evidence and weights:
+
+- A standalone reply separator or reply-introduction line (`Original message`, `Forwarded message`, `On … wrote:`, including one whose `wrote:` hard-wrapped onto a following line): 3.
+- A From/Sent/To/Subject header cluster — consecutive non-blank lines that include `From:`, at least three distinct fields, and an address or timestamp: 2, or 3 when it is complete (four or more fields including `Sent:` or `Date:`). A horizontal rule or separator line directly above the cluster adds 1, and the fold then starts at that rule.
+- A trailing blockquote or citation (nothing meaningful after it): 2.
+- A trailing run of `>`-prefixed lines (at least `minQuoteRunLines`, with only blank lines between them and the end): 3. Quoted lines followed by unquoted text are an inline reply and never count.
+- An attribution paired with a quoted region that follows it, or that opens it as the region's first line: +2 for each.
+- Non-empty current content before the boundary: 1.
+
+Folding requires `foldScoreThreshold` (four) points. When the boundary line begins one or more wrapper elements, the cut moves before the outermost wrapper so the visible copy does not end in an empty blockquote or rule. A lone trailing blockquote (3) and a mid-message header cluster without a rule or complete fields (3) stay visible. Ambiguous content remains visible and can be expanded when folded. All folding limits are in `EMAIL_QUOTE_FOLDING_LIMITS`. This is visual normalization, not a security decision: the security stages still sanitize and contain the complete message.
 
 When changing this policy, add structurally distinct fixtures, security-negative cases, numeric-boundary tests, and visual coverage at narrow/wide widths and light/dark themes. Do not encode a sender-specific workaround in production logic.
 

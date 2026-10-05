@@ -16,8 +16,11 @@ import {
 } from "./emailRenderingPolicy";
 import { createEmailFontSizeController } from "./emailMinimumFontSize";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
+import { collapseQuotedHistoryHtml, collapseQuotedHistoryText } from "./quotedHistory";
 import { LINKIFY_PATTERN, linkHrefFor, trimTrailingPunctuation } from "./linkify";
 import { fontFamilyStack, type FontFamily } from "./settings";
+
+export { collapseQuotedHistoryHtml, collapseQuotedHistoryText };
 
 type SafeMessageProps = {
   html: string;
@@ -50,10 +53,6 @@ type SafeMessageProps = {
    */
   onEnterKey?: () => void;
 };
-
-type QuotedHistoryBoundary =
-  | { node: Element; kind: "element" }
-  | { node: Text; kind: "text"; offset: number };
 
 async function defaultResolveImage(): Promise<string> {
   throw new Error("Image loading is not configured for this SafeMessage instance");
@@ -379,204 +378,6 @@ export function sanitizeMessageHtml(html: string): string {
   const container = document.createElement("div");
   container.append(fragment);
   return container.innerHTML;
-}
-
-const quotedHistoryMarker = /(?:^|\n)\s*(?:(?:[-—_]{2,})\s*)?(?:original message|forwarded message|begin forwarded message)(?:\s*(?:[-—_]{2,}))?\s*(?:\n|$)/i;
-const wroteMarker = /(?:^|\n)\s*On\s+[^\n]{1,500}\s+wrote:\s*(?:\n|$)/i;
-const headerField = /^(?:from|sent|date|to|cc|bcc|subject)\s*:/i;
-const emailOrTimestamp = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d{1,2}:\d{2}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b)/i;
-const quoteLine = /^\s*>/;
-const MIN_QUOTE_RUN = 5;
-
-/**
- * Mail clients sometimes hard-wrap the "On <date>, <name> <email> wrote:"
- * line — most often when a long display name or address pushes "wrote:"
- * past the wrap column — landing it on its own line or DOM text node,
- * separated from the opener by a real line break rather than the run of
- * whitespace `wroteMarker` expects. These two patterns recognize an opener
- * ending mid-phrase and a bare "wrote:" continuation so the pair can still
- * be treated as one boundary, regardless of which client produced the wrap.
- */
-const wroteOpenerLine = /(?:^|\n)\s*On\s+\S[^\n]{0,499}$/i;
-const wroteContinuationLine = /^\s*wrote:\s*$/i;
-const WRAPPED_WROTE_LOOKAHEAD = 3;
-const WRAPPED_WROTE_MAX_LENGTH = 500;
-
-/** Index of the first line starting a run of MIN_QUOTE_RUN+ consecutive `>`-quoted lines, or -1. */
-function findQuoteRunStart(lines: string[]): number {
-  let runStart = -1;
-  let runLength = 0;
-  for (let index = 0; index < lines.length; index++) {
-    if (quoteLine.test(lines[index])) {
-      if (runLength === 0) runStart = index;
-      runLength++;
-      if (runLength >= MIN_QUOTE_RUN) return runStart;
-    } else {
-      runLength = 0;
-      runStart = -1;
-    }
-  }
-  return -1;
-}
-
-/**
- * Index of a line opening "On ... wrote:" whose "wrote:" landed on its own
- * line after a hard wrap, or -1. A blank line ends the search for that
- * opener, so the lookahead never reaches across a paragraph break.
- */
-function findWrappedWroteMarkerLine(lines: string[]): number {
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
-    if (!wroteOpenerLine.test(line) || /wrote:/i.test(line)) continue;
-    let joinedLength = line.length;
-    for (let lookahead = 1; lookahead <= WRAPPED_WROTE_LOOKAHEAD && index + lookahead < lines.length; lookahead++) {
-      const nextLine = lines[index + lookahead];
-      if (!nextLine.trim()) break;
-      joinedLength += nextLine.length;
-      if (wroteContinuationLine.test(nextLine)) {
-        if (joinedLength <= WRAPPED_WROTE_MAX_LENGTH) return index;
-        break;
-      }
-    }
-  }
-  return -1;
-}
-
-function hasMeaningfulFollowingContent(element: Element, container: Element): boolean {
-  let current: Element = element;
-  while (current.parentElement && current.parentElement !== container) {
-    if (Array.from(current.parentElement.children).slice(Array.from(current.parentElement.children).indexOf(current) + 1)
-      .some((sibling) => Boolean(sibling.textContent?.trim()) || sibling.querySelector("img"))) return true;
-    current = current.parentElement;
-  }
-  if (current.parentElement === container) {
-    return Array.from(container.children).slice(Array.from(container.children).indexOf(current) + 1)
-      .some((sibling) => Boolean(sibling.textContent?.trim()) || sibling.querySelector("img"));
-  }
-  return false;
-}
-
-function isCompactHeaderBlock(element: Element): boolean {
-  const copy = element.cloneNode(true) as Element;
-  copy.querySelectorAll("br").forEach((br) => br.replaceWith("\n"));
-  const lines = (copy.textContent ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const fields = new Set(lines.filter((line) => headerField.test(line)).map((line) => line.match(headerField)?.[0].toLowerCase()));
-  return fields.size >= 3 && emailOrTimestamp.test(lines.join(" ")) && lines.length <= 12;
-}
-
-function nodeComesBefore(left: Node, right: Node): boolean {
-  return Boolean(left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING);
-}
-
-/**
- * Returns the message HTML before a mail client's quoted-reply section.
- * The full sanitized HTML remains available to reveal after the reader asks
- * for it; only this shorter copy is placed in the iframe initially.
- */
-export function collapseQuotedHistoryHtml(html: string): string | null {
-  const container = document.createElement("div");
-  container.innerHTML = html;
-  const candidates: Array<QuotedHistoryBoundary & { score: number }> = [];
-  const trailingQuotes = Array.from(container.querySelectorAll("blockquote, cite"))
-    .filter((node) => !hasMeaningfulFollowingContent(node, container));
-  const trailingHeaders = Array.from(container.querySelectorAll("*"))
-    .filter((node) => isCompactHeaderBlock(node) && !hasMeaningfulFollowingContent(node, container));
-
-  trailingQuotes.forEach((node) => {
-    const pairedHeader = trailingHeaders.some((header) => nodeComesBefore(node, header) || header.contains(node));
-    candidates.push({ node, kind: "element", score: 2 + (pairedHeader ? 2 : 0) });
-  });
-  trailingHeaders.forEach((node) => {
-    const pairedQuote = trailingQuotes.some((quote) => nodeComesBefore(node, quote) || node.contains(quote));
-    candidates.push({ node, kind: "element", score: 2 + (pairedQuote ? 2 : 0) });
-  });
-
-  const textNodes: Text[] = [];
-  {
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    let node = walker.nextNode();
-    while (node) {
-      textNodes.push(node as Text);
-      node = walker.nextNode();
-    }
-  }
-
-  textNodes.forEach((textNode, index) => {
-    const text = textNode.textContent ?? "";
-    const marker = quotedHistoryMarker.exec(text) ?? wroteMarker.exec(text);
-    const trailingEvidence = () => [...trailingQuotes, ...trailingHeaders]
-      .some((evidence) => nodeComesBefore(textNode, evidence));
-    if (marker?.index !== undefined) {
-      candidates.push({ node: textNode, kind: "text", offset: marker.index, score: 3 + (trailingEvidence() ? 2 : 0) });
-      return;
-    }
-    // A mail client can hard-wrap "On ... wrote:" so "wrote:" lands in a
-    // sibling text node — e.g. across a <br> or a paragraph boundary
-    // introduced by the sender's own markup. Recognize the split pair the
-    // same way the plain-text path does, regardless of which client wrapped it.
-    const opener = wroteOpenerLine.exec(text);
-    if (!opener || /wrote:/i.test(text)) return;
-    let joinedLength = text.length;
-    for (let lookahead = 1; lookahead <= WRAPPED_WROTE_LOOKAHEAD && index + lookahead < textNodes.length; lookahead++) {
-      const nextText = textNodes[index + lookahead].textContent ?? "";
-      if (!nextText.trim()) continue;
-      joinedLength += nextText.length;
-      if (wroteContinuationLine.test(nextText)) {
-        if (joinedLength <= WRAPPED_WROTE_MAX_LENGTH) {
-          candidates.push({ node: textNode, kind: "text", offset: opener.index, score: 3 + (trailingEvidence() ? 2 : 0) });
-        }
-        break;
-      }
-    }
-  });
-
-  if (candidates.length === 0) return null;
-  candidates.sort((left, right) => {
-    if (left.node === right.node) {
-      const leftOffset = left.kind === "text" ? left.offset : 0;
-      const rightOffset = right.kind === "text" ? right.offset : 0;
-      return leftOffset - rightOffset;
-    }
-    return nodeComesBefore(left.node, right.node) ? -1 : 1;
-  });
-
-  for (const boundary of candidates) {
-    const range = document.createRange();
-    range.setStart(container, 0);
-    if (boundary.kind === "text") range.setEnd(boundary.node, boundary.offset);
-    else range.setEndBefore(boundary.node);
-
-    const visibleContainer = document.createElement("div");
-    visibleContainer.append(range.cloneContents());
-    const hasVisibleContent = Boolean(visibleContainer.textContent?.trim())
-      || visibleContainer.querySelector("img") !== null;
-    if (hasVisibleContent && boundary.score + 1 >= 4) return visibleContainer.innerHTML;
-  }
-  return null;
-}
-
-/** Returns the part of a plain-text reply before its quoted history. */
-export function collapseQuotedHistoryText(text: string): string | null {
-  const lines = text.split(/\r?\n/);
-  const directMarkerIndex = lines.findIndex((line) => quotedHistoryMarker.test(`\n${line}\n`) || wroteMarker.test(`\n${line}\n`));
-  const markerIndex = directMarkerIndex >= 0 ? directMarkerIndex : findWrappedWroteMarkerLine(lines);
-  const quoteRunIndex = findQuoteRunStart(lines);
-  const cutCandidates = [markerIndex, quoteRunIndex].filter((index) => index >= 0);
-  if (cutCandidates.length > 0) {
-    const cutIndex = Math.min(...cutCandidates);
-    const visible = lines.slice(0, cutIndex).join("\n").trimEnd();
-    return visible.trim() ? visible : null;
-  }
-  const headerStart = lines.findIndex((_, index) => {
-    const block = lines.slice(index, index + 12).map((line) => line.trim()).filter(Boolean);
-    const fields = new Set(block.filter((line) => headerField.test(line)).map((line) => line.match(headerField)?.[0].toLowerCase()));
-    return fields.size >= 3 && emailOrTimestamp.test(block.join(" "));
-  });
-  if (headerStart > 0 && lines.slice(0, headerStart).some((line) => line.trim())) {
-    const separator = lines.slice(0, headerStart).some((line) => /^\s*[-—_]{2,}\s*$/.test(line));
-    if (separator) return lines.slice(0, headerStart).join("\n").trimEnd();
-  }
-  return null;
 }
 
 /** Every URL currently parked behind a blocked-src marker, deduplicated. */

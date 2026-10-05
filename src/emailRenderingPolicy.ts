@@ -51,7 +51,24 @@ export const EMAIL_IMAGE_LIMITS = {
   maxDataUriBytesPerMessage: 20 * 1024 * 1024,
 } as const;
 
-const colorValue = "(#[0-9a-f]{3,8}|rgba?\\([\\d.\\s,%]+\\)|hsla?\\([\\d.\\s,%]+\\)|transparent|currentcolor|[a-z]+)";
+/**
+ * Bounds for quoted-history folding. Folding is visual normalization only; it
+ * never changes what the security stages sanitize or contain.
+ */
+export const EMAIL_QUOTE_FOLDING_LIMITS = {
+  /** Consecutive `>`-prefixed lines needed before a run counts as quoted history. */
+  minQuoteRunLines: 5,
+  /** Non-blank lines searched for a "wrote:" that hard-wrapped off its opener. */
+  wrappedAttributionLookaheadLines: 3,
+  /** Longest "On … wrote:" attribution, in characters, including a wrapped one. */
+  maxAttributionLength: 500,
+  /** Longest From/Sent/To/Subject header cluster, in non-blank lines. */
+  maxHeaderClusterLines: 12,
+  /** Evidence points a boundary needs, including the point for current content. */
+  foldScoreThreshold: 4,
+} as const;
+
+const colorValue ="(#[0-9a-f]{3,8}|rgba?\\([\\d.\\s,%]+\\)|hsla?\\([\\d.\\s,%]+\\)|transparent|currentcolor|[a-z]+)";
 export const safeColor = new RegExp(`^${colorValue}$`, "i");
 
 const namedValue = (values: string[]) => new RegExp(`^(?:${values.join("|")})$`, "i");

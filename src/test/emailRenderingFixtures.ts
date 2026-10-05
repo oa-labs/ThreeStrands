@@ -68,6 +68,50 @@ export const emailRenderingFixtures = {
     <p>wrote:</p>
     <blockquote><p>Earlier message content.</p></blockquote>
   `,
+  // Quoted-history shapes. Each is structurally distinct; none relies on a
+  // provider's class names or IDs, and every one is folded after the real
+  // sanitize + linkify pass splits the attribution's address into a link.
+  replyAttributionWithLinkedAddress: `
+    <div dir="ltr">Thanks, that works.</div><br>
+    <div><div dir="ltr">On Mon, Oct 5, 2026 at 9:00 AM A. Sender &lt;<a href="mailto:sender@example.com">sender@example.com</a>&gt; wrote:<br></div>
+    <blockquote style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex"><div dir="ltr">Earlier message content.</div></blockquote></div>
+  `,
+  replyAttributionInsideCitation: `
+    <div>Sounds good.</div>
+    <div><br><blockquote type="cite"><div>On Oct 5, 2026, at 9:00 AM, A. Sender &lt;sender@example.com&gt; wrote:</div><br>
+    <div><div>Earlier message content.</div></div></blockquote></div>
+  `,
+  replyRuleThenHeaderBlock: `
+    <div><p>Thanks, will do.</p></div>
+    <div></div><hr style="display:inline-block;width:98%">
+    <div><font><b>From:</b> A. Sender &lt;sender@example.com&gt;<br><b>Sent:</b> Monday, October 5, 2026 9:00 AM<br><b>To:</b> Reader &lt;reader@example.com&gt;<br><b>Subject:</b> Re: Details</font><div>&nbsp;</div></div>
+    <div><p>Earlier message content.</p><p>Second earlier paragraph.</p></div>
+  `,
+  replyCompleteHeaderBlockWithoutQuote: `
+    <div><p>Thanks</p>
+    <div><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0in 0in 0in"><p><b>From:</b> A. Sender &lt;sender@example.com&gt;<br><b>Sent:</b> Monday, October 5, 2026 9:00 AM<br><b>To:</b> Reader<br><b>Subject:</b> Details</p></div></div>
+    <p>Earlier message content.</p><p>Second earlier paragraph.</p></div>
+  `,
+  replyAngleQuotedLines: [
+    "This is resolved now.<br><br>Reader<br><br>",
+    "On 2026-10-05T14:32:48+00:00, A. Sender &lt;sender@example.com&gt; wrote:<br>",
+    "&gt; Is this still happening?<br>&gt;<br>&gt; Earlier message content.<br>&gt;<br>&gt; Thanks",
+  ].join(""),
+  replyAngleQuotedLinesWithoutAttribution: [
+    "<div>This is resolved now.</div>",
+    "<div>&gt; Is this still happening?</div>",
+    "<div>&gt;</div>",
+    "<div>&gt; Earlier message content.</div>",
+    "<div>&gt;</div>",
+    "<div>&gt; Thanks</div>",
+  ].join("\n"),
+  inlineReplyBetweenQuotes: [
+    "<div>Answers inline.</div>",
+    "<div>&gt; First question?</div><div>&gt; More detail</div><div>&gt; More detail</div>",
+    "<div>&gt; More detail</div><div>&gt; More detail</div>",
+    "<div>My inline answer.</div>",
+    "<div>&gt; Second question?</div>",
+  ].join(""),
   malformed: `
     <div style="position:fixed;top:0;left:0;z-index:99;animation:spin 1s;cursor:pointer">No overlay</div>
     <img src="javascript:alert(1)"><form action="https://example.com"><input value="bad"></form>

@@ -70,4 +70,22 @@ test.describe("email rendering fixtures", () => {
       }
     }
   }
+
+  for (const { fixture, current } of [
+    { fixture: "replyAttributionWithLinkedAddress", current: "Thanks, that works." },
+    { fixture: "replyAttributionInsideCitation", current: "Sounds good." },
+    { fixture: "replyRuleThenHeaderBlock", current: "Thanks, will do." },
+    { fixture: "replyCompleteHeaderBlockWithoutQuote", current: "Thanks" },
+    { fixture: "replyAngleQuotedLines", current: "This is resolved now." },
+  ]) {
+    test(`${fixture} folds quoted history until the reader expands it`, async ({ page }) => {
+      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+      const body = page.locator("iframe.message-body").contentFrame().locator("body");
+      await expect(body).toContainText(current);
+      await expect(body).not.toContainText("Earlier message content.");
+
+      await page.getByRole("button", { name: "Show quoted content" }).click();
+      await expect(body).toContainText("Earlier message content.");
+    });
+  }
 });

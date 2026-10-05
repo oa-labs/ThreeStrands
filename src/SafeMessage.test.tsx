@@ -12,7 +12,7 @@ import {
   linkifyText,
   sanitizeMessageHtml,
 } from "./SafeMessage";
-import { EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS } from "./emailRenderingPolicy";
+import { EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, EMAIL_QUOTE_FOLDING_LIMITS } from "./emailRenderingPolicy";
 import { emailRenderingFixtures } from "./test/emailRenderingFixtures";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -455,6 +455,78 @@ describe("SafeMessage", () => {
     const html = `<p>Current answer.</p><div><div>From: sender@example.com<br>Date: Tue, Sep 15, 2026<br>Subject: Details</div><blockquote>Earlier details.</blockquote></div>`;
     expect(collapseQuotedHistoryHtml(html)).toContain("Current answer.");
     expect(collapseQuotedHistoryHtml(html)).not.toContain("Earlier details.");
+  });
+
+  // These go through the real sanitize pass, which linkifies bare addresses
+  // and so splits an attribution line across text nodes and an <a>.
+  const foldSanitized = (html: string) => collapseQuotedHistoryHtml(sanitizeMessageHtml(html));
+
+  it.each([
+    { fixture: "replyAttributionWithLinkedAddress", current: "Thanks, that works.", quoted: "Earlier message content." },
+    { fixture: "replyAttributionInsideCitation", current: "Sounds good.", quoted: "Earlier message content." },
+    { fixture: "replyRuleThenHeaderBlock", current: "Thanks, will do.", quoted: "Earlier message content." },
+    { fixture: "replyCompleteHeaderBlockWithoutQuote", current: "Thanks", quoted: "Earlier message content." },
+    { fixture: "replyAngleQuotedLines", current: "This is resolved now.", quoted: "Earlier message content." },
+    { fixture: "replyAngleQuotedLinesWithoutAttribution", current: "This is resolved now.", quoted: "Earlier message content." },
+  ] as const)("folds a sanitized $fixture at its attribution", ({ fixture, current, quoted }) => {
+    const folded = foldSanitized(emailRenderingFixtures[fixture]);
+    expect(folded).toContain(current);
+    expect(folded).not.toContain(quoted);
+    expect(folded).not.toMatch(/wrote:|From:|Is this still happening/);
+  });
+
+  it("cuts before the quoting wrapper so the visible copy has no empty citation or rule", () => {
+    expect(foldSanitized(emailRenderingFixtures.replyAttributionInsideCitation)).not.toContain("<blockquote");
+    expect(foldSanitized(emailRenderingFixtures.replyRuleThenHeaderBlock)).not.toContain("<hr");
+  });
+
+  it("keeps an inline reply between quoted lines visible", () => {
+    expect(foldSanitized(emailRenderingFixtures.inlineReplyBetweenQuotes)).toBeNull();
+  });
+
+  it("does not fold a mid-message header cluster that lacks a rule or complete fields", () => {
+    const html = "<p>Notes from the call:</p><p>From: sender@example.com<br>To: team<br>Subject: Plan</p><p>My follow-up thoughts.</p>";
+    expect(foldSanitized(html)).toBeNull();
+  });
+
+  it("does not treat a lone header-like line as quoted history", () => {
+    expect(foldSanitized("<p>Answer.</p><p>Subject: budget review at 10:30</p><p>More answer.</p>")).toBeNull();
+  });
+
+  it.each([
+    { lines: EMAIL_QUOTE_FOLDING_LIMITS.minQuoteRunLines - 1, folds: false },
+    { lines: EMAIL_QUOTE_FOLDING_LIMITS.minQuoteRunLines, folds: true },
+    { lines: EMAIL_QUOTE_FOLDING_LIMITS.minQuoteRunLines + 1, folds: true },
+  ])("folds a trailing run of $lines '>' lines in HTML: $folds", ({ lines, folds }) => {
+    const quoted = Array.from({ length: lines }, (_, index) => `&gt; quoted line ${index}`).join("<br>");
+    const folded = foldSanitized(`Current answer<br><br>${quoted}`);
+    if (folds) expect(folded).toBe("Current answer<br><br>");
+    else expect(folded).toBeNull();
+  });
+
+  it.each([
+    { length: EMAIL_QUOTE_FOLDING_LIMITS.maxAttributionLength - 1, folds: true },
+    { length: EMAIL_QUOTE_FOLDING_LIMITS.maxAttributionLength, folds: true },
+    { length: EMAIL_QUOTE_FOLDING_LIMITS.maxAttributionLength + 1, folds: false },
+  ])("recognizes an attribution with a $length-character middle: $folds", ({ length, folds }) => {
+    const folded = foldSanitized(`<p>Current answer</p><p>On ${"x".repeat(length)} wrote:</p><p>Earlier message content.</p>`);
+    if (folds) expect(folded).toContain("Current answer");
+    else expect(folded).toBeNull();
+  });
+
+  it("keeps sanitized output sanitized in both folded and expanded views", () => {
+    const html = `<p>Current <img src="https://example.com/a.png" onerror="alert(1)"></p>
+      <div>On Mon, A. Sender &lt;sender@example.com&gt; wrote:</div>
+      <blockquote><script>alert(2)</script><a href="javascript:alert(3)">Earlier message content.</a></blockquote>`;
+    render(<SafeMessage html={html} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    expect(frame.srcdoc).toContain("Current");
+    expect(frame.srcdoc).not.toContain("Earlier message content.");
+    expect(frame.srcdoc).not.toMatch(/onerror|<script|javascript:|\ssrc="https:/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show quoted content" }));
+    expect(frame.srcdoc).toContain("Earlier message content.");
+    expect(frame.srcdoc).not.toMatch(/onerror|<script|javascript:|\ssrc="https:/);
   });
 });
 
