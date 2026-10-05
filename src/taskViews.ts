@@ -101,6 +101,15 @@ export function isOverdue(task: ThreadTask): boolean {
   return isActiveTaskStatus(task.status) && dueView(task, new Date()) === "Overdue";
 }
 
+/** A task marked done on `now`'s local calendar day, still worth showing so it can be unchecked. */
+export function isCompletedToday(task: ThreadTask, now: Date = new Date()): boolean {
+  if (task.status !== "completed" || !task.completedAt) return false;
+  const completed = new Date(task.completedAt);
+  return completed.getFullYear() === now.getFullYear()
+    && completed.getMonth() === now.getMonth()
+    && completed.getDate() === now.getDate();
+}
+
 export function formatRelativeDate(date: Date, now: Date = new Date()): string {
   const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
   const diffDays = Math.round((startOfDay(date) - startOfDay(now)) / 86_400_000);

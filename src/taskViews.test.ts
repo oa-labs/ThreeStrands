@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ThreadTask } from "./domain";
-import { adjacentTaskStatus, compareTasksForDisplay, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll } from "./taskViews";
+import { adjacentTaskStatus, compareTasksForDisplay, isCompletedToday, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll } from "./taskViews";
 
 const now = new Date(2026, 8, 25, 12, 0);
 const task = (overrides: Partial<ThreadTask> = {}): ThreadTask => ({
@@ -45,6 +45,16 @@ describe("task workspace views", () => {
     expect(taskMatchesView(started, "Today", now)).toBe(true);
     expect(taskMatchesView(started, "Completed", now)).toBe(false);
     expect(taskViewForAll(started, now)).toBe("Today");
+  });
+
+  it("counts a task as completed today only on the local day it was marked done", () => {
+    const at = (hour: number, day = 25) => new Date(2026, 8, day, hour, 0).toISOString();
+    expect(isCompletedToday(task({ status: "completed", completedAt: at(0) }), now)).toBe(true);
+    expect(isCompletedToday(task({ status: "completed", completedAt: at(23) }), now)).toBe(true);
+    expect(isCompletedToday(task({ status: "completed", completedAt: at(23, 24) }), now)).toBe(false);
+    expect(isCompletedToday(task({ status: "completed", completedAt: null }), now)).toBe(false);
+    expect(isCompletedToday(task({ status: "cancelled", completedAt: at(9) }), now)).toBe(false);
+    expect(isCompletedToday(task({ status: "open", completedAt: at(9) }), now)).toBe(false);
   });
 });
 

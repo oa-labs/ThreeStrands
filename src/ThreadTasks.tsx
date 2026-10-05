@@ -1,16 +1,17 @@
-import { Check, Clock3, Plus } from "lucide-react";
+import { Clock3, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Thread, ThreadTask } from "./domain";
 import { mailClient } from "./data/client";
 import { HoverTooltip } from "./AppChrome";
 import { errorMessage } from "./errors";
 import { ContextSection } from "./ContextSections";
-import { formatDue, isActiveTaskStatus, isDue, isOverdue } from "./taskViews";
+import { formatDue, isActiveTaskStatus, isCompletedToday, isDue, isOverdue } from "./taskViews";
 
 /**
  * Open tasks linked to the conversation, followed by open tasks from other
- * conversations with the selected person (`contactId`, when known). Renders
- * nothing while there are none.
+ * conversations with the selected person (`contactId`, when known). Tasks
+ * marked done today stay listed, checked, so they can be unchecked until the
+ * day ends. Renders nothing while there are none.
  */
 export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, onEditTask, onDraftFollowUp, onTasksChanged }: {
   thread: Thread;
@@ -33,8 +34,10 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
     ])
       .then(([accountTasks, contactTasks]) => {
         if (!active) return;
-        const here = accountTasks.filter((task) => task.threadId === thread.id && isActiveTaskStatus(task.status));
-        const elsewhere = contactTasks.filter((task) => task.threadId !== thread.id && isActiveTaskStatus(task.status));
+        const now = new Date();
+        const shown = (task: ThreadTask) => isActiveTaskStatus(task.status) || isCompletedToday(task, now);
+        const here = accountTasks.filter((task) => task.threadId === thread.id && shown(task));
+        const elsewhere = contactTasks.filter((task) => task.threadId !== thread.id && shown(task));
         setTasks([...here, ...elsewhere]);
         setError(null);
       })
@@ -42,11 +45,13 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
     return () => { active = false; };
   }, [contactId, refreshKey, thread.accountId, thread.id]);
 
-  const complete = async (task: ThreadTask) => {
+  // Checking or unchecking updates the row in place so a done task stays where it was.
+  const toggleDone = async (task: ThreadTask) => {
+    const done = isActiveTaskStatus(task.status);
     try {
-      await mailClient.setTaskStatus(task.id, "completed");
-      setTasks((current) => current.filter((candidate) => candidate.id !== task.id));
-      setAnnouncement(`Completed: ${task.title}`);
+      const updated = await mailClient.setTaskStatus(task.id, done ? "completed" : "open");
+      setTasks((current) => current.map((candidate) => candidate.id === task.id ? updated : candidate));
+      setAnnouncement(`${done ? "Completed" : "Reopened"}: ${task.title}`);
       onTasksChanged();
     } catch (reason) {
       setError(errorMessage(reason));
@@ -61,14 +66,23 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
       className="context-tasks"
       title="Tasks"
       label="Conversation tasks"
-      count={tasks.length}
+      count={tasks.filter((task) => isActiveTaskStatus(task.status)).length}
       actions={<HoverTooltip title="Add task" shortcut="d" placement="bottom">
         <button type="button" className="context-icon-button" aria-label="Add task" onClick={onAddTask}><Plus size={15} /></button>
       </HoverTooltip>}
       rows={tasks.map((task) => {
         const due = formatDue(task);
-        return <article className="context-task" key={task.id}>
-          <button type="button" className="task-status-button" aria-label={`Complete ${task.title}`} onClick={() => void complete(task)}><Check size={15} /></button>
+        const done = !isActiveTaskStatus(task.status);
+        return <article className={done ? "context-task context-task-done" : "context-task"} key={task.id}>
+          <HoverTooltip label={done ? "Mark not done" : "Mark done"}>
+            <input
+              type="checkbox"
+              className="context-task-checkbox"
+              checked={done}
+              aria-label={done ? `Mark ${task.title} not done` : `Mark ${task.title} done`}
+              onChange={() => void toggleDone(task)}
+            />
+          </HoverTooltip>
           <button type="button" className="context-task-main" onClick={() => onEditTask(task)}>
             <strong>{task.title}</strong>
             {task.threadId !== thread.id && task.subjectSnapshot ? <span className="context-task-source">{task.subjectSnapshot}</span> : null}

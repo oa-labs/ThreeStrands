@@ -45,35 +45,75 @@ describe("ThreadTasks", () => {
     expect(screen.getByRole("button", { name: "Add task" })).toBeInTheDocument();
   });
 
-  it("lists only open tasks linked to this conversation", async () => {
+  it("lists open tasks linked to this conversation and those marked done today", async () => {
+    const today = new Date();
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1, 12).toISOString();
     const listTasks = vi.spyOn(mailClient, "listTasks").mockResolvedValue([
       task("mine"),
       task("other-thread", { threadId: "thread-2" }),
       task("standalone", { threadId: null }),
-      task("done", { status: "completed", completedAt: "2026-09-19T11:00:00Z" }),
+      task("done-today", { status: "completed", completedAt: today.toISOString() }),
+      task("done-yesterday", { status: "completed", completedAt: yesterday }),
+      task("cancelled", { status: "cancelled", completedAt: today.toISOString() }),
       task("started", { status: "in_progress" }),
     ]);
     renderTasks();
 
-    expect(await screen.findByText("Task mine")).toBeInTheDocument();
+    const section = await screen.findByRole("region", { name: "Conversation tasks" });
+    expect(screen.getByText("Task mine")).toBeInTheDocument();
     expect(screen.getByText("Task started")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Mark Task done-today not done" })).toBeChecked();
     expect(screen.queryByText("Task other-thread")).not.toBeInTheDocument();
     expect(screen.queryByText("Task standalone")).not.toBeInTheDocument();
-    expect(screen.queryByText("Task done")).not.toBeInTheDocument();
+    expect(screen.queryByText("Task done-yesterday")).not.toBeInTheDocument();
+    expect(screen.queryByText("Task cancelled")).not.toBeInTheDocument();
+    expect(section.querySelector(".context-section-header-actions .context-count")).toHaveTextContent("2");
     expect(listTasks).toHaveBeenCalledWith("you@example.com");
   });
 
-  it("completes a task in place and reports the change", async () => {
+  it("marks a task done with a labelled checkbox and keeps it listed, checked", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([task("mine")]);
-    const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue(task("mine", { status: "completed" }));
+    const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus")
+      .mockResolvedValue(task("mine", { status: "completed", completedAt: new Date().toISOString() }));
     const { onTasksChanged } = renderTasks();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Complete Task mine" }));
+    const checkbox = await screen.findByRole("checkbox", { name: "Mark Task mine done" });
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox.closest(".tooltip-anchor")?.querySelector("[role=tooltip]")).toHaveTextContent("Mark done");
+    fireEvent.click(checkbox);
 
-    await waitFor(() => expect(screen.queryByText("Task mine")).not.toBeInTheDocument());
+    const checked = await screen.findByRole("checkbox", { name: "Mark Task mine not done" });
+    expect(checked).toBeChecked();
+    expect(screen.getByText("Task mine").closest("article")).toHaveClass("context-task-done");
+    expect(checked.closest(".tooltip-anchor")?.querySelector("[role=tooltip]")).toHaveTextContent("Mark not done");
     expect(setTaskStatus).toHaveBeenCalledWith("mine", "completed");
     expect(onTasksChanged).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Completed: Task mine")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("unchecks a task done today to reopen it", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task("mine", { status: "completed", completedAt: new Date().toISOString() })]);
+    const setTaskStatus = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue(task("mine"));
+    const { onTasksChanged } = renderTasks();
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Mark Task mine not done" }));
+
+    expect(await screen.findByRole("checkbox", { name: "Mark Task mine done" })).not.toBeChecked();
+    expect(setTaskStatus).toHaveBeenCalledWith("mine", "open");
+    expect(onTasksChanged).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Reopened: Task mine")).toBeInTheDocument();
+  });
+
+  it("keeps the checkbox state and shows the error when marking done fails", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task("mine")]);
+    vi.spyOn(mailClient, "setTaskStatus").mockRejectedValue(new Error("Database is locked"));
+    const { onTasksChanged } = renderTasks();
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Mark Task mine done" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Database is locked");
+    expect(screen.getByRole("checkbox", { name: "Mark Task mine done" })).not.toBeChecked();
+    expect(onTasksChanged).not.toHaveBeenCalled();
   });
 
   it("opens editing, adding, and due follow-up drafting through the supplied handlers", async () => {
