@@ -122,6 +122,34 @@ impl ThreadHistory {
     }
 }
 
+/// A thread's message bodies, oldest first, as its search row indexes them:
+/// each body minus a trailing region that repeats an earlier body in the same
+/// thread. The earliest copy of any text is never removed — nothing precedes
+/// it — so the row loses no phrase it held before. Words in a removed region
+/// that the thread has not used yet (a line counts as repeated at
+/// `MIN_SEEN_LINE_COVERAGE`, not 100%) are kept, so every word stays searchable.
+pub fn searchable_thread_text<'a>(bodies: impl IntoIterator<Item = &'a str>) -> String {
+    let mut history = ThreadHistory::default();
+    let mut used: HashSet<String> = HashSet::new();
+    let mut out = String::new();
+    for body in bodies {
+        let new_len = history.new_text_len(body);
+        let (new_text, removed) = body.split_at(new_len);
+        out.push_str(new_text);
+        let mut present: HashSet<String> = new_text.lines().flat_map(line_words).collect();
+        for word in removed.lines().flat_map(line_words) {
+            if !used.contains(&word) && present.insert(word.clone()) {
+                out.push(' ');
+                out.push_str(&word);
+            }
+        }
+        out.push(' ');
+        history.remember(body);
+        used.extend(body.lines().flat_map(line_words));
+    }
+    out
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum LineKind {
     Neutral,
@@ -407,6 +435,26 @@ mod tests {
             let expected = if removed { "Fixed.\n\n".to_string() } else { format!("Fixed.\n\n{signature}\n\n") };
             assert_eq!(new_text(&history(&[&format!("{signature}\n{quote}")]), &body), expected, "{quoted} signature words");
         }
+    }
+
+    #[test]
+    fn search_text_drops_repeated_quotes_but_keeps_every_word() {
+        let original = "Can you check whether the nightly feed import still fails for the west region?";
+        let reply = format!("Fixed now.\n\nOn Mon, A wrote:\n> {original}");
+        // A quote with one word edited still counts as repeated (at least 80% covered).
+        let edited = format!("Thanks!\n\nOn Tue, B wrote:\n> Fixed now.\n>\n> On Mon, A wrote:\n> > {}", original.replace("nightly", "hourly"));
+        let text = searchable_thread_text([original, reply.as_str(), edited.as_str()]);
+        assert_eq!(text.matches("nightly feed import").count(), 1);
+        assert!(text.contains("Fixed now."));
+        assert!(text.contains("Thanks!"));
+        assert!(text.contains("hourly"), "{text}");
+        assert!(!text.contains("On Mon, A wrote:\n> Can"), "{text}");
+    }
+
+    #[test]
+    fn search_text_keeps_quotes_with_no_earlier_copy() {
+        let reply = "Fixed now.\n\nOn Mon, A wrote:\n> The only copy of a message that is not stored here.";
+        assert_eq!(searchable_thread_text([reply]), format!("{reply} "));
     }
 
     #[test]

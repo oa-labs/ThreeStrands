@@ -465,14 +465,21 @@ function structuralTextCut(lines: string[]): number {
   const quoteRunIndex = findQuoteRunStart(lines);
   const cutCandidates = [markerIndex, quoteRunIndex].filter((index) => index >= 0);
   if (cutCandidates.length > 0) return Math.min(...cutCandidates);
-  const headerStart = lines.findIndex((_, index) => {
-    const block = lines.slice(index, index + LIMITS.maxHeaderClusterLines).map((line) => line.trim()).filter(Boolean);
-    const fields = new Set(block.filter((line) => headerField.test(line)).map((line) => line.match(headerField)?.[1].toLowerCase()));
-    return fields.size >= 3 && emailOrTimestamp.test(block.join(" "));
-  });
-  if (headerStart > 0 && lines.slice(0, headerStart).some((line) => line.trim())) {
-    const separator = lines.slice(0, headerStart).some((line) => /^\s*[-—_]{2,}\s*$/.test(line));
-    if (separator) return headerStart;
+  // A From/Sent/To/Subject block that starts on a header line, directly
+  // below a separator line; the fold starts at the separator.
+  for (let index = 1; index < lines.length; index++) {
+    if (!headerField.test(lines[index].trim())) continue;
+    const block: string[] = [];
+    for (let next = index; next < lines.length && lines[next].trim() && block.length < LIMITS.maxHeaderClusterLines; next++) {
+      block.push(lines[next].trim());
+    }
+    const fields = new Set(block.map((line) => line.match(headerField)?.[1].toLowerCase()).filter(Boolean));
+    if (!fields.has("from") || fields.size < 3 || !emailOrTimestamp.test(block.join(" "))) continue;
+    let separator = index - 1;
+    while (separator >= 0 && !lines[separator].trim()) separator--;
+    if (separator > 0 && separatorLine.test(lines[separator]) && lines.slice(0, separator).some((line) => line.trim())) {
+      return separator;
+    }
   }
   return -1;
 }

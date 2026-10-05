@@ -1793,6 +1793,45 @@ impl Database {
         })
     }
 
+    /// Rewrites a bounded batch of search rows queued by schema v46 so their
+    /// `body` drops quoted history repeated within the thread (see
+    /// [`crate::quoted_history::searchable_thread_text`]). Returns the number
+    /// of queued threads handled; call repeatedly until it returns 0. A queued
+    /// thread that no longer has a search row is simply dequeued.
+    pub fn reindex_next_search_batch(&self, batch_size: usize) -> DbResult<usize> {
+        self.with_transaction(|transaction| {
+            let queued: Vec<String> = transaction
+                .prepare("SELECT thread_id FROM pending_search_reindex LIMIT ?1")?
+                .query_map(params![batch_size as i64], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            for thread_id in &queued {
+                let rowid: Option<i64> = transaction
+                    .query_row(
+                        "SELECT rowid FROM thread_search WHERE thread_id = ?1",
+                        [thread_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if let Some(rowid) = rowid {
+                    let bodies: Vec<String> = transaction
+                        .prepare(
+                            "SELECT body_text, body_text_z FROM messages
+                             WHERE thread_id = ?1 ORDER BY sent_at, id",
+                        )?
+                        .query_map([thread_id], |row| resolve_body(0, row.get(0)?, row.get(1)?))?
+                        .collect::<Result<_, _>>()?;
+                    let body = crate::quoted_history::searchable_thread_text(bodies.iter().map(String::as_str));
+                    transaction.execute(
+                        "UPDATE thread_search SET body = ?1 WHERE rowid = ?2",
+                        params![body, rowid],
+                    )?;
+                }
+                transaction.execute("DELETE FROM pending_search_reindex WHERE thread_id = ?1", [thread_id])?;
+            }
+            Ok(queued.len())
+        })
+    }
+
     /// Like [`Self::compress_next_body_batch`] for raw provider payloads
     /// stored before `message_metadata.payload_z` existed. Payloads can be
     /// large, so callers use a smaller batch than for bodies.
@@ -1960,11 +1999,8 @@ impl Database {
                 "DELETE FROM thread_search WHERE thread_id = ?1",
                 [&thread_id],
             )?;
-        let mut body = String::new();
         for message in messages {
             store_message_metadata(transaction, &message.id, &message.metadata_json)?;
-            body.push_str(&message.body_text);
-            body.push(' ');
             let message_unread = message.labels.iter().any(|label| label == "UNREAD");
             transaction
                 .execute(
@@ -1993,6 +2029,11 @@ impl Database {
                 )?;
             contacts::index_contact_message(transaction, account_id, &thread_id, message)?;
         }
+        let mut chronological: Vec<&NormalizedMessage> = messages.iter().collect();
+        chronological.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)));
+        let body = crate::quoted_history::searchable_thread_text(
+            chronological.iter().map(|message| message.body_text.as_str()),
+        );
         transaction
             .execute(
                 "INSERT INTO thread_search(thread_id, subject, snippet, participants, body)
@@ -2005,6 +2046,10 @@ impl Database {
                     body
                 ],
             )?;
+        transaction.execute(
+            "DELETE FROM pending_search_reindex WHERE thread_id = ?1",
+            [&thread_id],
+        )?;
         Ok(())
     }
 
@@ -3049,6 +3094,71 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(result[0].id, "welcome");
         assert!(result[0].match_snippet.is_some());
+    }
+
+    const QUOTED_ORIGINAL: &str = "Can you check whether the nightly feed import still fails for the west region accounts?";
+
+    fn quoting_thread_messages() -> Vec<NormalizedMessage> {
+        // Out of order on purpose: the search row must follow message dates.
+        vec![
+            message("reply", "quoting", "2026-10-02T09:00:00Z", &format!("Fixed now, the hourly retry handles it.\n\nOn Thu, A wrote:\n> {QUOTED_ORIGINAL}")),
+            message("original", "quoting", "2026-10-01T09:00:00Z", QUOTED_ORIGINAL),
+        ]
+    }
+
+    fn search_body(database: &Database, thread_id: &str) -> String {
+        database
+            .connection()
+            .unwrap()
+            .query_row("SELECT body FROM thread_search WHERE thread_id = ?1", [thread_id], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn search_ids(database: &Database, query: &str) -> Vec<String> {
+        database
+            .search_threads(&SearchThreadsRequest { query: query.into(), limit: None, offset: None, include_archived: None }, None)
+            .unwrap()
+            .into_iter()
+            .map(|thread| thread.id)
+            .collect()
+    }
+
+    #[test]
+    fn search_rows_index_repeated_quoted_history_once() {
+        let database = database();
+        database.upsert_thread("you@example.com", &quoting_thread_messages()).unwrap();
+        let thread_id = local_thread_id("you@example.com", "quoting");
+        let body = search_body(&database, &thread_id);
+        assert_eq!(body.matches("nightly feed import").count(), 1, "{body}");
+        assert!(body.starts_with(QUOTED_ORIGINAL), "{body}");
+        assert!(body.contains("hourly retry"));
+        for query in ["nightly", "\"west region accounts\"", "hourly"] {
+            assert_eq!(search_ids(&database, query), vec![thread_id.clone()], "{query}");
+        }
+    }
+
+    #[test]
+    fn queued_search_rows_are_rewritten_in_batches_and_fresh_rows_are_dequeued() {
+        let database = database();
+        database.upsert_thread("you@example.com", &quoting_thread_messages()).unwrap();
+        let thread_id = local_thread_id("you@example.com", "quoting");
+        let full = format!("{QUOTED_ORIGINAL} Fixed now, the hourly retry handles it.\n\nOn Thu, A wrote:\n> {QUOTED_ORIGINAL} ");
+        {
+            // Simulate a row written before v46, queued by the migration, plus
+            // a queued thread whose row is gone.
+            let connection = database.connection().unwrap();
+            connection.execute("UPDATE thread_search SET body = ?1 WHERE thread_id = ?2", params![full, thread_id]).unwrap();
+            connection.execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1), ('deleted-thread')", [&thread_id]).unwrap();
+        }
+        assert_eq!(database.reindex_next_search_batch(1).unwrap(), 1);
+        assert_eq!(database.reindex_next_search_batch(10).unwrap(), 1);
+        assert_eq!(database.reindex_next_search_batch(10).unwrap(), 0);
+        assert_eq!(search_body(&database, &thread_id).matches("nightly feed import").count(), 1);
+        assert_eq!(search_ids(&database, "nightly"), vec![thread_id.clone()]);
+
+        database.connection().unwrap().execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1)", [&thread_id]).unwrap();
+        database.upsert_thread("you@example.com", &quoting_thread_messages()).unwrap();
+        assert_eq!(database.reindex_next_search_batch(10).unwrap(), 0);
     }
 
     #[test]

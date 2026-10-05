@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 45;
+pub(crate) const LATEST_VERSION: i64 = 46;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1332,6 +1332,18 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             PRAGMA user_version=45;",
         ).map_err(error)?;
     }
+    if version < 46 {
+        // Search rows now leave out quoted history repeated within a thread.
+        // Existing rows are queued here and rewritten in the background
+        // (`Database::reindex_next_search_batch`); `apply_thread` dequeues a
+        // thread whenever it writes a fresh row. A queued row stays fully
+        // searchable until it is rewritten.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pending_search_reindex (thread_id TEXT PRIMARY KEY);
+            INSERT OR IGNORE INTO pending_search_reindex(thread_id) SELECT thread_id FROM thread_search;
+            PRAGMA user_version=46;",
+        ).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1408,6 +1420,24 @@ mod tests {
             )
             .unwrap();
         assert_eq!(after, 0);
+    }
+
+    #[test]
+    fn v46_queues_existing_search_rows_for_reindexing() {
+        let mut connection = unmigrated_database_with_one_account();
+        connection
+            .execute(
+                "INSERT INTO thread_search(thread_id, subject, snippet, participants, body)
+                 VALUES ('you@gmail.com:t1', 's', 's', 'p', 'body'), ('you@gmail.com:t2', 's', 's', 'p', 'body')",
+                [],
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let queued: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pending_search_reindex", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(queued, 2);
+        super::migrate(&mut connection).unwrap();
     }
 
     #[test]

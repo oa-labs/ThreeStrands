@@ -891,6 +891,20 @@ it("does not collapse fewer than 5 consecutive '>' lines", () => {
   expect(collapseQuotedHistoryText(text)).toBeNull();
 });
 
+it("starts a plain-text header fold at the separator above the header, keeping every current line", () => {
+  const current = Array.from({ length: 15 }, (_, index) => `Current line ${index}`);
+  const header = ["From: A. Sender <sender@example.com>", "Sent: Monday, October 5, 2026 9:00 AM", "To: Reader", "Subject: Feed", "", "Earlier message"];
+  expect(collapseQuotedHistoryText([...current, "", "________________________________", ...header].join("\n")))
+    .toBe([...current, ""].join("\n").trimEnd());
+  expect(collapseQuotedHistoryText(["Short reply", "", "-----", ...header].join("\n"))).toBe("Short reply");
+});
+
+it("does not fold a plain-text header block without a separator directly above it", () => {
+  const header = ["From: A. Sender <sender@example.com>", "Sent: Monday 9:00 AM", "Subject: Feed", "", "Earlier message"];
+  const reply = Array.from({ length: 13 }, (_, index) => `Reply line ${index}`);
+  expect(collapseQuotedHistoryText(["Intro", "-----", ...reply, "", ...header].join("\n"))).toBeNull();
+});
+
 it("collapses at the first line of a 5+ line '>' quote run", () => {
   const text = [
     "Current answer",

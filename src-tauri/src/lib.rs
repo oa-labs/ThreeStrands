@@ -3555,6 +3555,21 @@ fn spawn_storage_maintenance(database: Arc<Database>) {
             }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
+        // Same for search rows queued by schema v46, rewritten without
+        // quoted history the thread already contains.
+        loop {
+            let backfill_db = database.clone();
+            let reindexed =
+                tokio::task::spawn_blocking(move || backfill_db.reindex_next_search_batch(200))
+                    .await
+                    .ok()
+                    .and_then(|result| log_failure("reindexing search rows", result))
+                    .unwrap_or(0);
+            if reindexed == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
         // Stay clear of the launch window, when the inbox loads and every
         // account runs its first sync; maintenance is never urgent.
         tokio::time::sleep(FIRST_STORAGE_MAINTENANCE_DELAY).await;
