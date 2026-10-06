@@ -70,7 +70,7 @@ export function ContextSectionHeader({ title, titleId, count, toggle, actions }:
  * and whose rows stop at a few with "Show more", so stacked sections stay
  * scannable instead of pushing everything else down.
  */
-export function ContextSection({ id, title, label, count, actions, note, rows, className }: {
+export function ContextSection({ id, title, label, count, actions, note, rows, limit = CONTEXT_SECTION_ROWS, footer, className }: {
   /** Stable key for the remembered collapse state. */
   id: string;
   title: ReactNode;
@@ -82,13 +82,17 @@ export function ContextSection({ id, title, label, count, actions, note, rows, c
   /** A line under the heading, such as a date range. */
   note?: ReactNode;
   rows: ReactNode[];
+  /** How many rows show before "Show more". */
+  limit?: number;
+  /** Shown under the rows once they are all visible, such as "Load older". */
+  footer?: ReactNode;
   className?: string;
 }) {
   const [collapsed, setCollapsed] = useState(() => readCollapsed().has(id));
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
   const headingId = useId();
-  const hidden = rows.length - CONTEXT_SECTION_ROWS;
+  const hidden = rows.length - limit;
   const toggle = () => {
     setCollapsed(!collapsed);
     saveCollapsed(id, !collapsed);
@@ -98,12 +102,13 @@ export function ContextSection({ id, title, label, count, actions, note, rows, c
       <ContextSectionHeader title={title} titleId={headingId} count={count} actions={actions} toggle={{ collapsed, controls: bodyId, onToggle: toggle }} />
       <div id={bodyId} hidden={collapsed}>
         {note ? <p className="context-section-note">{note}</p> : null}
-        {expanded || hidden <= 0 ? rows : rows.slice(0, CONTEXT_SECTION_ROWS)}
+        {expanded || hidden <= 0 ? rows : rows.slice(0, limit)}
         {hidden > 0 ? (
           <button type="button" className="context-link-button" onClick={() => setExpanded(!expanded)}>
             {expanded ? "Show fewer" : `Show ${hidden} more`}
           </button>
         ) : null}
+        {footer && (expanded || hidden <= 0) ? footer : null}
       </div>
     </section>
   );
@@ -212,9 +217,12 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
 }
 
 /** Other conversations with the selected person, newest first. */
-export function RecentEmailsSection({ items, onOpenThread }: {
+export function RecentEmailsSection({ items, onOpenThread, limit, onLoadOlder }: {
   items: ContactTimelineItem[];
   onOpenThread(id: string): void;
+  limit?: number;
+  /** Fetches the next page; offered once every loaded row is showing. */
+  onLoadOlder?(): void;
 }) {
   return (
     <ContextSection
@@ -222,6 +230,8 @@ export function RecentEmailsSection({ items, onOpenThread }: {
       className="context-history"
       title="Recent emails"
       count={items.length}
+      limit={limit}
+      footer={onLoadOlder ? <button type="button" className="context-link-button" onClick={onLoadOlder}>Load older emails</button> : undefined}
       rows={items.map((item) => {
         // The section is about one person, so the row shows what was said rather than their address.
         const snippet = decodeHtmlEntities(item.snippet).replace(/\s+/g, " ").trim();

@@ -1840,7 +1840,20 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-avatar.medium { width:76px; height:76px; font-size:26px; }
 .contact-avatar.large { width:96px; height:96px; font-size:32px; }
 .contact-avatar.large input { position:absolute; inset:0; opacity:0; cursor:pointer; }
-.contact-profile-panel { min-width:0; min-height:0; overflow:auto; padding:24px clamp(24px,4vw,56px) clamp(24px,4vw,56px); background:var(--surface); }
+/* The panel is the size container; the layout inside splits into the form and
+   a context rail, and stacks them when the panel is too narrow for both. */
+.contact-profile-panel { min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:var(--surface); container-type:inline-size; }
+.contact-profile-layout { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1fr); }
+.contact-profile-layout.has-rail { grid-template-columns:minmax(0,1fr) clamp(260px,30%,340px); }
+.contact-profile-main { min-width:0; min-height:0; overflow:auto; padding:24px clamp(24px,4vw,56px) clamp(24px,4vw,56px); }
+.contact-profile-column { max-width:880px; }
+.contact-context-rail { min-width:0; min-height:0; overflow:auto; padding:12px 14px 16px; border-left:1px solid var(--border); background:var(--surface); }
+.contact-context-rail > .context-section:last-child { border-bottom:0; }
+@container (max-width: 820px) {
+  .contact-profile-layout.has-rail { grid-template-columns:minmax(0,1fr); overflow:auto; }
+  .contact-profile-layout.has-rail > .contact-profile-main,.contact-profile-layout.has-rail > .contact-context-rail { overflow:visible; }
+  .contact-context-rail { padding:4px clamp(24px,4vw,56px) 24px; border-left:0; }
+}
 .contact-profile-top { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding-bottom:23px; border-bottom:1px solid var(--border); }
 .contact-identity { display:flex; align-items:center; gap:24px; min-width:0; }
 .contact-identity > div { display:grid; gap:8px; min-width:0; }
@@ -1855,12 +1868,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-multi-value-box:focus-within { border-color:var(--accent); }
 .contact-editor-grid .contact-multi-value-box input { flex:1 1 140px; width:auto; min-width:80px; padding:3px 4px; border:0; background:transparent; outline:none; }
 .contact-multi-value-chip { min-width:0; max-width:100%; color:var(--text); letter-spacing:normal; text-transform:none; cursor:default; }
+/* Field values, chips, and placeholders share one size across the form. */
+.contact-editor-grid .contact-multi-value-chip { font-size:var(--type-ui); }
 .contact-multi-value-chip .recipient-chip-label { max-width:100%; }
 .contact-multi-value-copy { opacity:0; }
 .contact-multi-value-chip:hover .contact-multi-value-copy,.contact-multi-value-copy:focus-visible,.contact-multi-value-copy[aria-label^="Copied"] { opacity:1; }
 @media (hover:none) { .contact-multi-value-copy { opacity:1; } }
 .contact-editor-grid label.wide { grid-column:1/-1; }
-.contact-editor-grid input,.contact-editor-grid textarea { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; letter-spacing:normal; text-transform:none; resize:vertical; }
+.contact-editor-grid input,.contact-editor-grid textarea { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; font-size:var(--type-ui); letter-spacing:normal; text-transform:none; resize:vertical; }
 .contact-editor-grid .contact-field-slot { display:contents; }
 .contact-editor-grid textarea { min-height:0; overflow:hidden; }
 .contact-add-fields { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:6px; }
@@ -1882,30 +1897,23 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-primary-button:hover { border-color:var(--accent); }
 .contact-primary-button:disabled { opacity:.55; cursor:wait; }
 /* The sections below the form share one heading style and divider. */
-.contact-keep-in-touch,.contact-enrichment,.contact-timeline { margin-top:0; padding:20px 0; border-top:1px solid var(--border); }
-.contact-keep-in-touch h2,.contact-enrichment h2,.contact-timeline h2 { margin:0; font-size:var(--type-ui); font-weight:600; }
-.contact-timeline h2 { margin-bottom:6px; }
-.contact-enrichment > header,.contact-enrichment > header > div { display:flex; align-items:center; gap:8px; }
-.contact-enrichment > header { justify-content:space-between; }
-.contact-enrichment > header svg { color:var(--muted); }
-.contact-enrichment > header button,.contact-enrichment article button { display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
-.contact-enrichment > header button { padding:5px 9px; font:inherit; font-size:var(--type-sm); }
-.contact-enrichment article { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:8px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-md); }
-.contact-enrichment article > div { display:grid; gap:3px; }
+.contact-keep-in-touch { margin-top:0; padding:20px 0; border-top:1px solid var(--border); }
+.contact-keep-in-touch h2 { margin:0; font-size:var(--type-ui); font-weight:600; }
+/* Profile suggestions use the context panel's card, so the rail matches the
+   Brief card beside an open email. */
+.contact-enrichment .thread-assist-run:disabled { opacity:.6; cursor:wait; }
+.contact-suggestion { display:grid; gap:3px; margin-top:8px; padding:9px 10px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--background); font-size:var(--type-ui); }
+.contact-suggestion strong { font-weight:500; overflow-wrap:anywhere; }
 .contact-suggestion-field { color:var(--muted); font-size:var(--type-xs); text-transform:uppercase; letter-spacing:.04em; }
 .contact-suggestion-evidence { display:grid; gap:1px; margin:3px 0 0; padding-left:8px; border-left:2px solid var(--border); }
 .contact-suggestion-evidence > span { color:var(--muted); font-size:var(--type-xs); text-transform:uppercase; letter-spacing:.04em; }
-.contact-enrichment blockquote { margin:0; color:var(--secondary); font-size:var(--type-sm); font-style:italic; }
-.contact-enrichment-notice { margin:10px 0 0; color:var(--muted); font-size:var(--type-sm); }
-.contact-enrichment-progress { margin:10px 0 0; color:var(--muted); font-size:var(--type-xs); }
-.contact-enrichment-more { margin-top:10px; padding:7px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
-.contact-enrichment-more:disabled { opacity:.55; cursor:wait; }
-.contact-suggestion-source { width:max-content; padding:0; border:0; color:var(--accent); background:transparent; font:inherit; font-size:var(--type-xs); text-decoration:underline; cursor:pointer; }
-.contact-suggestion-apply { flex-shrink:0; }
-.contact-timeline > button { width:100%; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 9px; border:0; border-bottom:1px solid var(--border); color:var(--text); background:transparent; text-align:left; cursor:pointer; }
-.contact-timeline > button span { min-width:0; }
-.contact-timeline > button span { display:grid; gap:4px; }
-.contact-timeline small { color:var(--muted); font-size:var(--type-xs); }
+.contact-suggestion blockquote { margin:0; color:var(--secondary); font-size:var(--type-sm); font-style:italic; }
+.contact-suggestion-actions { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; margin-top:6px; }
+.contact-suggestion-actions .context-link-button { margin:0; }
+.contact-suggestion-apply { padding:3px 8px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); color:var(--text); background:var(--hover); font:inherit; font-size:var(--type-sm); cursor:pointer; }
+.contact-suggestion-apply:hover { border-color:var(--accent); }
+.contact-enrichment > .context-status { margin-top:2px; }
+.contact-enrichment > .context-section-note { margin:8px 0 0; }
 .contact-sidebar-links { display:flex; flex-wrap:wrap; gap:2px 12px; margin:0; }
 .contact-sidebar-links a { color:var(--accent); font-size:var(--type-sm); overflow-wrap:anywhere; text-decoration:underline; text-underline-offset:2px; }
 .contact-sidebar-links a:hover { color:var(--text); }
@@ -1922,7 +1930,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-list-item > svg.contact-kit-due { color:var(--error); }
 .contact-list-item > svg.contact-kit-due + svg { margin-left:4px; }
 .contact-list-group.kit-overdue h2 { color:var(--error); }
-.contact-keep-in-touch > header { display:flex; align-items:center; gap:8px; }
+.contact-keep-in-touch > header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+.contact-keep-in-touch > header select { height:30px; padding:0 8px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; font-size:var(--type-sm); }
 .contact-kit-saved { display:inline-flex; align-items:center; gap:3px; color:var(--muted); font-size:var(--type-xs); }
 .contact-kit-controls { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin-top:12px; }
 .contact-kit-controls label,.contact-kit-snooze-menu label { display:grid; gap:6px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.05em; text-transform:uppercase; }

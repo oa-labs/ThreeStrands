@@ -198,14 +198,15 @@ describe("ContactsWorkspace",()=>{
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
     const onOpenThread=vi.fn();
     vi.mocked(mailClient.getContactProfile).mockResolvedValue({...jane,sentCount:20,receivedCount:20});
-    vi.mocked(mailClient.contactTimeline).mockResolvedValue([{threadId:"work-thread",accountId:"work@example.com",contactEmail:"jane@example.com",subject:"Project",snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]}]);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([{threadId:"work-thread",accountId:"work@example.com",contactEmail:"jane@example.com",subject:"Project",snippet:"Kickoff notes attached",sentAt:"2026-09-20T00:00:00Z",labels:[]}]);
     render(<ContactsWorkspace accountId="work@example.com" onOpenThread={onOpenThread} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
     expect(screen.getByText("· work@example.com")).toBeInTheDocument();
     expect(mailClient.listContactProfiles).toHaveBeenCalledWith("",500,"work@example.com");
     expect(mailClient.contactTimeline).toHaveBeenCalledWith(jane.id,0,20,"work@example.com");
-    expect(screen.getByRole("button",{name:/Project/})).toHaveTextContent("jane@example.com");
-    expect(screen.getByText("3 sent · 2 received")).toBeInTheDocument();
+    // The row shows what was said; every row is with this person, so the address would repeat.
+    expect(screen.getByRole("button",{name:/Project/})).toHaveTextContent("Kickoff notes attached");
+    expect(screen.getByText(/^3 sent · 2 received/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:/Project/}));
     expect(onOpenThread).toHaveBeenCalledWith("work-thread");
     fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
@@ -297,6 +298,32 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(screen.getByRole("button",{name:/Jane Doe/}));
     await screen.findByDisplayValue("Jane Doe");
     expect(screen.queryByLabelText("About")).not.toBeInTheDocument();
+  });
+
+  it("puts profile suggestions and recent emails in the context rail",async()=>{
+    localStorage.setItem("threestrands.settings.ai.provider","openai");
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
+    const page=(start:number,count:number)=>Array.from({length:count},(_,index)=>({threadId:`thread-${start+index}`,accountId:"me@example.com",contactEmail:"jane@example.com",subject:`Subject ${start+index}`,snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]}));
+    vi.mocked(mailClient.contactTimeline).mockImplementation(async(_id,offset)=>offset===0?page(0,20):page(20,2));
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const rail=screen.getByRole("complementary",{name:"Contact context"});
+    expect(within(rail).getByRole("region",{name:"Profile Suggestions"})).toBeInTheDocument();
+    expect(within(rail).getByRole("button",{name:/Enhance with AI/})).toBeInTheDocument();
+    const recent=await within(rail).findByRole("region",{name:"Recent emails"});
+    expect(within(recent).getAllByRole("button",{name:/^Subject/})).toHaveLength(8);
+    expect(within(recent).queryByRole("button",{name:"Load older emails"})).not.toBeInTheDocument();
+    fireEvent.click(within(recent).getByRole("button",{name:"Show 12 more"}));
+    fireEvent.click(within(recent).getByRole("button",{name:"Load older emails"}));
+    await waitFor(()=>expect(within(recent).getAllByRole("button",{name:/^Subject/})).toHaveLength(22));
+    expect(mailClient.contactTimeline).toHaveBeenLastCalledWith(jane.id,20,20,undefined);
+    expect(within(recent).queryByRole("button",{name:"Load older emails"})).not.toBeInTheDocument();
+  });
+
+  it("leaves out the rail when there is no history and AI is off",async()=>{
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    expect(screen.queryByRole("complementary",{name:"Contact context"})).not.toBeInTheDocument();
   });
 
   it("shows email volume and the last contact date in the header",async()=>{

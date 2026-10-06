@@ -51,7 +51,7 @@ describe("task detail heading", () => {
 
 describe("contact detail header", () => {
   it("starts near the top of the pane while retaining responsive side spacing", () => {
-    expect(lastDeclaration(".contact-profile-panel", "padding")).toBe("24px clamp(24px,4vw,56px) clamp(24px,4vw,56px)");
+    expect(lastDeclaration(".contact-profile-main", "padding")).toBe("24px clamp(24px,4vw,56px) clamp(24px,4vw,56px)");
   });
 });
 

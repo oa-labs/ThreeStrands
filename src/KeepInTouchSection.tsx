@@ -78,24 +78,21 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   return <section className="contact-keep-in-touch" aria-label="Keep in Touch">
-    <header><h2>Keep in Touch</h2>{busy ? <LoaderCircle className="spin" size={14} aria-label="Saving" /> : saved ? <span className="contact-kit-saved" aria-live="polite"><Check size={13} />Saved</span> : null}</header>
-    <div className="contact-kit-controls">
-      <label>Frequency
-        <select value={choice} disabled={busy} onChange={(event) => chooseFrequency(event.target.value as FrequencyChoice)}>
-          <option value="off">Off</option>
-          {KEEP_IN_TOUCH_FREQUENCIES.map((item) => <option key={item.days} value={item.days}>{item.label}</option>)}
-          <option value="custom">Custom…</option>
-        </select>
+    <header><h2>Keep in Touch</h2>
+      <select aria-label="Frequency" value={choice} disabled={busy} onChange={(event) => chooseFrequency(event.target.value as FrequencyChoice)}>
+        <option value="off">Off</option>
+        {KEEP_IN_TOUCH_FREQUENCIES.map((item) => <option key={item.days} value={item.days}>{item.label}</option>)}
+        <option value="custom">Custom…</option>
+      </select>
+      {busy ? <LoaderCircle className="spin" size={14} aria-label="Saving" /> : saved ? <span className="contact-kit-saved" aria-live="polite"><Check size={13} />Saved</span> : null}</header>
+    {choice === "custom" ? <div className="contact-kit-controls">
+      <label>Every N Days
+        <input type="number" inputMode="numeric" min={1} max={MAX_KEEP_IN_TOUCH_DAYS} value={customDays} disabled={busy}
+          onChange={(event) => setCustomDays(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyCustom(); } }} />
       </label>
-      {choice === "custom" ? <>
-        <label>Every N Days
-          <input type="number" inputMode="numeric" min={1} max={MAX_KEEP_IN_TOUCH_DAYS} value={customDays} disabled={busy}
-            onChange={(event) => setCustomDays(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyCustom(); } }} />
-        </label>
-        <button type="button" className="contact-primary-button" disabled={busy} onClick={applyCustom}>Set Frequency</button>
-      </> : null}
-    </div>
+      <button type="button" className="contact-primary-button" disabled={busy} onClick={applyCustom}>Set Frequency</button>
+    </div> : null}
     {interval !== null && profile.keepInTouchDueAt ? <>
       <p className="contact-kit-status" role="status">
         {isSnoozeActive(profile) ? `Snoozed until ${formatKeepInTouchDate(profile.keepInTouchDueAt)}` : describeDue(profile.keepInTouchDueAt)}

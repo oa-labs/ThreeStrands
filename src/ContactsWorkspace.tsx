@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type TextareaHTMLAttributes } from "react";
-import { AlertCircle, Check, ChevronDown, ContactRound, Heart, LoaderCircle, Plus, Search, Sparkles, Trash2, UserRound } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type TextareaHTMLAttributes } from "react";
+import { AlertCircle, Check, ContactRound, Heart, LoaderCircle, Plus, Search, Sparkles, Trash2, UserRound } from "lucide-react";
 import { ContactAddressField, ContactLinksField } from "./ContactAddressField";
 import { mailClient } from "./data/client";
 import type { ContactFieldSuggestion, ContactProfile, ContactTimelineItem, SaveContactRequest } from "./domain";
@@ -7,6 +7,7 @@ import { readAiFeatures, readAiRequestConfig } from "./aiSettings";
 import { errorMessage } from "./errors";
 import { PanelResizeHandle, useContactListWidth } from "./PanelResizeHandle";
 import { KeepInTouchSection } from "./KeepInTouchSection";
+import { ContextSectionHeader, RecentEmailsSection } from "./ContextSections";
 import { KEEP_IN_TOUCH_FREQUENCIES, KEEP_IN_TOUCH_GROUPS, UPCOMING_BIRTHDAY_DAYS, describeBirthday, describeDue, formatKeepInTouchDate, frequencyLabel, isKeepInTouchDue, keepInTouchStatus, lastTouchAt, nextBirthday } from "./keepInTouch";
 
 import type { ContactsView } from "./contactsView";
@@ -35,6 +36,9 @@ const suggestionHasDistinctEvidence = (item:ContactFieldSuggestion) => item.exce
 // overwrite or extend what is already there.
 const CONTACT_ENRICH_FIELDS:ContactFieldSuggestion["field"][]=["displayName","role","company","location","bio","link"];
 const enrichFieldIsEmpty=(draft:SaveContactRequest,field:ContactFieldSuggestion["field"])=>field==="link"?draft.links.length===0:!(draft[field]??"").trim();
+// The rail is the contact page's only home for history, so it shows more rows
+// than the email sidebar before "Show more".
+const CONTACT_RECENT_EMAIL_ROWS = 8;
 const photoUrl = (value:string|null) => value ? `data:image/jpeg;base64,${value}` : null;
 async function encodePhoto(file:File):Promise<string>{
   const bitmap=await createImageBitmap(file); const scale=Math.min(1,160/Math.max(bitmap.width,bitmap.height));
@@ -109,6 +113,9 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,ac
   const unsaved=adding||(!!profile&&formSnapshot(draft)!==formSnapshot(draftFrom(profile)));
   const showField=(field:OptionalField)=>adding||revealedFields.includes(field)||optionalFieldHasValue(draft,field)||(!!profile&&optionalFieldHasValue(draftFrom(profile),field));
   const hiddenFields=OPTIONAL_FIELDS.filter(item=>!showField(item.field));
+  // Reference material and AI help sit in a rail beside the form, like the
+  // context panel beside an open email.
+  const showRail=!!profile&&(aiEnabled||timeline.length>0);
   // A suggestion disappears the moment its field is filled in, so one can
   // never overwrite typing the user did while enrichment was running.
   const visibleSuggestions=suggestions.filter(item=>enrichFieldIsEmpty(draft,item.field));
@@ -141,8 +148,8 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,ac
         {view==="keepInTouch"&&!kitGroups.reminders.length&&!kitGroups.birthdays.length?<p className="contacts-empty">{needle?"No reminders match this search.":"No keep-in-touch reminders yet. Choose a frequency on a contact, or use Select in All Contacts to set one for several people at once."}</p>:null}
       </aside></div>
       <section className="contact-profile-panel" aria-label="Contact details">
-        {adding||profile?<>
-          <div className="contact-profile-top"><div className="contact-identity"><label className="contact-avatar large" title="Contact photo">{avatar?<img src={avatar} alt=""/>:<span>{initial||<UserRound/>}</span>}<input type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" aria-label="Upload contact photo" onChange={async event=>{const file=event.target.files?.[0];if(!file)return;try{setField("photoData",await encodePhoto(file));}catch(reason){setError(errorMessage(reason));}}}/></label><div><input className="contact-name-input" aria-label="Name" placeholder="Name" value={draft.displayName??""} onChange={event=>setField("displayName",event.target.value)}/><input aria-label="Role" placeholder="Role or title" value={draft.role??""} onChange={event=>setField("role",event.target.value)}/>{scopedProfile?<p className="contact-identity-meta"><span>{`${scopedProfile.sentCount} sent · ${scopedProfile.receivedCount} received`}</span>{lastContact?<span>Last contact {formatKeepInTouchDate(lastContact)}</span>:null}</p>:null}</div></div>
+        {adding||profile?<div className={`contact-profile-layout${showRail?" has-rail":""}`}><div className="contact-profile-main"><div className="contact-profile-column">
+          <div className="contact-profile-top"><div className="contact-identity"><label className="contact-avatar large" title="Contact photo">{avatar?<img src={avatar} alt=""/>:<span>{initial||<UserRound/>}</span>}<input type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" aria-label="Upload contact photo" onChange={async event=>{const file=event.target.files?.[0];if(!file)return;try{setField("photoData",await encodePhoto(file));}catch(reason){setError(errorMessage(reason));}}}/></label><div><input className="contact-name-input" aria-label="Name" placeholder="Name" value={draft.displayName??""} onChange={event=>setField("displayName",event.target.value)}/><input aria-label="Role" placeholder="Role or title" value={draft.role??""} onChange={event=>setField("role",event.target.value)}/>{scopedProfile?<p className="contact-identity-meta">{[`${scopedProfile.sentCount} sent`,`${scopedProfile.receivedCount} received`,lastContact?`Last contact ${formatKeepInTouchDate(lastContact)}`:null].filter(Boolean).join(" · ")}</p>:null}</div></div>
             <div className="contact-profile-actions">{confirmDelete?<div className="contact-delete-confirm"><span>Delete this profile?</span><button type="button" onClick={()=>void deleteProfile()}>Confirm</button><button type="button" onClick={()=>setConfirmDelete(false)}>Cancel</button></div>:<><button type="button" aria-label="Favorite contact" aria-pressed={draft.favorite} disabled={busy} onClick={()=>void toggleFavorite()}><Heart size={17} fill={draft.favorite?"currentColor":"none"}/></button>{profile&&!profile.id.startsWith("derived:")?<button type="button" aria-label="Delete contact" onClick={()=>void deleteProfile()}><Trash2 size={17}/></button>:null}</>}</div></div>
           <div ref={editorRef} className="contact-editor-grid"><ContactAddressField addresses={draft.addresses} disabled={busy} onChange={addresses=>setField("addresses",addresses)}/>
             {showField("company")?<label data-contact-field="company">Company<input value={draft.company??""} onChange={event=>setField("company",event.target.value)}/></label>:null}
@@ -154,10 +161,13 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,ac
             {hiddenFields.length?<div className="contact-add-fields">{hiddenFields.map(item=><button type="button" key={item.field} aria-label={`Add ${item.label.toLocaleLowerCase()}`} onClick={()=>revealField(item.field)}><Plus size={13}/>{item.label}</button>)}</div>:null}
           </div>
           {profile?<KeepInTouchSection profile={profile} onChanged={onSectionChanged}/>:null}
-          {aiEnabled&&profile?<section className="contact-enrichment"><header><div><Sparkles size={14}/><h2>AI suggestions</h2></div><button type="button" disabled={enriching} onClick={()=>void enrich()}>{enriching?<LoaderCircle className="spin" size={14}/>:null}Enhance with AI</button></header>{enrichNotice?<p className={enrichNotice.failed?"contact-enrichment-notice contacts-error":"contact-enrichment-notice"} role={enrichNotice.failed?"alert":"status"}>{enrichNotice.text}</p>:null}{visibleSuggestions.map((item,index)=><article key={`${item.field}-${index}`}><div><span className="contact-suggestion-field">{CONTACT_SUGGESTION_FIELD_LABELS[item.field]}</span><strong>{item.value}</strong>{suggestionHasDistinctEvidence(item)?<div className="contact-suggestion-evidence"><span>From the email</span><blockquote>{item.excerpt}</blockquote></div>:null}<button type="button" className="contact-suggestion-source" onClick={()=>onOpenThread(item.sourceThreadId)}>View source email</button></div><button type="button" className="contact-suggestion-apply" onClick={()=>void applySuggestion(item)}>Use suggestion</button></article>)}{emailsReviewed>0?<p className="contact-enrichment-progress">{emailsReviewed} {emailsReviewed===1?"email":"emails"} reviewed</p>:null}{moreEmailsAvailable?<button type="button" className="contact-enrichment-more" disabled={enriching} onClick={()=>void enrich(true)}>Search more emails</button>:null}</section>:null}
-          {timeline.length?<section className="contact-timeline"><h2>Recent emails</h2>{timeline.map(item=><button type="button" key={item.threadId} onClick={()=>onOpenThread(item.threadId)}><span><strong>{item.subject||"(no subject)"}</strong><small>{item.contactEmail} · {new Date(item.sentAt).toLocaleDateString()}</small></span><ChevronDown size={14}/></button>)}{timelineHasMore?<button type="button" className="contact-load-more" onClick={()=>void loadOlder()}>Load older emails</button>:null}</section>:null}
           {unsaved?<div className="contact-save-bar" role="region" aria-label="Save changes"><span>{adding?"New contact":"Unsaved changes"}</span><div><button type="button" disabled={busy} onClick={discard}>Discard</button><button type="button" className="contact-primary-button" disabled={busy} onClick={()=>void save()}><Check size={15}/>Save contact</button></div></div>:null}
-        </>:<div className="contacts-empty-state"><ContactRound size={30}/><p>Select a contact to see their details</p></div>}
+          </div></div>
+          {showRail?<aside className="contact-context-rail" aria-label="Contact context">
+            {aiEnabled?<ContactEnrichmentCard suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}
+            {timeline.length?<RecentEmailsSection items={timeline} limit={CONTACT_RECENT_EMAIL_ROWS} onOpenThread={onOpenThread} onLoadOlder={timelineHasMore?()=>void loadOlder():undefined}/>:null}
+          </aside>:null}
+        </div>:<div className="contacts-empty-state"><ContactRound size={30}/><p>Select a contact to see their details</p></div>}
       </section>
     </div>
   </section>;
@@ -179,4 +189,25 @@ function GrowingTextarea(props:TextareaHTMLAttributes<HTMLTextAreaElement>){
   const ref=useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(()=>{const element=ref.current;if(!element)return;element.style.height="auto";element.style.height=`${element.scrollHeight+element.offsetHeight-element.clientHeight}px`;},[props.value]);
   return <textarea ref={ref} rows={2} {...props}/>;
+}
+
+/**
+ * AI profile suggestions, laid out like the Brief card in the email context
+ * panel. Nothing is written until the user picks "Use suggestion".
+ */
+function ContactEnrichmentCard({suggestions,notice,enriching,emailsReviewed,moreAvailable,onEnrich,onApply,onOpenThread}:{suggestions:ContactFieldSuggestion[];notice:{text:string;failed:boolean}|null;enriching:boolean;emailsReviewed:number;moreAvailable:boolean;onEnrich(searchMore:boolean):void;onApply(item:ContactFieldSuggestion):void;onOpenThread(id:string):void}){
+  const headingId=useId();
+  return <section className="context-section contact-enrichment" aria-labelledby={headingId}>
+    <ContextSectionHeader title="Profile Suggestions" titleId={headingId} actions={<button type="button" className="thread-assist-run" disabled={enriching} onClick={()=>onEnrich(false)}>{enriching?<LoaderCircle className="spin" size={12}/>:<Sparkles size={12}/>}Enhance with AI</button>}/>
+    {enriching?<p className="context-status">Reading emails…</p>:!notice&&!suggestions.length&&emailsReviewed===0?<p className="context-status">Fill empty fields from your emails with this person. Nothing changes until you use a suggestion.</p>:null}
+    {notice?<p className={notice.failed?"context-status contacts-error":"context-status"} role={notice.failed?"alert":"status"}>{notice.text}</p>:null}
+    {suggestions.map((item,index)=><article key={`${item.field}-${index}`} className="contact-suggestion">
+      <span className="contact-suggestion-field">{CONTACT_SUGGESTION_FIELD_LABELS[item.field]}</span>
+      <strong>{item.value}</strong>
+      {suggestionHasDistinctEvidence(item)?<div className="contact-suggestion-evidence"><span>From the email</span><blockquote>{item.excerpt}</blockquote></div>:null}
+      <div className="contact-suggestion-actions"><button type="button" className="contact-suggestion-apply" onClick={()=>onApply(item)}>Use suggestion</button><button type="button" className="context-link-button" onClick={()=>onOpenThread(item.sourceThreadId)}>View source email</button></div>
+    </article>)}
+    {emailsReviewed>0?<p className="context-section-note">{emailsReviewed} {emailsReviewed===1?"email":"emails"} reviewed</p>:null}
+    {moreAvailable?<button type="button" className="context-link-button" disabled={enriching} onClick={()=>onEnrich(true)}>Search more emails</button>:null}
+  </section>;
 }
