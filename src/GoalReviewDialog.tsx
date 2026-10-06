@@ -67,7 +67,7 @@ export function GoalReviewDialog({
             })}
           </ul>
         </> : <p className="goal-review-intro">All caught up. Every goal from a past period is settled.</p>}
-        <div className="modal-form-actions"><button type="button" onClick={onClose}>{pending.length ? "Finish later" : "Done"}</button></div>
+        <div className="modal-form-actions"><button type="button" className="btn btn-primary" onClick={onClose}>{pending.length ? "Finish later" : "Done"}</button></div>
       </div>
     </Modal>
   );

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Goal } from "./domain";
 import { TaskEditorDialog } from "./TaskEditorDialog";
+import { expectPrimaryActionLast } from "./test/sharedButtons";
 
 describe("TaskEditorDialog", () => {
   afterEach(cleanup);
@@ -23,6 +24,7 @@ describe("TaskEditorDialog", () => {
     fireEvent.change(title, { target: { value: "Set up the client website" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
     fireEvent.change(screen.getByLabelText("Due Date"), { target: { value: "2026-09-25" } });
+    expectPrimaryActionLast(screen.getByRole("button", { name: "Add Task" }).parentElement!);
     fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({

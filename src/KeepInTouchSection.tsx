@@ -91,7 +91,7 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
           onChange={(event) => setCustomDays(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyCustom(); } }} />
       </label>
-      <button type="button" className="contact-primary-button" disabled={busy} onClick={applyCustom}>Set Frequency</button>
+      <button type="button" className="btn" disabled={busy} onClick={applyCustom}>Set Frequency</button>
     </div> : null}
     {interval !== null && profile.keepInTouchDueAt ? <>
       <p className="contact-kit-status" role="status">

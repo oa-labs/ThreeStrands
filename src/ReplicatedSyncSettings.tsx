@@ -480,7 +480,7 @@ function SetupChoice({
     <>
       <button
         type="button"
-        className="primary-action"
+        className="btn-primary"
         disabled={busy || noConnector || spacePresence === "checking"}
         onClick={() => beginGenesis(false)}
       >
@@ -514,7 +514,7 @@ function SetupChoice({
       ) : null}
       <button
         type="button"
-        className={existing ? "primary-action" : "account-action-button"}
+        className={existing ? "btn-primary" : "account-action-button"}
         disabled={busy || !phraseCheck?.valid || noConnector}
         onClick={joinWithPhrase}
       >
@@ -624,7 +624,7 @@ function VerifyStep({ enrollmentStatus, operation }: { enrollmentStatus: Enrollm
         </p>
         <p className="sync-fingerprint">This device: {enrollmentStatus.fingerprint}</p>
         <p className="sync-fingerprint">Approver: {enrollmentStatus.approverFingerprint}</p>
-        <button type="button" className="primary-action" disabled={busy} onClick={() => actFor("confirm", () => replicatedSyncConfirmEnrollment(requestId))}>
+        <button type="button" className="btn-primary" disabled={busy} onClick={() => actFor("confirm", () => replicatedSyncConfirmEnrollment(requestId))}>
           Confirm — fingerprints match
         </button>
         <InlineStatus operation={operation} for="confirm" />
@@ -706,7 +706,7 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
           <span className="account-card-email">Requested {new Date(request.createdAt).toLocaleString()}</span>
         </div>
         {reviewing ? null : (
-          <button type="button" className="primary-action" disabled={busy} aria-expanded={false} onClick={() => setReviewing(true)}>
+          <button type="button" className="btn-primary" disabled={busy} aria-expanded={false} onClick={() => setReviewing(true)}>
             Review…
           </button>
         )}
@@ -735,7 +735,7 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
           ) : null}
           <span className="settings-inline-confirm-actions">
             <button type="button" disabled={busy} onClick={() => setReviewing(false)}>Cancel</button>
-            <button type="button" className="primary-action" disabled={busy} onClick={approve}>Codes match — approve</button>
+            <button type="button" className="btn-primary" disabled={busy} onClick={approve}>Codes match — approve</button>
           </span>
         </div>
       ) : null}
@@ -795,7 +795,7 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
           </label>
           <span className="settings-inline-confirm-actions">
             <button type="button" disabled={busy} onClick={() => setRenaming(false)}>Cancel</button>
-            <button type="submit" className="primary-action" disabled={busy}>Save</button>
+            <button type="submit" className="btn-primary" disabled={busy}>Save</button>
           </span>
         </form>
       ) : null}

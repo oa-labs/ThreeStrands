@@ -385,6 +385,14 @@ button { color: inherit; }
 }
 .btn:hover { border-color: var(--accent); }
 .btn:disabled { opacity: .55; cursor: default; }
+.btn-sm { height: var(--control-h-sm); padding: 0 9px; font-size: var(--type-xs); }
+/* One primary look everywhere: the --primary fill, never a solid accent. */
+.btn-primary { border-color: var(--primary-border); background: var(--primary); color: var(--text); }
+.btn-danger { border-color: color-mix(in srgb, var(--error) 50%, var(--border-strong)); color: var(--error); }
+.btn-danger:hover { border-color: var(--error); }
+/* Settings still shapes its buttons with `.settings-section button`; keep the
+   primary fill winning there until those buttons move to .btn. */
+.settings-section .btn-primary { border-color: var(--primary-border); background: var(--primary); }
 .btn-icon {
   display: grid;
   place-items: center;
@@ -1786,13 +1794,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .task-card-main small.task-card-goal { max-width: 100%; overflow: hidden; color: var(--secondary); text-overflow: ellipsis; white-space: nowrap; }
 .goal-dialog-footer { align-items: center; }
 .goal-delete-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.goal-dialog-footer button { padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; font-size: var(--type-xs); cursor: pointer; }
-.goal-dialog-footer .goal-delete-button { border-color: color-mix(in srgb, var(--error) 50%, var(--border-strong)); color: var(--error); }
 .goal-stale { color: var(--warning); font-weight: 650; }
 .goal-review-prompt { display: grid; gap: 8px; margin: 0 0 12px; padding: 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); color: var(--text); font-size: var(--type-sm); }
 .goal-review-actions { display: flex; gap: 6px; }
-.goal-review-actions button, .goal-review-choices button { padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; font-size: var(--type-xs); cursor: pointer; }
-.goal-review-actions .goal-review-button { border-color: var(--primary-border); background: var(--primary); }
+.goal-review-choices button { padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; font-size: var(--type-xs); cursor: pointer; }
 .goal-review-choices button:disabled { cursor: default; opacity: .55; }
 .goal-review-intro { margin: 0; color: var(--secondary); font-size: var(--type-sm); }
 .goal-review-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
@@ -1817,10 +1822,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .task-quick-add { display: grid; gap: 9px; margin: 14px; padding: 13px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); }
 .task-quick-add label { color: var(--muted); font-size: var(--type-xs); letter-spacing: .08em; text-transform: uppercase; }
 .task-quick-add input, .task-quick-add select { min-width: 0; width: 100%; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; }
-.task-quick-add > div { display: flex; gap: 8px; }
-.task-quick-add button { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; cursor: pointer; }
-.task-quick-add button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-.task-quick-add button:disabled { opacity: .5; cursor: default; }
+.task-quick-add > div { display: flex; justify-content: flex-end; gap: 8px; }
 .tasks-workspace .tasks-list { padding: 20px 16px 40px; }
 .tasks-workspace .tasks-list section + section { margin-top: 28px; }
 .tasks-workspace .task-card { min-height: 66px; margin: 7px 0; border-radius: var(--radius-md); }
@@ -1918,12 +1920,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
    like they wait on it. */
 .contact-save-bar { position:sticky; bottom:0; z-index:1; display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:20px; padding:10px 14px; border:1px solid var(--border-strong); border-radius:var(--radius-md); color:var(--secondary); background:var(--raised); box-shadow:0 4px 16px var(--shadow); font-size:var(--type-sm); }
 .contact-save-bar > div { display:flex; align-items:center; gap:8px; }
-.contact-save-bar > div > button:not(.contact-primary-button) { min-height:34px; padding:0 12px; border:0; border-radius:var(--radius-sm); color:var(--secondary); background:transparent; font:inherit; cursor:pointer; }
-.contact-save-bar > div > button:not(.contact-primary-button):hover { color:var(--text); background:var(--hover); }
-.contact-save-bar .contact-primary-button { border-color:var(--accent); color:#fff; background:var(--accent); }
-.contact-primary-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:34px; padding:0 12px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); color:var(--text); background:var(--hover); font:inherit; cursor:pointer; }
-.contact-primary-button:hover { border-color:var(--accent); }
-.contact-primary-button:disabled { opacity:.55; cursor:wait; }
 /* The sections below the form share one heading style and divider. */
 .contact-keep-in-touch { margin-top:0; padding:20px 0; border-top:1px solid var(--border); }
 .contact-keep-in-touch h2 { margin:0; font-size:var(--type-ui); font-weight:600; }
@@ -2258,9 +2254,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .modal-form-evidence blockquote { max-height: 120px; margin: 0; padding: 8px 10px; overflow: auto; border-left: 2px solid var(--border-strong); background: var(--input); color: var(--text); white-space: pre-wrap; }
 .modal-form .form-error { margin: 0; }
 .modal-form-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 3px; }
-.modal-form-actions button { padding: 7px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--hover); color: var(--text); cursor: pointer; font: inherit; }
-.modal-form-actions button[type="submit"] { border-color: var(--primary-border); background: var(--primary); }
-.modal-form-actions button:disabled { cursor: default; opacity: .55; }
 .palette-search { display: flex; align-items: center; gap: 10px; margin: 8px 12px; padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); }
 .command-list { max-height: 48vh; overflow: auto; padding: 5px 8px 10px; }
 .command-list button { width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 10px; border: 0; border-radius: var(--radius-sm); background: transparent; text-align: left; cursor: pointer; }
@@ -2322,9 +2315,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .snippet-field input, .snippet-field textarea { color: var(--text); background: var(--input); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 10px; outline: none; font: inherit; resize: vertical; }
 .snippet-field input:focus, .snippet-field textarea:focus { border-color: var(--accent); }
 .snippet-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.snippet-editor-actions button { padding: 7px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--hover); cursor: pointer; }
-.snippet-editor-actions button[type="submit"] { border-color: var(--accent); background: var(--accent); color: var(--accent-contrast); }
-.snippet-editor-actions button:disabled { opacity: .5; cursor: default; }
 .accounts-manager { width: 100%; padding: 10px 20px 24px; }
 .accounts-manager-header { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; width: 100%; }
 .accounts-manager-header > div { min-width: 0; flex: 1 1 420px; }
@@ -2354,7 +2344,7 @@ form.split-inbox-add select {
   background-repeat: no-repeat;
   background-position: right 12px center;
 }
-.settings-section button.settings-add-account { display: inline-flex; flex-shrink: 0; align-items: center; gap: 7px; border-color: var(--primary-border); background: var(--primary); white-space: nowrap; }
+.settings-section button.settings-add-account { display: inline-flex; flex-shrink: 0; align-items: center; gap: 7px; white-space: nowrap; }
 .accounts-config-notice strong { display: block; font-size: var(--type-ui); }
 .accounts-config-notice p { margin: 4px 0 0; color: var(--muted); }
 .accounts-empty { display: grid; justify-items: center; gap: 5px; width: 100%; padding: 28px 16px; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); text-align: center; }
@@ -2399,7 +2389,7 @@ form.split-inbox-add select {
 .account-status.needs_reauth { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
 .accounts-footnote { width: 100%; margin: 2px 0 0; color: var(--muted); font-size: var(--type-sm); line-height: 1.45; }
 .accounts-list-actions { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; margin-left: auto; }
-.settings-section button.account-reconnect { flex-shrink: 0; padding: 5px 10px; border-color: var(--primary-border); background: var(--primary); font-size: var(--type-caption); white-space: nowrap; }
+.settings-section button.account-reconnect { flex-shrink: 0; padding: 5px 10px; font-size: var(--type-caption); white-space: nowrap; }
 .accounts-manager .accounts-list-actions button { display: inline-flex; align-items: center; padding: 5px 8px; border: 0; border-radius: var(--radius-sm); color: var(--muted); background: transparent; font-size: var(--type-caption); cursor: pointer; }
 .accounts-manager .accounts-list-actions button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .accounts-manager .accounts-list-actions button:disabled { opacity: .4; }
@@ -2417,9 +2407,6 @@ form.split-inbox-add select {
 .unsubscribe-list { display: block; margin-top: 4px; color: var(--muted); font-size: var(--type-caption); }
 .unsubscribe-explanation { color: var(--muted); font-size: var(--type-ui); }
 .unsubscribe-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
-.unsubscribe-actions button { padding: 8px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--hover); cursor: pointer; }
-.unsubscribe-actions button:disabled { opacity: .5; cursor: default; }
-.unsubscribe-actions .primary-action { border-color: var(--primary-border); background: var(--primary); }
 
 .settings-modal { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(940px, calc(100vw - 40px)); height: min(760px, 78vh); max-height: none; }
 .settings-body { display: grid; grid-template-columns: 205px minmax(0, 1fr); min-height: 0; }
@@ -2471,8 +2458,8 @@ form.split-inbox-add select {
   background-position: right 12px center;
 }
 .settings-field select { width: 100%; }
-.settings-section button { padding: 7px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--hover); cursor: pointer; font-size: var(--type-ui); }
-.settings-section button:disabled { opacity: .5; cursor: default; }
+.settings-section button:where(:not(.btn)) { padding: 7px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--hover); cursor: pointer; font-size: var(--type-ui); }
+.settings-section button:where(:not(.btn)):disabled { opacity: .5; cursor: default; }
 .settings-section .settings-transfer-action { display: inline-flex; align-items: center; gap: 6px; }
 .settings-section .ai-connection-test { display: inline-flex; align-items: center; gap: 6px; }
 .settings-hint { color: var(--muted); font-size: var(--type-caption); }

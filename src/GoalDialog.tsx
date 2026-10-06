@@ -211,12 +211,12 @@ export function GoalDialog({
           <span>Changes save automatically</span>
           {confirmingDelete ? <span className="goal-delete-confirm">
             Delete this goal? Its tasks stay and are unlinked.
-            <button type="button" className="goal-delete-button" disabled={busy} onClick={() => void remove()}>Delete</button>
-            <button type="button" onClick={() => setConfirmingDelete(false)}>Keep</button>
-          </span> : <button type="button" className="goal-delete-button" onClick={() => setConfirmingDelete(true)}>Delete goal</button>}
+            <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => void remove()}>Delete</button>
+            <button type="button" className="btn btn-sm" onClick={() => setConfirmingDelete(false)}>Keep</button>
+          </span> : <button type="button" className="btn btn-sm btn-danger" onClick={() => setConfirmingDelete(true)}>Delete goal</button>}
         </footer> : <div className="modal-form-actions">
-          <button type="button" onClick={onClose}>Cancel</button>
-          <button type="submit" disabled={busy || !drafts.title.trim() || !drafts.accountId}>{busy ? "Adding…" : "Add goal"}</button>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !drafts.title.trim() || !drafts.accountId}>{busy ? "Adding…" : "Add goal"}</button>
         </div>}
       </form>
     </Modal>

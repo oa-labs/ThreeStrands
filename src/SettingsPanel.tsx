@@ -967,7 +967,7 @@ function AccountsSettings({
         </div>
         <button
           type="button"
-          className="primary-action settings-add-account"
+          className="btn-primary settings-add-account"
           disabled={busyEmail !== null}
           onClick={() => runFor("__add__", onAdd)}
         >
@@ -1017,7 +1017,7 @@ function AccountsSettings({
                 {account.status === "needs_reauth" ? (
                   <button
                     type="button"
-                    className="account-action-button account-reconnect"
+                    className="account-action-button account-reconnect btn-primary"
                     disabled={busyEmail !== null}
                     onClick={() => runFor(`reconnect:${account.email}`, () => onReconnect(account.email))}
                   >
@@ -1304,7 +1304,7 @@ export function CalendarAccountsSettings({
         </div>
         <button
           type="button"
-          className="primary-action settings-add-account"
+          className="btn-primary settings-add-account"
           disabled={busyEmail !== null}
           onClick={() => runFor("__add__", onAdd)}
         >
@@ -1347,7 +1347,7 @@ export function CalendarAccountsSettings({
                 {account.status === "needs_reauth" ? (
                   <button
                     type="button"
-                    className="account-action-button account-reconnect"
+                    className="account-action-button account-reconnect btn-primary"
                     disabled={busyEmail !== null}
                     onClick={() => runFor(`reconnect:${account.email}`, () => onReconnect(account.email))}
                   >
@@ -1593,7 +1593,7 @@ export function SplitInboxesSettings({
             onChange={(event) => setMatchValue(event.target.value)}
           />
         )}
-        <button type="submit" className="primary-action" disabled={creating || !name.trim() || !matchValue.trim() || !accountId}>
+        <button type="submit" className="btn-primary" disabled={creating || !name.trim() || !matchValue.trim() || !accountId}>
           <Plus size={15} />
           {creating ? "Adding…" : "Add Split Inbox"}
         </button>
@@ -1685,7 +1685,7 @@ export function SnippetsSettings({
             <code>{"{first_name}"}</code> to insert the recipient's first name.
           </p>
         </div>
-        <button type="button" className="primary-action" onClick={() => setEditorTarget("new")}>
+        <button type="button" className="btn-primary" onClick={() => setEditorTarget("new")}>
           <Plus size={15} /> Add Snippet
         </button>
       </div>

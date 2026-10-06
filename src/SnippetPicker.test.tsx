@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Snippet } from "./domain";
 import { SnippetEditor } from "./SnippetPicker";
+import { expectPrimaryActionLast } from "./test/sharedButtons";
 
 describe("SnippetEditor", () => {
   afterEach(() => {
@@ -16,6 +17,11 @@ describe("SnippetEditor", () => {
     );
     return { onUpdate, textarea: screen.getByRole("textbox", { name: "Body" }) as HTMLTextAreaElement };
   }
+
+  it("ends its actions with Save as the primary button", () => {
+    renderEditor("Hello");
+    expectPrimaryActionLast(screen.getByRole("button", { name: "Save" }).parentElement!);
+  });
 
   it("edits an HTML snippet body as plain text with its line breaks and spacing", () => {
     const { textarea } = renderEditor("Hi {first_name},<br>  Thanks &amp; regards<div>Ada</div>");

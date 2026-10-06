@@ -55,7 +55,7 @@ export function FrontierConflictEditor({
           </label>
         ))}
       </fieldset>
-      <button type="button" className="primary-action" disabled={disabled || !selectedOperationId} onClick={resolve}>
+      <button type="button" className="btn-primary" disabled={disabled || !selectedOperationId} onClick={resolve}>
         Resolve conflict
       </button>
     </div>

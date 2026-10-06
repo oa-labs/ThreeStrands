@@ -104,8 +104,8 @@ export function CreateCalendarEventDialog({
         <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="modal-form-actions">
-          <button type="button" onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="submit" disabled={saving || writable.length === 0}>{saving ? "Creating…" : "Create event"}</button>
+          <button type="button" className="btn" onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={saving || writable.length === 0}>{saving ? "Creating…" : "Create event"}</button>
         </div>
       </form>
     </Modal>

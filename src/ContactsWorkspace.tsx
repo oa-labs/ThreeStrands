@@ -161,7 +161,7 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,ac
             {hiddenFields.length?<div className="contact-add-fields">{hiddenFields.map(item=><button type="button" key={item.field} aria-label={`Add ${item.label.toLocaleLowerCase()}`} onClick={()=>revealField(item.field)}><Plus size={13}/>{item.label}</button>)}</div>:null}
           </div>
           {profile?<KeepInTouchSection profile={profile} onChanged={onSectionChanged}/>:null}
-          {unsaved?<div className="contact-save-bar" role="region" aria-label="Save changes"><span>{adding?"New contact":"Unsaved changes"}</span><div><button type="button" disabled={busy} onClick={discard}>Discard</button><button type="button" className="contact-primary-button" disabled={busy} onClick={()=>void save()}><Check size={15}/>Save contact</button></div></div>:null}
+          {unsaved?<div className="contact-save-bar" role="region" aria-label="Save changes"><span>{adding?"New contact":"Unsaved changes"}</span><div><button type="button" className="btn" disabled={busy} onClick={discard}>Discard</button><button type="button" className="btn btn-primary" disabled={busy} onClick={()=>void save()}><Check size={15}/>Save contact</button></div></div>:null}
           </div></div>
           {showRail?<aside className="contact-context-rail" aria-label="Contact context">
             {aiEnabled?<ContactEnrichmentCard suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}

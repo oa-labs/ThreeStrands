@@ -8,3 +8,11 @@ export function expectSharedButtons(container: Element) {
     expect(button.matches(".btn, .btn-icon, .segmented > button"), button.outerHTML).toBe(true);
   }
 }
+
+/** A form's action row uses the shared buttons and ends with its single primary action. */
+export function expectPrimaryActionLast(row: Element) {
+  expectSharedButtons(row);
+  const buttons = [...row.querySelectorAll("button")];
+  expect(buttons.filter((button) => button.classList.contains("btn-primary"))).toHaveLength(1);
+  expect(buttons.at(-1)).toHaveClass("btn-primary");
+}

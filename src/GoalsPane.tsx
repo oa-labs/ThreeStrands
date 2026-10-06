@@ -107,8 +107,8 @@ export const GoalsPane = forwardRef<GoalsPaneHandle, {
       {toReview.length && deferredUntil !== currentQuarter ? <div className="goal-review-prompt" role="status">
         <span>{toReview.length === 1 ? "1 goal" : `${toReview.length} goals`} from a past period {toReview.length === 1 ? "needs" : "need"} review.</span>
         <span className="goal-review-actions">
-          <button type="button" className="goal-review-button" onClick={onReview}>Review</button>
-          <button type="button" onClick={deferReview}>Later</button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={onReview}>Review</button>
+          <button type="button" className="btn btn-sm" onClick={deferReview}>Later</button>
         </span>
       </div> : null}
       <ul className="goal-list goal-filters">

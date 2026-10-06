@@ -158,7 +158,7 @@ export function TaskEditorDialog({
         <label><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional details" /></label>
         {evidence ? <div className="modal-form-evidence"><span>Evidence</span><blockquote>{evidence}</blockquote></div> : null}
         {error ? <p className="form-error" role="alert">{error}</p> : null}
-        <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={busy || !title.trim()}>{busy ? "Saving…" : submitLabel}</button></div>
+        <div className="modal-form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || !title.trim()}>{busy ? "Saving…" : submitLabel}</button></div>
       </form>
     </Modal>
   );

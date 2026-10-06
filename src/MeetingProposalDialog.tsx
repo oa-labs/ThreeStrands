@@ -67,7 +67,7 @@ export function MeetingProposalDialog({
         <label><span>Timezone</span><input value={timeZone} onChange={(event) => setTimeZone(event.target.value)} placeholder="America/New_York" /></label>
         <label><span>Location</span><input value={location} onChange={(event) => setLocation(event.target.value)} /></label>
         <div className="modal-form-evidence"><span>Evidence</span><blockquote>{proposal.evidence.excerpt}</blockquote></div>
-        <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={!title.trim()}>Save Proposal</button></div>
+        <div className="modal-form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={!title.trim()}>Save Proposal</button></div>
       </form>
     </Modal>
   );

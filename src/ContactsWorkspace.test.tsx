@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
-import { expectSharedButtons } from "./test/sharedButtons";
+import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
 
 vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),openAttachment:vi.fn()}}));
 
@@ -270,6 +270,7 @@ describe("ContactsWorkspace",()=>{
     await screen.findByDisplayValue("Jane Doe");
     fireEvent.click(screen.getByRole("button",{name:/New Contact/}));
     expect(screen.getByRole("region",{name:"Save changes"})).toHaveTextContent("New contact");
+    expectPrimaryActionLast(screen.getByRole("button",{name:"Save contact"}).parentElement!);
     expect(screen.getByLabelText("Company")).toBeInTheDocument();
     expect(screen.getByLabelText("Notes")).toBeInTheDocument();
     expect(screen.queryByRole("button",{name:"Add company"})).not.toBeInTheDocument();

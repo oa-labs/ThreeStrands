@@ -136,7 +136,7 @@ function AvailabilityRequestDialog({
         <label><span>Date</span><input ref={dateRef} type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value)} required /></label>
         <label><span>Duration</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{[...new Set([15, 30, 45, 60, 90, 120, durationMinutes])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value} minutes</option>)}</select></label>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
-        <div className="modal-form-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={loading}>{loading ? "Checking…" : "Check Schedule"}</button></div>
+        <div className="modal-form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={loading}>{loading ? "Checking…" : "Check Schedule"}</button></div>
       </form>
     </Modal>
   );

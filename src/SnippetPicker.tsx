@@ -177,8 +177,8 @@ export function SnippetEditor({
         </label>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="snippet-editor-actions">
-          <button type="button" onClick={onBack} disabled={busy}>{backLabel}</button>
-          <button type="submit" disabled={!name.trim() || !body.trim() || busy}>Save</button>
+          <button type="button" className="btn" onClick={onBack} disabled={busy}>{backLabel}</button>
+          <button type="submit" className="btn btn-primary" disabled={!name.trim() || !body.trim() || busy}>Save</button>
         </div>
       </form>
     </Modal>

@@ -3,7 +3,7 @@ import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { mailClient } from "./data/client";
-import { expectSharedButtons } from "./test/sharedButtons";
+import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
 import type { Goal, ThreadTask } from "./domain";
 import { formatPeriod, periodFor, shiftPeriod } from "./goals";
 
@@ -43,7 +43,8 @@ describe("TaskSidebar", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
-    expect(screen.getByRole("textbox", { name: "Task title" })).toBeInTheDocument();
+    const form = screen.getByRole("textbox", { name: "Task title" }).closest("form")!;
+    expectPrimaryActionLast(within(form).getByRole("button", { name: "Add task" }).parentElement!);
   });
 
   it("renders tasks and lets the user complete them", async () => {

@@ -89,6 +89,54 @@ describe("primary workspace header buttons", () => {
   });
 });
 
+describe("primary and form action buttons", () => {
+  const actionRows = [
+    ".modal-form-actions",
+    ".snippet-editor-actions",
+    ".task-quick-add",
+    ".contact-save-bar",
+    ".goal-dialog-footer",
+    ".goal-review-actions",
+    ".unsubscribe-actions",
+  ];
+
+  it("fills a primary button with --primary, the one primary look", () => {
+    expect(lastDeclaration(".btn-primary", "background")).toBe("var(--primary)");
+    expect(lastDeclaration(".btn-primary", "border-color")).toBe("var(--primary-border)");
+  });
+
+  it("never fills a button with the solid accent color", () => {
+    const accentFilled: string[] = [];
+    css.walkRules((rule) => {
+      const buttons = rule.selectors.filter((selector) => /(?<![\w-])button(?![\w-])|\.btn(?![\w-])|\.btn-|-button(?![\w-])|-action(?![\w-])/.test(selector));
+      if (!buttons.length) return;
+      rule.walkDecls(/^background(-color)?$/, (declaration) => {
+        if (declaration.value === "var(--accent)") accentFilled.push(buttons.join(", "));
+      });
+    });
+    expect(accentFilled).toEqual([]);
+  });
+
+  it("leaves form action buttons to the shared classes", () => {
+    const styled: string[] = [];
+    css.walkRules((rule) => {
+      for (const selector of rule.selectors) {
+        if (actionRows.some((row) => selector.includes(row)) && /\bbutton\b/.test(selector)) styled.push(selector);
+      }
+    });
+    expect(styled).toEqual([]);
+  });
+
+  it("keeps the Settings button rule from reshaping shared buttons", () => {
+    let blanket = false;
+    css.walkRules((rule) => {
+      if (rule.selectors.includes(".settings-section button")) blanket = true;
+    });
+    expect(blanket).toBe(false);
+    expect(lastDeclaration(".settings-section button:where(:not(.btn))", "padding")).toBe("7px 11px");
+  });
+});
+
 describe("task detail heading", () => {
   it("edits the title in the detail dialog at the compact heading size", () => {
     expect(lastDeclaration(".modal-form .task-detail-title-field input", "font-size")).toBe("var(--type-heading-sm)");

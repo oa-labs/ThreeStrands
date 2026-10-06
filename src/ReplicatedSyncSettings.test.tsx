@@ -69,8 +69,8 @@ describe("replicated sync setup choice", () => {
     expect(await screen.findByText(/Another device already set up a sync group/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create a new sync group" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Enter the recovery phrase" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Join with recovery phrase" })).toHaveClass("primary-action");
-    expect(screen.getByRole("button", { name: "Ask another device to approve this one" })).not.toHaveClass("primary-action");
+    expect(screen.getByRole("button", { name: "Join with recovery phrase" })).toHaveClass("btn-primary");
+    expect(screen.getByRole("button", { name: "Ask another device to approve this one" })).not.toHaveClass("btn-primary");
     expect(screen.getByRole("button", { name: "Paste a join code" })).toBeInTheDocument();
   });
 
@@ -104,8 +104,8 @@ describe("replicated sync setup choice", () => {
 
     expect(await screen.findByText(/No sync group found here yet/)).toBeInTheDocument();
     const create = screen.getByRole("button", { name: "Create a new sync group" });
-    expect(create).toHaveClass("primary-action");
-    expect(screen.getByRole("button", { name: "Ask another device to approve this one" })).not.toHaveClass("primary-action");
+    expect(create).toHaveClass("btn-primary");
+    expect(screen.getByRole("button", { name: "Ask another device to approve this one" })).not.toHaveClass("btn-primary");
     expect(screen.getByRole("textbox", { name: "Or join with a recovery phrase" })).toBeInTheDocument();
     fireEvent.click(create);
 

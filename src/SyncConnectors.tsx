@@ -260,7 +260,7 @@ function FolderConnectorForm({ operation, refresh, onAdded }: { operation: Opera
         Choose a folder your devices already keep in sync, such as one in Dropbox, iCloud Drive, OneDrive, or Syncthing.
         Every device in the group chooses its own copy of that same folder.
       </p>
-      <button type="button" className="primary-action" disabled={busy} onClick={choose}>Choose folder…</button>
+      <button type="button" className="btn-primary" disabled={busy} onClick={choose}>Choose folder…</button>
       <InlineStatus operation={operation} for="add-folder" />
     </>
   );
@@ -338,7 +338,7 @@ function S3ConnectorForm({ operation, refresh, onAdded }: { operation: Operation
       </Disclosure>
       <div className="settings-row">
         <button type="button" className="account-action-button" disabled={busy || !s3FormComplete(form)} onClick={runTest}>Test connection</button>
-        <button type="button" className="primary-action" disabled={busy || !test || !s3TestPassed(test)} onClick={add}>Add connector</button>
+        <button type="button" className="btn-primary" disabled={busy || !test || !s3TestPassed(test)} onClick={add}>Add connector</button>
       </div>
       {test ? <S3TestResults test={test} /> : <p className="settings-hint">Test the connection before adding it.</p>}
       <InlineStatus operation={operation} for="s3" />
@@ -397,7 +397,7 @@ function IpfsConnectorForm({ operation, refresh, onAdded }: { operation: Operati
       {probe?.versionOk ? (
         <p className="settings-hint">{`Reachable · ${probe.headDiscoveryAvailable ? "supports sync discovery through bucket pins" : "bucket pins unavailable"}`}</p>
       ) : null}
-      <button type="button" className="primary-action" disabled={busy || !baseUrl} onClick={add}>Add IPFS RPC endpoint</button>
+      <button type="button" className="btn-primary" disabled={busy || !baseUrl} onClick={add}>Add IPFS RPC endpoint</button>
       <InlineStatus operation={operation} for="ipfs" />
     </>
   );
@@ -504,7 +504,7 @@ function ReplaceCredentials({
       )}
       <span className="settings-inline-confirm-actions">
         <button type="button" disabled={busy} onClick={onDone}>Cancel</button>
-        <button type="button" className="primary-action" disabled={busy || !ready} onClick={save}>Test and save</button>
+        <button type="button" className="btn-primary" disabled={busy || !ready} onClick={save}>Test and save</button>
       </span>
     </div>
   );
@@ -559,7 +559,7 @@ export function ConnectorCard({ transport, operation, refresh }: { transport: Re
           <span className="settings-inline-confirm-actions">
             {hasCredentials ? <button type="button" disabled={busy} onClick={() => setPanel("credentials")}>Replace credentials…</button> : null}
             <button type="button" disabled={busy} onClick={() => setPanel("none")}>Cancel</button>
-            <button type="submit" className="primary-action" disabled={busy}>Save</button>
+            <button type="submit" className="btn-primary" disabled={busy}>Save</button>
           </span>
         </form>
       ) : null}

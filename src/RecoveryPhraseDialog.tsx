@@ -66,8 +66,8 @@ function RecoveryPhraseDialog({ phrase }: { phrase: string }) {
         </ol>
         {copyStatus ? <p role="status" className="settings-hint">{copyStatus}</p> : null}
         <div className="modal-form-actions">
-          <button type="button" onClick={copy}>Copy</button>
-          <button type="button" onClick={releaseRecoveryPhrase}>I’ve written it down</button>
+          <button type="button" className="btn" onClick={copy}>Copy</button>
+          <button type="button" className="btn btn-primary" onClick={releaseRecoveryPhrase}>I’ve written it down</button>
         </div>
       </div>
     </Modal>

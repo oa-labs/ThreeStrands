@@ -170,7 +170,7 @@ export function JoinCodePanel({ operation, refresh, inputId }: { operation: Oper
           {readiness.missing.map((message) => <p key={message} className="settings-hint">{message}</p>)}
         </>
       ) : null}
-      <button type="button" className="primary-action" disabled={busy || !readiness.ready} onClick={join}>
+      <button type="button" className="btn-primary" disabled={busy || !readiness.ready} onClick={join}>
         {pending === "join-code" ? "Joining…" : "Join sync group"}
       </button>
       <InlineStatus operation={operation} for="join-code" />
@@ -228,7 +228,7 @@ export function AddDevicePanel({
         <>
           <textarea className="sync-join-code" readOnly rows={4} aria-label="Join code" value={created.code} onFocus={(event) => event.target.select()} />
           <div className="settings-row">
-            <button type="button" className="primary-action" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+            <button type="button" className="btn-primary" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
           </div>
           <p className="settings-hint sync-attention-text">
             Anyone with this code can join your sync group{created.credentials ? " and use the included storage credentials" : ""}.
@@ -278,7 +278,7 @@ export function AddDevicePanel({
           </fieldset>
           <span className="settings-inline-confirm-actions">
             <button type="button" disabled={busy} onClick={onClose}>Cancel</button>
-            <button type="button" className="primary-action" disabled={busy || chosen.length === 0} onClick={create}>Create join code</button>
+            <button type="button" className="btn-primary" disabled={busy || chosen.length === 0} onClick={create}>Create join code</button>
           </span>
           <InlineStatus operation={operation} for="create-join-code" />
         </>

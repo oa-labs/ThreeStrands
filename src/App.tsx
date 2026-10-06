@@ -3568,10 +3568,10 @@ function UnsubscribeConfirm({
               : "ThreeStrands will open the sender's unsubscribe page in your default browser."}
         </p>
         <div className="unsubscribe-actions">
-          <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
           <button
             type="button"
-            className="primary-action"
+            className="btn btn-primary"
             disabled={busy || !method}
             onClick={() => {
               setBusy(true);
