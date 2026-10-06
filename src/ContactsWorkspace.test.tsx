@@ -8,6 +8,8 @@ vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContact
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:"Founder",company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:3,receivedCount:2,lastInteractedAt:"2026-09-20T00:00:00Z",birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const favoriteContact:ContactProfile={...jane,id:"contact:favorite@example.com",displayName:"Favorite Person",favorite:true,addresses:["favorite@example.com"],lastInteractedAt:"2026-09-10T00:00:00Z"};
+// Empty optional fields start collapsed behind an "Add" button.
+const field=(label:string)=>{const add=screen.queryByRole("button",{name:`Add ${label.toLowerCase()}`});if(add)fireEvent.click(add);return screen.getByLabelText(label);};
 const newerContact:ContactProfile={...jane,id:"contact:newer@example.com",displayName:"Newer Person",addresses:["newer@example.com"],lastInteractedAt:"2026-09-24T00:00:00Z"};
 
 describe("ContactsWorkspace",()=>{
@@ -60,7 +62,7 @@ describe("ContactsWorkspace",()=>{
     expect(document.activeElement).toBe(search);
     fireEvent.change(search,{target:{value:"jane"}});
     await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("jane",500,undefined));
-    fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Acme"}});
+    fireEvent.change(field("Company"),{target:{value:"Acme"}});
     fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({company:"Acme",addresses:["jane@example.com"]})));
     await waitFor(()=>expect(onSaved).toHaveBeenCalledOnce());
@@ -215,9 +217,94 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.saveContactProfile).mockRejectedValueOnce(new Error("Could not save contact"));
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={onSaved}/>);
     await screen.findByDisplayValue("Jane Doe");
+    fireEvent.change(field("Company"),{target:{value:"Acme"}});
     fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save contact");
+    expect(screen.getByRole("region",{name:"Save changes"})).toHaveTextContent("Unsaved changes");
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it("offers Save only while profile fields differ from the saved profile",async()=>{
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    expect(screen.queryByRole("region",{name:"Save changes"})).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Role"),{target:{value:"CEO"}});
+    expect(screen.getByRole("region",{name:"Save changes"})).toHaveTextContent("Unsaved changes");
+    fireEvent.change(screen.getByLabelText("Role"),{target:{value:"Founder"}});
+    expect(screen.queryByRole("region",{name:"Save changes"})).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Role"),{target:{value:"CEO"}});
+    fireEvent.click(screen.getByRole("button",{name:"Discard"}));
+    expect(screen.getByLabelText("Role")).toHaveValue("Founder");
+    expect(screen.queryByRole("region",{name:"Save changes"})).not.toBeInTheDocument();
+    expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Role"),{target:{value:"CEO"}});
+    fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
+    await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({role:"CEO"})));
+    await waitFor(()=>expect(screen.queryByRole("region",{name:"Save changes"})).not.toBeInTheDocument());
+  });
+
+  it("does not offer Save for a favorite change, which saves on its own",async()=>{
+    vi.mocked(mailClient.saveContactProfile).mockImplementation(async request=>({...jane,favorite:request.favorite}));
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(screen.getByRole("button",{name:"Favorite contact"}));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","true"));
+    expect(screen.queryByRole("region",{name:"Save changes"})).not.toBeInTheDocument();
+  });
+
+  it("keeps Save available for a new contact and discards it on request",async()=>{
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(screen.getByRole("button",{name:/New contact/}));
+    expect(screen.getByRole("region",{name:"Save changes"})).toHaveTextContent("New contact");
+    expect(screen.getByLabelText("Company")).toBeInTheDocument();
+    expect(screen.getByLabelText("Notes")).toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Add company"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Discard"}));
+    expect(screen.getByText("Select a contact to see their details")).toBeInTheDocument();
+  });
+
+  it("collapses empty optional fields behind Add buttons and shows filled ones",async()=>{
+    const filled={...jane,company:"Acme",notes:"Met at the conference"};
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([filled]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(filled);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    expect(screen.getByLabelText("Company")).toHaveValue("Acme");
+    expect(screen.getByLabelText("Notes")).toHaveValue("Met at the conference");
+    for(const label of ["Location","Birthday","About"])expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox",{name:"Links"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Add company"})).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button",{name:"Add location"}));
+    expect(document.activeElement).toBe(screen.getByLabelText("Location"));
+    expect(screen.queryByRole("button",{name:"Add location"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Add links"}));
+    expect(document.activeElement).toBe(screen.getByRole("textbox",{name:"Links"}));
+
+    // Clearing a saved value keeps its field open so the edit can be saved.
+    fireEvent.change(screen.getByLabelText("Company"),{target:{value:""}});
+    expect(screen.getByLabelText("Company")).toHaveValue("");
+  });
+
+  it("closes fields revealed for one contact when another is opened",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([newerContact,jane]);
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:newerContact);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Newer Person");
+    fireEvent.click(screen.getByRole("button",{name:"Add about"}));
+    expect(screen.getByLabelText("About")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:/Jane Doe/}));
+    await screen.findByDisplayValue("Jane Doe");
+    expect(screen.queryByLabelText("About")).not.toBeInTheDocument();
+  });
+
+  it("shows email volume and the last contact date in the header",async()=>{
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const meta=document.querySelector(".contact-identity-meta");
+    expect(meta).toHaveTextContent("3 sent · 2 received");
+    expect(meta).toHaveTextContent(/Last contact/);
   });
 
   it("groups favorites first and sorts each group by recent activity",async()=>{
@@ -236,19 +323,19 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.saveContactProfile).mockImplementation(async request=>({...jane,favorite:request.favorite}));
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={onSaved}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Unsaved Company"}});
+    fireEvent.change(field("Company"),{target:{value:"Unsaved Company"}});
 
     fireEvent.click(screen.getByRole("button",{name:"Favorite contact"}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:jane.id,favorite:true,company:null})));
     await waitFor(()=>expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","true"));
-    expect(screen.getByLabelText("Company")).toHaveValue("Unsaved Company");
+    expect(field("Company")).toHaveValue("Unsaved Company");
     expect(within(screen.getByRole("region",{name:"Favorites"})).getByRole("button",{name:/Jane Doe/})).toBeInTheDocument();
     expect(onSaved).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button",{name:"Favorite contact"}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenLastCalledWith(expect.objectContaining({id:jane.id,favorite:false,company:null})));
     await waitFor(()=>expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","false"));
-    expect(screen.getByLabelText("Company")).toHaveValue("Unsaved Company");
+    expect(field("Company")).toHaveValue("Unsaved Company");
   });
 
   it("keeps an unsaved edit when favoriting a mail-derived person creates their profile",async()=>{
@@ -262,13 +349,13 @@ describe("ContactsWorkspace",()=>{
     });
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Unsaved Company"}});
+    fireEvent.change(field("Company"),{target:{value:"Unsaved Company"}});
 
     fireEvent.click(screen.getByRole("button",{name:"Favorite contact"}));
 
     await waitFor(()=>expect(mailClient.getContactProfile).toHaveBeenCalledWith("contact:saved-jane"));
     expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:derived.id,favorite:true,company:null}));
-    expect(screen.getByLabelText("Company")).toHaveValue("Unsaved Company");
+    expect(field("Company")).toHaveValue("Unsaved Company");
     expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","true");
   });
 
@@ -377,13 +464,13 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[{field:"company",value:"Acme",sourceMessageId:"m1",sourceThreadId:"thread-1",excerpt:"I work at Acme."}],messagesReviewed:3,hasMore:false});
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Typed Co"}});
+    fireEvent.change(field("Company"),{target:{value:"Typed Co"}});
     fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
     await screen.findByText("3 emails reviewed");
     expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["location","bio","link"],false,undefined,"default");
     // Even a stray suggestion for the typed field never surfaces.
     expect(screen.queryByText("I work at Acme.")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Company")).toHaveValue("Typed Co");
+    expect(field("Company")).toHaveValue("Typed Co");
     expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
   });
 
@@ -396,13 +483,13 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
     await screen.findByText("I work at Acme.");
 
-    fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Typed Co"}});
+    fireEvent.change(field("Company"),{target:{value:"Typed Co"}});
     expect(screen.queryByText("I work at Acme.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button",{name:"Use suggestion"})).not.toBeInTheDocument();
     expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
 
     // Clearing the field again makes the suggestion relevant once more.
-    fireEvent.change(screen.getByLabelText("Company"),{target:{value:""}});
+    fireEvent.change(field("Company"),{target:{value:""}});
     await screen.findByText("I work at Acme.");
     fireEvent.click(screen.getByRole("button",{name:"Use suggestion"}));
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({company:"Acme"})));
@@ -462,7 +549,7 @@ describe("ContactsWorkspace",()=>{
     await waitFor(()=>expect(screen.getByRole("button",{name:/Jane Doe/})).toHaveAttribute("aria-pressed","true"));
     await waitFor(()=>expect(mailClient.getContactProfile).toHaveBeenCalledWith(saved.id));
     expect(screen.getByDisplayValue("Jane Doe")).toBeInTheDocument();
-    expect(screen.getByLabelText("Company")).toHaveValue("Acme");
+    expect(field("Company")).toHaveValue("Acme");
     expect(screen.getByText("I live in Boston.")).toBeInTheDocument();
     expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:derived.id,company:"Acme"}));
 
@@ -549,14 +636,16 @@ describe("ContactsWorkspace",()=>{
       const onKeepInTouchChanged=vi.fn();
       render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} onKeepInTouchChanged={onKeepInTouchChanged}/>);
       await screen.findByDisplayValue("Jane Doe");
-      fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Unsaved Co"}});
+      fireEvent.change(field("Company"),{target:{value:"Unsaved Co"}});
       const section=screen.getByRole("region",{name:"Keep in Touch"});
       fireEvent.change(within(section).getByRole("combobox",{name:"Frequency"}),{target:{value:"30"}});
       await waitFor(()=>expect(mailClient.setKeepInTouch).toHaveBeenCalledWith([jane.id],30));
       expect(await within(section).findByText(/Due .* · Last contact/)).toBeInTheDocument();
       expect(onKeepInTouchChanged).toHaveBeenCalled();
       expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
-      expect(screen.getByLabelText("Company")).toHaveValue("Unsaved Co");
+      expect(field("Company")).toHaveValue("Unsaved Co");
+      expect(within(section).getByText("Saved")).toBeInTheDocument();
+      expect(screen.getByRole("region",{name:"Save changes"})).toHaveTextContent("Unsaved changes");
     });
 
     it("moves to the saved profile when a reminder is set on a mail-derived person",async()=>{
@@ -567,11 +656,11 @@ describe("ContactsWorkspace",()=>{
       vi.mocked(mailClient.setKeepInTouch).mockResolvedValue([saved]);
       render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
       await screen.findByDisplayValue("Jane Doe");
-      fireEvent.change(screen.getByLabelText("Location"),{target:{value:"Typed but unsaved"}});
+      fireEvent.change(field("Location"),{target:{value:"Typed but unsaved"}});
       fireEvent.change(screen.getByRole("combobox",{name:"Frequency"}),{target:{value:"7"}});
       await waitFor(()=>expect(mailClient.getContactProfile).toHaveBeenCalledWith(saved.id));
       expect(mailClient.setKeepInTouch).toHaveBeenCalledWith([derived.id],7);
-      expect(screen.getByLabelText("Location")).toHaveValue("Typed but unsaved");
+      expect(field("Location")).toHaveValue("Typed but unsaved");
       expect(screen.getAllByRole("button",{name:/Jane Doe/})).toHaveLength(1);
     });
 
@@ -704,10 +793,10 @@ describe("ContactsWorkspace",()=>{
     it("saves the birthday with the profile form",async()=>{
       render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
       await screen.findByDisplayValue("Jane Doe");
-      fireEvent.change(screen.getByLabelText("Birthday"),{target:{value:" 1990-04-02 "}});
+      fireEvent.change(field("Birthday"),{target:{value:" 1990-04-02 "}});
       fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
       await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({birthday:"1990-04-02"})));
-      fireEvent.change(screen.getByLabelText("Birthday"),{target:{value:""}});
+      fireEvent.change(field("Birthday"),{target:{value:""}});
       fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
       await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenLastCalledWith(expect.objectContaining({birthday:null})));
     });

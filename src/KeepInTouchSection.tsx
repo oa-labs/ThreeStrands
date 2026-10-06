@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlarmClock, CheckCircle2, LoaderCircle } from "lucide-react";
+import { AlarmClock, Check, CheckCircle2, LoaderCircle } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactProfile } from "./domain";
 import { errorMessage } from "./errors";
@@ -25,6 +25,13 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
   const [snoozeDate, setSnoozeDate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Confirms the immediate save, since the profile form above saves separately.
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [saved]);
   useEffect(() => {
     setChoice(choiceFor(interval));
     setCustomDays(interval === null ? "" : String(interval));
@@ -34,8 +41,10 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
   const run = async (action: () => Promise<ContactProfile>) => {
     setBusy(true);
     setError(null);
+    setSaved(false);
     try {
       onChanged(await action());
+      setSaved(true);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -69,7 +78,7 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   return <section className="contact-keep-in-touch" aria-label="Keep in Touch">
-    <header><h2>Keep in Touch</h2>{busy ? <LoaderCircle className="spin" size={14} aria-label="Saving" /> : null}</header>
+    <header><h2>Keep in Touch</h2>{busy ? <LoaderCircle className="spin" size={14} aria-label="Saving" /> : saved ? <span className="contact-kit-saved" aria-live="polite"><Check size={13} />Saved</span> : null}</header>
     <div className="contact-kit-controls">
       <label>Frequency
         <select value={choice} disabled={busy} onChange={(event) => chooseFrequency(event.target.value as FrequencyChoice)}>
@@ -104,7 +113,7 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
         </details>
         {isSnoozeActive(profile) ? <button type="button" disabled={busy} onClick={() => void run(() => mailClient.snoozeKeepInTouch(profile.id, null))}>End Snooze</button> : null}
       </div>
-    </> : <p className="contact-kit-hint">Choose how often you want to be in touch. Email either way counts, and so does Mark Contacted.</p>}
+    </> : <p className="contact-kit-hint">Choose how often you want to be in touch. Changes save right away, and email either way counts as contact.</p>}
     {error ? <p className="contacts-error" role="alert">{error}</p> : null}
   </section>;
 }

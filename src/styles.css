@@ -1861,15 +1861,35 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 @media (hover:none) { .contact-multi-value-copy { opacity:1; } }
 .contact-editor-grid label.wide { grid-column:1/-1; }
 .contact-editor-grid input,.contact-editor-grid textarea { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; letter-spacing:normal; text-transform:none; resize:vertical; }
-.contact-save-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 0; border-top:1px solid var(--border); color:var(--muted); font-size:var(--type-sm); }
-.contact-save-row > div { display:flex; align-items:center; gap:9px; }
+.contact-editor-grid .contact-field-slot { display:contents; }
+.contact-editor-grid textarea { min-height:0; overflow:hidden; }
+.contact-add-fields { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:6px; }
+.contact-add-fields button { display:inline-flex; align-items:center; gap:4px; padding:4px 9px; border:1px dashed var(--border-strong); border-radius:var(--radius-md); color:var(--muted); background:transparent; font:inherit; font-size:var(--type-sm); cursor:pointer; }
+.contact-add-fields button:hover { border-style:solid; color:var(--text); background:var(--hover); }
+.contact-identity-meta { display:flex; flex-wrap:wrap; gap:0 6px; margin:0; color:var(--muted); font-size:var(--type-sm); }
+.contact-identity-meta span + span::before { content:"·"; margin-right:6px; }
+.contact-delete-confirm { display:flex; align-items:center; gap:8px; color:var(--secondary); font-size:var(--type-sm); }
+.contact-profile-actions .contact-delete-confirm button { width:auto; padding:0 10px; border:1px solid var(--border); color:var(--text); font:inherit; }
+/* Profile fields save together; this bar only appears while they differ from
+   what is saved, so instant controls (favorite, Keep in Touch) never look
+   like they wait on it. */
+.contact-save-bar { position:sticky; bottom:0; z-index:1; display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:20px; padding:10px 14px; border:1px solid var(--border-strong); border-radius:var(--radius-md); color:var(--secondary); background:var(--raised); box-shadow:0 4px 16px var(--shadow); font-size:var(--type-sm); }
+.contact-save-bar > div { display:flex; align-items:center; gap:8px; }
+.contact-save-bar > div > button:not(.contact-primary-button) { min-height:34px; padding:0 12px; border:0; border-radius:var(--radius-sm); color:var(--secondary); background:transparent; font:inherit; cursor:pointer; }
+.contact-save-bar > div > button:not(.contact-primary-button):hover { color:var(--text); background:var(--hover); }
+.contact-save-bar .contact-primary-button { border-color:var(--accent); color:#fff; background:var(--accent); }
 .contact-primary-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:34px; padding:0 12px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); color:var(--text); background:var(--hover); font:inherit; cursor:pointer; }
 .contact-primary-button:hover { border-color:var(--accent); }
 .contact-primary-button:disabled { opacity:.55; cursor:wait; }
-.contact-enrichment,.contact-timeline { margin-top:26px; }
+/* The sections below the form share one heading style and divider. */
+.contact-keep-in-touch,.contact-enrichment,.contact-timeline { margin-top:0; padding:20px 0; border-top:1px solid var(--border); }
+.contact-keep-in-touch h2,.contact-enrichment h2,.contact-timeline h2 { margin:0; font-size:var(--type-ui); font-weight:600; }
+.contact-timeline h2 { margin-bottom:6px; }
 .contact-enrichment > header,.contact-enrichment > header > div { display:flex; align-items:center; gap:8px; }
 .contact-enrichment > header { justify-content:space-between; }
+.contact-enrichment > header svg { color:var(--muted); }
 .contact-enrichment > header button,.contact-enrichment article button { display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); cursor:pointer; }
+.contact-enrichment > header button { padding:5px 9px; font:inherit; font-size:var(--type-sm); }
 .contact-enrichment article { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:8px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-md); }
 .contact-enrichment article > div { display:grid; gap:3px; }
 .contact-suggestion-field { color:var(--muted); font-size:var(--type-xs); text-transform:uppercase; letter-spacing:.04em; }
@@ -1882,7 +1902,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-enrichment-more:disabled { opacity:.55; cursor:wait; }
 .contact-suggestion-source { width:max-content; padding:0; border:0; color:var(--accent); background:transparent; font:inherit; font-size:var(--type-xs); text-decoration:underline; cursor:pointer; }
 .contact-suggestion-apply { flex-shrink:0; }
-.contact-timeline h2 { font-size:var(--type-ui); font-weight:600; }
 .contact-timeline > button { width:100%; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 9px; border:0; border-bottom:1px solid var(--border); color:var(--text); background:transparent; text-align:left; cursor:pointer; }
 .contact-timeline > button span { min-width:0; }
 .contact-timeline > button span { display:grid; gap:4px; }
@@ -1903,9 +1922,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-list-item > svg.contact-kit-due { color:var(--error); }
 .contact-list-item > svg.contact-kit-due + svg { margin-left:4px; }
 .contact-list-group.kit-overdue h2 { color:var(--error); }
-.contact-keep-in-touch { margin-top:26px; }
 .contact-keep-in-touch > header { display:flex; align-items:center; gap:8px; }
-.contact-keep-in-touch h2 { margin:0; font-size:var(--type-ui); font-weight:600; }
+.contact-kit-saved { display:inline-flex; align-items:center; gap:3px; color:var(--muted); font-size:var(--type-xs); }
 .contact-kit-controls { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin-top:12px; }
 .contact-kit-controls label,.contact-kit-snooze-menu label { display:grid; gap:6px; color:var(--muted); font-size:var(--type-xs); letter-spacing:.05em; text-transform:uppercase; }
 .contact-kit-controls select,.contact-kit-controls input,.contact-kit-snooze-menu input { height:34px; box-sizing:border-box; padding:0 10px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; letter-spacing:normal; text-transform:none; }
