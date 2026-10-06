@@ -159,9 +159,19 @@ const scenes: Scene[] = [
     },
   },
   {
+    name: "goals",
+    capture: async (page) => {
+      await page.keyboard.press("3");
+      const goals = page.getByRole("complementary", { name: "Goals" });
+      await goals.getByRole("button", { name: /^Ship onboarding v3 with the Q4 launch/ }).click();
+      await expect(page.getByText("Sign off on the Q4 launch plan").first()).toBeVisible();
+      await expect(page.getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeHidden();
+    },
+  },
+  {
     name: "contacts",
     capture: async (page) => {
-      await page.getByRole("button", { name: "Contacts", exact: true }).click();
+      await page.keyboard.press("4");
       await expect(page.getByRole("textbox", { name: "Name" })).toHaveValue("Priya Natarajan");
       await expect(page.getByRole("heading", { name: "Recent emails" })).toBeVisible();
       await expect(page.getByText("priya.natarajan@harborlight.example", { exact: true })).toBeVisible();

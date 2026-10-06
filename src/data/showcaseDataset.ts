@@ -1,5 +1,6 @@
 import type { DemoDataset, DemoMessageSeed } from "./demoDataset";
-import type { ScheduleEvent, Thread, ThreadTask } from "../domain";
+import type { Goal, ScheduleEvent, Thread, ThreadTask } from "../domain";
+import { periodFor } from "../goals";
 
 /**
  * Marketing-screenshot data: a believable two-account mailbox for a fictional
@@ -453,16 +454,32 @@ function buildTasks(now: Date): ThreadTask[] {
     date.setHours(hour, minute, 0, 0);
     return date.toISOString();
   };
-  const base = { createdAt: stamp, updatedAt: stamp, completedAt: null, completionSource: null, sourceMessageId: null, notes: null, timeZone: null, repeatIntervalDays: null, evidenceText: null, waitAfter: null };
+  const base = { createdAt: stamp, updatedAt: stamp, completedAt: null, completionSource: null, sourceMessageId: null, notes: null, timeZone: null, repeatIntervalDays: null, evidenceText: null, waitAfter: null, goalId: null };
   return [
-    { ...base, id: "task-launch", accountId: SHOWCASE_WORK_ACCOUNT, threadId: "launch-plan", subjectSnapshot: "Q4 launch plan — final review", title: "Sign off on the Q4 launch plan", kind: "action", dueKind: "date", dueValue: inDays(2), status: "open", evidenceText: "Could everyone sign off by Thursday?" },
-    { ...base, id: "task-pricing", accountId: SHOWCASE_WORK_ACCOUNT, threadId: "renewal", subjectSnapshot: "Contract renewal — Brightwater Co-op", title: "Send Marcus pricing for 35 seats", kind: "action", dueKind: "datetime", dueValue: today("16:00"), status: "open", notes: "Annual plan; include the volume discount tier." },
-    { ...base, id: "task-renewal", accountId: SHOWCASE_WORK_ACCOUNT, threadId: "renewal", subjectSnapshot: "Contract renewal — Brightwater Co-op", title: "Follow up with Brightwater on renewal", kind: "follow_up", dueKind: "date", dueValue: inDays(7), repeatIntervalDays: 7, status: "open" },
-    { ...base, id: "task-security", accountId: SHOWCASE_WORK_ACCOUNT, threadId: "security-review", subjectSnapshot: "Security review sign-off for launch", title: "Waiting on Aisha's security sign-off", kind: "waiting_for", dueKind: "date", dueValue: inDays(1), status: "open" },
-    { ...base, id: "task-crit", accountId: SHOWCASE_WORK_ACCOUNT, threadId: "design-crit", subjectSnapshot: "Design crit: onboarding flow v3", title: "Review the onboarding v3 prototype", kind: "action", dueKind: "none", dueValue: null, status: "open" },
+    { ...base, id: "task-launch", accountId: SHOWCASE_WORK_ACCOUNT, goalId: "goal-launch", threadId: "launch-plan", subjectSnapshot: "Q4 launch plan — final review", title: "Sign off on the Q4 launch plan", kind: "action", dueKind: "date", dueValue: inDays(2), status: "open", evidenceText: "Could everyone sign off by Thursday?" },
+    { ...base, id: "task-pricing", accountId: SHOWCASE_WORK_ACCOUNT, goalId: "goal-renewals", threadId: "renewal", subjectSnapshot: "Contract renewal — Brightwater Co-op", title: "Send Marcus pricing for 35 seats", kind: "action", dueKind: "datetime", dueValue: today("16:00"), status: "open", notes: "Annual plan; include the volume discount tier." },
+    { ...base, id: "task-renewal", accountId: SHOWCASE_WORK_ACCOUNT, goalId: "goal-renewals", threadId: "renewal", subjectSnapshot: "Contract renewal — Brightwater Co-op", title: "Follow up with Brightwater on renewal", kind: "follow_up", dueKind: "date", dueValue: inDays(7), repeatIntervalDays: 7, status: "open" },
+    { ...base, id: "task-security", accountId: SHOWCASE_WORK_ACCOUNT, goalId: "goal-launch", threadId: "security-review", subjectSnapshot: "Security review sign-off for launch", title: "Waiting on Aisha's security sign-off", kind: "waiting_for", dueKind: "date", dueValue: inDays(1), status: "open" },
+    { ...base, id: "task-crit", accountId: SHOWCASE_WORK_ACCOUNT, goalId: "goal-launch", threadId: "design-crit", subjectSnapshot: "Design crit: onboarding flow v3", title: "Review the onboarding v3 prototype", kind: "action", dueKind: "none", dueValue: null, status: "in_progress" },
+    { ...base, id: "task-announcement", accountId: SHOWCASE_WORK_ACCOUNT, goalId: "goal-launch", threadId: null, subjectSnapshot: null, title: "Draft the launch announcement", kind: "action", dueKind: "none", dueValue: null, status: "completed", completionSource: "user", completedAt: stamp },
     { ...base, id: "task-flights", accountId: SHOWCASE_WORK_ACCOUNT, threadId: "offsite", subjectSnapshot: "Offsite logistics — Lisbon, Oct 14–16", title: "Book flights for the Lisbon offsite", kind: "action", dueKind: "none", dueValue: null, status: "completed", completionSource: "user", completedAt: stamp },
     { ...base, id: "task-agenda", accountId: SHOWCASE_WORK_ACCOUNT, threadId: null, subjectSnapshot: null, title: "Prepare the team retrospective agenda", kind: "action", dueKind: "date", dueValue: inDays(1), status: "open" },
     { ...base, id: "task-cake", accountId: SHOWCASE_PERSONAL_ACCOUNT, threadId: "birthday", subjectSnapshot: "Re: Mom's birthday plans", title: "Buy lemons and cake flour", kind: "action", dueKind: "date", dueValue: inDays(3), status: "open" },
+  ];
+}
+
+/** Work goals for the current year, half, and quarter, so the Tasks workspace shows goal filters and progress. */
+function buildGoals(now: Date): Goal[] {
+  const createdAt = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+  const base = { accountId: SHOWCASE_WORK_ACCOUNT, notes: null, status: "active" as const, createdAt, updatedAt: createdAt, closedAt: null };
+  const year = periodFor("year", now);
+  const half = periodFor("half", now);
+  const quarter = periodFor("quarter", now);
+  return [
+    { ...base, id: "goal-teams", title: "Become the default inbox for mid-size teams", horizon: "year", period: year, parentGoalId: null },
+    { ...base, id: "goal-retention", title: "Grow revenue from existing customers", horizon: "half", period: half, parentGoalId: "goal-teams" },
+    { ...base, id: "goal-launch", title: "Ship onboarding v3 with the Q4 launch", horizon: "quarter", period: quarter, parentGoalId: "goal-teams", notes: "North America first, then EU and APAC." },
+    { ...base, id: "goal-renewals", title: "Renew every customer due this quarter", horizon: "quarter", period: quarter, parentGoalId: "goal-retention" },
   ];
 }
 
@@ -548,6 +565,7 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
       { id: "split-newsletters", name: "Newsletters", matchKind: "label", matchValue: "newsletters", sortOrder: 1, createdAt: connectedAt, accountId: SHOWCASE_WORK_ACCOUNT },
     ],
     tasks: buildTasks(now),
+    goals: buildGoals(now),
     snippets: [
       { id: "snippet-schedule", name: "Share availability", body: "Happy to find a time! Here are a few windows that work on my side — pick whichever suits you best.", createdAt: connectedAt },
       { id: "snippet-review", name: "Will review", body: "Thanks for sending this over. I'll take a close look and get back to you by end of day tomorrow.", createdAt: connectedAt },

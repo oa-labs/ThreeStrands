@@ -20,7 +20,7 @@ Mail is cached in SQLite for fast reading, search, and offline work. Gmail
 remains the source of truth for mail. The app stores OAuth credentials in the
 operating system's credential store and sends mail through a durable local
 outbox. Optional AI sends bounded mail context to a provider the user
-configures. Optional cross-device sync, currently a beta, replicates selected
+configures. Optional cross-device sync replicates selected
 workflow data through storage the user chooses.
 
 This document distinguishes implemented behavior from future work. “Available”
@@ -101,8 +101,8 @@ particular platform package, or always-on service behavior.
 - Inspect sync diagnostics and use opt-in crash reporting. Local database
   backups and startup recovery protect access when the cache is damaged.
 
-**Beta:** End-to-end encrypted cross-device sync can replicate tasks,
-saved contacts, snippets, Split Inboxes, selected preferences, and account
+**Encrypted sync:** End-to-end encrypted cross-device sync can replicate tasks,
+goals, saved contacts, snippets, Split Inboxes, selected preferences, and account
 display metadata through a shared folder, S3-compatible storage, or an IPFS connector. Devices
 can join with a code, recovery phrase, or approval from another device.
 Cached mail, attachments, drafts, queued sends, and provider credentials stay
@@ -122,8 +122,8 @@ from the current feature set when publishing a website.
 | Drafts across devices | Start a reply on one computer and finish it on another, with clear controls over draft synchronization. |
 | Connected address books | Import existing Google Contacts and keep them connected to local profiles, notes, and correspondence history. |
 | Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
-| More mail providers | Add Microsoft 365 and, after its folder and threading behavior is designed, IMAP/SMTP. Gmail is the only implemented mail provider today. |
-| Encrypted sync reliability | Harden the optional encrypted sync beta across devices, especially upgrades and interrupted joins. |
+| More mail providers | Add IMAP/SMTP (design in `docs/imap-design.md`), then Microsoft 365. Gmail is the only implemented mail provider today. |
+| Encrypted sync reliability | Keep hardening optional encrypted sync across devices and app versions, especially upgrades and interrupted joins. |
 | Shared and mobile workflows | Explore a mobile companion and shared conversations or drafts where demand justifies the additional architecture. |
 
 The roadmap should be revised as research and reliability work change
@@ -243,6 +243,6 @@ flowchart LR
 
 - [Design principles](DESIGN.md) — current keyboard, workspace, form, and AI
   review decisions.
-- [Cross-device sync](docs/cross-device-sync.md) and [replicated sync design](docs/replicated-sync-design.md) — beta scope and trust model.
+- [Cross-device sync](docs/cross-device-sync.md) and [replicated sync design](docs/replicated-sync-design.md) — sync scope and trust model.
 - [Settings transfer](docs/settings-transfer.md) and [email rendering policy](docs/email-rendering-policy.md) — persistent-format and reader boundaries.
 - [Phase 1 status](docs/phase-1.md), [Phase 2 correspondence status](docs/phase-2-status.md), [multi-account plan](docs/multi-account.md), and [address-book proposal](docs/address-book.md) — historical milestones and feature-specific context; check the current code before treating their status labels as current.

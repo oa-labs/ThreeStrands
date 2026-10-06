@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDemoClient, DEMO_ACCOUNT_ID, demoClient } from "./demoClient";
 import { defaultDemoDataset } from "./demoDataset";
 import { buildShowcaseDataset, SHOWCASE_WORK_ACCOUNT } from "./showcaseDataset";
+import { goalIsStale, goalsToReview } from "../goals";
 
 const OTHER_ACCOUNT_ID = "other@example.com";
 
@@ -93,6 +94,21 @@ describe("showcase dataset", () => {
     ];
     expect(domains.length).toBeGreaterThan(20);
     expect(domains.filter((domain) => !RESERVED_DOMAIN.test(domain.toLocaleLowerCase()))).toEqual([]);
+  });
+
+  it("links work tasks to current goals that need no review and are not stale", async () => {
+    const dataset = buildShowcaseDataset(now);
+    const goals = dataset.goals ?? [];
+    const goalIds = new Set(goals.map((goal) => goal.id));
+    expect(goals.length).toBeGreaterThan(0);
+    expect(goals.every((goal) => goal.accountId === SHOWCASE_WORK_ACCOUNT)).toBe(true);
+    const linked = (dataset.tasks ?? []).filter((task) => task.goalId);
+    expect(linked.length).toBeGreaterThan(0);
+    expect(linked.every((task) => task.accountId === SHOWCASE_WORK_ACCOUNT && goalIds.has(task.goalId!))).toBe(true);
+    expect(goalsToReview(goals, now)).toEqual([]);
+    expect(goals.filter((goal) => goalIsStale(goal, goals, dataset.tasks ?? [], now))).toEqual([]);
+    const client = createDemoClient(dataset);
+    expect((await client.listGoals(SHOWCASE_WORK_ACCOUNT)).map((goal) => goal.id).sort()).toEqual([...goalIds].sort());
   });
 
   it("produces reproducible AI fixtures with evidence from the fictional mailbox", async () => {

@@ -140,7 +140,7 @@
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
               <p class="strand-label">Tasks</p>
               <h3>Follow-Ups That Close Themselves</h3>
-              <p>Create standalone tasks or turn a conversation into an action, follow-up, or waiting-for. Linked follow-ups can complete when a reply arrives.</p>
+              <p>Create standalone tasks or turn a conversation into an action, follow-up, or waiting-for. Link each one to a quarterly or yearly goal, and linked follow-ups can complete when a reply arrives.</p>
             </article>
             <article class="strand-card" style="--strand: var(--strand-schedule); --strand-ink: var(--strand-schedule-ink)">
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
@@ -237,29 +237,35 @@
               <li class="tour-step" data-step="tasks">
                 <p class="step-count">04</p>
                 <h3>Tasks Tied to Conversations</h3>
-                <p>Standalone tasks and conversation-linked actions, follow-ups, and waiting-fors with due dates and repeats. Linked follow-ups can complete when a new reply lands.</p>
-                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="tasks" sizes="92vw" alt="The Tasks view listing standalone actions and conversation-linked follow-ups and waiting-for items."></ts-shot></div></div>
+                <p>Standalone tasks and conversation-linked actions, follow-ups, and waiting-fors with due dates and repeats, on a list or a board. Open any task to edit it as you go, step through tasks with <kbd>j</kbd> and <kbd>k</kbd>, and press <kbd>o</kbd> to jump to its conversation. Linked follow-ups can complete when a new reply lands.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="tasks" sizes="92vw" alt="The Tasks board with standalone actions and conversation-linked follow-ups and waiting-for items, each tagged with the goal it supports."></ts-shot></div></div>
+              </li>
+              <li class="tour-step" data-step="goals">
+                <p class="step-count">05</p>
+                <h3>Goals Your Tasks Roll Up To</h3>
+                <p>Set goals for the year, half, and quarter in each account, and link tasks to the goal they move forward. Select a goal to see only its work, with open and done counts and a flag when nothing has moved in three weeks. At the end of a period, review each goal and mark it achieved, drop it, or carry it forward.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="goals" sizes="92vw" alt="The Tasks board filtered to a quarterly launch goal, beside a Goals pane listing quarter, half, and year goals with open and done counts."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="today-schedule">
-                <p class="step-count">05</p>
+                <p class="step-count">06</p>
                 <h3>Today's Schedule at a Glance</h3>
                 <p>Press <kbd>T</kbd> to see your day beside your inbox. Check free times against your calendars and working hours, then put them in a reply.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="today-schedule" sizes="92vw" alt="Today's schedule shown in a sidebar next to the inbox."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="calendar-week">
-                <p class="step-count">06</p>
+                <p class="step-count">07</p>
                 <h3>Plan the Week</h3>
                 <p>A full week view across the calendars you choose. Open a time slot or select New event to start planning without leaving your mail.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="calendar-week" sizes="92vw" alt="A week calendar view with meetings, focus time, and an all-day launch event."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="calendar-create">
-                <p class="step-count">07</p>
+                <p class="step-count">08</p>
                 <h3>From Conversation to Calendar</h3>
                 <p>Create events with invitees from the week view or a reviewed meeting suggestion. Check the title, time, and calendar before creating.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="calendar-create" sizes="92vw" alt="A new calendar event with a title, time, calendar, and invitee, awaiting Create event."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="contacts">
-                <p class="step-count">08</p>
+                <p class="step-count">09</p>
                 <h3>People, in Context</h3>
                 <p>Browse, add, and edit contacts with multiple addresses, notes, and correspondence history. The conversation context panel brings people, related tasks, and meetings beside your mail. Optional AI enrichment suggests profile details for you to apply.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="contacts" sizes="92vw" alt="An editable contact profile with role, company, multiple addresses, notes, and recent emails."></ts-shot></div></div>
@@ -273,6 +279,7 @@
                   <ts-shot scene="split-inbox" data-scene="split-inbox" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="reply" data-scene="reply" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="tasks" data-scene="tasks" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="goals" data-scene="goals" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="today-schedule" data-scene="today-schedule" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="calendar-week" data-scene="calendar-week" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="calendar-create" data-scene="calendar-create" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
@@ -356,8 +363,8 @@
               <li class="stamp" style="--stamp: var(--strand-mail-ink)">
                 <div class="stamp-inner">
                   <ts-icon name="folder-sync"></ts-icon>
-                  <h3>Encrypted Sync <span class="tag">Beta</span></h3>
-                  <p>Sync tasks, saved contacts, snippets, Split Inboxes, portable preferences, and account display details with end-to-end encryption through a shared folder, S3-compatible storage, or IPFS. Mail, drafts, queued sends, and provider credentials stay on each device.</p>
+                  <h3>Encrypted Sync</h3>
+                  <p>Sync tasks, goals, saved contacts, snippets, Split Inboxes, portable preferences, and account display details with end-to-end encryption through a shared folder, S3-compatible storage, or IPFS. Mail, drafts, queued sends, and provider credentials stay on each device.</p>
                 </div>
               </li>
             </ul>
@@ -412,6 +419,8 @@
             <li><ts-icon name="users"></ts-icon><h3>Multiple Accounts</h3><p>Every Gmail account in one merged inbox, color-coded.</p></li>
             <li><ts-icon name="scroll-text"></ts-icon><h3>Snippets</h3><p>Reusable replies, a keystroke away.</p></li>
             <li><ts-icon name="mail-x"></ts-icon><h3>Unsubscribe</h3><p>Leave a mailing list in one step, with a confirmation first.</p></li>
+            <li><ts-icon name="fold-vertical"></ts-icon><h3>Clean Threads</h3><p>Repeated quoted replies fold away, and search skips them too.</p></li>
+            <li><ts-icon name="a-large-small"></ts-icon><h3>Readable Mail</h3><p>Set a minimum font size for tiny sender text.</p></li>
             <li><ts-icon name="database-backup"></ts-icon><h3>Self-Healing Cache</h3><p>Automatic backups and startup recovery keep your local data safe.</p></li>
           </ul>
         </div>
@@ -431,8 +440,8 @@
             <li><h3>Drafts Across Devices</h3><p>Start a reply on one computer and finish it on another, with clear controls over draft synchronization.</p></li>
             <li><h3>Connected Address Books</h3><p>Import existing Google Contacts and keep them connected to your local profiles, notes, and correspondence history.</p></li>
             <li><h3>Smarter Inbox Rules</h3><p>Inspectable, user-controlled classification beyond domain, label, and address rules.</p></li>
-            <li><h3>More Mail Providers</h3><p>Microsoft 365, then IMAP and SMTP. Gmail is the only provider today.</p></li>
-            <li><h3>Encrypted Sync Reliability</h3><p>Harden the encrypted sync beta across devices, especially upgrades and interrupted joins.</p></li>
+            <li><h3>More Mail Providers</h3><p>IMAP and SMTP, then Microsoft 365. Gmail is the only provider today.</p></li>
+            <li><h3>Encrypted Sync Reliability</h3><p>Keep hardening encrypted sync across devices and app versions, especially upgrades and interrupted joins.</p></li>
             <li><h3>Shared and Mobile Workflows</h3><p>A mobile companion and shared conversations or drafts, where demand justifies them.</p></li>
           </ol>
         </div>

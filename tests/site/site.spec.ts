@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const RELEASES = "https://github.com/oa-labs/dispatch/releases/latest";
 const LICENSE_URL = "https://github.com/oa-labs/dispatch/blob/master/LICENSE";
-const TOUR_SCENES = ["inbox", "split-inbox", "reply", "tasks", "today-schedule", "calendar-week", "calendar-create", "contacts"];
+const TOUR_SCENES = ["inbox", "split-inbox", "reply", "tasks", "goals", "today-schedule", "calendar-week", "calendar-create", "contacts"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
 /** Walks the whole page so every lazy image and scroll-driven effect gets a chance to run. */
@@ -63,6 +63,8 @@ test.describe("feature claims", () => {
     await expect(tour).toContainText("Browse, add, and edit contacts");
     await expect(tour).toContainText("Create events with invitees");
     await expect(tour).toContainText("Standalone tasks");
+    await expect(tour).toContainText("Set goals for the year, half, and quarter");
+    await expect(tour).toContainText("mark it achieved, drop it, or carry it forward");
     const roadmap = page.locator("#roadmap");
     await expect(roadmap.getByRole("heading", { level: 3 })).toHaveText([
       "Snooze and Scheduled Sending", "Sending Aliases and Signatures", "Drafts Across Devices",
@@ -72,6 +74,8 @@ test.describe("feature claims", () => {
     await expect(roadmap).toContainText("verified Gmail aliases");
     await expect(roadmap).toContainText("clear controls over draft synchronization");
     await expect(roadmap).toContainText("Import existing Google Contacts");
+    await expect(roadmap).toContainText("IMAP and SMTP, then Microsoft 365");
+    await expect(roadmap).not.toContainText(/\bbeta\b/i);
   });
 
   test("explains AI activation, sharing choices, and reviewed actions", async ({ page }) => {
@@ -100,7 +104,10 @@ test.describe("feature claims", () => {
       await expect(stamp).toContainText("saved contacts");
       await expect(stamp).toContainText("Mail, drafts, queued sends");
     }
-    await expect(stamps.locator(".tag")).toHaveText("Beta");
+    const sync = stamps.locator("li").filter({ has: page.getByRole("heading", { name: "Encrypted Sync", exact: true }) });
+    await expect(sync).toContainText("tasks, goals, saved contacts");
+    await expect(stamps.locator(".tag")).toHaveCount(0);
+    await expect(stamps).not.toContainText(/\bbeta\b/i);
   });
 });
 
