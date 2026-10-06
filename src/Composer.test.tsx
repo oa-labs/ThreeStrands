@@ -184,7 +184,7 @@ describe("Composer body input responsiveness", () => {
     const props = { draft: reply, accounts, ...snippetProps, onClose: () => {}, onQueued: () => {} };
     const { rerender } = render(<Composer {...props} />);
     const editor = screen.getByRole("textbox", { name: "Message Body" });
-    expect(editor.textContent).toContain("Quoted line 199");
+    expect(screen.getByLabelText("Quoted Text").textContent).toContain("Quoted line 199");
     const sanitize = vi.spyOn(DOMPurify, "sanitize");
 
     // The first input flips the status to "Unsaved changes", and a parent
@@ -413,7 +413,7 @@ describe("Composer Reply Assist", () => {
     const editor = screen.getByRole("textbox", { name: "Message Body" });
     await waitFor(() => expect(editor).toHaveTextContent('<img src=x onerror="alert(1)">Friday works for me.'));
     expect(editor.querySelector("img")).toBeNull();
-    expect(editor).toHaveTextContent("Can we meet Friday?");
+    expect(screen.getByLabelText("Quoted Text")).toHaveTextContent("Can we meet Friday?");
   });
 
   it("opens a reply with the quoted source as a citation and saves a quoted text alternative", async () => {
@@ -421,7 +421,8 @@ describe("Composer Reply Assist", () => {
     render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
 
     const editor = screen.getByRole("textbox", { name: "Message Body" });
-    const citation = editor.querySelector('blockquote[type="cite"]');
+    const quoted = screen.getByLabelText("Quoted Text");
+    const citation = quoted.querySelector('blockquote[type="cite"]');
     expect(citation).toHaveTextContent("Can we meet Friday?");
     expect(citation?.textContent).not.toContain(">");
 
@@ -448,8 +449,8 @@ describe("Composer Reply Assist", () => {
 
     const editor = screen.getByRole("textbox", { name: "Message Body" });
     await waitFor(() => expect(editor).toHaveTextContent("September 22, 2026"));
-    expect(editor).toHaveTextContent("Can we meet Friday?");
-    expect(editor.textContent?.indexOf("Here are some times")).toBeLessThan(editor.textContent?.indexOf("Can we meet Friday?") ?? 0);
+    expect(editor).not.toHaveTextContent("Can we meet Friday?");
+    expect(screen.getByLabelText("Quoted Text")).toHaveTextContent("Can we meet Friday?");
   });
 
   it("shows a task-derived instruction in Reply Assist without generating automatically", async () => {
@@ -485,7 +486,7 @@ describe("Composer Reply Assist", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Generate Draft" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Provider unavailable");
-    expect(screen.getByRole("textbox", { name: "Message Body", hidden: true })).toHaveTextContent("Can we meet Friday?");
+    expect(screen.getByLabelText("Quoted Text")).toHaveTextContent("Can we meet Friday?");
   });
 
   it("requires confirmation before adding a suggestion above existing authored text", async () => {
@@ -588,6 +589,92 @@ describe("Composer Reply Assist", () => {
     expect(within(assist).getByText("Can we meet Friday?")).toBeInTheDocument();
     expect(within(assist).getByRole("textbox", { name: "Optional Short Instruction" })).toHaveValue("Keep it short");
     expect(replyAssistContext).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Composer quoted history", () => {
+  const reply: Draft = {
+    ...draft,
+    mode: "reply",
+    sourceId: "source-message",
+    to: "sender@example.com",
+    subject: "Project timing",
+    body: "\n\nOn Sep 16, Sender wrote:\n> Can we meet Friday?",
+  };
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("keeps a reply's quoted history out of the body editor, collapsed until shown", () => {
+    render(<Composer draft={reply} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const body = screen.getByRole("textbox", { name: "Message Body" });
+    const quoted = screen.getByLabelText("Quoted Text");
+    const toggle = screen.getByRole("button", { name: "Show Quoted Text" });
+
+    expect(body).toBeEmptyDOMElement();
+    expect(body).toHaveFocus();
+    expect(quoted).not.toBeVisible();
+    expect(quoted.querySelector('blockquote[type="cite"]')).toHaveTextContent("Can we meet Friday?");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveAttribute("aria-controls", quoted.id);
+
+    fireEvent.click(toggle);
+    expect(quoted).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Quoted Text" })).toBe(quoted);
+    expect(screen.getByRole("button", { name: "Hide Quoted Text" })).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Quoted Text" }));
+    expect(quoted).not.toBeVisible();
+  });
+
+  it("saves edits to the shown quoted history after the authored text", async () => {
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    render(<Composer draft={reply} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const body = screen.getByRole("textbox", { name: "Message Body" });
+    fireEvent.click(screen.getByRole("button", { name: "Show Quoted Text" }));
+    const quoted = screen.getByRole("textbox", { name: "Quoted Text" });
+
+    body.textContent = "Friday works.";
+    fireEvent.input(body);
+    quoted.querySelector("blockquote")!.textContent = "Can we meet Saturday?";
+    fireEvent.input(quoted);
+
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled());
+    const saved = saveDraft.mock.calls.at(-1)![0];
+    expect(saved.body).toBe("Friday works.\n\nOn Sep 16, Sender wrote:\n> Can we meet Saturday?");
+    expect(saved.bodyHtml).toMatch(/^Friday works\.<br><br>On Sep 16, Sender wrote:<blockquote type="cite"/);
+  });
+
+  it("splits a reopened reply draft's saved HTML back into authored text and collapsed history", async () => {
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const reopened: Draft = {
+      ...reply,
+      body: "Friday works.\n\nOn Sep 16, Sender wrote:\n> Can we meet Friday?",
+      bodyHtml: 'Friday <b>works</b>.<br><br>On Sep 16, Sender wrote:<blockquote type="cite">Can we meet Friday?</blockquote>',
+    };
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={reopened} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+
+    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent(/^Friday works\.$/);
+    expect(screen.getByLabelText("Quoted Text")).not.toBeVisible();
+
+    fireEvent.input(screen.getByRole("textbox", { name: "Message Body" }));
+    await ref.current?.flush();
+    expect(saveDraft.mock.calls.at(-1)![0]).toEqual(expect.objectContaining({ body: reopened.body }));
+    expect(saveDraft.mock.calls.at(-1)![0].bodyHtml).toMatch(/^Friday <b>works<\/b>\.<br><br>On Sep 16, Sender wrote:<blockquote type="cite"/);
+  });
+
+  it("leaves new messages and inline answers in a single body editor", () => {
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Show Quoted Text" })).toBeNull();
+    cleanup();
+
+    const inline: Draft = { ...reply, bodyHtml: 'On Sep 16, Sender wrote:<blockquote type="cite">Can we meet Friday?</blockquote>Yes, Friday.' };
+    render(<Composer draft={inline} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Show Quoted Text" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent("Can we meet Friday?");
   });
 });
 

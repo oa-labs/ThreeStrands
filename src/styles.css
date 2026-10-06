@@ -2643,6 +2643,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
 .compose-body ol, .compose-body ul { margin: .5em 0; padding-left: 2em; }
+.compose-quote-toggle { align-self: flex-start; flex-shrink: 0; margin: 0 0 8px; letter-spacing: 1px; }
+.compose-body.compose-quoted { min-height: 0; height: auto; padding-top: 0; overflow: visible; }
+.compose-body.compose-quoted[hidden] { display: none; }
 .reply-assist { flex-shrink: 0; margin: 0 0 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .reply-assist-backdrop { place-items: center; padding: 16px; }
 .reply-assist-modal { display: flex; flex-direction: column; width: min(680px, 100%); max-height: calc(100dvh - 32px); }

@@ -13,6 +13,7 @@ import {
   sanitizeComposeHtml,
   serializeComposeBody,
   serializeComposeHtml,
+  splitReplyQuote,
 } from "./richText";
 
 const event = (key: string, options: KeyboardEventInit = {}) =>
@@ -296,6 +297,51 @@ describe("reply citations", () => {
     const folded = collapseQuotedHistoryHtml(sanitizeMessageHtml(serializeComposeBody(editor).html));
     expect(folded).toContain("Friday works.");
     expect(folded).not.toMatch(/wrote:|Is this still happening/);
+  });
+});
+
+describe("reply quote split", () => {
+  const reply = "\n\nOn Mon, Oct 5, 2026 at 10:32 AM, A. Sender <sender@example.com> wrote:\n> Is this still happening?\n> > Earlier thread line";
+  const nativeHtml = () => sanitizeComposeHtml(draftTextToComposeHtml(reply));
+  const editorFor = (html: string) => {
+    const editor = document.createElement("div");
+    editor.innerHTML = html;
+    return editor;
+  };
+
+  it("separates a native reply's attribution and citation from the authored text", () => {
+    const split = splitReplyQuote(sanitizeComposeHtml(`Friday works.${draftTextToComposeHtml(reply)}`));
+    expect(split?.authoredHtml).toBe("Friday works.");
+    expect(split?.quotedHtml.startsWith("On Mon, Oct 5, 2026 at 10:32 AM, A. Sender &lt;sender@example.com&gt; wrote:<blockquote type=\"cite\"")).toBe(true);
+    expect(splitReplyQuote(nativeHtml())?.authoredHtml).toBe("");
+  });
+
+  it("splits an edited reply whose lines and attribution were wrapped in blocks", () => {
+    const html = '<div>Friday works.</div><div><br></div><div>On Mon, A wrote:</div><blockquote type="cite">one<br>two</blockquote><br>';
+    const split = splitReplyQuote(html);
+    expect(split?.authoredHtml).toBe("<div>Friday works.</div><div><br></div>");
+    expect(split?.quotedHtml).toBe('<div>On Mon, A wrote:</div><blockquote type="cite">one<br>two</blockquote><br>');
+  });
+
+  it("leaves a body whole without conservative evidence of a trailing reply quote", () => {
+    expect(splitReplyQuote("Just a note")).toBeNull();
+    expect(splitReplyQuote('Hi<br><blockquote type="cite">no attribution</blockquote>')).toBeNull();
+    expect(splitReplyQuote("Hi<br>On Mon, A wrote:<blockquote>not a citation</blockquote>")).toBeNull();
+    expect(splitReplyQuote('On Mon, A wrote:<blockquote type="cite">q</blockquote>My inline answer')).toBeNull();
+    expect(splitReplyQuote('<div>Per our call</div><blockquote type="cite">q</blockquote>')).toBeNull();
+  });
+
+  it("rejoins the authored text and quoted history into the native reply shape", () => {
+    const split = splitReplyQuote(nativeHtml())!;
+    const editor = editorFor("Friday works.<br><br>");
+    const { html, text } = serializeComposeBody(editor, editorFor(split.quotedHtml));
+    expect(text).toBe(`Friday works.${reply}`);
+    expect(splitReplyQuote(html)).toEqual({ authoredHtml: "Friday works.", quotedHtml: split.quotedHtml });
+    expect(serializeComposeBody(editorFor(""), editorFor(split.quotedHtml)).html).toBe(nativeHtml());
+  });
+
+  it("drops the separator when the quoted history was deleted", () => {
+    expect(serializeComposeBody(editorFor("Friday works."), editorFor("")).text).toBe("Friday works.");
   });
 });
 

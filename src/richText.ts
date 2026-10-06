@@ -224,6 +224,53 @@ export function draftTextToComposeHtml(text: string): string {
 
 const TEXT_BLOCK_ELEMENTS = new Set(["BLOCKQUOTE", "DIV", "LI", "OL", "P", "UL"]);
 
+function isBlankTrailingNode(node: Node): boolean {
+  return (node.nodeType === Node.TEXT_NODE && !(node as Text).data.trim())
+    || (node instanceof Element && node.tagName === "BR");
+}
+
+/**
+ * Splits compose HTML into the part the user writes and the quoted history a
+ * reply starts with, so the composer can keep the history out of the editor
+ * the user types in. Assistive and dictation software reads the focused
+ * editor's entire text, which stalls on a long quoted thread.
+ *
+ * Only a body that ends with an "On … wrote:" attribution followed by a
+ * `<blockquote type="cite">` splits; anything after the citation (an inline
+ * answer) or a citation without its attribution leaves the body whole.
+ */
+export function splitReplyQuote(html: string): { authoredHtml: string; quotedHtml: string } | null {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const root = template.content;
+  let citation = root.lastChild;
+  while (citation && isBlankTrailingNode(citation)) citation = citation.previousSibling;
+  if (!(citation instanceof Element) || citation.tagName !== "BLOCKQUOTE" || citation.getAttribute("type")?.toLowerCase() !== "cite") return null;
+
+  // The attribution is either the inline run since the last line break, or
+  // one block element when editing wrapped the line.
+  let start: ChildNode | null = citation.previousSibling;
+  if (start instanceof Element && TEXT_BLOCK_ELEMENTS.has(start.tagName)) {
+    if (!replyAttributionLine.test(start.textContent?.trim() ?? "")) return null;
+  } else {
+    let attribution = "";
+    let node: ChildNode | null = start;
+    while (node && !(node instanceof Element && (node.tagName === "BR" || TEXT_BLOCK_ELEMENTS.has(node.tagName)))) {
+      attribution = `${node.textContent ?? ""}${attribution}`;
+      start = node;
+      node = node.previousSibling;
+    }
+    if (!start || start === citation || !replyAttributionLine.test(attribution.trim())) return null;
+  }
+
+  const authored = document.createElement("div");
+  const quoted = document.createElement("div");
+  while (root.firstChild && root.firstChild !== start) authored.append(root.firstChild);
+  while (root.firstChild) quoted.append(root.firstChild);
+  while (authored.lastChild && isBlankTrailingNode(authored.lastChild)) authored.lastChild.remove();
+  return { authoredHtml: authored.innerHTML, quotedHtml: quoted.innerHTML };
+}
+
 /**
  * Plain-text alternative for compose HTML. `innerText` cannot be used: the
  * editor is serialized from a detached clone, where engines fall back to
@@ -384,9 +431,16 @@ export function insertHtmlAtRange(editor: HTMLElement, range: Range, html: strin
  * Removes compose-only image controls and returns the draft's HTML and plain
  * text. Both come from a single clone: the body includes the quoted thread,
  * so every extra copy adds autosave cost proportional to the whole thread.
+ *
+ * A reply's separately edited quoted history (see `splitReplyQuote`) joins
+ * the authored text after a blank line, the shape a native reply starts with.
  */
-export function serializeComposeBody(editor: HTMLElement): { html: string; text: string } {
+export function serializeComposeBody(editor: HTMLElement, quoted?: HTMLElement | null): { html: string; text: string } {
   const clone = editor.cloneNode(true) as HTMLElement;
+  if (quoted && (quoted.textContent?.trim() || quoted.querySelector("img"))) {
+    while (clone.lastChild && isBlankTrailingNode(clone.lastChild)) clone.lastChild.remove();
+    clone.append(document.createElement("br"), document.createElement("br"), ...Array.from(quoted.cloneNode(true).childNodes));
+  }
   clone.querySelectorAll<HTMLElement>("[data-compose-image]").forEach((wrapper) => {
     const image = wrapper.querySelector("img");
     const composeSource = image?.dataset.composeSource;
