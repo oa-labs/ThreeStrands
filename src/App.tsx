@@ -90,7 +90,7 @@ import { formatAvailabilityText, formatConfirmationText } from "./actionDrafting
 import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { isActiveTaskStatus } from "./taskViews";
 import { isKeepInTouchDue } from "./keepInTouch";
-import type { ContactsView } from "./ContactsWorkspace";
+import { adjacentContactsView, readContactsView, writeContactsView, type ContactsView } from "./contactsView";
 import { ContextPanel } from "./ContextPanel";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
@@ -358,7 +358,8 @@ export function App() {
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
-  const [contactsView, setContactsView] = useState<ContactsView>("all");
+  const [contactsView, setContactsView] = useState<ContactsView>(readContactsView);
+  useEffect(() => { writeContactsView(contactsView); }, [contactsView]);
   const [keepInTouchDueCount, setKeepInTouchDueCount] = useState(0);
   const refreshKeepInTouchCount = useCallback(async () => {
     try {
@@ -1927,7 +1928,7 @@ export function App() {
     setRightWorkspace("tasks");
   }, []);
 
-  const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("all"); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
+  const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
   const openKeepInTouchView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("keepInTouch"); setRightWorkspace("contacts"); }, []);
   const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setContactsView("all"); setRightWorkspace("contacts"); }, []);
   // The participant picked from a message header, kept per conversation so
@@ -2074,6 +2075,7 @@ export function App() {
     selectAdjacentTaskColumn: (direction) => taskWorkspaceRef.current?.selectAdjacentColumn(direction),
     toggleTaskLayout: () => taskWorkspaceRef.current?.toggleLayout(),
     cycleTaskView: (direction) => taskWorkspaceRef.current?.cycleView(direction),
+    cycleContactsView: (direction) => setContactsView((current) => adjacentContactsView(current, direction)),
     focusGoals: () => taskWorkspaceRef.current?.focusGoals(),
     linkTaskToGoal: () => taskWorkspaceRef.current?.linkSelectedToGoal(),
     taskBoardActive: rightWorkspace === "tasks" && taskLayout === "board",
@@ -2921,7 +2923,7 @@ export function App() {
           </> : null}
         />
       ) : null}
-      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactsView}`} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} initialView={contactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} /></Suspense> : null}
+      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} /></Suspense> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
           ref={taskWorkspaceRef}

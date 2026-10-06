@@ -53,6 +53,8 @@ export type CommandContext = {
   selectAdjacentTaskColumn(direction: -1 | 1): void;
   toggleTaskLayout(): void;
   cycleTaskView(direction: -1 | 1): void;
+  /** Alternates the address book between All Contacts and Keep in Touch. */
+  cycleContactsView(direction: -1 | 1): void;
   focusGoals(): void;
   linkTaskToGoal(): void;
   taskBoardActive: boolean;
@@ -278,6 +280,22 @@ export const commands: Command[] = [
     group: "Navigation",
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
     run: (context) => complete(() => context.cycleTaskView(1)),
+  },
+  {
+    id: "contacts.nextView",
+    title: "Next Contacts View",
+    keys: ["Tab"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "contacts" && !context.composerActive,
+    run: (context) => complete(() => context.cycleContactsView(1)),
+  },
+  {
+    id: "contacts.previousView",
+    title: "Previous Contacts View",
+    keys: ["Shift+Tab"],
+    group: "Navigation",
+    enabled: (context) => context.focusedPane === "contacts" && !context.composerActive,
+    run: (context) => complete(() => context.cycleContactsView(-1)),
   },
   {
     id: "tasks.focusGoals",

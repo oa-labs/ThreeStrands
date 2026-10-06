@@ -23,6 +23,34 @@ describe("ContactsWorkspace",()=>{
   });
   afterEach(()=>{cleanup();vi.clearAllMocks();localStorage.clear();});
 
+  it("clears search and returns focus to the selected contact on Escape",async()=>{
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const search=screen.getByRole("textbox",{name:"Search contacts"});
+    search.focus();
+    fireEvent.change(search,{target:{value:"jane"}});
+    await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("jane",500,undefined));
+    const onWindowEscape=vi.fn();
+    window.addEventListener("keydown",onWindowEscape);
+    try{fireEvent.keyDown(search,{key:"Escape"});}finally{window.removeEventListener("keydown",onWindowEscape);}
+    expect(search).toHaveValue("");
+    expect(onWindowEscape).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(screen.getByRole("button",{name:/Jane Doe/}));
+    await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("",500,undefined));
+  });
+
+  it("leaves the search box on Escape when no contact is selected",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([]);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByText(/No contacts found/);
+    const search=screen.getByRole("textbox",{name:"Search contacts"});
+    search.focus();
+    fireEvent.change(search,{target:{value:"zzz"}});
+    fireEvent.keyDown(search,{key:"Escape"});
+    expect(search).toHaveValue("");
+    expect(document.activeElement).not.toBe(search);
+  });
+
   it("searches sent-to and saved contacts, then saves edited details",async()=>{
     const onSaved=vi.fn();
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={onSaved}/>);
@@ -628,6 +656,22 @@ describe("ContactsWorkspace",()=>{
       fireEvent.change(screen.getByRole("textbox",{name:"Search contacts"}),{target:{value:"tara"}});
       expect(screen.queryByRole("region",{name:"Overdue"})).not.toBeInTheDocument();
       expect(screen.getByRole("region",{name:"Due Today"})).toBeInTheDocument();
+    });
+
+    it("lets the owner control the view and reports tab clicks",async()=>{
+      const onViewChange=vi.fn();
+      const {rerender}=render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} view="all" onViewChange={onViewChange}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.click(screen.getByRole("button",{name:"Select"}));
+      fireEvent.click(screen.getByRole("tab",{name:/Keep in Touch/}));
+      expect(onViewChange).toHaveBeenCalledWith("keepInTouch");
+      // Still controlled: nothing changes until the owner passes the new view.
+      expect(screen.getByRole("tab",{name:"All Contacts"})).toHaveAttribute("aria-selected","true");
+      rerender(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} view="keepInTouch" onViewChange={onViewChange}/>);
+      expect(screen.getByRole("tab",{name:/Keep in Touch/})).toHaveAttribute("aria-selected","true");
+      rerender(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} view="all" onViewChange={onViewChange}/>);
+      // Leaving All Contacts ends a bulk selection however the view changed.
+      expect(screen.getByRole("button",{name:"Select"})).toHaveAttribute("aria-pressed","false");
     });
 
     it("opens directly on the keep-in-touch view and explains an empty one",async()=>{

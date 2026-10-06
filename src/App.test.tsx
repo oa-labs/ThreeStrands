@@ -773,6 +773,35 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.getByText("Address book")).toBeInTheDocument();
   });
 
+  it("alternates contact views with Tab and remembers the last one when the address book reopens", async () => {
+    localStorage.removeItem("threestrands.contacts.view");
+    try {
+      render(<App />);
+      await screen.findByRole("region", { name: "Inbox" });
+
+      fireEvent.keyDown(window, { key: "4" });
+      const allTab = await screen.findByRole("tab", { name: "All Contacts" });
+      expect(allTab).toHaveAttribute("aria-selected", "true");
+
+      fireEvent.keyDown(document.body, { key: "Tab" });
+      expect(await screen.findByRole("tab", { name: /Keep in Touch/ })).toHaveAttribute("aria-selected", "true");
+      expect(localStorage.getItem("threestrands.contacts.view")).toBe("keepInTouch");
+
+      // Tab works from the search box too, as it does from mail search.
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Search contacts" }), { key: "Tab", shiftKey: true });
+      expect(await screen.findByRole("tab", { name: "All Contacts" })).toHaveAttribute("aria-selected", "true");
+      fireEvent.keyDown(document.body, { key: "Tab" });
+      expect(await screen.findByRole("tab", { name: /Keep in Touch/ })).toHaveAttribute("aria-selected", "true");
+
+      fireEvent.keyDown(window, { key: "4" });
+      await waitFor(() => expect(screen.queryByRole("heading", { name: "Contacts" })).not.toBeInTheDocument());
+      fireEvent.keyDown(window, { key: "4" });
+      expect(await screen.findByRole("tab", { name: /Keep in Touch/ })).toHaveAttribute("aria-selected", "true");
+    } finally {
+      localStorage.removeItem("threestrands.contacts.view");
+    }
+  });
+
   it("labels the navbar Contacts button with its 4 shortcut and separates it from utility actions", async () => {
     render(<App />);
     await screen.findByRole("region", { name: "Inbox" });

@@ -61,6 +61,7 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   selectAdjacentTaskColumn: vi.fn(),
   toggleTaskLayout: vi.fn(),
   cycleTaskView: vi.fn(),
+  cycleContactsView: vi.fn(),
   taskBoardActive: false,
   calendarWeekActive: false,
   selectedTaskHasThread: false,

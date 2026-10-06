@@ -57,6 +57,7 @@ function noopContext(): CommandContext {
     selectAdjacentTaskColumn: () => {},
     toggleTaskLayout: () => {},
     cycleTaskView: () => {},
+    cycleContactsView: () => {},
     taskBoardActive: false,
     calendarWeekActive: false,
     selectedTaskHasThread: false,
@@ -128,8 +129,8 @@ describe("command registry", () => {
       arrowright: ["tasks.nextColumn", "message.next"],
       arrowleft: ["tasks.previousColumn", "message.previous"],
       "mod+j": ["draft.replyAssist", "chat.open"],
-      tab: ["mailbox.nextSplit", "tasks.nextView"],
-      "shift+tab": ["mailbox.previousSplit", "tasks.previousView"],
+      tab: ["mailbox.nextSplit", "tasks.nextView", "contacts.nextView"],
+      "shift+tab": ["mailbox.previousSplit", "contacts.previousView", "tasks.previousView"],
     });
 
     for (const focusedPane of ["mail", "tasks", "contacts"] as const) {
@@ -472,6 +473,25 @@ describe("command registry", () => {
     void next?.run({ ...taskContext, cycleTaskView });
     void previous?.run({ ...taskContext, cycleTaskView });
     expect(cycleTaskView.mock.calls).toEqual([[1], [-1]]);
+  });
+
+  it("alternates contact views with Tab/Shift+Tab only while the Contacts pane is focused", () => {
+    const next = commands.find((command) => command.id === "contacts.nextView");
+    const previous = commands.find((command) => command.id === "contacts.previousView");
+    expect(next?.keys).toEqual(["Tab"]);
+    expect(previous?.keys).toEqual(["Shift+Tab"]);
+
+    const contactsContext = { ...noopContext(), focusedPane: "contacts" as const, splitInboxCount: 2 };
+    expect(next?.enabled(contactsContext)).toBe(true);
+    expect(previous?.enabled(contactsContext)).toBe(true);
+    expect(next?.enabled({ ...contactsContext, composerActive: true })).toBe(false);
+    expect(next?.enabled({ ...contactsContext, focusedPane: "mail" })).toBe(false);
+    expect(next?.enabled({ ...contactsContext, focusedPane: "tasks" })).toBe(false);
+
+    const cycleContactsView = vi.fn();
+    void next?.run({ ...contactsContext, cycleContactsView });
+    void previous?.run({ ...contactsContext, cycleContactsView });
+    expect(cycleContactsView.mock.calls).toEqual([[1], [-1]]);
   });
 
   it("splits sequential shortcuts into independently matchable steps", () => {

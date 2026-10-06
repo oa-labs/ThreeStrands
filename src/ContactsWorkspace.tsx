@@ -9,7 +9,9 @@ import { PanelResizeHandle, useContactListWidth } from "./PanelResizeHandle";
 import { KeepInTouchSection } from "./KeepInTouchSection";
 import { KEEP_IN_TOUCH_FREQUENCIES, KEEP_IN_TOUCH_GROUPS, UPCOMING_BIRTHDAY_DAYS, describeBirthday, describeDue, frequencyLabel, isKeepInTouchDue, keepInTouchStatus, nextBirthday } from "./keepInTouch";
 
-export type ContactsView = "all" | "keepInTouch";
+import type { ContactsView } from "./contactsView";
+
+export type { ContactsView };
 const matchesQuery = (profile:ContactProfile,needle:string) => !needle || `${profile.displayName??""} ${profile.addresses.join(" ")} ${profile.company??""}`.toLocaleLowerCase().includes(needle);
 
 const empty = (): SaveContactRequest => ({ id:null,displayName:"",role:"",company:"",location:"",bio:"",notes:"",links:[],photoData:null,favorite:false,addresses:[],birthday:"" });
@@ -34,8 +36,10 @@ async function encodePhoto(file:File):Promise<string>{
   if(data.length>87_000)throw new Error("Photo is too large to save after resizing"); return data;
 }
 
-export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,accountId=null,initialView="all",onKeepInTouchChanged}:{onOpenThread(id:string):void;onSaved():void;initialContactId?:string|null;accountId?:string|null;initialView?:ContactsView;onKeepInTouchChanged?():void}){
-  const [view,setView]=useState<ContactsView>(initialView);const [kitProfiles,setKitProfiles]=useState<ContactProfile[]>([]);const [selecting,setSelecting]=useState(false);const [checkedIds,setCheckedIds]=useState<string[]>([]);const [bulkNotice,setBulkNotice]=useState<string|null>(null);
+export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,accountId=null,initialView="all",view:controlledView,onViewChange,onKeepInTouchChanged}:{onOpenThread(id:string):void;onSaved():void;initialContactId?:string|null;accountId?:string|null;initialView?:ContactsView;view?:ContactsView;onViewChange?(view:ContactsView):void;onKeepInTouchChanged?():void}){
+  // The view is controlled when the app owns it (so Tab can switch it and it
+  // is remembered); standalone renders fall back to local state.
+  const [localView,setLocalView]=useState<ContactsView>(initialView);const view=controlledView??localView;const changeView=(next:ContactsView)=>{setLocalView(next);onViewChange?.(next);};const [kitProfiles,setKitProfiles]=useState<ContactProfile[]>([]);const [selecting,setSelecting]=useState(false);const [checkedIds,setCheckedIds]=useState<string[]>([]);const [bulkNotice,setBulkNotice]=useState<string|null>(null);
   const [query,setQuery]=useState("");const [profiles,setProfiles]=useState<ContactProfile[]>([]);const [selectedId,setSelectedId]=useState<string|null>(null);const [profile,setProfile]=useState<ContactProfile|null>(null);
   const [timeline,setTimeline]=useState<ContactTimelineItem[]>([]);const [timelineHasMore,setTimelineHasMore]=useState(false);const [draft,setDraft]=useState<SaveContactRequest>(empty());const [loading,setLoading]=useState(true);const [busy,setBusy]=useState(false);const [error,setError]=useState<string|null>(null);const [adding,setAdding]=useState(false);const [confirmDelete,setConfirmDelete]=useState(false);const [suggestions,setSuggestions]=useState<ContactFieldSuggestion[]>([]);const [enrichNotice,setEnrichNotice]=useState<{text:string;failed:boolean}|null>(null);const [enriching,setEnriching]=useState(false);const [moreEmailsAvailable,setMoreEmailsAvailable]=useState(false);const [emailsReviewed,setEmailsReviewed]=useState(0);
   const searchRef=useRef<HTMLInputElement>(null);
@@ -60,6 +64,8 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,ac
   };
   const toggleChecked=(id:string)=>setCheckedIds(current=>current.includes(id)?current.filter(value=>value!==id):[...current,id]);
   const stopSelecting=()=>{setSelecting(false);setCheckedIds([]);};
+  // Bulk selection exists only in All Contacts.
+  useEffect(()=>{if(view!=="all"){setSelecting(false);setCheckedIds([]);}},[view]);
   const applyBulkFrequency=async(value:string)=>{if(!value||!checkedIds.length)return;const days=value==="off"?null:Number(value);setBusy(true);setError(null);setBulkNotice(null);try{const updated=await mailClient.setKeepInTouch(checkedIds,days);keepInTouchChanged(updated);setBulkNotice(days===null?`Keep in touch turned off for ${updated.length} ${updated.length===1?"contact":"contacts"}`:`${frequencyLabel(days)} for ${updated.length} ${updated.length===1?"contact":"contacts"}`);stopSelecting();if(selectedId&&!updated.some(item=>item.id===selectedId)){const replaced=updated.find(item=>profile?.addresses.some(address=>item.addresses.includes(address)));if(replaced)setSelectedId(replaced.id);}else if(selectedId){const current=updated.find(item=>item.id===selectedId);if(current)setProfile(current);}}catch(reason){setError(errorMessage(reason));}finally{setBusy(false);}};
   useEffect(()=>{const onKey=(event:KeyboardEvent)=>{if(event.key!=="/"||event.metaKey||event.ctrlKey||event.altKey)return;const target=event.target;if(target instanceof HTMLElement&&(target.isContentEditable||["INPUT","TEXTAREA","SELECT"].includes(target.tagName)))return;event.preventDefault();searchRef.current?.focus();};window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);},[]);
   const addingRef=useRef(adding);
@@ -105,8 +111,8 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,ac
     <div className="contacts-workspace-body" style={{ "--contact-list-width": `${listSize.width}px` } as CSSProperties}>
       <div className="contacts-list-pane"><PanelResizeHandle {...listSize} label="Resize contact list" controlsId="contact-list-panel" title="Drag to resize the contact list. Use arrow keys to adjust; double-click to reset."/>
       <aside id="contact-list-panel" className="contacts-list-panel" aria-label="Contact list">
-        <div className="contacts-view-switch" role="tablist" aria-label="Contact Views"><button type="button" role="tab" aria-selected={view==="all"} onClick={()=>setView("all")}>All Contacts</button><button type="button" role="tab" aria-selected={view==="keepInTouch"} onClick={()=>{stopSelecting();setView("keepInTouch");}}>Keep in Touch{dueCount?<span className="contacts-view-count" aria-label={`${dueCount} due`}>{dueCount}</span>:null}</button></div>
-        <label className="contacts-search"><Search size={16}/><input ref={searchRef} aria-label="Search contacts" placeholder="Search contacts" value={query} onChange={event=>setQuery(event.target.value)}/><kbd>/</kbd></label>
+        <div className="contacts-view-switch" role="tablist" aria-label="Contact Views"><button type="button" role="tab" aria-selected={view==="all"} data-mailbox-tab-shortcut onClick={()=>changeView("all")}>All Contacts</button><button type="button" role="tab" aria-selected={view==="keepInTouch"} data-mailbox-tab-shortcut onClick={()=>changeView("keepInTouch")}>Keep in Touch{dueCount?<span className="contacts-view-count" aria-label={`${dueCount} due`}>{dueCount}</span>:null}</button></div>
+        <label className="contacts-search"><Search size={16}/><input ref={searchRef} aria-label="Search contacts" placeholder="Search contacts" value={query} data-mailbox-tab-shortcut onChange={event=>setQuery(event.target.value)} onKeyDown={event=>{if(event.key!=="Escape")return;event.preventDefault();event.stopPropagation();setQuery("");if(selectedItemRef.current)selectedItemRef.current.focus();else event.currentTarget.blur();}}/><kbd>/</kbd></label>
         {view==="all"?<div className="contacts-list-toolbar"><p className="contacts-sort-hint">Favorites first · then recent activity</p><button type="button" className="contacts-select-toggle" aria-pressed={selecting} onClick={()=>selecting?stopSelecting():setSelecting(true)}>{selecting?"Done":"Select"}</button></div>:<p className="contacts-sort-hint">Soonest reminder first · email either way counts as contact</p>}
         {selecting?<div className="contacts-bulk-bar"><span>{checkedIds.length} selected</span><select aria-label="Keep in Touch Frequency" value="" disabled={busy||!checkedIds.length} onChange={event=>void applyBulkFrequency(event.target.value)}><option value="" disabled>Keep in Touch…</option>{KEEP_IN_TOUCH_FREQUENCIES.map(item=><option key={item.days} value={item.days}>{item.label}</option>)}<option value="off">Off</option></select></div>:null}
         {bulkNotice?<p className="contacts-status" role="status">{bulkNotice}</p>:null}
@@ -138,5 +144,5 @@ function ContactListItem({item,selected,itemRef,onSelect,detail,showDue=true,che
   // In selection mode a row is a checkbox, so one click never both selects
   // the row for a bulk change and opens the profile.
   if(checked!==undefined)return <label className={`contact-list-item selectable${checked?" checked":""}`}><input type="checkbox" checked={checked} aria-label={`Select ${name}`} onChange={()=>onToggleChecked?.()}/>{content}</label>;
-  return <button ref={itemRef} type="button" className={`contact-list-item${selected?" selected":""}`} aria-pressed={selected} onClick={onSelect}>{content}</button>;
+  return <button ref={itemRef} type="button" data-mailbox-tab-shortcut className={`contact-list-item${selected?" selected":""}`} aria-pressed={selected} onClick={onSelect}>{content}</button>;
 }
