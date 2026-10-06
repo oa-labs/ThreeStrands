@@ -4,7 +4,7 @@ import type { ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
 
-vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),openAttachment:vi.fn()}}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:"Founder",company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:3,receivedCount:2,lastInteractedAt:"2026-09-20T00:00:00Z",birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const favoriteContact:ContactProfile={...jane,id:"contact:favorite@example.com",displayName:"Favorite Person",favorite:true,addresses:["favorite@example.com"],lastInteractedAt:"2026-09-10T00:00:00Z"};
@@ -22,6 +22,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.deleteContactProfile).mockResolvedValue(undefined);
     vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[],messagesReviewed:0,hasMore:false});
     vi.mocked(mailClient.listKeepInTouch).mockResolvedValue([]);
+    vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[],total:0});
   });
   afterEach(()=>{cleanup();vi.clearAllMocks();localStorage.clear();});
 
@@ -318,6 +319,24 @@ describe("ContactsWorkspace",()=>{
     await waitFor(()=>expect(within(recent).getAllByRole("button",{name:/^Subject/})).toHaveLength(22));
     expect(mailClient.contactTimeline).toHaveBeenLastCalledWith(jane.id,20,20,undefined);
     expect(within(recent).queryByRole("button",{name:"Load older emails"})).not.toBeInTheDocument();
+  });
+
+  it("lists the person's files in the rail and opens them or their email",async()=>{
+    const onOpenThread=vi.fn();
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([{threadId:"report-thread",accountId:"me@example.com",contactEmail:"jane@example.com",subject:"Report",snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]}]);
+    vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[{threadId:"report-thread",messageId:"report-message",subject:"Report",sentAt:"2026-09-20T00:00:00Z",attachment:{id:"report-pdf",filename:"September.pdf",mimeType:"application/pdf",size:1200,contentId:null,inline:false}}],total:1});
+    vi.mocked(mailClient.openAttachment).mockResolvedValue(undefined);
+    render(<ContactsWorkspace onOpenThread={onOpenThread} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const rail=screen.getByRole("complementary",{name:"Contact context"});
+    const files=await within(rail).findByRole("region",{name:"Files"});
+    expect(mailClient.contactFiles).toHaveBeenCalledWith(jane.id,expect.any(Number));
+    // Files sit above Recent emails, in the same order as the email sidebar.
+    expect(files.compareDocumentPosition(within(rail).getByRole("region",{name:"Recent emails"}))&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(within(files).getByRole("button",{name:/^September\.pdf/}));
+    expect(mailClient.openAttachment).toHaveBeenCalledWith("report-message","report-pdf");
+    fireEvent.click(within(files).getByRole("button",{name:"Show the email with September.pdf"}));
+    expect(onOpenThread).toHaveBeenCalledWith("report-thread");
   });
 
   it("leaves out the rail when there is no history and AI is off",async()=>{

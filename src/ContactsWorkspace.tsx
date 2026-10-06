@@ -7,7 +7,7 @@ import { readAiFeatures, readAiRequestConfig } from "./aiSettings";
 import { errorMessage } from "./errors";
 import { PanelResizeHandle, useContactListWidth } from "./PanelResizeHandle";
 import { KeepInTouchSection } from "./KeepInTouchSection";
-import { ContextSectionHeader, RecentEmailsSection } from "./ContextSections";
+import { ContactFilesSection, ContextSectionHeader, RecentEmailsSection } from "./ContextSections";
 import { KEEP_IN_TOUCH_FREQUENCIES, KEEP_IN_TOUCH_GROUPS, UPCOMING_BIRTHDAY_DAYS, describeBirthday, describeDue, formatKeepInTouchDate, frequencyLabel, isKeepInTouchDue, keepInTouchStatus, lastTouchAt, nextBirthday } from "./keepInTouch";
 
 import type { ContactsView } from "./contactsView";
@@ -165,6 +165,7 @@ export function ContactsWorkspace({onOpenThread,onSaved,initialContactId=null,ac
           </div></div>
           {showRail?<aside className="contact-context-rail" aria-label="Contact context">
             {aiEnabled?<ContactEnrichmentCard suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}
+            {profile?<ContactFilesSection key={profile.id} contactId={profile.id} onShowMessage={threadId=>onOpenThread(threadId)}/>:null}
             {timeline.length?<RecentEmailsSection items={timeline} limit={CONTACT_RECENT_EMAIL_ROWS} onOpenThread={onOpenThread} onLoadOlder={timelineHasMore?()=>void loadOlder():undefined}/>:null}
           </aside>:null}
         </div>:<div className="contacts-empty-state"><ContactRound size={30}/><p>Select a contact to see their details</p></div>}
