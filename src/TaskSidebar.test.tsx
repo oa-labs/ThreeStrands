@@ -3,6 +3,7 @@ import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskSidebar, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { mailClient } from "./data/client";
+import { expectSharedButtons } from "./test/sharedButtons";
 import type { Goal, ThreadTask } from "./domain";
 import { formatPeriod, periodFor, shiftPeriod } from "./goals";
 
@@ -34,14 +35,14 @@ describe("TaskSidebar", () => {
     localStorage.clear();
   });
 
-  it("stays read-only until Add task opens the quick-add form", async () => {
+  it("stays read-only until Add Task opens the quick-add form", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={vi.fn()} />);
 
     await screen.findByText("0 tasks");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
     expect(screen.getByRole("textbox", { name: "Task title" })).toBeInTheDocument();
   });
 
@@ -260,7 +261,7 @@ describe("TaskSidebar", () => {
       .mockResolvedValueOnce(workspaceTask("task-2", { title: "Second" }));
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
     const input = screen.getByRole("textbox", { name: "Task title" });
     fireEvent.change(input, { target: { value: "First" } });
     fireEvent.click(within(input.closest("form")!).getByRole("button", { name: "Add task" }));
@@ -277,7 +278,7 @@ describe("TaskSidebar", () => {
     const onCreateTask = vi.fn().mockResolvedValue(workspaceTask("work-task", { accountId: "work@example.com" }));
     render(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
     expect(screen.getByText("· All accounts")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
     const form = screen.getByRole("textbox", { name: "Task title" }).closest("form")!;
     fireEvent.change(within(form).getByRole("textbox", { name: "Task title" }), { target: { value: "Review proposal" } });
     expect(within(form).getByRole("button", { name: "Add task" })).toBeDisabled();
@@ -324,10 +325,12 @@ describe("TaskSidebar", () => {
     await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
     expect(screen.getByText("you@example.com", { exact: false })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
-    const addTask = screen.getByRole("button", { name: "Add task" });
-    expect(addTask).toHaveClass("task-add-button");
-    expect(addTask).toHaveTextContent("Add task");
+    const addTask = screen.getByRole("button", { name: "Add Task" });
+    expect(addTask).toHaveClass("btn", "task-add-button");
+    expect(addTask).toHaveTextContent("Add Task");
     expect(addTask.querySelector("svg")).not.toBeNull();
+    expectSharedButtons(screen.getByRole("region", { name: "Tasks" }).querySelector(".tasks-sidebar-header-actions")!);
+    expect(screen.getByRole("group", { name: "Task layout" })).toHaveClass("segmented");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
@@ -337,7 +340,7 @@ describe("TaskSidebar", () => {
     const onCreateTask = vi.fn().mockResolvedValue(created);
     const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
     const form = screen.getByRole("textbox", { name: "Task title" }).closest("form");
     expect(form).not.toBeNull();
     fireEvent.change(screen.getByRole("textbox", { name: "Task title" }), { target: { value: "  Call the contractor  " } });
@@ -1016,7 +1019,7 @@ describe("TaskSidebar goals", () => {
     await waitFor(() => expect(card.querySelector(".task-card-goal")).toHaveTextContent("Supports Ship IMAP"));
 
     fireEvent.click(within(screen.getByRole("complementary", { name: "Goals" })).getByRole("button", { name: /^Ship IMAP/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
     const form = container.querySelector(".task-quick-add") as HTMLElement;
     expect(form).toHaveTextContent("Supports Ship IMAP");
     expect(within(form).queryByRole("combobox", { name: "Account" })).not.toBeInTheDocument();

@@ -56,6 +56,38 @@ The release workflow builds installers and attaches them to a draft GitHub
 Release for installation checks before publishing. If the final tag push fails,
 retry `git push origin v<version>`; the signed tag already exists locally.
 
+### Automatic updates
+
+Installed copies check
+`https://github.com/oa-labs/ThreeStrands/releases/latest/download/latest.json`
+at launch and every six hours, and install only after the user chooses
+**Install and restart**. GitHub's "latest" release excludes drafts and
+prereleases, so publishing a stable draft is what offers it as an update; betas
+are never offered. The Mac app and the AppImage replace themselves. Mac copies
+still running from the disk image, and deb and rpm installs, are linked to the
+release page instead. Development builds never check.
+
+Every update is signed with a Tauri updater key, separate from the Apple
+certificate. The app trusts only the public key in `src-tauri/tauri.conf.json`
+(`plugins.updater.pubkey`), and `pnpm release` refuses to tag without it. To
+set it up once:
+
+```sh
+pnpm tauri signer generate -w ~/.tauri/threestrands-updater.key
+```
+
+Put the contents of `~/.tauri/threestrands-updater.key.pub` in
+`plugins.updater.pubkey`, and add the private key file's contents and its
+password as the `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets. Keep an offline backup
+of the private key and password. If they are lost, installed copies can never
+be updated again and every user must reinstall by hand.
+
+Release builds pass `src-tauri/tauri.updater.conf.json`, which makes Tauri sign
+the update packages; local builds don't, so they need no key. Before
+publishing, the release job verifies every signature against the configured
+public key, so a mismatched secret fails the release instead of users' updates.
+
 ## Marketing screenshots
 
 The browser preview can run against a fictional showcase mailbox instead of

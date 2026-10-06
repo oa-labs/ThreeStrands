@@ -1293,7 +1293,7 @@ describe("account selection persistence", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tasks (3)" }));
     const workspace = screen.getByRole("region", { name: "Tasks" });
     expect(workspace.querySelector(".tasks-sidebar-header")).toHaveTextContent("All accounts");
-    fireEvent.click(within(workspace).getByRole("button", { name: "Add task" }));
+    fireEvent.click(within(workspace).getByRole("button", { name: "Add Task" }));
     const form = workspace.querySelector<HTMLElement>(".task-quick-add")!;
     fireEvent.change(within(form).getByRole("textbox", { name: "Task title" }), { target: { value: "Review plan" } });
     expect(within(form).getByRole("button", { name: "Add task" })).toBeDisabled();

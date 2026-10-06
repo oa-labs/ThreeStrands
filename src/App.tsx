@@ -155,6 +155,7 @@ import {
 } from "./triage";
 import type { MailAccountSettings, SettingsSection, SyncDiagnosticsActions } from "./SettingsPanel";
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
+import { UpdateNotice } from "./UpdateNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
 type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | null;
@@ -3093,6 +3094,7 @@ export function App() {
         suppressed={settingsOpen && settingsSection === "replicatedSync"}
         onReview={() => openSettingsAt("replicatedSync")}
       />
+      <UpdateNotice />
       {notice ? (
         <div className="toast" role="status">
           {notice.message}

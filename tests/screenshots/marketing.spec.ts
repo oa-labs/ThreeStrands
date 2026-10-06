@@ -100,7 +100,7 @@ const scenes: Scene[] = [
     name: "calendar-create",
     capture: async (page) => {
       await page.keyboard.press("2");
-      await page.getByRole("button", { name: "New event", exact: true }).click();
+      await page.getByRole("button", { name: "New Event", exact: true }).click();
       const event = page.getByRole("dialog", { name: "New event", exact: true });
       await event.getByLabel("Title", { exact: true }).fill("Q4 launch rollout review");
       await event.getByLabel("Invite people", { exact: true }).fill("priya@harborlight.example");

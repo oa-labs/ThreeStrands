@@ -43,6 +43,10 @@ if [[ "$release_build" == "1" ]]; then
     echo "error: THREESTRANDS_GOOGLE_CLIENT_SECRET is required for a release build" >&2
     exit 1
   fi
+  if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+    echo "error: TAURI_SIGNING_PRIVATE_KEY is required to sign the AppImage update" >&2
+    exit 1
+  fi
 fi
 
 report_build_resources() {
@@ -87,7 +91,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-pnpm tauri build --bundles "$bundle_selection"
+# Release builds also sign the AppImage as an in-place update package.
+build_args=(--bundles "$bundle_selection")
+if [[ "$release_build" == "1" ]]; then
+  build_args+=(--config src-tauri/tauri.updater.conf.json)
+fi
+pnpm tauri build "${build_args[@]}"
 
 bundle_root="$project_root/src-tauri/target/release/bundle"
 artifact_dir="$project_root/artifacts/linux-amd64"
@@ -125,6 +134,17 @@ for package in "${packages[@]}"; do
     install -m 0644 "$package" "$artifact_dir/"
   fi
 done
+
+if [[ "$release_build" == "1" ]]; then
+  mapfile -d '' update_signatures < <(
+    find "$bundle_root" -type f -newer "$build_marker" -name '*.AppImage.sig' -print0
+  )
+  if [[ "${#update_signatures[@]}" != "1" ]]; then
+    echo "error: expected exactly one signed AppImage update; found ${#update_signatures[@]}" >&2
+    exit 1
+  fi
+  install -m 0644 "${update_signatures[0]}" "$artifact_dir/"
+fi
 
 deb_package="$(find "$artifact_dir" -maxdepth 1 -type f -name '*.deb' -print -quit)"
 rpm_package="$(find "$artifact_dir" -maxdepth 1 -type f -name '*.rpm' -print -quit)"

@@ -43,6 +43,52 @@ describe("primary workspace headers", () => {
   });
 });
 
+describe("primary workspace header buttons", () => {
+  const headerControls = [
+    ".thread-header",
+    ".filters-trigger",
+    ".calendar-week-controls",
+    ".tasks-sidebar-header-actions",
+    ".contacts-header",
+    ".contacts-view-switch",
+  ];
+  const shapeProperties = ["height", "min-height", "padding", "border", "border-radius", "font-size", "font-weight", "letter-spacing", "text-transform"];
+  const px = (value: string | undefined) => Number.parseFloat(value ?? "");
+
+  it("gives buttons, icon buttons, and segmented toggles one shared height", () => {
+    const controlHeight = px(lastDeclaration(":root", "--control-h"));
+    const segmentHeight = px(lastDeclaration(":root", "--control-h-sm"));
+    expect(lastDeclaration(".btn", "height")).toBe("var(--control-h)");
+    expect(lastDeclaration(".btn-icon", "height")).toBe("var(--control-h)");
+    expect(lastDeclaration(".btn-icon", "width")).toBe("var(--control-h)");
+    expect(lastDeclaration(".segmented > button", "height")).toBe("var(--control-h-sm)");
+    const inset = px(lastDeclaration(".segmented", "padding"));
+    const border = px(lastDeclaration(".segmented", "border"));
+    expect(segmentHeight + 2 * inset + 2 * border).toBe(controlHeight);
+  });
+
+  it("leaves button shape to the shared classes instead of per-view rules", () => {
+    const overrides: string[] = [];
+    css.walkRules((rule) => {
+      for (const selector of rule.selectors) {
+        const scoped = headerControls.some((control) => selector.includes(control));
+        const targetsButton = /\bbutton\b|\.filters-trigger(?![\w-])/.test(selector);
+        if (!scoped || !targetsButton) continue;
+        rule.walkDecls((declaration) => {
+          if (shapeProperties.includes(declaration.prop)) overrides.push(`${selector} { ${declaration.prop} }`);
+        });
+      }
+    });
+    expect(overrides).toEqual([]);
+  });
+
+  it("keeps button labels in their written case", () => {
+    for (const selector of [".btn", ".btn-icon", ".segmented > button"]) {
+      expect(lastDeclaration(selector, "text-transform")).toBeUndefined();
+    }
+  });
+});
+
 describe("task detail heading", () => {
   it("edits the title in the detail dialog at the compact heading size", () => {
     expect(lastDeclaration(".modal-form .task-detail-title-field input", "font-size")).toBe("var(--type-heading-sm)");

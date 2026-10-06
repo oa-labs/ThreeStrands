@@ -514,11 +514,11 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
-          <div className="task-layout-toggle" role="group" aria-label="Task layout">
+          <div className="segmented" role="group" aria-label="Task layout">
             <button type="button" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={15} />List</button>
             <button type="button" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={15} />Board</button>
           </div>
-          {onCreateTask ? <button type="button" className="task-add-button" onClick={startNew}><Plus size={15} />Add task</button> : null}
+          {onCreateTask ? <button type="button" className="btn task-add-button" onClick={startNew}><Plus size={15} />Add Task</button> : null}
         </div>
       </header>
       {error ? <p className="form-error tasks-error" role="alert">

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { describe, it } from "node:test";
-import { prepareReleaseAssets, releaseMetadata } from "./release.mjs";
+import { prepareReleaseAssets, releaseMetadata, updaterPublicKey, verifyUpdateSignature } from "./release.mjs";
 
 describe("Linux CI container builds", () => {
   for (const [path, job] of [["release.yml", "linux"], ["linux-build.yml", "linux-amd64"]]) {
@@ -169,10 +169,35 @@ else console.log("test tool " + name);
   });
 });
 
+/** A minisign key pair in the encodings `tauri signer` writes. */
+function updaterKeyPair() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const keyId = randomBytes(8);
+  const raw = publicKey.export({ format: "der", type: "spki" }).subarray(12);
+  const pubkey = Buffer.from(`untrusted comment: minisign public key\n${Buffer.concat([Buffer.from("Ed"), keyId, raw]).toString("base64")}\n`).toString("base64");
+  const signFile = (data, { trustedComment = "timestamp:1791299842\tfile:fixture" } = {}) => {
+    const signature = sign(null, createHash("blake2b512").update(data).digest(), privateKey);
+    const global = sign(null, Buffer.concat([signature, Buffer.from(trustedComment)]), privateKey);
+    return Buffer.from([
+      "untrusted comment: signature from tauri secret key",
+      Buffer.concat([Buffer.from("ED"), keyId, signature]).toString("base64"),
+      `trusted comment: ${trustedComment}`,
+      global.toString("base64"), "",
+    ].join("\n")).toString("base64");
+  };
+  return { pubkey, signFile };
+}
+
+const releaseKey = updaterKeyPair();
+
+function tauriConfig(version, pubkey = releaseKey.pubkey) {
+  return JSON.stringify({ version, plugins: { updater: { pubkey, endpoints: ["https://example.invalid/latest.json"] } } });
+}
+
 function sources(version = "0.56.0") {
   return {
     packageJson: JSON.stringify({ version }),
-    tauriConfig: JSON.stringify({ version }),
+    tauriConfig: tauriConfig(version),
     cargoToml: `[package]\nname = "threestrands"\nversion = "${version}"\n\n[dependencies]\ntauri = "2"\n`,
     cargoLock: `version = 4\n\n[[package]]\nname = "other"\nversion = "9.0.0"\n\n[[package]]\nname = "threestrands"\nversion = "${version}"\n`,
   };
@@ -202,6 +227,13 @@ describe("release version validation", () => {
         ...sources(), [key]: sources("0.55.2")[key],
       }), /requires 0\.56\.0/);
     }
+  });
+
+  it("requires a valid updater public key so every release can be installed as an update", () => {
+    for (const pubkey of [null, "", "  ", "bm90IGEga2V5", Buffer.from("untrusted comment: x\nAAAA\n").toString("base64")]) {
+      assert.throws(() => releaseMetadata("v0.56.0", { ...sources(), tauriConfig: tauriConfig("0.56.0", pubkey) }), /pubkey/);
+    }
+    assert.throws(() => releaseMetadata("v0.56.0", { ...sources(), tauriConfig: JSON.stringify({ version: "0.56.0" }) }), /pubkey/);
   });
 
   it("requires the application package and never uses a dependency version", () => {
@@ -333,49 +365,117 @@ describe("pnpm release command", () => {
   });
 });
 
-async function artifacts(t) {
+const signedUpdates = [["macos-aarch64", "ThreeStrands.app.tar.gz"], ["macos-x86_64", "ThreeStrands.app.tar.gz"], ["linux-amd64", "app.AppImage"]];
+
+async function artifacts(t, { signFile = releaseKey.signFile } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "threestrands-release-test-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const files = [
     ["macos-aarch64", "arm.dmg"], ["macos-x86_64", "intel.dmg"],
     ["linux-amd64", "app.deb"], ["linux-amd64", "app.rpm"], ["linux-amd64", "app.AppImage"],
+    ["macos-aarch64", "ThreeStrands.app.tar.gz"], ["macos-x86_64", "ThreeStrands.app.tar.gz"],
   ];
   for (const [platform, name] of files) {
     const folder = join(directory, `threestrands-release-${platform}`);
     await mkdir(folder, { recursive: true });
     await writeFile(join(folder, name), `fixture ${platform} ${name}`);
   }
+  for (const [platform, name] of signedUpdates) {
+    const folder = join(directory, `threestrands-release-${platform}`);
+    await writeFile(join(folder, `${name}.sig`), signFile(await readFile(join(folder, name))));
+  }
   return { directory, output: join(directory, "output") };
 }
 
+const prepare = (directory, output, version, key = releaseKey.pubkey) => prepareReleaseAssets(directory, output, version, {
+  updaterKey: updaterPublicKey(tauriConfig(version, key)), now: new Date("2026-10-06T12:00:00Z"),
+});
+
 describe("release installer collection", () => {
-  it("collects all five installers with versioned names and verifiable hashes, excluding diagnostics", async (t) => {
+  it("collects all installers and update packages with versioned names and verifiable hashes, excluding diagnostics", async (t) => {
     const { directory, output } = await artifacts(t);
     await writeFile(join(directory, "threestrands-release-linux-amd64", "SHA256SUMS"), "old hashes");
     await writeFile(join(directory, "threestrands-release-linux-amd64", "native-library-dependencies.txt"), "diagnostics");
-    const names = await prepareReleaseAssets(directory, output, "0.56.0-beta.1");
-    assert.deepEqual(names, [
+    const names = await prepare(directory, output, "0.56.0-beta.1");
+    const packages = [
       "ThreeStrands_0.56.0-beta.1_macos_aarch64.dmg", "ThreeStrands_0.56.0-beta.1_macos_x86_64.dmg",
       "ThreeStrands_0.56.0-beta.1_linux_amd64.deb", "ThreeStrands_0.56.0-beta.1_linux_amd64.rpm",
       "ThreeStrands_0.56.0-beta.1_linux_amd64.AppImage",
-    ]);
+      "ThreeStrands_0.56.0-beta.1_macos_aarch64.app.tar.gz", "ThreeStrands_0.56.0-beta.1_macos_x86_64.app.tar.gz",
+    ];
+    assert.deepEqual(names, [...packages, "latest.json"]);
     assert.deepEqual((await readdir(output)).sort(), [...names, "SHA256SUMS"].sort());
     const expected = [];
-    for (const name of names) {
+    for (const name of packages) {
       const digest = createHash("sha256").update(await readFile(join(output, name))).digest("hex");
       expected.push(`${digest}  ${name}\n`);
     }
     assert.equal(await readFile(join(output, "SHA256SUMS"), "utf8"), expected.join(""));
   });
 
+  it("writes an update manifest pointing each platform at its signed package", async (t) => {
+    const { directory, output } = await artifacts(t);
+    await prepare(directory, output, "0.56.0");
+    const manifest = JSON.parse(await readFile(join(output, "latest.json"), "utf8"));
+    const download = "https://github.com/oa-labs/ThreeStrands/releases/download/v0.56.0";
+    const signature = async (platform, name) => (await readFile(join(directory, `threestrands-release-${platform}`, `${name}.sig`), "utf8")).trim();
+    assert.deepEqual(manifest, {
+      version: "0.56.0",
+      pub_date: "2026-10-06T12:00:00.000Z",
+      platforms: {
+        "darwin-aarch64": { signature: await signature("macos-aarch64", "ThreeStrands.app.tar.gz"), url: `${download}/ThreeStrands_0.56.0_macos_aarch64.app.tar.gz` },
+        "darwin-x86_64": { signature: await signature("macos-x86_64", "ThreeStrands.app.tar.gz"), url: `${download}/ThreeStrands_0.56.0_macos_x86_64.app.tar.gz` },
+        "linux-x86_64": { signature: await signature("linux-amd64", "app.AppImage"), url: `${download}/ThreeStrands_0.56.0_linux_amd64.AppImage` },
+      },
+    });
+  });
+
+  it("refuses to publish updates signed by a different key than the app trusts", async (t) => {
+    const { directory, output } = await artifacts(t, { signFile: updaterKeyPair().signFile });
+    await assert.rejects(prepare(directory, output, "0.56.0"), /signed with a different key/);
+    await assert.rejects(readdir(output), { code: "ENOENT" });
+  });
+
+  it("refuses an update package changed after it was signed", async (t) => {
+    const { directory, output } = await artifacts(t);
+    await writeFile(join(directory, "threestrands-release-macos-x86_64", "ThreeStrands.app.tar.gz"), "tampered");
+    await assert.rejects(prepare(directory, output, "0.56.0"), /does not verify/);
+    await assert.rejects(readdir(output), { code: "ENOENT" });
+  });
+
+  it("refuses missing, empty, and malformed update signatures", async (t) => {
+    const { directory, output } = await artifacts(t);
+    const signature = join(directory, "threestrands-release-linux-amd64", "app.AppImage.sig");
+    await writeFile(signature, "");
+    await assert.rejects(prepare(directory, output, "0.56.0"), /Malformed update signature/);
+    await writeFile(signature, Buffer.from("untrusted comment: x\nAAAA\n").toString("base64"));
+    await assert.rejects(prepare(directory, output, "0.56.0"), /Malformed update signature/);
+    await rm(signature);
+    await assert.rejects(prepare(directory, output, "0.56.0"), /exactly one linux-amd64 \.AppImage\.sig/);
+    await assert.rejects(readdir(output), { code: "ENOENT" });
+  });
+
+  it("verifies a signature produced by the Tauri CLI", async (t) => {
+    // `tauri signer generate` / `tauri signer sign` 2.11.4 output for "hi\n" with a throwaway key.
+    const directory = await mkdtemp(join(tmpdir(), "threestrands-signature-test-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const file = join(directory, "a.txt");
+    await writeFile(file, "hi\n");
+    const key = updaterPublicKey(tauriConfig("0.56.0", "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5MTVCQjY0MzcyNUU1NUIKUldSYjVTVTNaTHNWR2JNcWkweFZ2WW1QbmhGMWZQWG04OHVHRzA0MW9Ddko2Z3daMzYvZjdhaFUK"));
+    const signature = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSYjVTVTNaTHNWR1N1SkJ4WFYvTi9Pd2J5aGE4ODJWSzdvbzZ2SmtnTkhYZStWSzhaM2xod2JXMkYwOVI3U1BKVWZ4bTA5dXRjRm5qMXNIeDRhTjhGSmhYek5tMWhUaVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMjk5ODQyCWZpbGU6YS50eHQKZ1lYa2IvYzRBVUVaemJEaUZ6czVQaEpnK1ZkWmVQYXEwZk0yZ1Rrc2pPY0dKRUFIWDBLN05nT0xPTVljSVVuZllia3pCT3lueGNqaXp2TVlJT0g0Q1E9PQo=";
+    await verifyUpdateSignature(file, signature, key);
+    await writeFile(file, "hj\n");
+    await assert.rejects(verifyUpdateSignature(file, signature, key), /does not verify/);
+  });
+
   it("rejects missing and duplicate installers before creating output", async (t) => {
     const { directory, output } = await artifacts(t);
     const folder = join(directory, "threestrands-release-linux-amd64");
     await rm(join(folder, "app.rpm"));
-    await assert.rejects(prepareReleaseAssets(directory, output, "0.56.0"), /exactly one linux-amd64 \.rpm/);
+    await assert.rejects(prepare(directory, output, "0.56.0"), /exactly one linux-amd64 \.rpm/);
     await writeFile(join(folder, "app.rpm"), "rpm");
     await writeFile(join(folder, "duplicate.deb"), "deb");
-    await assert.rejects(prepareReleaseAssets(directory, output, "0.56.0"), /exactly one linux-amd64 \.deb/);
+    await assert.rejects(prepare(directory, output, "0.56.0"), /exactly one linux-amd64 \.deb/);
     await assert.rejects(readdir(output), { code: "ENOENT" });
   });
 
@@ -383,19 +483,19 @@ describe("release installer collection", () => {
     const { directory, output } = await artifacts(t);
     const installer = join(directory, "threestrands-release-macos-aarch64", "arm.dmg");
     await writeFile(installer, "");
-    await assert.rejects(prepareReleaseAssets(directory, output, "0.56.0"), /Empty installer/);
+    await assert.rejects(prepare(directory, output, "0.56.0"), /Empty installer/);
     await rm(installer);
     await symlink(join(directory, "threestrands-release-macos-x86_64", "intel.dmg"), installer);
-    await assert.rejects(prepareReleaseAssets(directory, output, "0.56.0"), /exactly one macos-aarch64/);
+    await assert.rejects(prepare(directory, output, "0.56.0"), /exactly one macos-aarch64/);
     await rm(join(directory, "threestrands-release-macos-aarch64"), { recursive: true });
-    await assert.rejects(prepareReleaseAssets(directory, output, "0.56.0"), { code: "ENOENT" });
+    await assert.rejects(prepare(directory, output, "0.56.0"), { code: "ENOENT" });
   });
 
   it("rejects invalid versions and existing output directories", async (t) => {
     const { directory, output } = await artifacts(t);
-    await assert.rejects(prepareReleaseAssets(directory, output, "../escape"), /Invalid release asset version/);
+    await assert.rejects(prepare(directory, output, "../escape"), /Invalid release asset version/);
     await mkdir(output);
     await writeFile(join(output, "stale.dmg"), "stale");
-    await assert.rejects(prepareReleaseAssets(directory, output, "0.56.0"), { code: "EEXIST" });
+    await assert.rejects(prepare(directory, output, "0.56.0"), { code: "EEXIST" });
   });
 });

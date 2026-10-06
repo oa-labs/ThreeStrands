@@ -78,10 +78,12 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           THREESTRANDS_GOOGLE_CLIENT_ID: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_ID }}
           THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID THREESTRANDS_GOOGLE_CLIENT_ID THREESTRANDS_GOOGLE_CLIENT_SECRET; do
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID THREESTRANDS_GOOGLE_CLIENT_ID THREESTRANDS_GOOGLE_CLIENT_SECRET TAURI_SIGNING_PRIVATE_KEY; do
             if [[ -z "${!name}" ]]; then
               echo "error: repository secret $name is required" >&2
               exit 1
@@ -89,7 +91,8 @@ jobs:
           done
           # Tauri imports the certificate into a temporary keychain and
           # notarizes/staples the app. Use our CLI shim for Icon Composer.
-          pnpm tauri build --target "$BUILD_TARGET" --bundles app,dmg
+          # The updater config also packs and signs the app as an update.
+          pnpm tauri build --target "$BUILD_TARGET" --bundles app,dmg --config src-tauri/tauri.updater.conf.json
       - name: Verify signature, notarization, and architecture
         env:
           BUILD_TARGET: ${{ matrix.target }}
@@ -117,13 +120,25 @@ jobs:
             exit 1
           fi
           hdiutil verify "${installers[0]}"
+          # The update package must carry the same signed, stapled app that
+          # the DMG does; installed copies swap it in without Gatekeeper's
+          # first-launch check.
+          update="$bundle/macos/ThreeStrands.app.tar.gz"
+          test -s "$update.sig"
+          update_dir="$(mktemp -d)"
+          tar -xzf "$update" -C "$update_dir"
+          codesign --verify --deep --strict --verbose=2 "$update_dir/ThreeStrands.app"
+          xcrun stapler validate "$update_dir/ThreeStrands.app"
           mkdir -p "artifacts/macos-$ARTIFACT_ARCH"
-          cp "${installers[0]}" "artifacts/macos-$ARTIFACT_ARCH/"
+          cp "${installers[0]}" "$update" "$update.sig" "artifacts/macos-$ARTIFACT_ARCH/"
       - name: Upload verified installer
         uses: actions/upload-artifact@v6
         with:
           name: threestrands-release-macos-${{ matrix.arch }}
-          path: artifacts/macos-${{ matrix.arch }}/*.dmg
+          path: |
+            artifacts/macos-${{ matrix.arch }}/*.dmg
+            artifacts/macos-${{ matrix.arch }}/*.app.tar.gz
+            artifacts/macos-${{ matrix.arch }}/*.app.tar.gz.sig
           if-no-files-found: error
 
   linux:
@@ -150,6 +165,8 @@ jobs:
         env:
           THREESTRANDS_GOOGLE_CLIENT_ID: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_ID }}
           THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           THREESTRANDS_RELEASE_BUILD: "1"
           # Avoid full debug symbols and incremental caches on ephemeral runners.
           CARGO_BUILD_JOBS: "2"
@@ -163,6 +180,8 @@ jobs:
           env: |
             THREESTRANDS_GOOGLE_CLIENT_ID
             THREESTRANDS_GOOGLE_CLIENT_SECRET
+            TAURI_SIGNING_PRIVATE_KEY
+            TAURI_SIGNING_PRIVATE_KEY_PASSWORD
             THREESTRANDS_RELEASE_BUILD
             CARGO_BUILD_JOBS
             CARGO_INCREMENTAL
@@ -225,8 +244,9 @@ jobs:
           {
             echo "### ThreeStrands $RELEASE_TAG ($RELEASE_CHANNEL)"
             echo
-            echo "All five installers and SHA256SUMS are attached to a draft release."
+            echo "All installers, update packages, latest.json, and SHA256SUMS are attached to a draft release."
             echo "Verify installation, then publish the draft in GitHub Releases."
+            echo "Publishing a stable release offers it to installed copies through latest.json."
             gh release view "$RELEASE_TAG" --json url --jq '.url'
           } >> "$GITHUB_STEP_SUMMARY"
 

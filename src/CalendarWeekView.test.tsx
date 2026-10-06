@@ -5,6 +5,7 @@ import { CalendarWeekView, monthGridDays } from "./CalendarWeekView";
 import { startOfLocalDay } from "./calendarTime";
 import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
+import { expectSharedButtons } from "./test/sharedButtons";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
 
 const accounts: CalendarAccount[] = [
@@ -95,6 +96,19 @@ describe("CalendarWeekView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
     await screen.findByText("Sun 20");
+  });
+
+  it("uses the shared header buttons, ending with New Event like the other workspaces", async () => {
+    const { container } = renderWeek();
+    await screen.findByText("Sun 20");
+    const controls = container.querySelector(".calendar-week-controls")!;
+
+    expectSharedButtons(controls);
+    const newEvent = screen.getByRole("button", { name: "New Event" });
+    expect(newEvent).toHaveClass("btn");
+    expect(newEvent.querySelector("svg")).not.toBeNull();
+    expect(controls.lastElementChild).toBe(newEvent);
+    expect(screen.getByRole("button", { name: "Today" })).toHaveClass("btn");
   });
 
   it("navigates weeks with Tab and Shift+Tab unless a control has focus", async () => {
@@ -382,7 +396,7 @@ describe("CalendarWeekView", () => {
   it("keeps the dialog open on a save error and excludes read-only calendars", async () => {
     vi.spyOn(mailClient, "createCalendarEvent").mockRejectedValue(new Error("Reconnect this calendar account"));
     renderWeek();
-    fireEvent.click(screen.getByRole("button", { name: "New event" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Event" }));
     const dialog = await screen.findByRole("dialog", { name: "New event" });
     expect(within(dialog).getByRole("option", { name: /joel@example.com/ })).toBeInTheDocument();
     expect(within(dialog).queryByRole("option", { name: /Holidays/ })).not.toBeInTheDocument();

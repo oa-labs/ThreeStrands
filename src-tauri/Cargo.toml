@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.71.0"
+version = "0.72.1"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -66,6 +66,7 @@ threestrands-sync-core = { path = "../crates/sync-core" }
 threestrands-sync-envelope = { path = "../crates/sync-envelope" }
 threestrands-sync-protocol = { path = "../crates/sync-protocol" }
 threestrands-sync-transport = { path = "../crates/sync-transport" }
+tauri-plugin-updater = "2"
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"

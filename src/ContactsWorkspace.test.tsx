@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
+import { expectSharedButtons } from "./test/sharedButtons";
 
 vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),openAttachment:vi.fn()}}));
 
@@ -194,6 +195,16 @@ describe("ContactsWorkspace",()=>{
     expect(screen.getByRole("button",{name:`Copy ${link}`})).toBeInTheDocument();
   });
 
+  it("uses the shared header button and segmented view switch",async()=>{
+    const {container}=render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    expectSharedButtons(container.querySelector(".contacts-header")!);
+    expect(screen.getByRole("button",{name:"New Contact"})).toHaveClass("btn");
+    const views=screen.getByRole("tablist",{name:"Contact Views"});
+    expect(views).toHaveClass("segmented");
+    expectSharedButtons(views);
+  });
+
   it("shows the selected account and scopes contacts, history, and enrichment",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
@@ -257,7 +268,7 @@ describe("ContactsWorkspace",()=>{
   it("keeps Save available for a new contact and discards it on request",async()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:/New contact/}));
+    fireEvent.click(screen.getByRole("button",{name:/New Contact/}));
     expect(screen.getByRole("region",{name:"Save changes"})).toHaveTextContent("New contact");
     expect(screen.getByLabelText("Company")).toBeInTheDocument();
     expect(screen.getByLabelText("Notes")).toBeInTheDocument();

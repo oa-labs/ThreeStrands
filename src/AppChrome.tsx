@@ -35,7 +35,7 @@ export function FiltersButton({
     <div className="filters-anchor" ref={anchorRef}>
       <button
         type="button"
-        className={`filters-trigger ${activeFilters.size > 0 ? "active" : ""}`}
+        className={`btn filters-trigger ${activeFilters.size > 0 ? "active" : ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}

@@ -1,4 +1,5 @@
 mod ai;
+mod app_update;
 mod availability;
 mod attachment_reader;
 mod attachment_text;
@@ -3477,6 +3478,8 @@ pub fn run() {
         )
         .plugin(external_navigation_guard())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(app_update::PendingUpdate::default())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -3933,6 +3936,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         reconcile_tasks,
         // System
         system_fonts::list_system_font_families,
+        app_update::check_for_app_update,
+        app_update::install_app_update,
     ]
 }
 

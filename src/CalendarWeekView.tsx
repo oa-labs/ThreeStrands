@@ -1,4 +1,4 @@
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventViewer } from "./CalendarSidebar";
 import { HoverTooltip } from "./AppChrome";
@@ -330,10 +330,12 @@ export function CalendarWeekView({
         <header className="calendar-week-header">
           <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account">· {selectedAccountEmails.length ? selectedAccountEmails.join(", ") : "None selected"}</span></span><h1>{monthTitle(weekStart)}</h1></div>
           <div className="calendar-week-controls">
-            <button type="button" className="calendar-today-button" onClick={newEventAtAnchor}>New event</button>
-            <button type="button" className="calendar-today-button" onClick={goToToday}>Today</button>
-            <HoverTooltip title="Previous week (-)"><button type="button" aria-label="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={20} /></button></HoverTooltip>
-            <HoverTooltip title="Next week (=)"><button type="button" aria-label="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={20} /></button></HoverTooltip>
+            <button type="button" className="btn" onClick={goToToday}>Today</button>
+            <div className="calendar-week-nav">
+              <HoverTooltip title="Previous week (-)"><button type="button" className="btn-icon" aria-label="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={20} /></button></HoverTooltip>
+              <HoverTooltip title="Next week (=)"><button type="button" className="btn-icon" aria-label="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={20} /></button></HoverTooltip>
+            </div>
+            <button type="button" className="btn" onClick={newEventAtAnchor}><Plus size={15} />New Event</button>
           </div>
         </header>
         {error ? (

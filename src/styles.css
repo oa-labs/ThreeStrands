@@ -48,6 +48,10 @@
   --radius-lg: 12px;
   --radius-pill: 999px;
   --radius-circle: 50%;
+  /* Shared button heights: a workspace header's buttons and its segmented
+     toggles (control-sm + 2px inset + 1px border each side) all land on --control-h. */
+  --control-h: 34px;
+  --control-h-sm: 28px;
   /* Layer stack: local content and drawers < modals < tooltips and toasts
      < notices < page popovers < the critical exit backdrop. */
   --z-local-event: 1;
@@ -361,6 +365,68 @@ button { color: inherit; }
 .nav-button:hover, .icon-button:hover { background: var(--hover); }
 .nav-button.active { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--accent); }
 
+/* Shared buttons. Workspace headers use only these, so 1-4 look alike. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--control-h);
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--hover);
+  font: inherit;
+  font-size: var(--type-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn-icon {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.btn-icon:hover { color: var(--text); background: var(--hover); }
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.segmented > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--control-h-sm);
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--type-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.segmented > button:hover { color: var(--text); background: var(--hover); }
+.segmented > button[aria-pressed="true"],
+.segmented > button[aria-selected="true"] { color: var(--text); background: color-mix(in srgb, var(--accent) 13%, var(--surface)); }
+
 .tooltip-anchor {
   position: relative;
   display: inline-flex;
@@ -450,7 +516,7 @@ button { color: inherit; }
 .thread-header > .filters-anchor,
 .calendar-week-controls,
 .tasks-workspace .tasks-sidebar-header-actions,
-.contacts-header > .contact-primary-button { align-self: center; }
+.contacts-header > .btn { align-self: center; }
 
 .thread-header-title { display: flex; align-items: center; gap: 12px; }
 .mailbox-heading-context { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: var(--type-sm); }
@@ -649,20 +715,6 @@ h2 { font-size: var(--type-heading); }
   font-weight: 650;
 }
 .filters-anchor { position: relative; flex: 0 0 auto; align-self: flex-start; margin-top: 1px; }
-.filters-trigger {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 38px;
-  padding: 0 11px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--muted);
-  background: var(--hover);
-  font-size: var(--type-ui);
-  cursor: pointer;
-}
-.filters-trigger:hover { color: var(--text); }
 .filters-trigger.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--hover)); }
 .filters-badge {
   display: grid;
@@ -1452,32 +1504,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .calendar-week-header h1 { font-size: var(--type-display); font-weight: 550; }
 .calendar-week-heading { min-width: 0; }
 .calendar-week-heading .eyebrow { overflow-wrap: anywhere; }
-.calendar-week-controls { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
-.calendar-week-controls button {
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-.calendar-week-controls button:hover { color: var(--text); background: var(--hover); }
-.calendar-week-controls button:focus-visible { outline: 2px solid var(--accent); }
-.calendar-week-controls button.calendar-today-button {
-  width: auto;
-  padding: 0 12px;
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--type-sm);
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  margin-right: 8px;
-}
+.calendar-week-controls { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
+.calendar-week-nav { display: flex; gap: 2px; }
 .calendar-week-days,
 .calendar-week-all-day,
 .calendar-week-grid {
@@ -1917,9 +1945,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .contact-sidebar-links { display:flex; flex-wrap:wrap; gap:2px 12px; margin:0; }
 .contact-sidebar-links a { color:var(--accent); font-size:var(--type-sm); overflow-wrap:anywhere; text-decoration:underline; text-underline-offset:2px; }
 .contact-sidebar-links a:hover { color:var(--text); }
-.contacts-view-switch { display:grid; grid-template-columns:1fr 1fr; gap:3px; margin:0 4px 12px; padding:3px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); }
-.contacts-view-switch button { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:30px; border:0; border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; font-size:var(--type-sm); cursor:pointer; }
-.contacts-view-switch button[aria-selected=true] { color:var(--text); background:var(--hover); font-weight:550; }
+.contacts-view-switch { display:grid; grid-template-columns:1fr 1fr; margin:0 4px 12px; }
 .contacts-view-count { min-width:18px; height:18px; padding:0 5px; display:inline-grid; place-items:center; border-radius:var(--radius-md); color:#fff; background:var(--accent); font-size:var(--type-xs); font-weight:700; }
 .contacts-list-toolbar { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
 .contacts-select-toggle { margin:0 8px 0 0; padding:0; border:0; color:var(--accent); background:transparent; font:inherit; font-size:var(--type-xs); cursor:pointer; }
@@ -2100,15 +2126,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   padding: 20px 14px 12px 20px;
   border-bottom: 1px solid var(--border);
 }
-.tasks-sidebar-header-actions { display: flex; flex-shrink: 0; gap: 2px; }
-.tasks-sidebar-header-actions button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
-.tasks-sidebar-header-actions button:hover { color: var(--text); background: var(--hover); }
-.tasks-workspace .tasks-sidebar-header-actions .task-add-button { display: inline-flex; align-items: center; gap: 6px; width: auto; height: 34px; padding: 0 12px; border: 1px solid var(--border-strong); color: var(--text); background: var(--hover); font: inherit; font-size: var(--type-sm); white-space: nowrap; }
-.tasks-workspace .tasks-sidebar-header-actions .task-add-button:hover { border-color: var(--accent); }
-.tasks-sidebar-header-actions { align-items: center; }
-.task-layout-toggle { display: inline-flex; gap: 2px; margin-right: 8px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.tasks-sidebar-header-actions .task-layout-toggle button { display: inline-flex; align-items: center; gap: 6px; width: auto; height: 28px; padding: 0 9px; font: inherit; font-size: var(--type-sm); white-space: nowrap; }
-.tasks-sidebar-header-actions .task-layout-toggle button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); color: var(--text); }
+.tasks-sidebar-header-actions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
 .tasks-board-pane { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
 .tasks-board-pane .task-view-nav { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
 .task-board { min-height: 0; flex: 1; display: grid; grid-template-columns: repeat(var(--task-board-columns, 3), minmax(190px, 1fr)); gap: 12px; padding: 16px; overflow-x: auto; }
@@ -2667,6 +2685,16 @@ form.split-inbox-add select {
 .toast button { border: 0; color: var(--link); background: transparent; cursor: pointer; }
 .search-status-toast { left: 24px; right: auto; color: var(--muted); }
 .search-status-toast.error { color: var(--error); }
+/* Bottom-left keeps it clear of the undo toast (bottom-right) and device
+   join requests (top-right), which can appear at the same time. */
+.update-toast {
+  left: 24px;
+  right: auto;
+  box-sizing: border-box;
+  max-width: min(560px, calc(100vw - 48px));
+}
+.update-toast-icon { flex: 0 0 auto; color: var(--link); }
+.update-toast-message { min-width: 0; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

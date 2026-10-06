@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: Require and embed the configured Google OAuth client
+        description: Require and embed the configured Google OAuth client and sign the AppImage update
         required: true
         default: false
         type: boolean
@@ -41,6 +41,8 @@ jobs:
         env:
           THREESTRANDS_GOOGLE_CLIENT_ID: ${{ inputs.release == true && secrets.THREESTRANDS_GOOGLE_CLIENT_ID || '' }}
           THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ inputs.release == true && secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release == true && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.release == true && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
           THREESTRANDS_RELEASE_BUILD: ${{ inputs.release == true && '1' || '0' }}
           # Avoid full debug symbols and incremental caches on ephemeral runners.
           CARGO_BUILD_JOBS: "2"
@@ -54,6 +56,8 @@ jobs:
           env: |
             THREESTRANDS_GOOGLE_CLIENT_ID
             THREESTRANDS_GOOGLE_CLIENT_SECRET
+            TAURI_SIGNING_PRIVATE_KEY
+            TAURI_SIGNING_PRIVATE_KEY_PASSWORD
             THREESTRANDS_RELEASE_BUILD
             CARGO_BUILD_JOBS
             CARGO_INCREMENTAL

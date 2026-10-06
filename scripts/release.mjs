@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { appendFile, copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,11 +38,62 @@ export function releaseMetadata(tag, sources) {
     }
   }
 
+  updaterPublicKey(sources.tauriConfig);
   const prerelease = version.includes("-beta.");
   return { version, channel: prerelease ? "beta" : "stable", prerelease };
 }
 
-// Only these five installers become release assets. Build diagnostics and the
+/**
+ * Installed copies trust only this key, so a release without it could never
+ * be installed as an update. Returns the decoded raw Ed25519 key and its id.
+ */
+export function updaterPublicKey(tauriConfig) {
+  const encoded = JSON.parse(tauriConfig).plugins?.updater?.pubkey;
+  if (typeof encoded !== "string" || !encoded.trim()) {
+    throw new Error("src-tauri/tauri.conf.json needs plugins.updater.pubkey before a release can ship updates");
+  }
+  const key = Buffer.from(Buffer.from(encoded, "base64").toString("utf8").split("\n")[1] ?? "", "base64");
+  if (key.length !== 42 || key.subarray(0, 2).toString() !== "Ed") {
+    throw new Error("plugins.updater.pubkey is not a minisign public key from `tauri signer generate`");
+  }
+  return { keyId: key.subarray(2, 10), publicKey: createPublicKey({
+    key: Buffer.concat([ED25519_SPKI_PREFIX, key.subarray(10)]), format: "der", type: "spki",
+  }) };
+}
+
+const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+
+async function fileDigest(path, algorithm) {
+  const hash = createHash(algorithm);
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest();
+}
+
+/**
+ * Verifies a `tauri signer` (minisign) signature over `path` exactly as the
+ * installed updater will, so a mismatched signing secret fails the release
+ * instead of every user's update.
+ */
+export async function verifyUpdateSignature(path, signature, { keyId, publicKey }) {
+  const lines = Buffer.from(signature, "base64").toString("utf8").split("\n");
+  const raw = Buffer.from(lines[1] ?? "", "base64");
+  const trustedComment = lines[2]?.startsWith("trusted comment: ") ? lines[2].slice("trusted comment: ".length) : null;
+  const algorithm = raw.subarray(0, 2).toString();
+  if (raw.length !== 74 || !["Ed", "ED"].includes(algorithm) || trustedComment === null) {
+    throw new Error(`Malformed update signature for ${basename(path)}`);
+  }
+  if (!raw.subarray(2, 10).equals(keyId)) {
+    throw new Error(`${basename(path)} was signed with a different key than plugins.updater.pubkey`);
+  }
+  const message = algorithm === "ED" ? await fileDigest(path, "blake2b512") : await readFile(path);
+  const signed = raw.subarray(10);
+  if (!verify(null, message, publicKey, signed)
+    || !verify(null, Buffer.concat([signed, Buffer.from(trustedComment)]), publicKey, Buffer.from(lines[3] ?? "", "base64"))) {
+    throw new Error(`Update signature does not verify for ${basename(path)}`);
+  }
+}
+
+// Only these files become release assets. Build diagnostics and the
 // Linux-only checksum file stay in Actions artifacts; hashes here cover all OSes.
 const installers = [
   ["macos-aarch64", ".dmg"],
@@ -50,22 +101,50 @@ const installers = [
   ["linux-amd64", ".deb"],
   ["linux-amd64", ".rpm"],
   ["linux-amd64", ".AppImage"],
+  // In-place update packages. The AppImage is its own update package.
+  ["macos-aarch64", ".app.tar.gz"],
+  ["macos-x86_64", ".app.tar.gz"],
 ];
 
-export async function prepareReleaseAssets(inputDir, outputDir, version) {
+// The updater's platform keys, each paired with the asset it downloads.
+// deb and rpm installs also resolve `linux-x86_64`, but only to learn that an
+// update exists; the app sends those users to the release page instead.
+const updatePlatforms = [
+  ["darwin-aarch64", "macos-aarch64", ".app.tar.gz"],
+  ["darwin-x86_64", "macos-x86_64", ".app.tar.gz"],
+  ["linux-x86_64", "linux-amd64", ".AppImage"],
+];
+
+export const UPDATE_MANIFEST = "latest.json";
+const RELEASE_DOWNLOADS = "https://github.com/oa-labs/ThreeStrands/releases/download";
+
+async function onlyFile(directory, platform, extension) {
+  const matches = (await readdir(directory, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(extension));
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one ${platform} ${extension} file; found ${matches.length}`);
+  }
+  return resolve(directory, matches[0].name);
+}
+
+export async function prepareReleaseAssets(inputDir, outputDir, version, { updaterKey, now = new Date() }) {
   if (!releaseVersion.test(version)) throw new Error("Invalid release asset version");
   const selected = [];
   for (const [platform, extension] of installers) {
-    const directory = resolve(inputDir, `threestrands-release-${platform}`);
-    const matches = (await readdir(directory, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && entry.name.endsWith(extension));
-    if (matches.length !== 1) {
-      throw new Error(`Expected exactly one ${platform} ${extension} installer; found ${matches.length}`);
-    }
-    const source = resolve(directory, matches[0].name);
-    if ((await stat(source)).size === 0) throw new Error(`Empty installer: ${matches[0].name}`);
-    selected.push({ source, name: `ThreeStrands_${version}_${platform.replaceAll("-", "_")}${extension}` });
+    const source = await onlyFile(resolve(inputDir, `threestrands-release-${platform}`), platform, extension);
+    if ((await stat(source)).size === 0) throw new Error(`Empty installer: ${basename(source)}`);
+    selected.push({ platform, extension, source, name: `ThreeStrands_${version}_${platform.replaceAll("-", "_")}${extension}` });
   }
+
+  const platforms = {};
+  for (const [target, platform, extension] of updatePlatforms) {
+    const asset = selected.find((item) => item.platform === platform && item.extension === extension);
+    const signaturePath = await onlyFile(resolve(inputDir, `threestrands-release-${platform}`), platform, `${extension}.sig`);
+    const signature = (await readFile(signaturePath, "utf8")).trim();
+    await verifyUpdateSignature(asset.source, signature, updaterKey);
+    platforms[target] = { signature, url: `${RELEASE_DOWNLOADS}/v${version}/${asset.name}` };
+  }
+  const manifest = `${JSON.stringify({ version, pub_date: now.toISOString(), platforms }, null, 2)}\n`;
 
   // Require a new directory so a rerun cannot accidentally publish stale files.
   await mkdir(outputDir, { recursive: false });
@@ -73,12 +152,11 @@ export async function prepareReleaseAssets(inputDir, outputDir, version) {
   for (const { source, name } of selected) {
     const destination = resolve(outputDir, name);
     await copyFile(source, destination);
-    const hash = createHash("sha256");
-    for await (const chunk of createReadStream(destination)) hash.update(chunk);
-    checksums.push(`${hash.digest("hex")}  ${name}\n`);
+    checksums.push(`${(await fileDigest(destination, "sha256")).toString("hex")}  ${name}\n`);
   }
+  await writeFile(resolve(outputDir, UPDATE_MANIFEST), manifest);
   await writeFile(resolve(outputDir, "SHA256SUMS"), checksums.join(""));
-  return selected.map(({ name }) => name);
+  return [...selected.map(({ name }) => name), UPDATE_MANIFEST];
 }
 
 async function readReleaseSources(directory) {
@@ -131,7 +209,8 @@ async function main() {
     }
     console.log(JSON.stringify(metadata));
   } else if (command === "prepare-assets" && argument && outputDir && version) {
-    console.log((await prepareReleaseAssets(argument, outputDir, version)).join("\n"));
+    const updaterKey = updaterPublicKey((await readReleaseSources(root)).tauriConfig);
+    console.log((await prepareReleaseAssets(argument, outputDir, version, { updaterKey })).join("\n"));
   } else if (command === "tag") {
     await tagRelease();
   } else {
