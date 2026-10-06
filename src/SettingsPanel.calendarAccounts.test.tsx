@@ -1,10 +1,15 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CALENDAR_COLORS_KEY, resetCalendarColorsForTests } from "./calendarColors";
 import type { CalendarAccount, CalendarOption } from "./domain";
 import { CalendarAccountsSettings } from "./SettingsPanel";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+  resetCalendarColorsForTests();
+});
 
 const account: CalendarAccount = { email: "me@example.com", status: "connected" } as CalendarAccount;
 
@@ -49,5 +54,25 @@ describe("calendar account picker", () => {
       calendars: [{ id: "primary", accountId: account.email, name: "Me", primary: true, selected: true } as CalendarOption],
     });
     expect(within(picker).getByRole("checkbox", { name: "Me (Primary)" })).toBeChecked();
+  });
+
+  it("picks a calendar's meeting color from its options menu", () => {
+    const picker = renderPicker({
+      calendarsLoaded: true,
+      calendars: [
+        { id: "primary", accountId: account.email, name: "Me", primary: true, selected: true } as CalendarOption,
+        { id: "team", accountId: account.email, name: "Team", primary: false, selected: false } as CalendarOption,
+      ],
+    });
+    fireEvent.click(within(picker).getByRole("button", { name: "Options for Team" }));
+    const palette = within(picker).getByRole("menu", { name: "Color for Team" });
+    expect(within(palette).getAllByRole("menuitemradio")).toHaveLength(16);
+    fireEvent.click(within(palette).getByRole("menuitemradio", { name: "Purple" }));
+
+    expect(JSON.parse(localStorage.getItem(CALENDAR_COLORS_KEY)!)).toEqual({ [account.email]: { team: "purple" } });
+    const teamRow = within(picker).getByRole("checkbox", { name: "Team" }).closest(".calendar-color-row") as HTMLElement;
+    expect(teamRow.style.getPropertyValue("--calendar-color")).toBe("#8a55c9");
+    const meRow = within(picker).getByRole("checkbox", { name: "Me (Primary)" }).closest(".calendar-color-row") as HTMLElement;
+    expect(meRow.style.getPropertyValue("--calendar-color")).toBe("");
   });
 });

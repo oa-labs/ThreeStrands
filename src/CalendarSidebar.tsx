@@ -15,6 +15,7 @@ import {
 } from "./calendarTime";
 import { calendarDescriptionText } from "./calendarDescription";
 import { responseLabel } from "./calendarResponse";
+import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { revalidateScheduleCache } from "./calendarScheduleCache";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
@@ -181,6 +182,7 @@ function EventLocation({ location }: { location: string }) {
 }
 
 export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEvent; onDismiss(): void; onUpdated(event: ScheduleEvent): void }) {
+  const calendarColors = useCalendarColors();
   const viewerRef = useRef<HTMLDivElement>(null);
   const conferenceUrl = safeWebUrl(event.conferenceUrl);
   const [responsePending, setResponsePending] = useState(false);
@@ -224,7 +226,7 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
       tabIndex={-1}
     >
       <header>
-        <span className="calendar-event-color" aria-hidden="true" />
+        <span className="calendar-event-color" aria-hidden="true" style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)} />
         <h3>{event.title}</h3>
         <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Event Details" onClick={onDismiss}><X size={16} /></button>
       </header>
@@ -282,6 +284,7 @@ export function CalendarSidebar({
 }) {
   const [date, setDate] = useState(() => startOfLocalDay(initialDate ?? new Date()));
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
+  const calendarColors = useCalendarColors();
   const [availability, setAvailability] = useState<AvailabilityResult | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
@@ -408,6 +411,7 @@ export function CalendarSidebar({
                   aria-expanded={selectedEvent === event}
                   aria-controls={selectedEvent === event ? "calendar-event-viewer" : undefined}
                   onClick={() => setSelectedEvent((current) => current === event ? null : event)}
+                  style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
                 >
                   {event.title}
                 </button>
@@ -515,6 +519,7 @@ export function CalendarSidebar({
                   aria-controls={selectedEvent === event ? "calendar-event-viewer" : undefined}
                   onClick={() => setSelectedEvent((current) => current === event ? null : event)}
                   style={{
+                    ...calendarColorStyle(calendarColors, event.accountId, event.calendarId),
                     top: (start / 60) * HOUR_HEIGHT,
                     height: duration,
                   }}

@@ -20,6 +20,8 @@ import { useCalendarSchedule } from "./useCalendarSchedule";
 import { revalidateScheduleCache } from "./calendarScheduleCache";
 import { responseLabel } from "./calendarResponse";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
+import { CalendarColorRow } from "./CalendarColorMenu";
+import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
@@ -182,14 +184,16 @@ function CalendarList({
               <ChevronLeft size={16} className={open ? "calendar-list-chevron-open" : "calendar-list-chevron"} />
             </button>
             {open ? accountCalendars.map((calendar) => (
-              <label key={calendar.id}>
-                <input
-                  type="checkbox"
-                  checked={calendar.selected}
-                  onChange={(event) => onToggle(account.email, calendar.id, event.target.checked)}
-                />
-                <span>{calendar.name}</span>
-              </label>
+              <CalendarColorRow key={calendar.id} accountId={account.email} calendarId={calendar.id} calendarName={calendar.name}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={calendar.selected}
+                    onChange={(event) => onToggle(account.email, calendar.id, event.target.checked)}
+                  />
+                  <span>{calendar.name}</span>
+                </label>
+              </CalendarColorRow>
             )) : null}
           </div>
         );
@@ -220,6 +224,7 @@ export function CalendarWeekView({
 }) {
   const [month, setMonth] = useState(() => startOfLocalDay(anchor));
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
+  const calendarColors = useCalendarColors();
   const [newEventRange, setNewEventRange] = useState<{ start: Date; end: Date } | null>(null);
   const [dragPreview, setDragPreview] = useState<{ dayIndex: number; startMinutes: number; endMinutes: number } | null>(null);
   const dragRef = useRef<{ dayIndex: number; anchor: number; pointerId: number } | null>(null);
@@ -373,6 +378,7 @@ export function CalendarWeekView({
                     data-response-status={event.responseStatus ?? undefined}
                     aria-expanded={sameEvent(selectedEvent, event)}
                     onClick={() => setSelectedEvent((current) => sameEvent(current, event) ? null : event)}
+                    style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
                   >
                     {event.title}
                   </button>
@@ -446,6 +452,7 @@ export function CalendarWeekView({
                       aria-expanded={sameEvent(selectedEvent, event)}
                       onClick={() => setSelectedEvent((current) => sameEvent(current, event) ? null : event)}
                       style={{
+                        ...calendarColorStyle(calendarColors, event.accountId, event.calendarId),
                         top: (startMinutes / 60) * HOUR_HEIGHT,
                         height,
                         left: `${(lane / lanes) * 100}%`,

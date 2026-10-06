@@ -5,6 +5,7 @@ import { CalendarWeekView, monthGridDays } from "./CalendarWeekView";
 import { startOfLocalDay } from "./calendarTime";
 import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
+import { CALENDAR_COLORS_KEY, resetCalendarColorsForTests } from "./calendarColors";
 import { expectSharedButtons } from "./test/sharedButtons";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
 
@@ -51,6 +52,7 @@ describe("CalendarWeekView", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     localStorage.clear();
+    resetCalendarColorsForTests();
   });
 
   it("shows the seven Sunday-anchored days of the current week with the month title", async () => {
@@ -416,6 +418,54 @@ describe("CalendarWeekView", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Reconnect this calendar account");
     expect(dialog).toBeInTheDocument();
+  });
+
+  it("colors one calendar's meetings from the calendar's options menu", async () => {
+    const standup = { ...event("primary:standup", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Standup"), calendarId: "primary" };
+    const parade = { ...event("holidays:parade", "2026-09-23T09:00:00", "2026-09-23T10:00:00", "Parade"), calendarId: "holidays" };
+    const allDay = { ...event("primary:offsite", "2026-09-24", "2026-09-25", "Offsite"), calendarId: "primary", allDay: true };
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [standup, parade, allDay], errors: [] });
+    renderWeek();
+    const meeting = await screen.findByRole("button", { name: /^Standup/ });
+    expect(meeting.style.getPropertyValue("--calendar-color")).toBe("");
+
+    const list = screen.getByRole("region", { name: "Calendars" });
+    const trigger = within(list).getByRole("button", { name: "Options for joel@example.com" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(within(list).getByRole("button", { name: "Options for Holidays in United States" })).toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const palette = within(list).getByRole("menu", { name: "Color for joel@example.com" });
+    expect(within(palette).getAllByRole("menuitemradio")).toHaveLength(16);
+    fireEvent.click(within(palette).getByRole("menuitemradio", { name: "Teal" }));
+
+    expect(within(list).queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Standup/ }).style.getPropertyValue("--calendar-color")).toBe("#1f9a8f");
+    expect(screen.getByRole("button", { name: "Offsite" }).style.getPropertyValue("--calendar-color")).toBe("#1f9a8f");
+    expect(screen.getByRole("button", { name: /^Parade/ }).style.getPropertyValue("--calendar-color")).toBe("");
+    expect(JSON.parse(localStorage.getItem(CALENDAR_COLORS_KEY)!)).toEqual({ "joel@example.com": { primary: "teal" } });
+
+    fireEvent.click(trigger);
+    expect(within(list).getByRole("menuitemradio", { name: "Teal" })).toHaveAttribute("aria-checked", "true");
+    expect(within(list).getByRole("menuitemradio", { name: "Red" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("closes the calendar color menu on Escape or a click elsewhere", async () => {
+    renderWeek();
+    await screen.findByText("Sun 20");
+    const list = screen.getByRole("region", { name: "Calendars" });
+    const trigger = within(list).getByRole("button", { name: "Options for joel@example.com" });
+
+    fireEvent.click(trigger);
+    expect(within(list).getByRole("menu")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(within(list).queryByRole("menu")).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    fireEvent.mouseDown(screen.getByText("Sun 20"));
+    expect(within(list).queryByRole("menu")).not.toBeInTheDocument();
+    expect(localStorage.getItem(CALENDAR_COLORS_KEY)).toBeNull();
   });
 
   it("offers recovery when the schedule cannot be loaded", async () => {

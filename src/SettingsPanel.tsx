@@ -22,6 +22,7 @@ import {
   Upload,
   type LucideIcon,
 } from "lucide-react";
+import { CalendarColorRow } from "./CalendarColorMenu";
 import {
   useEffect,
   useMemo,
@@ -1394,25 +1395,27 @@ export function CalendarAccountsSettings({
                           : "Loading calendars…"}
                     </p>
                   ) : accountCalendars.map((calendar) => (
-                      <label key={calendar.id}>
-                        <input
-                          type="checkbox"
-                          checked={calendar.selected}
-                          disabled={busyEmail !== null}
-                          onChange={(event) => {
-                            const selected = calendars
-                              .filter((candidate) =>
-                                candidate.accountId === account.email
-                                && candidate.selected
-                                && candidate.id !== calendar.id
-                              )
-                              .map((candidate) => candidate.id);
-                            if (event.target.checked) selected.push(calendar.id);
-                            runFor(account.email, () => onSetSelection(account.email, selected));
-                          }}
-                        />
-                        <span>{calendar.name}{calendar.primary ? " (Primary)" : ""}</span>
-                      </label>
+                      <CalendarColorRow key={calendar.id} accountId={account.email} calendarId={calendar.id} calendarName={calendar.name}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={calendar.selected}
+                            disabled={busyEmail !== null}
+                            onChange={(event) => {
+                              const selected = calendars
+                                .filter((candidate) =>
+                                  candidate.accountId === account.email
+                                  && candidate.selected
+                                  && candidate.id !== calendar.id
+                                )
+                                .map((candidate) => candidate.id);
+                              if (event.target.checked) selected.push(calendar.id);
+                              runFor(account.email, () => onSetSelection(account.email, selected));
+                            }}
+                          />
+                          <span>{calendar.name}{calendar.primary ? " (Primary)" : ""}</span>
+                        </label>
+                      </CalendarColorRow>
                     ))}
                 </fieldset>
               ) : null}
