@@ -260,7 +260,7 @@ function FolderConnectorForm({ operation, refresh, onAdded }: { operation: Opera
         Choose a folder your devices already keep in sync, such as one in Dropbox, iCloud Drive, OneDrive, or Syncthing.
         Every device in the group chooses its own copy of that same folder.
       </p>
-      <button type="button" className="btn-primary" disabled={busy} onClick={choose}>Choose folder…</button>
+      <button type="button" className="btn btn-primary" disabled={busy} onClick={choose}>Choose folder…</button>
       <InlineStatus operation={operation} for="add-folder" />
     </>
   );
@@ -334,11 +334,11 @@ function S3ConnectorForm({ operation, refresh, onAdded }: { operation: Operation
       <Disclosure summary="Permissions this key needs">
         <p className="settings-hint">A key limited to this bucket and folder is safest. Reading the bucket’s versioning setting is optional.</p>
         <pre className="sync-policy" aria-label="Minimal access policy">{policy}</pre>
-        <button type="button" className="account-action-button" onClick={() => void navigator.clipboard?.writeText(policy)}>Copy policy</button>
+        <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(policy)}>Copy policy</button>
       </Disclosure>
       <div className="settings-row">
-        <button type="button" className="account-action-button" disabled={busy || !s3FormComplete(form)} onClick={runTest}>Test connection</button>
-        <button type="button" className="btn-primary" disabled={busy || !test || !s3TestPassed(test)} onClick={add}>Add connector</button>
+        <button type="button" className="btn" disabled={busy || !s3FormComplete(form)} onClick={runTest}>Test connection</button>
+        <button type="button" className="btn btn-primary" disabled={busy || !test || !s3TestPassed(test)} onClick={add}>Add connector</button>
       </div>
       {test ? <S3TestResults test={test} /> : <p className="settings-hint">Test the connection before adding it.</p>}
       <InlineStatus operation={operation} for="s3" />
@@ -389,15 +389,15 @@ function IpfsConnectorForm({ operation, refresh, onAdded }: { operation: Operati
         <input type="password" value={token} disabled={busy} onChange={(event) => { setToken(event.target.value); setProbe(null); }} />
       </label>
       <div className="settings-row">
-        <button type="button" className="account-action-button" disabled={busy} onClick={() => { setBaseUrl(FILEBASE_RPC_URL); setProbe(null); }}>
+        <button type="button" className="btn" disabled={busy} onClick={() => { setBaseUrl(FILEBASE_RPC_URL); setProbe(null); }}>
           Fill in Filebase URL
         </button>
-        <button type="button" className="account-action-button" disabled={busy || !baseUrl} onClick={test}>Test connection</button>
+        <button type="button" className="btn" disabled={busy || !baseUrl} onClick={test}>Test connection</button>
       </div>
       {probe?.versionOk ? (
         <p className="settings-hint">{`Reachable · ${probe.headDiscoveryAvailable ? "supports sync discovery through bucket pins" : "bucket pins unavailable"}`}</p>
       ) : null}
-      <button type="button" className="btn-primary" disabled={busy || !baseUrl} onClick={add}>Add IPFS RPC endpoint</button>
+      <button type="button" className="btn btn-primary" disabled={busy || !baseUrl} onClick={add}>Add IPFS RPC endpoint</button>
       <InlineStatus operation={operation} for="ipfs" />
     </>
   );
@@ -437,7 +437,7 @@ export function ConnectorPicker({ operation, refresh, onDone }: { operation: Ope
   return (
     <div className="sync-connector-form" role="group" aria-label={`Add ${connectorKindLabel(kind)}`}>
       <div className="settings-row">
-        <button type="button" className="account-action-button" disabled={operation.busy} onClick={() => setKind(null)}>← Back</button>
+        <button type="button" className="btn" disabled={operation.busy} onClick={() => setKind(null)}>← Back</button>
         <h4>{connectorKindLabel(kind)}</h4>
       </div>
       {forms[kind]}
@@ -503,8 +503,8 @@ function ReplaceCredentials({
         </label>
       )}
       <span className="settings-inline-confirm-actions">
-        <button type="button" disabled={busy} onClick={onDone}>Cancel</button>
-        <button type="button" className="btn-primary" disabled={busy || !ready} onClick={save}>Test and save</button>
+        <button className="btn" type="button" disabled={busy} onClick={onDone}>Cancel</button>
+        <button type="button" className="btn btn-primary" disabled={busy || !ready} onClick={save}>Test and save</button>
       </span>
     </div>
   );
@@ -535,10 +535,10 @@ export function ConnectorCard({ transport, operation, refresh }: { transport: Re
           ) : null}
           {transport.lastSuccessAt ? <span className="account-card-email">Last synced {new Date(transport.lastSuccessAt).toLocaleString()}</span> : null}
         </div>
-        <button type="button" className="account-action-button" disabled={busy} aria-expanded={panel === "edit"} onClick={() => { setName(transport.label ?? ""); setPanel("edit"); }}>
+        <button type="button" className="btn" disabled={busy} aria-expanded={panel === "edit"} onClick={() => { setName(transport.label ?? ""); setPanel("edit"); }}>
           Edit…
         </button>
-        <button type="button" className="account-action-button danger-action" disabled={busy} aria-expanded={panel === "disconnect"} onClick={() => setPanel("disconnect")}>
+        <button type="button" className="btn btn-danger" disabled={busy} aria-expanded={panel === "disconnect"} onClick={() => setPanel("disconnect")}>
           Disconnect…
         </button>
       </div>
@@ -557,9 +557,9 @@ export function ConnectorCard({ transport, operation, refresh }: { transport: Re
             <input id={nameId} type="text" maxLength={MAX_CONNECTOR_LABEL_CHARS} placeholder={transport.location} value={name} disabled={busy} autoFocus onChange={(event) => setName(event.target.value)} />
           </label>
           <span className="settings-inline-confirm-actions">
-            {hasCredentials ? <button type="button" disabled={busy} onClick={() => setPanel("credentials")}>Replace credentials…</button> : null}
-            <button type="button" disabled={busy} onClick={() => setPanel("none")}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={busy}>Save</button>
+            {hasCredentials ? <button className="btn" type="button" disabled={busy} onClick={() => setPanel("credentials")}>Replace credentials…</button> : null}
+            <button className="btn" type="button" disabled={busy} onClick={() => setPanel("none")}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={busy}>Save</button>
           </span>
         </form>
       ) : null}
@@ -572,7 +572,7 @@ export function ConnectorCard({ transport, operation, refresh }: { transport: Re
           disabled={busy}
           actions={[
             { label: "Disconnect and keep data", onClick: () => { setPanel("none"); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, false)); } },
-            ...(transport.supportsDeleteData ? [{ label: "Delete files and disconnect", className: "danger-action", onClick: () => { setPanel("none"); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, true)); } }] : []),
+            ...(transport.supportsDeleteData ? [{ label: "Delete files and disconnect", className: "btn-danger", onClick: () => { setPanel("none"); actFor(key, () => replicatedSyncRemoveTransport(transport.instanceId, true)); } }] : []),
           ]}
         >
           <strong>Stop syncing through this connector?</strong><br />{disconnectExplanation(transport)}
@@ -615,10 +615,10 @@ export function ConnectorList({
             it automatically.
           </p>
           <ConnectorPicker operation={operation} refresh={refresh} onDone={() => setAdding(false)} />
-          <button type="button" className="account-action-button" disabled={operation.busy} onClick={() => setAdding(false)}>Cancel</button>
+          <button type="button" className="btn" disabled={operation.busy} onClick={() => setAdding(false)}>Cancel</button>
         </>
       ) : (
-        <button type="button" className="account-action-button" disabled={operation.busy} onClick={() => setAdding(true)}>Add another connector</button>
+        <button type="button" className="btn" disabled={operation.busy} onClick={() => setAdding(true)}>Add another connector</button>
       )}
     </>
   );

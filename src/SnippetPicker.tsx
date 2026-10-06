@@ -83,6 +83,7 @@ export function SnippetPicker({
             </span>
             <span className="label-actions">
               <button
+                className="btn-icon btn-icon-sm"
                 aria-label={`Edit ${snippet.name}`}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -92,6 +93,7 @@ export function SnippetPicker({
                 <Pencil size={14} />
               </button>
               <button
+                className="btn-icon btn-icon-sm"
                 aria-label={`Delete ${snippet.name}`}
                 onClick={(event) => {
                   event.stopPropagation();

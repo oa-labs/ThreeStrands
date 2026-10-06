@@ -233,21 +233,21 @@ export function ThreadChat({
           {entry.availability && renderAvailability ? renderAvailability(entry.availability) : null}
           {entry.replyDraft ? <div className="thread-chat-draft">
             <pre>{entry.replyDraft}</pre>
-            <button type="button" onClick={() => onUseReply(entry.replyDraft!)}>Use as Reply</button>
+            <button type="button" className="btn btn-sm" onClick={() => onUseReply(entry.replyDraft!)}>Use as Reply</button>
           </div> : null}
-          {entry.addedSuggestions > 0 ? <button type="button" className="context-link-button" onClick={onShowSuggestions}>
+          {entry.addedSuggestions > 0 ? <button type="button" className="btn-link context-link-button" onClick={onShowSuggestions}>
             Added {entry.addedSuggestions === 1 ? "1 suggestion" : `${entry.addedSuggestions} suggestions`} to review
           </button> : null}
           {entry.hiddenSuggestions > 0 ? <small>{entry.hiddenSuggestions === 1 ? "1 suggestion" : `${entry.hiddenSuggestions} suggestions`} couldn&rsquo;t be matched to the email, so {entry.hiddenSuggestions === 1 ? "it was" : "they were"} hidden.</small> : null}
           {entry.sources.length > 0 ? <nav className="thread-chat-sources" aria-label="Sources">
-            {entry.sources.map((source) => <button type="button" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}
+            {entry.sources.map((source) => <button type="button" className="btn-link" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}
           </nav> : null}
           {entry.attachments.filter((attachment) => attachment.truncated).map((attachment) => <small key={attachmentKey(attachment)}>
             {attachment.filename} is long, so only its first part was shared.
           </small>)}
           {entry.searched.length > 0 ? <details className="thread-chat-searched">
             <summary>Shared {entry.searched.length === 1 ? "1 other email" : `${entry.searched.length} other emails`} with AI</summary>
-            {entry.searched.map((source) => <button type="button" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}
+            {entry.searched.map((source) => <button type="button" className="btn-link" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}
           </details> : null}
         </div>
       ))}
@@ -255,11 +255,11 @@ export function ThreadChat({
     </div> : pending ? <p className="context-status" role="status">Thinking…</p> : null}
     {error ? <div className="action-analysis-error" role="alert">
       <p>{error}</p>
-      <div className="action-analysis-error-actions"><button type="button" onClick={onRetry}><RotateCcw size={13} /> Try Again</button></div>
+      <div className="action-analysis-error-actions"><button type="button" className="btn btn-sm" onClick={onRetry}><RotateCcw size={13} /> Try Again</button></div>
     </div> : null}
     {!enabled || !available ? <>
       <p className="context-status">{!enabled ? "Turn on Thread Chat in AI settings to ask questions about this conversation." : "Set up an AI provider and API key in AI settings to ask questions."}</p>
-      <button type="button" className="context-link-button" onClick={onOpenSettings}>AI Settings</button>
+      <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Settings</button>
     </> : open ? (
       <form
         className="thread-chat-form"
@@ -316,20 +316,21 @@ export function ThreadChat({
             <FileText size={12} aria-hidden="true" /><span>{attachment.filename}</span>
             <button
               type="button"
+                className="btn-icon btn-icon-sm"
               aria-label={`Don’t share ${attachment.filename}`}
               onClick={() => setSelected((current) => current.filter((candidate) => attachmentKey(candidate) !== attachmentKey(attachment)))}
             ><X size={12} aria-hidden="true" /></button>
           </li>)}
         </ul> : null}
         {!draft.trim() && entries.length === 0 ? <div className="thread-chat-quick" aria-label="Suggested questions" role="group">
-          {QUICK_QUESTIONS.map((question) => <button key={question} type="button" disabled={pending} onClick={() => ask(question)}>{question}</button>)}
+          {QUICK_QUESTIONS.map((question) => <button key={question} type="button" className="btn btn-sm btn-wrap" disabled={pending} onClick={() => ask(question)}>{question}</button>)}
         </div> : null}
         <div className="thread-chat-controls">
           <label title="Also search your other mail for this question only">
             <input type="checkbox" checked={searchMailbox} onChange={(event) => setSearchMailbox(event.target.checked)} />
             Search all mail
           </label>
-          <button type="submit" disabled={pending || !draft.trim()}><Sparkles size={13} /> Ask</button>
+          <button type="submit" className="btn btn-sm btn-primary" disabled={pending || !draft.trim()}><Sparkles size={13} /> Ask</button>
         </div>
       </form>
     ) : (

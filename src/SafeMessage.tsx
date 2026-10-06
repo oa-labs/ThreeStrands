@@ -738,7 +738,7 @@ export function SafeMessage({
       {hasBlockedImages ? (
         <div className="message-images-notice">
           <span>Images are blocked in this message.</span>
-          <button type="button" onClick={() => setImagesAllowedForMessage(true)}>
+          <button type="button" className="btn btn-sm" onClick={() => setImagesAllowedForMessage(true)}>
             <Image size={14} /> Load images
           </button>
         </div>

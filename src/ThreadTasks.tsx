@@ -72,7 +72,7 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
       label={thread ? "Conversation tasks" : "Tasks with this person"}
       count={tasks.filter((task) => isActiveTaskStatus(task.status)).length}
       actions={onAddTask ? <HoverTooltip title="Add task" shortcut="d" placement="bottom">
-        <button type="button" className="context-icon-button" aria-label="Add task" onClick={onAddTask}><Plus size={15} /></button>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Add task" onClick={onAddTask}><Plus size={15} /></button>
       </HoverTooltip> : undefined}
       rows={tasks.map((task) => {
         const due = formatDue(task);
@@ -92,7 +92,7 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
             {task.threadId !== thread?.id && task.subjectSnapshot ? <span className="context-task-source">{task.subjectSnapshot}</span> : null}
             {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
           </button>
-          {task.kind === "follow_up" && isDue(task) ? <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button> : null}
+          {task.kind === "follow_up" && isDue(task) ? <button type="button" className="btn btn-sm task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button> : null}
         </article>;
       }).concat(error ? [<p className="form-error" role="alert" key="error">{error}</p>] : [])}
     /> : null}

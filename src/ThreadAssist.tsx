@@ -78,13 +78,13 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
   if (!summary.enabled && !suggestions.enabled) {
     return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-label="Brief">
       <p className="context-status">AI briefs and suggestions are off.</p>
-      <button type="button" className="context-link-button" onClick={onOpenSettings}>AI Settings</button>
+      <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Settings</button>
     </section>;
   }
   if (!summary.available && !suggestions.available) {
     return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-label="Brief">
       <p className="context-status">Set up an AI provider and API key in AI settings to get a brief of this conversation.</p>
-      <button type="button" className="context-link-button" onClick={onOpenSettings}>AI Settings</button>
+      <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Settings</button>
     </section>;
   }
 
@@ -122,19 +122,19 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
         <div className="context-section-header-actions">
           {!failure && (missingSummary || missingSuggestions) ? (
             <HoverTooltip title={missingSummary ? "Get Brief" : "Get Suggestions"} shortcut={missingSummary ? "i" : undefined} placement="bottom">
-              <button type="button" className="thread-assist-run" aria-keyshortcuts={missingSummary ? "i" : undefined} onClick={() => onRun(false)}>
+              <button type="button" className="btn btn-sm thread-assist-run" aria-keyshortcuts={missingSummary ? "i" : undefined} onClick={() => onRun(false)}>
                 <Sparkles size={12} />{missingSummary ? "Get Brief" : "Get Suggestions"}
               </button>
             </HoverTooltip>
           ) : null}
           {summaryText ? (
             <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">
-              <button type="button" className="context-icon-button" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+              <button type="button" className="btn-icon btn-icon-sm" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
             </HoverTooltip>
           ) : null}
           {generated ? (
             <HoverTooltip title={`Refresh ${title.toLowerCase()}`} placement="bottom">
-              <button type="button" className="context-icon-button" aria-label={`Refresh ${title.toLowerCase()}`} onClick={() => onRun(true)}><RefreshCw size={14} /></button>
+              <button type="button" className="btn-icon btn-icon-sm" aria-label={`Refresh ${title.toLowerCase()}`} onClick={() => onRun(true)}><RefreshCw size={14} /></button>
             </HoverTooltip>
           ) : null}
         </div>
@@ -148,7 +148,7 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
     {failure ? <div className="action-analysis-error" role="alert">
       <p>{failure.summary}</p>
       <div className="action-analysis-error-actions">
-        {failure.retryable ? <button type="button" onClick={() => onRun(false)}><RotateCcw size={13} /> Try Again</button> : null}
+        {failure.retryable ? <button type="button" className="btn btn-sm" onClick={() => onRun(false)}><RotateCcw size={13} /> Try Again</button> : null}
         {failure.retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{error}</p></details> : null}
       </div>
     </div> : null}
@@ -180,9 +180,9 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
             /> : null}
             <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
             <div className="proposal-actions">
-              <button type="button" onClick={() => suggestions.onReview(index, proposal, "edit")}><Pencil size={13} /> Edit</button>
-              {proposal.type === "task" ? <button type="button" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
-              <button type="button" onClick={() => suggestions.onDiscard(index)}>Discard</button>
+              <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "edit")}><Pencil size={13} /> Edit</button>
+              {proposal.type === "task" ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
+              <button type="button" className="btn btn-sm" onClick={() => suggestions.onDiscard(index)}>Discard</button>
             </div>
           </article>;
         })}

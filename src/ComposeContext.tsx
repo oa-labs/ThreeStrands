@@ -42,7 +42,7 @@ function checkRow(check: ComposeCheck, actions: {
     case "attachment":
       return <div className="compose-check compose-check-warning" key="attachment">
         <span>Says &ldquo;{check.word}&rdquo;, but nothing is attached</span>
-        <button type="button" onClick={actions.onAttach}>Attach Files</button>
+        <button type="button" className="btn btn-sm btn-wrap" onClick={actions.onAttach}>Attach Files</button>
       </div>;
     case "subject":
       return <div className="compose-check compose-check-warning" key="subject"><span>No subject</span></div>;
@@ -50,7 +50,7 @@ function checkRow(check: ComposeCheck, actions: {
       const replacement = check.suggestionName ? `${check.suggestionName} <${check.suggestion}>` : check.suggestion;
       return <div className="compose-check compose-check-warning" key={`typo:${check.email}`}>
         <span>You&rsquo;ve never emailed <strong>{check.email}</strong>. Did you mean <strong>{check.suggestion}</strong>?</span>
-        <button type="button" aria-label={`Use ${check.suggestion} instead of ${check.email}`} onClick={() => actions.onReplaceRecipient(check.email, replacement)}>Use {check.suggestion}</button>
+        <button type="button" className="btn btn-sm btn-wrap" aria-label={`Use ${check.suggestion} instead of ${check.email}`} onClick={() => actions.onReplaceRecipient(check.email, replacement)}>Use {check.suggestion}</button>
       </div>;
     }
     case "firstContact":
@@ -62,7 +62,7 @@ function checkRow(check: ComposeCheck, actions: {
     case "account":
       return <div className="compose-check compose-check-warning" key="account">
         <span>You&rsquo;ve written to {check.emails.join(", ")} from {check.account}</span>
-        <button type="button" onClick={() => actions.onSwitchAccount(check.account)}>Send From {check.account}</button>
+        <button type="button" className="btn btn-sm btn-wrap" onClick={() => actions.onSwitchAccount(check.account)}>Send From {check.account}</button>
       </div>;
   }
 }

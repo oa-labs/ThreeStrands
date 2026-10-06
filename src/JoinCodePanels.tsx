@@ -149,7 +149,7 @@ export function JoinCodePanel({ operation, refresh, inputId }: { operation: Oper
                   <>
                     <p className="settings-hint">On {inviter} this folder is named “{connector.folderName}”. Choose this device’s copy of it.</p>
                     <div className="settings-row">
-                      <button type="button" className="account-action-button" disabled={busy} onClick={() => chooseFolder(connector.index)}>
+                      <button type="button" className="btn" disabled={busy} onClick={() => chooseFolder(connector.index)}>
                         {folders[connector.index] ? "Choose a different folder…" : "Choose folder…"}
                       </button>
                       {folders[connector.index] ? <span className="settings-hint">{folders[connector.index]}</span> : null}
@@ -170,7 +170,7 @@ export function JoinCodePanel({ operation, refresh, inputId }: { operation: Oper
           {readiness.missing.map((message) => <p key={message} className="settings-hint">{message}</p>)}
         </>
       ) : null}
-      <button type="button" className="btn-primary" disabled={busy || !readiness.ready} onClick={join}>
+      <button type="button" className="btn btn-primary" disabled={busy || !readiness.ready} onClick={join}>
         {pending === "join-code" ? "Joining…" : "Join sync group"}
       </button>
       <InlineStatus operation={operation} for="join-code" />
@@ -228,7 +228,7 @@ export function AddDevicePanel({
         <>
           <textarea className="sync-join-code" readOnly rows={4} aria-label="Join code" value={created.code} onFocus={(event) => event.target.select()} />
           <div className="settings-row">
-            <button type="button" className="btn-primary" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+            <button type="button" className="btn btn-primary" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
           </div>
           <p className="settings-hint sync-attention-text">
             Anyone with this code can join your sync group{created.credentials ? " and use the included storage credentials" : ""}.
@@ -236,7 +236,7 @@ export function AddDevicePanel({
             {created.credentials ? " The credentials don’t expire with the code, so a key limited to this bucket is safest." : ""}
           </p>
           <span className="settings-inline-confirm-actions">
-            <button type="button" onClick={onClose}>Done</button>
+            <button className="btn" type="button" onClick={onClose}>Done</button>
           </span>
         </>
       ) : (
@@ -277,8 +277,8 @@ export function AddDevicePanel({
             ))}
           </fieldset>
           <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={onClose}>Cancel</button>
-            <button type="button" className="btn-primary" disabled={busy || chosen.length === 0} onClick={create}>Create join code</button>
+            <button className="btn" type="button" disabled={busy} onClick={onClose}>Cancel</button>
+            <button type="button" className="btn btn-primary" disabled={busy || chosen.length === 0} onClick={create}>Create join code</button>
           </span>
           <InlineStatus operation={operation} for="create-join-code" />
         </>
@@ -315,12 +315,12 @@ function OutstandingJoinCodeRow({ code, operation }: { code: OutstandingJoinCode
           ) : null}
         </div>
         {code.status === "open" && !confirming ? (
-          <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => setConfirming(true)}>Cancel…</button>
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setConfirming(true)}>Cancel…</button>
         ) : null}
       </div>
       {confirming ? (
         <InlineConfirm ariaLabel="Cancel join code confirmation" cancelLabel="Keep" onCancel={() => setConfirming(false)} disabled={busy}
-          actions={[{ label: "Cancel code", className: "danger-action", onClick: () => { setConfirming(false); actFor(key, () => replicatedSyncCancelJoinCode(code.invitationCid)); } }]}>
+          actions={[{ label: "Cancel code", className: "btn-danger", onClick: () => { setConfirming(false); actFor(key, () => replicatedSyncCancelJoinCode(code.invitationCid)); } }]}>
           <strong>Cancel this join code?</strong><br />It stops working, and your sync group’s keys change so it can’t be used later.
         </InlineConfirm>
       ) : null}
@@ -358,15 +358,15 @@ function JoinCodeNoticeRow({ notice, operation }: { notice: JoinCodeNotice; oper
             : `A device named “${notice.deviceName || "unnamed"}” tried to use a join code that was already used, expired, or cancelled.`}
         </p>
         {notice.kind === "joined" && !revoking ? (
-          <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => setRevoking(true)}>Not you? Revoke…</button>
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setRevoking(true)}>Not you? Revoke…</button>
         ) : null}
-        <button type="button" className="account-action-button" disabled={busy} onClick={() => actFor(key, () => replicatedSyncDismissJoinCodeNotice(notice.redemptionCid))}>
+        <button type="button" className="btn" disabled={busy} onClick={() => actFor(key, () => replicatedSyncDismissJoinCodeNotice(notice.redemptionCid))}>
           Dismiss
         </button>
       </div>
       {revoking ? (
         <InlineConfirm ariaLabel="Revoke device confirmation" cancelLabel="Cancel" onCancel={() => setRevoking(false)} disabled={busy}
-          actions={[{ label: "Revoke device", className: "danger-action", onClick: () => { setRevoking(false); actFor(key, () => replicatedSyncRotateEpoch(notice.deviceId)); } }]}>
+          actions={[{ label: "Revoke device", className: "btn-danger", onClick: () => { setRevoking(false); actFor(key, () => replicatedSyncRotateEpoch(notice.deviceId)); } }]}>
           <strong>Revoke this device?</strong><br />It keeps existing data, but future writes from it will no longer be trusted.
         </InlineConfirm>
       ) : null}

@@ -396,7 +396,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     const kindLabel = TASK_CARD_KIND_LABELS[task.kind];
     const cardGoal = task.goalId ? goalsById.get(task.goalId) ?? null : null;
     const followUp = onDraftFollowUp && task.threadId && task.kind === "follow_up" && isDue(task) ? (
-      <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button>
+      <button type="button" className="btn btn-sm task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button>
     ) : null;
     return <article
       id={`task-${task.id}`}
@@ -455,10 +455,10 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       </button>
       {board ? (back || forward || followUp) ? <div className="task-board-moves">
         {followUp}
-        {back ? <button type="button" className="task-move-button" aria-label={`Move ${task.title} to ${STATUS_LABELS[back]}`} onClick={() => void setStatus(task, back)}><ChevronLeft size={14} aria-hidden="true" />{STATUS_LABELS[back]}</button> : null}
-        {forward ? <button type="button" className="task-move-button" aria-label={`Move ${task.title} to ${STATUS_LABELS[forward]}`} onClick={() => void setStatus(task, forward)}>{STATUS_LABELS[forward]}<ChevronRight size={14} aria-hidden="true" /></button> : null}
+        {back ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[back]}`} onClick={() => void setStatus(task, back)}><ChevronLeft size={14} aria-hidden="true" />{STATUS_LABELS[back]}</button> : null}
+        {forward ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[forward]}`} onClick={() => void setStatus(task, forward)}>{STATUS_LABELS[forward]}<ChevronRight size={14} aria-hidden="true" /></button> : null}
       </div> : null : <>
-        <button type="button" className="task-status-button" aria-label={active ? `Complete ${task.title}` : `Reopen ${task.title}`} onClick={() => void setStatus(task, active ? "completed" : "open")}>
+        <button type="button" className="btn-icon btn-icon-sm task-status-button" aria-label={active ? `Complete ${task.title}` : `Reopen ${task.title}`} onClick={() => void setStatus(task, active ? "completed" : "open")}>
           {active ? <Check size={15} /> : <RotateCcw size={15} />}
         </button>
         {followUp}
@@ -483,7 +483,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         <header><h3 id={headingId}>{column.name}</h3><span className="task-view-count">{column.tasks.length}</span></header>
         <div className="task-board-cards">
           {column.tasks.length > 0 ? column.tasks.map(renderCard) : olderDoneCount > 0 && column.name === "Done" && !showOlderDone ? null : <p className="task-board-empty">No tasks</p>}
-          {column.name === "Done" && olderDoneCount > 0 ? <button type="button" className="task-board-older" aria-expanded={showOlderDone} onClick={() => setShowOlderDone((shown) => !shown)}>
+          {column.name === "Done" && olderDoneCount > 0 ? <button type="button" className="btn btn-sm btn-ghost task-board-older" aria-expanded={showOlderDone} onClick={() => setShowOlderDone((shown) => !shown)}>
             {showOlderDone ? "Hide older completed" : `Show ${olderDoneCount} older completed`}
           </button> : null}
         </div>
@@ -515,21 +515,21 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         </div>
         <div className="tasks-sidebar-header-actions">
           <div className="segmented" role="group" aria-label="Task layout">
-            <button type="button" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={15} />List</button>
-            <button type="button" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={15} />Board</button>
+            <button type="button" className="segment" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={15} />List</button>
+            <button type="button" className="segment" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={15} />Board</button>
           </div>
           {onCreateTask ? <button type="button" className="btn task-add-button" onClick={startNew}><Plus size={15} />Add Task</button> : null}
         </div>
       </header>
       {error ? <p className="form-error tasks-error" role="alert">
         <span>{error}</span>
-        <button type="button" aria-label="Dismiss error" onClick={() => setError(null)}><X size={13} /></button>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Dismiss error" onClick={() => setError(null)}><X size={13} /></button>
       </p> : null}
       <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
       {completionToast ? (
         <div className="toast task-complete-toast" role="status">
           Completed &ldquo;{completionToast.title}&rdquo;
-          <button type="button" onClick={() => void setStatus(completionToast, isActiveTaskStatus(completionToast.status) ? completionToast.status : "open")}>Undo</button>
+          <button type="button" className="btn-link" onClick={() => void setStatus(completionToast, isActiveTaskStatus(completionToast.status) ? completionToast.status : "open")}>Undo</button>
         </div>
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
@@ -539,7 +539,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           <nav className="task-view-nav" aria-label="Task views">
             {(board ? BOARD_TASK_VIEWS : TASK_VIEWS).map((name) => {
               const count = filteredTasks.filter((task) => taskMatchesView(task, name, now)).length;
-              return <button key={name} type="button" aria-pressed={view === name} onClick={() => setView(name)}>
+              return <button key={name} type="button" className="task-view-item" aria-pressed={view === name} onClick={() => setView(name)}>
                 <span>{name}</span>{count > 0 ? <span className="task-view-count" aria-hidden="true">{count}</span> : null}
               </button>;
             })}

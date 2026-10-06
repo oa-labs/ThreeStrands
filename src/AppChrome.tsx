@@ -119,7 +119,7 @@ export function ActionButton({
   onClick(): void;
   shortcut?: string;
 }) {
-  return <button className="action-button" aria-label={shortcut ? `${label} (${shortcut})` : label} onClick={onClick}>{children}<span>{label}</span>{shortcut ? <kbd>{shortcut}</kbd> : null}</button>;
+  return <button className="btn-icon action-button" aria-label={shortcut ? `${label} (${shortcut})` : label} onClick={onClick}>{children}<span>{label}</span>{shortcut ? <kbd>{shortcut}</kbd> : null}</button>;
 }
 
 export function CommandPalette({
@@ -145,7 +145,7 @@ export function CommandPalette({
       </label>
       <div className="command-list">
         {visible.map((command) => (
-          <button key={command.id} disabled={!command.enabled(context)} onClick={() => { execute(command); onClose(); }}>
+          <button key={command.id} className="command-item" disabled={!command.enabled(context)} onClick={() => { execute(command); onClose(); }}>
             <span><small>{command.group}</small>{command.title}</span>
             <span>{command.keys.map((key) => <ShortcutKeys key={key} shortcut={key} />)}</span>
           </button>
@@ -290,7 +290,7 @@ export function Modal({
         onKeyDown={trapFocus}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header><h2>{title}</h2>{dismissible ? <button aria-label="Close" onClick={onClose}><X size={18} /></button> : null}</header>
+        <header><h2>{title}</h2>{dismissible ? <button className="btn-icon" aria-label="Close" onClick={onClose}><X size={18} /></button> : null}</header>
         {children}
       </div>
     </div>,

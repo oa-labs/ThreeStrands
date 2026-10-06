@@ -225,7 +225,7 @@ export function DiagnosticsSettings({
       {recovery ? (
         <DiagnosticsIssue
           title="Mail cache was recovered"
-          actions={actions ? <button type="button" onClick={actions.dismissRecovery}>Dismiss</button> : null}
+          actions={actions ? <button className="btn btn-sm" type="button" onClick={actions.dismissRecovery}>Dismiss</button> : null}
         >
           <p>{recoveryStatusMessage(recovery)}</p>
         </DiagnosticsIssue>
@@ -245,10 +245,10 @@ export function DiagnosticsSettings({
           title={`${plural(failed.length, "change")} couldn’t be applied in Gmail`}
           actions={actions ? (
             <>
-              <button type="button" disabled={pending !== null} onClick={() => runFor("retry", actions.retryFailed)}>
+              <button className="btn btn-sm" type="button" disabled={pending !== null} onClick={() => runFor("retry", actions.retryFailed)}>
                 {pending === "retry" ? "Retrying…" : "Retry"}
               </button>
-              <button type="button" disabled={pending !== null} onClick={() => runFor("dismiss-failed", actions.dismissProblems)}>
+              <button className="btn btn-sm" type="button" disabled={pending !== null} onClick={() => runFor("dismiss-failed", actions.dismissProblems)}>
                 Dismiss
               </button>
             </>
@@ -276,7 +276,7 @@ export function DiagnosticsSettings({
         <DiagnosticsIssue
           title={`${plural(quarantined.length, "message")} couldn’t be read`}
           actions={actions ? (
-            <button type="button" disabled={pending !== null} onClick={() => runFor("dismiss-quarantine", actions.dismissProblems)}>
+            <button className="btn btn-sm" type="button" disabled={pending !== null} onClick={() => runFor("dismiss-quarantine", actions.dismissProblems)}>
               Dismiss
             </button>
           ) : null}
@@ -322,7 +322,7 @@ export function DiagnosticsSettings({
         version, and browser engine. Email addresses, URLs, quoted text, and
         message headers are redacted, and nothing from your mail is included.
       </span>
-      <button
+      <button className="btn"
         disabled={reportCount === 0}
         onClick={() => {
           clearLocalCrashReports();
@@ -533,7 +533,7 @@ export function Settings({
                       key={item.id}
                       type="button"
                       data-section-id={item.id}
-                      className={item.id === section ? "active" : ""}
+                      className={`settings-nav-item${item.id === section ? " active" : ""}`}
                       aria-current={item.id === section ? "true" : undefined}
                       ref={item.id === section ? selectedSectionButtonRef : undefined}
                       onClick={() => onSectionChange(item.id)}
@@ -565,7 +565,7 @@ export function Settings({
             <div className="settings-search-empty">
               <strong>No settings match “{settingsQuery.trim()}”</strong>
               <p>Try a feature name, account, privacy, or sync.</p>
-              <button type="button" onClick={() => setSettingsQuery("")}>Clear search</button>
+              <button className="btn" type="button" onClick={() => setSettingsQuery("")}>Clear search</button>
             </div>
           ) : (
             <>
@@ -967,7 +967,7 @@ function AccountsSettings({
         </div>
         <button
           type="button"
-          className="btn-primary settings-add-account"
+          className="btn btn-primary settings-add-account"
           disabled={busyEmail !== null}
           onClick={() => runFor("__add__", onAdd)}
         >
@@ -1017,7 +1017,7 @@ function AccountsSettings({
                 {account.status === "needs_reauth" ? (
                   <button
                     type="button"
-                    className="account-action-button account-reconnect btn-primary"
+                    className="btn btn-sm btn-primary account-reconnect"
                     disabled={busyEmail !== null}
                     onClick={() => runFor(`reconnect:${account.email}`, () => onReconnect(account.email))}
                   >
@@ -1038,7 +1038,7 @@ function AccountsSettings({
                 />
                 <span className="accounts-list-actions">
                   <span className="account-reorder">
-                    <button
+                    <button className="btn-icon btn-icon-sm"
                       type="button"
                       aria-label={`Move ${account.email} up`}
                       disabled={index === 0 || busyEmail !== null}
@@ -1046,7 +1046,7 @@ function AccountsSettings({
                     >
                       <ChevronUp size={14} />
                     </button>
-                    <button
+                    <button className="btn-icon btn-icon-sm"
                       type="button"
                       aria-label={`Move ${account.email} down`}
                       disabled={index === accounts.length - 1 || busyEmail !== null}
@@ -1069,7 +1069,7 @@ function AccountsSettings({
                   </label>
                   <button
                     type="button"
-                    className="account-action-button danger-action"
+                    className="btn btn-sm btn-danger"
                     disabled={busyEmail !== null}
                     aria-expanded={confirmEmail === account.email}
                     onClick={() => setConfirmEmail(account.email)}
@@ -1138,8 +1138,8 @@ function AccountDisconnectConfirm({
       onCancel={onCancel}
       disabled={disabled}
       actions={[
-        { label: "Disconnect this device", className: "danger-action", onClick: onDisconnect },
-        { label: "Remove on all devices", className: "danger-action", onClick: onRemoveEverywhere },
+        { label: "Disconnect this device", className: "btn-danger", onClick: onDisconnect },
+        { label: "Remove on all devices", className: "btn-danger", onClick: onRemoveEverywhere },
       ]}
     >
       <strong>Disconnect {email}?</strong><br />
@@ -1214,14 +1214,14 @@ function AvailabilitySettings({
         </datalist>
       </label>
       <div className="settings-row">
-        <button type="button" onClick={() => commitTimeZone(systemTimeZone)}>Use system timezone</button>
+        <button className="btn" type="button" onClick={() => commitTimeZone(systemTimeZone)}>Use system timezone</button>
         <span className="settings-hint">Times include daylight-saving transitions.</span>
       </div>
       {timeZoneError ? <p className="form-error" role="alert">{timeZoneError}</p> : null}
       <div className="settings-section-heading-row">
         <h3>Working Hours</h3>
         <span className="settings-section-heading-actions">
-          <button
+          <button className="btn btn-sm"
             type="button"
             onClick={() => {
               const monday = preferences.workingWindows.find((window) => window.weekday === 1)
@@ -1238,7 +1238,7 @@ function AvailabilitySettings({
           >
             Copy Monday to weekdays
           </button>
-          <button type="button" onClick={() => onChange({ ...preferences, workingWindows: [] })}>Clear</button>
+          <button className="btn btn-sm" type="button" onClick={() => onChange({ ...preferences, workingWindows: [] })}>Clear</button>
         </span>
       </div>
       <div className="availability-windows">
@@ -1304,7 +1304,7 @@ export function CalendarAccountsSettings({
         </div>
         <button
           type="button"
-          className="btn-primary settings-add-account"
+          className="btn btn-primary settings-add-account"
           disabled={busyEmail !== null}
           onClick={() => runFor("__add__", onAdd)}
         >
@@ -1347,7 +1347,7 @@ export function CalendarAccountsSettings({
                 {account.status === "needs_reauth" ? (
                   <button
                     type="button"
-                    className="account-action-button account-reconnect btn-primary"
+                    className="btn btn-sm btn-primary account-reconnect"
                     disabled={busyEmail !== null}
                     onClick={() => runFor(`reconnect:${account.email}`, () => onReconnect(account.email))}
                   >
@@ -1357,7 +1357,7 @@ export function CalendarAccountsSettings({
                 <span className="accounts-list-actions">
                   <button
                     type="button"
-                    className="account-action-button danger-action"
+                    className="btn btn-sm btn-danger"
                     disabled={busyEmail !== null}
                     aria-expanded={confirmEmail === account.email}
                     onClick={() => setConfirmEmail(account.email)}
@@ -1474,7 +1474,7 @@ function SplitInboxNameInput({
         maxLength={200}
         onChange={(event) => setValue(event.target.value)}
       />
-      <button type="submit" disabled={!normalized || normalized === splitInbox.name}>
+      <button className="btn btn-primary" type="submit" disabled={!normalized || normalized === splitInbox.name}>
         Save Name
       </button>
     </form>
@@ -1593,7 +1593,7 @@ export function SplitInboxesSettings({
             onChange={(event) => setMatchValue(event.target.value)}
           />
         )}
-        <button type="submit" className="btn-primary" disabled={creating || !name.trim() || !matchValue.trim() || !accountId}>
+        <button type="submit" className="btn btn-primary" disabled={creating || !name.trim() || !matchValue.trim() || !accountId}>
           <Plus size={15} />
           {creating ? "Adding…" : "Add Split Inbox"}
         </button>
@@ -1621,7 +1621,7 @@ export function SplitInboxesSettings({
               <div className="account-card-controls">
                 <span className="accounts-list-actions">
                   <span className="account-reorder">
-                    <button
+                    <button className="btn-icon btn-icon-sm"
                       type="button"
                       aria-label={`Move ${splitInbox.name} up`}
                       disabled={index === 0 || busyId !== null}
@@ -1629,7 +1629,7 @@ export function SplitInboxesSettings({
                     >
                       <ChevronUp size={14} />
                     </button>
-                    <button
+                    <button className="btn-icon btn-icon-sm"
                       type="button"
                       aria-label={`Move ${splitInbox.name} down`}
                       disabled={index === splitInboxes.length - 1 || busyId !== null}
@@ -1640,7 +1640,7 @@ export function SplitInboxesSettings({
                   </span>
                   <button
                     type="button"
-                    className="account-action-button danger-action"
+                    className="btn btn-sm btn-danger"
                     disabled={busyId !== null}
                     onClick={() => runFor(splitInbox.id, () => onDelete(splitInbox.id))}
                   >
@@ -1685,7 +1685,7 @@ export function SnippetsSettings({
             <code>{"{first_name}"}</code> to insert the recipient's first name.
           </p>
         </div>
-        <button type="button" className="btn-primary" onClick={() => setEditorTarget("new")}>
+        <button type="button" className="btn btn-primary" onClick={() => setEditorTarget("new")}>
           <Plus size={15} /> Add Snippet
         </button>
       </div>
@@ -1706,12 +1706,12 @@ export function SnippetsSettings({
               </div>
               <div className="account-card-controls">
                 <span className="accounts-list-actions">
-                  <button type="button" className="account-action-button" onClick={() => setEditorTarget(snippet)}>
+                  <button type="button" className="btn btn-sm" onClick={() => setEditorTarget(snippet)}>
                     Edit
                   </button>
                   <button
                     type="button"
-                    className="account-action-button danger-action"
+                    className="btn btn-sm btn-danger"
                     disabled={busyId !== null}
                     onClick={() => runFor(snippet.id, () => onDelete(snippet.id))}
                   >
@@ -1773,7 +1773,7 @@ function AccountSenderNameInput({
         disabled={saving}
         onChange={(event) => setValue(event.target.value)}
       />
-      <button type="submit" disabled={saving || normalized === saved}>
+      <button className="btn btn-primary" type="submit" disabled={saving || normalized === saved}>
         {saving ? "Saving…" : "Save Name"}
       </button>
     </form>
@@ -1922,7 +1922,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                 onChange={(event) => setKeyInput(event.target.value)}
               />
             </label>
-            <button
+            <button className="btn"
               type="button"
               disabled={busy || !keyInput.trim()}
               onClick={() => {
@@ -1951,7 +1951,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             {keyConfigured ? (
               <button
                 type="button"
-                className="settings-link-button"
+                className="btn-link"
                 disabled={busy}
                 onClick={() => {
                   setBusy(true);
@@ -1970,7 +1970,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           </div>
           <div className="settings-field-detail ai-connection-actions">
             <button
-              className="ai-connection-test"
+              className="btn"
               type="button"
               disabled={testDisabled}
               onClick={() => {
@@ -2011,7 +2011,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                   <button
                     key={suggestion}
                     type="button"
-                    className={model.trim() === suggestion ? "selected" : undefined}
+                    className={`model-suggestion${model.trim() === suggestion ? " selected" : ""}`}
                     onClick={() => {
                       setModel(suggestion);
                       setConnectionTested(false);
@@ -2247,7 +2247,7 @@ export function DataTransferSettings({
       ) : null}
       <button
         type="button"
-        className="settings-transfer-action settings-field-offset"
+        className="btn settings-field-offset"
         disabled={!isDesktop || !passwordsMatch || busy !== null}
         onClick={() => {
           setBusy("export");
@@ -2287,7 +2287,7 @@ export function DataTransferSettings({
       </label>
       <button
         type="button"
-        className="settings-transfer-action settings-field-offset"
+        className="btn settings-field-offset"
         disabled={!isDesktop || importPassword.length < 8 || busy !== null}
         onClick={() => {
           setBusy("import");

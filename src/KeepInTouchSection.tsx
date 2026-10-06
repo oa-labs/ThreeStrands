@@ -99,16 +99,16 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
         {" · "}{touched ? `Last contact ${formatKeepInTouchDate(touched)}` : "No contact yet"}
       </p>
       <div className="contact-kit-actions">
-        <button type="button" disabled={busy} title="Log a call, meeting, or message outside email" onClick={() => void run(() => mailClient.markContacted(profile.id))}><CheckCircle2 size={15} />Mark Contacted</button>
+        <button type="button" className="btn" disabled={busy} title="Log a call, meeting, or message outside email" onClick={() => void run(() => mailClient.markContacted(profile.id))}><CheckCircle2 size={15} />Mark Contacted</button>
         <details className="contact-kit-snooze">
           <summary><AlarmClock size={15} />Snooze</summary>
           <div className="contact-kit-snooze-menu">
-            {KEEP_IN_TOUCH_SNOOZES.map((item) => <button key={item.days} type="button" disabled={busy} onClick={() => void run(() => mailClient.snoozeKeepInTouch(profile.id, snoozeUntilDays(item.days)))}>{item.label}</button>)}
+            {KEEP_IN_TOUCH_SNOOZES.map((item) => <button key={item.days} type="button" className="btn" disabled={busy} onClick={() => void run(() => mailClient.snoozeKeepInTouch(profile.id, snoozeUntilDays(item.days)))}>{item.label}</button>)}
             <label>Until Date<input type="date" min={dateInputValue(tomorrow)} value={snoozeDate} disabled={busy} onChange={(event) => setSnoozeDate(event.target.value)} /></label>
-            <button type="button" disabled={busy || !snoozeDate} onClick={snoozeToDate}>Snooze Until Date</button>
+            <button type="button" className="btn" disabled={busy || !snoozeDate} onClick={snoozeToDate}>Snooze Until Date</button>
           </div>
         </details>
-        {isSnoozeActive(profile) ? <button type="button" disabled={busy} onClick={() => void run(() => mailClient.snoozeKeepInTouch(profile.id, null))}>End Snooze</button> : null}
+        {isSnoozeActive(profile) ? <button type="button" className="btn" disabled={busy} onClick={() => void run(() => mailClient.snoozeKeepInTouch(profile.id, null))}>End Snooze</button> : null}
       </div>
     </> : <p className="contact-kit-hint">Choose how often you want to be in touch. Changes save right away, and email either way counts as contact.</p>}
     {error ? <p className="contacts-error" role="alert">{error}</p> : null}

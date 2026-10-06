@@ -58,9 +58,9 @@ export function GoalReviewDialog({
                   <span>{GOAL_HORIZON_LABELS[goal.horizon]} · {formatPeriod(goal.period)} · {progress.open} open · {progress.done} done</span>
                 </div>
                 <div className="goal-review-choices">
-                  <button type="button" disabled={busy} onClick={() => void settle(goal, { status: "achieved" })}>Achieved</button>
-                  <button type="button" disabled={busy} onClick={() => void settle(goal, { status: "dropped" })}>Dropped</button>
-                  <button type="button" disabled={busy} onClick={() => void settle(goal, carryForwardRequest(goal, goals, now))}>Carry to {nextPeriod}</button>
+                  <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void settle(goal, { status: "achieved" })}>Achieved</button>
+                  <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void settle(goal, { status: "dropped" })}>Dropped</button>
+                  <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void settle(goal, carryForwardRequest(goal, goals, now))}>Carry to {nextPeriod}</button>
                 </div>
                 {errors[goal.id] ? <p className="form-error" role="alert">{errors[goal.id]}</p> : null}
               </li>;

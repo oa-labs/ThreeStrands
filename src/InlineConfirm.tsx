@@ -25,9 +25,9 @@ export function InlineConfirm({
     <div className="settings-inline-confirm notice--error" role="group" aria-label={ariaLabel}>
       <p>{children}</p>
       <span className="settings-inline-confirm-actions">
-        <button type="button" disabled={disabled} onClick={onCancel}>{cancelLabel}</button>
+        <button className="btn" type="button" disabled={disabled} onClick={onCancel}>{cancelLabel}</button>
         {actions.map((action) => (
-          <button key={action.label} type="button" className={action.className} disabled={disabled} onClick={action.onClick}>
+          <button key={action.label} type="button" className={action.className ? `btn ${action.className}` : "btn"} disabled={disabled} onClick={action.onClick}>
             {action.label}
           </button>
         ))}

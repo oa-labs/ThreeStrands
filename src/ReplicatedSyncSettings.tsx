@@ -272,7 +272,7 @@ export function ReplicatedSyncSettings() {
             </p>
             <button
               type="button"
-              className="account-action-button"
+              className="btn"
               disabled={busy}
               onClick={() => actFor("protocol-reset-notice", replicatedSyncDismissProtocolResetNotice)}
             >
@@ -480,7 +480,7 @@ function SetupChoice({
     <>
       <button
         type="button"
-        className="btn-primary"
+        className="btn btn-primary"
         disabled={busy || noConnector || spacePresence === "checking"}
         onClick={() => beginGenesis(false)}
       >
@@ -514,7 +514,7 @@ function SetupChoice({
       ) : null}
       <button
         type="button"
-        className={existing ? "btn-primary" : "account-action-button"}
+        className={existing ? "btn btn-primary" : "btn"}
         disabled={busy || !phraseCheck?.valid || noConnector}
         onClick={joinWithPhrase}
       >
@@ -552,7 +552,7 @@ function SetupChoice({
       {existing ? recoveryPhraseEntry : null}
       <button
         type="button"
-        className="account-action-button"
+        className="btn"
         disabled={busy || noConnector}
         onClick={() => actFor("join-request", replicatedSyncRequestEnrollment)}
       >
@@ -563,7 +563,7 @@ function SetupChoice({
       {existing && joinCodeInputId ? (
         <p className="settings-hint">
           Have another device nearby? A join code from it is faster.{" "}
-          <button type="button" className="link-button" onClick={() => document.getElementById(joinCodeInputId)?.focus()}>
+          <button type="button" className="btn-link" onClick={() => document.getElementById(joinCodeInputId)?.focus()}>
             Paste a join code
           </button>
         </p>
@@ -571,12 +571,12 @@ function SetupChoice({
       {existing ? (
         confirmingSeparateSpace ? (
           <InlineConfirm ariaLabel="Create a separate sync group confirmation" cancelLabel="Cancel" onCancel={() => setConfirmingSeparateSpace(false)} disabled={busy}
-            actions={[{ label: "Create separate group", className: "danger-action", onClick: () => { setConfirmingSeparateSpace(false); beginGenesis(true); } }]}>
+            actions={[{ label: "Create separate group", className: "btn-danger", onClick: () => { setConfirmingSeparateSpace(false); beginGenesis(true); } }]}>
             <strong>Create a separate sync group?</strong><br />This device will not sync with the devices already using this connector, and the new group gets its own recovery phrase.
           </InlineConfirm>
         ) : (
           <>
-            <button type="button" className="account-action-button" disabled={busy} onClick={() => setConfirmingSeparateSpace(true)}>
+            <button type="button" className="btn" disabled={busy} onClick={() => setConfirmingSeparateSpace(true)}>
               Create a separate sync group instead…
             </button>
             <InlineStatus operation={operation} for="genesis" />
@@ -606,7 +606,7 @@ function VerifyStep({ enrollmentStatus, operation }: { enrollmentStatus: Enrollm
           to compare with this one:
         </p>
         <p className="sync-fingerprint">{enrollmentStatus.fingerprint}</p>
-        <button type="button" className="account-action-button" disabled={busy} onClick={() => actFor("check-approval", replicatedSyncNow)}>
+        <button type="button" className="btn" disabled={busy} onClick={() => actFor("check-approval", replicatedSyncNow)}>
           Check for approval
         </button>
         <InlineStatus operation={operation} for="check-approval" />
@@ -624,7 +624,7 @@ function VerifyStep({ enrollmentStatus, operation }: { enrollmentStatus: Enrollm
         </p>
         <p className="sync-fingerprint">This device: {enrollmentStatus.fingerprint}</p>
         <p className="sync-fingerprint">Approver: {enrollmentStatus.approverFingerprint}</p>
-        <button type="button" className="btn-primary" disabled={busy} onClick={() => actFor("confirm", () => replicatedSyncConfirmEnrollment(requestId))}>
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => actFor("confirm", () => replicatedSyncConfirmEnrollment(requestId))}>
           Confirm — fingerprints match
         </button>
         <InlineStatus operation={operation} for="confirm" />
@@ -669,11 +669,11 @@ function LeaveControl({
     <>
       {confirming ? (
         <InlineConfirm ariaLabel={title} cancelLabel="Keep" onCancel={() => setConfirming(false)} disabled={busy}
-          actions={[{ label: confirm, className: "danger-action", onClick: () => { setConfirming(false); actFor("leave", replicatedSyncLeave); } }]}>
+          actions={[{ label: confirm, className: "btn-danger", onClick: () => { setConfirming(false); actFor("leave", replicatedSyncLeave); } }]}>
           <strong>{title}</strong><br />{body}
         </InlineConfirm>
       ) : (
-        <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => setConfirming(true)}>
+        <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setConfirming(true)}>
           {trigger}
         </button>
       )}
@@ -706,19 +706,19 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
           <span className="account-card-email">Requested {new Date(request.createdAt).toLocaleString()}</span>
         </div>
         {reviewing ? null : (
-          <button type="button" className="btn-primary" disabled={busy} aria-expanded={false} onClick={() => setReviewing(true)}>
+          <button type="button" className="btn btn-primary" disabled={busy} aria-expanded={false} onClick={() => setReviewing(true)}>
             Review…
           </button>
         )}
         {rejecting ? null : (
-          <button type="button" className="account-action-button danger-action" disabled={busy} onClick={() => setRejecting(true)}>
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setRejecting(true)}>
             Reject…
           </button>
         )}
       </div>
       {rejecting ? (
         <InlineConfirm ariaLabel="Reject device request confirmation" cancelLabel="Keep pending" onCancel={() => setRejecting(false)} disabled={busy}
-          actions={[{ label: "Reject on all devices", className: "danger-action", onClick: () => { setRejecting(false); actFor(key, () => replicatedSyncRejectRequest(request.requestId)); } }]}>
+          actions={[{ label: "Reject on all devices", className: "btn-danger", onClick: () => { setRejecting(false); actFor(key, () => replicatedSyncRejectRequest(request.requestId)); } }]}>
           Reject this request on all your sync devices? If an approval grant has already been published, that approval takes precedence.
         </InlineConfirm>
       ) : null}
@@ -734,8 +734,8 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
             </label>
           ) : null}
           <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={() => setReviewing(false)}>Cancel</button>
-            <button type="button" className="btn-primary" disabled={busy} onClick={approve}>Codes match — approve</button>
+            <button className="btn" type="button" disabled={busy} onClick={() => setReviewing(false)}>Cancel</button>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={approve}>Codes match — approve</button>
           </span>
         </div>
       ) : null}
@@ -766,12 +766,12 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
           <span className="device-roster-id"><span>ID</span><code>{device.deviceId}</code></span>
         </div>
         {renaming ? null : (
-          <button type="button" className="account-action-button" disabled={busy} onClick={() => { setName(device.label ?? ""); setRenaming(true); }}>
+          <button type="button" className="btn" disabled={busy} onClick={() => { setName(device.label ?? ""); setRenaming(true); }}>
             {device.label ? "Rename" : "Name"}
           </button>
         )}
         {!device.isSelf && device.status === "active" ? (
-          <button type="button" className="account-action-button danger-action" disabled={busy} aria-expanded={revoking} onClick={() => setRevoking(true)}>
+          <button type="button" className="btn btn-danger" disabled={busy} aria-expanded={revoking} onClick={() => setRevoking(true)}>
             Revoke…
           </button>
         ) : null}
@@ -794,14 +794,14 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
             <input type="text" maxLength={MAX_DEVICE_LABEL_CHARS} value={name} disabled={busy} autoFocus onChange={(event) => setName(event.target.value)} />
           </label>
           <span className="settings-inline-confirm-actions">
-            <button type="button" disabled={busy} onClick={() => setRenaming(false)}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={busy}>Save</button>
+            <button className="btn" type="button" disabled={busy} onClick={() => setRenaming(false)}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={busy}>Save</button>
           </span>
         </form>
       ) : null}
       {revoking ? (
         <InlineConfirm ariaLabel="Revoke device confirmation" cancelLabel="Cancel" onCancel={() => setRevoking(false)} disabled={busy}
-          actions={[{ label: "Revoke device", className: "danger-action", onClick: () => { setRevoking(false); actFor(key, () => replicatedSyncRotateEpoch(device.deviceId)); } }]}>
+          actions={[{ label: "Revoke device", className: "btn-danger", onClick: () => { setRevoking(false); actFor(key, () => replicatedSyncRotateEpoch(device.deviceId)); } }]}>
           <strong>Revoke this device?</strong><br />It keeps existing data, but future writes from it will no longer be trusted.
         </InlineConfirm>
       ) : null}
@@ -851,7 +851,7 @@ function EnrolledOverview({
       ) : null}
       <div className={`sync-overview sync-overview-${overview.tone}`} role="status" aria-label="Sync status">
         <span>{overview.text}</span>
-        <button type="button" className="account-action-button" disabled={busy || transports.length === 0} onClick={() => actFor("sync-now", replicatedSyncNow)}>
+        <button type="button" className="btn" disabled={busy || transports.length === 0} onClick={() => actFor("sync-now", replicatedSyncNow)}>
           Sync now
         </button>
       </div>
@@ -877,7 +877,7 @@ function EnrolledOverview({
         {addingDevice ? (
           <AddDevicePanel transports={transports} operation={operation} refresh={refresh} onClose={() => setAddingDevice(false)} />
         ) : (
-          <button type="button" className="account-action-button" disabled={busy || transports.length === 0} onClick={() => setAddingDevice(true)}>
+          <button type="button" className="btn" disabled={busy || transports.length === 0} onClick={() => setAddingDevice(true)}>
             Add a device
           </button>
         )}

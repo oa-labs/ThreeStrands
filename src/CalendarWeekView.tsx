@@ -105,8 +105,8 @@ function MiniMonth({
       <header>
         <h3>{monthTitle(month)}</h3>
         <div>
-          <button type="button" aria-label="Previous Month" onClick={() => onMoveMonth(-1)}><ChevronLeft size={17} /></button>
-          <button type="button" aria-label="Next Month" onClick={() => onMoveMonth(1)}><ChevronRight size={17} /></button>
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Month" onClick={() => onMoveMonth(-1)}><ChevronLeft size={17} /></button>
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Month" onClick={() => onMoveMonth(1)}><ChevronRight size={17} /></button>
         </div>
       </header>
       <div className="calendar-mini-month-grid" role="grid">
@@ -159,7 +159,7 @@ function CalendarList({
       <header>
         <CalendarDays size={17} />
         <h3>Calendars</h3>
-        <HoverTooltip title="Add calendar account"><button type="button" aria-label="Add calendar account" onClick={onAdd}>+</button></HoverTooltip>
+        <HoverTooltip title="Add calendar account"><button type="button" className="btn-icon btn-icon-sm" aria-label="Add calendar account" onClick={onAdd}><Plus size={16} /></button></HoverTooltip>
       </header>
       {accounts.length === 0 ? <p className="calendar-list-empty">No calendar accounts connected.</p> : null}
       {accounts.map((account) => {
@@ -342,8 +342,8 @@ export function CalendarWeekView({
           <div className="calendar-error-notice" role="alert">
             <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>
             <div>
-              <button type="button" onClick={reload}>Try Again</button>
-              <button type="button" onClick={onOpenSettings}>Calendar Accounts</button>
+              <button type="button" className="btn btn-sm" onClick={reload}>Try Again</button>
+              <button type="button" className="btn btn-sm" onClick={onOpenSettings}>Calendar Accounts</button>
             </div>
           </div>
         ) : null}
@@ -367,6 +367,7 @@ export function CalendarWeekView({
                 {allDayByDay[index].map((event) => (
                   <button
                     type="button"
+                    className="calendar-all-day-event"
                     key={`${event.accountId}:${event.id}`}
                     data-calendar-event-trigger
                     data-response-status={event.responseStatus ?? undefined}

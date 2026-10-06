@@ -5,7 +5,7 @@ export function expectSharedButtons(container: Element) {
   const buttons = [...container.querySelectorAll("button")];
   expect(buttons.length).toBeGreaterThan(0);
   for (const button of buttons) {
-    expect(button.matches(".btn, .btn-icon, .segmented > button"), button.outerHTML).toBe(true);
+    expect(button.matches(".btn, .btn-icon, .segment"), button.outerHTML).toBe(true);
   }
 }
 

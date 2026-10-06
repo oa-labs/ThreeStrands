@@ -226,7 +226,7 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
       <header>
         <span className="calendar-event-color" aria-hidden="true" />
         <h3>{event.title}</h3>
-        <button type="button" aria-label="Close Event Details" onClick={onDismiss}><X size={16} /></button>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Event Details" onClick={onDismiss}><X size={16} /></button>
       </header>
       <div className="calendar-event-viewer-details">
         <p><Clock3 size={17} /><span>{formatEventDate(event)} · {formatEventTime(event)}</span></p>
@@ -243,9 +243,9 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
         <p><CalendarDays size={17} /><span>{event.accountId}</span></p>
         {label ? <div className="calendar-event-response">
           <span>Your response: <strong>{label}</strong></span>
-          {event.canRespond ? <div className="calendar-response-actions" role="group" aria-label="Going?">
+          {event.canRespond ? <div className="segmented calendar-response-actions" role="group" aria-label="Going?">
             {([ ["accepted", "Yes"], ["declined", "No"], ["tentative", "Maybe"] ] as const).map(([status, title]) => (
-              <button key={status} type="button" aria-pressed={event.responseStatus === status} disabled={responsePending} onClick={() => void respond(status)}>{title}</button>
+              <button key={status} type="button" className="segment" aria-pressed={event.responseStatus === status} disabled={responsePending} onClick={() => void respond(status)}>{title}</button>
             ))}
           </div> : null}
           {responseError ? <p role="alert">{responseError}</p> : null}
@@ -379,14 +379,14 @@ export function CalendarSidebar({
           }).format(date)}</h2>
         </div>
         <div className="calendar-sidebar-actions">
-          <HoverTooltip title="Previous day (-)"><button type="button" aria-label="Previous day (-)" onClick={() => moveDay(-1)}>
+          <HoverTooltip title="Previous day (-)"><button type="button" className="btn-icon" aria-label="Previous day (-)" onClick={() => moveDay(-1)}>
             <ChevronLeft size={18} />
           </button></HoverTooltip>
-          <HoverTooltip title="Next day (=)"><button type="button" aria-label="Next day (=)" onClick={() => moveDay(1)}>
+          <HoverTooltip title="Next day (=)"><button type="button" className="btn-icon" aria-label="Next day (=)" onClick={() => moveDay(1)}>
             <ChevronRight size={18} />
           </button></HoverTooltip>
           {!embedded ? (
-            <button type="button" aria-label="Close Calendar" onClick={onClose}>
+            <button type="button" className="btn-icon" aria-label="Close Calendar" onClick={onClose}>
               <X size={18} />
             </button>
           ) : null}
@@ -401,6 +401,7 @@ export function CalendarSidebar({
               return (
                 <button
                   type="button"
+                  className="calendar-all-day-event"
                   key={eventKey}
                   data-calendar-event-trigger
                   data-response-status={event.responseStatus ?? undefined}
@@ -418,7 +419,7 @@ export function CalendarSidebar({
       <div className="calendar-timezone">{timeZoneLabel(date)}</div>
       {canCheckAvailability ? (
         <section className="availability-panel" aria-label="Check availability">
-          <div className="availability-panel-header"><strong>Find a time</strong><button type="button" onClick={() => setAvailabilityDialogOpen(true)} disabled={availabilityLoading}>{availabilityLoading ? "Checking…" : "Check Schedule"}</button></div>
+          <div className="availability-panel-header"><strong>Find a time</strong><button type="button" className="btn btn-sm" onClick={() => setAvailabilityDialogOpen(true)} disabled={availabilityLoading}>{availabilityLoading ? "Checking…" : "Check Schedule"}</button></div>
           {availability ? <p className="availability-coverage">{durationMinutes} minute slots</p> : null}
           {availabilityError ? <p className="calendar-error-notice" role="alert">{availabilityError}</p> : null}
           {availability ? <>
@@ -445,7 +446,7 @@ export function CalendarSidebar({
             {selectedCandidates.size > 0 && onDraftAvailability ? (
               <button
                 type="button"
-                className="availability-draft-reply"
+                className="btn btn-sm btn-primary availability-draft-reply"
                 onClick={() => onDraftAvailability(availability.candidates.filter((candidate) => selectedCandidates.has(`${candidate.start}:${candidate.end}`)))}
               >{draftLabel}</button>
             ) : null}
@@ -458,10 +459,10 @@ export function CalendarSidebar({
         <div className="calendar-error-notice" role="alert">
           <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>
           <div>
-            <button type="button" onClick={reload}>
+            <button type="button" className="btn btn-sm" onClick={reload}>
               <RefreshCw size={14} /> Try Again
             </button>
-            <button type="button" onClick={onOpenSettings}>Calendar Accounts</button>
+            <button type="button" className="btn btn-sm" onClick={onOpenSettings}>Calendar Accounts</button>
           </div>
         </div>
       ) : null}

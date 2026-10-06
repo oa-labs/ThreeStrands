@@ -108,20 +108,20 @@ export function MeetingScheduler({
   }, [calendarConnected, queryKey, attempt, run]);
 
   const firstDay = query ? new Date(query.start) : new Date();
-  const moreTimes = <button type="button" onClick={() => onMoreTimes(firstDay, plan.durationMinutes)}>More Times</button>;
+  const moreTimes = <button type="button" className="btn btn-sm" onClick={() => onMoreTimes(firstDay, plan.durationMinutes)}>More Times</button>;
   const assumedZone = plan.timeZoneAssumed ? <small className="meeting-scheduler-note">Using your time zone ({timeZone})</small> : null;
 
   if (!calendarConnected) {
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
       <p className="context-status">Connect a calendar to check times for this meeting.</p>
-      <button type="button" className="context-link-button" onClick={onOpenCalendarSettings}>Calendar Settings</button>
+      <button type="button" className="btn-link context-link-button" onClick={onOpenCalendarSettings}>Calendar Settings</button>
     </div>;
   }
   if (!query) {
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
       <p className="context-status">That time has already passed.</p>
       <div className="meeting-scheduler-actions">
-        <button type="button" onClick={() => setOverride(lookaheadRange(new Date()))}>Find New Times</button>
+        <button type="button" className="btn btn-sm" onClick={() => setOverride(lookaheadRange(new Date()))}>Find New Times</button>
       </div>
     </div>;
   }
@@ -130,7 +130,7 @@ export function MeetingScheduler({
     {state.phase === "idle" || state.phase === "loading" ? <p className="context-status" role="status">Checking your calendar…</p> : null}
     {state.phase === "error" ? <div className="meeting-scheduler-error" role="alert">
       <p>{state.message}</p>
-      <button type="button" onClick={() => setAttempt((value) => value + 1)}><RotateCcw size={13} /> Try Again</button>
+      <button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}><RotateCcw size={13} /> Try Again</button>
     </div> : null}
     {state.phase === "specific" && query.kind === "specific" ? <>
       <p className="meeting-slot">{formatSlot(query, timeZone)}</p>
@@ -141,14 +141,14 @@ export function MeetingScheduler({
         {state.check.status === "unverified" ? <>No calendar could be checked</> : null}
       </p>
       <div className="meeting-scheduler-actions">
-        <button type="button" onClick={() => onAddToCalendar(query)}><CalendarPlus size={13} /> Add to Calendar</button>
+        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar(query)}><CalendarPlus size={13} /> Add to Calendar</button>
         {state.check.status === "conflicting"
-          ? <button type="button" onClick={() => {
+          ? <button type="button" className="btn btn-sm" onClick={() => {
             const day = new Date(query.start);
             day.setHours(0, 0, 0, 0);
             setOverride(lookaheadRange(new Date(Math.max(day.getTime(), Date.now()))));
           }}>Find Other Times</button>
-          : <button type="button" onClick={() => onConfirmTime(query)}>Reply &ldquo;That Works&rdquo;</button>}
+          : <button type="button" className="btn btn-sm" onClick={() => onConfirmTime(query)}>Reply &ldquo;That Works&rdquo;</button>}
         {moreTimes}
       </div>
     </> : null}
@@ -175,8 +175,8 @@ export function MeetingScheduler({
         {(() => {
           const chosen = state.candidates.filter((candidate) => selected.has(slotKey(candidate)));
           return <div className="meeting-scheduler-actions">
-            <button type="button" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 1 ? "This Time" : "These Times"}</button>
-            <button type="button" disabled={chosen.length !== 1} title={chosen.length !== 1 ? "Select one time to add it" : undefined} onClick={() => onAddToCalendar(chosen[0])}><CalendarPlus size={13} /> Add to Calendar</button>
+            <button type="button" className="btn btn-sm" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 1 ? "This Time" : "These Times"}</button>
+            <button type="button" className="btn btn-sm" disabled={chosen.length !== 1} title={chosen.length !== 1 ? "Select one time to add it" : undefined} onClick={() => onAddToCalendar(chosen[0])}><CalendarPlus size={13} /> Add to Calendar</button>
             {moreTimes}
           </div>;
         })()}

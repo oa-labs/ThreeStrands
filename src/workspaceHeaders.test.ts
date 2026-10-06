@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postcss from "postcss";
 import { describe, expect, it } from "vitest";
@@ -11,6 +11,52 @@ const headers = [
   ".contacts-header",
 ];
 
+/** Every <button ...> opening tag in the app's components, read with JSX braces balanced. */
+function buttonTags() {
+  const dir = resolve(process.cwd(), "src");
+  const tags: { file: string; attributes: string }[] = [];
+  for (const file of readdirSync(dir).filter((name) => name.endsWith(".tsx") && !name.includes(".test."))) {
+    const source = readFileSync(resolve(dir, file), "utf8");
+    for (const match of source.matchAll(/<button\b/g)) {
+      let index = match.index + match[0].length;
+      let depth = 0;
+      for (; index < source.length; index += 1) {
+        if (source[index] === "{") depth += 1;
+        else if (source[index] === "}") depth -= 1;
+        else if (source[index] === ">" && depth === 0) break;
+      }
+      tags.push({ file, attributes: source.slice(match.index + match[0].length, index) });
+    }
+  }
+  return tags;
+}
+
+/** The raw className value of a button tag: a string literal or a brace-balanced expression. */
+function classNameOf(attributes: string) {
+  const start = /\bclassName=/.exec(attributes);
+  if (!start) return undefined;
+  const value = attributes.slice(start.index + start[0].length);
+  if (value.startsWith('"')) return value.slice(0, value.indexOf('"', 1) + 1);
+  let depth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === "{") depth += 1;
+    else if (value[index] === "}" && --depth === 0) return value.slice(0, index + 1);
+  }
+  return value;
+}
+
+/** Class names that appear literally in a button's className. */
+function buttonClassNames() {
+  const names = new Set<string>();
+  for (const { attributes } of buttonTags()) {
+    const className = classNameOf(attributes) ?? "";
+    for (const literal of className.matchAll(/["`]([^"`]*)["`]/g)) {
+      for (const name of literal[1].split(/[\s${}]+/)) if (/^[a-z][\w-]*$/.test(name)) names.add(name);
+    }
+  }
+  return names;
+}
+
 function lastDeclaration(selector: string, property: string) {
   let value: string | undefined;
   css.walkRules((rule) => {
@@ -21,11 +67,12 @@ function lastDeclaration(selector: string, property: string) {
 }
 
 describe("primary workspace headers", () => {
-  it("uses the same top and left inset, height, and title spacing in all four views", () => {
+  it("uses the same top, left, and right inset, height, and title spacing in all four views", () => {
     const positions = headers.map((header) => ({
       padding: lastDeclaration(header, "padding"),
       topOverride: lastDeclaration(header, "padding-top"),
       leftOverride: lastDeclaration(header, "padding-left"),
+      rightOverride: lastDeclaration(header, "padding-right"),
       minHeight: lastDeclaration(header, "min-height"),
       alignment: lastDeclaration(header, "align-items"),
       titleMargin: lastDeclaration(`${header} h1`, "margin"),
@@ -35,6 +82,7 @@ describe("primary workspace headers", () => {
       padding: "20px 22px 12px",
       topOverride: undefined,
       leftOverride: undefined,
+      rightOverride: undefined,
       minHeight: "90px",
       alignment: "flex-start",
       titleMargin: "5px 0 0",
@@ -61,7 +109,7 @@ describe("primary workspace header buttons", () => {
     expect(lastDeclaration(".btn", "height")).toBe("var(--control-h)");
     expect(lastDeclaration(".btn-icon", "height")).toBe("var(--control-h)");
     expect(lastDeclaration(".btn-icon", "width")).toBe("var(--control-h)");
-    expect(lastDeclaration(".segmented > button", "height")).toBe("var(--control-h-sm)");
+    expect(lastDeclaration(".segment", "height")).toBe("var(--control-h-sm)");
     const inset = px(lastDeclaration(".segmented", "padding"));
     const border = px(lastDeclaration(".segmented", "border"));
     expect(segmentHeight + 2 * inset + 2 * border).toBe(controlHeight);
@@ -83,7 +131,7 @@ describe("primary workspace header buttons", () => {
   });
 
   it("keeps button labels in their written case", () => {
-    for (const selector of [".btn", ".btn-icon", ".segmented > button"]) {
+    for (const selector of [".btn", ".btn-icon", ".segment"]) {
       expect(lastDeclaration(selector, "text-transform")).toBeUndefined();
     }
   });
@@ -106,9 +154,11 @@ describe("primary and form action buttons", () => {
   });
 
   it("never fills a button with the solid accent color", () => {
+    const classes = [...buttonClassNames()];
     const accentFilled: string[] = [];
     css.walkRules((rule) => {
-      const buttons = rule.selectors.filter((selector) => /(?<![\w-])button(?![\w-])|\.btn(?![\w-])|\.btn-|-button(?![\w-])|-action(?![\w-])/.test(selector));
+      const buttons = rule.selectors.filter((selector) => /(?<![\w-])button(?![\w-])/.test(selector)
+        || classes.some((name) => new RegExp(`\\.${name}(?![\\w-])`).test(selector)));
       if (!buttons.length) return;
       rule.walkDecls(/^background(-color)?$/, (declaration) => {
         if (declaration.value === "var(--accent)") accentFilled.push(buttons.join(", "));
@@ -127,13 +177,43 @@ describe("primary and form action buttons", () => {
     expect(styled).toEqual([]);
   });
 
-  it("keeps the Settings button rule from reshaping shared buttons", () => {
-    let blanket = false;
+  it("styles Settings buttons by their own class, not a section-wide button rule", () => {
+    const blankets: string[] = [];
     css.walkRules((rule) => {
-      if (rule.selectors.includes(".settings-section button")) blanket = true;
+      blankets.push(...rule.selectors.filter((selector) => /^\.settings-section button(?![\w.[-])/.test(selector)));
     });
-    expect(blanket).toBe(false);
-    expect(lastDeclaration(".settings-section button:where(:not(.btn))", "padding")).toBe("7px 11px");
+    expect(blankets).toEqual([]);
+  });
+});
+
+describe("button system", () => {
+  it("gives every button a class, so no button depends on its container for its look", () => {
+    const unstyled = buttonTags()
+      .filter(({ attributes }) => {
+        const className = classNameOf(attributes);
+        // A bare ternary with an empty branch can still leave the button classless.
+        return !className || className === '""' || /\?\s*"[^"]*"\s*:\s*(""|undefined)\s*\}$/.test(className);
+      })
+      .map(({ file, attributes }) => `${file}: <button${attributes.slice(0, 60)}`);
+    expect(unstyled).toEqual([]);
+  });
+
+  it("styles buttons by class instead of by element inside a container", () => {
+    const elementRules: string[] = [];
+    css.walkRules((rule) => {
+      for (const selector of rule.selectors) {
+        if (/(?<![\w-])button(?![\w-])/.test(selector) && !["button", "button:disabled", "button:focus-visible"].includes(selector)) {
+          elementRules.push(selector);
+        }
+      }
+    });
+    expect(elementRules).toEqual([]);
+  });
+
+  it("sizes the small icon button from the shared control scale", () => {
+    expect(lastDeclaration(".btn-icon-sm", "width")).toBe("var(--control-h-xs)");
+    expect(lastDeclaration(".btn-icon-sm", "height")).toBe("var(--control-h-xs)");
+    expect(lastDeclaration(".btn-sm", "height")).toBe("var(--control-h-sm)");
   });
 });
 

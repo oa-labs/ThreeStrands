@@ -19,6 +19,7 @@ export function RecipientChips({ recipients, selectedEmail, onSelect }: {
       {recipients.map((recipient) => (
         <button
           type="button"
+          className="recipient-history-chip"
           key={recipient.email}
           aria-pressed={recipient.email === selectedEmail}
           title={recipient.email}
@@ -43,7 +44,7 @@ export function AvailabilitySection({ preferences, onInsertTimes, onAddToCalenda
     <section className="context-section compose-availability" aria-label="Availability">
       <ContextSectionHeader
         title="Availability"
-        actions={<button type="button" className="context-link-button" onClick={() => setSearch((current) => ({ key: (current?.key ?? 0) + 1, start: new Date() }))}>
+        actions={<button type="button" className="btn-link context-link-button" onClick={() => setSearch((current) => ({ key: (current?.key ?? 0) + 1, start: new Date() }))}>
           {search ? "Search Again" : "Find Times"}
         </button>}
       />

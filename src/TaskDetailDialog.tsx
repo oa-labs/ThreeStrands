@@ -256,7 +256,7 @@ export function TaskDetailDialog({
         {task.threadId ? <section className="task-detail-source" aria-label="Source conversation">
           <h3>Source conversation</h3>
           {task.subjectSnapshot ? <p>{task.subjectSnapshot}</p> : null}
-          <button type="button" onClick={() => { close(); onOpenThread(task.threadId!); }}><MessageSquare size={16} /> Open conversation</button>
+          <button type="button" className="btn-link" onClick={() => { close(); onOpenThread(task.threadId!); }}><MessageSquare size={16} /> Open conversation</button>
           {task.evidenceText ? <details><summary>Source excerpt</summary><blockquote>{task.evidenceText}</blockquote></details> : null}
         </section> : null}
         <footer className="task-detail-hints">

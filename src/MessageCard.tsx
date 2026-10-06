@@ -146,7 +146,7 @@ export const MessageCard = memo(function MessageCard({
             <HoverTooltip label="Reply" placement="bottom">
               <button
                 type="button"
-                className="message-header-action"
+                className="btn-icon btn-icon-sm"
                 aria-label="Reply"
                 onClick={() => onRespond("reply", message.id)}
               >
@@ -156,7 +156,7 @@ export const MessageCard = memo(function MessageCard({
             <HoverTooltip label="Reply all" placement="bottom">
               <button
                 type="button"
-                className="message-header-action"
+                className="btn-icon btn-icon-sm"
                 aria-label="Reply All"
                 onClick={() => onRespond("replyAll", message.id)}
               >
@@ -166,7 +166,7 @@ export const MessageCard = memo(function MessageCard({
             <HoverTooltip label="Forward" placement="bottom">
               <button
                 type="button"
-                className="message-header-action"
+                className="btn-icon btn-icon-sm"
                 aria-label="Forward"
                 onClick={() => onRespond("forward", message.id)}
               >
@@ -206,7 +206,7 @@ export const MessageCard = memo(function MessageCard({
         {headerDetails}
         <button
           type="button"
-          className="message-expanded-toggle"
+          className="btn-icon btn-icon-sm message-expanded-toggle"
           aria-expanded={true}
           aria-controls={cardBodyId}
           aria-label={`Collapse message from ${senderDisplayName}, ${formatMailTimestamp(message.sentAt)}`}

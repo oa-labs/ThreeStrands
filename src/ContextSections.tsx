@@ -104,7 +104,7 @@ export function ContextSection({ id, title, label, count, actions, note, rows, l
         {note ? <p className="context-section-note">{note}</p> : null}
         {expanded || hidden <= 0 ? rows : rows.slice(0, limit)}
         {hidden > 0 ? (
-          <button type="button" className="context-link-button" onClick={() => setExpanded(!expanded)}>
+          <button type="button" className="btn-link context-link-button" onClick={() => setExpanded(!expanded)}>
             {expanded ? "Show fewer" : `Show ${hidden} more`}
           </button>
         ) : null}
@@ -145,7 +145,7 @@ export function ContactFilesSection({ contactId, onShowMessage }: {
             <small>{formatHistoryDate(file.sentAt)} · {formatAttachmentSize(file.attachment.size)}</small>
           </span>
         </button>
-        <button type="button" className="context-icon-button" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
           <MessageSquareText size={14} />
         </button>
       </div>
@@ -205,9 +205,9 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
       note={<>
         <span>{range}</span>
         {mine.length > 0 ? (
-          <span className="context-outline-filter" role="group" aria-label="Thread outline filter">
-            <button type="button" aria-pressed={!onlyMine} onClick={() => setOnlyMine(false)}>All</button>
-            <button type="button" aria-pressed={onlyMine} onClick={() => setOnlyMine(true)}>Your replies · {mine.length}</button>
+          <span className="segmented context-outline-filter" role="group" aria-label="Thread outline filter">
+            <button type="button" className="segment" aria-pressed={!onlyMine} onClick={() => setOnlyMine(false)}>All</button>
+            <button type="button" className="segment" aria-pressed={onlyMine} onClick={() => setOnlyMine(true)}>Your replies · {mine.length}</button>
           </span>
         ) : null}
       </>}
@@ -231,7 +231,7 @@ export function RecentEmailsSection({ items, onOpenThread, limit, onLoadOlder }:
       title="Recent emails"
       count={items.length}
       limit={limit}
-      footer={onLoadOlder ? <button type="button" className="context-link-button" onClick={onLoadOlder}>Load older emails</button> : undefined}
+      footer={onLoadOlder ? <button type="button" className="btn-link context-link-button" onClick={onLoadOlder}>Load older emails</button> : undefined}
       rows={items.map((item) => {
         // The section is about one person, so the row shows what was said rather than their address.
         const snippet = decodeHtmlEntities(item.snippet).replace(/\s+/g, " ").trim();

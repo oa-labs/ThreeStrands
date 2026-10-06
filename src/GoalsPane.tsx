@@ -94,7 +94,7 @@ export const GoalsPane = forwardRef<GoalsPaneHandle, {
           {parent ? <span className="goal-parent" title={`Supports ${parent.title}`}>↳ {parent.title}</span> : null}
         </span>
       </button>
-      <button type="button" className="goal-edit" aria-label={`Edit goal ${goal.title}`} onClick={() => onEditGoal(goal)}><Pencil size={14} aria-hidden="true" /></button>
+      <button type="button" className="btn-icon btn-icon-sm goal-edit" aria-label={`Edit goal ${goal.title}`} onClick={() => onEditGoal(goal)}><Pencil size={14} aria-hidden="true" /></button>
     </li>;
   };
 
@@ -102,7 +102,7 @@ export const GoalsPane = forwardRef<GoalsPaneHandle, {
     <aside ref={paneRef} id="goals-pane" className="goals-pane" aria-label="Goals" onKeyDown={onKeyDown}>
       <header className="goals-pane-header">
         <h2>Goals</h2>
-        <button type="button" className="goal-add-button" onClick={onAddGoal}><Plus size={14} aria-hidden="true" />Add goal</button>
+        <button type="button" className="btn btn-sm" onClick={onAddGoal}><Plus size={14} aria-hidden="true" />Add goal</button>
       </header>
       {toReview.length && deferredUntil !== currentQuarter ? <div className="goal-review-prompt" role="status">
         <span>{toReview.length === 1 ? "1 goal" : `${toReview.length} goals`} from a past period {toReview.length === 1 ? "needs" : "need"} review.</span>

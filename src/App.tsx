@@ -2481,7 +2481,7 @@ export function App() {
                 </HoverTooltip>
                 <HoverTooltip label="Clear selection" placement="bottom">
                   <button
-                    className="icon-button"
+                    className="btn-icon"
                     aria-label="Clear Selection"
                     onClick={() => setCheckedIds(new Set())}
                   >
@@ -2584,7 +2584,7 @@ export function App() {
               <div className="connect-account-cta">
                 <Mail size={28} />
                 <p>Connect your Gmail account to start syncing mail.</p>
-                <button type="button" onClick={() => openSettingsAt("accounts")}>
+                <button type="button" className="btn btn-primary" onClick={() => openSettingsAt("accounts")}>
                   Add Account
                 </button>
               </div>
@@ -2611,7 +2611,7 @@ export function App() {
             />
           ))}
           {hasMoreResults ? (
-            <button className="load-more" onClick={() => void loadMoreResults()} disabled={loadingMoreState}>
+            <button className="btn load-more" onClick={() => void loadMoreResults()} disabled={loadingMoreState}>
               {loadingMoreState ? "Loading…" : "Load More Results"}
             </button>
           ) : null}
@@ -3098,8 +3098,8 @@ export function App() {
       {notice ? (
         <div className="toast" role="status">
           {notice.message}
-          {notice.undo ? <button onClick={notice.undo}>Undo</button> : null}
-          <button aria-label="Dismiss" onClick={() => setNotice(null)}><X size={14} /></button>
+          {notice.undo ? <button className="btn-link" onClick={notice.undo}>Undo</button> : null}
+          <button className="btn-icon btn-icon-sm" aria-label="Dismiss" onClick={() => setNotice(null)}><X size={14} /></button>
         </div>
       ) : null}
       {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "searching" ? (
@@ -3486,6 +3486,7 @@ function LabelManager({
             {label.kind === "user" ? (
               <span className="label-actions">
                 <button
+                  className="btn-icon btn-icon-sm"
                   aria-label={`Rename ${label.name}`}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -3496,6 +3497,7 @@ function LabelManager({
                   <Pencil size={14} />
                 </button>
                 <button
+                  className="btn-icon btn-icon-sm"
                   aria-label={`Delete ${label.name}`}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -3527,8 +3529,8 @@ function LabelManager({
             onChange={(event) => setRenameValue(event.target.value)}
             aria-label={`Rename ${renaming.name}`}
           />
-          <button type="submit" disabled={!renameValue.trim() || busy}>Save</button>
-          <button type="button" onClick={() => setRenaming(null)}>Cancel</button>
+          <button type="button" className="btn btn-sm" onClick={() => setRenaming(null)}>Cancel</button>
+          <button type="submit" className="btn btn-sm btn-primary" disabled={!renameValue.trim() || busy}>Save</button>
         </form>
       ) : null}
     </Modal>

@@ -64,7 +64,7 @@ export function UpdateNotice() {
   }
 
   const dismiss = (
-    <button aria-label="Dismiss update" onClick={() => { setDismissedVersion(update.version); setInstallState("idle"); }}>
+    <button className="btn-icon btn-icon-sm" aria-label="Dismiss update" onClick={() => { setDismissedVersion(update.version); setInstallState("idle"); }}>
       <X size={14} />
     </button>
   );
@@ -74,8 +74,8 @@ export function UpdateNotice() {
       <div className="toast update-toast" role="alert">
         <Download className="update-toast-icon" size={18} aria-hidden="true" />
         <span className="update-toast-message">ThreeStrands {update.version} couldn't be installed.</span>
-        <button onClick={install}>Try again</button>
-        <button onClick={openRelease}>Download</button>
+        <button className="btn-link" onClick={install}>Try again</button>
+        <button className="btn-link" onClick={openRelease}>Download</button>
         {dismiss}
       </div>
     );
@@ -92,11 +92,11 @@ export function UpdateNotice() {
       </span>
       {update.installMode === "inPlace" ? (
         <>
-          <button onClick={openRelease}>What's new</button>
-          <button onClick={install}>Install and restart</button>
+          <button className="btn-link" onClick={openRelease}>What's new</button>
+          <button className="btn-link" onClick={install}>Install and restart</button>
         </>
       ) : (
-        <button onClick={openRelease}>Download</button>
+        <button className="btn-link" onClick={openRelease}>Download</button>
       )}
       {dismiss}
     </div>

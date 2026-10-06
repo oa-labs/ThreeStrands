@@ -163,8 +163,8 @@ export function CalendarAttachment({ messageId, attachment, onError, loadedPrevi
       {preview.truncated ? <p className="calendar-card-more">Additional events are included in this file.</p> : null}
       <footer className="calendar-card-actions">
         <span><CalendarDays size={14} /> {attachment.filename}</span>
-        <button type="button" onClick={open}><ExternalLink size={14} /> Open Invitation</button>
-        <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button type="button" aria-label={`Download ${attachment.filename}`} onClick={download}>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={open}><ExternalLink size={14} /> Open Invitation</button>
+        <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button type="button" className="btn-icon btn-icon-sm" aria-label={`Download ${attachment.filename}`} onClick={download}>
           <Download size={14} />
         </button></HoverTooltip>
       </footer>
