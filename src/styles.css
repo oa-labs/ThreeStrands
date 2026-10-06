@@ -1580,6 +1580,33 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
   background: var(--raised);
   box-shadow: 0 8px 24px var(--shadow);
 }
+.calendar-color-default {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 4px 6px 4px 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--type-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.calendar-color-default:hover { background: var(--hover); }
+.calendar-color-default:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.calendar-color-default-swatch {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 55%, #fff);
+  color: #fff;
+}
 .calendar-color-swatch {
   display: grid;
   width: 22px;

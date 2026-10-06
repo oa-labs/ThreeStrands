@@ -38,34 +38,48 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function readCalendarColors(): CalendarColorMap {
+/** Keeps only palette ids under string keys; anything else is dropped. */
+export function sanitizeCalendarColors(value: unknown): CalendarColorMap {
   const colors: CalendarColorMap = {};
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(CALENDAR_COLORS_KEY) ?? "{}");
-    if (!isPlainObject(parsed)) return colors;
-    for (const [accountId, calendars] of Object.entries(parsed)) {
-      if (!isPlainObject(calendars)) continue;
-      for (const [calendarId, colorId] of Object.entries(calendars)) {
-        if (typeof colorId !== "string" || !colorIds.has(colorId)) continue;
-        (colors[accountId] ??= {})[calendarId] = colorId as CalendarColorId;
-      }
+  if (!isPlainObject(value)) return colors;
+  for (const [accountId, calendars] of Object.entries(value)) {
+    if (!isPlainObject(calendars)) continue;
+    for (const [calendarId, colorId] of Object.entries(calendars)) {
+      if (typeof colorId !== "string" || !colorIds.has(colorId)) continue;
+      (colors[accountId] ??= {})[calendarId] = colorId as CalendarColorId;
     }
-  } catch {
-    // Unreadable or blocked storage leaves every calendar on the default color.
   }
   return colors;
 }
 
-export function setCalendarColor(accountId: string, calendarId: string, colorId: CalendarColorId) {
-  if (!colorIds.has(colorId)) return;
-  const current = snapshot ?? readCalendarColors();
-  snapshot = { ...current, [accountId]: { ...current[accountId], [calendarId]: colorId } };
+export function readCalendarColors(): CalendarColorMap {
   try {
-    localStorage.setItem(CALENDAR_COLORS_KEY, JSON.stringify(snapshot));
+    return sanitizeCalendarColors(JSON.parse(localStorage.getItem(CALENDAR_COLORS_KEY) ?? "{}"));
   } catch {
-    // The color still applies for this session when storage is unavailable.
+    // Unreadable or blocked storage leaves every calendar on the default color.
+    return {};
+  }
+}
+
+/** Replaces every calendar color, as when importing settings or applying another device's. */
+export function saveCalendarColors(value: unknown) {
+  snapshot = sanitizeCalendarColors(value);
+  try {
+    if (Object.keys(snapshot).length) localStorage.setItem(CALENDAR_COLORS_KEY, JSON.stringify(snapshot));
+    else localStorage.removeItem(CALENDAR_COLORS_KEY);
+  } catch {
+    // The colors still apply for this session when storage is unavailable.
   }
   listeners.forEach((listener) => listener());
+}
+
+/** Sets one calendar's color; null returns it to the default accent color. */
+export function setCalendarColor(accountId: string, calendarId: string, colorId: CalendarColorId | null) {
+  if (colorId !== null && !colorIds.has(colorId)) return;
+  const { [calendarId]: _previous, ...others } = getSnapshot()[accountId] ?? {};
+  const calendars = colorId === null ? others : { ...others, [calendarId]: colorId };
+  const { [accountId]: _account, ...accounts } = getSnapshot();
+  saveCalendarColors(Object.keys(calendars).length ? { ...accounts, [accountId]: calendars } : accounts);
 }
 
 function subscribe(listener: () => void) {

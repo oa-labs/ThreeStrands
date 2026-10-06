@@ -205,7 +205,7 @@ describe("CalendarWeekView", () => {
   });
 
   it("shows RSVP styling and changes one response through the event popup", async () => {
-    const invited = { ...event("primary:invited", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Team sync"), calendarId: "primary", responseStatus: "needsAction" as const, canRespond: true };
+    const invited: ScheduleEvent = { ...event("primary:invited", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Team sync"), calendarId: "primary", responseStatus: "needsAction" as const, canRespond: true };
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [invited], errors: [] });
     const update = vi.spyOn(mailClient, "updateCalendarResponse").mockResolvedValue({ ...invited, responseStatus: "accepted" });
     renderWeek();
@@ -437,7 +437,9 @@ describe("CalendarWeekView", () => {
 
     fireEvent.click(trigger);
     const palette = within(list).getByRole("menu", { name: "Color for joel@example.com" });
-    expect(within(palette).getAllByRole("menuitemradio")).toHaveLength(16);
+    // Sixteen colors plus Default.
+    expect(within(palette).getAllByRole("menuitemradio")).toHaveLength(17);
+    expect(within(palette).getByRole("menuitemradio", { name: "Default" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(within(palette).getByRole("menuitemradio", { name: "Teal" }));
 
     expect(within(list).queryByRole("menu")).not.toBeInTheDocument();
@@ -449,6 +451,12 @@ describe("CalendarWeekView", () => {
     fireEvent.click(trigger);
     expect(within(list).getByRole("menuitemradio", { name: "Teal" })).toHaveAttribute("aria-checked", "true");
     expect(within(list).getByRole("menuitemradio", { name: "Red" })).toHaveAttribute("aria-checked", "false");
+    expect(within(list).getByRole("menuitemradio", { name: "Default" })).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(within(list).getByRole("menuitemradio", { name: "Default" }));
+    expect(screen.getByRole("button", { name: /^Standup/ }).style.getPropertyValue("--calendar-color")).toBe("");
+    expect(screen.getByRole("button", { name: "Offsite" }).style.getPropertyValue("--calendar-color")).toBe("");
+    expect(localStorage.getItem(CALENDAR_COLORS_KEY)).toBeNull();
   });
 
   it("closes the calendar color menu on Escape or a click elsewhere", async () => {

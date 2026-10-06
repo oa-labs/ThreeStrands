@@ -2,11 +2,13 @@ import { Check, MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   CALENDAR_COLORS,
+  type CalendarColorId,
   calendarColorId,
   calendarColorStyle,
   setCalendarColor,
   useCalendarColors,
 } from "./calendarColors";
+import { queuePortablePreferences } from "./syncedPreferences";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 
 /**
@@ -58,6 +60,7 @@ export function CalendarColorRow({
           selected={selected}
           onSelect={(colorId) => {
             setCalendarColor(accountId, calendarId, colorId);
+            queuePortablePreferences();
             setOpen(false);
           }}
           onClose={() => setOpen(false)}
@@ -74,13 +77,26 @@ function CalendarColorPalette({
   onClose,
 }: {
   calendarName: string;
-  selected: string | undefined;
-  onSelect(colorId: (typeof CALENDAR_COLORS)[number]["id"]): void;
+  selected: CalendarColorId | undefined;
+  /** Null returns the calendar to the default accent color. */
+  onSelect(colorId: CalendarColorId | null): void;
   onClose(): void;
 }) {
   useEscapeDismiss(onClose);
   return (
     <div className="calendar-color-menu" role="menu" aria-label={`Color for ${calendarName}`}>
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={selected === undefined}
+        className="calendar-color-default"
+        onClick={() => onSelect(null)}
+      >
+        <span className="calendar-color-default-swatch" aria-hidden="true">
+          {selected === undefined ? <Check size={13} /> : null}
+        </span>
+        Default
+      </button>
       {CALENDAR_COLORS.map((color) => (
         <button
           key={color.id}

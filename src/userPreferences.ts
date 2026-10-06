@@ -14,6 +14,7 @@ import {
   type AiProvider,
 } from "./aiSettings";
 import { readAccent, saveAccent, type Accent } from "./accent";
+import { readCalendarColors, saveCalendarColors, type CalendarColorMap } from "./calendarColors";
 import { readFontScale, saveFontScale } from "./fontScale";
 import {
   readAutoReadDelaySeconds,
@@ -54,6 +55,8 @@ export type ExportablePreferences = {
   aiEndpoint: string;
   aiFeatures: AiFeatureFlags;
   availabilityPreferences: AvailabilityPreferences;
+  /** Optional on the wire: exports without colors omit it. */
+  calendarColors?: CalendarColorMap;
 };
 
 export type SettingsImportResult = {
@@ -79,6 +82,7 @@ export function readExportablePreferences(): ExportablePreferences {
     aiEndpoint: readAiEndpoint(),
     aiFeatures: readAiFeatures(),
     availabilityPreferences: readAvailabilityPreferences(),
+    calendarColors: readCalendarColors(),
   };
 }
 
@@ -97,6 +101,8 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveAiEndpoint(preferences.aiEndpoint);
   saveAiFeatures(preferences.aiFeatures);
   saveAvailabilityPreferences(preferences.availabilityPreferences);
+  // Absent from exports made before calendar colors, or with none set.
+  saveCalendarColors(preferences.calendarColors ?? {});
 }
 
 export async function exportSettings(password: string): Promise<string | null> {

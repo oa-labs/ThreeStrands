@@ -1,4 +1,8 @@
-use std::{collections::HashSet, fs, path::Path};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fs,
+    path::Path,
+};
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -31,6 +35,19 @@ const KEY_LEN: usize = 32;
 // contacts with maximum-sized photos and bounded profile fields.
 const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_TEXT_LENGTH: usize = 2_048;
+/// Mirrors `CALENDAR_COLORS` in src/calendarColors.ts; only these ids may be
+/// stored, so an imported value never reaches an inline style as raw CSS.
+const CALENDAR_COLOR_IDS: [&str; 16] = [
+    "red", "coral", "orange", "amber", "yellow", "lime", "green", "teal",
+    "cyan", "sky", "blue", "indigo", "purple", "pink", "brown", "gray",
+];
+/// Total colored calendars across every account in one transfer.
+const MAX_CALENDAR_COLORS: usize = 2_000;
+const MAX_CALENDAR_ACCOUNT_LENGTH: usize = 320;
+const MAX_CALENDAR_ID_LENGTH: usize = 1_024;
+
+/// Palette id by calendar account email, then calendar id.
+pub type CalendarColors = BTreeMap<String, BTreeMap<String, String>>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -84,6 +101,11 @@ pub struct TransferPreferences {
     pub ai_features: AiFeaturePreferences,
     #[serde(default = "default_availability_preferences")]
     pub availability_preferences: AvailabilityPreferences,
+    // Added in 0.73 under format version 3; earlier exports omit it and
+    // import with every calendar on the default color. Omitted when empty
+    // so an export without colors still imports into earlier builds.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub calendar_colors: CalendarColors,
 }
 
 fn default_accent() -> String {
@@ -135,8 +157,28 @@ impl TransferPreferences {
         validate_text("AI endpoint", &self.ai_endpoint, MAX_TEXT_LENGTH)?;
         crate::availability::validate_preferences(&self.availability_preferences)
             .map_err(|_| "The transfer contains invalid availability preferences".to_string())?;
-        Ok(())
+        validate_calendar_colors(&self.calendar_colors)
     }
+}
+
+fn validate_calendar_colors(colors: &CalendarColors) -> Result<(), String> {
+    let invalid = || "The transfer contains invalid calendar colors".to_string();
+    if colors.values().map(BTreeMap::len).sum::<usize>() > MAX_CALENDAR_COLORS {
+        return Err(invalid());
+    }
+    for (account_id, calendars) in colors {
+        validate_required_text("calendar account", account_id, MAX_CALENDAR_ACCOUNT_LENGTH).map_err(|_| invalid())?;
+        if calendars.is_empty() {
+            return Err(invalid());
+        }
+        for (calendar_id, color_id) in calendars {
+            validate_required_text("calendar", calendar_id, MAX_CALENDAR_ID_LENGTH).map_err(|_| invalid())?;
+            if !CALENDAR_COLOR_IDS.contains(&color_id.as_str()) {
+                return Err(invalid());
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -631,6 +673,7 @@ mod tests {
                     thread_chat: false,
                 },
                 availability_preferences: default_availability_preferences(),
+                calendar_colors: CalendarColors::new(),
             },
             accounts: vec![TransferAccount {
                 email: "person@example.com".to_string(),
@@ -924,6 +967,7 @@ mod tests {
     ///   through `threadChat`, no `aiFastModel`.
     /// - `v3-0.66`: last export before contact birthdays and keep-in-touch
     ///   settings (0.66.10).
+    /// - `v3-0.72`: last export before calendar colors (0.72.4).
     /// - `v3-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
@@ -1228,6 +1272,19 @@ mod tests {
                     default_duration_minutes: 25,
                     slot_increment_minutes: 5,
                 },
+                calendar_colors: CalendarColors::from([
+                    (
+                        "current@example.com".to_string(),
+                        BTreeMap::from([
+                            ("current@example.com".to_string(), "teal".to_string()),
+                            ("team@group.calendar.google.com".to_string(), "coral".to_string()),
+                        ]),
+                    ),
+                    (
+                        "other@example.net".to_string(),
+                        BTreeMap::from([("other@example.net".to_string(), "gray".to_string())]),
+                    ),
+                ]),
             },
             accounts: vec![
                 TransferAccount {
@@ -1309,6 +1366,8 @@ mod tests {
         assert!(!features.classify);
         assert_eq!(preferences.availability_preferences.time_zone, "Asia/Tokyo");
         assert_eq!(preferences.availability_preferences.slot_increment_minutes, 5);
+        assert_eq!(preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
+        assert_eq!(preferences.calendar_colors["current@example.com"]["team@group.calendar.google.com"], "coral");
 
         assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (2, 1, 1, 1));
         assert_eq!(
@@ -1349,6 +1408,82 @@ mod tests {
         assert_eq!(contacts[0].birthday, None);
         assert_eq!(contacts[0].keep_in_touch, crate::models::KeepInTouch::default());
         assert_eq!(contacts[0].keep_in_touch_due_at, None);
+    }
+
+    #[test]
+    fn frozen_v3_0_72_export_imports_without_calendar_colors() {
+        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v3-0.72.dispatch-settings");
+        assert_eq!(envelope_version(bytes), 3);
+        let (_, result) = import_fixture(bytes);
+        result.preferences.validate().unwrap();
+        assert!(result.preferences.calendar_colors.is_empty());
+        assert_eq!(result.preferences.accent, "amber");
+        assert_eq!(result.preferences.availability_preferences.time_zone, "Asia/Tokyo");
+        assert_eq!(result.contact_count, 1);
+    }
+
+    #[test]
+    fn transfer_omits_calendar_colors_when_none_are_set() {
+        let mut payload = current_fixture_payload();
+        payload.preferences.calendar_colors.clear();
+        let serialized = serde_json::to_value(&payload).unwrap();
+        // Earlier builds reject unknown fields, so an export without colors
+        // must not mention them.
+        assert!(serialized["preferences"].get("calendarColors").is_none());
+    }
+
+    #[test]
+    fn transfer_accepts_calendar_colors_up_to_the_limit() {
+        let mut payload = current_fixture_payload();
+        let calendars = (0..MAX_CALENDAR_COLORS)
+            .map(|index| (format!("calendar-{index}"), CALENDAR_COLOR_IDS[index % 16].to_string()))
+            .collect();
+        payload.preferences.calendar_colors = CalendarColors::from([("current@example.com".to_string(), calendars)]);
+        payload.preferences.validate().unwrap();
+
+        payload.preferences.calendar_colors
+            .get_mut("current@example.com").unwrap()
+            .insert("one-too-many".to_string(), "red".to_string());
+        assert!(payload.preferences.validate().is_err());
+
+        let mut split = current_fixture_payload();
+        split.preferences.calendar_colors.clear();
+        for account in 0..2 {
+            let calendars = (0..MAX_CALENDAR_COLORS / 2 + account)
+                .map(|index| (format!("calendar-{index}"), "red".to_string()))
+                .collect();
+            split.preferences.calendar_colors.insert(format!("account-{account}@example.com"), calendars);
+        }
+        assert!(split.preferences.validate().is_err(), "the limit counts calendars across every account");
+    }
+
+    #[test]
+    fn transfer_rejects_calendar_colors_outside_the_palette() {
+        let account = "current@example.com".to_string();
+        let invalid: [(String, String, String); 7] = [
+            (account.clone(), "primary".into(), "#123456".into()),
+            (account.clone(), "primary".into(), "red; background-image: url(https://tracker.example/x)".into()),
+            (account.clone(), "primary".into(), "Red".into()),
+            (account.clone(), "primary".into(), String::new()),
+            (account.clone(), " ".into(), "red".into()),
+            (account.clone(), "x".repeat(MAX_CALENDAR_ID_LENGTH + 1), "red".into()),
+            ("x".repeat(MAX_CALENDAR_ACCOUNT_LENGTH + 1), "primary".into(), "red".into()),
+        ];
+        for (account_id, calendar_id, color_id) in invalid {
+            let mut payload = current_fixture_payload();
+            payload.preferences.calendar_colors = CalendarColors::from([(account_id, BTreeMap::from([(calendar_id, color_id)]))]);
+            assert!(payload.preferences.validate().is_err());
+        }
+        let mut empty_account = current_fixture_payload();
+        empty_account.preferences.calendar_colors.insert("empty@example.com".into(), BTreeMap::new());
+        assert!(empty_account.preferences.validate().is_err());
+
+        let mut edge = current_fixture_payload();
+        edge.preferences.calendar_colors = CalendarColors::from([(
+            "x".repeat(MAX_CALENDAR_ACCOUNT_LENGTH),
+            BTreeMap::from([("y".repeat(MAX_CALENDAR_ID_LENGTH), "gray".to_string())]),
+        )]);
+        edge.preferences.validate().unwrap();
     }
 
     #[test]

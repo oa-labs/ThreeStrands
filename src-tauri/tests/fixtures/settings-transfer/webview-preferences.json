@@ -36,5 +36,11 @@
     "defaultDurationMinutes": 30,
     "slotIncrementMinutes": 15
   },
-  "emailMinimumFontSize": 18
+  "emailMinimumFontSize": 18,
+  "calendarColors": {
+    "person@example.com": {
+      "person@example.com": "teal",
+      "family@group.calendar.google.com": "pink"
+    }
+  }
 }

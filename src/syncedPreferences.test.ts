@@ -5,6 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { invoke } from "@tauri-apps/api/core";
 import { pullSyncedPreferences, queuePortablePreferences, queuePortablePreferencesAndWait } from "./syncedPreferences";
 import { DEFAULT_AI_FEATURES, readAiFeatures, saveAiFeatures } from "./aiSettings";
+import { readCalendarColors, resetCalendarColorsForTests, setCalendarColor } from "./calendarColors";
 
 function queuedPreferences(): Record<string, unknown> {
   const call = vi.mocked(invoke).mock.calls.find(([command]) => command === "update_synced_preferences");
@@ -15,6 +16,7 @@ function queuedPreferences(): Record<string, unknown> {
 describe("synced preferences data boundary", () => {
   beforeEach(() => {
     localStorage.clear();
+    resetCalendarColorsForTests();
     vi.clearAllMocks();
     Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
   });
@@ -56,6 +58,7 @@ describe("synced preferences data boundary", () => {
       "aiProvider",
       "autoReadDelaySeconds",
       "availabilityPreferences",
+      "calendarColors",
       "emailMinimumFontSize",
       "fontFamily",
       "fontScale",
@@ -101,6 +104,41 @@ describe("synced preferences data boundary", () => {
     expect(localStorage.getItem("threestrands.fontScale")).toBe("110");
     expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("18");
     expect(localStorage.getItem("threestrands.crash-reports")).toBeNull();
+  });
+
+  it("queues calendar colors so they reach the user's other devices", () => {
+    setCalendarColor("me@example.com", "primary", "teal");
+    queuePortablePreferences();
+    expect(queuedPreferences().calendarColors).toEqual({ "me@example.com": { primary: "teal" } });
+  });
+
+  it("applies calendar colors and resets chosen on another device", async () => {
+    setCalendarColor("me@example.com", "primary", "teal");
+    setCalendarColor("me@example.com", "team", "red");
+    vi.mocked(invoke).mockResolvedValue({ calendarColors: { "me@example.com": { primary: "pink" } } });
+
+    await expect(pullSyncedPreferences()).resolves.toBe(true);
+
+    expect(readCalendarColors()).toEqual({ "me@example.com": { primary: "pink" } });
+  });
+
+  it("keeps this device's calendar colors when an older replica omits them", async () => {
+    setCalendarColor("me@example.com", "primary", "teal");
+    vi.mocked(invoke).mockResolvedValue({ fontScale: 110 });
+
+    await pullSyncedPreferences();
+
+    expect(readCalendarColors()).toEqual({ "me@example.com": { primary: "teal" } });
+  });
+
+  it("drops synced calendar colors outside the palette", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      calendarColors: { "me@example.com": { primary: "url(https://tracker.example/x)", team: "sky" } },
+    });
+
+    await pullSyncedPreferences();
+
+    expect(readCalendarColors()).toEqual({ "me@example.com": { team: "sky" } });
   });
 
   it("preserves the device theme when a new replica omits it", async () => {

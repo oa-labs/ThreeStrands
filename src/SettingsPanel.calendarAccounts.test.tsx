@@ -66,7 +66,9 @@ describe("calendar account picker", () => {
     });
     fireEvent.click(within(picker).getByRole("button", { name: "Options for Team" }));
     const palette = within(picker).getByRole("menu", { name: "Color for Team" });
-    expect(within(palette).getAllByRole("menuitemradio")).toHaveLength(16);
+    // Sixteen colors plus Default.
+    expect(within(palette).getAllByRole("menuitemradio")).toHaveLength(17);
+    expect(within(palette).getByRole("menuitemradio", { name: "Default" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(within(palette).getByRole("menuitemradio", { name: "Purple" }));
 
     expect(JSON.parse(localStorage.getItem(CALENDAR_COLORS_KEY)!)).toEqual({ [account.email]: { team: "purple" } });

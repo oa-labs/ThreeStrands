@@ -11,6 +11,7 @@ import {
   type ExportablePreferences,
   type SettingsImportResult,
 } from "./userPreferences";
+import { CALENDAR_COLORS_KEY, resetCalendarColorsForTests } from "./calendarColors";
 // Shared with the native `transfer::tests::webview_preferences_fixture_matches_the_native_transfer_preferences`
 // test, which deserializes it into `TransferPreferences` (deny_unknown_fields).
 import webviewPreferences from "../src-tauri/tests/fixtures/settings-transfer/webview-preferences.json";
@@ -30,6 +31,7 @@ function keyPaths(value: unknown, prefix = ""): string[] {
 describe("exportable preferences", () => {
   beforeEach(() => {
     localStorage.clear();
+    resetCalendarColorsForTests();
   });
 
   it("round-trips the complete allowlisted settings shape", () => {
@@ -67,6 +69,7 @@ describe("exportable preferences", () => {
         defaultDurationMinutes: 30,
         slotIncrementMinutes: 15,
       },
+      calendarColors: { "person@example.com": { primary: "teal", "team@example.com": "gray" } },
     };
 
     applyExportablePreferences(preferences);
@@ -82,6 +85,25 @@ describe("exportable preferences", () => {
     expect(readExportablePreferences().fontFamily).toBe(previous.fontFamily);
   });
 
+  it("imports the preceding preference schema with every calendar on the default color", () => {
+    const { calendarColors: _colors, ...previous } = nativeContractFixture;
+    applyExportablePreferences(nativeContractFixture);
+    applyExportablePreferences(previous as ExportablePreferences);
+    expect(readExportablePreferences().calendarColors).toEqual({});
+    expect(localStorage.getItem(CALENDAR_COLORS_KEY)).toBeNull();
+  });
+
+  it("imports only calendar colors from the palette", () => {
+    applyExportablePreferences({
+      ...nativeContractFixture,
+      calendarColors: {
+        "person@example.com": { primary: "teal", injected: "red; background: url(x)" },
+        "list@example.com": ["teal"],
+      } as unknown as ExportablePreferences["calendarColors"],
+    });
+    expect(readExportablePreferences().calendarColors).toEqual({ "person@example.com": { primary: "teal" } });
+  });
+
   it("does not collect secrets or transient storage", () => {
     localStorage.setItem("threestrands.settings.ai.apiKey", "do-not-export");
     localStorage.setItem("threestrands.crashReports", "private diagnostics");
@@ -95,8 +117,10 @@ describe("exportable preferences", () => {
   });
 
   it("emits exactly the key set the native transfer contract accepts", () => {
-    // Defaults, as on a fresh install.
-    expect(keyPaths(readExportablePreferences()).sort()).toEqual(keyPaths(nativeContractFixture).sort());
+    // Defaults, as on a fresh install. Calendar color keys are account and
+    // calendar ids, so only the field itself belongs to the contract.
+    const schemaPaths = (value: unknown) => keyPaths(value).filter((path) => !path.startsWith("calendarColors.")).sort();
+    expect(schemaPaths(readExportablePreferences())).toEqual(schemaPaths(nativeContractFixture));
 
     applyExportablePreferences(nativeContractFixture);
     const exported = readExportablePreferences();
