@@ -105,7 +105,7 @@ import { attachmentKey, chatAttachmentOptions, type ChatAttachmentOption } from 
 import { MeetingScheduler, type ScheduleSlot } from "./MeetingScheduler";
 import { planChatAvailability } from "./scheduling";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
-import { clearScheduleCache } from "./calendarScheduleCache";
+import { revalidateScheduleCache } from "./calendarScheduleCache";
 import { hasEmailedBefore, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { TaskEditorDialog, type TaskEditorValues } from "./TaskEditorDialog";
@@ -1883,7 +1883,7 @@ export function App() {
     const source = meetingEventDraft?.source;
     if (source) removeActionProposal(source.from, source.proposal);
     setMeetingEventDraft(null);
-    clearScheduleCache();
+    revalidateScheduleCache();
     setNotice({ message: "Added to calendar" });
   }, [meetingEventDraft, removeActionProposal, setNotice]);
   const confirmMeetingTime = useCallback((slot: ScheduleSlot) => {

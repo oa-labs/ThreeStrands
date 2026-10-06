@@ -2,7 +2,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearScheduleCache, MAX_CACHED_SCHEDULE_RANGES, readScheduleCache,
-  refreshScheduleCache, type ScheduleRequest,
+  refreshScheduleCache, revalidateScheduleCache, type ScheduleRequest,
 } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { ScheduleResult } from "./domain";
@@ -116,6 +116,35 @@ describe("calendar schedule caching", () => {
     expect(hook.result.current.events).toEqual([]);
     await act(async () => { newRequest.resolve(result("Selected calendar")); });
     expect(hook.result.current.events[0].title).toBe("Selected calendar");
+  });
+
+  it("keeps mounted views populated while revalidating after a local change", async () => {
+    await refreshScheduleCache(week, async () => result());
+    const oldRequest = deferred();
+    const newRequest = deferred();
+    vi.mocked(mailClient.listScheduleEvents).mockReturnValueOnce(oldRequest.promise).mockReturnValueOnce(newRequest.promise);
+    const hook = renderHook(() => useCalendarSchedule(week));
+    act(() => revalidateScheduleCache({ ...result().events[0], title: "Accepted" }));
+    expect(hook.result.current.events[0].title).toBe("Accepted");
+    expect(hook.result.current.loading).toBe(false);
+    await act(async () => { oldRequest.resolve(result("Before change")); });
+    expect(hook.result.current.events[0].title).toBe("Accepted");
+    await act(async () => { newRequest.resolve(result("Refetched")); });
+    expect(hook.result.current.events[0].title).toBe("Refetched");
+    expect(readScheduleCache(week)).toEqual(result("Refetched"));
+  });
+
+  it("only patches the matching event and refetches stale neighboring weeks", async () => {
+    const other = result("Other account");
+    other.events[0].accountId = "other@example.com";
+    await refreshScheduleCache(week, async () => ({ events: [...result().events, ...other.events], errors: [] }));
+    await refreshScheduleCache(next, async () => result("Neighbor"));
+    act(() => revalidateScheduleCache({ ...result().events[0], title: "Accepted" }));
+    expect(readScheduleCache(week)?.events.map((event) => event.title)).toEqual(["Accepted", "Other account"]);
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue(result());
+    renderHook(() => useCalendarSchedule(week, true));
+    await waitFor(() => expect(vi.mocked(mailClient.listScheduleEvents).mock.calls.map((call) => call[0]))
+      .toEqual([week.timeMin, "2026-09-13T00:00:00.000Z", next.timeMin]));
   });
 
   it("caches empty ranges and whole busy weeks, and evicts the least recently used range", async () => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { addDays } from "./calendarTime";
 import {
-  readScheduleCache, refreshScheduleCache, scheduleCacheGeneration,
+  isScheduleRangeFresh, readScheduleCache, refreshScheduleCache, scheduleCacheGeneration,
   subscribeScheduleCache, type ScheduleRequest,
 } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
@@ -35,7 +35,7 @@ export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequ
           const neighbor = { timeMin: addDays(new Date(timeMin), offset).toISOString(),
             timeMax: addDays(new Date(timeMax), offset).toISOString(), timeZone };
           // A speculative fetch failure should not mark the visible week as failed.
-          if (!readScheduleCache(neighbor)) void fetchSchedule(neighbor).catch(() => {});
+          if (!isScheduleRangeFresh(neighbor)) void fetchSchedule(neighbor).catch(() => {});
         }
       }
     }).catch((reason: unknown) => {

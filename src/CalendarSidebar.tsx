@@ -15,7 +15,7 @@ import {
 } from "./calendarTime";
 import { calendarDescriptionText } from "./calendarDescription";
 import { responseLabel } from "./calendarResponse";
-import { clearScheduleCache } from "./calendarScheduleCache";
+import { revalidateScheduleCache } from "./calendarScheduleCache";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
@@ -192,7 +192,7 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
     try {
       const updated = await mailClient.updateCalendarResponse(event, status);
       onUpdated(updated);
-      clearScheduleCache();
+      revalidateScheduleCache(updated);
     } catch (error) {
       setResponseError(errorMessage(error));
     } finally {

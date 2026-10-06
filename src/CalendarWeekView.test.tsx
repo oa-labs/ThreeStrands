@@ -214,10 +214,17 @@ describe("CalendarWeekView", () => {
     expect(dialog).toHaveTextContent("Awaiting response");
     const going = within(dialog).getByRole("group", { name: "Going?" });
     expect(within(going).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "false");
+    let finishRefetch!: (value: { events: typeof invited[]; errors: string[] }) => void;
+    vi.mocked(mailClient.listScheduleEvents).mockImplementation(() => new Promise((resolve) => { finishRefetch = resolve; }));
     fireEvent.click(within(going).getByRole("button", { name: "Yes" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(invited, "accepted"));
     await waitFor(() => expect(dialog).toHaveTextContent("Going"));
     expect(within(going).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "true");
+    // The grid keeps the week, with the new response, while the refetch is in flight.
+    expect(screen.getByRole("button", { name: "Team sync" })).toHaveAttribute("data-response-status", "accepted");
+    expect(screen.queryByText("Loading schedule…")).not.toBeInTheDocument();
+    await act(async () => { finishRefetch({ events: [{ ...invited, responseStatus: "accepted" }], errors: [] }); });
+    expect(screen.getByRole("button", { name: "Team sync" })).toHaveAttribute("data-response-status", "accepted");
   });
 
   it("keeps the prior RSVP and reports a failed change", async () => {

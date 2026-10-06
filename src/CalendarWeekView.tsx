@@ -17,7 +17,7 @@ import {
 } from "./calendarTime";
 import { isEditableTarget } from "./commands";
 import { useCalendarSchedule } from "./useCalendarSchedule";
-import { clearScheduleCache } from "./calendarScheduleCache";
+import { revalidateScheduleCache } from "./calendarScheduleCache";
 import { responseLabel } from "./calendarResponse";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
@@ -478,7 +478,7 @@ export function CalendarWeekView({
           accounts={accounts}
           calendars={calendars}
           onClose={() => setNewEventRange(null)}
-          onCreated={() => { setNewEventRange(null); clearScheduleCache(); }}
+          onCreated={() => { setNewEventRange(null); revalidateScheduleCache(); }}
         /> : null}
       </div>
       <aside className="calendar-week-side" aria-label="Calendar navigation">
