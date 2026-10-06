@@ -22,6 +22,7 @@ const thread: Thread = {
   matchSnippet: "Before \u0001matched\u0002 after",
   summary: null,
   summaryGeneratedAt: null,
+  summaryRevision: null,
   hasAttachments: true,
 };
 

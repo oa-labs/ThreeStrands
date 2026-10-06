@@ -90,6 +90,7 @@ export function defaultDemoDataset(): DemoDataset {
         accountId: DEMO_ACCOUNT_ID,
         summary: null,
         summaryGeneratedAt: null,
+        summaryRevision: null,
         hasAttachments: true,
       },
       {
@@ -108,6 +109,7 @@ export function defaultDemoDataset(): DemoDataset {
         accountId: DEMO_ACCOUNT_ID,
         summary: null,
         summaryGeneratedAt: null,
+        summaryRevision: null,
         hasAttachments: false,
       },
       {
@@ -126,6 +128,7 @@ export function defaultDemoDataset(): DemoDataset {
         accountId: DEMO_ACCOUNT_ID,
         summary: null,
         summaryGeneratedAt: null,
+        summaryRevision: null,
         hasAttachments: false,
       },
     ],

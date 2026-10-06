@@ -2151,6 +2151,15 @@ mod tests {
                 value: true,
             })
             .unwrap();
+        // Drift means the archives already reached Gmail (or were lost);
+        // an undelivered archive is the user's pending intent, which
+        // reconcile keeps instead (see
+        // `reconcile_keeps_an_archive_that_has_not_been_delivered_yet`).
+        database
+            .connection()
+            .unwrap()
+            .execute("UPDATE mutations SET state = 'done'", [])
+            .unwrap();
 
         assert!(
             database
@@ -2199,6 +2208,48 @@ mod tests {
             .find(|thread| thread.id == format!("{account}:orphaned-thread"))
             .unwrap();
         assert!(orphaned.archived, "drifted-away thread must be archived");
+    }
+
+    #[tokio::test]
+    async fn reconcile_keeps_an_archive_that_has_not_been_delivered_yet() {
+        let account = "acct";
+        let database = Database::open_memory();
+        let mut pending = ContractProvider::message();
+        pending.id = "pending-message".into();
+        pending.thread_id = "pending-thread".into();
+        database
+            .upsert_thread(account, &[crate::mime::normalize(&pending).unwrap()])
+            .unwrap();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: format!("{account}:pending-thread"),
+                value: true,
+            })
+            .unwrap();
+
+        // Gmail still lists it in INBOX because the archive hasn't reached it.
+        let provider = ReconcileProvider {
+            inbox_ids: vec!["pending-thread".into()],
+            threads: [("pending-thread".to_string(), pending)].into_iter().collect(),
+            list_calls: AtomicUsize::new(0),
+            fail_thread_once: StdMutex::new(None),
+            invalid_thread_ids: vec![],
+        };
+        reconcile_inbox(&database, account, &provider).await.unwrap();
+
+        let thread = database
+            .list_all_mail(Some(account))
+            .unwrap()
+            .into_iter()
+            .find(|thread| thread.id == format!("{account}:pending-thread"))
+            .unwrap();
+        assert!(thread.archived, "the user's pending archive must survive reconciliation");
+        let pending: i64 = database
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM mutations WHERE state = 'pending'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(pending, 1);
     }
 
     #[tokio::test]

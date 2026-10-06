@@ -149,6 +149,28 @@ describe("undo", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
+  it("undoes an archive made in another folder without repainting the folder now on screen", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    await archiveSelected();
+    await screen.findByRole("status");
+
+    selectFolder("Trash");
+    await waitFor(() => expect(screen.queryAllByRole("option")).toHaveLength(0));
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "z" }));
+    });
+    await advance(50);
+
+    // The Inbox rows the archive captured stay out of Trash.
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(screen.queryByRole("option", { name: /Welcome to ThreeStrands/ })).not.toBeInTheDocument();
+    // The archive itself was still undone.
+    expect((await mailClient.listThreads()).find((thread) => thread.id === "welcome")?.archived).toBe(false);
+    selectFolder("Inbox");
+    expect(await screen.findByRole("option", { name: /Welcome to ThreeStrands/ })).toBeInTheDocument();
+  });
+
   it("undoes adding and removing a label", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

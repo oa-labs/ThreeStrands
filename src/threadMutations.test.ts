@@ -23,6 +23,7 @@ const thread: Thread = {
   accountId: "account@example.com",
   summary: null,
   summaryGeneratedAt: null,
+  summaryRevision: null,
   hasAttachments: false,
 };
 

@@ -17,6 +17,8 @@ export type Thread = {
   matchSnippet?: string | null;
   summary: string | null;
   summaryGeneratedAt: string | null;
+  /** The `lastMessageAt` the summary was written from; null for summaries saved before it was recorded. */
+  summaryRevision: string | null;
   hasAttachments: boolean;
 };
 
@@ -360,6 +362,8 @@ export type ThreadPage = {
 export type SummaryResult = {
   summary: string;
   generatedAt: string;
+  /** The thread's `lastMessageAt` the summary was written from. */
+  revision: string;
 };
 
 /** One local day's provider usage for one provider and model. */

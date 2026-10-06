@@ -44,6 +44,8 @@ function providerContract(name: string, client: MailClient) {
       const detail = await client.getThread(thread.id);
       expect(detail.thread.summary).toBe(result.summary);
       expect(detail.thread.summaryGeneratedAt).toBe(result.generatedAt);
+      expect(result.revision).toBe(thread.lastMessageAt);
+      expect(detail.thread.summaryRevision).toBe(result.revision);
     });
   });
 }

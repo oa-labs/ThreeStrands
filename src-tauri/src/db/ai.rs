@@ -29,27 +29,32 @@ impl Database {
         Ok(saved.and_then(|json| serde_json::from_str(&json).ok()))
     }
 
-    /// Replaces the thread's saved suggestions with those for its current
-    /// newest message.
+    /// Saves the thread's suggestions for the newest message time
+    /// `last_message_at`. Suggestions saved for a newer message are never
+    /// replaced by a slower request for an older one; suggestions saved for
+    /// the same message are replaced only when `replace_same_revision` is
+    /// set. Returns whether this set was saved.
     pub fn save_thread_analysis(
         &self,
         thread_id: &str,
         last_message_at: &str,
         analysis: &ActionAnalysis,
         generated_at: &str,
-    ) -> DbResult<()> {
+        replace_same_revision: bool,
+    ) -> DbResult<bool> {
         let json = serde_json::to_string(analysis).map_err(|error| error.to_string())?;
         self.with_connection(|connection| {
-            connection.execute(
+            Ok(connection.execute(
                 "INSERT INTO ai_thread_analyses(thread_id, last_message_at, analysis_json, generated_at)
                  VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(thread_id) DO UPDATE SET
                     last_message_at = excluded.last_message_at,
                     analysis_json = excluded.analysis_json,
-                    generated_at = excluded.generated_at",
-                params![thread_id, last_message_at, json, generated_at],
-            )?;
-            Ok(())
+                    generated_at = excluded.generated_at
+                 WHERE excluded.last_message_at > ai_thread_analyses.last_message_at
+                    OR (?5 AND excluded.last_message_at = ai_thread_analyses.last_message_at)",
+                params![thread_id, last_message_at, json, generated_at, replace_same_revision],
+            )? > 0)
         })
     }
 
@@ -254,6 +259,7 @@ mod tests {
                 "2026-09-19T10:00:00Z",
                 &analysis(1),
                 "2026-09-19T11:00:00Z",
+                true,
             )
             .unwrap();
         let saved = database
@@ -272,6 +278,7 @@ mod tests {
                 "2026-09-20T10:00:00Z",
                 &analysis(0),
                 "2026-09-20T11:00:00Z",
+                true,
             )
             .unwrap();
         assert!(database
@@ -320,6 +327,7 @@ mod tests {
                 revision,
                 &ActionAnalysis { proposals: vec![task("Send the deck"), task("Book the room")], hidden_count: 2 },
                 "2026-09-19T11:00:00Z",
+                true,
             )
             .unwrap();
 
@@ -333,6 +341,32 @@ mod tests {
     }
 
     #[test]
+    fn a_slower_request_never_replaces_suggestions_saved_for_a_newer_message() {
+        let database = database_with_thread();
+        let (older, newer) = ("2026-09-19T10:00:00Z", "2026-09-20T10:00:00Z");
+        assert!(database.save_thread_analysis("account:thread", newer, &analysis(0), "2026-09-20T11:00:00Z", true).unwrap());
+        assert!(!database.save_thread_analysis("account:thread", older, &analysis(1), "2026-09-20T12:00:00Z", true).unwrap());
+        assert!(database.thread_analysis("account:thread", older).unwrap().is_none());
+        assert_eq!(database.thread_analysis("account:thread", newer).unwrap().unwrap().hidden_count, 0);
+    }
+
+    #[test]
+    fn a_cache_fill_keeps_the_saved_set_for_the_same_message_but_a_brief_replaces_it() {
+        let database = database_with_thread();
+        let revision = "2026-09-19T10:00:00Z";
+        let both = ActionAnalysis { proposals: vec![task("Send the deck"), task("Book the room")], hidden_count: 0 };
+        assert!(database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:00:00Z", false).unwrap());
+        // The user handles one suggestion; a concurrent analysis of the same
+        // message then finishes and must not bring it back.
+        assert!(database.remove_thread_suggestion("account:thread", revision, &task("Send the deck")).unwrap());
+        assert!(!database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:01:00Z", false).unwrap());
+        assert_eq!(saved_titles(&database, revision), Some(vec!["Book the room".to_string()]));
+        // An explicit brief of the same message replaces the saved set.
+        assert!(database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:02:00Z", true).unwrap());
+        assert_eq!(saved_titles(&database, revision).map(|titles| titles.len()), Some(2));
+    }
+
+    #[test]
     fn removing_a_suggestion_ignores_other_revisions_and_missing_rows() {
         let database = database_with_thread();
         assert!(!database
@@ -340,7 +374,7 @@ mod tests {
             .unwrap());
 
         database
-            .save_thread_analysis("account:thread", "2026-09-20T10:00:00Z", &analysis(0), "2026-09-20T11:00:00Z")
+            .save_thread_analysis("account:thread", "2026-09-20T10:00:00Z", &analysis(0), "2026-09-20T11:00:00Z", true)
             .unwrap();
         // A removal for the older revision leaves the newer saved set alone.
         assert!(!database
@@ -358,6 +392,7 @@ mod tests {
                 "2026-09-19T10:00:00Z",
                 &analysis(0),
                 "2026-09-19T11:00:00Z",
+                true,
             )
             .unwrap();
         let connection = database.connection().unwrap();

@@ -18,6 +18,7 @@ function makeThread(overrides: Partial<Thread> & { id: string }): Thread {
     accountId: "a@example.com",
     summary: null,
     summaryGeneratedAt: null,
+    summaryRevision: null,
     hasAttachments: false,
     ...overrides,
   };

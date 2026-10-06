@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 47;
+pub(crate) const LATEST_VERSION: i64 = 48;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1353,6 +1353,17 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             PRAGMA user_version=47;",
         ).map_err(error)?;
     }
+    if version < 48 {
+        // The thread revision (newest message time) a summary was written
+        // from. Staleness compares against it rather than the time the
+        // provider call finished, which can be later than mail that arrived
+        // while it ran. Existing summaries keep a NULL revision and fall back
+        // to `summary_generated_at`.
+        if !has_column(&tx, "threads", "summary_revision")? {
+            tx.execute("ALTER TABLE threads ADD COLUMN summary_revision TEXT", []).map_err(error)?;
+        }
+        tx.execute_batch("PRAGMA user_version=48;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1470,6 +1481,30 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(queued, vec!["you@gmail.com:t1".to_string()]);
+    }
+
+    #[test]
+    fn v48_adds_a_summary_revision_and_keeps_existing_summaries() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at,
+                                     account_id, summary, summary_generated_at)
+                 VALUES ('you@gmail.com:t1', 't1', 's', 'n', '[]', '2026-01-01T00:00:00Z',
+                         'you@gmail.com', 'Existing summary', '2026-01-02T00:00:00Z');
+                 PRAGMA user_version=47;",
+            )
+            .unwrap();
+        // Re-running over a column that already exists must not fail.
+        super::migrate(&mut connection).unwrap();
+        let (summary, revision): (Option<String>, Option<String>) = connection
+            .query_row("SELECT summary, summary_revision FROM threads WHERE id='you@gmail.com:t1'", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(summary.as_deref(), Some("Existing summary"));
+        assert_eq!(revision, None);
     }
 
     #[test]

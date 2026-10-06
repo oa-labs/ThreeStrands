@@ -2637,6 +2637,7 @@ async fn ai_summarize_thread(
 ) -> Result<SummaryResult, String> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     let detail = state.database.get_thread(&thread_id)?;
+    let revision = detail.thread.last_message_at.clone();
     let request = ai::SummarizeRequest {
         provider,
         model,
@@ -2654,13 +2655,33 @@ async fn ai_summarize_thread(
             .collect(),
     };
     let summary = ai::summarize(request, &api_key).await?;
+    save_thread_summary(&state, &thread_id, summary, &revision)
+}
+
+/// Saves a summary written from the thread as of `revision`. When a request
+/// for a newer revision already saved its summary, that one stays and is
+/// returned instead, so the caller shows what is stored.
+fn save_thread_summary(
+    state: &AppState,
+    thread_id: &str,
+    summary: String,
+    revision: &str,
+) -> Result<SummaryResult, String> {
     let generated_at = Utc::now().to_rfc3339();
-    state
-        .database
-        .set_thread_summary(&thread_id, &summary, &generated_at)?;
+    if !state.database.set_thread_summary(thread_id, &summary, &generated_at, revision)? {
+        if let Ok(detail) = state.database.get_thread(thread_id) {
+            let thread = detail.thread;
+            if let (Some(summary), Some(generated_at), Some(revision)) =
+                (thread.summary, thread.summary_generated_at, thread.summary_revision)
+            {
+                return Ok(SummaryResult { summary, generated_at, revision });
+            }
+        }
+    }
     Ok(SummaryResult {
         summary,
         generated_at,
+        revision: revision.to_string(),
     })
 }
 
@@ -2715,15 +2736,30 @@ async fn thread_analysis_request(
     Ok((revision, request))
 }
 
-/// Saves the suggestions for the thread's current revision, replacing any
-/// saved for an older one.
+/// Saves the suggestions for `revision`, replacing any saved for an older
+/// one, and returns the suggestions now saved for the thread. Suggestions
+/// already saved for a newer revision are kept. `replace_same_revision` is
+/// false for a cache fill: a concurrent request for the same revision has
+/// already saved its result, possibly with suggestions the user has since
+/// handled, and that saved set is returned instead.
 fn cache_thread_analysis(
     state: &AppState,
     thread_id: &str,
     revision: &str,
-    analysis: &ActionAnalysis,
-) -> Result<(), String> {
-    database_result(state.database.save_thread_analysis(thread_id, revision, analysis, &Utc::now().to_rfc3339()))
+    analysis: ActionAnalysis,
+    replace_same_revision: bool,
+) -> Result<ActionAnalysis, String> {
+    let saved = database_result(state.database.save_thread_analysis(
+        thread_id,
+        revision,
+        &analysis,
+        &Utc::now().to_rfc3339(),
+        replace_same_revision,
+    ))?;
+    if saved {
+        return Ok(analysis);
+    }
+    Ok(state.database.thread_analysis(thread_id, revision)?.unwrap_or(analysis))
 }
 
 #[tauri::command]
@@ -2765,8 +2801,7 @@ async fn ai_analyze_thread(
         analysis.proposals.len(),
         analysis.hidden_count
     );
-    cache_thread_analysis(&state, &thread_id, &revision, &analysis)?;
-    Ok(analysis)
+    cache_thread_analysis(&state, &thread_id, &revision, analysis, false)
 }
 
 /// Drops a handled suggestion from the thread's saved suggestions for
@@ -3122,18 +3157,9 @@ async fn ai_brief_thread(
         brief.analysis.proposals.len(),
         brief.analysis.hidden_count
     );
-    let generated_at = Utc::now().to_rfc3339();
-    state
-        .database
-        .set_thread_summary(&thread_id, &brief.summary, &generated_at)?;
-    cache_thread_analysis(&state, &thread_id, &revision, &brief.analysis)?;
-    Ok(ThreadBriefResult {
-        summary: SummaryResult {
-            summary: brief.summary,
-            generated_at,
-        },
-        analysis: brief.analysis,
-    })
+    let summary = save_thread_summary(&state, &thread_id, brief.summary, &revision)?;
+    let analysis = cache_thread_analysis(&state, &thread_id, &revision, brief.analysis, true)?;
+    Ok(ThreadBriefResult { summary, analysis })
 }
 
 #[tauri::command]

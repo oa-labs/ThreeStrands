@@ -32,6 +32,7 @@ const detail: ThreadDetail = {
     accountId: "account@example.com",
     summary: null,
     summaryGeneratedAt: null,
+    summaryRevision: null,
     hasAttachments: false,
   },
   messages: [message("older"), message("latest")],

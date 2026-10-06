@@ -44,6 +44,17 @@ export function splitAttachmentName(filename: string): { base: string; extension
   return { base: filename.slice(0, dot), extension };
 }
 
+/**
+ * Whether the thread has a message newer than its summary covers. Compares
+ * against the revision the summary was written from; summaries saved before
+ * that was recorded fall back to their generation time.
+ */
+export function isSummaryStale(thread: Pick<Thread, "summary" | "lastMessageAt" | "summaryRevision" | "summaryGeneratedAt">): boolean {
+  if (!thread.summary) return false;
+  const coveredUpTo = thread.summaryRevision ?? thread.summaryGeneratedAt;
+  return Boolean(coveredUpTo && thread.lastMessageAt > coveredUpTo);
+}
+
 export function sortByRecency(threads: Thread[]): Thread[] {
   return [...threads].sort((a, b) => b.lastReceivedAt.localeCompare(a.lastReceivedAt));
 }

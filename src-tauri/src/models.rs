@@ -365,6 +365,9 @@ pub struct Thread {
     pub match_snippet: Option<String>,
     pub summary: Option<String>,
     pub summary_generated_at: Option<String>,
+    /// The `last_message_at` the summary was written from. A summary is
+    /// stale once the thread has a newer message than this.
+    pub summary_revision: Option<String>,
     pub has_attachments: bool,
 }
 
@@ -661,6 +664,8 @@ pub struct ContactFieldSuggestion {
 pub struct SummaryResult {
     pub summary: String,
     pub generated_at: String,
+    /// The thread's `last_message_at` the summary was written from.
+    pub revision: String,
 }
 
 /// One day's AI provider usage for a provider and model. Cost is known only

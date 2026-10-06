@@ -403,10 +403,11 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         `- ${thread.snippet}`,
       ].join("\n");
       const generatedAt = new Date().toISOString();
+      const revision = thread.lastMessageAt;
       threads = threads.map((candidate) =>
-        candidate.id === threadId ? { ...candidate, summary, summaryGeneratedAt: generatedAt } : candidate,
+        candidate.id === threadId ? { ...candidate, summary, summaryGeneratedAt: generatedAt, summaryRevision: revision } : candidate,
       );
-      return { summary, generatedAt };
+      return { summary, generatedAt, revision };
     },
     async analyzeThread(threadId): Promise<ActionAnalysis> {
       // Like the native client, reuse suggestions saved for the thread's newest message.

@@ -66,7 +66,7 @@ it("shows a conversation participant on the next meeting and opens its details i
 
 describe("conversation brief", () => {
   const briefResult = {
-    summary: { summary: "- Welcome to the app.\n- Nothing is due.", generatedAt: "2099-01-01T00:00:00Z" },
+    summary: { summary: "- Welcome to the app.\n- Nothing is due.", generatedAt: "2099-01-01T00:00:00Z", revision: "2099-01-01T00:00:00Z" },
     analysis: { proposals: [], hiddenCount: 0 },
   };
 
@@ -136,6 +136,36 @@ describe("conversation brief", () => {
     expect(await within(panel).findByText("1 suggestion couldn’t be matched to the email, so it was hidden.")).toBeInTheDocument();
     expect(analyzeThread).toHaveBeenCalledTimes(1);
     expect(briefThread).not.toHaveBeenCalled();
+  });
+
+  it("keeps one conversation's pending or failed suggestions from showing on another", async () => {
+    await enableAi({ summarize: false, actionExtraction: true });
+    let failFirst: (reason: Error) => void = () => {};
+    const analyzeThread = vi.spyOn(mailClient, "analyzeThread").mockImplementation((threadId) => threadId === "welcome"
+      ? new Promise((_, reject) => { failFirst = reject; })
+      : Promise.resolve({ proposals: [], hiddenCount: 0 }));
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+    fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
+    expect(await within(panel).findByRole("status")).toHaveTextContent("Reading the conversation…");
+
+    // Open another conversation while the first request is still running.
+    const [, other] = screen.getAllByRole("option");
+    fireEvent.click(other);
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument());
+    expect(within(panel).queryByText("Reading the conversation…")).not.toBeInTheDocument();
+    fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
+    expect(await within(panel).findByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
+    expect(analyzeThread).toHaveBeenCalledTimes(2);
+    expect(analyzeThread.mock.calls[1]?.[0]).not.toBe("welcome");
+
+    // The first conversation's failure stays with it.
+    failFirst(new Error("Suggestions for the welcome thread failed"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(panel).getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
   });
 
   describe("scheduling meetings from the panel", () => {

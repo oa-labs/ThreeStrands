@@ -387,6 +387,7 @@ function buildThreads(now: number): { threads: Thread[]; messages: DemoDataset["
       accountId: seed.accountId,
       summary: seed.summary ?? null,
       summaryGeneratedAt: seed.summary ? minutesAgo(10) : null,
+      summaryRevision: seed.summary ? latest.sentAt : null,
       hasAttachments: seeded.some((candidate) => (candidate.attachments?.length ?? 0) > 0),
     });
   }

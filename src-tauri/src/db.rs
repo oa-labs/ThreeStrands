@@ -81,7 +81,7 @@ impl From<DatabaseError> for String {
 const THREAD_COLUMNS: &str = "t.id, t.provider_thread_id, t.subject, t.snippet,
     t.participants_json, t.last_message_at, t.unread, t.starred, t.archived,
     t.labels_json, t.trashed, t.account_id, t.summary, t.summary_generated_at,
-    t.has_attachments, t.last_received_at";
+    t.has_attachments, t.last_received_at, t.summary_revision";
 
 #[derive(Debug, Clone)]
 pub struct PendingMutation {
@@ -960,18 +960,23 @@ impl Database {
         })
     }
 
+    /// Saves a summary written from the thread as of `revision` (its
+    /// `last_message_at` when the summary request read it). A slower request
+    /// for an older revision never replaces one saved for a newer revision.
+    /// Returns whether the summary was saved.
     pub fn set_thread_summary(
         &self,
         thread_id: &str,
         summary: &str,
         generated_at: &str,
-    ) -> DbResult<()> {
+        revision: &str,
+    ) -> DbResult<bool> {
         self.with_connection(|connection| {
-            connection.execute(
-                "UPDATE threads SET summary = ?1, summary_generated_at = ?2 WHERE id = ?3",
-                params![summary, generated_at, thread_id],
-            )?;
-            Ok(())
+            Ok(connection.execute(
+                "UPDATE threads SET summary = ?1, summary_generated_at = ?2, summary_revision = ?3
+                 WHERE id = ?4 AND (summary_revision IS NULL OR summary_revision <= ?3)",
+                params![summary, generated_at, revision, thread_id],
+            )? > 0)
         })
     }
 
@@ -1127,7 +1132,8 @@ impl Database {
                     summary_generated_at: row.get(13)?,
                     has_attachments: row.get(14)?,
                     last_received_at: row.get(15)?,
-                    match_snippet: row.get(16)?,
+                    summary_revision: row.get(16)?,
+                    match_snippet: row.get(17)?,
                 })
             };
             let rows = match account_id {
@@ -1144,13 +1150,34 @@ impl Database {
         transaction: &Transaction<'_>,
         mutation: &ThreadMutation,
     ) -> DbResult<()> {
-        let (kind, value) = match mutation {
-            ThreadMutation::Archive { value, .. } => ("archive", *value),
-            ThreadMutation::Trash { value, .. } => ("trash", *value),
-            ThreadMutation::Spam { value, .. } => ("spam", *value),
-            ThreadMutation::Read { value, .. } => ("read", *value),
-            ThreadMutation::Star { value, .. } => ("star", *value),
-            ThreadMutation::Label { value, .. } => ("label", *value),
+        let kind = match mutation {
+            ThreadMutation::Archive { .. } => "archive",
+            ThreadMutation::Trash { .. } => "trash",
+            ThreadMutation::Spam { .. } => "spam",
+            ThreadMutation::Read { .. } => "read",
+            ThreadMutation::Star { .. } => "star",
+            ThreadMutation::Label { .. } => "label",
+        };
+        if Self::apply_mutation_locally(transaction, mutation)? == 0 {
+            return Err("Thread not found".into());
+        }
+        Self::queue_mutation(transaction, mutation, kind)
+    }
+
+    /// Applies a mutation's effect to the local thread row (and, for read
+    /// state, its messages) without queueing it. Returns the number of
+    /// thread rows changed.
+    fn apply_mutation_locally(
+        transaction: &Transaction<'_>,
+        mutation: &ThreadMutation,
+    ) -> DbResult<usize> {
+        let value = match mutation {
+            ThreadMutation::Archive { value, .. }
+            | ThreadMutation::Trash { value, .. }
+            | ThreadMutation::Spam { value, .. }
+            | ThreadMutation::Read { value, .. }
+            | ThreadMutation::Star { value, .. }
+            | ThreadMutation::Label { value, .. } => *value,
         };
         let changed = match mutation {
             ThreadMutation::Spam { thread_id, value } => {
@@ -1199,22 +1226,27 @@ impl Database {
                     labels.sort();
                     labels.dedup();
                 }
-                let unread = labels.iter().any(|label| label == "UNREAD");
-                let starred = labels.iter().any(|label| label == "STARRED");
-                let archived = !labels.iter().any(|label| label == "INBOX");
-                transaction
-                    .execute(
-                        "UPDATE threads
-                         SET labels_json = ?1, unread = ?2, starred = ?3, archived = ?4
-                         WHERE id = ?5",
-                        params![
-                            serde_json::to_string(&labels).map_err(serialization_error)?,
-                            unread,
-                            starred,
-                            archived,
-                            thread_id
-                        ],
-                    )?
+                // Only the flag this label controls changes. Archive, read
+                // and star mutations set their columns without rewriting
+                // `labels_json`, so deriving every flag from it here would
+                // undo them.
+                let flag = match label_id.as_str() {
+                    "UNREAD" => Some(("unread", *value)),
+                    "STARRED" => Some(("starred", *value)),
+                    "INBOX" => Some(("archived", !*value)),
+                    _ => None,
+                };
+                let labels_json = serde_json::to_string(&labels).map_err(serialization_error)?;
+                match flag {
+                    Some((column, flag_value)) => transaction.execute(
+                        &format!("UPDATE threads SET labels_json = ?1, {column} = ?2 WHERE id = ?3"),
+                        params![labels_json, flag_value, thread_id],
+                    )?,
+                    None => transaction.execute(
+                        "UPDATE threads SET labels_json = ?1 WHERE id = ?2",
+                        params![labels_json, thread_id],
+                    )?,
+                }
             }
             ThreadMutation::Read { thread_id, value } => {
                 let changed = transaction
@@ -1262,9 +1294,40 @@ impl Database {
                     .execute(&sql, params![stored_value, mutation.thread_id()])?
             }
         };
-        if changed == 0 {
-            return Err("Thread not found".into());
+        Ok(changed)
+    }
+
+    /// Re-applies the thread's undelivered mutations, oldest first, after a
+    /// provider copy of it was written. That copy can predate a mutation the
+    /// user made while it was being fetched, or one still waiting to be
+    /// delivered; without this, sync would visibly undo the change until the
+    /// mutation reached the provider and a later poll fetched it back.
+    fn reapply_undelivered_mutations(
+        transaction: &Transaction<'_>,
+        thread_id: &str,
+    ) -> DbResult<()> {
+        let payloads = {
+            let mut statement = transaction.prepare(
+                "SELECT payload_json FROM mutations
+                 WHERE thread_id = ?1 AND state IN ('pending', 'running')
+                 ORDER BY created_at ASC, rowid ASC",
+            )?;
+            let rows = statement.query_map([thread_id], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for payload in payloads {
+            let mutation: ThreadMutation =
+                serde_json::from_str(&payload).map_err(serialization_error)?;
+            Self::apply_mutation_locally(transaction, &mutation)?;
         }
+        Ok(())
+    }
+
+    fn queue_mutation(
+        transaction: &Transaction<'_>,
+        mutation: &ThreadMutation,
+        kind: &str,
+    ) -> DbResult<()> {
         let (account_id, provider_thread_id): (String, String) = transaction
             .query_row(
                 "SELECT account_id, provider_thread_id FROM threads WHERE id = ?1",
@@ -2065,7 +2128,7 @@ impl Database {
             "DELETE FROM pending_search_reindex WHERE thread_id = ?1",
             [&thread_id],
         )?;
-        Ok(())
+        Self::reapply_undelivered_mutations(transaction, &thread_id)
     }
 
     pub fn upsert_thread(
@@ -2780,6 +2843,7 @@ fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         summary_generated_at: row.get(13)?,
         has_attachments: row.get(14)?,
         last_received_at: row.get(15)?,
+        summary_revision: row.get(16)?,
         match_snippet: None,
     })
 }
@@ -2926,7 +2990,11 @@ fn insert_demo(
     let participants = serde_json::to_string(&[participant]).expect("static data serializes");
     let labels = serde_json::to_string(&["INBOX"]).expect("static data serializes");
     transaction.execute(
-        "INSERT INTO threads VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0, 'default', NULL, NULL, 0, ?6)",
+        "INSERT INTO threads(
+            id, provider_thread_id, subject, snippet, participants_json, last_message_at,
+            unread, starred, archived, labels_json, trashed, account_id, summary,
+            summary_generated_at, has_attachments, last_received_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, 0, 'default', NULL, NULL, 0, ?6)",
         params![
             id,
             format!("demo-{id}"),
@@ -4718,6 +4786,7 @@ pub(crate) mod tests {
             match_snippet: None,
             summary: None,
             summary_generated_at: None,
+            summary_revision: None,
             has_attachments: false,
         }
     }
@@ -4918,13 +4987,14 @@ pub(crate) mod tests {
         assert_eq!(before.summary, None);
         assert_eq!(before.summary_generated_at, None);
 
-        database
+        assert!(database
             .set_thread_summary(
                 "welcome",
                 "- Point one\n- Point two",
                 "2026-03-05T16:30:00Z",
+                &before.last_message_at,
             )
-            .unwrap();
+            .unwrap());
 
         let after = database.get_thread("welcome").unwrap().thread;
         assert_eq!(after.summary.as_deref(), Some("- Point one\n- Point two"));
@@ -4932,6 +5002,23 @@ pub(crate) mod tests {
             after.summary_generated_at.as_deref(),
             Some("2026-03-05T16:30:00Z")
         );
+        assert_eq!(after.summary_revision.as_deref(), Some(before.last_message_at.as_str()));
+    }
+
+    #[test]
+    fn a_summary_for_an_older_revision_never_replaces_a_newer_one() {
+        let database = database();
+        let save = |summary: &str, revision: &str| {
+            database.set_thread_summary("welcome", summary, "2026-03-05T16:30:00Z", revision).unwrap()
+        };
+        assert!(save("newer", "2026-03-02T00:00:00Z"));
+        // A slower request that read the thread before the newer message.
+        assert!(!save("older", "2026-03-01T00:00:00Z"));
+        // Regenerating for the same revision still replaces it.
+        assert!(save("regenerated", "2026-03-02T00:00:00Z"));
+        let thread = database.get_thread("welcome").unwrap().thread;
+        assert_eq!(thread.summary.as_deref(), Some("regenerated"));
+        assert_eq!(thread.summary_revision.as_deref(), Some("2026-03-02T00:00:00Z"));
     }
 
     fn message(id: &str, thread_id: &str, date: &str, body: &str) -> NormalizedMessage {
@@ -4950,6 +5037,45 @@ pub(crate) mod tests {
             unsubscribe: None,
             attachments: vec![],
         }
+    }
+
+    #[test]
+    fn a_provider_copy_fetched_before_an_undelivered_mutation_does_not_undo_it() {
+        let database = database();
+        let account = "work@example.com";
+        let thread_id = "work@example.com:raced";
+        let mut server_copy = message("m1", "raced", "2026-01-01T00:00:00Z", "body");
+        server_copy.labels = vec!["INBOX".into(), "UNREAD".into(), "Label_keep".into()];
+        database.upsert_thread(account, &[server_copy.clone()]).unwrap();
+        let flags = |database: &Database| {
+            let thread = database.list_all_mail(Some(account)).unwrap().into_iter().find(|thread| thread.id == thread_id).unwrap();
+            (thread.archived, thread.unread, thread.starred, thread.labels.contains(&"Label_keep".to_string()))
+        };
+
+        // The user archives, reads, stars and unlabels the thread while a
+        // sync holds a copy fetched before any of that.
+        for mutation in [
+            ThreadMutation::Archive { thread_id: thread_id.into(), value: true },
+            ThreadMutation::Read { thread_id: thread_id.into(), value: true },
+            ThreadMutation::Star { thread_id: thread_id.into(), value: true },
+            ThreadMutation::Label { thread_id: thread_id.into(), label_id: "Label_keep".into(), value: false },
+        ] {
+            database.mutate_thread(&mutation).unwrap();
+        }
+        database
+            .apply_ingested_threads(account, &[("raced".into(), vec![server_copy.clone()], vec![])])
+            .unwrap();
+        assert_eq!(flags(&database), (true, false, true, false));
+
+        // In flight to the provider still counts as undelivered.
+        database.connection().unwrap().execute("UPDATE mutations SET state = 'running'", []).unwrap();
+        database.upsert_thread(account, &[server_copy.clone()]).unwrap();
+        assert_eq!(flags(&database), (true, false, true, false));
+
+        // Once delivered (or abandoned), the provider's copy is authoritative.
+        database.connection().unwrap().execute("UPDATE mutations SET state = 'done'", []).unwrap();
+        database.upsert_thread(account, &[server_copy]).unwrap();
+        assert_eq!(flags(&database), (false, true, false, true));
     }
 
     #[test]

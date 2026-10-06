@@ -135,6 +135,7 @@ import {
   type MutationTemplate,
 } from "./threadMutations";
 import {
+  isSummaryStale,
   sortByRecency,
   triageNow,
 } from "./threadPresentation";
@@ -181,6 +182,14 @@ export const NOTICE_TIMEOUT_MS = 6000;
 let noticeSequence = 0;
 
 /** Smooth scrolling, unless the reader asked the OS to reduce motion. */
+/** `record` without `key`, or `record` itself when it has no such entry. */
+function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
 function scrollBehavior(): ScrollBehavior {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
 }
@@ -652,6 +661,11 @@ export function App() {
   // from, even though the header already reflects the new view.
   const loadThreadsRef = useRef(loadThreads);
   loadThreadsRef.current = loadThreads;
+  // Identifies the thread list on screen, so work that outlives a view switch
+  // (a mutation's round trip, a later Undo) can tell whether to touch it.
+  const viewKey = [mailbox, activeAccountId ?? "", activeSplitInboxId ?? "", includeArchived].join("\u0000");
+  const viewKeyRef = useRef(viewKey);
+  viewKeyRef.current = viewKey;
 
   // Background accounts keep polling Gmail while a different account is
   // active in the UI; without this, their sidebar badge only catches up to
@@ -992,6 +1006,10 @@ export function App() {
       threads.filter((thread) => targetIds.includes(thread.id)).map((thread) => [thread.id, thread] as const),
     );
     const previousDetail = detail && targetIds.includes(detail.thread.id) ? detail : null;
+    // The list rows captured above belong to this view; they are only put
+    // back while it is still the one on screen.
+    const mutationView = viewKey;
+    const stillInView = () => viewKeyRef.current === mutationView;
     // "split" intentionally falls into the default branch below: a split
     // inbox's underlying set is the same unarchived/untrashed inbox scope,
     // so archiving/trashing/spamming a thread should remove it exactly like
@@ -1052,18 +1070,20 @@ export function App() {
       });
     }
 
-    if (failedIds.length > 0) {
+    if (failedIds.length > 0 && stillInView()) {
       setThreads((current) => {
         const restored = failedIds
           .map((id) => previous.get(id))
           .filter((thread): thread is Thread => Boolean(thread));
         return sortByRecency([...current.filter((thread) => !failedIds.includes(thread.id)), ...restored]);
       });
-      if (previousDetail && failedIds.includes(previousDetail.thread.id)) setDetail(previousDetail);
     }
+    if (failedIds.length > 0 && previousDetail && failedIds.includes(previousDetail.thread.id)) setDetail(previousDetail);
 
+    // Through the ref: the user may have switched mailbox or account during
+    // the round trip, and a reload must paint the view now on screen.
     if (removesFromView) {
-      await loadThreads(query);
+      await loadThreadsRef.current(queryRef.current);
     }
     if (document.visibilityState !== "visible" || !document.hasFocus()) {
       void mailClient.flushPending().then(setSyncStatus).catch(logBackgroundFailure("Pending mutation flush"));
@@ -1088,13 +1108,18 @@ export function App() {
     return {
       message,
       undoAction: async () => {
-        setThreads((current) => {
-          const restored = succeededIds
-            .map((id) => previous.get(id))
-            .filter((thread): thread is Thread => Boolean(thread));
-          return sortByRecency([...current.filter((thread) => !succeededIds.includes(thread.id)), ...restored]);
-        });
-        if (removesFromView && succeededIds.length === 1) setSelectedId(succeededIds[0]);
+        // Undo can come long after the change, from another mailbox or
+        // account. The server-side undo always runs, but the optimistic
+        // restore and reselection only apply to the view it was made in.
+        if (stillInView()) {
+          setThreads((current) => {
+            const restored = succeededIds
+              .map((id) => previous.get(id))
+              .filter((thread): thread is Thread => Boolean(thread));
+            return sortByRecency([...current.filter((thread) => !succeededIds.includes(thread.id)), ...restored]);
+          });
+          if (removesFromView && succeededIds.length === 1) setSelectedId(succeededIds[0]);
+        }
         await mailClient.mutateThreads(succeededIds.map((id) => buildThreadMutation(id, undoTemplate)));
         if (triageEvents) {
           succeededIds.forEach((id) => {
@@ -1109,10 +1134,10 @@ export function App() {
             });
           });
         }
-        await loadThreads(query);
+        await loadThreadsRef.current(queryRef.current);
       },
     };
-  }, [threads, detail, includeArchived, mailbox, selectedId, loadThreads, query, recordTriageEvent, setNotice, setSyncStatus]);
+  }, [threads, detail, includeArchived, mailbox, selectedId, viewKey, recordTriageEvent, setNotice, setSyncStatus]);
 
   const visibleThreads = useMemo(
     () => filterThreadsByMessageFilters(threads, activeMessageFilters),
@@ -1396,7 +1421,7 @@ export function App() {
     setThreads((current) =>
       current.map((thread) =>
         thread.id === threadId
-          ? { ...thread, summary: result.summary, summaryGeneratedAt: result.generatedAt }
+          ? { ...thread, summary: result.summary, summaryGeneratedAt: result.generatedAt, summaryRevision: result.revision }
           : thread,
       ),
     );
@@ -1404,7 +1429,7 @@ export function App() {
       current && current.thread.id === threadId
         ? {
             ...current,
-            thread: { ...current.thread, summary: result.summary, summaryGeneratedAt: result.generatedAt },
+            thread: { ...current.thread, summary: result.summary, summaryGeneratedAt: result.generatedAt, summaryRevision: result.revision },
           }
         : current,
     );
@@ -1415,12 +1440,7 @@ export function App() {
     if (summarizingRef.current.has(threadId)) return false;
     summarizingRef.current.add(threadId);
     setSummarizingIds(new Set(summarizingRef.current));
-    setSummaryErrors((current) => {
-      if (!(threadId in current)) return current;
-      const next = { ...current };
-      delete next[threadId];
-      return next;
-    });
+    setSummaryErrors((current) => omitKey(current, threadId));
     return true;
   }, []);
 
@@ -1454,11 +1474,28 @@ export function App() {
   const markSuggestionsFetched = useCallback((key: string) => {
     setActionFetchedKeys((current) => current.has(key) ? current : new Set(current).add(key));
   }, []);
-  const [actionAnalysisLoading, setActionAnalysisLoading] = useState(false);
-  const [actionAnalysisError, setActionAnalysisError] = useState<string | null>(null);
+  // Suggestion requests and their errors are tracked per thread revision, so
+  // one conversation's request in flight or failure never shows on (or
+  // blocks) another. The ref is the synchronous duplicate-request guard.
+  const actionAnalysisLoadingRef = useRef(new Set<string>());
+  const [actionAnalysisLoadingKeys, setActionAnalysisLoadingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [actionAnalysisErrors, setActionAnalysisErrors] = useState<Record<string, string>>({});
+  const beginActionAnalysis = useCallback((key: string) => {
+    if (actionAnalysisLoadingRef.current.has(key)) return false;
+    actionAnalysisLoadingRef.current.add(key);
+    setActionAnalysisLoadingKeys(new Set(actionAnalysisLoadingRef.current));
+    setActionAnalysisErrors((current) => omitKey(current, key));
+    return true;
+  }, []);
+  const endActionAnalysis = useCallback((key: string) => {
+    actionAnalysisLoadingRef.current.delete(key);
+    setActionAnalysisLoadingKeys(new Set(actionAnalysisLoadingRef.current));
+  }, []);
   const actionProposalKey = visibleDetail
     ? `${visibleDetail.thread.id}:${visibleDetail.thread.lastMessageAt}`
     : null;
+  const actionAnalysisLoading = Boolean(actionProposalKey && actionAnalysisLoadingKeys.has(actionProposalKey));
+  const actionAnalysisError = actionProposalKey ? actionAnalysisErrors[actionProposalKey] ?? null : null;
   const actionProposalSource = useMemo<ProposalSource | null>(() => visibleDetail && actionProposalKey
     ? { key: actionProposalKey, threadId: visibleDetail.thread.id, revision: visibleDetail.thread.lastMessageAt }
     : null, [actionProposalKey, visibleDetail]);
@@ -1473,7 +1510,10 @@ export function App() {
       || (actionProposalKey && actionFetchedKeys.has(actionProposalKey)),
   );
   useEffect(() => {
-    setActionAnalysisError(null);
+    // A conversation's suggestion error is shown until the reader leaves it.
+    if (!actionProposalKey) return;
+    const key = actionProposalKey;
+    return () => setActionAnalysisErrors((current) => omitKey(current, key));
   }, [actionProposalKey]);
   const actionAnalysisPreview = useMemo(() => {
     if (!visibleDetail) return null;
@@ -1490,15 +1530,16 @@ export function App() {
   }, [availabilityPreferences.timeZone, visibleDetail]);
 
   const runAnalyzeThread = useCallback(async () => {
-    if (!visibleDetail || !actionProposalKey || actionAnalysisLoading) return;
+    if (!visibleDetail || !actionProposalKey) return;
+    const proposalKey = actionProposalKey;
     if (!aiActionAvailable) {
-      setActionAnalysisError(aiActionFeatureEnabled
+      const message = aiActionFeatureEnabled
         ? "Set up an AI provider and API key in AI settings to get suggestions."
-        : "Turn on Suggestions in AI settings to get suggestions.");
+        : "Turn on Suggestions in AI settings to get suggestions.";
+      setActionAnalysisErrors((current) => ({ ...current, [proposalKey]: message }));
       return;
     }
-    setActionAnalysisLoading(true);
-    setActionAnalysisError(null);
+    if (!beginActionAnalysis(proposalKey)) return;
     try {
       const { provider, model, endpoint } = readAiRequestConfig("getting suggestions", "actionExtraction");
       const { proposals, hiddenCount } = await mailClient.analyzeThread(
@@ -1508,24 +1549,23 @@ export function App() {
         model,
         endpoint,
       );
-      setActionProposalSets((current) => ({ ...current, [actionProposalKey]: proposals }));
-      markSuggestionsFetched(actionProposalKey);
-      setActionHiddenCounts((current) => ({ ...current, [actionProposalKey]: hiddenCount }));
+      setActionProposalSets((current) => ({ ...current, [proposalKey]: proposals }));
+      markSuggestionsFetched(proposalKey);
+      setActionHiddenCounts((current) => ({ ...current, [proposalKey]: hiddenCount }));
     } catch (reason) {
-      setActionAnalysisError(errorMessage(reason));
+      setActionAnalysisErrors((current) => ({ ...current, [proposalKey]: errorMessage(reason) }));
     } finally {
-      setActionAnalysisLoading(false);
+      endActionAnalysis(proposalKey);
     }
-  }, [markSuggestionsFetched, actionAnalysisLoading, actionProposalKey, aiActionAvailable, aiActionFeatureEnabled, availabilityPreferences.timeZone, visibleDetail]);
+  }, [markSuggestionsFetched, actionProposalKey, aiActionAvailable, aiActionFeatureEnabled, availabilityPreferences.timeZone, beginActionAnalysis, endActionAnalysis, visibleDetail]);
 
   /** Summarizes and extracts suggestions in one provider call. */
   const runCombinedBrief = useCallback(async () => {
-    if (!visibleDetail || !actionProposalKey || actionAnalysisLoading) return;
+    if (!visibleDetail || !actionProposalKey) return;
     const threadId = visibleDetail.thread.id;
     const proposalKey = actionProposalKey;
-    if (!beginSummary(threadId)) return;
-    setActionAnalysisLoading(true);
-    setActionAnalysisError(null);
+    if (actionAnalysisLoadingRef.current.has(proposalKey) || !beginSummary(threadId)) return;
+    beginActionAnalysis(proposalKey);
     try {
       const { provider, model, endpoint } = readAiRequestConfig("getting a brief", "brief");
       const { summary, analysis } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
@@ -1537,9 +1577,9 @@ export function App() {
       setSummaryErrors((current) => ({ ...current, [threadId]: errorMessage(error) }));
     } finally {
       endSummary(threadId);
-      setActionAnalysisLoading(false);
+      endActionAnalysis(proposalKey);
     }
-  }, [markSuggestionsFetched, actionAnalysisLoading, actionProposalKey, applySummary, availabilityPreferences.timeZone, beginSummary, endSummary, visibleDetail]);
+  }, [markSuggestionsFetched, actionProposalKey, applySummary, availabilityPreferences.timeZone, beginActionAnalysis, beginSummary, endActionAnalysis, endSummary, visibleDetail]);
 
   /**
    * Fetches whatever part of the brief is missing for the visible thread, in
@@ -1550,8 +1590,7 @@ export function App() {
   const runBrief = useCallback(async ({ force = false, only }: { force?: boolean; only?: "summary" | "suggestions" } = {}) => {
     if (!visibleDetail || !actionProposalKey) return;
     const { thread } = visibleDetail;
-    const summaryFresh = Boolean(thread.summary)
-      && !(thread.summaryGeneratedAt && thread.lastMessageAt > thread.summaryGeneratedAt);
+    const summaryFresh = Boolean(thread.summary) && !isSummaryStale(thread);
     const needSummary = aiSummaryAvailable && (force || !summaryFresh);
     const needSuggestions = aiActionAvailable
       && (force || !actionFetchedKeys.has(actionProposalKey));

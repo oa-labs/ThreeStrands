@@ -5,6 +5,7 @@ import { MeetingScheduler, type ScheduleSlot } from "./MeetingScheduler";
 import { planMeeting } from "./scheduling";
 import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
+import { isSummaryStale } from "./threadPresentation";
 
 export const THREAD_ASSIST_ID = "thread-assist";
 
@@ -90,7 +91,7 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
   const title = summary.available ? "Brief" : "Suggestions";
   const summaryText = summary.available ? thread.summary : null;
   const copied = Boolean(summaryText) && copiedSummary === summaryText;
-  const stale = Boolean(summaryText && thread.summaryGeneratedAt && thread.lastMessageAt > thread.summaryGeneratedAt);
+  const stale = Boolean(summaryText) && isSummaryStale(thread);
   const busy = loading || summary.pending;
   const generated = Boolean(summaryText) || suggestions.requested;
   const showSuggestions = suggestions.available && (suggestions.requested || suggestions.proposals.length > 0);

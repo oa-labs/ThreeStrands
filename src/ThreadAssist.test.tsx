@@ -21,6 +21,7 @@ const detail: ThreadDetail = {
     accountId: "you@example.com",
     summary: null,
     summaryGeneratedAt: null,
+    summaryRevision: null,
     hasAttachments: false,
   },
   messages: [{
@@ -147,6 +148,14 @@ describe("ThreadAssist", () => {
 
   it("flags a summary that predates the newest message", () => {
     render(<ThreadAssist {...props({ detail: { ...summarized, thread: { ...summarized.thread, lastMessageAt: "2026-09-20T09:00:00Z" } } })} />);
+    expect(screen.getByText("New messages since this brief.")).toBeInTheDocument();
+  });
+
+  it("flags mail that arrived while the brief was being written, even though it predates the save", () => {
+    // Written from the thread as of 10:00, saved at 11:00; a message sent at
+    // 10:30 arrived during the provider call.
+    const thread = { ...summarized.thread, summaryRevision: "2026-09-19T10:00:00Z", summaryGeneratedAt: "2026-09-19T11:00:00Z", lastMessageAt: "2026-09-19T10:30:00Z" };
+    render(<ThreadAssist {...props({ detail: { ...summarized, thread } })} />);
     expect(screen.getByText("New messages since this brief.")).toBeInTheDocument();
   });
 

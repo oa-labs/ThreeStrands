@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Thread } from "./domain";
-import { formatAttachmentSize, formatMailTimestamp, sortByRecency, splitAttachmentName } from "./threadPresentation";
+import { formatAttachmentSize, formatMailTimestamp, isSummaryStale, sortByRecency, splitAttachmentName } from "./threadPresentation";
 
 const thread = (id: string, received: string): Thread => ({
   id,
@@ -18,10 +18,22 @@ const thread = (id: string, received: string): Thread => ({
   accountId: "account@example.com",
   summary: null,
   summaryGeneratedAt: null,
+  summaryRevision: null,
   hasAttachments: false,
 });
 
 describe("thread presentation helpers", () => {
+  it("judges a summary stale against the revision it was written from", () => {
+    const base = { ...thread("t", "2026-09-19T10:30:00Z"), summary: "- Brief" };
+    // Mail newer than the revision is stale even if it predates the save.
+    expect(isSummaryStale({ ...base, summaryRevision: "2026-09-19T10:00:00Z", summaryGeneratedAt: "2026-09-19T11:00:00Z" })).toBe(true);
+    expect(isSummaryStale({ ...base, summaryRevision: "2026-09-19T10:30:00Z", summaryGeneratedAt: "2026-09-19T11:00:00Z" })).toBe(false);
+    // Summaries saved before revisions were recorded use their generation time.
+    expect(isSummaryStale({ ...base, summaryRevision: null, summaryGeneratedAt: "2026-09-19T10:00:00Z" })).toBe(true);
+    expect(isSummaryStale({ ...base, summaryRevision: null, summaryGeneratedAt: "2026-09-19T11:00:00Z" })).toBe(false);
+    expect(isSummaryStale({ ...base, summary: null, summaryRevision: "2026-09-19T10:00:00Z" })).toBe(false);
+  });
+
   it("formats attachment sizes at each unit boundary", () => {
     expect(formatAttachmentSize(512)).toBe("512 B");
     expect(formatAttachmentSize(1024)).toBe("1 KB");
