@@ -14,10 +14,12 @@ import { formatDue, isActiveTaskStatus, isCompletedToday, isDue, isOverdue } fro
  * day ends. Renders nothing while there are none.
  */
 export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, onEditTask, onDraftFollowUp, onTasksChanged }: {
-  thread: Thread;
+  /** The open conversation; null lists only the person's tasks, as while composing a new message. */
+  thread: Thread | null;
   contactId?: string | null;
   refreshKey: number;
-  onAddTask(): void;
+  /** Shows the Add control; tasks are added from a conversation. */
+  onAddTask?(): void;
   onEditTask(task: ThreadTask): void;
   onDraftFollowUp(task: ThreadTask): void;
   onTasksChanged(): void;
@@ -26,24 +28,26 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
 
+  const threadId = thread?.id ?? null;
+  const accountId = thread?.accountId ?? null;
   useEffect(() => {
     let active = true;
     Promise.all([
-      mailClient.listTasks(thread.accountId),
+      accountId ? mailClient.listTasks(accountId) : Promise.resolve([]),
       contactId ? mailClient.listContactTasks(contactId) : Promise.resolve([]),
     ])
       .then(([accountTasks, contactTasks]) => {
         if (!active) return;
         const now = new Date();
         const shown = (task: ThreadTask) => isActiveTaskStatus(task.status) || isCompletedToday(task, now);
-        const here = accountTasks.filter((task) => task.threadId === thread.id && shown(task));
-        const elsewhere = contactTasks.filter((task) => task.threadId !== thread.id && shown(task));
+        const here = accountTasks.filter((task) => task.threadId === threadId && shown(task));
+        const elsewhere = contactTasks.filter((task) => task.threadId !== threadId && shown(task));
         setTasks([...here, ...elsewhere]);
         setError(null);
       })
       .catch((reason: unknown) => { if (active) setError(errorMessage(reason)); });
     return () => { active = false; };
-  }, [contactId, refreshKey, thread.accountId, thread.id]);
+  }, [accountId, contactId, refreshKey, threadId]);
 
   // Checking or unchecking updates the row in place so a done task stays where it was.
   const toggleDone = async (task: ThreadTask) => {
@@ -65,11 +69,11 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
       id="tasks"
       className="context-tasks"
       title="Tasks"
-      label="Conversation tasks"
+      label={thread ? "Conversation tasks" : "Tasks with this person"}
       count={tasks.filter((task) => isActiveTaskStatus(task.status)).length}
-      actions={<HoverTooltip title="Add task" shortcut="d" placement="bottom">
+      actions={onAddTask ? <HoverTooltip title="Add task" shortcut="d" placement="bottom">
         <button type="button" className="context-icon-button" aria-label="Add task" onClick={onAddTask}><Plus size={15} /></button>
-      </HoverTooltip>}
+      </HoverTooltip> : undefined}
       rows={tasks.map((task) => {
         const due = formatDue(task);
         const done = !isActiveTaskStatus(task.status);
@@ -85,7 +89,7 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
           </HoverTooltip>
           <button type="button" className="context-task-main" onClick={() => onEditTask(task)}>
             <strong>{task.title}</strong>
-            {task.threadId !== thread.id && task.subjectSnapshot ? <span className="context-task-source">{task.subjectSnapshot}</span> : null}
+            {task.threadId !== thread?.id && task.subjectSnapshot ? <span className="context-task-source">{task.subjectSnapshot}</span> : null}
             {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
           </button>
           {task.kind === "follow_up" && isDue(task) ? <button type="button" className="task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button> : null}

@@ -49,6 +49,7 @@ export function MeetingScheduler({
   onConfirmTime,
   onMoreTimes,
   onOpenCalendarSettings,
+  intoDraft = false,
 }: {
   plan: SchedulePlan;
   preferences: AvailabilityPreferences;
@@ -58,6 +59,8 @@ export function MeetingScheduler({
   onConfirmTime(slot: ScheduleSlot): void;
   onMoreTimes(day: Date, durationMinutes: number): void;
   onOpenCalendarSettings(): void;
+  /** Times go into the open draft rather than a new reply. */
+  intoDraft?: boolean;
 }) {
   // Plans computed from "now" differ on every render; keep the one this
   // scheduler mounted with. Callers key the scheduler by what it schedules.
@@ -172,7 +175,7 @@ export function MeetingScheduler({
         {(() => {
           const chosen = state.candidates.filter((candidate) => selected.has(slotKey(candidate)));
           return <div className="meeting-scheduler-actions">
-            <button type="button" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>Draft Reply With {chosen.length === 1 ? "This Time" : "These Times"}</button>
+            <button type="button" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 1 ? "This Time" : "These Times"}</button>
             <button type="button" disabled={chosen.length !== 1} title={chosen.length !== 1 ? "Select one time to add it" : undefined} onClick={() => onAddToCalendar(chosen[0])}><CalendarPlus size={13} /> Add to Calendar</button>
             {moreTimes}
           </div>;

@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Pin, PinOff, UserPlus, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactSuggestion } from "./domain";
-import { parseAddress } from "./emailAddress";
+import { looksLikeCompleteAddress, parseAddress } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 
 type Props = {
@@ -24,16 +24,6 @@ type Chip = { email: string; displayName: string | null };
 // during `dragover`, only at `drop`, so the source can't be told "did this
 // land somewhere real?" any other way than the drop target calling back here.
 let dragOrigin: { field: Props["id"]; remove(): void } | null = null;
-
-// A loose "is this a full address yet" check, not RFC 5322 validation — just
-// enough to decide whether a segment is a committed chip or still being
-// typed. The server validates for real at send time.
-function looksComplete(email: string): boolean {
-  const at = email.indexOf("@");
-  if (at <= 0) return false;
-  const domain = email.slice(at + 1);
-  return domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".");
-}
 
 function toChip(segment: string): Chip {
   const parsed = parseAddress(segment);
@@ -60,7 +50,7 @@ function mergeChip(chips: Chip[], candidate: Chip): Chip[] {
 function parseExternalValue(value: string): { chips: Chip[]; draftText: string } {
   const segments = value.split(",").map((segment) => segment.trim());
   const last = segments[segments.length - 1] ?? "";
-  const lastIsComplete = last.length > 0 && looksComplete(parseAddress(last).email);
+  const lastIsComplete = last.length > 0 && looksLikeCompleteAddress(parseAddress(last).email);
   const committed = lastIsComplete ? segments : segments.slice(0, -1);
   const chips = committed.filter((segment) => segment.length > 0).map(toChip);
   return { chips, draftText: lastIsComplete ? "" : last };
@@ -117,7 +107,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
     (contact) => !chips.some((chip) => chip.email.toLowerCase() === contact.email.toLowerCase()),
   );
   const draftEmail = draftText.trim() ? parseAddress(draftText.trim()).email : "";
-  const candidateEmail = draftEmail && looksComplete(draftEmail) ? draftEmail : null;
+  const candidateEmail = draftEmail && looksLikeCompleteAddress(draftEmail) ? draftEmail : null;
   const alreadyKnown = candidateEmail
     ? visibleSuggestions.some((contact) => contact.email.toLowerCase() === candidateEmail.toLowerCase())
     : true;

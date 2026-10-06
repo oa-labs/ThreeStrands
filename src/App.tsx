@@ -91,6 +91,7 @@ import { isActiveTaskStatus } from "./taskViews";
 import { isKeepInTouchDue } from "./keepInTouch";
 import type { ContactsView } from "./ContactsWorkspace";
 import { ContextPanel } from "./ContextPanel";
+import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { ThreadTasks } from "./ThreadTasks";
@@ -315,6 +316,9 @@ export function App() {
     && correspondence.activeDraft.mode !== "new"
     && visibleDetail?.messages.some((message) => message.id === correspondence.activeDraft?.sourceId),
   );
+  // A new message, a forward, or a draft opened from the list: the reader
+  // shows only the composer, so the context panel follows the draft instead.
+  const composingApart = Boolean(correspondence.activeDraft && !composerBelongsToVisibleThread);
   const displayedMessages = useMemo(
     () => visibleDetail ? messagesWithQueuedReplies(visibleDetail, correspondence.outbox) : [],
     [visibleDetail, correspondence.outbox],
@@ -1400,13 +1404,11 @@ export function App() {
 
   const draftAvailabilityReply = useCallback((candidates: AvailabilityCandidate[]) => {
     if (candidates.length === 0) return;
-    const sourceMessageId = visibleDetail?.messages.at(-1)?.id;
-    correspondence.replyWithAvailability(
-      formatAvailabilityText(candidates, availabilityPreferences.timeZone),
-      sourceMessageId,
-    );
+    const text = formatAvailabilityText(candidates, availabilityPreferences.timeZone);
+    if (composingApart) correspondence.insertIntoDraft(text);
+    else correspondence.replyWithAvailability(text, visibleDetail?.messages.at(-1)?.id);
     setRightWorkspace(null);
-  }, [availabilityPreferences.timeZone, correspondence, visibleDetail]);
+  }, [availabilityPreferences.timeZone, composingApart, correspondence, visibleDetail]);
 
   const draftFollowUp = useCallback(async (task: ThreadTask) => {
     try {
@@ -1844,6 +1846,25 @@ export function App() {
       source,
     });
   }, [ownAddresses, refreshCalendarOptions, visibleDetail]);
+  // Add to Calendar from the compose panel's open times: the draft's
+  // recipients are invited and its subject names the meeting.
+  const addComposeMeeting = useCallback((slot: ScheduleSlot, invitees: string[]) => {
+    void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
+    setMeetingEventDraft({
+      start: new Date(slot.start),
+      end: new Date(slot.end),
+      title: correspondence.liveDraft?.subject.trim() ?? "",
+      invitees,
+      description: "",
+      source: null,
+    });
+  }, [correspondence.liveDraft?.subject, refreshCalendarOptions]);
+  // Opening a conversation replaces the composer, so save the draft first; it stays in Drafts.
+  const openThreadFromDraft = useCallback((threadId: string) => {
+    void correspondence.flushDraft()
+      .then(() => openTaskThread(threadId))
+      .catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
+  }, [correspondence, openTaskThread, setNotice]);
   const meetingCreated = useCallback(() => {
     const source = meetingEventDraft?.source;
     if (source) removeActionProposal(source.from, source.proposal);
@@ -2757,20 +2778,53 @@ export function App() {
           selectedCalendarAccountIds={[...new Set(calendar.calendars.filter((option) => option.selected).map((option) => option.accountId))]}
           availabilityPreferences={availabilityPreferences}
           onDraftAvailability={draftAvailabilityReply}
+          draftLabel={composingApart ? "Insert Selected Times" : undefined}
           onOpenSettings={() => {
             setRightWorkspace(null);
             openSettingsAt("calendarAccounts");
           }}
         />
       ) : null}
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? (
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && composingApart && correspondence.liveDraft ? (
+        <ComposeContext
+          key={correspondence.liveDraft.id}
+          draft={correspondence.liveDraft}
+          accounts={accounts}
+          calendarConnected={calendarConnected}
+          preferences={availabilityPreferences}
+          taskRefreshKey={taskRevision}
+          onAttach={correspondence.context.attachFiles}
+          onReplaceRecipient={correspondence.replaceDraftRecipient}
+          onSwitchAccount={correspondence.switchDraftAccount}
+          onInsertTimes={draftAvailabilityReply}
+          onAddToCalendar={addComposeMeeting}
+          onMoreTimes={openCalendarAt}
+          onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
+          onOpenEvent={(event) => openCalendarAt(eventDate(event), availabilityPreferences.defaultDurationMinutes)}
+          onOpenThread={openThreadFromDraft}
+          onShowMessage={(threadId) => openThreadFromDraft(threadId)}
+          onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
+          onDraftFollowUp={(task) => void draftFollowUp(task)}
+          onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
+        />
+      ) : null}
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && !composingApart ? (
         <ContextPanel
           detail={visibleDetail}
           accounts={accounts}
           selectedEmail={contextPersonEmail}
           onOpenThread={openTaskThread}
           onShowMessage={showMessage}
-          assist={visibleDetail ? (
+          assist={visibleDetail ? (<>
+            {composerBelongsToVisibleThread && correspondence.liveDraft ? (
+              <ReplyChecks
+                draft={correspondence.liveDraft}
+                accounts={accounts}
+                onAttach={correspondence.context.attachFiles}
+                onReplaceRecipient={correspondence.replaceDraftRecipient}
+                onSwitchAccount={correspondence.switchDraftAccount}
+              />
+            ) : null}
             <ThreadAssist
               detail={visibleDetail}
               summary={{ enabled: aiSummaryFeatureEnabled, available: aiSummaryAvailable, pending: summaryPending }}
@@ -2797,7 +2851,7 @@ export function App() {
               onRun={(force) => void runBrief({ force })}
               onOpenSettings={() => openSettingsAt("ai")}
             />
-          ) : null}
+          </>) : null}
           chat={(person) => visibleDetail ? (
             <ThreadChat
               key={visibleDetail.thread.id}

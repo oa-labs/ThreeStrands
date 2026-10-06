@@ -2044,6 +2044,21 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .context-outline-filter { display:inline-flex; gap:2px; }
 .context-outline-filter button { padding:1px 7px; border:1px solid transparent; border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; cursor:pointer; }
 .context-outline-filter button[aria-pressed="true"] { border-color:var(--border-strong); color:var(--text); background:var(--hover); }
+/* Compose context: the panel while writing a message outside the open conversation. */
+.compose-check { display:grid; gap:4px; padding:6px 0 6px 10px; border-left:2px solid var(--border); color:var(--muted); font-size:var(--type-sm); line-height:1.4; }
+.compose-check + .compose-check { margin-top:4px; }
+.compose-check strong { color:var(--text); font-weight:500; overflow-wrap:anywhere; }
+.compose-check-warning { border-left-color:var(--warning); color:var(--text); }
+.compose-check button { justify-self:start; padding:3px 8px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); color:var(--text); background:var(--hover); font:inherit; font-size:var(--type-xs); cursor:pointer; overflow-wrap:anywhere; text-align:left; }
+.compose-recipient-chips { display:flex; flex-wrap:wrap; gap:4px; padding-top:12px; }
+.compose-recipient-chips button { max-width:100%; padding:2px 8px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; font-size:var(--type-xs); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.compose-recipient-chips button[aria-pressed="true"] { border-color:var(--border-strong); color:var(--text); background:var(--hover); }
+.compose-recipient { display:grid; gap:2px; }
+.compose-recipient-name { color:var(--text); font-size:calc(var(--type-base) + 1px); font-weight:600; line-height:1.3; overflow-wrap:anywhere; }
+.compose-recipient-email, .compose-recipient-role { color:var(--muted); font-size:var(--type-xs); overflow-wrap:anywhere; }
+.compose-recipient-facts { display:grid; gap:1px; margin:4px 0 0; padding:0; list-style:none; color:var(--muted); font-size:var(--type-xs); line-height:1.4; }
+.compose-recipient-notes { display:-webkit-box; margin:6px 0 0; overflow:hidden; color:var(--text); font-size:var(--type-sm); line-height:1.4; white-space:pre-wrap; -webkit-box-orient:vertical; -webkit-line-clamp:4; }
+.compose-context-empty { padding:12px 0; }
 .context-outline-row { display:grid; width:100%; gap:2px; padding:6px 4px; border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
 .context-outline-row:hover { background:var(--hover); }
 .context-outline-meta { display:flex; justify-content:space-between; gap:8px; min-width:0; }

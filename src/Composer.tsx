@@ -23,12 +23,21 @@ import {
   serializeComposeBody,
 } from "./richText";
 import { SnippetPicker } from "./SnippetPicker";
+import { replaceAddress } from "./composeChecks";
 import { firstNameFromRecipient, renderSnippetBody } from "./snippets";
 import { recordSnippetUsed } from "./settings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
-export type ComposerHandle = { flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; discard(): void; draftReplyWithAI(): void };
+export type ComposerHandle = {
+  flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; discard(): void; draftReplyWithAI(): void;
+  /** Inserts plain text where the caret last was in the body, or at the top when it never was. */
+  insertText(text: string): void;
+  /** Swaps one recipient address for another, in whichever field holds it. */
+  replaceRecipient(from: string, to: string): void;
+  /** Changes a new message's sending account. */
+  switchAccount(email: string): void;
+};
 
 export const Composer = forwardRef<ComposerHandle, {
   draft: Draft;
@@ -41,7 +50,9 @@ export const Composer = forwardRef<ComposerHandle, {
   onQueued(item: OutboxItem): void;
   availabilityText?: string | null;
   replyAssistInstruction?: string | null;
-}>(function Composer({ draft: initial, accounts, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, replyAssistInstruction = null }, ref) {
+  /** Called with the draft as edits are made; body text arrives at each autosave. */
+  onDraftChange?(draft: Draft): void;
+}>(function Composer({ draft: initial, accounts, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, replyAssistInstruction = null, onDraftChange }, ref) {
   const [draft, setDraft] = useState(initial);
   const latest = useRef(initial);
   const generation = useRef(0);
@@ -64,6 +75,9 @@ export const Composer = forwardRef<ComposerHandle, {
   const [confirmAddToExisting, setConfirmAddToExisting] = useState(false);
   const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
   const savedSnippetRange = useRef<Range | null>(null);
+  // Where the caret was when the body last lost focus, so text inserted from
+  // the context panel lands there rather than at the top.
+  const lastBodyRange = useRef<Range | null>(null);
   const panel = useRef<HTMLDivElement>(null);
   const bodyEditor = useRef<HTMLDivElement>(null);
   const bodyDirty = useRef(false);
@@ -166,6 +180,23 @@ export const Composer = forwardRef<ComposerHandle, {
   function changeAccount(email: string) {
     if (email === latest.current.account) return;
     void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); latest.current = next; setDraft(next); });
+  }
+  function insertText(text: string) {
+    const editor = bodyEditor.current;
+    if (!editor || busyRef.current) return;
+    const saved = lastBodyRange.current;
+    const range = saved && editor.contains(saved.startContainer) ? saved : document.createRange();
+    if (range !== saved) { range.selectNodeContents(editor); range.collapse(true); }
+    editor.focus();
+    insertHtmlAtRange(editor, range, sanitizeComposeHtml(plainTextToHtml(`${text}\n`)));
+    lastBodyRange.current = null;
+    editBody();
+  }
+  function replaceRecipient(from: string, to: string) {
+    for (const field of ["to", "cc", "bcc"] as const) {
+      const next = replaceAddress(latest.current[field], from, to);
+      if (next !== latest.current[field]) { edit(field, next); return; }
+    }
   }
   function draftReplyWithAI() {
     if (!replyAssistAvailable || replyAssistOpen) return;
@@ -292,7 +323,7 @@ export const Composer = forwardRef<ComposerHandle, {
     };
     reader.readAsDataURL(file);
   }
-  useImperativeHandle(ref, () => ({ flush, send, attach, close, discard, draftReplyWithAI, prepareExit: async () => {
+  useImperativeHandle(ref, () => ({ flush, send, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, switchAccount: changeAccount, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
     try { await flush(); }
@@ -363,6 +394,7 @@ export const Composer = forwardRef<ComposerHandle, {
     pendingRecipientFocus.current = null;
     panel.current?.querySelector<HTMLInputElement>(`[name="${field}"]`)?.focus();
   }, [showBlankCopies]);
+  useEffect(() => { onDraftChange?.(draft); }, [draft, onDraftChange]);
   useEscapeDismiss(close);
   return <div ref={panel} className="composer composer-inline" role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward Message" : "Reply Message"}
       onKeyDown={(event) => {
@@ -405,6 +437,11 @@ export const Composer = forwardRef<ComposerHandle, {
           data-placeholder="Write your message…"
           dangerouslySetInnerHTML={{ __html: initialBodyHtml }}
           onInput={editBody}
+          onBlur={() => {
+            const selection = window.getSelection();
+            const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+            lastBodyRange.current = range && bodyEditor.current?.contains(range.startContainer) ? range.cloneRange() : null;
+          }}
           onPaste={(event) => {
             const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
             if (images.length) {

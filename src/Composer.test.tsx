@@ -725,3 +725,60 @@ describe("Composer recipient autocomplete", () => {
     expect(within(ccField).getByRole("button", { name: "Remove hello@threestrands.local" })).toBeInTheDocument();
   });
 });
+
+describe("Composer context panel actions", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("reports recipient edits as they happen and body text at autosave", async () => {
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const onDraftChange = vi.fn();
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} onDraftChange={onDraftChange} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Lunch" } });
+    expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ subject: "Lunch" }));
+
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    editor.innerHTML = "See you there";
+    fireEvent.input(editor);
+    await waitFor(() => expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ body: "See you there" })));
+  });
+
+  it("swaps one recipient for another and leaves the rest", async () => {
+    const onDraftChange = vi.fn();
+    const ref = createRef<ComposerHandle>();
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => next);
+    render(<Composer ref={ref} draft={{ ...draft, to: "Ann <ann@example.com>, jonh@example.com, " }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} onDraftChange={onDraftChange} />);
+    act(() => ref.current!.replaceRecipient("JONH@example.com", "John <john@example.com>"));
+    expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ to: "Ann <ann@example.com>, John <john@example.com>" }));
+    expect(screen.getByText("John")).toBeInTheDocument();
+  });
+
+  it("inserts text where the caret was before the body lost focus, else at the top", () => {
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => next);
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={{ ...draft, body: "Hi Ann,\nBest, Me" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+
+    act(() => ref.current!.insertText("Top line"));
+    expect(editor.textContent?.startsWith("Top line")).toBe(true);
+
+    // Put the caret after "Hi Ann," and leave the body.
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let greeting: Node | null = walker.nextNode();
+    while (greeting && !greeting.textContent?.includes("Hi Ann,")) greeting = walker.nextNode();
+    const caret = document.createRange();
+    caret.setStart(greeting!, greeting!.textContent!.indexOf("Hi Ann,") + "Hi Ann,".length);
+    caret.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(caret);
+    fireEvent.blur(editor);
+
+    act(() => ref.current!.insertText("Here are some times"));
+    const text = editor.textContent ?? "";
+    expect(text.indexOf("Hi Ann,")).toBeLessThan(text.indexOf("Here are some times"));
+    expect(text.indexOf("Here are some times")).toBeLessThan(text.indexOf("Best, Me"));
+  });
+});

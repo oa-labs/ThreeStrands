@@ -8,6 +8,8 @@ export const THREAD_OUTLINE_MIN_MESSAGES = 6;
 export const CONTACT_FILE_LIMIT = 50;
 /** People and conversations fetched for the same-organization section. */
 export const DOMAIN_CONTEXT_LIMIT = 8;
+/** Addresses loaded per account for the compose checks; the backend's own maximum. */
+export const KNOWN_ADDRESS_LIMIT = 5_000;
 
 /** Messages this close together count as one arrival when estimating cadence. */
 const BURST_DAYS = 3;
@@ -109,6 +111,11 @@ const PUBLIC_MAIL_DOMAINS = new Set([
   "yandex.com", "zoho.com",
 ]);
 
+/** Whether a domain is a personal mailbox provider rather than an organization. */
+export function isPersonalMailDomain(domain: string): boolean {
+  return PUBLIC_MAIL_DOMAINS.has(domain.trim().toLocaleLowerCase());
+}
+
 /**
  * The organization domain to look up colleagues at, or null for personal
  * mailbox providers and for the user's own domains, whose correspondents are
@@ -118,7 +125,7 @@ export function organizationDomain(email: string, ownEmails: string[]): string |
   const at = email.lastIndexOf("@");
   if (at <= 0) return null;
   const domain = email.slice(at + 1).trim().toLocaleLowerCase();
-  if (!domain.includes(".") || PUBLIC_MAIL_DOMAINS.has(domain)) return null;
+  if (!domain.includes(".") || isPersonalMailDomain(domain)) return null;
   if (ownEmails.some((own) => own.toLocaleLowerCase().endsWith(`@${domain}`))) return null;
   return domain;
 }

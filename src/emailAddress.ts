@@ -42,6 +42,16 @@ export function formatDisplayName(value: string): string {
   return delegatedName?.trim() || name;
 }
 
+// A loose "is this a full address yet" check, not RFC 5322 validation — just
+// enough to decide whether a segment is a committed recipient or still being
+// typed. The server validates for real at send time.
+export function looksLikeCompleteAddress(email: string): boolean {
+  const at = email.indexOf("@");
+  if (at <= 0) return false;
+  const domain = email.slice(at + 1);
+  return domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".");
+}
+
 // Splits an RFC-style address list without treating commas inside quoted
 // display names or angle brackets as recipient separators. Stored mail can
 // also carry an unquoted comma in a display name ("Daniel O'Connor, CFA®

@@ -265,6 +265,7 @@ export function CalendarSidebar({
   embedded = false,
   initialDate,
   initialDurationMinutes,
+  draftLabel = "Draft Reply With Selected Times",
 }: {
   onClose(): void;
   onOpenSettings(): void;
@@ -276,6 +277,8 @@ export function CalendarSidebar({
   initialDate?: Date;
   /** Starts availability checks at a meeting's duration. */
   initialDurationMinutes?: number;
+  /** The label of the button that hands selected times to `onDraftAvailability`. */
+  draftLabel?: string;
 }) {
   const [date, setDate] = useState(() => startOfLocalDay(initialDate ?? new Date()));
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
@@ -444,7 +447,7 @@ export function CalendarSidebar({
                 type="button"
                 className="availability-draft-reply"
                 onClick={() => onDraftAvailability(availability.candidates.filter((candidate) => selectedCandidates.has(`${candidate.start}:${candidate.end}`)))}
-              >Draft Reply With Selected Times</button>
+              >{draftLabel}</button>
             ) : null}
             {availability.candidates.length === 0 ? <p className="calendar-grid-status">No open working-hours slots found.</p> : null}
           </> : null}

@@ -35,6 +35,27 @@ it("keeps one read-only context panel beside the conversation; Shift+A reveals s
   expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
 });
 
+it("follows a new message's recipients in the context panel instead of the conversation behind it", async () => {
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  expect(screen.getByRole("complementary", { name: "Conversation context" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+  const composer = await screen.findByRole("dialog", { name: "New Message" });
+  const panel = await screen.findByRole("complementary", { name: "Compose context" });
+  expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
+  expect(panel).toHaveTextContent("Add a recipient to see your history with them.");
+
+  const to = within(composer).getByRole("textbox", { name: "To" });
+  fireEvent.change(to, { target: { value: "hello@threestrands.local," } });
+  expect(await within(panel).findByRole("region", { name: /^About / })).toBeInTheDocument();
+
+  fireEvent.click(within(composer).getByRole("button", { name: "Save and Close Draft" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "New Message" })).not.toBeInTheDocument());
+  expect(screen.getByRole("complementary", { name: "Conversation context" })).toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Compose context" })).not.toBeInTheDocument();
+});
+
 it("shows a conversation participant on the next meeting and opens its details in the calendar", async () => {
   clearScheduleCache();
   vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([

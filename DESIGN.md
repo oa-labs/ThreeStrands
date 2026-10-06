@@ -101,6 +101,29 @@ add a second always-on panel beside it; new conversation
 context belongs in this panel as a section, in the group that matches its
 subject.
 
+While a new message, forward, or reopened draft fills the reader, the panel
+follows the draft instead of the conversation behind it. It shows "Before you
+send" checks, the selected recipient (name, role and company, the same history
+facts as the contact card, and the user's notes), Availability, then that
+person's tasks, upcoming meetings with any recipient, recent emails, files, and
+others at their organization. The selected recipient is the first complete
+address in To, Cc, then Bcc; with several, small chips pick whose history to
+show, since there is no message header to click. Availability searches the
+calendar only when the user presses Find Times, and chosen times go into the
+draft at the caret. Nothing in this panel replaces the draft: meetings open the
+Calendar sidebar beside it, and opening an email saves the draft first.
+
+"Before you send" checks are local, deterministic, and never block sending:
+the user's own words promise an attachment ("attached", "attaching",
+"enclosed") but none is attached, the subject is empty, an address the user
+has never corresponded with is one or two edits from one they write to (with a
+one-click fix), a new message or forward goes to someone for the first time, a
+new message's recipients were written to only from another account (with a
+switch), or a mostly internal message includes outsiders. A reply in the open
+conversation shows the same section at the top of the conversation panel,
+without the first-email note, since reply recipients come from the
+conversation. The section is left out when nothing needs a look.
+
 Every section heading follows one rule: an uppercase label with no icon,
 then the item count (in a bordered badge, like the question box's key hint)
 and any actions (such as Add) at the right edge. List

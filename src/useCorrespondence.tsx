@@ -32,6 +32,8 @@ export function useCorrespondence(
   const [activeAvailabilityText, setActiveAvailabilityText] = useState<string | null>(null);
   const [activeReplyAssistInstruction, setActiveReplyAssistInstruction] = useState<string | null>(null);
   const [activeFollowUpTaskId, setActiveFollowUpTaskId] = useState<string | null>(null);
+  // The open draft as the composer last reported it, for the context panel.
+  const [liveDraft, setLiveDraft] = useState<Draft | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [outbox, setOutbox] = useState<OutboxItem[]>([]);
   const [error, setError] = useState("");
@@ -176,6 +178,10 @@ export function useCorrespondence(
   const discardDraft = useCallback(() => editor.current?.discard(), []);
   const undoSend = useCallback(() => { void undo(); }, [undo]);
   const composerActive = Boolean(active);
+  const flushDraft = useCallback(async () => { await editor.current?.flush(); }, []);
+  const insertIntoDraft = useCallback((text: string) => editor.current?.insertText(text), []);
+  const replaceDraftRecipient = useCallback((from: string, to: string) => editor.current?.replaceRecipient(from, to), []);
+  const switchDraftAccount = useCallback((email: string) => editor.current?.switchAccount(email), []);
 
   const context = useMemo(() => ({
     closing,
@@ -207,6 +213,7 @@ export function useCorrespondence(
       onDeleteSnippet={onDeleteSnippet}
       availabilityText={activeAvailabilityText}
       replyAssistInstruction={activeReplyAssistInstruction}
+      onDraftChange={setLiveDraft}
       onClose={() => { setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); void refresh(); }}
       onQueued={(item) => {
         const followUpTaskId = activeFollowUpTaskId ?? active.followUpTaskId ?? null;
@@ -244,6 +251,11 @@ export function useCorrespondence(
     reconcileSend,
     pendingOutboxActions,
     activeDraft: active,
+    liveDraft: active ? (liveDraft?.id === active.id ? liveDraft : active) : null,
+    flushDraft,
+    insertIntoDraft,
+    replaceDraftRecipient,
+    switchDraftAccount,
     composer,
     overlay: <>
       {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button onClick={() => void undo(pending.id)}>Undo Send</button></div>}
