@@ -756,7 +756,7 @@ describe("Composer context panel actions", () => {
     expect(screen.getByText("John")).toBeInTheDocument();
   });
 
-  it("inserts text where the caret was before the body lost focus, else at the top", () => {
+  it("returns focus and inserts text where the caret was before the body lost focus, else at the top", () => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => next);
     const ref = createRef<ComposerHandle>();
     render(<Composer ref={ref} draft={{ ...draft, body: "Hi Ann,\nBest, Me" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
@@ -775,6 +775,11 @@ describe("Composer context panel actions", () => {
     window.getSelection()!.removeAllRanges();
     window.getSelection()!.addRange(caret);
     fireEvent.blur(editor);
+
+    act(() => ref.current!.focusBody());
+    expect(editor).toHaveFocus();
+    expect(window.getSelection()!.getRangeAt(0).startContainer).toBe(greeting);
+    expect(window.getSelection()!.getRangeAt(0).startOffset).toBe(greeting!.textContent!.indexOf("Hi Ann,") + "Hi Ann,".length);
 
     act(() => ref.current!.insertText("Here are some times"));
     const text = editor.textContent ?? "";

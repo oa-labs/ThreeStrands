@@ -38,6 +38,8 @@ export type CommandContext = {
   attachFiles(): void;
   discardDraft(): void;
   draftReplyWithAI(): void;
+  /** Moves focus between the open draft and the context panel beside it. */
+  toggleContextPanelFocus(): void;
   undoSend(): void;
   selectNext(): void;
   selectPrevious(): void;
@@ -163,6 +165,7 @@ export const commands: Command[] = [
   { id: "draft.discard", title: "Discard Draft", keys: ["#"], group: "Compose", enabled: (c) => c.composerActive && c.focusedPane === "mail" && c.mailbox === "drafts", run: (c) => complete(c.discardDraft) },
   { id: "draft.attach", title: "Attach Files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
   { id: "draft.replyAssist", title: "Draft Reply With AI", keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.draftReplyWithAI) },
+  { id: "draft.contextPanel", title: "Switch Between Draft and Context Panel", keys: ["F6", "Mod+Shift+p"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleContextPanelFocus) },
   { id: "send.undo", title: "Undo Send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {
     id: "thread.next",

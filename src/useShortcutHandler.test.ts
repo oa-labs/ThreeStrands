@@ -44,6 +44,7 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   attachFiles: vi.fn(),
   discardDraft: vi.fn(),
   draftReplyWithAI: vi.fn(),
+  toggleContextPanelFocus: vi.fn(),
   undoSend: vi.fn(),
   selectNext: vi.fn(),
   selectPrevious: vi.fn(),
@@ -203,6 +204,44 @@ describe("useShortcutHandler", () => {
 
     button.dispatchEvent(new KeyboardEvent("keydown", { key: "#", code: "Digit3", shiftKey: true, bubbles: true, cancelable: true }));
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "draft.discard" }));
+    hook.unmount();
+  });
+
+  it("switches to the context panel from inside the draft's fields, and only while composing", () => {
+    const execute = vi.fn();
+    let current = context({ interactionScope: "compose", composerActive: true });
+    const hook = renderHook(() => useShortcutHandler(current, execute));
+    const composer = document.createElement("div");
+    composer.className = "composer";
+    composer.dataset.shortcutScope = "compose";
+    const to = document.createElement("input");
+    const body = document.createElement("div");
+    body.contentEditable = "true";
+    composer.append(to, body);
+    const panel = document.createElement("aside");
+    const fix = document.createElement("button");
+    panel.append(fix);
+    document.body.append(composer, panel);
+
+    for (const [target, init] of [
+      [to, { key: "F6" }],
+      [body, { key: "P", metaKey: true, shiftKey: true }],
+      [fix, { key: "F6" }],
+    ] as const) {
+      const event = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ id: "draft.contextPanel" }));
+
+    execute.mockClear();
+    current = context();
+    hook.rerender();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "F6", cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+    composer.remove();
+    panel.remove();
     hook.unmount();
   });
 

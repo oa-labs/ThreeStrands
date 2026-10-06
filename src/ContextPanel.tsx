@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { ContactFilesSection, DomainSection, RecentEmailsSection, ThreadOutlineSection } from "./ContextSections";
@@ -24,7 +24,7 @@ export type ContextPerson = {
  * The selected participant is the latest external sender unless the reader
  * picked someone else by clicking their name in a message header.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, onOpenThread, onShowMessage, assist, related, chat }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, onOpenThread, onShowMessage, assist, related, chat, onKeyDown }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
@@ -37,6 +37,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, onOpenThr
   related?(person: ContextPerson | null, meetingPeople: { email: string; name: string }[]): ReactNode;
   /** The question box, kept at the bottom of the panel. */
   chat?(person: ContextPerson | null): ReactNode;
+  /** Keyboard handling for the panel while focus is inside it. */
+  onKeyDown?(event: KeyboardEvent<HTMLElement>): void;
 }) {
   const own = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
   const participants = useMemo(() => {
@@ -154,7 +156,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, onOpenThr
   const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   return (
-    <aside className="context-panel" aria-label="Conversation context">
+    <aside className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
       {detail ? assist : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { mailClient } from "./data/client";
 import type { Draft } from "./correspondence";
 import type { Account, AvailabilityCandidate, AvailabilityPreferences, ContactActivity, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
@@ -173,6 +173,7 @@ export function ComposeContext({
   onEditTask,
   onDraftFollowUp,
   onTasksChanged,
+  onKeyDown,
 }: {
   draft: Draft;
   accounts: Account[];
@@ -194,6 +195,8 @@ export function ComposeContext({
   onEditTask(task: ThreadTask): void;
   onDraftFollowUp(task: ThreadTask): void;
   onTasksChanged(): void;
+  /** Keyboard handling for the panel while focus is inside it. */
+  onKeyDown?(event: KeyboardEvent<HTMLElement>): void;
 }) {
   const ownEmails = useMemo(() => accounts.map((account) => account.email), [accounts]);
   const known = useKnownCorrespondents(ownEmails);
@@ -238,7 +241,7 @@ export function ComposeContext({
   const invitees = recipients.map((recipient) => recipient.email);
 
   return (
-    <aside className="context-panel compose-context" aria-label="Compose context">
+    <aside className="context-panel compose-context" aria-label="Compose context" tabIndex={-1} onKeyDown={onKeyDown}>
       <ComposeChecksSection
         draft={draft}
         accounts={accounts}

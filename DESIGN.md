@@ -165,6 +165,11 @@ Current primary commands are:
 - `i`: summarize the conversation into the context panel's brief;
 - `q` or `Mod+J`: ask about the conversation in the context panel's thread
   chat (`Mod+J` drafts with AI while composing);
+- `F6` or `Mod+Shift+P` while composing: move focus between the draft and the
+  context panel. Focus lands on the first "Before you send" fix, then Find
+  Times, then the first control. Tab stays inside the panel, and `F6`, the
+  same key again, or Escape returns to the caret in the draft (Escape in the
+  panel never closes the draft);
 - `Cmd/Ctrl+K`: open the command palette.
 
 The focused-pane model routes `j`/`k` and Up/Down to conversations or tasks.

@@ -60,6 +60,8 @@ export function useShortcutHandler(
       // In Drafts, "#" discards the open draft unless focus is somewhere "#" is text.
       const discardDraftShortcut = interactionScope === "compose" && currentContext.composerActive && currentContext.mailbox === "drafts" && !isEditableTarget(event.target) && matchesShortcut(event, "#");
       const fontShortcut = (event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
+      // Moves between the draft and the context panel, so it must work from inside the draft's fields.
+      const contextPanelShortcut = currentContext.composerActive && (matchesShortcut(event, "F6") || matchesShortcut(event, "Mod+Shift+p"));
       const allowsMailboxTabShortcut = event.key === "Tab"
         && event.target instanceof HTMLElement
         && event.target.hasAttribute("data-mailbox-tab-shortcut");
@@ -70,7 +72,7 @@ export function useShortcutHandler(
       const entryScope = interactionScope !== "read";
       if (
         reservesNativeActivation(event)
-        || (!sendShortcut && !replyAssistShortcut && !discardDraftShortcut && !fontShortcut && !allowsMailboxTabShortcut
+        || (!sendShortcut && !replyAssistShortcut && !discardDraftShortcut && !fontShortcut && !contextPanelShortcut && !allowsMailboxTabShortcut
           && (entryScope || isEditableTarget(event.target) || focusedControl))
       ) {
         clearPendingStep();

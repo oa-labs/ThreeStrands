@@ -1072,7 +1072,7 @@ describe("Escape dismissal", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
     const composer = await screen.findByRole("dialog", { name: "New Message" });
-    fireEvent.click(screen.getByRole("button", { name: "Command Palette" }));
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette (⌘K)" }));
 
     const filter = await screen.findByRole("textbox", { name: "Filter Commands" });
     fireEvent.keyDown(filter, { key: "Escape" });

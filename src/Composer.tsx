@@ -37,6 +37,8 @@ export type ComposerHandle = {
   replaceRecipient(from: string, to: string): void;
   /** Changes a new message's sending account. */
   switchAccount(email: string): void;
+  /** Focuses the body with the caret back where it was before the body lost focus. */
+  focusBody(): void;
 };
 
 export const Composer = forwardRef<ComposerHandle, {
@@ -192,6 +194,16 @@ export const Composer = forwardRef<ComposerHandle, {
     lastBodyRange.current = null;
     editBody();
   }
+  function focusBody() {
+    const editor = bodyEditor.current;
+    if (!editor) return;
+    editor.focus();
+    const saved = lastBodyRange.current;
+    if (!saved || !editor.contains(saved.startContainer)) return;
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(saved);
+  }
   function replaceRecipient(from: string, to: string) {
     for (const field of ["to", "cc", "bcc"] as const) {
       const next = replaceAddress(latest.current[field], from, to);
@@ -323,7 +335,7 @@ export const Composer = forwardRef<ComposerHandle, {
     };
     reader.readAsDataURL(file);
   }
-  useImperativeHandle(ref, () => ({ flush, send, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, switchAccount: changeAccount, prepareExit: async () => {
+  useImperativeHandle(ref, () => ({ flush, send, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, switchAccount: changeAccount, focusBody, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
     try { await flush(); }

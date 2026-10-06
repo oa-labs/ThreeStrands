@@ -182,6 +182,7 @@ export function useCorrespondence(
   const insertIntoDraft = useCallback((text: string) => editor.current?.insertText(text), []);
   const replaceDraftRecipient = useCallback((from: string, to: string) => editor.current?.replaceRecipient(from, to), []);
   const switchDraftAccount = useCallback((email: string) => editor.current?.switchAccount(email), []);
+  const focusDraftBody = useCallback(() => editor.current?.focusBody(), []);
 
   const context = useMemo(() => ({
     closing,
@@ -256,6 +257,7 @@ export function useCorrespondence(
     insertIntoDraft,
     replaceDraftRecipient,
     switchDraftAccount,
+    focusDraftBody,
     composer,
     overlay: <>
       {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button onClick={() => void undo(pending.id)}>Undo Send</button></div>}

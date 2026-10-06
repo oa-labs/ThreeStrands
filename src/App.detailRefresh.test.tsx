@@ -56,6 +56,34 @@ it("follows a new message's recipients in the context panel instead of the conve
   expect(screen.queryByRole("complementary", { name: "Compose context" })).not.toBeInTheDocument();
 });
 
+it("moves between a new draft and its context panel with F6 or Mod+Shift+P, and Escape in the panel returns to the draft", async () => {
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+  const composer = await screen.findByRole("dialog", { name: "New Message" });
+  const panel = await screen.findByRole("complementary", { name: "Compose context" });
+  const body = within(composer).getByRole("textbox", { name: "Message Body" });
+  body.focus();
+
+  fireEvent.keyDown(body, { key: "F6" });
+  expect(panel.contains(document.activeElement)).toBe(true);
+  fireEvent.keyDown(document.activeElement!, { key: "F6" });
+  expect(body).toHaveFocus();
+
+  fireEvent.keyDown(body, { key: "P", metaKey: true, shiftKey: true });
+  expect(panel.contains(document.activeElement)).toBe(true);
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  expect(body).toHaveFocus();
+  expect(screen.getByRole("dialog", { name: "New Message" })).toBe(composer);
+});
+
+it("shows the command palette's shortcut in its navigation tooltip", async () => {
+  render(<App />);
+  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+  const button = screen.getByRole("button", { name: "Command Palette (⌘K)" });
+  expect(button.parentElement?.querySelector("[role=tooltip]")).toHaveTextContent("Command Palette⌘K");
+});
+
 it("shows a conversation participant on the next meeting and opens its details in the calendar", async () => {
   clearScheduleCache();
   vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([

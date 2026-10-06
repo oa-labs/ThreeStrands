@@ -40,6 +40,7 @@ function noopContext(): CommandContext {
     attachFiles: () => {},
     discardDraft: () => {},
     draftReplyWithAI: () => {},
+    toggleContextPanelFocus: () => {},
     undoSend: () => {},
     selectNext: () => {},
     selectPrevious: () => {},
@@ -293,6 +294,20 @@ describe("command registry", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true }), "Mod+Shift+Enter")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true }), "Mod+Shift+Enter")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "Enter", metaKey: true }), "Mod+Shift+Enter")).toBe(false);
+  });
+
+  it("moves between the draft and the context panel on F6 or Mod+Shift+P while the composer is open", async () => {
+    const command = commands.find((candidate) => candidate.id === "draft.contextPanel");
+    expect(command?.keys).toEqual(["F6", "Mod+Shift+p"]);
+    expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(true);
+    expect(command?.enabled(noopContext())).toBe(false);
+    const toggleContextPanelFocus = vi.fn();
+    await command?.run({ ...noopContext(), composerActive: true, toggleContextPanelFocus });
+    expect(toggleContextPanelFocus).toHaveBeenCalledTimes(1);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "F6" }), "F6")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "P", metaKey: true, shiftKey: true }), "Mod+Shift+p")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "P", ctrlKey: true, shiftKey: true }), "Mod+Shift+p")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "p", metaKey: true }), "Mod+Shift+p")).toBe(false);
   });
 
   it("drafts a reply with AI on Mod+J while the composer is open", async () => {

@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import {
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   lazy,
   Suspense,
   useCallback,
@@ -92,6 +93,7 @@ import { isKeepInTouchDue } from "./keepInTouch";
 import type { ContactsView } from "./ContactsWorkspace";
 import { ContextPanel } from "./ContextPanel";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
+import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { ThreadTasks } from "./ThreadTasks";
@@ -2008,8 +2010,21 @@ export function App() {
         ? "modal"
         : "read";
 
+  // F6 / Mod+Shift+P: from the draft into the context panel, and back to the caret.
+  const { focusDraftBody, activeDraft } = correspondence;
+  const toggleContextPanelFocus = useCallback(() => {
+    const panel = document.querySelector<HTMLElement>(".context-panel");
+    if (!panel) return;
+    if (panel.contains(document.activeElement)) focusDraftBody();
+    else focusContextPanel(panel);
+  }, [focusDraftBody]);
+  const contextPanelKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
+    if (activeDraft) handleContextPanelKeyDown(event, focusDraftBody);
+  }, [activeDraft, focusDraftBody]);
+
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
+    toggleContextPanelFocus,
     interactionScope,
     focusedPane: rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
     compose: () => {
@@ -2183,7 +2198,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openThreadChat, openContactsView, openKeepInTouchView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openThreadChat, openContactsView, openKeepInTouchView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleContextPanelFocus, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -2368,13 +2383,15 @@ export function App() {
               {effectiveThemeValue === "dark" ? <Sun size={19} /> : <Moon size={19} />}
             </button>
           </HoverTooltip>
-          <button
-            className="nav-button"
-            aria-label="Command Palette"
-            onClick={() => executeById("palette.open")}
-          >
-            <CommandIcon size={19} />
-          </button>
+          <HoverTooltip label="Command Palette" shortcut="⌘K">
+            <button
+              className="nav-button"
+              aria-label="Command Palette (⌘K)"
+              onClick={() => executeById("palette.open")}
+            >
+              <CommandIcon size={19} />
+            </button>
+          </HoverTooltip>
           <HoverTooltip title="Settings (⌘,)"><button className="nav-button" aria-label="Settings (⌘,)" onClick={() => executeById("settings.open")}>
             <SettingsIcon size={19} />
           </button></HoverTooltip>
@@ -2790,6 +2807,7 @@ export function App() {
           key={correspondence.liveDraft.id}
           draft={correspondence.liveDraft}
           accounts={accounts}
+          onKeyDown={contextPanelKeyDown}
           calendarConnected={calendarConnected}
           preferences={availabilityPreferences}
           taskRefreshKey={taskRevision}
@@ -2813,6 +2831,7 @@ export function App() {
           detail={visibleDetail}
           accounts={accounts}
           selectedEmail={contextPersonEmail}
+          onKeyDown={contextPanelKeyDown}
           onOpenThread={openTaskThread}
           onShowMessage={showMessage}
           assist={visibleDetail ? (<>
