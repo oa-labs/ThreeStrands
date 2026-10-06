@@ -113,6 +113,17 @@ calendar only when the user presses Find Times, and chosen times go into the
 draft at the caret. Nothing in this panel replaces the draft: meetings open the
 Calendar sidebar beside it, and opening an email saves the draft first.
 
+While the user replies in the open conversation, the panel stays the
+conversation's panel, so the brief, suggestions, tasks, and question box remain
+at hand, but its top follows the reply: "Before you send", the reply's
+recipients (chips when there are several, To first), the same recipient card,
+and Availability, then the brief and suggestions, expanded, below the card. The
+person sections (files, recent emails, others at their organization) follow the
+selected recipient rather than the conversation's latest sender. A name clicked
+in a message header selects that person only when they are on the reply. When
+the reply is sent or closed, the panel returns to the conversation's latest
+sender.
+
 "Before you send" checks are local, deterministic, and never block sending:
 the user's own words promise an attachment ("attached", "attaching",
 "enclosed") but none is attached, the subject is empty, an address the user

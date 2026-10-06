@@ -322,4 +322,100 @@ describe("ContextPanel",()=>{
     expect(within(remembered).getByRole("button",{name:/Budget review/})).toBeVisible();
     expect(localStorage.getItem("threestrands.contextPanel.collapsedSections")).toBe("[]");
   });
+
+  describe("while replying",()=>{
+    const carol:ContactProfile={...jane,id:"contact:carol@example.com",displayName:"Carol Ng",role:"Buyer",notes:"Prefers mornings",addresses:["carol@example.com"]};
+    const toBob={email:"bob@example.com",name:"Bob Lee"};
+    const ccCarol={email:"carol@example.com",name:null};
+    const reply=(recipients:{email:string;name:string|null}[],extra:Partial<NonNullable<Parameters<typeof ContextPanel>[0]["reply"]>>={})=>({recipients,...extra});
+    beforeEach(()=>{
+      vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>Object.fromEntries(
+        emails.filter(email=>["jane@example.com","bob@example.com","carol@example.com"].includes(email)).map(email=>[email,`contact:${email}`])));
+      vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>({[jane.id]:jane,[bob.id]:bob,[carol.id]:carol})[id]??null);
+      vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+      vi.mocked(mailClient.contactActivity).mockResolvedValue({...noActivity,sentCount:3,receivedCount:4,threadCount:2});
+    });
+
+    it("shows a card for the first To recipient, with chips to switch among the reply's recipients",async()=>{
+      renderPanel({selectedEmail:null,reply:reply([toBob,ccCarol])});
+      const panel=screen.getByRole("complementary",{name:"Conversation context"});
+      expect(await within(panel).findByRole("region",{name:"About Bob Lee"})).toBeInTheDocument();
+      await waitFor(()=>expect(mailClient.contactActivity).toHaveBeenCalledWith(bob.id));
+      const chips=within(panel).getByRole("group",{name:"Show history with"});
+      expect(within(chips).getAllByRole("button").map(button=>button.textContent)).toEqual(["Bob Lee","carol@example.com"]);
+      expect(within(chips).getByRole("button",{name:"Bob Lee"})).toHaveAttribute("aria-pressed","true");
+
+      fireEvent.click(within(chips).getByRole("button",{name:"carol@example.com"}));
+      const card=await within(panel).findByRole("region",{name:"About Carol Ng"});
+      expect(card).toHaveTextContent("Buyer");
+      expect(card).toHaveTextContent("Prefers mornings");
+      await personLoaded(carol.id);
+    });
+
+    it("follows recipients the reply gains or loses, not the conversation's participants",async()=>{
+      const {rerender}=renderPanel({reply:reply([toBob])});
+      await personLoaded(bob.id);
+      // One recipient needs no chips; Jane is on the conversation but not on the reply.
+      expect(screen.queryByRole("group",{name:"Show history with"})).not.toBeInTheDocument();
+
+      rerender(<ContextPanel detail={detail} accounts={[account]} reply={reply([toBob,ccCarol])} onOpenThread={vi.fn()}/>);
+      const chips=await screen.findByRole("group",{name:"Show history with"});
+      fireEvent.click(within(chips).getByRole("button",{name:"carol@example.com"}));
+      await personLoaded(carol.id);
+
+      // Removing the chosen recipient returns the panel to the first one left.
+      rerender(<ContextPanel detail={detail} accounts={[account]} reply={reply([toBob])} onOpenThread={vi.fn()}/>);
+      await personLoaded(bob.id);
+
+      rerender(<ContextPanel detail={detail} accounts={[account]} reply={reply([])} onOpenThread={vi.fn()}/>);
+      expect(await screen.findByText("Add a recipient to see your history with them.")).toBeInTheDocument();
+      expect(screen.queryByRole("region",{name:/^About /})).not.toBeInTheDocument();
+    });
+
+    it("selects a recipient picked in the reader and ignores a pick who is not on the reply",async()=>{
+      const {rerender}=renderPanel({selectedEmail:"jane@example.com",reply:reply([toBob,ccCarol])});
+      await personLoaded(bob.id);
+      expect(screen.queryByRole("region",{name:"About Jane Doe"})).not.toBeInTheDocument();
+
+      rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="Carol@Example.com" reply={reply([toBob,ccCarol])} onOpenThread={vi.fn()}/>);
+      expect(await screen.findByRole("region",{name:"About Carol Ng"})).toBeInTheDocument();
+      await personLoaded(carol.id);
+    });
+
+    it("puts the checks, the recipient card, and availability above the conversation's brief and sections",async()=>{
+      vi.mocked(mailClient.contactTimeline).mockResolvedValue([timelineItem("thread-2","Budget review")]);
+      renderPanel({
+        reply:reply([toBob],{
+          checks:<section aria-label="Before you send">checks</section>,
+          availability:<section aria-label="Availability">times</section>,
+        }),
+        assist:<section aria-label="Brief">brief</section>,
+        related:()=><section aria-label="Conversation tasks">tasks</section>,
+      });
+      const panel=screen.getByRole("complementary",{name:"Conversation context"});
+      await within(panel).findByRole("region",{name:"Recent emails"});
+      await within(panel).findByRole("region",{name:"About Bob Lee"});
+      const regions=within(panel).getAllByRole("region").map((region)=>region.getAttribute("aria-label")??region.textContent?.split(/\d/)[0].trim());
+      expect(regions).toEqual(["Before you send","About Bob Lee","Availability","Brief","Conversation tasks","Recent emails"]);
+      // The brief stays open below the card rather than collapsing while replying.
+      expect(within(panel).getByRole("region",{name:"Brief"})).toBeVisible();
+    });
+
+    it("names the reply's recipients as meeting attendees",async()=>{
+      const related=vi.fn(()=>null);
+      renderPanel({reply:reply([toBob,ccCarol]),related});
+      await waitFor(()=>expect(related).toHaveBeenLastCalledWith(expect.anything(),expect.arrayContaining([
+        {email:"carol@example.com",name:"carol@example.com"},
+        {email:"bob@example.com",name:"Bob Lee"},
+      ])));
+    });
+
+    it("leaves the recipient sections and the activity lookup out while reading",async()=>{
+      renderPanel();
+      await personLoaded(bob.id);
+      expect(screen.queryByRole("region",{name:/^About /})).not.toBeInTheDocument();
+      expect(screen.queryByText("Add a recipient to see your history with them.")).not.toBeInTheDocument();
+      expect(mailClient.contactActivity).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -93,6 +93,8 @@ import { isKeepInTouchDue } from "./keepInTouch";
 import { adjacentContactsView, readContactsView, writeContactsView, type ContactsView } from "./contactsView";
 import { ContextPanel } from "./ContextPanel";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
+import { AvailabilitySection } from "./RecipientSections";
+import { draftRecipients } from "./composeChecks";
 import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
@@ -321,6 +323,13 @@ export function App() {
   // A new message, a forward, or a draft opened from the list: the reader
   // shows only the composer, so the context panel follows the draft instead.
   const composingApart = Boolean(correspondence.activeDraft && !composerBelongsToVisibleThread);
+  // Who a reply in the open conversation goes to; the context panel follows them.
+  const replyRecipients = useMemo(
+    () => composerBelongsToVisibleThread && correspondence.liveDraft
+      ? draftRecipients(correspondence.liveDraft, accounts.map((account) => account.email))
+      : [],
+    [accounts, composerBelongsToVisibleThread, correspondence.liveDraft],
+  );
   const displayedMessages = useMemo(
     () => visibleDetail ? messagesWithQueuedReplies(visibleDetail, correspondence.outbox) : [],
     [visibleDetail, correspondence.outbox],
@@ -1408,10 +1417,11 @@ export function App() {
   const draftAvailabilityReply = useCallback((candidates: AvailabilityCandidate[]) => {
     if (candidates.length === 0) return;
     const text = formatAvailabilityText(candidates, availabilityPreferences.timeZone);
-    if (composingApart) correspondence.insertIntoDraft(text);
+    // An open draft, new or a reply, takes the times at the caret.
+    if (correspondence.activeDraft) correspondence.insertIntoDraft(text);
     else correspondence.replyWithAvailability(text, visibleDetail?.messages.at(-1)?.id);
     setRightWorkspace(null);
-  }, [availabilityPreferences.timeZone, composingApart, correspondence, visibleDetail]);
+  }, [availabilityPreferences.timeZone, correspondence, visibleDetail]);
 
   const draftFollowUp = useCallback(async (task: ThreadTask) => {
     try {
@@ -2797,7 +2807,7 @@ export function App() {
           selectedCalendarAccountIds={[...new Set(calendar.calendars.filter((option) => option.selected).map((option) => option.accountId))]}
           availabilityPreferences={availabilityPreferences}
           onDraftAvailability={draftAvailabilityReply}
-          draftLabel={composingApart ? "Insert Selected Times" : undefined}
+          draftLabel={correspondence.activeDraft ? "Insert Selected Times" : undefined}
           onOpenSettings={() => {
             setRightWorkspace(null);
             openSettingsAt("calendarAccounts");
@@ -2833,11 +2843,9 @@ export function App() {
           detail={visibleDetail}
           accounts={accounts}
           selectedEmail={contextPersonEmail}
-          onKeyDown={contextPanelKeyDown}
-          onOpenThread={openTaskThread}
-          onShowMessage={showMessage}
-          assist={visibleDetail ? (<>
-            {composerBelongsToVisibleThread && correspondence.liveDraft ? (
+          reply={composerBelongsToVisibleThread && correspondence.liveDraft ? {
+            recipients: replyRecipients,
+            checks: (
               <ReplyChecks
                 draft={correspondence.liveDraft}
                 accounts={accounts}
@@ -2845,7 +2853,21 @@ export function App() {
                 onReplaceRecipient={correspondence.replaceDraftRecipient}
                 onSwitchAccount={correspondence.switchDraftAccount}
               />
-            ) : null}
+            ),
+            availability: calendarConnected ? (
+              <AvailabilitySection
+                preferences={availabilityPreferences}
+                onInsertTimes={draftAvailabilityReply}
+                onAddToCalendar={(slot) => addComposeMeeting(slot, replyRecipients.map((item) => item.email))}
+                onMoreTimes={openCalendarAt}
+                onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
+              />
+            ) : null,
+          } : null}
+          onKeyDown={contextPanelKeyDown}
+          onOpenThread={openTaskThread}
+          onShowMessage={showMessage}
+          assist={visibleDetail ? (<>
             <ThreadAssist
               detail={visibleDetail}
               summary={{ enabled: aiSummaryFeatureEnabled, available: aiSummaryAvailable, pending: summaryPending }}

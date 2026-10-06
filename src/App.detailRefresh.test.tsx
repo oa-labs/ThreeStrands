@@ -56,6 +56,82 @@ it("follows a new message's recipients in the context panel instead of the conve
   expect(screen.queryByRole("complementary", { name: "Compose context" })).not.toBeInTheDocument();
 });
 
+it("follows a reply's recipients in the conversation panel, with the brief below the recipient card", async () => {
+  localStorage.removeItem("threestrands.demoCorrespondence");
+  try {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    expect(within(panel).queryByRole("region", { name: /^About / })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    const composer = await screen.findByRole("dialog", { name: "Reply Message" });
+    // A reply keeps the conversation panel, so its brief and chat stay at hand.
+    expect(screen.getByRole("complementary", { name: "Conversation context" })).toBe(panel);
+    expect(screen.queryByRole("complementary", { name: "Compose context" })).not.toBeInTheDocument();
+    const card = await within(panel).findByRole("region", { name: /^About / });
+    expect(card).toHaveTextContent("hello@threestrands.local");
+    const regions = within(panel).getAllByRole("region");
+    expect(regions.indexOf(card)).toBeLessThan(regions.indexOf(within(panel).getByRole("region", { name: "Brief" })));
+
+    const to = within(composer).getByRole("textbox", { name: "To" });
+    fireEvent.change(to, { target: { value: `${(to as HTMLInputElement).value}, carol@example.com,` } });
+    const chips = await within(panel).findByRole("group", { name: "Show history with" });
+    fireEvent.click(within(chips).getByRole("button", { name: "carol@example.com" }));
+    expect(await within(panel).findByRole("region", { name: "About carol@example.com" })).toBeInTheDocument();
+
+    fireEvent.click(within(composer).getByRole("button", { name: "Save and Close Draft" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());
+    expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByRole("region", { name: /^About / })).not.toBeInTheDocument();
+  } finally {
+    localStorage.removeItem("threestrands.demoCorrespondence");
+  }
+});
+
+it("inserts open times from the reply's context panel into that reply instead of starting another", async () => {
+  localStorage.removeItem("threestrands.demoCorrespondence");
+  clearScheduleCache();
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+    { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+  ]);
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+  vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+    candidates: [{ start: "2030-01-07T15:00:00Z", end: "2030-01-07T15:30:00Z", status: "verified" }],
+    checkedCalendarCount: 1, totalCalendarCount: 1, errors: [],
+  });
+  try {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    // Reading a conversation offers no availability to insert.
+    expect(within(panel).queryByRole("region", { name: "Availability" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    const composer = await screen.findByRole("dialog", { name: "Reply Message" });
+    const editor = within(composer).getByRole("textbox", { name: "Message Body" });
+    editor.innerHTML = "<p>Here is what I have</p>";
+    fireEvent.input(editor);
+    // Leave the caret after the user's line, as the panel's insert goes where they were typing.
+    const caret = document.createRange();
+    caret.selectNodeContents(editor.querySelector("p")!);
+    caret.collapse(false);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(caret);
+    fireEvent.blur(editor);
+    const availability = await within(panel).findByRole("region", { name: "Availability" });
+    fireEvent.click(within(availability).getByRole("button", { name: "Find Times" }));
+    fireEvent.click(await within(availability).findByRole("button", { name: /^Insert / }));
+
+    await waitFor(() => expect(editor.textContent).toContain("2030"));
+    const text = editor.textContent ?? "";
+    expect(text.indexOf("Here is what I have")).toBe(0);
+    expect(text.indexOf("Here is what I have")).toBeLessThan(text.indexOf("2030"));
+    expect(screen.getByRole("dialog", { name: "Reply Message" })).toBe(composer);
+  } finally {
+    localStorage.removeItem("threestrands.demoCorrespondence");
+  }
+});
+
 it("moves between a new draft and its context panel with F6 or Mod+Shift+P, and Escape in the panel returns to the draft", async () => {
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
