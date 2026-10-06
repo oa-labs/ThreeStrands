@@ -1065,6 +1065,53 @@ fn save_contact_profile(
     Ok(profile)
 }
 
+#[tauri::command]
+async fn list_keep_in_touch(state: State<'_, AppState>) -> Result<Vec<ContactProfile>, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_keep_in_touch()).await
+}
+
+fn record_synced_contact(state: &State<'_, AppState>, profile: &ContactProfile) -> Result<(), String> {
+    record_synced_value(
+        state,
+        threestrands_sync_protocol::EntityType::Contact,
+        &profile.id,
+        &ContactRecord::from(profile),
+        None,
+    )
+}
+
+#[tauri::command(async)]
+fn set_keep_in_touch(
+    ids: Vec<String>,
+    interval_days: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ContactProfile>, String> {
+    let profiles = state.database.set_keep_in_touch(&ids, interval_days)?;
+    for profile in &profiles {
+        record_synced_contact(&state, profile)?;
+    }
+    Ok(profiles)
+}
+
+#[tauri::command(async)]
+fn snooze_keep_in_touch(
+    id: String,
+    until: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<ContactProfile, String> {
+    let profile = state.database.snooze_keep_in_touch(&id, until.as_deref())?;
+    record_synced_contact(&state, &profile)?;
+    Ok(profile)
+}
+
+#[tauri::command(async)]
+fn mark_contacted(id: String, state: State<'_, AppState>) -> Result<ContactProfile, String> {
+    let profile = state.database.mark_contacted(&id)?;
+    record_synced_contact(&state, &profile)?;
+    Ok(profile)
+}
+
 #[tauri::command(async)]
 fn delete_contact_profile(id: String, state: State<'_, AppState>) -> Result<(), String> {
     state.database.delete_contact_profile(&id)?;
@@ -3797,6 +3844,10 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         get_contact_profile,
         save_contact_profile,
         delete_contact_profile,
+        list_keep_in_touch,
+        set_keep_in_touch,
+        snooze_keep_in_touch,
+        mark_contacted,
         contact_timeline,
         contact_activity,
         contact_files,

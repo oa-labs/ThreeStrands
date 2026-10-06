@@ -137,6 +137,14 @@ export interface MailClient extends CorrespondenceClient {
   getContactProfile(id: string): Promise<ContactProfile | null>;
   saveContactProfile(request: SaveContactRequest): Promise<ContactProfile>;
   deleteContactProfile(id: string): Promise<void>;
+  /** Saved contacts with keep-in-touch reminders or a birthday, soonest reminder first. */
+  listKeepInTouch(): Promise<ContactProfile[]>;
+  /** Sets the interval for each contact (saving `derived:<email>` contacts first), or turns reminders off with null. */
+  setKeepInTouch(ids: string[], intervalDays: number | null): Promise<ContactProfile[]>;
+  /** Pushes the next reminder to `until` (an ISO instant), or clears the snooze with null. */
+  snoozeKeepInTouch(id: string, until: string | null): Promise<ContactProfile>;
+  /** Logs a touch outside email at the current time, ending any snooze. */
+  markContacted(id: string): Promise<ContactProfile>;
   contactTimeline(id: string, offset?: number, limit?: number, accountId?: string): Promise<ContactTimelineItem[]>;
   /** Counts and timing of local correspondence with a saved id or `derived:<email>`. */
   contactActivity(id: string): Promise<ContactActivity>;
@@ -262,6 +270,10 @@ const tauriClient: MailClient = {
   getContactProfile: (id) => read("get_contact_profile", { id }),
   saveContactProfile: (request) => complete("save_contact_profile", { request }),
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
+  listKeepInTouch: () => read("list_keep_in_touch"),
+  setKeepInTouch: (ids, intervalDays) => complete("set_keep_in_touch", { ids, intervalDays }),
+  snoozeKeepInTouch: (id, until) => complete("snooze_keep_in_touch", { id, until }),
+  markContacted: (id) => complete("mark_contacted", { id }),
   contactTimeline: (id, offset = 0, limit = 30, accountId) => read("contact_timeline", { id, offset, limit, accountId }),
   contactActivity: (id) => read("contact_activity", { id }),
   contactFiles: (id, limit) => read("contact_files", { id, limit }),

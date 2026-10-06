@@ -11,7 +11,7 @@ use tokio::sync::{watch, Mutex};
 use crate::{
     auth::AccountAuth,
     backoff::retry_at,
-    db::{Database, DatabaseError, PendingMutation},
+    db::{Database, DatabaseError, PendingMutation, SentBackfillProgress},
     mime::{
         normalize, normalized_size, NormalizedMessage, MAX_NORMALIZED_THREAD_BYTES,
         MAX_THREAD_MESSAGES,
@@ -42,6 +42,17 @@ const MAX_INCREMENTAL_SYNC_PAGES: usize = 1_000;
 // while keeping a broad query from blocking the UI on hundreds of sequential
 // `threads.get` calls (each one is deliberately paced for Gmail quota).
 const REMOTE_SEARCH_SCAN_LIMIT: usize = 50;
+/// Sent mail the address book learns from. The initial sync lists only the
+/// inbox, so without this, people you wrote to in threads that were already
+/// archived never become contacts. Trash and spam are left out.
+const SENT_BACKFILL_QUERY: &str = "in:sent -in:trash -in:spam";
+/// Newest sent threads scanned before the backfill stops for good.
+const MAX_SENT_BACKFILL_THREADS: usize = 5_000;
+/// Thread fetches per backfill step. Each step holds the account's sync gate,
+/// so it stays short enough not to stall a manual refresh queued behind it.
+const SENT_BACKFILL_FETCHES_PER_STEP: usize = 25;
+/// Backfill steps per poll; the gate is released between steps.
+const SENT_BACKFILL_STEPS_PER_POLL: usize = 4;
 
 fn database_provider_error(error: DatabaseError) -> ProviderError {
     ProviderError::Other(error.to_string())
@@ -294,6 +305,37 @@ impl SyncService {
             }
             delay = next_poll_delay(delay, before, result.map(|(status, _)| status));
             self.reconcile_if_due().await;
+            self.backfill_sent_if_pending().await;
+        }
+    }
+
+    /// Advances the one-time sent-mail backfill by a few bounded steps once
+    /// the account's initial sync has finished. Failures are swallowed and
+    /// retried on a later poll; progress is saved after every step.
+    async fn backfill_sent_if_pending(&self) {
+        for _ in 0..SENT_BACKFILL_STEPS_PER_POLL {
+            let account_id = self.account_id();
+            let ready = !self.database.account_needs_reauth(&account_id).unwrap_or(true)
+                && self.database.cursor(&account_id).ok().flatten().is_some()
+                && self.database.recovery_cursor(&account_id).ok().flatten().is_none();
+            if !ready {
+                return;
+            }
+            let more = self
+                .exclusive(async {
+                    let provider = self.auth.provider();
+                    if !provider.capabilities().server_search {
+                        return false;
+                    }
+                    backfill_sent_step(self.database.as_ref(), &account_id, provider.as_ref())
+                        .await
+                        .unwrap_or(false)
+                })
+                .await
+                .unwrap_or(false);
+            if !more {
+                return;
+            }
         }
     }
 
@@ -641,6 +683,79 @@ async fn search_and_ingest_missing(
         return Ok(());
     }
     ingest_threads(database, account_id, provider, missing).await
+}
+
+/// Imports up to [`SENT_BACKFILL_FETCHES_PER_STEP`] uncached sent threads
+/// from the saved resume point, then saves the next one. The offset within a
+/// page advances past every result examined, fetched or not, so a thread that
+/// never imports cannot pin the backfill to one page. Returns whether more
+/// work remains.
+async fn backfill_sent_step(
+    database: &Database,
+    account_id: &str,
+    provider: &(impl MailSync + ?Sized),
+) -> ProviderResult<bool> {
+    let Some(progress) = database
+        .sent_backfill_progress(account_id)
+        .map_err(database_provider_error)?
+    else {
+        return Ok(false);
+    };
+    let result = match provider.search(SENT_BACKFILL_QUERY, progress.page.as_deref()).await {
+        Ok(result) => result,
+        // A page token the provider no longer honors. Starting over is cheap:
+        // threads already cached are skipped without a fetch.
+        Err(ProviderError::InvalidOperation(_) | ProviderError::InvalidCursor)
+            if progress.page.is_some() =>
+        {
+            database
+                .record_sent_backfill(account_id, Some(&SentBackfillProgress::default()))
+                .map_err(database_provider_error)?;
+            return Ok(true);
+        }
+        Err(error) => return Err(error),
+    };
+
+    let cached: HashSet<String> = database
+        .local_provider_thread_ids(account_id)
+        .map_err(database_provider_error)?
+        .into_iter()
+        .collect();
+    let page_len = result
+        .thread_ids
+        .len()
+        .min(MAX_SENT_BACKFILL_THREADS.saturating_sub(progress.scanned));
+    let mut position = progress.offset.min(page_len);
+    let mut missing = Vec::new();
+    while position < page_len && missing.len() < SENT_BACKFILL_FETCHES_PER_STEP {
+        let id = &result.thread_ids[position];
+        position += 1;
+        if !cached.contains(id) && !missing.contains(id) {
+            missing.push(id.clone());
+        }
+    }
+    ingest_threads(database, account_id, provider, missing).await?;
+
+    let next = if position < page_len {
+        Some(SentBackfillProgress {
+            offset: position,
+            ..progress
+        })
+    } else {
+        let scanned = progress.scanned + page_len;
+        result
+            .next
+            .filter(|_| scanned < MAX_SENT_BACKFILL_THREADS)
+            .map(|page| SentBackfillProgress {
+                page: Some(page),
+                offset: 0,
+                scanned,
+            })
+    };
+    database
+        .record_sent_backfill(account_id, next.as_ref())
+        .map_err(database_provider_error)?;
+    Ok(next.is_some())
 }
 
 // Flushed periodically, not just once at the end, so a) a transient
@@ -2537,5 +2652,249 @@ mod tests {
             database.sync_status("default").unwrap().pending_mutations,
             0
         );
+    }
+
+    const BACKFILL_ACCOUNT: &str = "me@example.com";
+
+    /// Fake Gmail whose `in:sent` search answers from fixed pages, keyed by
+    /// page token (`""` for the first page).
+    struct SentBackfillProvider {
+        pages: std::collections::HashMap<String, (Vec<String>, Option<String>)>,
+        missing_threads: Vec<String>,
+        expired_tokens: Vec<String>,
+        searches: AtomicUsize,
+        fetched: StdMutex<Vec<String>>,
+    }
+
+    impl SentBackfillProvider {
+        fn new(pages: &[(&str, &[&str], Option<&str>)]) -> Self {
+            Self {
+                pages: pages
+                    .iter()
+                    .map(|(token, ids, next)| {
+                        (
+                            token.to_string(),
+                            (ids.iter().map(|id| id.to_string()).collect(), next.map(str::to_string)),
+                        )
+                    })
+                    .collect(),
+                missing_threads: vec![],
+                expired_tokens: vec![],
+                searches: AtomicUsize::new(0),
+                fetched: StdMutex::new(vec![]),
+            }
+        }
+
+        fn fetched(&self) -> Vec<String> {
+            self.fetched.lock().unwrap().clone()
+        }
+    }
+
+    fn sent_message(thread_id: &str) -> RawMessage {
+        let mut message = ContractProvider::message();
+        message.id = format!("{thread_id}-message");
+        message.thread_id = thread_id.into();
+        message.label_ids = vec!["SENT".into()];
+        message.payload.headers = vec![
+            MimeHeader { name: "Subject".into(), value: format!("About {thread_id}") },
+            MimeHeader { name: "From".into(), value: format!("Me <{BACKFILL_ACCOUNT}>") },
+            MimeHeader { name: "To".into(), value: format!("Person <{thread_id}@example.org>") },
+        ];
+        message
+    }
+
+    #[async_trait]
+    impl MailSync for SentBackfillProvider {
+        async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+            unreachable!()
+        }
+        async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+            unreachable!()
+        }
+        async fn poll(&self, _: &SyncCursor) -> ProviderResult<SyncBatch> {
+            unreachable!()
+        }
+        async fn search(&self, query: &str, page: Option<&str>) -> ProviderResult<ThreadPage> {
+            assert_eq!(query, SENT_BACKFILL_QUERY);
+            self.searches.fetch_add(1, Ordering::SeqCst);
+            let token = page.unwrap_or_default();
+            if self.expired_tokens.iter().any(|expired| expired == token) {
+                return Err(ProviderError::InvalidOperation("400 Invalid pageToken".into()));
+            }
+            let (thread_ids, next) = self.pages.get(token).cloned().expect("known page token");
+            Ok(ThreadPage { thread_ids, next })
+        }
+        async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
+            self.fetched.lock().unwrap().push(id.to_string());
+            if self.missing_threads.iter().any(|missing| missing == id) {
+                return Err(ProviderError::NotFound);
+            }
+            Ok(vec![sent_message(id)])
+        }
+    }
+
+    fn backfill_database() -> Database {
+        let database = Database::open_memory();
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO sync_state(account_id, cursor) VALUES (?1, 'synced')",
+                [BACKFILL_ACCOUNT],
+            )
+            .unwrap();
+        database
+    }
+
+    async fn run_sent_backfill(database: &Database, provider: &SentBackfillProvider) -> usize {
+        let mut steps = 0;
+        while backfill_sent_step(database, BACKFILL_ACCOUNT, provider).await.unwrap() {
+            steps += 1;
+            assert!(steps < 100, "backfill never finished");
+        }
+        steps + 1
+    }
+
+    #[tokio::test]
+    async fn sent_backfill_imports_uncached_sent_threads_as_contacts() {
+        let database = backfill_database();
+        let provider = SentBackfillProvider::new(&[
+            ("", &["cached", "older"], Some("p2")),
+            ("p2", &["oldest"], None),
+        ]);
+        ingest_threads(&database, BACKFILL_ACCOUNT, &provider, vec!["cached".into()])
+            .await
+            .unwrap();
+        provider.fetched.lock().unwrap().clear();
+
+        run_sent_backfill(&database, &provider).await;
+
+        assert_eq!(provider.fetched(), ["older", "oldest"]);
+        assert_eq!(database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(), None);
+        let contacts = database
+            .list_contact_suggestions(BACKFILL_ACCOUNT, "", 50)
+            .unwrap();
+        for email in ["cached@example.org", "older@example.org", "oldest@example.org"] {
+            let contact = contacts
+                .iter()
+                .find(|contact| contact.email == email)
+                .unwrap_or_else(|| panic!("{email} missing from {contacts:?}"));
+            assert_eq!(contact.sent_count, 1);
+        }
+
+        // Finished for good: later polls don't search again.
+        let searches = provider.searches.load(Ordering::SeqCst);
+        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert_eq!(provider.searches.load(Ordering::SeqCst), searches);
+    }
+
+    #[tokio::test]
+    async fn sent_backfill_bounds_fetches_per_step_and_resumes_mid_page() {
+        let database = backfill_database();
+        let ids = (0..SENT_BACKFILL_FETCHES_PER_STEP + 5)
+            .map(|index| format!("thread-{index}"))
+            .collect::<Vec<_>>();
+        let id_refs = ids.iter().map(String::as_str).collect::<Vec<_>>();
+        let provider = SentBackfillProvider::new(&[("", &id_refs, None)]);
+
+        assert!(backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert_eq!(provider.fetched().len(), SENT_BACKFILL_FETCHES_PER_STEP);
+        assert_eq!(
+            database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(),
+            Some(SentBackfillProgress { page: None, offset: SENT_BACKFILL_FETCHES_PER_STEP, scanned: 0 })
+        );
+
+        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert_eq!(provider.fetched(), ids);
+    }
+
+    #[tokio::test]
+    async fn sent_backfill_moves_past_threads_that_never_import() {
+        let database = backfill_database();
+        let ids = (0..SENT_BACKFILL_FETCHES_PER_STEP + 1)
+            .map(|index| format!("gone-{index}"))
+            .chain(["kept".to_string()])
+            .collect::<Vec<_>>();
+        let id_refs = ids.iter().map(String::as_str).collect::<Vec<_>>();
+        let mut provider = SentBackfillProvider::new(&[("", &id_refs, None)]);
+        provider.missing_threads = ids[..ids.len() - 1].to_vec();
+
+        assert_eq!(run_sent_backfill(&database, &provider).await, 2);
+        assert_eq!(provider.fetched(), ids);
+        assert!(database
+            .list_contact_suggestions(BACKFILL_ACCOUNT, "kept", 5)
+            .unwrap()
+            .iter()
+            .any(|contact| contact.email == "kept@example.org"));
+    }
+
+    #[tokio::test]
+    async fn sent_backfill_restarts_when_a_page_token_expires() {
+        let database = backfill_database();
+        let mut provider = SentBackfillProvider::new(&[("", &["fresh"], None)]);
+        provider.expired_tokens = vec!["stale".into()];
+        database
+            .record_sent_backfill(
+                BACKFILL_ACCOUNT,
+                Some(&SentBackfillProgress { page: Some("stale".into()), offset: 3, scanned: 100 }),
+            )
+            .unwrap();
+
+        assert!(backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert_eq!(
+            database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(),
+            Some(SentBackfillProgress::default())
+        );
+        run_sent_backfill(&database, &provider).await;
+        assert_eq!(provider.fetched(), ["fresh"]);
+    }
+
+    #[tokio::test]
+    async fn sent_backfill_stops_at_the_thread_limit() {
+        let database = backfill_database();
+        let provider = SentBackfillProvider::new(&[("p9", &["last", "beyond"], Some("p10"))]);
+        database
+            .record_sent_backfill(
+                BACKFILL_ACCOUNT,
+                Some(&SentBackfillProgress {
+                    page: Some("p9".into()),
+                    offset: 0,
+                    scanned: MAX_SENT_BACKFILL_THREADS - 1,
+                }),
+            )
+            .unwrap();
+
+        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert_eq!(provider.fetched(), ["last"]);
+        assert_eq!(database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn sent_backfill_surfaces_transient_failures_without_losing_progress() {
+        struct FlakySearch;
+        #[async_trait]
+        impl MailSync for FlakySearch {
+            async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+                unreachable!()
+            }
+            async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+                unreachable!()
+            }
+            async fn poll(&self, _: &SyncCursor) -> ProviderResult<SyncBatch> {
+                unreachable!()
+            }
+            async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
+                unreachable!()
+            }
+            async fn search(&self, _: &str, _: Option<&str>) -> ProviderResult<ThreadPage> {
+                Err(ProviderError::RetryableServer("503".into()))
+            }
+        }
+        let database = backfill_database();
+        let saved = SentBackfillProgress { page: Some("p3".into()), offset: 7, scanned: 200 };
+        database.record_sent_backfill(BACKFILL_ACCOUNT, Some(&saved)).unwrap();
+
+        assert!(backfill_sent_step(&database, BACKFILL_ACCOUNT, &FlakySearch).await.is_err());
+        assert_eq!(database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(), Some(saved));
     }
 }

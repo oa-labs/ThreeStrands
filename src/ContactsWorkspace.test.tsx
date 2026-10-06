@@ -4,9 +4,9 @@ import type { ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
 
-vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn()}}));
 
-const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:"Founder",company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:3,receivedCount:2,lastInteractedAt:"2026-09-20T00:00:00Z"};
+const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:"Founder",company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:3,receivedCount:2,lastInteractedAt:"2026-09-20T00:00:00Z",birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const favoriteContact:ContactProfile={...jane,id:"contact:favorite@example.com",displayName:"Favorite Person",favorite:true,addresses:["favorite@example.com"],lastInteractedAt:"2026-09-10T00:00:00Z"};
 const newerContact:ContactProfile={...jane,id:"contact:newer@example.com",displayName:"Newer Person",addresses:["newer@example.com"],lastInteractedAt:"2026-09-24T00:00:00Z"};
 
@@ -19,6 +19,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.saveContactProfile).mockImplementation(async request=>({...jane,...request,id:request.id??jane.id,sentCount:3,receivedCount:2,lastInteractedAt:jane.lastInteractedAt}));
     vi.mocked(mailClient.deleteContactProfile).mockResolvedValue(undefined);
     vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[],messagesReviewed:0,hasMore:false});
+    vi.mocked(mailClient.listKeepInTouch).mockResolvedValue([]);
   });
   afterEach(()=>{cleanup();vi.clearAllMocks();localStorage.clear();});
 
@@ -508,5 +509,163 @@ describe("ContactsWorkspace",()=>{
     fireEvent.keyDown(search,{key:"ArrowDown"});
     pressed(/Newer Person/);notPressed(/Jane Doe/);
     expect(screen.getByDisplayValue("Newer Person")).toBeInTheDocument();
+  });
+
+  describe("keep in touch",()=>{
+    const today=new Date();
+    const localDay=(offset:number)=>new Date(today.getFullYear(),today.getMonth(),today.getDate()+offset,12).toISOString();
+    const withKit=(profile:ContactProfile,intervalDays:number|null,keepInTouchDueAt:string|null,extra:Partial<ContactProfile["keepInTouch"]>={}):ContactProfile=>({...profile,keepInTouch:{...profile.keepInTouch,intervalDays,startedAt:intervalDays?localDay(-60):null,...extra},keepInTouchDueAt});
+
+    it("applies a frequency at once without saving unsaved profile edits",async()=>{
+      vi.mocked(mailClient.setKeepInTouch).mockResolvedValue([withKit(jane,30,localDay(10))]);
+      const onKeepInTouchChanged=vi.fn();
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} onKeepInTouchChanged={onKeepInTouchChanged}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.change(screen.getByLabelText("Company"),{target:{value:"Unsaved Co"}});
+      const section=screen.getByRole("region",{name:"Keep in Touch"});
+      fireEvent.change(within(section).getByRole("combobox",{name:"Frequency"}),{target:{value:"30"}});
+      await waitFor(()=>expect(mailClient.setKeepInTouch).toHaveBeenCalledWith([jane.id],30));
+      expect(await within(section).findByText(/Due .* · Last contact/)).toBeInTheDocument();
+      expect(onKeepInTouchChanged).toHaveBeenCalled();
+      expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("Company")).toHaveValue("Unsaved Co");
+    });
+
+    it("moves to the saved profile when a reminder is set on a mail-derived person",async()=>{
+      const derived:ContactProfile={...jane,id:"derived:jane@example.com"};
+      const saved=withKit(jane,7,localDay(5));
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([derived]);
+      vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===saved.id?saved:derived);
+      vi.mocked(mailClient.setKeepInTouch).mockResolvedValue([saved]);
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.change(screen.getByLabelText("Location"),{target:{value:"Typed but unsaved"}});
+      fireEvent.change(screen.getByRole("combobox",{name:"Frequency"}),{target:{value:"7"}});
+      await waitFor(()=>expect(mailClient.getContactProfile).toHaveBeenCalledWith(saved.id));
+      expect(mailClient.setKeepInTouch).toHaveBeenCalledWith([derived.id],7);
+      expect(screen.getByLabelText("Location")).toHaveValue("Typed but unsaved");
+      expect(screen.getAllByRole("button",{name:/Jane Doe/})).toHaveLength(1);
+    });
+
+    it("rejects a custom interval outside 1 to 730 days before calling the backend",async()=>{
+      vi.mocked(mailClient.setKeepInTouch).mockResolvedValue([withKit(jane,730,localDay(700))]);
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.change(screen.getByRole("combobox",{name:"Frequency"}),{target:{value:"custom"}});
+      const days=screen.getByRole("spinbutton",{name:"Every N Days"});
+      for(const invalid of ["0","731"]){
+        fireEvent.change(days,{target:{value:invalid}});
+        fireEvent.click(screen.getByRole("button",{name:"Set Frequency"}));
+        expect(await screen.findByRole("alert")).toHaveTextContent("Enter a whole number of days from 1 to 730");
+      }
+      expect(mailClient.setKeepInTouch).not.toHaveBeenCalled();
+      fireEvent.change(days,{target:{value:"730"}});
+      fireEvent.keyDown(days,{key:"Enter"});
+      await waitFor(()=>expect(mailClient.setKeepInTouch).toHaveBeenCalledWith([jane.id],730));
+    });
+
+    it("snoozes, ends a snooze, and logs contact outside email",async()=>{
+      const due=withKit(jane,14,localDay(-2));
+      const until=new Date(today.getFullYear(),today.getMonth(),today.getDate()+7).toISOString();
+      const snoozed=withKit(jane,14,until,{snoozedUntil:until,snoozedAt:localDay(0)});
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(due);
+      vi.mocked(mailClient.snoozeKeepInTouch).mockImplementation(async(_id,value)=>value?snoozed:due);
+      vi.mocked(mailClient.markContacted).mockResolvedValue(withKit(jane,14,localDay(14),{lastTouchAt:localDay(0)}));
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      const section=await screen.findByRole("region",{name:"Keep in Touch"});
+      expect(await within(section).findByText(/Overdue since/)).toBeInTheDocument();
+
+      fireEvent.click(within(section).getByText("Snooze"));
+      fireEvent.click(within(section).getByRole("button",{name:"1 Week"}));
+      await waitFor(()=>expect(mailClient.snoozeKeepInTouch).toHaveBeenCalledWith(jane.id,until));
+      expect(await within(section).findByText(/Snoozed until/)).toBeInTheDocument();
+
+      fireEvent.click(within(section).getByRole("button",{name:"End Snooze"}));
+      await waitFor(()=>expect(mailClient.snoozeKeepInTouch).toHaveBeenLastCalledWith(jane.id,null));
+      await within(section).findByText(/Overdue since/);
+
+      fireEvent.click(within(section).getByRole("button",{name:"Mark Contacted"}));
+      await waitFor(()=>expect(mailClient.markContacted).toHaveBeenCalledWith(jane.id));
+      expect(await within(section).findByText(/Due .* · Last contact/)).toBeInTheDocument();
+    });
+
+    it("refuses a snooze date that is not after today",async()=>{
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(withKit(jane,14,localDay(3)));
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      const section=await screen.findByRole("region",{name:"Keep in Touch"});
+      await within(section).findByText(/Due /);
+      fireEvent.click(within(section).getByText("Snooze"));
+      const pad=(value:number)=>String(value).padStart(2,"0");
+      fireEvent.change(within(section).getByLabelText("Until Date"),{target:{value:`${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`}});
+      fireEvent.click(within(section).getByRole("button",{name:"Snooze Until Date"}));
+      expect(await within(section).findByRole("alert")).toHaveTextContent("Choose a date after today");
+      expect(mailClient.snoozeKeepInTouch).not.toHaveBeenCalled();
+    });
+
+    it("lists reminders by when they fall due and upcoming birthdays, with a due count",async()=>{
+      const overdue=withKit({...jane,id:"contact:o",displayName:"Olive Overdue",addresses:["o@example.com"]},7,localDay(-3));
+      const dueToday=withKit({...jane,id:"contact:t",displayName:"Tara Today",addresses:["t@example.com"]},30,localDay(0));
+      const later=withKit({...jane,id:"contact:l",displayName:"Liam Later",addresses:["l@example.com"]},91,localDay(40));
+      const birthday:ContactProfile={...jane,id:"contact:b",displayName:"Bea Birthday",addresses:["b@example.com"],birthday:`${String(new Date(today.getFullYear(),today.getMonth(),today.getDate()+3).getMonth()+1).padStart(2,"0")}-${String(new Date(today.getFullYear(),today.getMonth(),today.getDate()+3).getDate()).padStart(2,"0")}`};
+      vi.mocked(mailClient.listKeepInTouch).mockResolvedValue([overdue,dueToday,later,birthday]);
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,overdue]);
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      const tab=screen.getByRole("tab",{name:/Keep in Touch/});
+      expect(within(tab).getByLabelText("2 due")).toBeInTheDocument();
+      // The All Contacts list flags only the contact whose reminder is due.
+      expect(within(screen.getByRole("button",{name:/Olive Overdue/})).getByLabelText("Due to reconnect")).toBeInTheDocument();
+      expect(within(screen.getByRole("button",{name:/Jane Doe/})).queryByLabelText("Due to reconnect")).not.toBeInTheDocument();
+
+      fireEvent.click(tab);
+      expect(tab).toHaveAttribute("aria-selected","true");
+      expect(within(screen.getByRole("region",{name:"Overdue"})).getByText("Weekly · Overdue since",{exact:false})).toBeInTheDocument();
+      expect(within(screen.getByRole("region",{name:"Due Today"})).getByText("Monthly · Due today")).toBeInTheDocument();
+      expect(within(screen.getByRole("region",{name:"Later"})).getByText(/Quarterly · Due/)).toBeInTheDocument();
+      expect(screen.queryByRole("region",{name:"This Week"})).not.toBeInTheDocument();
+      expect(within(screen.getByRole("region",{name:"Upcoming Birthdays"})).getByRole("button",{name:/Bea Birthday/})).toBeInTheDocument();
+
+      fireEvent.change(screen.getByRole("textbox",{name:"Search contacts"}),{target:{value:"tara"}});
+      expect(screen.queryByRole("region",{name:"Overdue"})).not.toBeInTheDocument();
+      expect(screen.getByRole("region",{name:"Due Today"})).toBeInTheDocument();
+    });
+
+    it("opens directly on the keep-in-touch view and explains an empty one",async()=>{
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} initialView="keepInTouch"/>);
+      expect(await screen.findByText(/No keep-in-touch reminders yet/)).toBeInTheDocument();
+      expect(screen.getByRole("tab",{name:/Keep in Touch/})).toHaveAttribute("aria-selected","true");
+    });
+
+    it("sets one frequency for several selected contacts without opening them",async()=>{
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,favoriteContact,newerContact]);
+      vi.mocked(mailClient.setKeepInTouch).mockImplementation(async(ids,days)=>[jane,newerContact].filter(item=>ids.includes(item.id)).map(item=>withKit(item,days,localDay(20))));
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.click(screen.getByRole("button",{name:"Select"}));
+      const bulk=screen.getByRole("combobox",{name:"Keep in Touch Frequency"});
+      expect(bulk).toBeDisabled();
+      fireEvent.click(screen.getByRole("checkbox",{name:"Select Jane Doe"}));
+      fireEvent.click(screen.getByRole("checkbox",{name:"Select Newer Person"}));
+      expect(screen.getByText("2 selected")).toBeInTheDocument();
+      expect(mailClient.getContactProfile).not.toHaveBeenCalledWith(newerContact.id);
+      fireEvent.change(bulk,{target:{value:"30"}});
+      await waitFor(()=>expect(mailClient.setKeepInTouch).toHaveBeenCalledWith([jane.id,newerContact.id],30));
+      expect(await screen.findByText("Monthly for 2 contacts")).toHaveAttribute("role","status");
+      // The open profile was in the batch, so its section shows the new reminder.
+      expect(await within(screen.getByRole("region",{name:"Keep in Touch"})).findByRole("combobox",{name:"Frequency"})).toHaveValue("30");
+      expect(screen.queryByRole("checkbox",{name:"Select Jane Doe"})).not.toBeInTheDocument();
+      expect(mailClient.listKeepInTouch).toHaveBeenCalledTimes(2);
+    });
+
+    it("saves the birthday with the profile form",async()=>{
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.change(screen.getByLabelText("Birthday"),{target:{value:" 1990-04-02 "}});
+      fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
+      await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({birthday:"1990-04-02"})));
+      fireEvent.change(screen.getByLabelText("Birthday"),{target:{value:""}});
+      fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
+      await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenLastCalledWith(expect.objectContaining({birthday:null})));
+    });
   });
 });

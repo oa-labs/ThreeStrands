@@ -9,7 +9,7 @@ import type { ContactProfile } from "./domain";
 vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
-const bob:ContactProfile={id:"contact:bob@example.com",displayName:"Bob Lee",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["bob@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null};
+const bob:ContactProfile={id:"contact:bob@example.com",displayName:"Bob Lee",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["bob@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null,birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 
 /** Hosts the card the way its callers do: saved profiles and errors flow back in. */
 function Host({ initial, onOpenContact = vi.fn(), facts = [] }: { initial: ContactProfile | null; onOpenContact?: (id: string) => void; facts?: string[] }) {
@@ -84,6 +84,16 @@ describe("ContactCard",()=>{
     expect(address.compareDocumentPosition(link)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(link);
     expect(openUrl).toHaveBeenCalledWith("https://upwardprojects.com");
+  });
+
+  it("says when a keep-in-touch reminder is due and stays quiet otherwise",()=>{
+    const kit={...bob.keepInTouch,intervalDays:30};
+    const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+    const nextWeek=new Date();nextWeek.setDate(nextWeek.getDate()+7);
+    const {rerender}=render(<ContactCard email="bob@example.com" fallbackName="Bob Lee" profile={{...bob,keepInTouch:kit,keepInTouchDueAt:yesterday.toISOString()}} facts={[]} onOpenContact={vi.fn()} onProfileSaved={vi.fn()} onError={vi.fn()}/>);
+    expect(screen.getByText(/^Keep in touch: overdue since /)).toBeInTheDocument();
+    rerender(<ContactCard email="bob@example.com" fallbackName="Bob Lee" profile={{...bob,keepInTouch:kit,keepInTouchDueAt:nextWeek.toISOString()}} facts={[]} onOpenContact={vi.fn()} onProfileSaved={vi.fn()} onError={vi.fn()}/>);
+    expect(screen.queryByText(/Keep in touch/)).not.toBeInTheDocument();
   });
 
   it("puts the job title before the history line",()=>{

@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 48;
+pub(crate) const LATEST_VERSION: i64 = 50;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1364,6 +1364,40 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         }
         tx.execute_batch("PRAGMA user_version=48;").map_err(error)?;
     }
+    if version < 49 {
+        // Birthdays and keep-in-touch reminders on saved contacts. Every
+        // column is nullable: a NULL interval means reminders are off, and
+        // existing profiles keep that default.
+        for (column, kind) in [
+            ("birthday", "TEXT"),
+            ("kit_interval_days", "INTEGER"),
+            ("kit_started_at", "TEXT"),
+            ("kit_snoozed_until", "TEXT"),
+            ("kit_snoozed_at", "TEXT"),
+            ("kit_last_touch_at", "TEXT"),
+        ] {
+            if !has_column(&tx, "contacts", column)? {
+                tx.execute(&format!("ALTER TABLE contacts ADD COLUMN {column} {kind}"), []).map_err(error)?;
+            }
+        }
+        tx.execute_batch("PRAGMA user_version=49;").map_err(error)?;
+    }
+    if version < 50 {
+        // Progress of the one-time sent-mail backfill that seeds the address
+        // book from history older than the inbox-only initial sync. The page
+        // token and offset let it resume across polls and restarts.
+        for (column, kind) in [
+            ("sent_backfill_page", "TEXT"),
+            ("sent_backfill_offset", "INTEGER NOT NULL DEFAULT 0"),
+            ("sent_backfill_scanned", "INTEGER NOT NULL DEFAULT 0"),
+            ("sent_backfill_completed_at", "TEXT"),
+        ] {
+            if !has_column(&tx, "sync_state", column)? {
+                tx.execute(&format!("ALTER TABLE sync_state ADD COLUMN {column} {kind}"), []).map_err(error)?;
+            }
+        }
+        tx.execute_batch("PRAGMA user_version=50;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1548,6 +1582,40 @@ mod tests {
             .query_row("SELECT generation FROM sync_local_state WHERE id=1", [], |row| row.get(0))
             .unwrap();
         assert_eq!(generation, 0);
+    }
+
+    #[test]
+    fn v49_adds_keep_in_touch_columns_that_default_to_off() {
+        let mut connection=unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute("INSERT INTO contacts(id,display_name,updated_at) VALUES('c1','Ada','2026-01-01T00:00:00Z')",[]).unwrap();
+        // Rebuild the v48 shape so the upgrade path runs, not just the guard.
+        for column in ["birthday","kit_interval_days","kit_started_at","kit_snoozed_until","kit_snoozed_at","kit_last_touch_at"] {
+            connection.execute(&format!("ALTER TABLE contacts DROP COLUMN {column}"),[]).unwrap();
+        }
+        connection.pragma_update(None,"user_version",48).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let (name,interval):(String,Option<i64>)=connection.query_row("SELECT display_name,kit_interval_days FROM contacts WHERE id='c1'",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!((name.as_str(),interval),("Ada",None));
+        let version:i64=connection.query_row("PRAGMA user_version",[],|row|row.get(0)).unwrap();
+        assert_eq!(version,super::LATEST_VERSION);
+    }
+
+    #[test]
+    fn v50_starts_the_sent_backfill_from_the_first_page() {
+        let mut connection=unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute("INSERT OR IGNORE INTO sync_state(account_id,cursor) VALUES('me@example.com','history-1')",[]).unwrap();
+        // Rebuild the v49 shape so the upgrade path runs, not just the guard.
+        for column in ["sent_backfill_page","sent_backfill_offset","sent_backfill_scanned","sent_backfill_completed_at"] {
+            connection.execute(&format!("ALTER TABLE sync_state DROP COLUMN {column}"),[]).unwrap();
+        }
+        connection.pragma_update(None,"user_version",49).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let progress:(String,Option<String>,i64,i64,Option<String>)=connection.query_row("SELECT cursor,sent_backfill_page,sent_backfill_offset,sent_backfill_scanned,sent_backfill_completed_at FROM sync_state WHERE account_id='me@example.com'",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap();
+        assert_eq!(progress,("history-1".to_string(),None,0,0,None));
+        let version:i64=connection.query_row("PRAGMA user_version",[],|row|row.get(0)).unwrap();
+        assert_eq!(version,super::LATEST_VERSION);
     }
 
     #[test]

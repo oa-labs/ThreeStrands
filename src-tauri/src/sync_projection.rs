@@ -178,12 +178,29 @@ impl Database {
         })
     }
 
-    fn upsert_synced_contact(&self, value: &Value) -> DbResult<()> {
+    pub(crate) fn upsert_synced_contact(&self, value: &Value) -> DbResult<()> {
         let item: ContactRecord = serde_json::from_value(value.clone()).map_err(display)?;
+        // A device on a build before birthdays and keep-in-touch sends
+        // records without those keys. Treat a missing key as "unknown to the
+        // sender" and keep the local value rather than clearing it.
+        let local = if value.get("birthday").is_none() || value.get("keepInTouch").is_none() {
+            self.get_contact_profile(&item.id)?
+        } else {
+            None
+        };
+        let birthday = match (&local, value.get("birthday")) {
+            (Some(local), None) => local.birthday.clone(),
+            _ => item.birthday,
+        };
+        let keep_in_touch = match (&local, value.get("keepInTouch")) {
+            (Some(local), None) => local.keep_in_touch.clone(),
+            _ => item.keep_in_touch,
+        };
         self.save_contact_profile(&crate::models::SaveContactRequest {
             id:Some(item.id),display_name:item.display_name,role:item.role,company:item.company,
             location:item.location,bio:item.bio,notes:item.notes,links:item.links,
             photo_data:item.photo_data,favorite:item.favorite,addresses:item.addresses,
+            birthday,keep_in_touch:Some(keep_in_touch),
         }).map(|_|())
     }
 

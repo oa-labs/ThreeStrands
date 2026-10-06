@@ -786,6 +786,28 @@ describe("keyboard-first task and action workspaces", () => {
     expect(separator?.nextElementSibling).toContainElement(within(navbar).getByRole("button", { name: "Refresh mail" }));
   });
 
+  it("badges the navbar Contacts button with reminders that are due and opens on Keep in Touch from the palette", async () => {
+    const day = 86_400_000;
+    const contact = (id: string, dueInDays: number) => ({
+      id, displayName: id, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null,
+      favorite: false, addresses: [`${id}@example.com`], sentCount: 0, receivedCount: 0, lastInteractedAt: null, birthday: null,
+      keepInTouch: { intervalDays: 7, startedAt: null, snoozedUntil: null, snoozedAt: null, lastTouchAt: null },
+      keepInTouchDueAt: new Date(Date.now() + dueInDays * day).toISOString(),
+    });
+    vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([contact("overdue", -3), contact("today", 0), contact("later", 20)]);
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+
+    const navbar = screen.getByRole("navigation", { name: "Mailboxes" });
+    const contactsButton = await within(navbar).findByRole("button", { name: "Contacts (4), 2 due to reconnect" });
+    expect(contactsButton.querySelector(".nav-button-badge")).toHaveTextContent("2");
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Keep in Touch" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Go to Keep in Touch/ }));
+    expect(await screen.findByRole("tab", { name: /Keep in Touch/ })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("sends the navbar Calendar button to the week calendar view", async () => {
     const { container } = render(<App />);
     await screen.findByRole("region", { name: "Inbox" });

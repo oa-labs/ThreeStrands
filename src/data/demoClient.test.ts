@@ -293,3 +293,36 @@ describe("demoClient goals", () => {
     expect((await client.listTasks()).find((candidate) => candidate.id === task.id)?.goalId).toBeNull();
   });
 });
+
+describe("demoClient keep in touch", () => {
+  const saved = (name: string, email: string) => ({ id: null, displayName: name, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses: [email], birthday: null });
+
+  it("mirrors the backend: saves derived contacts, keeps reminders across form saves, and lists by due date", async () => {
+    const dataset = defaultDemoDataset();
+    const recent = new Date(Date.now() - 86_400_000).toISOString();
+    dataset.contacts.push({ email: "pat@example.com", displayName: "Pat", sentCount: 2, receivedCount: 1, lastInteractedAt: recent, pinned: false });
+    const client = createDemoClient(dataset);
+    const [pat] = await client.setKeepInTouch(["derived:pat@example.com"], 7);
+    expect(pat.id).not.toMatch(/^derived:/);
+    expect(pat.keepInTouchDueAt).toBe(new Date(Date.parse(recent) + 7 * 86_400_000).toISOString());
+
+    const sam = await client.saveContactProfile({ ...saved("Sam", "sam@example.com"), birthday: "07-04" });
+    await expect(client.setKeepInTouch([sam.id], 0)).rejects.toThrow("1 to 730");
+    await expect(client.saveContactProfile({ ...saved("Sam", "sam@example.com"), id: sam.id, birthday: "02-30" })).rejects.toThrow("MM-DD");
+
+    const resaved = await client.saveContactProfile({ ...saved("Pat Lee", "pat@example.com"), id: pat.id });
+    expect(resaved.keepInTouch.intervalDays).toBe(7);
+    expect((await client.listKeepInTouch()).map((item) => item.id)).toEqual([pat.id, sam.id]);
+
+    await expect(client.snoozeKeepInTouch(sam.id, new Date(Date.now() + 86_400_000).toISOString())).rejects.toThrow("Turn on keep in touch");
+    const until = new Date(Date.now() + 10 * 86_400_000).toISOString();
+    expect((await client.snoozeKeepInTouch(pat.id, until)).keepInTouchDueAt).toBe(until);
+    const touched = await client.markContacted(pat.id);
+    expect(touched.keepInTouch.snoozedUntil).toBeNull();
+    expect(Date.parse(touched.keepInTouchDueAt ?? "")).toBeGreaterThan(Date.now() + 6 * 86_400_000);
+
+    const [off] = await client.setKeepInTouch([pat.id], null);
+    expect(off.keepInTouchDueAt).toBeNull();
+    expect((await client.listKeepInTouch()).map((item) => item.id)).toEqual([sam.id]);
+  });
+});

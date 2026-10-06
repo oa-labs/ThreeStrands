@@ -3,8 +3,9 @@
 use super::*;
 use crate::models::{
     ContactActivity, ContactFile, ContactFiles, ContactProfile, ContactTimelineItem, DomainContext,
-    DomainPerson, SaveContactRequest,
+    DomainPerson, KeepInTouch, SaveContactRequest,
 };
+use chrono::{DateTime, Duration, NaiveDate};
 use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
 
@@ -13,6 +14,13 @@ const MAX_CONTACTS: usize = 5_000;
 const MAX_ACTIVITY_ARRIVALS: usize = 24;
 pub(crate) const MAX_CONTACT_FILES: usize = 100;
 pub(crate) const MAX_DOMAIN_CONTEXT: usize = 20;
+/// Longest keep-in-touch interval: two years.
+pub(crate) const MAX_KEEP_IN_TOUCH_DAYS: i64 = 730;
+/// Furthest a keep-in-touch reminder can be snoozed: two years.
+const MAX_KEEP_IN_TOUCH_SNOOZE_DAYS: i64 = 730;
+/// Birthday, interval, and keep-in-touch timestamps, read by [`contact_extras`].
+const CONTACT_EXTRA_COLUMNS: &str =
+    "c.birthday,c.kit_interval_days,c.kit_started_at,c.kit_snoozed_until,c.kit_snoozed_at,c.kit_last_touch_at";
 
 pub(super) fn index_contact_message(
     tx: &rusqlite::Transaction<'_>,
@@ -112,6 +120,8 @@ impl Database {
                 photo_data: None,
                 favorite: true,
                 addresses: vec![email],
+                birthday: None,
+                keep_in_touch: None,
             })?;
         }
         Ok(())
@@ -128,9 +138,9 @@ impl Database {
     pub fn list_saved_contact_profiles(&self) -> DbResult<Vec<ContactProfile>> {
         self.with_connection(|connection|{
             let mut statement=connection.prepare(
-                "SELECT c.id,c.display_name,c.role,c.company,c.location,c.bio,c.notes,c.links_json,c.photo_data,c.favorite,
+                &format!("SELECT c.id,c.display_name,c.role,c.company,c.location,c.bio,c.notes,c.links_json,c.photo_data,c.favorite,
                     COALESCE((SELECT json_group_array(a.email) FROM contact_addresses a WHERE a.contact_id=c.id),'[]'),
-                    COALESCE(stats.sent_count,0),COALESCE(stats.received_count,0),stats.last_interacted_at
+                    COALESCE(stats.sent_count,0),COALESCE(stats.received_count,0),stats.last_interacted_at,{CONTACT_EXTRA_COLUMNS}
                  FROM contacts c
                  LEFT JOIN (
                     SELECT ca.contact_id,
@@ -140,17 +150,18 @@ impl Database {
                     FROM contact_addresses ca LEFT JOIN contact_interactions ci ON ci.email=ca.email
                     GROUP BY ca.contact_id
                  ) stats ON stats.contact_id=c.id
-                 ORDER BY c.favorite DESC,c.updated_at DESC")?;
+                 ORDER BY c.favorite DESC,c.updated_at DESC"))?;
             let rows=statement.query_map([],|row|Ok((
                 row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,
                 row.get::<_,Option<String>>(3)?,row.get::<_,Option<String>>(4)?,row.get::<_,Option<String>>(5)?,
                 row.get::<_,Option<String>>(6)?,row.get::<_,String>(7)?,row.get::<_,Option<String>>(8)?,
                 row.get::<_,bool>(9)?,row.get::<_,String>(10)?,row.get::<_,i64>(11)?,row.get::<_,i64>(12)?,
-                row.get::<_,Option<String>>(13)?,
+                row.get::<_,Option<String>>(13)?,contact_extras(row,14)?,
             )))?;
             rows.map(|row|{
-                let(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,addresses,sent_count,received_count,last_interacted_at)=row?;
-                Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses:serde_json::from_str(&addresses).unwrap_or_default(),sent_count,received_count,last_interacted_at})
+                let(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,(birthday,keep_in_touch))=row?;
+                let keep_in_touch_due_at=keep_in_touch_due_at(&keep_in_touch,last_interacted_at.as_deref());
+                Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses:serde_json::from_str(&addresses).unwrap_or_default(),sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at})
             }).collect()
         })
     }
@@ -175,20 +186,20 @@ impl Database {
             // A saved profile is shared across accounts. In a scoped view it
             // appears where it has mail history; profiles with no history stay
             // available everywhere. Filter before LIMIT to avoid hiding rows.
-            let mut statement = connection.prepare(
+            let mut statement = connection.prepare(&format!(
                 "SELECT c.id,c.display_name,c.role,c.company,c.location,c.bio,c.notes,c.links_json,
-                        c.photo_data,c.favorite,c.updated_at
+                        c.photo_data,c.favorite,{CONTACT_EXTRA_COLUMNS}
                  FROM contacts c
                  WHERE (?3 IS NULL
                    OR EXISTS(SELECT 1 FROM contact_addresses a JOIN contact_interactions ci ON ci.email=a.email WHERE a.contact_id=c.id AND ci.account_id=?3)
                    OR NOT EXISTS(SELECT 1 FROM contact_addresses a JOIN contact_interactions ci ON ci.email=a.email WHERE a.contact_id=c.id))
                    AND (?2='' OR lower(coalesce(c.display_name,'') || ' ' || coalesce(c.role,'') || ' ' || coalesce(c.company,'') || ' ' || coalesce(c.location,'') || ' ' || coalesce(c.bio,'') || ' ' || coalesce(c.notes,'') || ' ' || coalesce(c.links_json,'') || ' ' || coalesce((SELECT group_concat(email,' ') FROM contact_addresses a WHERE a.contact_id=c.id),'')) LIKE '%' || ?2 || '%')
-                 ORDER BY c.favorite DESC,c.updated_at DESC LIMIT ?1")?;
+                 ORDER BY c.favorite DESC,c.updated_at DESC LIMIT ?1"))?;
             let rows = statement.query_map(params![limit as i64,needle,account_id], |row| {
                 Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,
                     row.get::<_,Option<String>>(3)?,row.get::<_,Option<String>>(4)?,row.get::<_,Option<String>>(5)?,
                     row.get::<_,Option<String>>(6)?,row.get::<_,String>(7)?,row.get::<_,Option<String>>(8)?,
-                    row.get::<_,bool>(9)?))
+                    row.get::<_,bool>(9)?,contact_extras(row,10)?))
             })?;
             rows.collect::<Result<Vec<_>,_>>().map_err(Into::into)
         })?;
@@ -212,7 +223,7 @@ impl Database {
             }
         }
         let mut profiles = Vec::new();
-        for (id, name, role, company, location, bio, notes, links, photo, favorite) in saved {
+        for (id, name, role, company, location, bio, notes, links, photo, favorite, (birthday, keep_in_touch)) in saved {
             let addresses = self.contact_addresses(&id)?;
             let query_text = format!(
                 "{} {} {} {} {} {} {} {}",
@@ -244,6 +255,14 @@ impl Database {
                     }
                 }
             }
+            // A scoped view counts only this account's mail, but a reminder
+            // is satisfied by mail from any account.
+            let keep_in_touch_due_at = if keep_in_touch.interval_days.is_some() {
+                let (_, _, latest) = self.contact_interaction_summary(&addresses)?;
+                keep_in_touch_due_at(&keep_in_touch, latest.as_deref())
+            } else {
+                None
+            };
             profiles.push(ContactProfile {
                 id,
                 display_name: name,
@@ -259,6 +278,9 @@ impl Database {
                 sent_count: sent,
                 received_count: received,
                 last_interacted_at: last,
+                birthday,
+                keep_in_touch,
+                keep_in_touch_due_at,
             });
         }
         // The existing ranked suggestion query supplies mail-derived entries and
@@ -292,6 +314,9 @@ impl Database {
                 sent_count: 0,
                 received_count: 0,
                 last_interacted_at: None,
+                birthday: None,
+                keep_in_touch: KeepInTouch::default(),
+                keep_in_touch_due_at: None,
             });
             profile.sent_count += item.sent_count;
             profile.received_count += item.received_count;
@@ -358,16 +383,20 @@ impl Database {
                 sent_count: sent,
                 received_count: received,
                 last_interacted_at: last,
+                birthday: None,
+                keep_in_touch: KeepInTouch::default(),
+                keep_in_touch_due_at: None,
             }));
         }
         self.with_connection(|connection| {
             let row = connection.query_row(
-                "SELECT id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite FROM contacts WHERE id=?1",[id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,row.get::<_,Option<String>>(3)?,row.get::<_,Option<String>>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,String>(7)?,row.get::<_,Option<String>>(8)?,row.get::<_,bool>(9)?))).optional()?;
+                &format!("SELECT c.id,c.display_name,c.role,c.company,c.location,c.bio,c.notes,c.links_json,c.photo_data,c.favorite,{CONTACT_EXTRA_COLUMNS} FROM contacts c WHERE c.id=?1"),[id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,row.get::<_,Option<String>>(3)?,row.get::<_,Option<String>>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,String>(7)?,row.get::<_,Option<String>>(8)?,row.get::<_,bool>(9)?,contact_extras(row,10)?))).optional()?;
             Ok(row)
-        })?.map(|(id,display_name,role,company,location,bio,notes,links,photo_data,favorite)| {
+        })?.map(|(id,display_name,role,company,location,bio,notes,links,photo_data,favorite,(birthday,keep_in_touch))| {
             let addresses=self.contact_addresses(&id)?;
             let (sent_count,received_count,last_interacted_at)=self.contact_interaction_summary(&addresses)?;
-            Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses,sent_count,received_count,last_interacted_at})
+            let keep_in_touch_due_at=keep_in_touch_due_at(&keep_in_touch,last_interacted_at.as_deref());
+            Ok(ContactProfile{id,display_name,role,company,location,bio,notes,links:serde_json::from_str(&links).unwrap_or_default(),photo_data,favorite,addresses,sent_count,received_count,last_interacted_at,birthday,keep_in_touch,keep_in_touch_due_at})
         }).transpose()
     }
 
@@ -403,6 +432,12 @@ impl Database {
         let location = clean_contact_text(request.location.as_deref(), 200)?;
         let bio = clean_contact_text(request.bio.as_deref(), 4000)?;
         let notes = clean_contact_text(request.notes.as_deref(), 8000)?;
+        let birthday = normalize_birthday(request.birthday.as_deref())?;
+        if let Some(keep_in_touch) = &request.keep_in_touch {
+            validate_keep_in_touch(keep_in_touch)?;
+        }
+        let replace_keep_in_touch = request.keep_in_touch.is_some();
+        let keep_in_touch = request.keep_in_touch.clone().unwrap_or_default();
         let mut addresses = Vec::new();
         for raw in &request.addresses {
             let email = raw.trim().to_ascii_lowercase();
@@ -455,13 +490,147 @@ impl Database {
                 let existing:Option<String>=tx.query_row("SELECT contact_id FROM contact_addresses WHERE email=?1",[email],|row|row.get(0)).optional()?;
                 if existing.as_deref().is_some_and(|owner|owner!=id) { return Err("That address already belongs to another saved contact. Remove it there before linking it here.".into()); }
             }
-            tx.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,role=excluded.role,company=excluded.company,location=excluded.location,bio=excluded.bio,notes=excluded.notes,links_json=excluded.links_json,photo_data=excluded.photo_data,favorite=excluded.favorite,updated_at=excluded.updated_at",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339()])?;
+            tx.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,role=excluded.role,company=excluded.company,location=excluded.location,bio=excluded.bio,notes=excluded.notes,links_json=excluded.links_json,photo_data=excluded.photo_data,favorite=excluded.favorite,updated_at=excluded.updated_at,birthday=excluded.birthday,
+                kit_interval_days=CASE WHEN ?18 THEN excluded.kit_interval_days ELSE contacts.kit_interval_days END,
+                kit_started_at=CASE WHEN ?18 THEN excluded.kit_started_at ELSE contacts.kit_started_at END,
+                kit_snoozed_until=CASE WHEN ?18 THEN excluded.kit_snoozed_until ELSE contacts.kit_snoozed_until END,
+                kit_snoozed_at=CASE WHEN ?18 THEN excluded.kit_snoozed_at ELSE contacts.kit_snoozed_at END,
+                kit_last_touch_at=CASE WHEN ?18 THEN excluded.kit_last_touch_at ELSE contacts.kit_last_touch_at END",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339(),birthday,keep_in_touch.interval_days,keep_in_touch.started_at,keep_in_touch.snoozed_until,keep_in_touch.snoozed_at,keep_in_touch.last_touch_at,replace_keep_in_touch])?;
             tx.execute("DELETE FROM contact_addresses WHERE contact_id=?1",[&id])?;
             for email in &addresses { tx.execute("INSERT INTO contact_addresses(contact_id,email) VALUES(?1,?2)",params![id,email])?; }
             Ok(())
         })?;
         self.get_contact_profile(&id)?
             .ok_or_else(|| "Saved contact could not be loaded".into())
+    }
+
+    /// Saved contacts with keep-in-touch reminders or a birthday, soonest
+    /// reminder first. Contacts without a reminder follow, by name.
+    pub fn list_keep_in_touch(&self) -> DbResult<Vec<ContactProfile>> {
+        let mut profiles = self
+            .list_saved_contact_profiles()?
+            .into_iter()
+            .filter(|profile| profile.keep_in_touch.interval_days.is_some() || profile.birthday.is_some())
+            .collect::<Vec<_>>();
+        profiles.sort_by(|a, b| {
+            let due = |profile: &ContactProfile| profile.keep_in_touch_due_at.as_deref().and_then(parse_instant);
+            match (due(a), due(b)) {
+                (Some(a), Some(b)) => a.cmp(&b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+            .then_with(|| a.display_name.cmp(&b.display_name))
+        });
+        Ok(profiles)
+    }
+
+    /// Turns reminders on (or changes the interval) for every contact in
+    /// `ids`, or off when `interval_days` is `None`. Mail-derived contacts
+    /// are saved first, so the returned profiles carry their saved ids.
+    pub fn set_keep_in_touch(&self, ids: &[String], interval_days: Option<i64>) -> DbResult<Vec<ContactProfile>> {
+        if ids.is_empty() || ids.len() > MAX_CONTACTS {
+            return Err(format!("Choose between 1 and {MAX_CONTACTS} contacts").into());
+        }
+        if let Some(days) = interval_days {
+            validate_keep_in_touch_days(days)?;
+        }
+        let mut saved_ids = Vec::with_capacity(ids.len());
+        for id in ids {
+            let saved = self.ensure_saved_contact(id)?;
+            if !saved_ids.contains(&saved) {
+                saved_ids.push(saved);
+            }
+        }
+        let now = Utc::now().to_rfc3339();
+        self.with_transaction(|tx| {
+            for id in &saved_ids {
+                // SQLite evaluates every SET expression against the old row,
+                // so `kit_interval_days IS NULL` means "was off until now".
+                // Changing an interval keeps the original start; turning
+                // reminders off also drops a pending snooze.
+                tx.execute(
+                    "UPDATE contacts SET
+                        kit_started_at=CASE WHEN ?1 IS NULL THEN NULL WHEN kit_interval_days IS NULL THEN ?2 ELSE COALESCE(kit_started_at,?2) END,
+                        kit_snoozed_until=CASE WHEN ?1 IS NULL THEN NULL ELSE kit_snoozed_until END,
+                        kit_snoozed_at=CASE WHEN ?1 IS NULL THEN NULL ELSE kit_snoozed_at END,
+                        kit_interval_days=?1,
+                        updated_at=?2
+                     WHERE id=?3",
+                    params![interval_days, now, id],
+                )?;
+            }
+            Ok(())
+        })?;
+        saved_ids
+            .iter()
+            .map(|id| self.get_contact_profile(id)?.ok_or_else(|| "Saved contact could not be loaded".into()))
+            .collect()
+    }
+
+    /// Pushes the next reminder to `until`, or clears the snooze. A touch
+    /// after the snooze was set supersedes it (see [`keep_in_touch_due_at`]).
+    pub fn snooze_keep_in_touch(&self, id: &str, until: Option<&str>) -> DbResult<ContactProfile> {
+        let now = Utc::now();
+        let until = match until {
+            Some(value) => {
+                let instant = parse_instant(value).ok_or("Choose a valid snooze date")?;
+                if instant <= now || instant > now + Duration::days(MAX_KEEP_IN_TOUCH_SNOOZE_DAYS) {
+                    return Err("Choose a snooze date within the next two years".into());
+                }
+                Some(instant.to_rfc3339())
+            }
+            None => None,
+        };
+        let changed = self.with_connection(|connection| {
+            Ok(connection.execute(
+                "UPDATE contacts SET kit_snoozed_until=?1,kit_snoozed_at=CASE WHEN ?1 IS NULL THEN NULL ELSE ?2 END,updated_at=?2 WHERE id=?3 AND kit_interval_days IS NOT NULL",
+                params![until, now.to_rfc3339(), id],
+            )?)
+        })?;
+        if changed == 0 {
+            return Err("Turn on keep in touch for this contact before snoozing".into());
+        }
+        self.get_contact_profile(id)?.ok_or_else(|| "Saved contact could not be loaded".into())
+    }
+
+    /// Logs a touch outside email (a call, a coffee) at the current time,
+    /// which also ends any snooze.
+    pub fn mark_contacted(&self, id: &str) -> DbResult<ContactProfile> {
+        let id = self.ensure_saved_contact(id)?;
+        let now = Utc::now().to_rfc3339();
+        self.with_connection(|connection| {
+            connection.execute(
+                "UPDATE contacts SET kit_last_touch_at=?1,kit_snoozed_until=NULL,kit_snoozed_at=NULL,updated_at=?1 WHERE id=?2",
+                params![now, id],
+            )?;
+            Ok(())
+        })?;
+        self.get_contact_profile(&id)?.ok_or_else(|| "Saved contact could not be loaded".into())
+    }
+
+    /// Returns a saved contact id, saving a `derived:<email>` contact first.
+    fn ensure_saved_contact(&self, id: &str) -> DbResult<String> {
+        let profile = self.get_contact_profile(id)?.ok_or("Contact not found")?;
+        if !profile.id.starts_with("derived:") {
+            return Ok(profile.id);
+        }
+        let saved = self.save_contact_profile(&SaveContactRequest {
+            id: Some(profile.id),
+            display_name: profile.display_name,
+            role: None,
+            company: None,
+            location: None,
+            bio: None,
+            notes: None,
+            links: Vec::new(),
+            photo_data: None,
+            favorite: profile.favorite,
+            addresses: profile.addresses,
+            birthday: None,
+            keep_in_touch: None,
+        })?;
+        Ok(saved.id)
     }
 
     pub fn delete_contact_profile(&self, id: &str) -> DbResult<()> {
@@ -673,4 +842,179 @@ fn clean_contact_text(value: Option<&str>, max: usize) -> DbResult<Option<String
         return Err("Contact field is too long".into());
     }
     Ok(Some(value.to_string()))
+}
+
+fn contact_extras(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<(Option<String>, KeepInTouch)> {
+    Ok((
+        row.get(start)?,
+        KeepInTouch {
+            interval_days: row.get(start + 1)?,
+            started_at: row.get(start + 2)?,
+            snoozed_until: row.get(start + 3)?,
+            snoozed_at: row.get(start + 4)?,
+            last_touch_at: row.get(start + 5)?,
+        },
+    ))
+}
+
+fn parse_instant(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value).ok().map(|value| value.with_timezone(&Utc))
+}
+
+pub(crate) fn validate_keep_in_touch_days(days: i64) -> DbResult<()> {
+    if (1..=MAX_KEEP_IN_TOUCH_DAYS).contains(&days) {
+        Ok(())
+    } else {
+        Err(format!("Keep in touch every 1 to {MAX_KEEP_IN_TOUCH_DAYS} days").into())
+    }
+}
+
+/// Checks settings that arrive whole, from sync or a settings import.
+pub(crate) fn validate_keep_in_touch(value: &KeepInTouch) -> DbResult<()> {
+    if let Some(days) = value.interval_days {
+        validate_keep_in_touch_days(days)?;
+    }
+    for instant in [&value.started_at, &value.snoozed_until, &value.snoozed_at, &value.last_touch_at].into_iter().flatten() {
+        if parse_instant(instant).is_none() {
+            return Err("Keep-in-touch dates must be RFC 3339 timestamps".into());
+        }
+    }
+    Ok(())
+}
+
+/// Accepts `MM-DD`, or `YYYY-MM-DD` when the year is known. February 29 is
+/// allowed without a year.
+pub(crate) fn normalize_birthday(value: Option<&str>) -> DbResult<Option<String>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let valid = match value.len() {
+        5 => NaiveDate::parse_from_str(&format!("2000-{value}"), "%Y-%m-%d").is_ok(),
+        10 => NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok_and(|date| {
+            use chrono::Datelike;
+            (1900..=Utc::now().year()).contains(&date.year())
+        }),
+        _ => false,
+    };
+    if valid {
+        Ok(Some(value.to_string()))
+    } else {
+        Err("Enter a birthday as MM-DD or YYYY-MM-DD".into())
+    }
+}
+
+/// When the next keep-in-touch reminder falls due, or `None` when reminders
+/// are off. A touch is the newest of any mail either way (`last_mail_at`)
+/// and a hand-logged touch. Without any touch the interval counts from when
+/// reminders were turned on. A snooze wins until a touch newer than it.
+pub(crate) fn keep_in_touch_due_at(value: &KeepInTouch, last_mail_at: Option<&str>) -> Option<String> {
+    let days = value.interval_days?;
+    let last_touch = [last_mail_at, value.last_touch_at.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter_map(parse_instant)
+        .max();
+    if let Some(until) = value.snoozed_until.as_deref().and_then(parse_instant) {
+        let snoozed_at = value.snoozed_at.as_deref().and_then(parse_instant);
+        let superseded = matches!((last_touch, snoozed_at), (Some(touch), Some(at)) if touch > at);
+        if !superseded {
+            return Some(until.to_rfc3339());
+        }
+    }
+    let base = last_touch.or_else(|| value.started_at.as_deref().and_then(parse_instant))?;
+    Some((base + Duration::days(days)).to_rfc3339())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kit(days: i64) -> KeepInTouch {
+        KeepInTouch {
+            interval_days: Some(days),
+            started_at: Some("2026-09-01T00:00:00+00:00".into()),
+            ..KeepInTouch::default()
+        }
+    }
+
+    #[test]
+    fn due_date_is_off_without_an_interval() {
+        let value = KeepInTouch { interval_days: None, ..kit(7) };
+        assert_eq!(keep_in_touch_due_at(&value, Some("2026-09-20T00:00:00Z")), None);
+    }
+
+    #[test]
+    fn due_date_counts_from_the_start_without_any_touch() {
+        assert_eq!(keep_in_touch_due_at(&kit(14), None).as_deref(), Some("2026-09-15T00:00:00+00:00"));
+    }
+
+    #[test]
+    fn due_date_counts_from_the_newest_mail_or_logged_touch() {
+        let mut value = kit(7);
+        assert_eq!(
+            keep_in_touch_due_at(&value, Some("2026-09-20T10:00:00Z")).as_deref(),
+            Some("2026-09-27T10:00:00+00:00")
+        );
+        value.last_touch_at = Some("2026-09-25T08:00:00+00:00".into());
+        assert_eq!(
+            keep_in_touch_due_at(&value, Some("2026-09-20T10:00:00Z")).as_deref(),
+            Some("2026-10-02T08:00:00+00:00")
+        );
+        // An older logged touch does not pull the due date back.
+        assert_eq!(
+            keep_in_touch_due_at(&value, Some("2026-09-30T00:00:00Z")).as_deref(),
+            Some("2026-10-07T00:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn snooze_holds_until_a_newer_touch_supersedes_it() {
+        let mut value = kit(7);
+        value.snoozed_at = Some("2026-09-21T00:00:00+00:00".into());
+        value.snoozed_until = Some("2026-10-15T00:00:00+00:00".into());
+        // Mail before the snooze leaves it in place.
+        assert_eq!(
+            keep_in_touch_due_at(&value, Some("2026-09-20T00:00:00Z")).as_deref(),
+            Some("2026-10-15T00:00:00+00:00")
+        );
+        // Mail exactly at the snooze time is not newer.
+        assert_eq!(
+            keep_in_touch_due_at(&value, Some("2026-09-21T00:00:00Z")).as_deref(),
+            Some("2026-10-15T00:00:00+00:00")
+        );
+        // Newer mail cancels the snooze and restarts the interval.
+        assert_eq!(
+            keep_in_touch_due_at(&value, Some("2026-09-22T00:00:00Z")).as_deref(),
+            Some("2026-09-29T00:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn interval_limits_accept_the_bounds_and_reject_beyond_them() {
+        assert!(validate_keep_in_touch_days(0).is_err());
+        assert!(validate_keep_in_touch_days(1).is_ok());
+        assert!(validate_keep_in_touch_days(MAX_KEEP_IN_TOUCH_DAYS - 1).is_ok());
+        assert!(validate_keep_in_touch_days(MAX_KEEP_IN_TOUCH_DAYS).is_ok());
+        assert!(validate_keep_in_touch_days(MAX_KEEP_IN_TOUCH_DAYS + 1).is_err());
+    }
+
+    #[test]
+    fn keep_in_touch_settings_reject_malformed_timestamps() {
+        let mut value = kit(30);
+        validate_keep_in_touch(&value).unwrap();
+        value.snoozed_until = Some("2026-10-15".into());
+        assert!(validate_keep_in_touch(&value).is_err());
+    }
+
+    #[test]
+    fn birthdays_accept_month_day_with_or_without_a_year() {
+        assert_eq!(normalize_birthday(Some(" 12-09 ")).unwrap().as_deref(), Some("12-09"));
+        assert_eq!(normalize_birthday(Some("1984-12-09")).unwrap().as_deref(), Some("1984-12-09"));
+        assert_eq!(normalize_birthday(Some("02-29")).unwrap().as_deref(), Some("02-29"));
+        assert_eq!(normalize_birthday(Some("")).unwrap(), None);
+        assert_eq!(normalize_birthday(None).unwrap(), None);
+        for invalid in ["13-01", "02-30", "2023-02-29", "1899-12-31", "9999-01-01", "Dec 9", "12/09"] {
+            assert!(normalize_birthday(Some(invalid)).is_err(), "{invalid}");
+        }
+    }
 }

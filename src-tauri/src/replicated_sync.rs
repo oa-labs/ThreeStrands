@@ -2385,7 +2385,7 @@ mod replicator_tests {
     #[test]
     fn conflicted_contact_does_not_block_other_entities_and_is_retried_later() {
         let db=Database::open_memory();
-        let owner=db.save_contact_profile(&crate::models::SaveContactRequest{
+        let owner=db.save_contact_profile(&crate::models::SaveContactRequest{birthday:None,keep_in_touch:None,
             id:Some("local-owner".into()),display_name:Some("Local owner".into()),role:None,company:None,
             location:None,bio:None,notes:Some("Keep local profile".into()),links:vec![],photo_data:None,
             favorite:false,addresses:vec!["shared@example.com".into()],
@@ -2409,7 +2409,7 @@ mod replicator_tests {
         assert_eq!(queued,1);
         assert!(db.get_contact_profile("remote-contact").unwrap().is_none());
 
-        db.save_contact_profile(&crate::models::SaveContactRequest{
+        db.save_contact_profile(&crate::models::SaveContactRequest{birthday:None,keep_in_touch:None,
             id:Some(owner.id),display_name:Some("Local owner".into()),role:None,company:None,
             location:None,bio:None,notes:Some("Keep local profile".into()),links:vec![],photo_data:None,
             favorite:false,addresses:vec!["owner@example.com".into()],
@@ -2421,6 +2421,33 @@ mod replicator_tests {
         assert_eq!(queued,0);
         let remote=db.get_contact_profile("remote-contact").unwrap().unwrap();
         assert_eq!(remote.addresses,vec!["shared@example.com"]);
+    }
+
+    #[test]
+    fn a_contact_record_from_an_older_build_keeps_local_birthday_and_keep_in_touch() {
+        let db=Database::open_memory();
+        db.save_contact_profile(&crate::models::SaveContactRequest{birthday:Some("03-14".into()),keep_in_touch:None,
+            id:Some("kit-contact".into()),display_name:Some("Local".into()),role:None,company:None,
+            location:None,bio:None,notes:None,links:vec![],photo_data:None,
+            favorite:false,addresses:vec!["kit@example.com".into()],
+        }).unwrap();
+        let local=db.set_keep_in_touch(&["kit-contact".into()],Some(21)).unwrap().remove(0);
+        // The exact key set every build before 0.67.0 sends.
+        let legacy=json!({"id":"kit-contact","displayName":"Renamed elsewhere","role":null,"company":null,"location":null,"bio":null,"notes":null,"links":[],"photoData":null,"favorite":false,"addresses":["kit@example.com"]});
+        db.upsert_synced_contact(&legacy).unwrap();
+        let merged=db.get_contact_profile("kit-contact").unwrap().unwrap();
+        assert_eq!(merged.display_name.as_deref(),Some("Renamed elsewhere"));
+        assert_eq!(merged.birthday.as_deref(),Some("03-14"));
+        assert_eq!(merged.keep_in_touch,local.keep_in_touch);
+
+        // A current build's record carries both keys, so it can clear them.
+        let mut current=serde_json::to_value(crate::models::ContactRecord::from(&merged)).unwrap();
+        current["birthday"]=Value::Null;
+        current["keepInTouch"]=json!({});
+        db.upsert_synced_contact(&current).unwrap();
+        let cleared=db.get_contact_profile("kit-contact").unwrap().unwrap();
+        assert_eq!(cleared.birthday,None);
+        assert_eq!(cleared.keep_in_touch,crate::models::KeepInTouch::default());
     }
 
     #[test]
@@ -3770,7 +3797,7 @@ mod reconciliation_tests {
                 goal_id: None,
             })
             .unwrap();
-        database.save_contact_profile(&crate::models::SaveContactRequest{
+        database.save_contact_profile(&crate::models::SaveContactRequest{birthday:None,keep_in_touch:None,
             id:None,display_name:Some("Sweep person".into()),role:None,company:None,
             location:None,bio:None,notes:None,links:vec![],photo_data:None,
             favorite:false,addresses:vec!["sweep@example.com".into()],

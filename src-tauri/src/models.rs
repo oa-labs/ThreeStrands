@@ -536,6 +536,34 @@ pub struct ContactProfile {
     pub sent_count: i64,
     pub received_count: i64,
     pub last_interacted_at: Option<String>,
+    /// `MM-DD`, or `YYYY-MM-DD` when the year is known.
+    #[serde(default)]
+    pub birthday: Option<String>,
+    #[serde(default)]
+    pub keep_in_touch: KeepInTouch,
+    /// When the next keep-in-touch reminder falls due. Derived from
+    /// `keep_in_touch` and mail history on every read; never stored.
+    #[serde(default)]
+    pub keep_in_touch_due_at: Option<String>,
+}
+
+/// Keep-in-touch reminder settings stored on a saved contact. Every field is
+/// optional so profiles, sync records, and exports from older builds read as
+/// "reminders off".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct KeepInTouch {
+    /// Days between touches; `None` turns reminders off.
+    pub interval_days: Option<i64>,
+    /// When reminders were turned on; the due date counts from here until
+    /// there is any interaction.
+    pub started_at: Option<String>,
+    /// The next reminder is pushed to this instant until a newer touch.
+    pub snoozed_until: Option<String>,
+    pub snoozed_at: Option<String>,
+    /// Latest touch logged by hand (a call, a coffee). It also outlives
+    /// mail retention pruning.
+    pub last_touch_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -552,10 +580,16 @@ pub struct ContactRecord {
     pub photo_data: Option<String>,
     pub favorite: bool,
     pub addresses: Vec<String>,
+    #[serde(default)]
+    pub birthday: Option<String>,
+    #[serde(default)]
+    pub keep_in_touch: KeepInTouch,
 }
 impl From<&ContactProfile> for ContactRecord {
     fn from(c: &ContactProfile) -> Self {
         Self {
+            birthday: c.birthday.clone(),
+            keep_in_touch: c.keep_in_touch.clone(),
             id: c.id.clone(),
             display_name: c.display_name.clone(),
             role: c.role.clone(),
@@ -647,6 +681,13 @@ pub struct SaveContactRequest {
     pub photo_data: Option<String>,
     pub favorite: bool,
     pub addresses: Vec<String>,
+    #[serde(default)]
+    pub birthday: Option<String>,
+    /// `None` keeps the stored settings. The webview changes reminders only
+    /// through the dedicated keep-in-touch commands, so a profile form
+    /// holding an older copy can never overwrite a newer snooze or touch.
+    #[serde(skip)]
+    pub keep_in_touch: Option<KeepInTouch>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

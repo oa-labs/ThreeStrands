@@ -6,6 +6,7 @@ import { DEMO_ACCOUNT_ID, defaultDemoDataset, type DemoDataset } from "./demoDat
 import { buildShowcaseDataset } from "./showcaseDataset";
 import { parseAddress, splitAddressList } from "../emailAddress";
 import { isCalendarAttachment } from "../CalendarAttachment";
+import { MAX_KEEP_IN_TOUCH_DAYS } from "../keepInTouch";
 import type {
   Account,
   ActionAnalysis,
@@ -17,6 +18,7 @@ import type {
   ContactFile,
   ContactProfile,
   ContactTimelineItem,
+  KeepInTouch,
   DomainPerson,
   SaveContactRequest,
   CreateTaskRequest,
@@ -74,7 +76,15 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   };
   let snippets = seed.snippets;
   let contacts = seed.contacts;
-  let savedContactProfiles = seed.contactProfiles;
+  /** A saved profile for `id`, saving a `derived:<email>` contact first. */
+  const ensureSavedContact = async (id: string): Promise<ContactProfile> => {
+    const saved = savedContactProfiles.find((item) => item.id === id);
+    if (saved) return saved;
+    const derived = await client.getContactProfile(id);
+    if (!derived) throw new Error("Contact not found");
+    return client.saveContactProfile({ ...derived, id: derived.id });
+  };
+  let savedContactProfiles: ContactProfile[] = seed.contactProfiles.map((profile) => withKeepInTouchDue({ birthday: null, keepInTouch: { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null, ...profile }));
   const { details, messages: seededMessages } = seed;
   const scheduleEvents = seed.scheduleEvents;
 
@@ -541,7 +551,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       for (const item of contacts.filter((contact) => contact.sentCount > 0 || contact.pinned)) {
         const email = item.email.toLocaleLowerCase();
         if (savedContactProfiles.some((profile) => profile.addresses.includes(email))) continue;
-        byEmail.set(email, { id: `derived:${email}`, displayName: item.displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: item.pinned, addresses: [email], sentCount: item.sentCount, receivedCount: item.receivedCount, lastInteractedAt: item.lastInteractedAt });
+        byEmail.set(email, { id: `derived:${email}`, displayName: item.displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: item.pinned, addresses: [email], sentCount: item.sentCount, receivedCount: item.receivedCount, lastInteractedAt: item.lastInteractedAt, birthday: null, keepInTouch: { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null });
       }
       const values = [...savedContactProfiles, ...byEmail.values()].filter((profile) => {
         if (!accountId) return true;
@@ -566,18 +576,63 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       if (saved) return structuredClone(saved);
       const email = id.startsWith("derived:") ? id.slice(8) : id;
       const suggestion = contacts.find((contact) => contact.email === email);
-      return suggestion ? { id: `derived:${email}`, displayName: suggestion.displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: suggestion.pinned, addresses: [email], sentCount: suggestion.sentCount, receivedCount: suggestion.receivedCount, lastInteractedAt: suggestion.lastInteractedAt } : null;
+      return suggestion ? { id: `derived:${email}`, displayName: suggestion.displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: suggestion.pinned, addresses: [email], sentCount: suggestion.sentCount, receivedCount: suggestion.receivedCount, lastInteractedAt: suggestion.lastInteractedAt, birthday: null, keepInTouch: { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null } : null;
     },
     async saveContactProfile(request: SaveContactRequest) {
       const addresses = request.addresses.map((address) => address.trim().toLocaleLowerCase());
       const id = request.id && !request.id.startsWith("derived:") ? request.id : `contact:${addresses[0]}`;
       if (addresses.some((address) => savedContactProfiles.some((profile) => profile.id !== id && profile.addresses.includes(address)))) throw new Error("That address already belongs to another saved contact.");
       const previous = savedContactProfiles.find((profile) => profile.id === id);
-      const candidate = { ...request, id, addresses, sentCount: previous?.sentCount ?? 0, receivedCount: previous?.receivedCount ?? 0, lastInteractedAt: previous?.lastInteractedAt ?? null };
+      const derived = !previous && request.id?.startsWith("derived:") ? contacts.find((contact) => contact.email === addresses[0]) : undefined;
+      if (request.birthday && !validDemoBirthday(request.birthday)) throw new Error("Enter a birthday as MM-DD or YYYY-MM-DD");
+      // Like the backend, the form never carries keep-in-touch settings: a
+      // re-save keeps them, whatever the request object holds.
+      const candidate = withKeepInTouchDue({
+        id, displayName: request.displayName, role: request.role, company: request.company, location: request.location, bio: request.bio, notes: request.notes,
+        links: request.links, photoData: request.photoData, favorite: request.favorite, addresses, birthday: request.birthday?.trim() || null,
+        sentCount: previous?.sentCount ?? derived?.sentCount ?? 0, receivedCount: previous?.receivedCount ?? derived?.receivedCount ?? 0, lastInteractedAt: previous?.lastInteractedAt ?? derived?.lastInteractedAt ?? null,
+        keepInTouch: previous?.keepInTouch ?? { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null,
+      });
       savedContactProfiles = [...savedContactProfiles.filter((profile) => profile.id !== id), candidate];
       return structuredClone(candidate);
     },
     async deleteContactProfile(id) { savedContactProfiles = savedContactProfiles.filter((profile) => profile.id !== id); },
+    async listKeepInTouch() {
+      const due = (profile: ContactProfile) => profile.keepInTouchDueAt ? Date.parse(profile.keepInTouchDueAt) : Number.POSITIVE_INFINITY;
+      return structuredClone(savedContactProfiles.map(withKeepInTouchDue)
+        .filter((profile) => profile.keepInTouch.intervalDays !== null || profile.birthday)
+        .sort((a, b) => due(a) - due(b) || (a.displayName ?? "").localeCompare(b.displayName ?? "")));
+    },
+    async setKeepInTouch(ids, intervalDays) {
+      if (!ids.length) throw new Error("Choose at least one contact");
+      if (intervalDays !== null && (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > MAX_KEEP_IN_TOUCH_DAYS)) throw new Error(`Keep in touch every 1 to ${MAX_KEEP_IN_TOUCH_DAYS} days`);
+      const now = new Date().toISOString();
+      const updated: ContactProfile[] = [];
+      for (const id of ids) {
+        const current = await ensureSavedContact(id);
+        const keepInTouch = intervalDays === null
+          ? { ...current.keepInTouch, intervalDays: null, startedAt: null, snoozedUntil: null, snoozedAt: null }
+          : { ...current.keepInTouch, intervalDays, startedAt: current.keepInTouch.intervalDays === null ? now : current.keepInTouch.startedAt ?? now };
+        const next = withKeepInTouchDue({ ...current, keepInTouch });
+        savedContactProfiles = savedContactProfiles.map((item) => item.id === next.id ? next : item);
+        if (!updated.some((item) => item.id === next.id)) updated.push(next);
+      }
+      return structuredClone(updated);
+    },
+    async snoozeKeepInTouch(id, until) {
+      const profile = savedContactProfiles.find((item) => item.id === id);
+      if (!profile || profile.keepInTouch.intervalDays === null) throw new Error("Turn on keep in touch for this contact before snoozing");
+      if (until !== null && !(Date.parse(until) > Date.now())) throw new Error("Choose a snooze date within the next two years");
+      const next = withKeepInTouchDue({ ...profile, keepInTouch: { ...profile.keepInTouch, snoozedUntil: until, snoozedAt: until ? new Date().toISOString() : null } });
+      savedContactProfiles = savedContactProfiles.map((item) => item.id === id ? next : item);
+      return structuredClone(next);
+    },
+    async markContacted(id) {
+      const saved = await ensureSavedContact(id);
+      const next = withKeepInTouchDue({ ...saved, keepInTouch: { ...saved.keepInTouch, lastTouchAt: new Date().toISOString(), snoozedUntil: null, snoozedAt: null } });
+      savedContactProfiles = savedContactProfiles.map((item) => item.id === next.id ? next : item);
+      return structuredClone(next);
+    },
     async listContactTasks(id): Promise<ThreadTask[]> {
       const threadIds = new Set((await this.contactTimeline(id, 0, 100)).map((item) => item.threadId));
       const tasks = await this.listTasks();
@@ -1169,3 +1224,23 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
 export const demoClient = /* @__PURE__ */ createDemoClient(
   import.meta.env.VITE_DEMO_DATASET === "showcase" ? buildShowcaseDataset() : defaultDemoDataset(),
 );
+
+const NO_KEEP_IN_TOUCH: KeepInTouch = { intervalDays: null, startedAt: null, snoozedUntil: null, snoozedAt: null, lastTouchAt: null };
+
+const validDemoBirthday = (value: string) => {
+  const match = /^(?:(\d{4})-)?(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return false;
+  const date = new Date(Number(match[1] ?? 2000), Number(match[2]) - 1, Number(match[3]));
+  return date.getMonth() === Number(match[2]) - 1 && date.getDate() === Number(match[3]);
+};
+
+/** Mirrors `keep_in_touch_due_at` in `src-tauri/src/db/contacts.rs`. */
+function withKeepInTouchDue(profile: ContactProfile): ContactProfile {
+  const { intervalDays, startedAt, snoozedUntil, snoozedAt, lastTouchAt } = profile.keepInTouch;
+  if (intervalDays === null) return { ...profile, keepInTouchDueAt: null };
+  const touches = [profile.lastInteractedAt, lastTouchAt].flatMap((value) => value ? [Date.parse(value)] : []).filter(Number.isFinite);
+  const lastTouch = touches.length ? Math.max(...touches) : null;
+  if (snoozedUntil && !(lastTouch !== null && snoozedAt && lastTouch > Date.parse(snoozedAt))) return { ...profile, keepInTouchDueAt: snoozedUntil };
+  const base = lastTouch ?? (startedAt ? Date.parse(startedAt) : null);
+  return { ...profile, keepInTouchDueAt: base === null ? null : new Date(base + intervalDays * 86_400_000).toISOString() };
+}

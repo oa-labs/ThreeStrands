@@ -87,6 +87,7 @@ function noopContext(): CommandContext {
     openMailView: () => {},
     openTasksView: () => {},
     openContactsView: () => {},
+    openKeepInTouchView: () => {},
     openCalendarView: () => {},
     getSuggestions: () => {},
     openThreadChat: () => {},
@@ -212,6 +213,15 @@ describe("command registry", () => {
     expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(false);
     await command?.run({ ...noopContext(), openContactsView });
     expect(openContactsView).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens Keep in Touch from the palette without claiming a shortcut", async () => {
+    const command = commands.find((candidate) => candidate.id === "view.keepInTouch");
+    const openKeepInTouchView = vi.fn();
+    expect(command?.keys).toEqual([]);
+    expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(false);
+    await command?.run({ ...noopContext(), openKeepInTouchView });
+    expect(openKeepInTouchView).toHaveBeenCalledTimes(1);
   });
 
   it("matches shortcuts case-insensitively", () => {

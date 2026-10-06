@@ -88,6 +88,8 @@ import { eventDate, startOfLocalDay } from "./calendarTime";
 import { formatAvailabilityText, formatConfirmationText } from "./actionDrafting";
 import { TaskSidebar, type TaskLayout, type TaskWorkspaceHandle } from "./TaskSidebar";
 import { isActiveTaskStatus } from "./taskViews";
+import { isKeepInTouchDue } from "./keepInTouch";
+import type { ContactsView } from "./ContactsWorkspace";
 import { ContextPanel } from "./ContextPanel";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
@@ -350,6 +352,22 @@ export function App() {
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
+  const [contactsView, setContactsView] = useState<ContactsView>("all");
+  const [keepInTouchDueCount, setKeepInTouchDueCount] = useState(0);
+  const refreshKeepInTouchCount = useCallback(async () => {
+    try {
+      setKeepInTouchDueCount((await mailClient.listKeepInTouch()).filter((profile) => isKeepInTouchDue(profile)).length);
+    } catch {
+      // The Contacts badge is supplemental; mail remains usable if unavailable.
+    }
+  }, []);
+  useEffect(() => {
+    void refreshKeepInTouchCount();
+    // Reminders fall due as time passes and as mail arrives, without any
+    // local edit, so the badge is re-read periodically.
+    const timer = window.setInterval(() => void refreshKeepInTouchCount(), 5 * 60_000);
+    return () => window.clearInterval(timer);
+  }, [refreshKeepInTouchCount]);
   const taskWorkspaceRef = useRef<TaskWorkspaceHandle>(null);
   const [selectedTaskStatus, setSelectedTaskStatus] = useState<ThreadTask["status"] | null>(null);
   const [taskLayout, setTaskLayout] = useState<TaskLayout | null>(null);
@@ -1886,8 +1904,9 @@ export function App() {
     setRightWorkspace("tasks");
   }, []);
 
-  const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
-  const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setRightWorkspace("contacts"); }, []);
+  const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("all"); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
+  const openKeepInTouchView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("keepInTouch"); setRightWorkspace("contacts"); }, []);
+  const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setContactsView("all"); setRightWorkspace("contacts"); }, []);
   // The participant picked from a message header, kept per conversation so
   // opening another conversation returns the panel to its latest sender.
   const [contextPersonPick, setContextPersonPick] = useState<{ threadId: string; email: string } | null>(null);
@@ -2131,6 +2150,7 @@ export function App() {
     openMailView,
     openTasksView,
     openContactsView,
+    openKeepInTouchView,
     openCalendarView,
     getSuggestions,
     openThreadChat,
@@ -2142,7 +2162,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openThreadChat, openContactsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openThreadChat, openContactsView, openKeepInTouchView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -2308,13 +2328,14 @@ export function App() {
               <CheckSquare size={19} />
             </button>
           </HoverTooltip>
-          <HoverTooltip label="Contacts" shortcut="4">
+          <HoverTooltip label={keepInTouchDueCount ? `Contacts · ${keepInTouchDueCount} to reconnect with` : "Contacts"} shortcut="4">
             <button
               className={`nav-button ${rightWorkspace === "contacts" ? "active" : ""}`}
-              aria-label="Contacts (4)"
+              aria-label={keepInTouchDueCount ? `Contacts (4), ${keepInTouchDueCount} due to reconnect` : "Contacts (4)"}
               onClick={openContactsView}
             >
               <ContactRound size={19} />
+              {keepInTouchDueCount ? <span className="nav-button-badge" aria-hidden="true">{keepInTouchDueCount > 99 ? "99+" : keepInTouchDueCount}</span> : null}
             </button>
           </HoverTooltip>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
@@ -2827,7 +2848,7 @@ export function App() {
           </> : null}
         />
       ) : null}
-      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={activeAccountId ?? "all"} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => setNotice({ message: "Contact saved" })} initialContactId={contactAddressBookTarget} /></Suspense> : null}
+      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactsView}`} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} initialView={contactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} /></Suspense> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
           ref={taskWorkspaceRef}

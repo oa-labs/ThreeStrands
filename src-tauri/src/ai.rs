@@ -3926,6 +3926,9 @@ mod tests {
             sent_count: 0,
             received_count: 0,
             last_interacted_at: None,
+            birthday: None,
+            keep_in_touch: Default::default(),
+            keep_in_touch_due_at: None,
         };
         let suggestion = |field: &str, value: &str| ContactFieldSuggestion {
             field: field.into(),
@@ -4067,6 +4070,9 @@ mod tests {
             sent_count: 0,
             received_count: 0,
             last_interacted_at: None,
+            birthday: None,
+            keep_in_touch: Default::default(),
+            keep_in_touch_due_at: None,
         };
         let request = ContactEnrichmentRequest {
             provider: AiProvider::Custom,
@@ -4226,6 +4232,9 @@ mod tests {
                     sent_count: 0,
                     received_count: 0,
                     last_interacted_at: None,
+                    birthday: None,
+                    keep_in_touch: Default::default(),
+                    keep_in_touch_due_at: None,
                 },
                 messages: vec![ContactMessageInput {
                     id: "m1".into(),
@@ -4305,6 +4314,9 @@ mod tests {
                     sent_count: 0,
                     received_count: 0,
                     last_interacted_at: None,
+                    birthday: None,
+                    keep_in_touch: Default::default(),
+                    keep_in_touch_due_at: None,
                 },
                 messages: (0..12)
                     .map(|index| ContactMessageInput {
@@ -4413,6 +4425,9 @@ mod tests {
             sent_count: 0,
             received_count: 0,
             last_interacted_at: None,
+            birthday: None,
+            keep_in_touch: Default::default(),
+            keep_in_touch_due_at: None,
         };
         let request = |profile: ContactProfile| ContactEnrichmentRequest {
             provider: AiProvider::Custom,

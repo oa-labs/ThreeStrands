@@ -100,7 +100,7 @@ describe("MessageCard", () => {
   describe("address contact cards", () => {
     const ada: ContactProfile = {
       id: "contact:ada", displayName: "Ada Lovelace", role: "Analyst", company: "Engines Ltd", location: null, bio: null,
-      notes: null, links: [], photoData: null, favorite: false, addresses: ["ada@example.com"], sentCount: 3, receivedCount: 4, lastInteractedAt: null,
+      notes: null, links: [], photoData: null, favorite: false, addresses: ["ada@example.com"], sentCount: 3, receivedCount: 4, lastInteractedAt: null, birthday: null, keepInTouch: { intervalDays: null, startedAt: null, snoozedUntil: null, snoozedAt: null, lastTouchAt: null }, keepInTouchDueAt: null,
     };
     const own = [{ email: "me@example.com" } as Account];
     function renderWithCard(actions: Partial<ContactCardActions> = {}) {

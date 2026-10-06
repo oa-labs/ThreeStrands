@@ -19,6 +19,8 @@ Linux. Sign-in credentials are kept in your operating system's keychain, your
 messages and search index stay on your computer, and actions you take offline
 are synced to Gmail when you reconnect.
 
+NOTE: Only the macOS app is frequently used/tested currently.
+
 ## Install
 
 Download the latest installer from

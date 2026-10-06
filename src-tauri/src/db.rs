@@ -21,7 +21,7 @@ use crate::transfer::{TransferAccount, TransferSnippet, TransferSplitInbox, Tran
 mod accounts;
 mod ai;
 mod calendar_accounts;
-mod contacts;
+pub(crate) mod contacts;
 mod goals;
 mod snippets;
 mod split_inboxes;
@@ -90,6 +90,16 @@ pub struct PendingMutation {
     pub target_message_id: Option<String>,
     pub mutation: ThreadMutation,
     pub attempts: u32,
+}
+
+/// Resume point for the sent-mail backfill: a provider search page token
+/// (`None` for the first page), how many of that page's results were already
+/// handled, and how many results all earlier pages held.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SentBackfillProgress {
+    pub page: Option<String>,
+    pub offset: usize,
+    pub scanned: usize,
 }
 
 /// `threads.id`, derived from the pair that's actually unique: Gmail thread
@@ -1701,6 +1711,49 @@ impl Database {
         })
     }
 
+    /// Where the sent-mail backfill should resume, or `None` once it has
+    /// finished (or the account has no sync state yet).
+    pub fn sent_backfill_progress(&self, account_id: &str) -> DbResult<Option<SentBackfillProgress>> {
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT sent_backfill_page, sent_backfill_offset, sent_backfill_scanned
+                     FROM sync_state
+                     WHERE account_id = ?1 AND sent_backfill_completed_at IS NULL",
+                    [account_id],
+                    |row| {
+                        Ok(SentBackfillProgress {
+                            page: row.get(0)?,
+                            offset: row.get::<_, i64>(1)?.max(0) as usize,
+                            scanned: row.get::<_, i64>(2)?.max(0) as usize,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+    }
+
+    /// Persists the next resume point, or marks the backfill finished.
+    pub fn record_sent_backfill(&self, account_id: &str, next: Option<&SentBackfillProgress>) -> DbResult<()> {
+        self.with_connection(|connection| {
+            match next {
+                Some(progress) => connection.execute(
+                    "UPDATE sync_state SET sent_backfill_page = ?1, sent_backfill_offset = ?2,
+                        sent_backfill_scanned = ?3
+                     WHERE account_id = ?4",
+                    params![progress.page, progress.offset as i64, progress.scanned as i64, account_id],
+                )?,
+                None => connection.execute(
+                    "UPDATE sync_state SET sent_backfill_page = NULL, sent_backfill_offset = 0,
+                        sent_backfill_completed_at = ?1
+                     WHERE account_id = ?2",
+                    params![Utc::now().to_rfc3339(), account_id],
+                )?,
+            };
+            Ok(())
+        })
+    }
+
     /// Gmail thread ids this account currently caches as inbox mail (not
     /// archived), for diffing against Gmail's live INBOX listing.
     pub fn local_inbox_provider_thread_ids(&self, account_id: &str) -> DbResult<Vec<String>> {
@@ -2423,7 +2476,8 @@ impl Database {
 
             transaction.execute("DELETE FROM contacts", [])?;
             for contact in contacts {
-                transaction.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339()])?;
+                let kit=&contact.keep_in_touch;
+                transaction.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339(),contact.birthday,kit.interval_days,kit.started_at,kit.snoozed_until,kit.snoozed_at,kit.last_touch_at])?;
                 for email in &contact.addresses { transaction.execute("INSERT INTO contact_addresses(contact_id,email) VALUES(?1,?2)",params![contact.id,email])?; }
             }
 
@@ -3650,18 +3704,18 @@ pub(crate) mod tests {
     #[test]
     fn saved_contact_search_links_addresses_and_enforces_unique_ownership() {
         let database=database();
-        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane Rivera".into()),role:Some("Founder".into()),company:Some("Acme Labs".into()),location:Some("Boston".into()),bio:None,notes:Some("Met at launch".into()),links:vec!["https://social.invalid/jane".into()],photo_data:None,favorite:true,addresses:vec!["jane@example.com".into(),"j.rivera@example.com".into()]}).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("Jane Rivera".into()),role:Some("Founder".into()),company:Some("Acme Labs".into()),location:Some("Boston".into()),bio:None,notes:Some("Met at launch".into()),links:vec!["https://social.invalid/jane".into()],photo_data:None,favorite:true,addresses:vec!["jane@example.com".into(),"j.rivera@example.com".into()]}).unwrap();
         assert_eq!(database.list_contact_profiles("Acme",20).unwrap()[0].id,saved.id);
         assert_eq!(database.list_contact_profiles("social.invalid",20).unwrap()[0].id,saved.id);
         assert_eq!(saved.addresses.len(),2);
-        let duplicate=database.save_contact_profile(&SaveContactRequest{id:Some("another".into()),display_name:Some("Other".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into()]});
+        let duplicate=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:Some("another".into()),display_name:Some("Other".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into()]});
         assert!(duplicate.is_err());
     }
 
     #[test]
     fn contact_ids_for_addresses_maps_every_linked_address_to_its_saved_owner() {
         let database=database();
-        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane Rivera".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"j.rivera@work.example.com".into()]}).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("Jane Rivera".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"j.rivera@work.example.com".into()]}).unwrap();
         let owners=database.contact_ids_for_addresses(&["Jane@Example.com".into(),"j.rivera@work.example.com".into(),"stranger@example.com".into(),"".into()]).unwrap();
         assert_eq!(owners.len(),2);
         assert_eq!(owners.get("jane@example.com"),Some(&saved.id));
@@ -3688,11 +3742,11 @@ pub(crate) mod tests {
     #[test]
     fn reusing_a_removed_address_cannot_overwrite_the_previous_profile_id() {
         let database=database();
-        let original=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Original person".into()),role:None,company:None,location:None,bio:None,notes:Some("Keep this profile".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["x@x.example".into()]}).unwrap();
-        let moved=database.save_contact_profile(&SaveContactRequest{id:Some(original.id.clone()),display_name:Some("Original person".into()),role:None,company:None,location:None,bio:None,notes:Some("Keep this profile".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["y@y.example".into()]}).unwrap();
+        let original=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("Original person".into()),role:None,company:None,location:None,bio:None,notes:Some("Keep this profile".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["x@x.example".into()]}).unwrap();
+        let moved=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:Some(original.id.clone()),display_name:Some("Original person".into()),role:None,company:None,location:None,bio:None,notes:Some("Keep this profile".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["y@y.example".into()]}).unwrap();
         assert_eq!(moved.id,original.id);
 
-        let reused=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("New person".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["x@x.example".into()]}).unwrap();
+        let reused=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("New person".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["x@x.example".into()]}).unwrap();
         assert_ne!(reused.id,original.id);
         let preserved=database.get_contact_profile(&original.id).unwrap().unwrap();
         assert_eq!(preserved.display_name.as_deref(),Some("Original person"));
@@ -3700,8 +3754,8 @@ pub(crate) mod tests {
         assert_eq!(preserved.addresses,vec!["y@y.example"]);
 
         let pin_email="pinned@x.example";
-        let pinned=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Moved from pin".into()),role:None,company:None,location:None,bio:None,notes:Some("Preserve me too".into()),links:vec![],photo_data:None,favorite:false,addresses:vec![pin_email.into()]}).unwrap();
-        database.save_contact_profile(&SaveContactRequest{id:Some(pinned.id.clone()),display_name:Some("Moved from pin".into()),role:None,company:None,location:None,bio:None,notes:Some("Preserve me too".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["moved@x.example".into()]}).unwrap();
+        let pinned=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("Moved from pin".into()),role:None,company:None,location:None,bio:None,notes:Some("Preserve me too".into()),links:vec![],photo_data:None,favorite:false,addresses:vec![pin_email.into()]}).unwrap();
+        database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:Some(pinned.id.clone()),display_name:Some("Moved from pin".into()),role:None,company:None,location:None,bio:None,notes:Some("Preserve me too".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["moved@x.example".into()]}).unwrap();
         database.pin_contact("you@example.com",pin_email,None).unwrap();
         let preserved_pin=database.get_contact_profile(&pinned.id).unwrap().unwrap();
         assert_eq!(preserved_pin.notes.as_deref(),Some("Preserve me too"));
@@ -3710,6 +3764,145 @@ pub(crate) mod tests {
         assert_eq!(newly_pinned.len(),1);
         assert_ne!(newly_pinned[0].id,pinned.id);
         assert!(newly_pinned[0].favorite);
+    }
+
+    fn contact_request(name:&str,email:&str)->SaveContactRequest{
+        SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some(name.into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec![email.into()]}
+    }
+
+    #[test]
+    fn keep_in_touch_saves_a_derived_contact_and_counts_mail_from_every_account() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        database.adopt_account("other@example.com").unwrap();
+        let mut sent=message("kit-one","kit-thread-one","2026-09-01T12:00:00Z","hello");
+        sent.from="you@example.com".into();sent.to=vec!["Jane <jane@example.com>".into()];
+        database.upsert_thread("you@example.com",&[sent]).unwrap();
+        let mut received=message("kit-two","kit-thread-two","2026-09-10T12:00:00Z","reply");
+        received.from="Jane <jane@example.com>".into();received.to=vec!["other@example.com".into()];
+        database.upsert_thread("other@example.com",&[received]).unwrap();
+
+        let profiles=database.set_keep_in_touch(&["derived:jane@example.com".into()],Some(14)).unwrap();
+        assert_eq!(profiles.len(),1);
+        let jane=&profiles[0];
+        assert!(!jane.id.starts_with("derived:"));
+        assert_eq!(jane.keep_in_touch.interval_days,Some(14));
+        assert!(jane.keep_in_touch.started_at.is_some());
+        // Received mail counts as a touch, from whichever account it reached.
+        assert_eq!(jane.keep_in_touch_due_at.as_deref(),Some("2026-09-24T12:00:00+00:00"));
+        // A view scoped to the account without the latest mail still reports
+        // the same due date.
+        let scoped=database.list_contact_profiles_for_account("jane",20,Some("you@example.com")).unwrap();
+        assert_eq!(scoped[0].keep_in_touch_due_at,jane.keep_in_touch_due_at);
+        assert_eq!(database.list_keep_in_touch().unwrap().iter().map(|item|item.id.clone()).collect::<Vec<_>>(),vec![jane.id.clone()]);
+    }
+
+    #[test]
+    fn keep_in_touch_interval_changes_keep_the_start_and_turning_off_clears_the_snooze() {
+        let database=database();
+        let saved=database.save_contact_profile(&contact_request("Sam","sam@example.com")).unwrap();
+        assert!(database.set_keep_in_touch(std::slice::from_ref(&saved.id),Some(0)).is_err());
+        assert!(database.set_keep_in_touch(std::slice::from_ref(&saved.id),Some(contacts::MAX_KEEP_IN_TOUCH_DAYS+1)).is_err());
+        assert!(database.set_keep_in_touch(&[],Some(7)).is_err());
+        let on=database.set_keep_in_touch(std::slice::from_ref(&saved.id),Some(7)).unwrap().remove(0);
+        let started=on.keep_in_touch.started_at.clone().unwrap();
+        let changed=database.set_keep_in_touch(std::slice::from_ref(&saved.id),Some(contacts::MAX_KEEP_IN_TOUCH_DAYS)).unwrap().remove(0);
+        assert_eq!(changed.keep_in_touch.interval_days,Some(contacts::MAX_KEEP_IN_TOUCH_DAYS));
+        assert_eq!(changed.keep_in_touch.started_at.as_deref(),Some(started.as_str()));
+
+        let until=(Utc::now()+chrono::Duration::days(10)).to_rfc3339();
+        let snoozed=database.snooze_keep_in_touch(&saved.id,Some(&until)).unwrap();
+        assert!(snoozed.keep_in_touch.snoozed_until.is_some());
+        assert_eq!(snoozed.keep_in_touch_due_at,snoozed.keep_in_touch.snoozed_until);
+
+        let off=database.set_keep_in_touch(std::slice::from_ref(&saved.id),None).unwrap().remove(0);
+        assert_eq!(off.keep_in_touch.interval_days,None);
+        assert_eq!(off.keep_in_touch.started_at,None);
+        assert_eq!(off.keep_in_touch.snoozed_until,None);
+        assert_eq!(off.keep_in_touch_due_at,None);
+        assert!(database.list_keep_in_touch().unwrap().is_empty());
+    }
+
+    #[test]
+    fn keep_in_touch_snooze_requires_reminders_and_a_date_within_two_years() {
+        let database=database();
+        let saved=database.save_contact_profile(&contact_request("Lee","lee@example.com")).unwrap();
+        let soon=(Utc::now()+chrono::Duration::days(3)).to_rfc3339();
+        assert!(database.snooze_keep_in_touch(&saved.id,Some(&soon)).is_err());
+        database.set_keep_in_touch(std::slice::from_ref(&saved.id),Some(30)).unwrap();
+        for invalid in [
+            (Utc::now()-chrono::Duration::days(1)).to_rfc3339(),
+            (Utc::now()+chrono::Duration::days(731)).to_rfc3339(),
+            "next week".to_string(),
+        ] {
+            assert!(database.snooze_keep_in_touch(&saved.id,Some(&invalid)).is_err(),"{invalid}");
+        }
+        let edge=(Utc::now()+chrono::Duration::days(729)).to_rfc3339();
+        database.snooze_keep_in_touch(&saved.id,Some(&edge)).unwrap();
+        let cleared=database.snooze_keep_in_touch(&saved.id,None).unwrap();
+        assert_eq!(cleared.keep_in_touch.snoozed_until,None);
+        assert_eq!(cleared.keep_in_touch.snoozed_at,None);
+    }
+
+    #[test]
+    fn marking_contacted_ends_a_snooze_and_outlives_pruned_mail() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        let mut sent=message("kit-prune","kit-thread-prune","2026-09-01T12:00:00Z","hello");
+        sent.from="you@example.com".into();sent.to=vec!["ana@example.com".into()];
+        database.upsert_thread("you@example.com",&[sent]).unwrap();
+        let ana=database.set_keep_in_touch(&["derived:ana@example.com".into()],Some(30)).unwrap().remove(0);
+        let until=(Utc::now()+chrono::Duration::days(60)).to_rfc3339();
+        database.snooze_keep_in_touch(&ana.id,Some(&until)).unwrap();
+
+        let touched=database.mark_contacted(&ana.id).unwrap();
+        let touch=touched.keep_in_touch.last_touch_at.clone().unwrap();
+        assert_eq!(touched.keep_in_touch.snoozed_until,None);
+        let expected=(chrono::DateTime::parse_from_rfc3339(&touch).unwrap()+chrono::Duration::days(30)).to_rfc3339();
+        assert_eq!(touched.keep_in_touch_due_at.as_deref(),Some(expected.as_str()));
+
+        // Retention pruning deletes the mail and its interactions; the logged
+        // touch still anchors the due date.
+        database.with_connection(|connection|{connection.execute("DELETE FROM threads",[])?;Ok(())}).unwrap();
+        let after=database.get_contact_profile(&ana.id).unwrap().unwrap();
+        assert_eq!(after.last_interacted_at,None);
+        assert_eq!(after.keep_in_touch_due_at.as_deref(),Some(expected.as_str()));
+        assert!(database.mark_contacted("missing-contact").is_err());
+    }
+
+    #[test]
+    fn saving_the_profile_form_keeps_reminders_and_stores_the_birthday() {
+        let database=database();
+        let saved=database.save_contact_profile(&contact_request("Kim","kim@example.com")).unwrap();
+        database.set_keep_in_touch(std::slice::from_ref(&saved.id),Some(90)).unwrap();
+        let until=(Utc::now()+chrono::Duration::days(5)).to_rfc3339();
+        let snoozed=database.snooze_keep_in_touch(&saved.id,Some(&until)).unwrap();
+        let mut form=contact_request("Kim Lee","kim@example.com");
+        form.id=Some(saved.id.clone());
+        form.birthday=Some("1990-04-02".into());
+        let resaved=database.save_contact_profile(&form).unwrap();
+        assert_eq!(resaved.display_name.as_deref(),Some("Kim Lee"));
+        assert_eq!(resaved.birthday.as_deref(),Some("1990-04-02"));
+        assert_eq!(resaved.keep_in_touch,snoozed.keep_in_touch);
+        form.birthday=Some("04-31".into());
+        assert!(database.save_contact_profile(&form).is_err());
+        form.birthday=None;
+        assert_eq!(database.save_contact_profile(&form).unwrap().birthday,None);
+    }
+
+    #[test]
+    fn keep_in_touch_list_orders_by_due_date_then_birthday_only_contacts() {
+        let database=database();
+        let later=database.save_contact_profile(&contact_request("Later","later@example.com")).unwrap();
+        let sooner=database.save_contact_profile(&contact_request("Sooner","sooner@example.com")).unwrap();
+        let mut birthday=contact_request("Birthday","birthday@example.com");
+        birthday.birthday=Some("07-04".into());
+        let birthday=database.save_contact_profile(&birthday).unwrap();
+        database.save_contact_profile(&contact_request("Neither","neither@example.com")).unwrap();
+        database.set_keep_in_touch(std::slice::from_ref(&later.id),Some(60)).unwrap();
+        database.set_keep_in_touch(std::slice::from_ref(&sooner.id),Some(7)).unwrap();
+        let ids=database.list_keep_in_touch().unwrap().into_iter().map(|item|item.id).collect::<Vec<_>>();
+        assert_eq!(ids,vec![sooner.id,later.id,birthday.id]);
     }
 
     #[test]
@@ -3725,7 +3918,7 @@ pub(crate) mod tests {
         database.upsert_thread("other@example.com",&[received]).unwrap();
         let derived=database.list_contact_profiles("jane",20).unwrap().into_iter().find(|item|item.id=="derived:jane@example.com").unwrap();
         assert_eq!(derived.sent_count,1);
-        let saved=database.save_contact_profile(&SaveContactRequest{id:Some(derived.id),display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into()]}).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:Some(derived.id),display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into()]}).unwrap();
         let timeline=database.contact_timeline(&saved.id,0,10).unwrap();
         assert_eq!(timeline.len(),2);
         assert!(timeline.iter().any(|item|item.account_id=="you@example.com"));
@@ -3746,12 +3939,12 @@ pub(crate) mod tests {
         let mut other_only=message("contact-three","thread-three","2026-09-22T12:00:00Z","other");
         other_only.from="Taylor <taylor@example.com>".into();other_only.to=vec!["other@example.com".into()];
         database.upsert_thread("other@example.com",&[other_only]).unwrap();
-        database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Taylor".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["taylor@example.com".into()]}).unwrap();
+        database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("Taylor".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["taylor@example.com".into()]}).unwrap();
         assert!(database.list_contact_profiles_for_account("taylor",20,Some("you@example.com")).unwrap().is_empty());
         assert_eq!(database.list_contact_profiles_for_account("taylor",20,Some("other@example.com")).unwrap().len(),1);
         assert_eq!(database.list_contact_profiles_for_account("",1,Some("you@example.com")).unwrap()[0].id,saved.id);
 
-        let no_history=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("New friend".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["newfriend@example.com".into()]}).unwrap();
+        let no_history=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("New friend".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["newfriend@example.com".into()]}).unwrap();
         assert_eq!(database.list_contact_profiles_for_account("New friend",20,Some("you@example.com")).unwrap()[0].id,no_history.id);
         assert_eq!(database.list_contact_profiles_for_account("New friend",20,Some("other@example.com")).unwrap()[0].id,no_history.id);
     }
@@ -3765,7 +3958,7 @@ pub(crate) mod tests {
         let mut latest=message("latest","thread","2026-09-21T12:00:00Z","hello again");
         latest.from="Jane Work <jane@work.example.com>".into();latest.to=vec!["you@example.com".into()];
         database.upsert_thread("you@example.com",&[first,latest]).unwrap();
-        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"jane@work.example.com".into()]}).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"jane@work.example.com".into()]}).unwrap();
 
         let timeline=database.contact_timeline(&saved.id,0,10).unwrap();
         assert_eq!(timeline.len(),1);
@@ -3808,7 +4001,7 @@ pub(crate) mod tests {
         database.upsert_thread("you@example.com",&[first,reply]).unwrap();
         database.upsert_thread("you@example.com",&[work]).unwrap();
         database.upsert_thread("you@example.com",&[newsletter]).unwrap();
-        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"jane@work.example.com".into()]}).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"jane@work.example.com".into()]}).unwrap();
 
         let activity=database.contact_activity(&saved.id).unwrap();
         assert_eq!((activity.sent_count,activity.received_count,activity.thread_count),(1,2,2));
@@ -3917,7 +4110,7 @@ pub(crate) mod tests {
         let titles=|id:&str|{let mut titles=database.list_contact_tasks(id).unwrap().into_iter().map(|task|task.title).collect::<Vec<_>>();titles.sort();titles};
 
         assert_eq!(titles("derived:jane@example.com"),vec!["Send Jane the deck"]);
-        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"jane@work.example.com".into()]}).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("Jane".into()),role:None,company:None,location:None,bio:None,notes:None,links:vec![],photo_data:None,favorite:false,addresses:vec!["jane@example.com".into(),"jane@work.example.com".into()]}).unwrap();
         assert_eq!(titles(&saved.id),vec!["Review Jane's contract","Send Jane the deck"]);
         assert!(titles("contact:unknown").is_empty());
 
@@ -3934,7 +4127,7 @@ pub(crate) mod tests {
         let mut sent=message("contact-account-remove","contact-account-remove-thread","2026-09-22T12:00:00Z","hello");
         sent.from="you@example.com".into();sent.to=vec!["Sam <sam@example.com>".into()];
         database.upsert_thread("you@example.com",&[sent]).unwrap();
-        let saved=database.save_contact_profile(&SaveContactRequest{id:None,display_name:Some("Sam".into()),role:None,company:None,location:None,bio:None,notes:Some("Keep this note".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["sam@example.com".into()]}).unwrap();
+        let saved=database.save_contact_profile(&SaveContactRequest{birthday:None,keep_in_touch:None,id:None,display_name:Some("Sam".into()),role:None,company:None,location:None,bio:None,notes:Some("Keep this note".into()),links:vec![],photo_data:None,favorite:false,addresses:vec!["sam@example.com".into()]}).unwrap();
         assert_eq!(database.contact_timeline(&saved.id,0,10).unwrap().len(),1);
         database.remove_account("you@example.com").unwrap();
         assert!(database.contact_timeline(&saved.id,0,10).unwrap().is_empty());

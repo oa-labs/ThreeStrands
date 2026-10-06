@@ -555,7 +555,7 @@ it("opens archived contact timeline email in All Mail and keeps it selected afte
   const contact: ContactProfile = {
     id: "contact:team@example.com", displayName: "Product Team", role: null, company: null,
     location: null, bio: null, notes: null, links: [], photoData: null, favorite: false,
-    addresses: ["team@example.com"], sentCount: 1, receivedCount: 1, lastInteractedAt: null,
+    addresses: ["team@example.com"], sentCount: 1, receivedCount: 1, lastInteractedAt: null, birthday: null, keepInTouch: { intervalDays: null, startedAt: null, snoozedUntil: null, snoozedAt: null, lastTouchAt: null }, keepInTouchDueAt: null,
   };
   const timelineItem: ContactTimelineItem = {
     threadId: "roadmap", accountId: "demo@example.com", contactEmail: "team@example.com", subject: "Phase 1: read and triage",

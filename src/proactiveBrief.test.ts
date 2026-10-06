@@ -19,7 +19,7 @@ function thread(...messages: Message[]): ThreadDetail {
 function contact(sentCount: number, addresses: string[]): ContactProfile {
   return {
     id: "contact:1", displayName: "Jane", role: null, company: null, location: null, bio: null, notes: null,
-    links: [], photoData: null, favorite: false, addresses, sentCount, receivedCount: 1, lastInteractedAt: null,
+    links: [], photoData: null, favorite: false, addresses, sentCount, receivedCount: 1, lastInteractedAt: null, birthday: null, keepInTouch: { intervalDays: null, startedAt: null, snoozedUntil: null, snoozedAt: null, lastTouchAt: null }, keepInTouchDueAt: null,
   };
 }
 

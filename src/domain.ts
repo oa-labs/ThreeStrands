@@ -310,6 +310,22 @@ export type ContactProfile = {
   sentCount: number;
   receivedCount: number;
   lastInteractedAt: string | null;
+  /** `MM-DD`, or `YYYY-MM-DD` when the year is known. */
+  birthday: string | null;
+  keepInTouch: KeepInTouch;
+  /** When the next keep-in-touch reminder falls due; derived on every read. */
+  keepInTouchDueAt: string | null;
+};
+
+/** Keep-in-touch reminder settings stored on a saved contact. */
+export type KeepInTouch = {
+  /** Days between touches; null turns reminders off. */
+  intervalDays: number | null;
+  startedAt: string | null;
+  snoozedUntil: string | null;
+  snoozedAt: string | null;
+  /** Latest touch logged by hand rather than by email. */
+  lastTouchAt: string | null;
 };
 
 export type ContactTimelineItem = {
@@ -350,7 +366,8 @@ export type DomainPerson = { email: string; displayName: string | null; lastAt: 
 /** Other correspondents at an email domain and their latest conversations. */
 export type DomainContext = { people: DomainPerson[]; threads: ContactTimelineItem[] };
 
-export type SaveContactRequest = Omit<ContactProfile, "sentCount" | "receivedCount" | "lastInteractedAt" | "id"> & { id: string | null };
+/** Keep-in-touch settings change only through their own commands, never through the profile form. */
+export type SaveContactRequest = Omit<ContactProfile, "sentCount" | "receivedCount" | "lastInteractedAt" | "id" | "keepInTouch" | "keepInTouchDueAt"> & { id: string | null };
 export type ContactFieldSuggestion = { field: "displayName" | "role" | "company" | "location" | "bio" | "link"; value: string; sourceMessageId: string; sourceThreadId: string; excerpt: string };
 export type ContactEnrichmentResult = { suggestions: ContactFieldSuggestion[]; messagesReviewed: number; hasMore: boolean };
 

@@ -86,6 +86,7 @@ export type CommandContext = {
   openMailView(): void;
   openTasksView(): void;
   openContactsView(): void;
+  openKeepInTouchView(): void;
   openCalendarView(): void;
   /** Shows the conversation's AI brief and fetches suggestions if missing. */
   getSuggestions(): void;
@@ -501,6 +502,14 @@ export const commands: Command[] = [
     group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.openContactsView),
+  },
+  {
+    id: "view.keepInTouch",
+    title: "Go to Keep in Touch",
+    keys: [],
+    group: "Navigation",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(context.openKeepInTouchView),
   },
   {
     id: "tasks.open",

@@ -486,6 +486,11 @@ function buildGoals(now: Date): Goal[] {
 export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
   const time = now.getTime();
   const daysAgo = (days: number) => new Date(time - days * 86_400_000).toISOString();
+  const monthDayIn = (days: number) => {
+    const date = new Date(time + days * 86_400_000);
+    return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  };
+  const keepInTouch = (intervalDays: number, startedDaysAgo: number) => ({ intervalDays, startedAt: daysAgo(startedDaysAgo), snoozedUntil: null, snoozedAt: null, lastTouchAt: null });
   const { threads, messages } = buildThreads(time);
   const connectedAt = daysAgo(120);
   return {
@@ -553,11 +558,13 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
         id: "contact:marcus@brightwater.example", displayName: "Marcus Webb", role: "Operations Director", company: "Brightwater Co-op", location: "Portland, OR",
         bio: "Customer since 2023. Champion for the rollout across Brightwater's 31-person team.", notes: "Renewal due end of quarter; interested in the analytics add-on.",
         links: ["https://brightwater.example"], photoData: null, favorite: true, addresses: ["marcus@brightwater.example"], sentCount: 12, receivedCount: 15, lastInteractedAt: daysAgo(1),
+        keepInTouch: keepInTouch(14, 90),
       },
       {
         id: "contact:ben.chen@example.org", displayName: "Ben Chen", role: null, company: null, location: "Oakland, CA",
         bio: "Brother. Trail runner, terrible puns.", notes: "Mom's birthday: Sunday the 12th.",
         links: [], photoData: null, favorite: false, addresses: ["ben.chen@example.org"], sentCount: 35, receivedCount: 38, lastInteractedAt: daysAgo(0.1),
+        birthday: monthDayIn(5), keepInTouch: keepInTouch(7, 30),
       },
     ],
     splitInboxes: [

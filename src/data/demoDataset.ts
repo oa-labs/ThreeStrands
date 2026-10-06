@@ -42,7 +42,8 @@ export type DemoDataset = {
   details: Record<string, string>;
   labels: Label[];
   contacts: ContactSuggestion[];
-  contactProfiles: ContactProfile[];
+  /** Birthday and keep-in-touch fields default to unset; the due date is always derived. */
+  contactProfiles: (Omit<ContactProfile, "birthday" | "keepInTouch" | "keepInTouchDueAt"> & Partial<Pick<ContactProfile, "birthday" | "keepInTouch">>)[];
   splitInboxes: SplitInbox[];
   tasks: ThreadTask[];
   goals?: Goal[];

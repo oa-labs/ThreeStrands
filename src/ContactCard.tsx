@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { mailClient } from "./data/client";
 import type { ContactProfile } from "./domain";
 import { describeActivity } from "./contactContext";
+import { describeDue, isKeepInTouchDue } from "./keepInTouch";
 import { errorMessage } from "./errors";
 
 /**
@@ -53,7 +54,7 @@ export function ContactCard({ email, fallbackName, profile, loaded = true, facts
       onProfileSaved(await mailClient.saveContactProfile({
         id: null, displayName: fallbackName ?? null, role: null, company: null,
         location: null, bio: null, notes: null, links: [], photoData: null,
-        favorite: false, addresses: [email],
+        favorite: false, addresses: [email], birthday: null,
       }));
     } catch (reason) { onError(errorMessage(reason)); }
   };
@@ -104,6 +105,7 @@ export function ContactCard({ email, fallbackName, profile, loaded = true, facts
           {copyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}
           {profile?.role || profile?.company ? <p>{[profile.role, profile.company].filter(Boolean).join(" · ")}</p> : null}
           {facts.length > 0 ? <p className="context-contact-activity">{facts.join(" · ")}</p> : null}
+          {profile?.keepInTouchDueAt && isKeepInTouchDue(profile) ? <p className="context-contact-keep-in-touch">Keep in touch: {describeDue(profile.keepInTouchDueAt).toLocaleLowerCase()}</p> : null}
           {profile?.location ? <p>{profile.location}</p> : null}
           {profile?.links.length ? <nav className="contact-sidebar-links" aria-label="Contact links">{profile.links.map((link) => <a key={link} href={link} onClick={(event) => { event.preventDefault(); void openUrl(link); }}>{new URL(link).hostname}</a>)}</nav> : null}
         </div>

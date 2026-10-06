@@ -15,7 +15,7 @@ use crate::{
     correspondence::validate_retention_days,
     db::Database,
     error_text::display,
-    models::{is_known_account_provider, Account, AvailabilityPreferences, Snippet, SplitInbox, ContactProfile},
+    models::{is_known_account_provider, Account, AvailabilityPreferences, Snippet, SplitInbox, ContactProfile, KeepInTouch},
 };
 
 const FORMAT: &str = "dispatch-settings";
@@ -227,9 +227,33 @@ pub(crate) struct TransferContact {
     pub display_name:Option<String>, pub role:Option<String>, pub company:Option<String>,
     pub location:Option<String>, pub bio:Option<String>, pub notes:Option<String>,
     pub links:Vec<String>, pub photo_data:Option<String>, pub favorite:bool, pub addresses:Vec<String>,
+    /// Added in 0.67.0; earlier exports omit it.
+    #[serde(default)]
+    pub birthday:Option<String>,
+    /// Added in 0.67.0; earlier exports omit it and import with reminders off.
+    #[serde(default)]
+    pub keep_in_touch:TransferKeepInTouch,
 }
 impl From<ContactProfile> for TransferContact {
-    fn from(c:ContactProfile)->Self { Self{id:c.id,display_name:c.display_name,role:c.role,company:c.company,location:c.location,bio:c.bio,notes:c.notes,links:c.links,photo_data:c.photo_data,favorite:c.favorite,addresses:c.addresses} }
+    fn from(c:ContactProfile)->Self { Self{id:c.id,display_name:c.display_name,role:c.role,company:c.company,location:c.location,bio:c.bio,notes:c.notes,links:c.links,photo_data:c.photo_data,favorite:c.favorite,addresses:c.addresses,birthday:c.birthday,keep_in_touch:c.keep_in_touch.into()} }
+}
+
+/// The export's copy of [`KeepInTouch`]. Kept separate so the transfer can
+/// reject unknown fields while the sync record stays forward compatible.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub(crate) struct TransferKeepInTouch {
+    pub interval_days:Option<i64>,
+    pub started_at:Option<String>,
+    pub snoozed_until:Option<String>,
+    pub snoozed_at:Option<String>,
+    pub last_touch_at:Option<String>,
+}
+impl From<KeepInTouch> for TransferKeepInTouch {
+    fn from(k:KeepInTouch)->Self { Self{interval_days:k.interval_days,started_at:k.started_at,snoozed_until:k.snoozed_until,snoozed_at:k.snoozed_at,last_touch_at:k.last_touch_at} }
+}
+impl From<&TransferKeepInTouch> for KeepInTouch {
+    fn from(k:&TransferKeepInTouch)->Self { Self{interval_days:k.interval_days,started_at:k.started_at.clone(),snoozed_until:k.snoozed_until.clone(),snoozed_at:k.snoozed_at.clone(),last_touch_at:k.last_touch_at.clone()} }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -338,6 +362,8 @@ impl TransferPayload {
                 if link.len()>2048 { return true; }
                 match url::Url::parse(link) { Ok(url)=>url.scheme()!="https"||url.host_str().is_none(), Err(_)=>true }
             }){return Err("The transfer contains an invalid contact link".into())}
+            crate::db::contacts::normalize_birthday(contact.birthday.as_deref()).map_err(|_|"The transfer contains an invalid contact birthday")?;
+            crate::db::contacts::validate_keep_in_touch(&KeepInTouch::from(&contact.keep_in_touch)).map_err(|_|"The transfer contains invalid keep-in-touch settings")?;
             if let Some(photo)=&contact.photo_data {use base64::{engine::general_purpose::STANDARD,Engine};let bytes=STANDARD.decode(photo).map_err(|_|"The transfer contains an invalid contact photo")?;crate::image_format::validate_contact_photo(&bytes)?;}
         }
         Ok(())
@@ -896,6 +922,8 @@ mod tests {
     ///   and `contactEnrichment`.
     /// - `v3-0.52`: last export before the fast model (0.52.0). Every field
     ///   through `threadChat`, no `aiFastModel`.
+    /// - `v3-0.66`: last export before contact birthdays and keep-in-touch
+    ///   settings (0.66.10).
     /// - `v3-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
@@ -1244,6 +1272,14 @@ mod tests {
                 photo_data: None,
                 favorite: false,
                 addresses: vec!["grace@example.com".to_string()],
+                birthday: Some("12-09".to_string()),
+                keep_in_touch: TransferKeepInTouch {
+                    interval_days: Some(30),
+                    started_at: Some("2026-09-01T09:00:00+00:00".to_string()),
+                    snoozed_until: Some("2026-10-20T09:00:00+00:00".to_string()),
+                    snoozed_at: Some("2026-09-28T09:00:00+00:00".to_string()),
+                    last_touch_at: Some("2026-09-15T09:00:00+00:00".to_string()),
+                },
             }],
             retention_days: Some(365),
         }
@@ -1291,7 +1327,53 @@ mod tests {
         assert_eq!(contacts.len(), 1);
         assert_eq!(contacts[0].company.as_deref(), Some("Example Navy"));
         assert_eq!(contacts[0].addresses, vec!["grace@example.com".to_string()]);
+        assert_eq!(contacts[0].birthday.as_deref(), Some("12-09"));
+        let kit = &contacts[0].keep_in_touch;
+        assert_eq!(kit.interval_days, Some(30));
+        assert_eq!(kit.started_at.as_deref(), Some("2026-09-01T09:00:00+00:00"));
+        assert_eq!(kit.snoozed_until.as_deref(), Some("2026-10-20T09:00:00+00:00"));
+        assert_eq!(kit.snoozed_at.as_deref(), Some("2026-09-28T09:00:00+00:00"));
+        assert_eq!(kit.last_touch_at.as_deref(), Some("2026-09-15T09:00:00+00:00"));
         assert_eq!(database.retention_days().unwrap(), Some(365));
+    }
+
+    #[test]
+    fn frozen_v3_0_66_export_imports_contacts_without_birthday_or_keep_in_touch() {
+        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v3-0.66.dispatch-settings");
+        assert_eq!(envelope_version(bytes), 3);
+        let (database, result) = import_fixture(bytes);
+        assert_eq!(result.contact_count, 1);
+        let contacts = database.list_saved_contact_profiles().unwrap();
+        assert_eq!(contacts[0].company.as_deref(), Some("Example Navy"));
+        assert_eq!(contacts[0].notes.as_deref(), Some("Prefers email."));
+        assert_eq!(contacts[0].birthday, None);
+        assert_eq!(contacts[0].keep_in_touch, crate::models::KeepInTouch::default());
+        assert_eq!(contacts[0].keep_in_touch_due_at, None);
+    }
+
+    #[test]
+    fn transfer_rejects_invalid_birthdays_and_keep_in_touch_settings() {
+        let valid = current_fixture_payload();
+        valid.validate().unwrap();
+        let invalid: [fn(&mut TransferContact); 5] = [
+            |contact| contact.birthday = Some("13-01".into()),
+            |contact| contact.birthday = Some("1850-01-01".into()),
+            |contact| contact.keep_in_touch.interval_days = Some(0),
+            |contact| contact.keep_in_touch.interval_days = Some(crate::db::contacts::MAX_KEEP_IN_TOUCH_DAYS + 1),
+            |contact| contact.keep_in_touch.snoozed_until = Some("next week".into()),
+        ];
+        for mutate in invalid {
+            let mut payload = current_fixture_payload();
+            mutate(&mut payload.contacts[0]);
+            assert!(payload.validate().is_err());
+        }
+        let mut edge = current_fixture_payload();
+        edge.contacts[0].birthday = Some("02-29".into());
+        edge.contacts[0].keep_in_touch.interval_days = Some(crate::db::contacts::MAX_KEEP_IN_TOUCH_DAYS);
+        edge.validate().unwrap();
+        let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
+        unknown["contacts"][0]["keepInTouch"]["unexpected"] = serde_json::json!(1);
+        assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
     }
 
     #[test]
