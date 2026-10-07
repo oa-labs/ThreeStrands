@@ -82,20 +82,6 @@ export function formatHistoryDate(iso: string, now = new Date()): string {
   return date.getFullYear() === now.getFullYear() ? monthDay.format(date) : monthYear.format(date);
 }
 
-const tileMonth = new Intl.DateTimeFormat(undefined, { month: "short" });
-const tileHover = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-
-/** A calendar tile's month and day, the year only outside the current one, and a full date and time for hover. */
-export function dateTileParts(iso: string, now = new Date()): { month: string; day: string; year: string | null; full: string } {
-  const date = new Date(iso);
-  return {
-    month: tileMonth.format(date),
-    day: String(date.getDate()),
-    year: date.getFullYear() === now.getFullYear() ? null : String(date.getFullYear()),
-    full: tileHover.format(date),
-  };
-}
-
 /**
  * Short facts about the relationship for the contact card, built only from
  * local history: volume and age, any regular cadence, and the user's latest
