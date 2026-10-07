@@ -1,10 +1,10 @@
-import { Clock3, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Thread, ThreadTask } from "./domain";
 import { mailClient } from "./data/client";
 import { HoverTooltip } from "./AppChrome";
 import { errorMessage } from "./errors";
-import { ContextSection } from "./ContextSections";
+import { ContextRow, ContextSection } from "./ContextSections";
 import { formatDue, isActiveTaskStatus, isCompletedToday, isDue, isOverdue } from "./taskViews";
 import { ICON_SIZE } from "./iconSizes";
 
@@ -78,8 +78,11 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
       rows={tasks.map((task) => {
         const due = formatDue(task);
         const done = !isActiveTaskStatus(task.status);
-        return <article className={done ? "context-task context-task-done" : "context-task"} key={task.id}>
-          <HoverTooltip label={done ? "Mark not done" : "Mark done"}>
+        return <ContextRow
+          as="article"
+          key={task.id}
+          className={done ? "context-task context-task-done" : "context-task"}
+          control={<HoverTooltip label={done ? "Mark not done" : "Mark done"}>
             <input
               type="checkbox"
               className="context-task-checkbox"
@@ -87,14 +90,16 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
               aria-label={done ? `Mark ${task.title} not done` : `Mark ${task.title} done`}
               onChange={() => void toggleDone(task)}
             />
-          </HoverTooltip>
-          <button type="button" className="context-task-main" onClick={() => onEditTask(task)}>
-            <strong>{task.title}</strong>
-            {task.threadId !== thread?.id && task.subjectSnapshot ? <span className="context-task-source">{task.subjectSnapshot}</span> : null}
-            {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={ICON_SIZE.xs} /> {due}</small> : null}
-          </button>
-          {task.kind === "follow_up" && isDue(task) ? <button type="button" className="btn btn-sm task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button> : null}
-        </article>;
+          </HoverTooltip>}
+          title={task.title}
+          wrapTitle
+          // The date slot holds the due date; "Due" keeps it from reading as when the task was made.
+          date={due ? `Due ${due}` : undefined}
+          dateClassName={due && isOverdue(task) ? "task-due-overdue" : undefined}
+          detail={task.threadId !== thread?.id && task.subjectSnapshot ? task.subjectSnapshot : undefined}
+          onActivate={() => onEditTask(task)}
+          trailing={task.kind === "follow_up" && isDue(task) ? <button type="button" className="btn btn-sm task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button> : undefined}
+        />;
       }).concat(error ? [<p className="form-error" role="alert" key="error">{error}</p>] : [])}
     /> : null}
     <p className="sr-only" aria-live="polite">{announcement}</p>

@@ -101,6 +101,13 @@ add a second always-on panel beside it; new conversation
 context belongs in this panel as a section, in the group that matches its
 subject.
 
+Every list row in the context panel is a `ContextRow`: a glyph column that
+lines up with the section headers' chevrons (a checkbox, a type icon, or empty),
+then the title with the row's date at the end of that line, then one detail
+line, then any trailing action. Section labels, notes, and "Show more" links
+start at the same text edge as row titles. A task's date slot shows its due
+date as "Due …". Do not hand-build a row in a section.
+
 While a new message, forward, or reopened draft fills the reader, the panel
 follows the draft instead of the conversation behind it. It shows "Before you
 send" checks, the selected recipient (name, role and company, the same history

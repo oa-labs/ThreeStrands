@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThreadTasks } from "./ThreadTasks";
 import { mailClient } from "./data/client";
 import type { Thread, ThreadTask } from "./domain";
+import { expectContextRows } from "./test/contextRows";
 
 const thread = { id: "thread-1", accountId: "you@example.com" } as Thread;
 
@@ -41,6 +42,7 @@ describe("ThreadTasks", () => {
     listTasks.mockResolvedValue([task("added")]);
     rerender(<ThreadTasks thread={thread} refreshKey={1} onAddTask={onAddTask} onEditTask={onEditTask} onDraftFollowUp={onDraftFollowUp} onTasksChanged={onTasksChanged} />);
     const section = await screen.findByRole("region", { name: "Conversation tasks" });
+    expectContextRows(section);
     expect(section.querySelector(".context-section-header-actions .context-count")).toHaveTextContent("1");
     expect(screen.getByRole("button", { name: "Add task" })).toBeInTheDocument();
   });

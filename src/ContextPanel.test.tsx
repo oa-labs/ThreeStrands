@@ -4,6 +4,7 @@ import { ContextPanel } from "./ContextPanel";
 import { mailClient } from "./data/client";
 import { formatHistoryDate } from "./contactContext";
 import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
+import { expectContextRows } from "./test/contextRows";
 
 vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),domainContext:vi.fn(),openAttachment:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
@@ -131,6 +132,7 @@ describe("ContextPanel",()=>{
     renderPanel({onOpenThread});
 
     const history=await screen.findByRole("region",{name:"Recent emails"});
+    expectContextRows(history);
     expect(within(history).queryByText("This conversation")).not.toBeInTheDocument();
     const row=within(history).getByRole("button",{name:/Budget review/});
     // Every row is with the selected person, so rows leave out their address.
@@ -228,6 +230,7 @@ describe("ContextPanel",()=>{
     renderPanel({onShowMessage});
 
     const files=await screen.findByRole("region",{name:"Files"});
+    expectContextRows(files);
     expect(mailClient.contactFiles).toHaveBeenCalledWith(bob.id,50);
     expect(files).toHaveTextContent("30");
     expect(files).toHaveTextContent("Newest 4 of 30");
@@ -253,6 +256,7 @@ describe("ContextPanel",()=>{
     renderPanel({detail:longDetail,onShowMessage});
 
     const outline=await screen.findByRole("region",{name:"This thread"});
+    expectContextRows(outline);
     const rows=()=>within(outline).getAllByRole("button",{name:/Message number/});
     expect(rows().map((row)=>row.textContent)).toEqual([expect.stringContaining("Message number 5"),expect.stringContaining("Message number 4"),expect.stringContaining("Message number 3")]);
     fireEvent.click(within(outline).getByRole("button",{name:"Your replies · 2"}));
@@ -281,6 +285,7 @@ describe("ContextPanel",()=>{
     renderPanel({detail:danaDetail,onOpenThread});
 
     const organization=await screen.findByRole("region",{name:"Others at acme.test"});
+    expectContextRows(organization);
     expect(mailClient.domainContext).toHaveBeenCalledWith("acme.test",["dana@acme.test","dana@acme-mail.test"],8);
     expect(organization).toHaveTextContent("Sam Lee, pat@acme.test");
     expect(within(organization).getAllByRole("button",{name:/Subject/}).map((button)=>button.textContent)).toEqual([expect.stringContaining("Subject thread-3")]);

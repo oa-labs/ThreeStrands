@@ -4,7 +4,7 @@ import type { ScheduleEvent } from "./domain";
 import { addDays, eventDate, formatEventDate, startOfLocalDay } from "./calendarTime";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import { responseLabel } from "./calendarResponse";
-import { ContextSection } from "./ContextSections";
+import { ContextRow, ContextSection } from "./ContextSections";
 import { ICON_SIZE } from "./iconSizes";
 
 /** How far ahead the context panel looks for meetings with conversation participants. */
@@ -53,16 +53,18 @@ export function ContactMeetings({ people, timeZone, onOpenEvent }: {
     title="Upcoming meetings"
     count={meetings.length}
     rows={meetings.map(({ event, name }) => (
-      <button type="button" key={`${event.accountId}:${event.id}`} className="context-meeting" data-response-status={event.responseStatus ?? undefined} onClick={() => onOpenEvent(event)}>
-        <CalendarDays size={ICON_SIZE.sm} aria-hidden="true" />
-        <span>
-          <strong>{event.title}</strong>
-          <small className="context-meeting-meta">
-            <span className="context-meeting-details">{formatEventDate(event)} · with {name}</span>
-            {responseLabel(event) ? <span className="context-meeting-response"> · {responseLabel(event)}</span> : null}
-          </small>
-        </span>
-      </button>
+      <ContextRow
+        key={`${event.accountId}:${event.id}`}
+        className="context-meeting"
+        icon={<CalendarDays size={ICON_SIZE.sm} />}
+        title={event.title}
+        date={formatEventDate(event)}
+        detail={<>
+          <span className="context-meeting-details">with {name}</span>
+          {responseLabel(event) ? <span className="context-meeting-response" data-response-status={event.responseStatus ?? undefined}> · {responseLabel(event)}</span> : null}
+        </>}
+        onActivate={() => onOpenEvent(event)}
+      />
     ))}
   />;
 }

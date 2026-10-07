@@ -46,15 +46,17 @@ export function ContextSectionHeader({ title, titleId, count, toggle, actions }:
   toggle?: { collapsed: boolean; controls: string; onToggle(): void };
   actions?: ReactNode;
 }) {
+  // The chevron (or an empty slot) sits in the rows' glyph column, so every
+  // section label starts at the same edge as its rows' text.
   return (
     <header className="context-section-header">
       <h3>
         {toggle ? (
           <button type="button" className="context-section-toggle" aria-expanded={!toggle.collapsed} aria-controls={toggle.controls} onClick={toggle.onToggle}>
-            {toggle.collapsed ? <ChevronRight size={ICON_SIZE.xs} aria-hidden="true" /> : <ChevronDown size={ICON_SIZE.xs} aria-hidden="true" />}
+            <span className="context-row-glyph" aria-hidden="true">{toggle.collapsed ? <ChevronRight size={ICON_SIZE.xs} /> : <ChevronDown size={ICON_SIZE.xs} />}</span>
             <span id={titleId}>{title}</span>
           </button>
-        ) : <span id={titleId}>{title}</span>}
+        ) : <><span className="context-row-glyph" aria-hidden="true" /><span id={titleId}>{title}</span></>}
       </h3>
       {(count !== undefined && count > 0) || actions ? (
         <div className="context-section-header-actions">
@@ -63,6 +65,55 @@ export function ContextSectionHeader({ title, titleId, count, toggle, actions }:
         </div>
       ) : null}
     </header>
+  );
+}
+
+/**
+ * The one row layout every context panel list shares. A glyph column lines up
+ * with the section headers' chevrons; the text column holds the title with the
+ * row's date at the end of that line, then an optional detail line; trailing
+ * actions sit after the text. Rows without a glyph keep the column, so all
+ * row text in the panel starts at one edge.
+ */
+export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, trailing, wrapTitle, className }: {
+  as?: "div" | "article";
+  /** A decorative glyph, drawn inside the row's button. */
+  icon?: ReactNode;
+  /** A control of its own in the glyph column, such as a checkbox. */
+  control?: ReactNode;
+  title: ReactNode;
+  /** The row's date, always at the end of the title line. */
+  date?: ReactNode;
+  /** A state on the date, such as overdue. */
+  dateClassName?: string;
+  /** The second line: a snippet, size, address, or source. */
+  detail?: ReactNode;
+  /** Makes the glyph and text one button. */
+  onActivate?(): void;
+  trailing?: ReactNode;
+  /** Lets a long title wrap, for titles the user wrote, such as tasks. */
+  wrapTitle?: boolean;
+  className?: string;
+}) {
+  const classes = ["context-row", onActivate ? "context-row-interactive" : "", control ? "context-row-has-control" : "", wrapTitle ? "context-row-wrap" : "", className ?? ""].filter(Boolean).join(" ");
+  const body = <>
+    {control ? null : <span className="context-row-glyph context-row-icon" aria-hidden="true">{icon}</span>}
+    <span className="context-row-text">
+      <span className="context-row-line">
+        <strong className="context-row-title">{title}</strong>
+        {date ? <small className={dateClassName ? `context-row-date ${dateClassName}` : "context-row-date"}>{date}</small> : null}
+      </span>
+      {detail ? <small className="context-row-detail">{detail}</small> : null}
+    </span>
+  </>;
+  return (
+    <Element className={classes}>
+      {control ? <span className="context-row-glyph context-row-control">{control}</span> : null}
+      {onActivate
+        ? <button type="button" className="context-row-main" onClick={onActivate}>{body}</button>
+        : <div className="context-row-main">{body}</div>}
+      {trailing ? <span className="context-row-trailing">{trailing}</span> : null}
+    </Element>
   );
 }
 
@@ -138,18 +189,18 @@ export function ContactFilesSection({ contactId, onShowMessage }: {
   const rows = files.files.map((file) => {
     const { base, extension } = splitAttachmentName(file.attachment.filename);
     return (
-      <div className="context-file" key={`${file.messageId}:${file.attachment.id}`}>
-        <button type="button" className="context-file-main" title={`Open ${file.attachment.filename}`} onClick={() => open(file.messageId, file.attachment.id)}>
-          <FileText size={ICON_SIZE.sm} aria-hidden="true" />
-          <span className="context-file-text">
-            <strong><span className="context-file-base">{base}</span>{extension}</strong>
-            <small>{formatHistoryDate(file.sentAt)} · {formatAttachmentSize(file.attachment.size)}</small>
-          </span>
-        </button>
-        <button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
+      <ContextRow
+        key={`${file.messageId}:${file.attachment.id}`}
+        className="context-file"
+        icon={<FileText size={ICON_SIZE.sm} />}
+        title={<><span className="context-file-base">{base}</span>{extension}</>}
+        date={formatHistoryDate(file.sentAt)}
+        detail={formatAttachmentSize(file.attachment.size)}
+        onActivate={() => open(file.messageId, file.attachment.id)}
+        trailing={<button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
           <MessageSquareText size={ICON_SIZE.sm} />
-        </button>
-      </div>
+        </button>}
+      />
     );
   });
   return (
@@ -188,13 +239,13 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
     const sender = parseAddress(message.sender);
     const preview = message.bodyText.replace(/\s+/g, " ").trim();
     return (
-      <button type="button" className="context-outline-row" key={message.id} onClick={() => onShowMessage(detail.thread.id, message.id)}>
-        <span className="context-outline-meta">
-          <strong>{isMine(message) ? "You" : sender.name || sender.email}</strong>
-          <small>{formatHistoryDate(message.sentAt)}</small>
-        </span>
-        {preview ? <span className="context-outline-preview">{preview}</span> : null}
-      </button>
+      <ContextRow
+        key={message.id}
+        title={isMine(message) ? "You" : sender.name || sender.email}
+        date={formatHistoryDate(message.sentAt)}
+        detail={preview || undefined}
+        onActivate={() => onShowMessage(detail.thread.id, message.id)}
+      />
     );
   });
   return (
@@ -237,10 +288,13 @@ export function RecentEmailsSection({ items, onOpenThread, limit, onLoadOlder }:
         // The section is about one person, so the row shows what was said rather than their address.
         const snippet = decodeHtmlEntities(item.snippet).replace(/\s+/g, " ").trim();
         return (
-          <button type="button" className="context-history-row" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
-            <strong>{item.subject || "(no subject)"}</strong>
-            <small>{formatHistoryDate(item.sentAt)}{snippet ? ` · ${snippet}` : ""}</small>
-          </button>
+          <ContextRow
+            key={item.threadId}
+            title={item.subject || "(no subject)"}
+            date={formatHistoryDate(item.sentAt)}
+            detail={snippet || undefined}
+            onActivate={() => onOpenThread(item.threadId)}
+          />
         );
       })}
     />
@@ -283,10 +337,13 @@ export function DomainSection({ email, addresses, accounts, hideThreadIds, onOpe
       count={context.people.length}
       note={<span title={context.people.map((person) => person.email).join(", ")}>{names.join(", ")}</span>}
       rows={threads.map((item) => (
-        <button type="button" className="context-history-row" key={item.threadId} onClick={() => onOpenThread(item.threadId)}>
-          <strong>{item.subject || "(no subject)"}</strong>
-          <small>{formatHistoryDate(item.sentAt)} · {item.contactEmail}</small>
-        </button>
+        <ContextRow
+          key={item.threadId}
+          title={item.subject || "(no subject)"}
+          date={formatHistoryDate(item.sentAt)}
+          detail={item.contactEmail}
+          onActivate={() => onOpenThread(item.threadId)}
+        />
       ))}
     />
   );

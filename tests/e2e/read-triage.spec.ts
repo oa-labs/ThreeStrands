@@ -47,29 +47,52 @@ test("keeps meeting titles and recent email subjects on one line in the context 
 
   const layout = await page.evaluate(() => {
     const panel = document.querySelector(".context-panel")!;
+    // Markup as ContextSection and ContextRow render it: an icon row, a row with no glyph, and a row with a control.
+    const header = (title: string) => `<header class="context-section-header"><h3><button class="context-section-toggle"><span class="context-row-glyph"><svg width="12" height="12"></svg></span><span>${title}</span></button></h3></header>`;
+    const row = ({ icon = "", control = "", title, date, detail, extra = "" }: { icon?: string; control?: string; title: string; date: string; detail: string; extra?: string }) =>
+      `<div class="context-row context-row-interactive${control ? " context-row-has-control" : ""} ${extra}">`
+      + (control ? `<span class="context-row-glyph context-row-control">${control}</span>` : "")
+      + `<button class="context-row-main">${control ? "" : `<span class="context-row-glyph context-row-icon">${icon}</span>`}`
+      + `<span class="context-row-text"><span class="context-row-line"><strong class="context-row-title">${title}</strong><small class="context-row-date">${date}</small></span><small class="context-row-detail">${detail}</small></span></button></div>`;
     const meetings = document.createElement("section");
-    meetings.className = "context-section context-meetings";
-    meetings.innerHTML = `<button class="context-meeting"><svg width="14" height="14"></svg><span><strong>${"Momentum Prep Call - EO Pittsburgh - Week 7 and 8 ".repeat(3)}</strong><small class="context-meeting-meta"><span class="context-meeting-details">Mon, Oct 5 · with ${"Beth Goldstein ".repeat(8)}</span><span class="context-meeting-response"> · Going</span></small></span></button>`;
+    meetings.className = "context-section context-collapsible context-meetings";
+    meetings.innerHTML = header("Upcoming meetings") + "<div>" + row({ icon: '<svg width="14" height="14"></svg>', title: "Momentum Prep Call - EO Pittsburgh - Week 7 and 8 ".repeat(3), date: "Mon, Oct 5", detail: `<span class="context-meeting-details">with ${"Beth Goldstein ".repeat(8)}</span><span class="context-meeting-response"> · Going</span>`, extra: "context-meeting" }) + "</div>";
     const history = document.createElement("section");
     history.className = "context-section context-collapsible context-history";
-    // Rows sit inside the collapsible body, as ContextSection renders them.
-    history.innerHTML = `<header class="context-section-header"><h3><button class="context-section-toggle"><span>Recent emails</span></button></h3></header><div><button class="context-history-row"><strong>${"Invitation: Call with Joel and McKenzie on Tuesday ".repeat(3)}</strong><small>9/21/2026 · beth@example.com</small></button></div>`;
-    panel.append(meetings, history);
+    history.innerHTML = header("Recent emails") + '<div><p class="context-section-note"><span>Sep 28 – Oct 7</span></p>' + row({ title: "Invitation: Call with Joel and McKenzie on Tuesday ".repeat(3), date: "Sep 21", detail: "beth@example.com" }) + '<button class="btn-link context-link-button">Show 2 more</button></div>';
+    const tasks = document.createElement("section");
+    tasks.className = "context-section context-collapsible context-tasks";
+    tasks.innerHTML = header("Tasks") + "<div>" + row({ control: '<input type="checkbox" class="context-task-checkbox">', title: "Email the sync errors", date: "Due Tomorrow", detail: "Re: Data quality" }) + "</div>";
+    panel.append(meetings, history, tasks);
+    const left = (element: Element) => element.getBoundingClientRect().left;
     const titles = [meetings, history].map((section) => {
-      const title = section.querySelector("strong")!;
+      const title = section.querySelector(".context-row-title")!;
       const style = getComputedStyle(title);
-      const meta = getComputedStyle(section.querySelector("small")!);
-      const row = getComputedStyle(title.closest("button")!);
+      const meta = getComputedStyle(section.querySelector(".context-row-detail")!);
+      const main = getComputedStyle(title.closest("button")!);
       return {
         whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, scrollWidth: title.scrollWidth, clientWidth: title.clientWidth,
         font: `${style.fontFamily}|${style.fontSize}|${style.fontWeight}|${style.color}`,
         metaFont: `${meta.fontFamily}|${meta.fontSize}|${meta.color}`,
-        rowBackground: row.backgroundColor, rowTextAlign: row.textAlign,
+        rowBackground: main.backgroundColor, rowTextAlign: main.textAlign,
       };
     });
-    const meta = meetings.querySelector<HTMLElement>(".context-meeting-meta")!;
+    const dates = [meetings, history, tasks].map((section) => {
+      const rowBox = section.querySelector(".context-row")!.getBoundingClientRect();
+      const title = section.querySelector(".context-row-title")!.getBoundingClientRect();
+      const date = section.querySelector(".context-row-date")!.getBoundingClientRect();
+      const rowStyle = getComputedStyle(section.querySelector(".context-row")!);
+      return { titleTop: title.top, titleBottom: title.bottom, dateTop: date.top, dateBottom: date.bottom, dateRight: date.right, rowContentRight: rowBox.right - parseFloat(rowStyle.paddingRight) };
+    });
+    const edges = {
+      labels: [meetings, history, tasks].map((section) => left(section.querySelector(".context-section-toggle > span:last-child")!)),
+      rows: [meetings, history, tasks].map((section) => left(section.querySelector(".context-row-title")!)),
+      note: left(history.querySelector(".context-section-note")!),
+      link: left(history.querySelector(".context-link-button")!),
+    };
+    const meta = meetings.querySelector<HTMLElement>(".context-row-detail")!;
     const response = meetings.querySelector<HTMLElement>(".context-meeting-response")!;
-    return { titles, metaWhiteSpace: getComputedStyle(meta).whiteSpace, metaHeight: meta.clientHeight, responseHeight: response.clientHeight, responseRight: response.getBoundingClientRect().right, metaRight: meta.getBoundingClientRect().right };
+    return { titles, dates, edges, metaWhiteSpace: getComputedStyle(meta).whiteSpace, metaHeight: meta.clientHeight, responseHeight: response.clientHeight, responseRight: response.getBoundingClientRect().right, metaRight: meta.getBoundingClientRect().right };
   });
 
   for (const title of layout.titles) {
@@ -85,6 +108,16 @@ test("keeps meeting titles and recent email subjects on one line in the context 
   expect(layout.metaWhiteSpace).toBe("nowrap");
   expect(layout.metaHeight).toBeLessThanOrEqual(layout.responseHeight + 1);
   expect(layout.responseRight).toBeLessThanOrEqual(layout.metaRight + 1);
+
+  // One text edge: section labels, row titles (with an icon, no glyph, or a checkbox), notes, and links.
+  const edge = layout.edges.labels[0];
+  for (const value of [...layout.edges.labels, ...layout.edges.rows, layout.edges.note, layout.edges.link]) expect(Math.abs(value - edge)).toBeLessThanOrEqual(0.5);
+  // The date always ends the title line, at the row's right edge.
+  for (const date of layout.dates) {
+    expect(date.dateTop).toBeGreaterThanOrEqual(date.titleTop - 1);
+    expect(date.dateBottom).toBeLessThanOrEqual(date.titleBottom + 1);
+    expect(Math.abs(date.dateRight - date.rowContentRight)).toBeLessThanOrEqual(0.5);
+  }
 });
 
 test("keeps the sender contact card to three type sizes with details below the email address", async ({ page }) => {

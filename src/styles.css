@@ -105,6 +105,10 @@
      row inset equals --pane-inset, so row text lines up with the pane title. */
   --list-gutter: var(--space-2);
   --list-row-inset: var(--space-3);
+  /* Context panel rows: a glyph column (wide enough for a checkbox) and one text edge
+     that rows, section labels, notes, and links all share. */
+  --context-row-inset: var(--space-1);
+  --context-glyph-column: calc(var(--check-size) + var(--space-1-5));
   --dialog-inset: var(--space-4);     /* horizontal inset of a dialog's header, body, and footer */
   --settings-label-width: 150px;      /* the label column of a settings row */
   --settings-label-gap: var(--space-4); /* between a settings label and its field; detail lines indent by both */
@@ -2037,8 +2041,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-contact-body .contact-sidebar-notes { margin-top:var(--space-2-5); }
 .context-section { padding:var(--space-3) 0; border-bottom:1px solid var(--border); }
 .context-panel > .context-section:last-of-type { border-bottom:0; }
-.context-section-header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); min-height:26px; margin-bottom:var(--space-1-5); }
-.context-section-header h3 { display:flex; align-items:center; gap:var(--space-1-5); min-width:0; margin:0; color:var(--muted); }
+.context-section-header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); min-height:26px; margin-bottom:var(--space-1-5); padding-inline:var(--context-row-inset); }
+.context-section-header h3 { display:flex; align-items:center; min-width:0; margin:0; color:var(--muted); }
 .context-section-header-actions { display:flex; flex:0 0 auto; align-items:center; gap:var(--space-0-5); }
 /* A bordered badge, matching the key hint in the question box. */
 .context-count { display:inline-grid; place-items:center; min-width:1.6em; margin-right:var(--space-0-5); padding:var(--space-0-5) var(--space-1-5) var(--space-0-5); border:1px solid var(--border); border-radius:var(--radius-xs); color:var(--muted); font-size:var(--text-micro); font-weight:var(--weight-medium); letter-spacing:normal; line-height:var(--leading-snug); font-variant-numeric:tabular-nums; }
@@ -2051,24 +2055,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .thread-assist-run svg { color:var(--accent); }
 .thread-assist-suggestions { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:var(--space-2); margin-top:var(--space-2-5); }
 .thread-assist-suggestions h4 { margin:0; color:var(--muted); }
-.context-task { display:flex; align-items:center; gap:var(--space-0-5); }
-.context-task-main { display:grid; flex:1; gap:var(--space-0-5); min-width:0; padding:var(--space-1-5) var(--space-1); border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
-.context-task-main:hover { background:var(--hover); }
-.context-task-main strong { font-size:var(--text-secondary); font-weight:var(--weight-medium); overflow-wrap:anywhere; }
-.context-task-main small { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--muted); font-size:var(--text-meta); }
-.context-task-source { overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
-.context-task > .tooltip-anchor { flex:none; align-self:center; margin:0 var(--space-1-5) 0 var(--space-1); }
-.context-task-checkbox { width: var(--check-size); height: var(--check-size); margin:0; accent-color:var(--accent); cursor:pointer; }
-.context-task-done .context-task-main strong { color:var(--muted); text-decoration:line-through; }
-.context-meeting { display:flex; align-items:flex-start; gap:var(--space-2); width:100%; padding:var(--space-1-5) var(--space-1); border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
-.context-meeting:hover { background:var(--hover); }
-.context-meeting svg { flex:0 0 auto; margin-top:var(--space-0-5); color:var(--accent); }
-.context-meeting > span { display:grid; grid-template-columns:minmax(0,1fr); flex:1; gap:var(--space-0-5); min-width:0; }
-.context-meeting strong { min-width:0; overflow:hidden; font-size:var(--text-secondary); font-weight:var(--weight-medium); text-overflow:ellipsis; white-space:nowrap; }
-.context-meeting-meta { display:flex; min-width:0; color:var(--muted); font-size:var(--text-meta); white-space:nowrap; }
 .context-meeting-details { min-width:0; overflow:hidden; text-overflow:ellipsis; }
-.context-meeting .context-meeting-response { flex:0 0 auto; color:var(--accent); font-weight:var(--weight-semibold); white-space:pre; }
-.context-meeting[data-response-status="declined"] .context-meeting-response { color:var(--muted); }
 .context-chat-dock { position:sticky; bottom:0; margin:auto calc(var(--space-4) * -1) 0; padding:0 var(--space-4) var(--space-1); border-top:1px solid var(--border); background:var(--surface); }
 .thread-chat { border-bottom:0; }
 .thread-chat-log { display:grid; gap:var(--space-2-5); max-height:min(40vh, 360px); margin-bottom:var(--space-2-5); overflow:auto; }
@@ -2110,26 +2097,44 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .contact-sidebar-notes p { margin:0; color:var(--muted); line-height:var(--leading-normal); }
 .contact-sidebar-notes { margin-top:var(--space-4); }
 .contact-sidebar-notes h3 { margin:0 0 var(--space-2); color:var(--muted); }
-.context-history-row { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--space-0-5); width:100%; padding:var(--space-1-5) var(--space-1); border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
-.context-history-row:hover { background:var(--hover); }
-.context-history-row strong { min-width:0; overflow:hidden; font-size:var(--text-secondary); font-weight:var(--weight-medium); text-overflow:ellipsis; white-space:nowrap; }
-.context-history-row small { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
 .context-contact-text p.context-contact-activity { color:var(--secondary); }
-.context-section-toggle { display:inline-flex; align-items:center; gap:var(--space-1-5); min-width:0; margin:0 0 0 calc(var(--space-0-5) * -1); padding:var(--space-0-5); border:0; border-radius:var(--radius-sm); color:inherit; background:transparent; font:inherit; letter-spacing:inherit; text-transform:inherit; text-align:left; cursor:pointer; }
+.context-section-toggle { display:inline-flex; align-items:center; min-width:0; margin:0 0 0 calc(var(--space-0-5) * -1); padding:var(--space-0-5); border:0; border-radius:var(--radius-sm); color:inherit; background:transparent; font:inherit; letter-spacing:inherit; text-transform:inherit; text-align:left; cursor:pointer; }
 .context-section-toggle:hover { color:var(--text); }
-.context-section-toggle > svg { flex:0 0 auto; color:var(--muted); }
+.context-section-toggle .context-row-glyph { color:var(--muted); }
 .context-section-toggle > span:first-of-type { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .context-domain { text-transform:none; letter-spacing:normal; }
+/* The shared row. The glyph column lines up with the section chevrons; rows without a
+   glyph keep it empty so all text starts at one edge. */
+.context-row { display:grid; grid-template-columns:var(--context-glyph-column) minmax(0,1fr) auto; align-items:start; padding-inline:var(--context-row-inset); border-radius:var(--radius-sm); }
+.context-row-interactive:hover { background:var(--hover); }
+.context-row-glyph { display:flex; flex:0 0 auto; align-items:center; width:var(--context-glyph-column); }
+.context-row-icon, .context-row-control { height:calc(var(--text-secondary) * var(--leading-normal)); color:var(--muted); }
+.context-row-control { grid-column:1; margin-top:var(--space-1-5); }
+.context-row-main { grid-column:1 / 3; display:grid; grid-template-columns:var(--context-glyph-column) minmax(0,1fr); min-width:0; padding:var(--space-1-5) 0; border:0; color:var(--text); background:transparent; font:inherit; text-align:left; }
+.context-row-interactive .context-row-main { cursor:pointer; }
+.context-row-has-control .context-row-main { grid-column:2; grid-template-columns:minmax(0,1fr); }
+.context-row-text { grid-column:-2; display:grid; gap:var(--space-0-5); min-width:0; }
+.context-row-line { display:flex; align-items:baseline; gap:var(--space-2); min-width:0; }
+.context-row-title { flex:1; min-width:0; overflow:hidden; font-size:var(--text-secondary); font-weight:var(--weight-medium); line-height:var(--leading-normal); text-overflow:ellipsis; white-space:nowrap; }
+.context-row-wrap .context-row-title { white-space:normal; overflow-wrap:anywhere; }
+.context-row-date { flex:0 0 auto; color:var(--muted); font-size:var(--text-meta); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.context-row-date.task-due-overdue { color:var(--error); font-weight:var(--weight-semibold); }
+.context-row-detail { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
+.context-row-trailing { grid-column:3; display:flex; align-self:center; align-items:center; gap:var(--space-1); margin-left:var(--space-1); }
+.context-task-checkbox { width:var(--check-size); height:var(--check-size); margin:0; accent-color:var(--accent); cursor:pointer; }
+.context-task-done .context-row-title { color:var(--muted); text-decoration:line-through; }
+.context-meeting .context-row-icon { color:var(--accent); }
+.context-meeting .context-row-detail { display:flex; }
+.context-meeting-details { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.context-meeting-response { flex:0 0 auto; color:var(--accent); font-weight:var(--weight-semibold); white-space:pre; }
+.context-meeting-response[data-response-status="declined"] { color:var(--muted); }
+.context-file .context-row-title { display:flex; }
+/* Notes and links under a heading start at the row text edge. */
+.context-collapsible > div > .context-section-note,
+.context-collapsible > div > .context-link-button { margin-left:calc(var(--context-row-inset) + var(--context-glyph-column)); }
 .context-section-note { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-1) var(--space-2); margin:0 0 var(--space-1-5); color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
 .context-organization .context-section-note > span { min-width:0; overflow-wrap:anywhere; }
-.context-file { display:flex; align-items:center; gap:var(--space-0-5); }
-.context-file-main { display:flex; flex:1; align-items:flex-start; gap:var(--space-2); min-width:0; padding:var(--space-1-5) var(--space-1); border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
-.context-file-main:hover { background:var(--hover); }
-.context-file-main > svg { flex:0 0 auto; margin-top:var(--space-0-5); color:var(--muted); }
-.context-file-text { display:grid; gap:var(--space-0-5); min-width:0; }
-.context-file-text strong { display:flex; min-width:0; font-size:var(--text-secondary); font-weight:var(--weight-medium); white-space:nowrap; }
 .context-file-base { min-width:0; overflow:hidden; text-overflow:ellipsis; }
-.context-file-text small { color:var(--muted); font-size:var(--text-meta); }
 /* Compose context: the panel while writing a message outside the open conversation. */
 .compose-check { display:grid; gap:var(--space-1); padding:var(--space-1-5) 0 var(--space-1-5) var(--space-2-5); border-left:2px solid var(--border); color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
 .compose-check + .compose-check { margin-top:var(--space-1); }
@@ -2145,12 +2150,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .compose-recipient-facts { display:grid; gap:var(--space-0-5); margin:var(--space-1) 0 0; padding:0; list-style:none; color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
 .compose-recipient-notes { display:-webkit-box; margin:var(--space-1-5) 0 0; overflow:hidden; color:var(--text); font-size:var(--text-meta); line-height:var(--leading-normal); white-space:pre-wrap; -webkit-box-orient:vertical; -webkit-line-clamp:4; }
 .compose-context-empty { padding:var(--space-3) 0; }
-.context-outline-row { display:grid; width:100%; gap:var(--space-0-5); padding:var(--space-1-5) var(--space-1); border:0; border-radius:var(--radius-sm); color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer; }
-.context-outline-row:hover { background:var(--hover); }
-.context-outline-meta { display:flex; justify-content:space-between; gap:var(--space-2); min-width:0; }
-.context-outline-meta strong { min-width:0; overflow:hidden; font-size:var(--text-secondary); font-weight:var(--weight-medium); text-overflow:ellipsis; white-space:nowrap; }
-.context-outline-meta small { flex:0 0 auto; color:var(--muted); font-size:var(--text-meta); }
-.context-outline-preview { overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
 .tasks-sidebar-header {
   min-height: 90px;
   display: flex;
