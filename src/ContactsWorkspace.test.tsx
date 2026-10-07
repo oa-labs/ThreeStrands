@@ -43,6 +43,13 @@ describe("ContactsWorkspace",()=>{
     await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("",500,undefined));
   });
 
+  it("turns off inline predictions on the search box so one Escape clears it",async()=>{
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    const search=await screen.findByRole("textbox",{name:"Search contacts"});
+    expect(search).toHaveAttribute("writingsuggestions","false");
+    expect(search).toHaveAttribute("autocorrect","off");
+  });
+
   it("leaves the search box on Escape when no contact is selected",async()=>{
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([]);
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);

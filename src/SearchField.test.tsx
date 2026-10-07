@@ -66,6 +66,14 @@ describe("SearchField", () => {
     expect(props.onCommit).not.toHaveBeenCalled();
   });
 
+  it("turns off inline predictions so a single Escape reaches the field", () => {
+    const { input } = renderField();
+    expect(input).toHaveAttribute("writingsuggestions", "false");
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveAttribute("spellcheck", "false");
+  });
+
   it("offers the archived toggle as soon as there is text to search", () => {
     const { input, props } = renderField();
     expect(screen.queryByRole("button", { name: /archived/i })).not.toBeInTheDocument();

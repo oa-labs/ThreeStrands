@@ -1,6 +1,7 @@
 import { Archive, Search } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ICON_SIZE } from "./iconSizes";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 /** How long typing must pause before a non-empty search is committed. */
 export const SEARCH_DEBOUNCE_MS = 180;
@@ -56,6 +57,7 @@ export function SearchField({
       <Search size={ICON_SIZE.md} />
       <input
         ref={inputRef}
+        {...SEARCH_INPUT_ATTRIBUTES}
         value={draft}
         onChange={(event) => {
           onInput();
