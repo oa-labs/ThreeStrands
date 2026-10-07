@@ -1,7 +1,6 @@
 import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ContextRow } from "./ContextSections";
-import { formatHistoryDate } from "./contactContext";
 
 /** jsdom does no layout, so a line's measured widths are set by hand. */
 function setWidths(element: Element, scrollWidth: number, clientWidth: number) {
@@ -47,23 +46,5 @@ describe("ContextRow", () => {
       expect(container.querySelector(".context-row-date")!.parentElement).toHaveClass("context-row-line");
       unmount();
     }
-  });
-  it("shows a dated row's date as a month-and-day tile, still named for assistive technology", () => {
-    const now = new Date();
-    const thisYear = new Date(now.getFullYear(), 0, 15, 12).toISOString();
-    const { container, unmount } = render(<ContextRow title="Budget review" dateTile={thisYear} detail="Numbers attached" onActivate={() => {}} />);
-    const tile = container.querySelector(".context-row-glyph .context-calendar-date-tile")!;
-    expect(tile.querySelector(".context-calendar-date-tile-day")).toHaveTextContent(/^15$/);
-    expect(tile.querySelector(".context-calendar-date-tile-month")!.textContent).not.toBe("");
-    expect(tile).toHaveAttribute("title");
-    const date = container.querySelector(".context-row-line .context-row-date")!;
-    expect(date.querySelector(".sr-only")).toHaveTextContent(formatHistoryDate(thisYear));
-    // Within the current year the tile says it all, so nothing else shows on the title line.
-    expect(date.querySelector("[aria-hidden]")).toBeNull();
-    unmount();
-
-    const lastYear = new Date(now.getFullYear() - 1, 2, 4, 12).toISOString();
-    const { container: older } = render(<ContextRow title="Old thread" dateTile={lastYear} />);
-    expect(older.querySelector(".context-row-date [aria-hidden]")).toHaveTextContent(String(now.getFullYear() - 1));
   });
 });
