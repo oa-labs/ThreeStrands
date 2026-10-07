@@ -1713,7 +1713,13 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .goal-achieved .goal-title, .goal-dropped .goal-title { color: var(--muted); }
 .goal-dropped .goal-title { text-decoration: line-through; }
 .goal-edit { flex: 0 0 auto; margin-top: 4px; }
-.task-goal-filter-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; margin-top: 6px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--text); font: inherit; font-size: var(--type-xs); cursor: pointer; }
+/* The chip shares the heading row so toggling the goal filter never changes header height. */
+.tasks-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tasks-title-row h1 { flex-shrink: 0; }
+.tasks-sidebar-header .thread-header-title,
+.tasks-sidebar-header .thread-header-title > div { min-width: 0; }
+.tasks-title-row .task-goal-filter-chip { flex: 0 1 auto; min-width: 0; margin-top: 5px; }
+.task-goal-filter-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--text); font: inherit; font-size: var(--type-xs); cursor: pointer; }
 .task-goal-filter-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-quick-add-goal { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--secondary); font-size: var(--type-sm); }
 .task-card-main small.task-card-goal { max-width: 100%; overflow: hidden; color: var(--secondary); text-overflow: ellipsis; white-space: nowrap; }

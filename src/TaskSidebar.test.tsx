@@ -1006,7 +1006,11 @@ describe("TaskSidebar goals", () => {
 
     fireEvent.click(within(pane).getByRole("button", { name: /No goal/ }));
     expect(titles()).toEqual(["Loose"]);
-    fireEvent.click(screen.getByRole("button", { name: "Show all tasks, not only those with no goal" }));
+    // The chip shares the heading row so toggling the filter never adds a header line.
+    const chip = screen.getByRole("button", { name: "Show all tasks, not only those with no goal" });
+    expect(chip.parentElement).toHaveClass("tasks-title-row");
+    expect(chip.parentElement).toContainElement(screen.getByRole("heading", { level: 1 }));
+    fireEvent.click(chip);
     expect(titles()).toHaveLength(3);
     expect(within(pane).getByRole("button", { name: /All tasks/ })).toHaveAttribute("aria-pressed", "true");
   });

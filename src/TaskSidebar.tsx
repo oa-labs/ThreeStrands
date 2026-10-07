@@ -507,10 +507,12 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               Tasks
               <span className="eyebrow-account"> · {accountId ?? "All accounts"}</span>
             </span>
-            <h1>{orderedTasks.length} {orderedTasks.length === 1 ? "task" : "tasks"}</h1>
-            {goalFilter ? <button type="button" className="task-goal-filter-chip" aria-label={`Show all tasks, not only ${filterGoal ? `those supporting ${filterGoal.title}` : "those with no goal"}`} onClick={() => setGoalFilter(null)}>
-              <Target size={12} aria-hidden="true" /><span>{filterGoal ? `Supports ${filterGoal.title}` : "No goal"}</span><X size={12} aria-hidden="true" />
-            </button> : null}
+            <div className="tasks-title-row">
+              <h1>{orderedTasks.length} {orderedTasks.length === 1 ? "task" : "tasks"}</h1>
+              {goalFilter ? <button type="button" className="task-goal-filter-chip" aria-label={`Show all tasks, not only ${filterGoal ? `those supporting ${filterGoal.title}` : "those with no goal"}`} onClick={() => setGoalFilter(null)}>
+                <Target size={12} aria-hidden="true" /><span>{filterGoal ? `Supports ${filterGoal.title}` : "No goal"}</span><X size={12} aria-hidden="true" />
+              </button> : null}
+            </div>
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
