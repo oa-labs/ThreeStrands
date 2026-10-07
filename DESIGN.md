@@ -352,6 +352,21 @@ the `white` or `black` keyword.
 
 `src/styleTokens.test.ts` enforces these rules.
 
+## Component sizes
+
+Dialogs take their width from `--dialog-w-sm` (440), `-md` (560, the
+default), `-lg` (640), `-xl` (720: composer, reply assist, shortcut help), or
+`-full` (940: Settings), written as
+`min(var(--dialog-w-…), calc(100vw - var(--dialog-edge)))`. Cards and pickers
+that float beside their trigger use `--popover-w`.
+
+Repeated small parts share one size each: `--badge-size` for count and status
+badges, `--dot-size`, `--check-size`, and `--swatch-size`. Icon tiles and
+icon-only buttons use `--control-h`. Corners use `--radius-*`, layers
+`--z-*`, and entrance animations `--duration-*` with `--ease-emphasized`.
+One-off intrinsic dimensions, such as the calendar's time gutter, stay
+literal.
+
 ## Accessibility and testing
 
 ARIA semantics do not define shortcut behavior by themselves. A read-only

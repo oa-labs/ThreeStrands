@@ -167,3 +167,54 @@ describe("icon sizes", () => {
     expect(raw).toEqual([]);
   });
 });
+
+describe("component sizes", () => {
+  it("rounds corners and stacks layers only with the radius and layer tokens", () => {
+    const raw = componentDeclarations(/^(border(-[a-z]+)*-radius|z-index)$/)
+      .filter((declaration) => !/^(var\(--(radius|z)-[\w-]+\)|0)$/.test(declaration.value))
+      .map(describeDeclaration);
+    expect(raw).toEqual([]);
+  });
+
+  it("sizes every dialog from the dialog width scale", () => {
+    const raw: string[] = [];
+    css.walkRules((rule) => {
+      if (!rule.selectors.some((selector) => /-modal$|^\.modal$|^\.composer$/.test(selector))) return;
+      rule.walkDecls("width", (declaration) => {
+        // A narrow-window override may fill the window less a spacing step.
+        const scaled = /^min\(var\(--dialog-w-(sm|md|lg|xl|full)\), (calc\(100vw - var\(--dialog-edge\)\)|100%)\)$/.test(declaration.value);
+        const fill = /^calc\(100vw - var\(--space-\d+\)\)$/.test(declaration.value);
+        if (!scaled && !fill) raw.push(describeDeclaration(declaration));
+      });
+    });
+    expect(raw).toEqual([]);
+  });
+
+  it("gives count badges, dots, checks, and swatches one size each", () => {
+    const families: [RegExp, string][] = [
+      [/badge$|-view-count$/, "var(--badge-size)"],
+      [/(^|\s)\.(unread|account)-dot$|now-indicator::before$/, "var(--dot-size)"],
+      [/check$|checkbox$|^\.select-all input$/, "var(--check-size)"],
+      [/^\.calendar-color(-default)?-swatch$/, "var(--swatch-size)"],
+    ];
+    const raw: string[] = [];
+    css.walkRules((rule) => {
+      if (rule.selector.startsWith(":root")) return;
+      for (const [pattern, token] of families) {
+        if (!rule.selectors.some((selector) => pattern.test(selector))) continue;
+        rule.walkDecls(/^(width|height|min-width)$/, (declaration) => {
+          if (/^(auto|100%|0)$/.test(declaration.value)) return;
+          if (declaration.value !== token) raw.push(`${describeDeclaration(declaration)} (expected ${token})`);
+        });
+      }
+    });
+    expect(raw).toEqual([]);
+  });
+
+  it("times entrance animations with the duration and easing tokens", () => {
+    const raw = componentDeclarations(/^animation$/)
+      .filter((declaration) => /\d(ms|s)\b|cubic-bezier/.test(declaration.value))
+      .map(describeDeclaration);
+    expect(raw).toEqual([]);
+  });
+});

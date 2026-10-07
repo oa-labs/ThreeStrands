@@ -301,7 +301,7 @@ describe("conversation participant layout", () => {
   it("opens a reader contact card that fits narrow windows and keeps keyboard focus visible", () => {
     // The card grows with its longest line, such as the history facts, instead of wrapping it at a fixed width.
     expect(lastDeclaration(".address-card", "width")).toBe("max-content");
-    expect(lastDeclaration(".address-card", "max-width")).toBe("min(440px, calc(100vw - 32px))");
+    expect(lastDeclaration(".address-card", "max-width")).toBe("min(var(--popover-w), calc(100vw - 32px))");
     expect(lastDeclaration(".address-card", "min-width")).toBe("min(280px, calc(100vw - 32px))");
     expect(lastDeclaration(".address-card", "white-space")).toBe("normal");
     // Fixed at the top of the stacking order so the reader's scroll area can't clip it and other panes can't cover it.

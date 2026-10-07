@@ -5,8 +5,13 @@ import { describe, expect, it } from "vitest";
 
 const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
 
+const rootTokens = new Map<string, string>();
+css.walkRules(":root", (rule) => rule.walkDecls(/^--/, (declaration) => { rootTokens.set(declaration.prop, declaration.value); }));
+
+/** Durations in a value, in ms, with var() references resolved to their :root token. */
 function durationMs(value: string): number[] {
-  return [...value.matchAll(/(\d*\.?\d+)(ms|s)\b/g)].map(([, amount, unit]) => Number(amount) * (unit === "s" ? 1000 : 1));
+  const resolved = value.replace(/var\((--[\w-]+)\)/g, (reference, name: string) => rootTokens.get(name) ?? reference);
+  return [...resolved.matchAll(/(\d*\.?\d+)(ms|s)\b/g)].map(([, amount, unit]) => Number(amount) * (unit === "s" ? 1000 : 1));
 }
 
 describe("interface motion", () => {

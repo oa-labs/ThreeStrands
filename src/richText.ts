@@ -289,7 +289,7 @@ export function composeHtmlToText(root: Node): string {
   root.childNodes.forEach(function visit(node: Node) {
     if (node.nodeType === Node.TEXT_NODE) {
       const data = (node as Text).data;
-      if (data) emit(data.replace(/ /g, " "));
+      if (data) emit(data.replace(/\u00a0/g, " "));
       return;
     }
     if (!(node instanceof Element)) return;
