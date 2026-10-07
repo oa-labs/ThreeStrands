@@ -82,7 +82,7 @@ describe("primary workspace headers", () => {
     }));
 
     expect(positions[0]).toEqual({
-      padding: "20px 22px 12px",
+      padding: "var(--pane-header-padding)",
       topOverride: undefined,
       leftOverride: undefined,
       rightOverride: undefined,
@@ -94,6 +94,12 @@ describe("primary workspace headers", () => {
       titleTracking: "var(--tracking-tight)",
     });
     for (const position of positions.slice(1)) expect(position).toEqual(positions[0]);
+  });
+
+  it("gives the reader and side-pane headers the same inset as the workspace headers", () => {
+    for (const header of [".reader-header", ".calendar-sidebar-header", ".tasks-sidebar-header"]) {
+      expect(lastDeclaration(header, "padding"), header).toBe("var(--pane-header-padding)");
+    }
   });
 
   it("titles Settings with the same page title type as the four workspaces", () => {
@@ -237,7 +243,7 @@ describe("task detail heading", () => {
 
 describe("contact detail header", () => {
   it("starts near the top of the pane while retaining responsive side spacing", () => {
-    expect(lastDeclaration(".contact-profile-main", "padding")).toBe("24px clamp(24px,4vw,56px) clamp(24px,4vw,56px)");
+    expect(lastDeclaration(".contact-profile-main", "padding")).toBe("var(--space-6) clamp(var(--space-6),4vw,var(--space-12)) clamp(var(--space-6),4vw,var(--space-12))");
   });
 });
 

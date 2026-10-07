@@ -299,6 +299,24 @@ of roles (`--text-*`) built from them. Components use only the roles:
 
 `src/typography.test.ts` enforces these rules.
 
+## Spacing
+
+Spacing sits on a 4px grid: `--space-1` (4px) through `--space-12` (48px).
+Layout roles build on the scale:
+
+| Role | Use |
+|---|---|
+| `--pane-header-padding` | Every pane header: Mail, reader, Calendar, Tasks, Contacts, side panes |
+| `--pane-inset` | Horizontal inset of a workspace pane |
+| `--side-pane-inset` | Horizontal inset of a narrow side pane: context panel, goals, calendar side |
+| `--pane-end-padding` | Room below the last item in a scrolling pane |
+
+Shells and headers use only scale steps and roles. Dialogs, forms, and list
+rows will move onto the scale in later phases; `src/styleTokens.test.ts`
+lists the surfaces converted so far and fails on raw lengths in them. That
+test also fails when the stylesheet reads a custom property that is never
+defined.
+
 ## Accessibility and testing
 
 ARIA semantics do not define shortcut behavior by themselves. A read-only
