@@ -58,7 +58,7 @@ describe("SafeMessage", () => {
 
   it("uses the floor for plain text and rejects an invalid floor", () => {
     const { rerender } = render(<SafeMessage html="" text="Plain message" emailMinimumFontSize={18} />);
-    expect(screen.getByTestId("message-body")).toHaveStyle({ fontSize: "max(18px, var(--type-reading))" });
+    expect(screen.getByTestId("message-body")).toHaveStyle({ fontSize: "max(18px, var(--text-reading))" });
     rerender(<SafeMessage html="" text="Plain message" emailMinimumFontSize={9000} />);
     expect(screen.getByTestId("message-body").style.fontSize).toBe("");
   });

@@ -76,6 +76,9 @@ describe("primary workspace headers", () => {
       minHeight: lastDeclaration(header, "min-height"),
       alignment: lastDeclaration(header, "align-items"),
       titleMargin: lastDeclaration(`${header} h1`, "margin"),
+      titleSize: lastDeclaration(`${header} h1`, "font-size"),
+      titleWeight: lastDeclaration(`${header} h1`, "font-weight"),
+      titleTracking: lastDeclaration(`${header} h1`, "letter-spacing"),
     }));
 
     expect(positions[0]).toEqual({
@@ -86,8 +89,17 @@ describe("primary workspace headers", () => {
       minHeight: "90px",
       alignment: "flex-start",
       titleMargin: "5px 0 0",
+      titleSize: "var(--text-page-title)",
+      titleWeight: "var(--weight-semibold)",
+      titleTracking: "var(--tracking-tight)",
     });
     for (const position of positions.slice(1)) expect(position).toEqual(positions[0]);
+  });
+
+  it("titles Settings with the same page title type as the four workspaces", () => {
+    for (const property of ["font-size", "font-weight", "letter-spacing"]) {
+      expect(lastDeclaration(".settings-page-header h2", property)).toBe(lastDeclaration(".contacts-header h1", property));
+    }
   });
 });
 
@@ -218,8 +230,8 @@ describe("button system", () => {
 });
 
 describe("task detail heading", () => {
-  it("edits the title in the detail dialog at the compact heading size", () => {
-    expect(lastDeclaration(".modal-form .task-detail-title-field input", "font-size")).toBe("var(--type-heading-sm)");
+  it("edits the title in the detail dialog at the pane title size", () => {
+    expect(lastDeclaration(".modal-form .task-detail-title-field input", "font-size")).toBe("var(--text-pane-title)");
   });
 });
 

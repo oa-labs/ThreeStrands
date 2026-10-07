@@ -720,7 +720,7 @@ export function SafeMessage({
       <div
         className="message-body message-body-plain"
         data-testid="message-body"
-        style={minimumFontSize ? { fontSize: `max(${minimumFontSize}px, var(--type-reading))` } : undefined}
+        style={minimumFontSize ? { fontSize: `max(${minimumFontSize}px, var(--text-reading))` } : undefined}
       >
         {plainFold ? (
           <>

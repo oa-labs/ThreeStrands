@@ -265,6 +265,40 @@ the control, the tooltip describes what it does. Dynamic content (email
 subjects, contact names, user-entered text) is exempt — this convention
 governs application chrome, not sender or user data.
 
+## Typography
+
+Text is sized by role, not by pixel value. `src/styles.css` defines nine size
+steps (`--type-*`), all scaled by the reader's text-size preference, and a set
+of roles (`--text-*`) built from them. Components use only the roles:
+
+| Role | Use |
+|---|---|
+| `--text-page-title` | The one title per workspace: Mail, Calendar, Tasks, Contacts, Settings |
+| `--text-pane-title` | Reader subject, dialog and composer titles, calendar sidebar |
+| `--text-card-title` | A heading inside a pane: an event, a person, a calendar group |
+| `--text-reading` | Message and compose bodies |
+| `--text-body` | Default UI text, list item titles, form values |
+| `--text-secondary` | Snippets, descriptions, hints |
+| `--text-control` | Buttons, segments, inline selects |
+| `--text-meta` | Timestamps, counts, detail lines |
+| `--text-label` | Uppercase section and field labels |
+| `--text-micro` | Badges, key hints, dense calendar blocks; never prose |
+| `--text-display`, `--text-glyph`, `--text-root` | The contact profile name, a character drawn as an icon, the shell default |
+
+- Weights come from `--weight-regular`, `--weight-medium`, `--weight-semibold`,
+  and `--weight-bold` (400–700). Readers can pick any installed font, so avoid
+  in-between weights that most fonts round away.
+- Line heights come from `--leading-*`, letter spacing from `--tracking-*`, and
+  monospace text from `--font-mono`.
+- Headings default by level: `h1` page title, `h2` pane title, `h3` card title,
+  `h4` body, all semibold.
+- Uppercase text exists only in two recipes: section labels (semibold) and
+  field labels (regular, because they wrap inputs). Add a selector to the
+  matching recipe, or use `.eyebrow`, instead of uppercasing text elsewhere.
+- Do not set type in inline component styles.
+
+`src/typography.test.ts` enforces these rules.
+
 ## Accessibility and testing
 
 ARIA semantics do not define shortcut behavior by themselves. A read-only
