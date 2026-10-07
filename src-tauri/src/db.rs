@@ -2925,13 +2925,17 @@ fn search_preview(text: &crate::quoted_history::ThreadSearchText, provider_snipp
 /// The inbox preview (`threads.snippet`): the latest message before any
 /// quoted history, HTML-entity-encoded like the provider snippets the reader
 /// decodes for display, or the provider's snippet when that message has no
-/// body text.
+/// body text. Entity references already in the text (senders' text/plain
+/// parts often carry them, like `&#847;` preheader padding) are decoded
+/// first, as the reader does for plain-text bodies, so they don't show
+/// literally.
 fn list_preview(text: &crate::quoted_history::ThreadSearchText, provider_snippet: &str) -> String {
     if text.latest_preview.is_empty() {
         return provider_snippet.to_string();
     }
-    let mut encoded = String::with_capacity(text.latest_preview.len());
-    for character in text.latest_preview.chars() {
+    let decoded = decode_entity_references(&text.latest_preview);
+    let mut encoded = String::with_capacity(decoded.len());
+    for character in decoded.chars() {
         match character {
             '&' => encoded.push_str("&amp;"),
             '<' => encoded.push_str("&lt;"),
@@ -2942,6 +2946,34 @@ fn list_preview(text: &crate::quoted_history::ThreadSearchText, provider_snippet
         }
     }
     encoded
+}
+
+/// Replaces named and numeric HTML entity references (`&amp;`, `&#847;`,
+/// `&#x2007;`) with their characters; an unknown name or a bare `&` stays as
+/// written.
+fn decode_entity_references(text: &str) -> String {
+    let mut decoded = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('&') {
+        decoded.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let reference_len = rest[1..]
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '#'))
+            .filter(|&end| end > 0 && rest[1 + end..].starts_with(';'))
+            .map(|end| end + 2);
+        match reference_len {
+            Some(len) => {
+                mail_parser::decoders::html::add_html_token(&mut decoded, rest[..len].as_bytes(), false);
+                rest = &rest[len..];
+            }
+            None => {
+                decoded.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    decoded.push_str(rest);
+    decoded
 }
 
 /// zstd-compresses message body text for the `body_html_z`/`body_text_z`
@@ -3343,6 +3375,19 @@ pub(crate) mod tests {
         blank.snippet = "Provider &amp; preview".into();
         database.upsert_thread("you@example.com", &[blank]).unwrap();
         assert_eq!(list_snippet(&database, &local_thread_id("you@example.com", "blank-thread")), "Provider &amp; preview");
+    }
+
+    #[test]
+    fn inbox_preview_decodes_entity_references_in_plain_text_bodies() {
+        let database = database();
+        let fixtures = [
+            ("padding", "Your claim &#847; &#847;&zwnj;&nbsp; is ready", "Your claim \u{34F} \u{34F}\u{200C}\u{A0} is ready"),
+            ("mixed", "R&amp;D at AT&T &#x2014; &bogus; & &#;", "R&amp;D at AT&amp;T \u{2014} &amp;bogus; &amp; &amp;#;"),
+        ];
+        for (thread, body, preview) in fixtures {
+            database.upsert_thread("you@example.com", &[message(thread, thread, "2026-10-02T09:00:00Z", body)]).unwrap();
+            assert_eq!(list_snippet(&database, &local_thread_id("you@example.com", thread)), preview, "{thread}");
+        }
     }
 
     #[test]
