@@ -25,20 +25,35 @@ export function clearScheduleCache() {
 }
 
 /**
- * Refetch every range after a change made from this app (an RSVP or a new event)
+ * Refetch every range after a change made from this app (an RSVP, edit, or new event)
  * while keeping cached events visible, so the grid does not blank out. Account or
  * calendar selection changes must use clearScheduleCache so other events never linger.
  */
 export function revalidateScheduleCache(updated?: ScheduleEvent) {
+  revalidate((events) => {
+    if (!updated) return events;
+    const replace = (event: ScheduleEvent) => sameScheduleEvent(event, updated);
+    return events.some(replace) ? events.map((event) => replace(event) ? updated : event) : events;
+  });
+}
+
+/** Like revalidateScheduleCache, but drops an event deleted from this app right away. */
+export function removeFromScheduleCache(removed: ScheduleEvent) {
+  revalidate((events) => events.some((event) => sameScheduleEvent(event, removed))
+    ? events.filter((event) => !sameScheduleEvent(event, removed))
+    : events);
+}
+
+const sameScheduleEvent = (left: ScheduleEvent, right: ScheduleEvent) =>
+  left.id === right.id && left.accountId === right.accountId;
+
+function revalidate(change: (events: ScheduleEvent[]) => ScheduleEvent[]) {
   generation += 1;
   pending.clear();
   for (const [key, result] of ranges) {
     stale.add(key);
-    if (!updated) continue;
-    const replace = (event: ScheduleEvent) => event.id === updated.id && event.accountId === updated.accountId;
-    if (result.events.some(replace)) {
-      ranges.set(key, { ...result, events: result.events.map((event) => replace(event) ? updated : event) });
-    }
+    const events = change(result.events);
+    if (events !== result.events) ranges.set(key, { ...result, events });
   }
   listeners.forEach((listener) => listener());
 }

@@ -424,17 +424,17 @@ function buildSchedule(now: Date): ScheduleEvent[] {
   }
   events.push(
     { id: "roadmap", accountId: work, title: "Roadmap sync", allDay: false, location: "Room 4B", attendees: ["priya@harborlight.example", "theo@harborlight.example"], responseStatus: "accepted", canRespond: true, ...slot(0, "11:00", 60) },
-    { id: "focus-1", accountId: work, title: "Focus time", allDay: false, ...slot(0, "14:00", 120) },
+    { id: "focus-1", accountId: work, title: "Focus time", allDay: false, canEdit: true, ...slot(0, "14:00", 120) },
     { id: "crit", accountId: work, title: "Design crit: onboarding v3", allDay: false, location: "Studio", responseStatus: "needsAction", canRespond: true, ...slot(1, "10:30", 60) },
-    { id: "lunch", accountId: SHOWCASE_PERSONAL_ACCOUNT, title: "Lunch with Lena", allDay: false, location: "Juniper Café", ...slot(1, "12:30", 60) },
+    { id: "lunch", accountId: SHOWCASE_PERSONAL_ACCOUNT, title: "Lunch with Lena", allDay: false, location: "Juniper Café", canEdit: true, ...slot(1, "12:30", 60) },
     { id: "brightwater", accountId: work, title: "Brightwater renewal call", allDay: false, conferenceUrl: "https://meet.harborlight.example/brightwater", attendees: ["marcus@brightwater.example"], responseStatus: "tentative", canRespond: true, ...slot(1, "15:00", 30) },
     { id: "interviews", accountId: work, title: "Customer interviews readout", allDay: false, ...slot(2, "13:00", 45) },
-    { id: "focus-2", accountId: work, title: "Focus time", allDay: false, ...slot(2, "15:00", 90) },
+    { id: "focus-2", accountId: work, title: "Focus time", allDay: false, canEdit: true, ...slot(2, "15:00", 90) },
     { id: "launch-review", accountId: work, title: "Q4 launch plan sign-off", allDay: false, location: "Room 2A", ...slot(3, "10:00", 30) },
     { id: "portfolio", accountId: work, title: "Portfolio review: Senior Designer", allDay: false, ...slot(3, "14:00", 60) },
     { id: "one-on-one", accountId: work, title: "1:1 Daniel / Maya", allDay: false, attendees: ["daniel@harborlight.example"], ...slot(4, "10:30", 30) },
     { id: "product-review", accountId: work, title: "Product review", allDay: false, ...slot(4, "13:00", 60) },
-    { id: "yoga", accountId: SHOWCASE_PERSONAL_ACCOUNT, title: "Yoga", allDay: false, location: "Riverside Studio", ...slot(4, "18:00", 60) },
+    { id: "yoga", accountId: SHOWCASE_PERSONAL_ACCOUNT, title: "Yoga", allDay: false, location: "Riverside Studio", canEdit: true, ...slot(4, "18:00", 60) },
     { id: "ship-week", accountId: work, title: "Launch week 🚀", allDay: true, start: day(3), end: day(5) },
     { id: "offsite", accountId: work, title: "Lisbon offsite", allDay: true, location: "Lisbon", start: day(8), end: day(11) },
   );

@@ -8,6 +8,7 @@ import {
   type CommandContext,
   type InteractionScope,
 } from "./commands";
+import { escapeDismissPending } from "./useEscapeDismiss";
 
 function targetShortcutScope(target: EventTarget | null): InteractionScope | null {
   if (!(target instanceof HTMLElement)) return null;
@@ -48,6 +49,8 @@ export function useShortcutHandler(
     const onKeyDown = (event: KeyboardEvent) => {
       const currentContext = contextRef.current;
       if (currentContext.closing || event.isComposing || event.defaultPrevented) return;
+      // An open overlay closes on Escape; its listener may run after this one.
+      if (event.key === "Escape" && escapeDismissPending()) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         clearPendingStep();
         event.preventDefault();

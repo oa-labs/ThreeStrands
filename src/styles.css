@@ -648,6 +648,9 @@ button:disabled { cursor: default; }
 .thread-header-title { display: flex; align-items: center; gap: var(--space-3); }
 .mailbox-heading-context { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--muted); font-size: var(--text-meta); }
 .mailbox-heading-context .eyebrow-account { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Undoes a jump from the context panel, Tasks, or Contacts; a long subject truncates. */
+.reader-back { max-width:100%; margin-bottom:var(--space-1); font-size:var(--text-meta); }
+.reader-back-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .reader-account-scope { display: block; margin-bottom: var(--space-1); color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
 .select-all { display: flex; }
 .select-all input { width: var(--check-size); height: var(--check-size); cursor: pointer; }
@@ -1799,6 +1802,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 }
 .calendar-event-viewer:focus { outline: none; }
 .calendar-event-viewer > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-2-5); }
+.calendar-event-viewer-actions { display: flex; align-items: center; gap: var(--space-1); }
+.calendar-event-viewer .settings-inline-confirm { flex-wrap: wrap; margin-top: var(--space-3); }
 .calendar-event-viewer h3 { min-width: 0; margin: 0; font-size: var(--text-pane-title); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
 .calendar-event-color { width: 12px; height: 12px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--calendar-color, var(--accent)) 55%, white); }
 .calendar-event-viewer-details { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); margin-top: var(--space-4); }
@@ -2275,6 +2280,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .task-editor-modal, .availability-request-modal { overflow-y: auto; }
 .task-editor-modal { width: min(var(--dialog-w-lg), calc(100vw - var(--dialog-edge))); }
 .calendar-event-modal { width: min(var(--dialog-w-md), calc(100vw - var(--dialog-edge))); overflow-y: auto; }
+.calendar-event-all-day-field { display: flex; align-items: center; gap: var(--space-2); width: fit-content; color: var(--text); font-size: var(--text-body); }
+.modal-form .calendar-event-all-day-field input { width: auto; }
 .calendar-event-time-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2-5); }
 @media (max-width: 560px) { .calendar-event-time-fields { grid-template-columns: 1fr; } }
 .availability-request-modal { width: min(var(--dialog-w-sm), calc(100vw - var(--dialog-edge))); }

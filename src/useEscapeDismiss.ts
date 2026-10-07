@@ -17,6 +17,11 @@ function handleEscape(event: KeyboardEvent) {
   topmost.dismiss();
 }
 
+/** Whether an open overlay will take the next Escape, so global shortcuts leave it alone. */
+export function escapeDismissPending(): boolean {
+  return dismissStack.length > 0;
+}
+
 export function useEscapeDismiss(onDismiss: () => void, enabled = true) {
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;

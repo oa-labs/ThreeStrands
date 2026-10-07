@@ -262,6 +262,29 @@ describe("showcase dataset", () => {
       .rejects.toThrow("no RSVP");
   });
 
+  it("edits and deletes only demo events the user organizes", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    const start = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+    const end = new Date(now.getTime() + 14 * 86_400_000).toISOString();
+    const schedule = await client.listScheduleEvents(start, end, "UTC");
+    const focus = schedule.events.find((event) => event.id === "focus-1")!;
+    const invitation = schedule.events.find((event) => event.id === "crit")!;
+    expect(focus.canEdit).toBe(true);
+    expect(invitation.canEdit).toBeFalsy();
+    const edit = (event: typeof focus) => ({
+      accountId: event.accountId, calendarId: "primary", eventId: event.id, title: " Deep work ",
+      start: event.start, end: event.end, allDay: false, location: "Library", description: "", attendees: ["Guest@Example.com"],
+    });
+    const updated = await client.updateCalendarEvent(edit(focus));
+    expect(updated).toMatchObject({ id: "focus-1", title: "Deep work", location: "Library", description: null, attendees: ["guest@example.com"] });
+    expect((await client.listScheduleEvents(start, end, "UTC")).events.find((event) => event.id === "focus-1")?.title).toBe("Deep work");
+    await expect(client.updateCalendarEvent(edit(invitation))).rejects.toThrow("Only events you organize");
+    await expect(client.deleteCalendarEvent(invitation)).rejects.toThrow("Only events you organize");
+
+    await client.deleteCalendarEvent(focus);
+    expect((await client.listScheduleEvents(start, end, "UTC")).events.some((event) => event.id === "focus-1")).toBe(false);
+  });
+
   it("unsubscribes through the first advertised method", async () => {
     const client = createDemoClient(buildShowcaseDataset(now));
     await expect(client.unsubscribe("reader-message")).resolves.toMatchObject({ method: "oneClick" });

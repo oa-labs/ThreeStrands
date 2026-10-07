@@ -1,6 +1,7 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandContext } from "./commands";
+import { useEscapeDismiss } from "./useEscapeDismiss";
 import { useShortcutHandler } from "./useShortcutHandler";
 
 const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
@@ -15,6 +16,8 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   canSendAndMarkDone: false,
   composerActive: false,
   canUndoSend: false,
+  canGoBack: false,
+  goBack: vi.fn(),
   splitInboxCount: 0,
   aiSummaryAvailable: false,
   canUndoAction: false,
@@ -119,6 +122,21 @@ describe("useShortcutHandler", () => {
     vi.advanceTimersByTime(1000);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "i", cancelable: true }));
     expect(execute).toHaveBeenCalledTimes(1);
+    hook.unmount();
+  });
+
+  it("leaves Escape to an open overlay, and otherwise runs Go Back", () => {
+    const current = context({ canGoBack: true });
+    const execute = vi.fn();
+    const hook = renderHook(() => useShortcutHandler(current, execute));
+    const overlay = renderHook(() => useEscapeDismiss(() => {}));
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+
+    overlay.unmount();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "navigation.back" }));
     hook.unmount();
   });
 

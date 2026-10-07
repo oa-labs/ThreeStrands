@@ -39,6 +39,23 @@ pub struct CreateCalendarEventRequest {
     pub attendees: Vec<String>,
 }
 
+/// Replaces an owned event's editable fields. All-day events carry `YYYY-MM-DD`
+/// dates with an exclusive end, matching Google; timed events carry RFC 3339.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCalendarEventRequest {
+    pub account_id: String,
+    pub calendar_id: String,
+    pub event_id: String,
+    pub title: String,
+    pub start: String,
+    pub end: String,
+    pub all_day: bool,
+    pub location: String,
+    pub description: String,
+    pub attendees: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduleEvent {
@@ -56,6 +73,9 @@ pub struct ScheduleEvent {
     pub attendees: Vec<String>,
     pub response_status: Option<String>,
     pub can_respond: bool,
+    /// The connected calendar organizes this event and can write to it, so it
+    /// may be edited or deleted from the app.
+    pub can_edit: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

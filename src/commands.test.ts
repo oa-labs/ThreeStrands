@@ -22,6 +22,8 @@ function noopContext(): CommandContext {
     canSendAndMarkDone: false,
     composerActive: false,
     canUndoSend: false,
+    canGoBack: false,
+    goBack: () => {},
     compose: () => {},
     reply: () => {},
     replyAll: () => {},
@@ -151,6 +153,15 @@ describe("command registry", () => {
         }
       }
     }
+  });
+
+  it("goes back with Escape only after a jump and never while composing", () => {
+    const back = commands.find((command) => command.id === "navigation.back")!;
+    expect(back.keys).toEqual(["Escape"]);
+    expect(back.group).toBe("Navigation");
+    expect(back.enabled(noopContext())).toBe(false);
+    expect(back.enabled({ ...noopContext(), canGoBack: true })).toBe(true);
+    expect(back.enabled({ ...noopContext(), canGoBack: true, composerActive: true })).toBe(false);
   });
 
   it("routes task navigation only while the Tasks pane is focused", () => {

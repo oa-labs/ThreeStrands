@@ -45,7 +45,7 @@ use auth::{AccountAuth, AuthConfig, OAuthProvider};
 use chrono::Utc;
 use db::Database;
 use models::{
-    ActionAnalysis, ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, CreateLabelRequest,
+    ActionAnalysis, ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, UpdateCalendarEventRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailProviderKind, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
@@ -2192,20 +2192,48 @@ async fn list_calendar_options(
 }
 
 fn validate_calendar_event_request(request: &CreateCalendarEventRequest) -> Result<(), String> {
-    if request.title.trim().is_empty() || request.title.len() > 1024 {
+    validate_calendar_event_fields(&request.title, &request.description, &request.start, &request.end, false, &request.attendees)
+}
+
+fn validate_calendar_event_update(request: &UpdateCalendarEventRequest) -> Result<(), String> {
+    if request.location.len() > 4096 {
+        return Err("Event location is too long".into());
+    }
+    validate_calendar_event_fields(&request.title, &request.description, &request.start, &request.end, request.all_day, &request.attendees)
+}
+
+/// All-day events use `YYYY-MM-DD` dates with an exclusive end; timed events use RFC 3339.
+fn validate_calendar_event_fields(
+    title: &str,
+    description: &str,
+    start: &str,
+    end: &str,
+    all_day: bool,
+    attendees: &[String],
+) -> Result<(), String> {
+    if title.trim().is_empty() || title.len() > 1024 {
         return Err("Enter an event title of at most 1024 characters".into());
     }
-    if request.description.len() > 32_768 {
+    if description.len() > 32_768 {
         return Err("Event description is too long".into());
     }
-    let start = chrono::DateTime::parse_from_rfc3339(&request.start)
-        .map_err(|_| "Enter a valid event start time".to_string())?;
-    let end = chrono::DateTime::parse_from_rfc3339(&request.end)
-        .map_err(|_| "Enter a valid event end time".to_string())?;
-    if end <= start {
+    let ordered = if all_day {
+        let start = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d")
+            .map_err(|_| "Enter a valid event start date".to_string())?;
+        let end = chrono::NaiveDate::parse_from_str(end, "%Y-%m-%d")
+            .map_err(|_| "Enter a valid event end date".to_string())?;
+        end > start
+    } else {
+        let start = chrono::DateTime::parse_from_rfc3339(start)
+            .map_err(|_| "Enter a valid event start time".to_string())?;
+        let end = chrono::DateTime::parse_from_rfc3339(end)
+            .map_err(|_| "Enter a valid event end time".to_string())?;
+        end > start
+    };
+    if !ordered {
         return Err("Event end must be after its start".into());
     }
-    if request.attendees.len() > 100 || request.attendees.iter().any(|email| {
+    if attendees.len() > 100 || attendees.iter().any(|email| {
         email.len() > 254 || email.contains(char::is_whitespace)
             || !email.split_once('@').is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.'))
     }) {
@@ -2240,6 +2268,42 @@ mod calendar_event_request_tests {
         invalid.title = " ".into();
         assert!(validate_calendar_event_request(&invalid).is_err());
     }
+
+    fn update(all_day: bool) -> UpdateCalendarEventRequest {
+        UpdateCalendarEventRequest {
+            account_id: "work@example.com".into(), calendar_id: "primary".into(), event_id: "primary:owned".into(),
+            title: "Planning".into(),
+            start: if all_day { "2026-09-22".into() } else { "2026-09-22T09:00:00Z".into() },
+            end: if all_day { "2026-09-23".into() } else { "2026-09-22T10:00:00Z".into() },
+            all_day, location: "Room 4B".into(), description: "Agenda".into(),
+            attendees: vec!["guest@example.com".into()],
+        }
+    }
+
+    #[test]
+    fn validates_event_updates_for_timed_and_all_day_events() {
+        assert!(validate_calendar_event_update(&update(false)).is_ok());
+        assert!(validate_calendar_event_update(&update(true)).is_ok());
+        let mut invalid = update(true);
+        invalid.end = invalid.start.clone();
+        assert!(validate_calendar_event_update(&invalid).is_err());
+        // An all-day update must not carry timed values, and the reverse.
+        invalid = update(true);
+        invalid.start = "2026-09-22T09:00:00Z".into();
+        assert!(validate_calendar_event_update(&invalid).is_err());
+        invalid = update(false);
+        invalid.start = "2026-09-22".into();
+        assert!(validate_calendar_event_update(&invalid).is_err());
+        invalid = update(false);
+        invalid.location = "x".repeat(4097);
+        assert!(validate_calendar_event_update(&invalid).is_err());
+        invalid = update(false);
+        invalid.location = "x".repeat(4096);
+        assert!(validate_calendar_event_update(&invalid).is_ok());
+        invalid = update(false);
+        invalid.attendees = vec!["not-an-email".into()];
+        assert!(validate_calendar_event_update(&invalid).is_err());
+    }
 }
 
 #[tauri::command]
@@ -2257,6 +2321,47 @@ async fn create_calendar_event(
         return Err("Choose a calendar where you can create events".into());
     }
     calendar::create_event(config.calendar_account(&account.email), &request).await
+}
+
+/// Finds the connected account for an edit and confirms it can still write to
+/// the event's calendar; `calendar::*_event` then confirms it organizes the event.
+async fn writable_calendar_account(
+    state: &State<'_, AppState>,
+    account_id: &str,
+    calendar_id: &str,
+) -> Result<String, String> {
+    let account = state.database.list_calendar_accounts()?.into_iter()
+        .find(|account| account.email == account_id && account.status == "connected")
+        .ok_or_else(|| "Connect this calendar account in Settings first".to_string())?;
+    let config = state.auth_config.google()?;
+    let options = calendar::list_calendar_options(config.calendar_account(&account.email), &account.email).await?;
+    if !options.iter().any(|option| option.id == calendar_id && option.writable) {
+        return Err("You can only change events on calendars you can edit".into());
+    }
+    Ok(account.email)
+}
+
+#[tauri::command]
+async fn update_calendar_event(
+    request: UpdateCalendarEventRequest,
+    state: State<'_, AppState>,
+) -> Result<ScheduleEvent, String> {
+    validate_calendar_event_update(&request)?;
+    let email = writable_calendar_account(&state, &request.account_id, &request.calendar_id).await?;
+    let config = state.auth_config.google()?;
+    calendar::update_event(config.calendar_account(&email), &request).await
+}
+
+#[tauri::command]
+async fn delete_calendar_event(
+    account_id: String,
+    calendar_id: String,
+    event_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let email = writable_calendar_account(&state, &account_id, &calendar_id).await?;
+    let config = state.auth_config.google()?;
+    calendar::delete_event(config.calendar_account(&email), &calendar_id, &event_id).await
 }
 
 #[tauri::command]
@@ -3923,6 +4028,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         reconnect_calendar_account,
         list_calendar_options,
         create_calendar_event,
+        update_calendar_event,
+        delete_calendar_event,
         set_calendar_selection,
         remove_calendar_account,
         remove_synced_calendar_account,

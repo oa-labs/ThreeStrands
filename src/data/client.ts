@@ -15,6 +15,7 @@ import type {
   CalendarOption,
   CalendarPreview,
   CreateCalendarEventRequest,
+  UpdateCalendarEventRequest,
   ContactSuggestion,
   ContactActivity,
   ContactFiles,
@@ -190,6 +191,10 @@ export interface MailClient extends CorrespondenceClient {
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
   updateCalendarResponse(event: ScheduleEvent, responseStatus: "accepted" | "declined" | "tentative"): Promise<ScheduleEvent>;
   createCalendarEvent(request: CreateCalendarEventRequest): Promise<ScheduleEvent>;
+  /** Changes an event the user organizes and notifies its guests. */
+  updateCalendarEvent(request: UpdateCalendarEventRequest): Promise<ScheduleEvent>;
+  /** Deletes an event the user organizes and notifies its guests. */
+  deleteCalendarEvent(event: ScheduleEvent): Promise<void>;
   /** `maxPerDay` spreads the candidates across days instead of the earliest slots of one day. */
   findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences; maxPerDay?: number }): Promise<AvailabilityResult>;
   checkProposedTime(request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck>;
@@ -314,6 +319,9 @@ const tauriClient: MailClient = {
   updateCalendarResponse: (event, responseStatus) =>
     complete("update_calendar_response", { accountId: event.accountId, calendarId: event.calendarId, eventId: event.id, responseStatus }),
   createCalendarEvent: (request) => complete("create_calendar_event", { request }),
+  updateCalendarEvent: (request) => complete("update_calendar_event", { request }),
+  deleteCalendarEvent: (event) =>
+    complete("delete_calendar_event", { accountId: event.accountId, calendarId: event.calendarId, eventId: event.id }),
   findAvailability: (request) => complete("find_availability", { request }),
   checkProposedTime: (request) => complete("check_proposed_time", { request }),
   listLabels: (accountId) => read("list_labels", { accountId }),

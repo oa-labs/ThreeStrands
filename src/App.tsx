@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Archive,
   AlertCircle,
   CalendarDays,
@@ -30,6 +31,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -96,6 +98,7 @@ import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { AvailabilitySection } from "./RecipientSections";
 import { draftRecipients } from "./composeChecks";
 import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
+import { captureReaderAnchor, currentReturnStep, pushReturnStep, restoreReaderAnchor, settleReturnSteps, type ReaderAnchor, type ReturnPoint, type ReturnStep } from "./returnNavigation";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import { describeAnalysisError, THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { ThreadTasks } from "./ThreadTasks";
@@ -550,6 +553,9 @@ export function App() {
   const threadsRequest = useRef(0);
   const detailRequest = useRef(0);
   const contextOpenedThreadRef = useRef<string | null>(null);
+  // Jumps to another conversation (from the context panel, Tasks, or Contacts) that Back can undo.
+  const [returnSteps, setReturnSteps] = useState<readonly ReturnStep[]>([]);
+  const pendingReaderRestoreRef = useRef<{ threadId: string; expanded: [string, boolean][]; anchor: ReaderAnchor | null; stage: "expand" | "scroll" } | null>(null);
   const triageSessionRef = useRef<TriageSession | null>(null);
   const triageCloseTimerRef = useRef<number | null>(null);
   const loadingMore = useRef(false);
@@ -1009,10 +1015,11 @@ export function App() {
     });
   }, [threads]);
 
+  // Claims Escape only while there is something to clear, so otherwise Escape can go back.
   useEscapeDismiss(() => {
     setCheckedIds((current) => (current.size > 0 ? new Set() : current));
     setActiveMessageFilters((current) => (current.size > 0 ? new Set() : current));
-  });
+  }, checkedIds.size > 0 || activeMessageFilters.size > 0);
 
   const mutateIds = useCallback(async (ids: string[], template: MutationTemplate): Promise<CommandResult> => {
     const targetIds = ids.filter((id) => threads.some((thread) => thread.id === id));
@@ -1385,8 +1392,32 @@ export function App() {
     return mailClient.createTask({ accountId, threadId: null, subjectSnapshot: null, title, kind: "action", ...(goalId ? { goalId } : {}) });
   }, [accounts, activeAccountId]);
 
-  const openTaskThread = useCallback((threadId: string) => {
+  /** Where the user is now, captured before a jump so Back can return to it. */
+  const captureReturnPoint = (): ReturnPoint => {
+    const workspaceLabel = rightWorkspace === "tasks" ? "Tasks" : rightWorkspace === "contacts" ? "Contacts" : rightWorkspace === "week" ? "Calendar" : null;
+    const searchLabel = searchOpen && query.trim() ? `search “${query.trim()}”` : null;
+    return {
+      accountId: activeAccountId,
+      mailbox,
+      splitInboxId: activeSplitInboxId,
+      query,
+      searchOpen,
+      workspace: rightWorkspace,
+      threadId: selectedId,
+      label: workspaceLabel ?? (visibleDetail ? visibleDetail.thread.subject || "(no subject)" : searchLabel ?? mailboxTitle),
+      reader: visibleDetail ? {
+        expanded: [...messageExpansionOverrides],
+        anchor: captureReaderAnchor(messageStackRef.current, messageRefs.current),
+      } : null,
+    };
+  };
+  const captureReturnPointRef = useRef(captureReturnPoint);
+  captureReturnPointRef.current = captureReturnPoint;
+
+  const openTaskThread = useCallback((threadId: string, origin?: ReturnPoint) => {
     const openThread = (thread: Thread, loadedDetail?: ThreadDetail) => {
+      // Recorded only once the conversation opens, so a failed jump leaves nothing to undo.
+      if (origin) setReturnSteps((steps) => pushReturnStep(steps, { origin, target: thread.id }));
       const targetMailbox: MailboxKind = thread.trashed ? "trash" : thread.archived ? "allMail" : "inbox";
       const targetAccountId = activeAccountId === null ? null : thread.accountId;
       if (targetAccountId !== activeAccountId) {
@@ -1421,6 +1452,56 @@ export function App() {
       })
       .finally(() => setDetailLoading(false));
   }, [activeAccountId, correspondence.context, mailbox, setActiveAccountId, setNotice, threads]);
+  /** Opens a conversation from elsewhere in the app, remembering where the user was. */
+  const jumpToThread = useCallback((threadId: string) => {
+    openTaskThread(threadId, captureReturnPointRef.current());
+  }, [openTaskThread]);
+
+  useEffect(() => {
+    setReturnSteps((steps) => settleReturnSteps(steps, selectedId));
+  }, [selectedId]);
+  const returnStep = currentReturnStep(returnSteps, selectedId);
+  const goBack = useCallback(() => {
+    const step = currentReturnStep(returnSteps, selectedId);
+    if (!step) return;
+    const origin = step.origin;
+    setReturnSteps((steps) => steps.slice(0, -1));
+    // Keeps the origin conversation selected while its list reloads, as a jump does for its target.
+    contextOpenedThreadRef.current = origin.threadId;
+    if (origin.accountId !== activeAccountId) {
+      saveSelectedMailboxForAccount(activeAccountId, mailbox === "split" ? "inbox" : mailbox);
+      // The origin's own tab and search come back below, so the per-account tab restore must not replace them.
+      restoredTabAccountRef.current = origin.accountId;
+      setActiveAccountId(origin.accountId);
+    }
+    setRightWorkspace(origin.workspace);
+    if (origin.mailbox === "drafts") correspondence.context.openDrafts();
+    else if (origin.mailbox === "outbox") correspondence.context.openOutbox();
+    else correspondence.context.openInbox();
+    setMailbox(origin.mailbox);
+    setActiveSplitInboxId(origin.splitInboxId);
+    saveSelectedMailboxForAccount(origin.accountId, origin.mailbox === "split" ? "inbox" : origin.mailbox);
+    setQuery(origin.query);
+    setSearchOpen(origin.searchOpen);
+    setSelectedId(origin.threadId);
+    pendingReaderRestoreRef.current = origin.threadId && origin.reader
+      ? { threadId: origin.threadId, ...origin.reader, stage: "expand" }
+      : null;
+    if (origin.workspace === null) window.requestAnimationFrame(() => selectedThreadRowRef.current?.focus({ preventScroll: true }));
+  }, [activeAccountId, correspondence.context, mailbox, returnSteps, selectedId, setActiveAccountId]);
+  // Going back restores the conversation's expanded messages, then (after they lay out) its scroll position.
+  useEffect(() => {
+    const pending = pendingReaderRestoreRef.current;
+    if (!pending || pending.stage !== "expand" || visibleDetail?.thread.id !== pending.threadId) return;
+    pending.stage = "scroll";
+    setMessageExpansionOverrides((current) => new Map([...current, ...pending.expanded]));
+  }, [visibleDetail, setMessageExpansionOverrides]);
+  useLayoutEffect(() => {
+    const pending = pendingReaderRestoreRef.current;
+    if (!pending || pending.stage !== "scroll" || visibleDetail?.thread.id !== pending.threadId) return;
+    pendingReaderRestoreRef.current = null;
+    if (pending.anchor) restoreReaderAnchor(messageStackRef.current, messageRefs.current, pending.anchor);
+  }, [messageExpansionOverrides, visibleDetail, messageRefs, messageStackRef]);
 
   const draftAvailabilityReply = useCallback((candidates: AvailabilityCandidate[]) => {
     if (candidates.length === 0) return;
@@ -2055,6 +2136,8 @@ export function App() {
     selectedArchived: selected?.archived ?? false,
     selectedTrashed: selected?.trashed ?? false,
     canUnsubscribe,
+    canGoBack: returnStep !== null,
+    goBack,
     canNavigateMessages: displayedMessages.length > 1,
     canSendAndMarkDone: composerBelongsToVisibleThread,
     sendAndMarkDone: () => {
@@ -2218,7 +2301,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openThreadChat, openContactsView, openKeepInTouchView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleContextPanelFocus, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, goBack, returnStep, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openThreadChat, openContactsView, openKeepInTouchView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleContextPanelFocus, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)
@@ -2308,7 +2391,7 @@ export function App() {
   // view when it is in the open conversation, otherwise by opening its thread.
   const showMessage = useCallback((threadId: string, messageId: string) => {
     if (threadId !== visibleDetail?.thread.id) {
-      openTaskThread(threadId);
+      jumpToThread(threadId);
       return;
     }
     activateMessage(messageId);
@@ -2316,7 +2399,7 @@ export function App() {
     requestAnimationFrame(() => {
       messageRefs.current.get(messageId)?.scrollIntoView?.({ block: "start", behavior: scrollBehavior() });
     });
-  }, [activateMessage, messageRefs, openTaskThread, setMessageExpansionOverrides, visibleDetail?.thread.id]);
+  }, [activateMessage, jumpToThread, messageRefs, setMessageExpansionOverrides, visibleDetail?.thread.id]);
   const registerMessageNode = useCallback((messageId: string, isLatest: boolean, node: HTMLElement | null) => {
     if (isLatest) latestMessageRef.current = node;
     if (node) messageRefs.current.set(messageId, node);
@@ -2632,6 +2715,14 @@ export function App() {
           <>
             <header className="reader-header">
               <div>
+                {returnStep ? (
+                  <HoverTooltip label={`Back to ${returnStep.origin.label}`} shortcut="Esc" placement="bottom">
+                    <button type="button" className="btn-link reader-back" onClick={() => executeById("navigation.back")}>
+                      <ArrowLeft size={ICON_SIZE.sm} aria-hidden="true" />
+                      <span className="reader-back-label">Back to {returnStep.origin.label}</span>
+                    </button>
+                  </HoverTooltip>
+                ) : null}
                 <span className="reader-account-scope">{visibleDetail.thread.accountId}</span>
                 {conversationSystemLabels.length > 0 ? (
                   <span className="eyebrow">{conversationSystemLabels.join(" · ")}</span>
@@ -2873,7 +2964,7 @@ export function App() {
             ) : null,
           } : null}
           onKeyDown={contextPanelKeyDown}
-          onOpenThread={openTaskThread}
+          onOpenThread={jumpToThread}
           onShowMessage={showMessage}
           assist={visibleDetail ? (<>
             <ThreadAssist
@@ -2920,7 +3011,7 @@ export function App() {
                 if (failure) void askThread(failure.question, failure.searchMailbox, person?.contactId ?? null, failure.attachments);
               }}
               onUseReply={(text) => correspondence.replyWithText(text, visibleDetail.messages.at(-1)?.id)}
-              onOpenThread={openTaskThread}
+              onOpenThread={jumpToThread}
               onShowSuggestions={() => document.getElementById(THREAD_ASSIST_ID)?.scrollIntoView?.({ block: "nearest" })}
               onOpenSettings={() => openSettingsAt("ai")}
               renderAvailability={(availability) => (
@@ -2953,13 +3044,13 @@ export function App() {
           </> : null}
         />
       ) : null}
-      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={openTaskThread} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} /></Suspense> : null}
+      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} /></Suspense> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
           ref={taskWorkspaceRef}
           accountId={activeAccountId}
           accountOptions={accounts.map((account) => account.email)}
-          onOpenThread={openTaskThread}
+          onOpenThread={jumpToThread}
           onTasksChanged={() => void refreshTaskIndicators()}
           onDraftFollowUp={(task) => void draftFollowUp(task)}
           refreshKey={taskRevision}

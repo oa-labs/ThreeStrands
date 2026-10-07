@@ -1,5 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlignLeft, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, RefreshCw, Video, X } from "lucide-react";
+import { AlignLeft, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, Pencil, RefreshCw, Trash2, Video, X } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HoverTooltip, Modal } from "./AppChrome";
 import {
@@ -16,7 +16,7 @@ import {
 import { calendarDescriptionText } from "./calendarDescription";
 import { responseLabel } from "./calendarResponse";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
-import { revalidateScheduleCache } from "./calendarScheduleCache";
+import { removeFromScheduleCache, revalidateScheduleCache } from "./calendarScheduleCache";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
@@ -24,6 +24,8 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import { ICON_SIZE } from "./iconSizes";
+import { InlineConfirm } from "./InlineConfirm";
+import { EditCalendarEventDialog } from "./CreateCalendarEventDialog";
 
 export const CALENDAR_SCROLL_TOP_KEY = "threestrands.calendar.scrollTop";
 const DEFAULT_CALENDAR_SCROLL_TOP = 7 * HOUR_HEIGHT;
@@ -188,7 +190,23 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
   const conferenceUrl = safeWebUrl(event.conferenceUrl);
   const [responsePending, setResponsePending] = useState(false);
   const [responseError, setResponseError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const label = responseLabel(event);
+  const deleteEvent = async () => {
+    setDeletePending(true);
+    setDeleteError(null);
+    try {
+      await mailClient.deleteCalendarEvent(event);
+      removeFromScheduleCache(event);
+      onDismiss();
+    } catch (error) {
+      setDeleteError(errorMessage(error));
+      setDeletePending(false);
+    }
+  };
   const respond = async (status: "accepted" | "declined" | "tentative") => {
     setResponsePending(true);
     setResponseError(null);
@@ -210,7 +228,8 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
       const target = pointerEvent.target;
       if (!(target instanceof Node)) return;
       if (viewerRef.current?.contains(target)) return;
-      if (target instanceof Element && target.closest("[data-calendar-event-trigger]")) return;
+      // The edit dialog is portaled outside the viewer but belongs to it.
+      if (target instanceof Element && target.closest("[data-calendar-event-trigger], .modal-backdrop")) return;
       onDismiss();
     };
     document.addEventListener("pointerdown", dismissOnOutsidePointer);
@@ -229,8 +248,21 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
       <header>
         <span className="calendar-event-color" aria-hidden="true" style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)} />
         <h3>{event.title}</h3>
-        <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Event Details" onClick={onDismiss}><X size={ICON_SIZE.sm} /></button>
+        <div className="calendar-event-viewer-actions">
+          {event.canEdit ? <>
+            <HoverTooltip title="Edit event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Edit Event" disabled={deletePending} onClick={() => setEditing(true)}><Pencil size={ICON_SIZE.sm} /></button></HoverTooltip>
+            <HoverTooltip title="Delete event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Delete Event" aria-expanded={confirmingDelete} disabled={deletePending} onClick={() => { setDeleteError(null); setConfirmingDelete(true); }}><Trash2 size={ICON_SIZE.sm} /></button></HoverTooltip>
+          </> : null}
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Event Details" onClick={onDismiss}><X size={ICON_SIZE.sm} /></button>
+        </div>
       </header>
+      {confirmingDelete ? (
+        <InlineConfirm ariaLabel="Delete event confirmation" cancelLabel="Keep" onCancel={() => setConfirmingDelete(false)} disabled={deletePending}
+          actions={[{ label: deletePending ? "Deleting…" : "Delete", className: "btn-danger", onClick: () => void deleteEvent() }]}>
+          <strong>Delete this event?</strong>{event.attendees?.length ? " Guests will be notified." : null}
+        </InlineConfirm>
+      ) : null}
+      {deleteError ? <p className="form-error" role="alert">{deleteError}</p> : null}
       <div className="calendar-event-viewer-details">
         <p><Clock3 size={ICON_SIZE.lg} /><span>{formatEventDate(event)} · {formatEventTime(event)}</span></p>
         {conferenceUrl ? (
@@ -255,6 +287,15 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
         </div> : null}
         {event.description ? <p className="calendar-event-viewer-description"><AlignLeft size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
+      {editing ? <EditCalendarEventDialog
+        event={event}
+        onClose={() => setEditing(false)}
+        onSaved={(updated) => {
+          setEditing(false);
+          onUpdated(updated);
+          revalidateScheduleCache(updated);
+        }}
+      /> : null}
     </div>
   );
 }

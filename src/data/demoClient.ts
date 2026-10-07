@@ -920,9 +920,30 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         allDay: false,
         description: request.description.trim() || null,
         attendees: request.attendees.map((email) => email.toLowerCase()),
+        canEdit: true,
       };
       scheduleEvents.push(created);
       return structuredClone(created);
+    },
+    async updateCalendarEvent(request) {
+      const current = scheduleEvents.find((item) => item.id === request.eventId && item.accountId === request.accountId);
+      if (!current || !current.canEdit) throw new Error("Only events you organize can be changed");
+      if (!request.title.trim() || request.end <= request.start) throw new Error("Enter a valid event title and time");
+      Object.assign(current, {
+        title: request.title.trim(),
+        start: request.start,
+        end: request.end,
+        allDay: request.allDay,
+        location: request.location.trim() || null,
+        description: request.description.trim() || null,
+        attendees: request.attendees.map((email) => email.toLowerCase()),
+      });
+      return structuredClone(current);
+    },
+    async deleteCalendarEvent(event) {
+      const index = scheduleEvents.findIndex((item) => item.id === event.id && item.accountId === event.accountId);
+      if (index === -1 || !scheduleEvents[index].canEdit) throw new Error("Only events you organize can be changed");
+      scheduleEvents.splice(index, 1);
     },
     async findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences; maxPerDay?: number }): Promise<AvailabilityResult> {
       const start = new Date(request.rangeStart);

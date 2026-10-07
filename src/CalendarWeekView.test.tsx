@@ -264,6 +264,154 @@ describe("CalendarWeekView", () => {
     expect(within(dialog).getByRole("button", { name: "Maybe" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  describe("owned event actions", () => {
+    const owned = (overrides: Partial<ScheduleEvent> = {}): ScheduleEvent => ({
+      ...event("primary:owned", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Planning"),
+      calendarId: "primary",
+      canEdit: true,
+      ...overrides,
+    });
+
+    it("offers no edit or delete for events the user does not organize", async () => {
+      const invited = { ...owned({ canEdit: false, canRespond: true, responseStatus: "accepted" as const }) };
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [invited], errors: [] });
+      renderWeek();
+      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      const dialog = screen.getByRole("dialog", { name: "Planning details" });
+      expect(within(dialog).queryByRole("button", { name: "Edit Event" })).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: "Delete Event" })).not.toBeInTheDocument();
+    });
+
+    it("deletes an owned event only after confirmation and drops it from the grid", async () => {
+      const planning = owned({ attendees: ["jane@example.com"] });
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [planning], errors: [] });
+      const remove = vi.spyOn(mailClient, "deleteCalendarEvent").mockResolvedValue();
+      renderWeek();
+      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      const dialog = screen.getByRole("dialog", { name: "Planning details" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete Event" }));
+      const confirm = within(dialog).getByRole("group", { name: "Delete event confirmation" });
+      expect(confirm).toHaveTextContent("Delete this event? Guests will be notified.");
+      fireEvent.click(within(confirm).getByRole("button", { name: "Keep" }));
+      expect(within(dialog).queryByRole("group", { name: "Delete event confirmation" })).not.toBeInTheDocument();
+      expect(remove).not.toHaveBeenCalled();
+
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete Event" }));
+      vi.mocked(mailClient.listScheduleEvents).mockImplementation(() => new Promise(() => {}));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+      await waitFor(() => expect(remove).toHaveBeenCalledWith(planning));
+      // The deleted event leaves the grid before the refetch finishes.
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Planning details" })).not.toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: /^Planning/ })).not.toBeInTheDocument();
+    });
+
+    it("keeps the event and reports a failed delete", async () => {
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [owned()], errors: [] });
+      vi.spyOn(mailClient, "deleteCalendarEvent").mockRejectedValue(new Error("Only events you organize can be changed"));
+      renderWeek();
+      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      const dialog = screen.getByRole("dialog", { name: "Planning details" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete Event" }));
+      expect(within(dialog).getByRole("group", { name: "Delete event confirmation" })).not.toHaveTextContent("Guests will be notified");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("Only events you organize can be changed");
+      expect(screen.getByRole("button", { name: /^Planning/ })).toBeInTheDocument();
+    });
+
+    it("edits an owned timed event and shows the change in the grid and popup", async () => {
+      const planning = owned({ location: "Room 4B", attendees: ["jane@example.com"], description: "Agenda" });
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [planning], errors: [] });
+      const update = vi.spyOn(mailClient, "updateCalendarEvent").mockImplementation(async (request) => ({
+        ...planning, title: request.title, start: request.start, end: request.end, location: request.location, attendees: request.attendees,
+      }));
+      renderWeek();
+      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
+      const form = screen.getByRole("dialog", { name: "Edit event" });
+      expect(within(form).getByLabelText("Title")).toHaveValue("Planning");
+      expect(within(form).getByLabelText("Starts")).toHaveValue("2026-09-22T09:00");
+      expect(within(form).getByLabelText("Ends")).toHaveValue("2026-09-22T10:00");
+      expect(within(form).getByLabelText("Location")).toHaveValue("Room 4B");
+      expect(within(form).getByLabelText("Invite people")).toHaveValue("jane@example.com");
+      expect(within(form).getByLabelText("All day")).not.toBeChecked();
+      fireEvent.change(within(form).getByLabelText("Title"), { target: { value: "Quarterly planning" } });
+      fireEvent.change(within(form).getByLabelText("Ends"), { target: { value: "2026-09-22T11:00" } });
+      fireEvent.change(within(form).getByLabelText("Invite people"), { target: { value: "jane@example.com, Theo@Example.com" } });
+      vi.mocked(mailClient.listScheduleEvents).mockImplementation(() => new Promise(() => {}));
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(update).toHaveBeenCalledWith({
+        accountId: "joel@example.com",
+        calendarId: "primary",
+        eventId: "primary:owned",
+        title: "Quarterly planning",
+        start: new Date(2026, 8, 22, 9).toISOString(),
+        end: new Date(2026, 8, 22, 11).toISOString(),
+        allDay: false,
+        location: "Room 4B",
+        description: "Agenda",
+        attendees: ["jane@example.com", "theo@example.com"],
+      }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit event" })).not.toBeInTheDocument());
+      expect(screen.getByRole("dialog", { name: "Quarterly planning details" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Quarterly planning/ })).toBeInTheDocument();
+    });
+
+    it("edits all-day dates inclusively and returns an untouched HTML description verbatim", async () => {
+      const offsite = owned({ id: "primary:offsite", title: "Offsite", allDay: true, start: "2026-09-23", end: "2026-09-25", description: "Bring <b>laptops</b>" });
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [offsite], errors: [] });
+      const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(offsite);
+      renderWeek();
+      fireEvent.click(await screen.findByRole("button", { name: "Offsite" }));
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Offsite details" })).getByRole("button", { name: "Edit Event" }));
+      const form = screen.getByRole("dialog", { name: "Edit event" });
+      expect(within(form).getByLabelText("All day")).toBeChecked();
+      expect(within(form).getByLabelText("Starts")).toHaveValue("2026-09-23");
+      // Google's end date is exclusive; the form shows the last day.
+      expect(within(form).getByLabelText("Ends")).toHaveValue("2026-09-24");
+      expect(within(form).getByLabelText("Description")).toHaveValue("Bring laptops");
+      fireEvent.change(within(form).getByLabelText("Ends"), { target: { value: "2026-09-25" } });
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({
+        allDay: true, start: "2026-09-23", end: "2026-09-26", description: "Bring <b>laptops</b>",
+      })));
+    });
+
+    it("converts between all-day and timed and rejects an end before the start", async () => {
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [owned()], errors: [] });
+      const update = vi.spyOn(mailClient, "updateCalendarEvent").mockImplementation(async () => owned());
+      renderWeek();
+      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
+      const form = screen.getByRole("dialog", { name: "Edit event" });
+      fireEvent.change(within(form).getByLabelText("Ends"), { target: { value: "2026-09-22T08:00" } });
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
+      expect(await within(form).findByRole("alert")).toHaveTextContent("The end time must be after the start time.");
+      expect(update).not.toHaveBeenCalled();
+
+      fireEvent.click(within(form).getByLabelText("All day"));
+      expect(within(form).getByLabelText("Starts")).toHaveValue("2026-09-22");
+      expect(within(form).getByLabelText("Ends")).toHaveValue("2026-09-22");
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ allDay: true, start: "2026-09-22", end: "2026-09-23" })));
+    });
+
+    it("keeps the edit dialog open with the reason when saving fails", async () => {
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [owned()], errors: [] });
+      vi.spyOn(mailClient, "updateCalendarEvent").mockRejectedValue(new Error("Calendar write access was denied."));
+      renderWeek();
+      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
+      const form = screen.getByRole("dialog", { name: "Edit event" });
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
+      expect(await within(form).findByRole("alert")).toHaveTextContent("Calendar write access was denied.");
+      // Pointer presses inside the portaled dialog must not dismiss the event popup underneath.
+      fireEvent.pointerDown(within(form).getByLabelText("Title"));
+      fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("dialog", { name: "Edit event" })).not.toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: "Planning details" })).toBeInTheDocument();
+    });
+  });
+
   it("uses free overlap space and keeps short meeting titles visible", async () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({
       events: [

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::{
     auth::OAuthCredential,
-    models::{BusyInterval, CalendarOption, CreateCalendarEventRequest, ScheduleEvent},
+    models::{BusyInterval, CalendarOption, CreateCalendarEventRequest, ScheduleEvent, UpdateCalendarEventRequest},
 };
 
 const MAX_EVENTS: usize = 20;
@@ -89,9 +89,17 @@ struct GoogleCreateEventTime<'a> { date_time: &'a str }
 struct GoogleCreateAttendee<'a> { email: &'a str }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GoogleEvents {
     #[serde(default)]
     items: Vec<GoogleEvent>,
+    /// The caller's access to the listed calendar, for example `owner` or `reader`.
+    #[serde(default)]
+    access_role: String,
+}
+
+fn writable_access_role(access_role: &str) -> bool {
+    matches!(access_role, "owner" | "writer")
 }
 
 #[derive(Serialize)]
@@ -275,7 +283,7 @@ fn calendar_options(
             name: entry.summary,
             primary: entry.primary,
             selected: false,
-            writable: matches!(entry.access_role.as_str(), "owner" | "writer"),
+            writable: writable_access_role(&entry.access_role),
         })
         .collect()
 }
@@ -305,7 +313,7 @@ pub async fn create_event(
         return Err("Calendar write access was denied. Reconnect this calendar account in Settings to grant event access.".into());
     }
     let event: GoogleEvent = checked_json(response).await?;
-    normalize_events(vec![event], &request.account_id, &request.calendar_id)
+    normalize_events(vec![event], &request.account_id, &request.calendar_id, true)
         .into_iter().next()
         .ok_or_else(|| "Google created an event but did not return its details. Refresh the calendar before trying again.".to_string())
 }
@@ -344,7 +352,8 @@ pub async fn fetch_schedule(
             .await
             .map_err(|error| error.to_string())?;
         let events: GoogleEvents = checked_json(response).await?;
-        schedule.extend(normalize_events(events.items, account_id, &calendar_id));
+        let writable = writable_access_role(&events.access_role);
+        schedule.extend(normalize_events(events.items, account_id, &calendar_id, writable));
     }
     schedule.sort_by(|left, right| left.start.cmp(&right.start));
     Ok(schedule)
@@ -445,10 +454,7 @@ pub async fn update_response(
     if !matches!(response_status, "accepted" | "declined" | "tentative") {
         return Err("Choose Yes, No, or Maybe".into());
     }
-    let event_id = schedule_id.strip_prefix(&format!("{calendar_id}:"))
-        .filter(|id| !id.is_empty())
-        .ok_or_else(|| "Event does not belong to this calendar".to_string())?;
-    let url = event_url(calendar_id, event_id)?;
+    let url = event_url(calendar_id, google_event_id(calendar_id, schedule_id)?)?;
     let token = auth.access_token().await.map_err(|error| error.to_string())?;
     let client = calendar_client()?;
     let current: GoogleEvent = checked_json(client.get(url.clone()).bearer_auth(&token).send().await.map_err(|error| error.to_string())?).await?;
@@ -467,11 +473,125 @@ pub async fn update_response(
         return Err("Calendar write access was denied. Reconnect this calendar account in Settings to grant event access.".into());
     }
     let event: GoogleEvent = checked_json(response).await?;
-    let mut updated = normalize_events(vec![event], account_id, calendar_id).into_iter().next()
+    // Google only accepts the patch on a calendar this account can write to.
+    let mut updated = normalize_events(vec![event], account_id, calendar_id, true).into_iter().next()
         .ok_or_else(|| "Google changed the response but did not return event details. Refresh the calendar.".to_string())?;
     updated.response_status = Some(response_status.to_string());
     updated.can_respond = true;
     Ok(updated)
+}
+
+/// Schedule IDs are `{calendar_id}:{google_event_id}` so events stay unique
+/// across calendars; recover the Google ID and refuse IDs from another calendar.
+fn google_event_id<'a>(calendar_id: &str, schedule_id: &'a str) -> Result<&'a str, String> {
+    schedule_id.strip_prefix(&format!("{calendar_id}:"))
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "Event does not belong to this calendar".to_string())
+}
+
+/// Loads an event and refuses to continue unless this calendar organizes it,
+/// so invitations on a writable calendar are never edited or deleted for
+/// everyone else.
+async fn owned_event(client: &reqwest::Client, token: &str, url: &url::Url) -> Result<serde_json::Value, String> {
+    let current: serde_json::Value = checked_json(
+        client.get(url.clone()).bearer_auth(token).send().await.map_err(|error| error.to_string())?,
+    ).await?;
+    if !organized_by_self(&current) {
+        return Err("Only events you organize can be changed".into());
+    }
+    Ok(current)
+}
+
+fn organized_by_self(event: &serde_json::Value) -> bool {
+    event.pointer("/organizer/self").and_then(serde_json::Value::as_bool) == Some(true)
+}
+
+/// Keeps the existing attendee records (and their RSVPs) for people who stay
+/// invited, always keeps the calendar owner and booked rooms, and invites new
+/// addresses.
+fn merged_attendees(current: &[serde_json::Value], requested: &[String]) -> Vec<serde_json::Value> {
+    let requested: Vec<String> = requested.iter().map(|email| email.trim().to_ascii_lowercase()).collect();
+    let email_of = |attendee: &serde_json::Value| attendee.get("email").and_then(serde_json::Value::as_str).map(str::to_ascii_lowercase);
+    let flag = |attendee: &serde_json::Value, name: &str| attendee.get(name).and_then(serde_json::Value::as_bool) == Some(true);
+    let mut merged: Vec<serde_json::Value> = current.iter()
+        .filter(|attendee| flag(attendee, "self") || flag(attendee, "resource")
+            || email_of(attendee).is_some_and(|email| requested.contains(&email)))
+        .cloned()
+        .collect();
+    for email in requested {
+        if !merged.iter().any(|attendee| email_of(attendee).as_deref() == Some(email.as_str())) {
+            merged.push(serde_json::json!({ "email": email }));
+        }
+    }
+    merged
+}
+
+/// Google keeps `date` and `dateTime` side by side, so clear the other one
+/// when an event moves between all-day and timed.
+fn event_time_patch(value: &str, all_day: bool) -> serde_json::Value {
+    if all_day {
+        serde_json::json!({ "date": value, "dateTime": null })
+    } else {
+        serde_json::json!({ "dateTime": value, "date": null })
+    }
+}
+
+fn update_patch(request: &UpdateCalendarEventRequest, current: &serde_json::Value) -> serde_json::Value {
+    let current_attendees = current.get("attendees").and_then(serde_json::Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    serde_json::json!({
+        "summary": request.title.trim(),
+        "description": request.description.trim(),
+        "location": request.location.trim(),
+        "start": event_time_patch(&request.start, request.all_day),
+        "end": event_time_patch(&request.end, request.all_day),
+        "attendees": merged_attendees(current_attendees, &request.attendees),
+    })
+}
+
+pub async fn update_event(
+    auth: OAuthCredential,
+    request: &UpdateCalendarEventRequest,
+) -> Result<ScheduleEvent, String> {
+    let url = event_url(&request.calendar_id, google_event_id(&request.calendar_id, &request.event_id)?)?;
+    let token = auth.access_token().await.map_err(|error| error.to_string())?;
+    let client = calendar_client()?;
+    let current = owned_event(&client, &token, &url).await?;
+    let response = client.patch(url).bearer_auth(&token)
+        .query(&[("sendUpdates", "all")])
+        .json(&update_patch(request, &current))
+        .send().await.map_err(|error| error.to_string())?;
+    if response.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err("Calendar write access was denied. Reconnect this calendar account in Settings to grant event access.".into());
+    }
+    let event: GoogleEvent = checked_json(response).await?;
+    normalize_events(vec![event], &request.account_id, &request.calendar_id, true)
+        .into_iter().next()
+        .ok_or_else(|| "Google saved the event but did not return its details. Refresh the calendar.".to_string())
+}
+
+pub async fn delete_event(
+    auth: OAuthCredential,
+    calendar_id: &str,
+    schedule_id: &str,
+) -> Result<(), String> {
+    let url = event_url(calendar_id, google_event_id(calendar_id, schedule_id)?)?;
+    let token = auth.access_token().await.map_err(|error| error.to_string())?;
+    let client = calendar_client()?;
+    owned_event(&client, &token, &url).await?;
+    let response = client.delete(url).bearer_auth(&token)
+        .query(&[("sendUpdates", "all")])
+        .send().await.map_err(|error| error.to_string())?;
+    let status = response.status();
+    // Gone means another device already deleted it, which is the outcome asked for.
+    if status.is_success() || status == reqwest::StatusCode::GONE {
+        return Ok(());
+    }
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Err("Calendar write access was denied. Reconnect this calendar account in Settings to grant event access.".into());
+    }
+    let body = response.text().await.unwrap_or_default();
+    eprintln!("Google Calendar request failed with {status}: {body}");
+    Err(format!("Google Calendar request failed ({status})."))
 }
 
 async fn checked_json<T: serde::de::DeserializeOwned>(
@@ -486,10 +606,13 @@ async fn checked_json<T: serde::de::DeserializeOwned>(
     Err(format!("Google Calendar request failed ({status})."))
 }
 
+/// `writable` is whether this account can write to the calendar; only events
+/// it also organizes become editable.
 fn normalize_events(
     events: Vec<GoogleEvent>,
     account_id: &str,
     calendar_id: &str,
+    writable: bool,
 ) -> Vec<ScheduleEvent> {
     events
         .into_iter()
@@ -499,6 +622,7 @@ fn normalize_events(
             let start = event.start.date_time.or(event.start.date)?;
             let end = event.end.date_time.or(event.end.date)?;
             let (response_status, can_respond) = self_response(&event.attendees, account_id);
+            let organized_by_self = event.organizer.as_ref().is_some_and(|organizer| organizer.is_self);
             Some(ScheduleEvent {
                 id: format!("{calendar_id}:{}", event.id),
                 account_id: account_id.to_string(),
@@ -515,6 +639,7 @@ fn normalize_events(
                 attendees: event_people(event.organizer, event.attendees),
                 response_status,
                 can_respond,
+                can_edit: writable && organized_by_self,
                 conference_url: event.hangout_link.or_else(|| {
                     event.conference_data.and_then(|conference| {
                         conference.entry_points.into_iter().find_map(|entry| {
@@ -770,6 +895,7 @@ mod tests {
             ],
             "work@example.com",
             "team@example.com",
+            true,
         );
 
         assert_eq!(events.len(), 2);
@@ -791,6 +917,99 @@ mod tests {
         assert!(events[1].attendees.is_empty());
         assert_eq!(events[1].response_status, None);
         assert!(!events[1].can_respond);
+        // An invitation and an event without a known organizer are not editable.
+        assert!(!events[0].can_edit);
+        assert!(!events[1].can_edit);
+    }
+
+    fn organized_event(organizer_self: bool) -> GoogleEvent {
+        serde_json::from_value(serde_json::json!({
+            "id": "owned",
+            "summary": "Planning",
+            "start": {"dateTime": "2026-09-18T09:30:00-07:00"},
+            "end": {"dateTime": "2026-09-18T10:00:00-07:00"},
+            "organizer": {"email": "work@example.com", "self": organizer_self}
+        })).unwrap()
+    }
+
+    #[test]
+    fn only_self_organized_events_on_writable_calendars_are_editable() {
+        let editable = |organizer_self, writable| {
+            normalize_events(vec![organized_event(organizer_self)], "work@example.com", "primary", writable)[0].can_edit
+        };
+        assert!(editable(true, true));
+        assert!(!editable(true, false));
+        assert!(!editable(false, true));
+        assert!(!editable(false, false));
+    }
+
+    #[test]
+    fn events_list_access_role_controls_editability() {
+        let list: GoogleEvents = serde_json::from_value(serde_json::json!({ "accessRole": "reader", "items": [] })).unwrap();
+        assert!(!writable_access_role(&list.access_role));
+        let list: GoogleEvents = serde_json::from_value(serde_json::json!({ "accessRole": "writer" })).unwrap();
+        assert!(writable_access_role(&list.access_role));
+        let list: GoogleEvents = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(!writable_access_role(&list.access_role));
+    }
+
+    #[test]
+    fn recognizes_only_events_this_calendar_organizes() {
+        assert!(organized_by_self(&serde_json::json!({ "organizer": { "email": "me@example.com", "self": true } })));
+        assert!(!organized_by_self(&serde_json::json!({ "organizer": { "email": "boss@example.com" } })));
+        assert!(!organized_by_self(&serde_json::json!({ "organizer": { "self": "true" } })));
+        assert!(!organized_by_self(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn schedule_ids_must_belong_to_the_named_calendar() {
+        assert_eq!(google_event_id("primary", "primary:abc"), Ok("abc"));
+        assert!(google_event_id("primary", "other:abc").is_err());
+        assert!(google_event_id("primary", "primary:").is_err());
+    }
+
+    #[test]
+    fn attendee_merge_keeps_rsvps_owner_and_rooms_and_invites_new_people() {
+        let current = vec![
+            serde_json::json!({ "email": "me@example.com", "self": true, "organizer": true, "responseStatus": "accepted" }),
+            serde_json::json!({ "email": "Jane@Example.com", "responseStatus": "accepted", "comment": "See you" }),
+            serde_json::json!({ "email": "removed@example.com", "responseStatus": "declined" }),
+            serde_json::json!({ "email": "room@resource.example.com", "resource": true, "responseStatus": "accepted" }),
+        ];
+        let merged = merged_attendees(&current, &["jane@example.com".into(), " New@Example.com ".into()]);
+        assert_eq!(merged, vec![
+            current[0].clone(),
+            current[1].clone(),
+            current[3].clone(),
+            serde_json::json!({ "email": "new@example.com" }),
+        ]);
+        assert!(merged_attendees(&[], &[]).is_empty());
+    }
+
+    fn update_request(all_day: bool) -> UpdateCalendarEventRequest {
+        UpdateCalendarEventRequest {
+            account_id: "work@example.com".into(), calendar_id: "primary".into(), event_id: "primary:owned".into(),
+            title: " Planning ".into(),
+            start: if all_day { "2026-09-18".into() } else { "2026-09-18T09:00:00Z".into() },
+            end: if all_day { "2026-09-19".into() } else { "2026-09-18T10:00:00Z".into() },
+            all_day, location: " Room 4B ".into(), description: " Agenda ".into(), attendees: vec!["jane@example.com".into()],
+        }
+    }
+
+    #[test]
+    fn update_patch_sets_fields_and_clears_the_other_time_kind() {
+        let current = serde_json::json!({ "attendees": [{ "email": "jane@example.com", "responseStatus": "accepted" }] });
+        let timed = update_patch(&update_request(false), &current);
+        assert_eq!(timed["summary"], "Planning");
+        assert_eq!(timed["location"], "Room 4B");
+        assert_eq!(timed["description"], "Agenda");
+        assert_eq!(timed["start"], serde_json::json!({ "dateTime": "2026-09-18T09:00:00Z", "date": null }));
+        assert_eq!(timed["end"], serde_json::json!({ "dateTime": "2026-09-18T10:00:00Z", "date": null }));
+        assert_eq!(timed["attendees"], serde_json::json!([{ "email": "jane@example.com", "responseStatus": "accepted" }]));
+        let all_day = update_patch(&update_request(true), &serde_json::json!({}));
+        assert_eq!(all_day["start"], serde_json::json!({ "date": "2026-09-18", "dateTime": null }));
+        assert_eq!(all_day["end"], serde_json::json!({ "date": "2026-09-19", "dateTime": null }));
+        assert_eq!(all_day["attendees"], serde_json::json!([{ "email": "jane@example.com" }]));
     }
 
     #[test]

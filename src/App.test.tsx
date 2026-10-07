@@ -4,6 +4,7 @@ import { AccountSwitcher, App, NOTICE_TIMEOUT_MS } from "./App";
 import { mailClient } from "./data/client";
 import type { ThreadTask } from "./domain";
 import { FOREGROUND_DEBOUNCE_MS, FOREGROUND_IDLE_MS } from "./foregroundRefresh";
+import { SEARCH_DEBOUNCE_MS } from "./SearchField";
 
 const demoThreadIds = ["welcome", "roadmap", "privacy"];
 
@@ -1359,5 +1360,69 @@ describe("account selection persistence", () => {
     expect(screen.getByRole("radio", { name: account!.email })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("tooltip", { name: account!.email, hidden: true })).toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /^All accounts/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("returning from a jump to another conversation", () => {
+  useConversationFixture();
+
+  async function jumpFromRecentEmails() {
+    const roadmap = await mailClient.getThread("roadmap");
+    vi.spyOn(mailClient, "contactTimeline").mockResolvedValue([{
+      threadId: "roadmap",
+      accountId: roadmap.thread.accountId,
+      contactEmail: "team@example.com",
+      subject: roadmap.thread.subject,
+      snippet: "",
+      sentAt: roadmap.thread.lastMessageAt,
+      labels: [],
+    }]);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const recent = await screen.findByRole("region", { name: "Recent emails" });
+    fireEvent.click(within(recent).getByRole("button", { name: new RegExp(roadmap.thread.subject) }));
+    await screen.findByRole("heading", { name: roadmap.thread.subject });
+    return roadmap;
+  }
+
+  it("offers Back to the conversation the jump started from, by link or Escape", async () => {
+    await jumpFromRecentEmails();
+    const back = screen.getByRole("button", { name: /Back to Welcome to ThreeStrands/ });
+    expect(back).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    // Back is spent once used, so Escape does nothing more.
+    expect(screen.queryByRole("button", { name: /Back to/ })).not.toBeInTheDocument();
+  });
+
+  it("returns to the origin's search", async () => {
+    const roadmap = await mailClient.getThread("roadmap");
+    vi.spyOn(mailClient, "contactTimeline").mockResolvedValue([{
+      threadId: "roadmap", accountId: roadmap.thread.accountId, contactEmail: "team@example.com",
+      subject: roadmap.thread.subject, snippet: "", sentAt: roadmap.thread.lastMessageAt, labels: [],
+    }]);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
+    fireEvent.change(search, { target: { value: "Welcome" } });
+    // The search commits once typing pauses.
+    await advance(SEARCH_DEBOUNCE_MS);
+    const recent = await screen.findByRole("region", { name: "Recent emails" });
+    fireEvent.click(within(recent).getByRole("button", { name: new RegExp(roadmap.thread.subject) }));
+    await screen.findByRole("heading", { name: roadmap.thread.subject });
+    // The jump clears the search; Back brings it back.
+    expect(screen.queryByRole("textbox", { name: "Search Mail" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Back to Welcome to ThreeStrands/ }));
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    expect(await screen.findByRole("textbox", { name: "Search Mail" })).toHaveValue("Welcome");
+  });
+
+  it("forgets the jump once the user picks another conversation", async () => {
+    await jumpFromRecentEmails();
+    fireEvent.keyDown(window, { key: "j" });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Back to/ })).not.toBeInTheDocument());
   });
 });

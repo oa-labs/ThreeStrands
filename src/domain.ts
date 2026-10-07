@@ -76,12 +76,28 @@ export type CreateCalendarEventRequest = {
   attendees: string[];
 };
 
+/** All-day events carry `YYYY-MM-DD` dates with an exclusive end; timed events carry ISO times. */
+export type UpdateCalendarEventRequest = {
+  accountId: string;
+  calendarId: string;
+  eventId: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location: string;
+  description: string;
+  attendees: string[];
+};
+
 export type ScheduleEvent = {
   id: string;
   accountId: string;
   calendarId?: string;
   responseStatus?: "accepted" | "declined" | "tentative" | "needsAction" | null;
   canRespond?: boolean;
+  /** The user organizes this event on a calendar they can write to. */
+  canEdit?: boolean;
   title: string;
   start: string;
   end: string;

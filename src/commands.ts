@@ -19,6 +19,8 @@ export type CommandContext = {
   composerActive: boolean;
   closing?: boolean;
   canUndoSend: boolean;
+  /** A jump to another conversation can be undone. */
+  canGoBack: boolean;
   compose(): void;
   reply(): void;
   replyAll(): void;
@@ -41,6 +43,8 @@ export type CommandContext = {
   /** Moves focus between the open draft and the context panel beside it. */
   toggleContextPanelFocus(): void;
   undoSend(): void;
+  /** Returns to where the latest jump to another conversation started. */
+  goBack(): void;
   selectNext(): void;
   selectPrevious(): void;
   selectNextTask(): void;
@@ -139,6 +143,7 @@ export const commands: Command[] = [
   { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.reply) },
   { id: "draft.replyAll", title: "Reply All", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.replyAll) },
   { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.forward) },
+  { id: "navigation.back", title: "Go Back", keys: ["Escape"], group: "Navigation", enabled: (c) => c.canGoBack && !c.composerActive, run: (c) => complete(c.goBack) },
   { id: "mailbox.inbox", title: "Go to Inbox", keys: ["g then i"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openInbox) },
   { id: "mailbox.allMail", title: "Go to All Mail", keys: ["g then a"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openAllMail) },
   { id: "mailbox.trash", title: "Go to Trash", keys: ["g then t"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openTrash) },
