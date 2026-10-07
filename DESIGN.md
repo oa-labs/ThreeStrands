@@ -301,8 +301,9 @@ of roles (`--text-*`) built from them. Components use only the roles:
 
 ## Spacing
 
-Spacing sits on a 4px grid: `--space-1` (4px) through `--space-12` (48px).
-Layout roles build on the scale:
+Spacing sits on a 4px grid: `--space-1` (4px) through `--space-12` (48px),
+with half steps `--space-0-5`, `--space-1-5`, and `--space-2-5` (2, 6, 10px)
+for tight controls. Layout roles build on the scale:
 
 | Role | Use |
 |---|---|
@@ -310,10 +311,16 @@ Layout roles build on the scale:
 | `--pane-inset` | Horizontal inset of a workspace pane |
 | `--side-pane-inset` | Horizontal inset of a narrow side pane: context panel, goals, calendar side |
 | `--pane-end-padding` | Room below the last item in a scrolling pane |
+| `--dialog-inset` | Horizontal inset of a dialog's header, body, and footer |
 
-Shells and headers use only scale steps and roles. Dialogs, forms, and list
-rows will move onto the scale in later phases; `src/styleTokens.test.ts`
-lists the surfaces converted so far and fails on raw lengths in them. That
+The composer sits in the reader, so it uses `--pane-inset` rather than the
+dialog inset. Text inputs, selects, and search fields take their height from
+`--control-h`, `--control-h-sm`, or `--control-h-xs`, the same heights as
+buttons, so a field and the button beside it line up.
+
+Shells, headers, dialogs, the composer, and notices use only scale steps and
+roles. List rows move onto the scale next; `src/styleTokens.test.ts` lists
+the surfaces converted so far and fails on raw lengths in them. That
 test also fails when the stylesheet reads a custom property that is never
 defined.
 
