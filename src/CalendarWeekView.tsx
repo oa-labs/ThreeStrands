@@ -235,6 +235,9 @@ export function CalendarWeekView({
   const days = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(weekStart, index)), [weekStart]);
   const today = startOfLocalDay(now);
   const selectedAccountEmails = [...new Set(calendars.filter((calendar) => calendar.selected).map((calendar) => calendar.accountId))];
+  // The week merges every connected calendar account, so name the scope like the mail "All accounts" view.
+  const showsEveryAccount = accounts.length > 0 && accounts.every((account) => selectedAccountEmails.includes(account.email));
+  const accountScope = selectedAccountEmails.length === 0 ? "None selected" : showsEveryAccount ? "All calendar accounts" : selectedAccountEmails.join(", ");
 
   const { events, loading, error, reload } = useCalendarSchedule({
     timeMin: weekStart.toISOString(),
@@ -333,7 +336,7 @@ export function CalendarWeekView({
     <section className="calendar-week" aria-label="Calendar week">
       <div className="calendar-week-main">
         <header className="calendar-week-header">
-          <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account">· {selectedAccountEmails.length ? selectedAccountEmails.join(", ") : "None selected"}</span></span><h1>{monthTitle(weekStart)}</h1></div>
+          <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account" title={selectedAccountEmails.join(", ") || undefined}>· {accountScope}</span></span><h1>{monthTitle(weekStart)}</h1></div>
           <div className="calendar-week-controls">
             <button type="button" className="btn" onClick={goToToday}>Today</button>
             <div className="calendar-week-nav">

@@ -63,12 +63,35 @@ describe("CalendarWeekView", () => {
     }
   });
 
-  it("names every account contributing selected calendars in the header", () => {
+  it("says all calendar accounts in the header when every connected account contributes, naming them in the tooltip", () => {
     const { container } = renderWeek({
       accounts: [...accounts, { ...accounts[0], email: "work@example.com" }],
       calendars: [...calendars, { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true, writable: true }],
     });
-    expect(container.querySelector(".calendar-week-header")).toHaveTextContent("Calendar · joel@example.com, work@example.com");
+    const header = container.querySelector(".calendar-week-header")!;
+    expect(header).toHaveTextContent("Calendar · All calendar accounts");
+    expect(header.querySelector(".eyebrow-account")).toHaveAttribute("title", "joel@example.com, work@example.com");
+  });
+
+  it("says all calendar accounts when the only connected account contributes", () => {
+    const { container } = renderWeek();
+    expect(container.querySelector(".calendar-week-header")).toHaveTextContent("Calendar · All calendar accounts");
+  });
+
+  it("names only the accounts contributing selected calendars when another connected account has none selected", () => {
+    const { container } = renderWeek({
+      accounts: [...accounts, { ...accounts[0], email: "work@example.com" }],
+      calendars: [...calendars, { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: false, writable: true }],
+    });
+    expect(container.querySelector(".calendar-week-header")).toHaveTextContent("Calendar · joel@example.com");
+    expect(container.querySelector(".calendar-week-header")).not.toHaveTextContent("All calendar accounts");
+  });
+
+  it("says none selected when no calendar is selected", () => {
+    const { container } = renderWeek({ calendars: calendars.map((calendar) => ({ ...calendar, selected: false })) });
+    const scope = container.querySelector(".calendar-week-header .eyebrow-account")!;
+    expect(scope).toHaveTextContent("· None selected");
+    expect(scope).not.toHaveAttribute("title");
   });
 
   it("requests the visible week, preloads neighbors, and refreshes when navigating", async () => {
