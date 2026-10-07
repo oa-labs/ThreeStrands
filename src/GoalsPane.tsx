@@ -9,6 +9,9 @@ export type GoalFilter = null | { goalId: string | null };
 
 export type GoalsPaneHandle = { focus(): void };
 
+/** An account other than the current one and how many goals it has. */
+export type OtherAccountGoals = { accountId: string; count: number };
+
 const STATUS_LABELS: Partial<Record<Goal["status"], string>> = { achieved: "Achieved", dropped: "Dropped" };
 const REVIEW_DEFERRED_KEY = "threestrands.goals.reviewDeferredUntil";
 
@@ -23,6 +26,10 @@ function readReviewDeferral(): string | null {
 /** Goals for the current quarter, half, and year beside the task workspace; selecting one filters the tasks. */
 export const GoalsPane = forwardRef<GoalsPaneHandle, {
   goals: readonly Goal[];
+  /** The account whose goals are shown; null shows every account's goals. */
+  accountId?: string | null;
+  /** Accounts that have goals, named when the current account has none. */
+  otherAccountGoals?: readonly OtherAccountGoals[];
   tasks: readonly ThreadTask[];
   filter: GoalFilter;
   now?: Date;
@@ -33,7 +40,7 @@ export const GoalsPane = forwardRef<GoalsPaneHandle, {
   onReview(): void;
   /** Escape from the pane hands focus back to the tasks. */
   onLeave(): void;
-}>(function GoalsPane({ goals, tasks, filter, now = new Date(), onFilterChange, onAddGoal, onEditGoal, onReview, onLeave }, ref) {
+}>(function GoalsPane({ goals, accountId = null, otherAccountGoals = [], tasks, filter, now = new Date(), onFilterChange, onAddGoal, onEditGoal, onReview, onLeave }, ref) {
   const paneRef = useRef<HTMLElement>(null);
   const groups = useMemo(() => currentGoalGroups(goals, now), [goals, now]);
   const shown = new Set(groups.flatMap((group) => group.goals.map((goal) => goal.id)));
@@ -119,6 +126,12 @@ export const GoalsPane = forwardRef<GoalsPaneHandle, {
           <span className="goal-title">No goal</span><span className="goal-meta">{unlinkedCount} open</span>
         </button></li>
       </ul>
+      {accountId && goals.length === 0 ? <div className="goal-account-note" role="note">
+        <p>Goals belong to each account. {accountId} has no goals yet.</p>
+        {otherAccountGoals.length ? <p>Goals on other accounts: {otherAccountGoals.map((other, index) => <span key={other.accountId}>
+          {index ? ", " : null}<strong>{other.accountId}</strong> ({other.count})
+        </span>)}.</p> : null}
+      </div> : null}
       {groups.map((group) => group.goals.length === 0 && group.horizon === "half" ? null : <section key={group.horizon} className="goal-group" aria-label={`${GOAL_HORIZON_LABELS[group.horizon]} goals`}>
         <h3>{GOAL_HORIZON_LABELS[group.horizon]} · {formatPeriod(group.period)}</h3>
         {group.goals.length ? <ul className="goal-list">{group.goals.map((goal) => renderGoal(goal))}</ul> : <p className="goal-empty">No {GOAL_HORIZON_LABELS[group.horizon].toLowerCase()} goals yet.</p>}

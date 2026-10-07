@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Goal, ThreadTask } from "./domain";
-import { carryForwardRequest, currentGoalGroups, formatPeriod, GOAL_STALE_AFTER_DAYS, goalIsStale, goalOptionsForTask, goalPeriodMatches, goalProgress, goalsToReview, parentCandidates, periodEncloses, periodEnded, periodFor, shiftPeriod } from "./goals";
+import { carryForwardRequest, currentGoalGroups, formatPeriod, GOAL_STALE_AFTER_DAYS, goalCountsByOtherAccount, goalIsStale, goalOptionsForTask, goalPeriodMatches, goalProgress, goalsToReview, parentCandidates, periodEncloses, periodEnded, periodFor, shiftPeriod } from "./goals";
 
 function goal(id: string, overrides: Partial<Goal> = {}): Goal {
   return {
@@ -57,6 +57,20 @@ describe("goal periods", () => {
 });
 
 describe("goal links", () => {
+  it("counts goals on every account but the current one, sorted by account", () => {
+    const goals = [
+      goal("mine"),
+      goal("z1", { accountId: "zed@example.com" }),
+      goal("a1", { accountId: "amy@example.com" }),
+      goal("z2", { accountId: "zed@example.com" }),
+    ];
+    expect(goalCountsByOtherAccount(goals, "you@example.com")).toEqual([
+      { accountId: "amy@example.com", count: 1 },
+      { accountId: "zed@example.com", count: 2 },
+    ]);
+    expect(goalCountsByOtherAccount([goal("mine")], "you@example.com")).toEqual([]);
+  });
+
   const year = goal("year", { horizon: "year", period: "2026" });
   const half = goal("half", { horizon: "half", period: "2026-H2" });
   const firstHalf = goal("first-half", { horizon: "half", period: "2026-H1" });

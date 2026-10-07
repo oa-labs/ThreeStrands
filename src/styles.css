@@ -1702,6 +1702,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--type-reading)
 .goal-group h3, .goal-other summary { margin: 0 4px 6px; color: var(--muted); font-size: var(--type-xs); font-weight: 650; }
 .goal-other summary { cursor: pointer; }
 .goal-empty { margin: 0 4px; color: var(--muted); font-size: var(--type-sm); }
+.goal-account-note { margin: 0 4px 12px; color: var(--muted); font-size: var(--type-sm); overflow-wrap: anywhere; }
+.goal-account-note p { margin: 0; }
+.goal-account-note p + p { margin-top: 4px; }
+.goal-account-note strong { color: var(--text); font-weight: 600; }
 .goal-item { display: flex; align-items: flex-start; gap: 2px; }
 .goal-row { min-width: 0; flex: 1; display: grid; gap: 2px; padding: 7px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .goal-row:hover { background: var(--hover); }

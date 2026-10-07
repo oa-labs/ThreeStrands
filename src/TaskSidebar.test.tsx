@@ -324,7 +324,8 @@ describe("TaskSidebar", () => {
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={vi.fn(async (title) => workspaceTask("created", { title }))} />);
 
     await waitFor(() => expect(screen.getByText("0 tasks")).toBeInTheDocument());
-    expect(screen.getByText("you@example.com", { exact: false })).toBeInTheDocument();
+    const header = screen.getByRole("region", { name: "Tasks" }).querySelector<HTMLElement>(".tasks-sidebar-header")!;
+    expect(within(header).getByText("you@example.com", { exact: false })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check schedule" })).not.toBeInTheDocument();
     const addTask = screen.getByRole("button", { name: "Add Task" });
     expect(addTask).toHaveClass("btn", "task-add-button");
@@ -976,6 +977,45 @@ describe("TaskSidebar goals", () => {
     expect(other).not.toHaveAttribute("open");
     expect(other).toHaveTextContent("Achieved");
     expect(within(pane).getByRole("button", { name: /No goal/ })).toHaveTextContent("1 open");
+  });
+
+  it("explains an empty pane belongs to the current account and names other accounts with goals", async () => {
+    setup([workspaceTask("a")], [
+      workspaceGoal("work-1", { title: "Work goal", accountId: "work@example.com" }),
+      workspaceGoal("work-2", { title: "Work year", accountId: "work@example.com", horizon: "year", period: year }),
+      workspaceGoal("home-1", { title: "Home goal", accountId: "home@example.com" }),
+    ]);
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const pane = await screen.findByRole("complementary", { name: "Goals" });
+    const note = await within(pane).findByRole("note");
+    expect(note).toHaveTextContent("Goals belong to each account. you@example.com has no goals yet.");
+    expect(note).toHaveTextContent("Goals on other accounts: home@example.com (1), work@example.com (2).");
+    // Other accounts' goals are named, never listed or offered as filters.
+    expect(within(pane).queryByRole("button", { name: /Work goal|Home goal/ })).not.toBeInTheDocument();
+  });
+
+  it("names no other accounts when none have goals, and shows no note once the account has goals or for all accounts", async () => {
+    setup([workspaceTask("a")], []);
+    const { unmount } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const note = await within(await screen.findByRole("complementary", { name: "Goals" })).findByRole("note");
+    expect(note).toHaveTextContent("you@example.com has no goals yet.");
+    expect(note).not.toHaveTextContent("other accounts");
+    unmount();
+    vi.restoreAllMocks();
+
+    setup([workspaceTask("a")], [workspaceGoal("mine", { title: "Mine" }), workspaceGoal("theirs", { title: "Theirs", accountId: "work@example.com" })]);
+    const { unmount: unmountMine } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const pane = await screen.findByRole("complementary", { name: "Goals" });
+    expect(await within(pane).findByRole("button", { name: /^Mine/ })).toBeInTheDocument();
+    expect(within(pane).queryByRole("button", { name: /^Theirs/ })).not.toBeInTheDocument();
+    expect(within(pane).queryByRole("note")).not.toBeInTheDocument();
+    unmountMine();
+
+    render(<TaskSidebar accountId={null} onOpenThread={vi.fn()} />);
+    const allPane = await screen.findByRole("complementary", { name: "Goals" });
+    expect(await within(allPane).findByRole("button", { name: /^Theirs/ })).toBeInTheDocument();
+    expect(within(allPane).queryByRole("note")).not.toBeInTheDocument();
   });
 
   it("filters tasks to a goal and the goals supporting it, to tasks with no goal, and clears from the header chip", async () => {

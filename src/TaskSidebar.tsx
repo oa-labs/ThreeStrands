@@ -5,8 +5,8 @@ import { mailClient } from "./data/client";
 import { GoalDialog } from "./GoalDialog";
 import { GoalLinkPicker } from "./GoalLinkPicker";
 import { GoalReviewDialog } from "./GoalReviewDialog";
-import { goalWithSupporters } from "./goals";
-import { GoalsPane, type GoalFilter, type GoalsPaneHandle } from "./GoalsPane";
+import { goalCountsByOtherAccount, goalWithSupporters } from "./goals";
+import { GoalsPane, type GoalFilter, type GoalsPaneHandle, type OtherAccountGoals } from "./GoalsPane";
 import { PanelResizeHandle, useGoalsPaneWidth } from "./PanelResizeHandle";
 import { TaskDetailDialog } from "./TaskDetailDialog";
 import { errorMessage } from "./errors";
@@ -108,6 +108,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 }, ref) {
   const [tasks, setTasks] = useState<ThreadTask[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [otherAccountGoals, setOtherAccountGoals] = useState<OtherAccountGoals[]>([]);
   const [goalFilter, setGoalFilter] = useState<GoalFilter>(null);
   const [goalDialog, setGoalDialog] = useState<null | { goalId: string | null }>(null);
   const [reviewingGoals, setReviewingGoals] = useState(false);
@@ -147,12 +148,14 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     setLoading(true);
     setError(null);
     try {
-      const [nextTasks, nextGoals] = await Promise.all([
+      // Every account's goals load so an empty pane can name the accounts that do have goals.
+      const [nextTasks, allGoals] = await Promise.all([
         mailClient.listTasks(accountId ?? undefined),
-        mailClient.listGoals(accountId ?? undefined),
+        mailClient.listGoals(),
       ]);
       setTasks(nextTasks);
-      setGoals(nextGoals);
+      setGoals(accountId ? allGoals.filter((goal) => goal.accountId === accountId) : allGoals);
+      setOtherAccountGoals(accountId ? goalCountsByOtherAccount(allGoals, accountId) : []);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -563,6 +566,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         <GoalsPane
           ref={goalsPane}
           goals={goals}
+          accountId={accountId}
+          otherAccountGoals={otherAccountGoals}
           tasks={tasks}
           filter={goalFilter}
           onFilterChange={setGoalFilter}

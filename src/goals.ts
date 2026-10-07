@@ -135,3 +135,12 @@ export function carryForwardRequest(goal: Goal, goals: readonly Goal[], now = ne
   const parent = goal.parentGoalId ? goals.find((candidate) => candidate.id === goal.parentGoalId) : null;
   return parent && !periodEncloses(parent.period, period) ? { period, parentGoalId: null } : { period };
 }
+
+/** How many goals each account other than `accountId` has, sorted by account. */
+export function goalCountsByOtherAccount(goals: readonly Goal[], accountId: string): { accountId: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const goal of goals) {
+    if (goal.accountId !== accountId) counts.set(goal.accountId, (counts.get(goal.accountId) ?? 0) + 1);
+  }
+  return [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([account, count]) => ({ accountId: account, count }));
+}
