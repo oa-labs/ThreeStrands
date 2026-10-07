@@ -26,6 +26,7 @@ import {
 } from "./quotedHistory";
 import { LINKIFY_PATTERN, linkHrefFor, trimTrailingPunctuation } from "./linkify";
 import { fontFamilyStack, type FontFamily } from "./settings";
+import { ICON_SIZE } from "./iconSizes";
 
 export { collapseQuotedHistoryHtml, collapseQuotedHistoryText };
 
@@ -739,7 +740,7 @@ export function SafeMessage({
         <div className="message-images-notice">
           <span>Images are blocked in this message.</span>
           <button type="button" className="btn btn-sm" onClick={() => setImagesAllowedForMessage(true)}>
-            <Image size={14} /> Load images
+            <Image size={ICON_SIZE.sm} /> Load images
           </button>
         </div>
       ) : null}

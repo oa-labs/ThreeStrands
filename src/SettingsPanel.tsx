@@ -103,6 +103,7 @@ import { moveItem, useSettingsOperation } from "./settingsOperations";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { AiUsageSummary } from "./AiUsageSummary";
 import { MIN_PROACTIVE_DWELL_SECONDS } from "./proactiveBrief";
+import { ICON_SIZE } from "./iconSizes";
 
 export type SettingsSection = "replicatedSync" | "appearance" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
@@ -152,7 +153,7 @@ function DiagnosticsIssue({
   return (
     <div className="diagnostics-issue" role="group" aria-label={title}>
       <div className="diagnostics-issue-header">
-        <AlertCircle size={15} aria-hidden="true" />
+        <AlertCircle size={ICON_SIZE.sm} aria-hidden="true" />
         <strong>{title}</strong>
         {actions ? <span className="diagnostics-issue-actions">{actions}</span> : null}
       </div>
@@ -211,7 +212,7 @@ export function DiagnosticsSettings({
     <section className="settings-section" aria-label="Diagnostics">
       <h3>Sync Health</h3>
       <div className={`diagnostics-summary${issueCount ? " attention" : ""}`} role="status">
-        {issueCount ? <AlertCircle size={18} aria-hidden="true" /> : <CheckCircle2 size={18} aria-hidden="true" />}
+        {issueCount ? <AlertCircle size={ICON_SIZE.lg} aria-hidden="true" /> : <CheckCircle2 size={ICON_SIZE.lg} aria-hidden="true" />}
         <div>
           <strong>{issueCount ? `${plural(issueCount, "item")} to review` : "Sync is healthy"}</strong>
           <span>
@@ -502,7 +503,7 @@ export function Settings({
           }}
         >
           <label className="settings-search">
-            <Search size={14} aria-hidden="true" />
+            <Search size={ICON_SIZE.sm} aria-hidden="true" />
             <input
               type="search"
               value={settingsQuery}
@@ -539,7 +540,7 @@ export function Settings({
                       ref={item.id === section ? selectedSectionButtonRef : undefined}
                       onClick={() => onSectionChange(item.id)}
                     >
-                      <item.icon size={15} aria-hidden="true" />
+                      <item.icon size={ICON_SIZE.sm} aria-hidden="true" />
                       {item.label}
                     </button>
                   ))}
@@ -552,14 +553,14 @@ export function Settings({
         <div className="settings-panel" ref={settingsPanelRef}>
           <header className="settings-page-header">
             <span className="settings-page-icon" aria-hidden="true">
-              {visibleSections.length === 0 ? <Search size={18} /> : <selectedSection.icon size={18} />}
+              {visibleSections.length === 0 ? <Search size={ICON_SIZE.lg} /> : <selectedSection.icon size={ICON_SIZE.lg} />}
             </span>
             <div className="settings-page-title">
               <h2>{visibleSections.length === 0 ? "Search settings" : selectedSection.label}</h2>
               <p>{visibleSections.length === 0 ? "No matching controls or sections are currently visible." : selectedSection.description}</p>
             </div>
             {visibleSections.length > 0 && selectedSection.autosaves ? (
-              <span className="settings-save-note"><Check size={13} aria-hidden="true" /> Changes save automatically</span>
+              <span className="settings-save-note"><Check size={ICON_SIZE.xs} aria-hidden="true" /> Changes save automatically</span>
             ) : null}
           </header>
           {visibleSections.length === 0 ? (
@@ -842,12 +843,12 @@ export function AppearanceSettings({
         >
           <span>{fontFamily === DEFAULT_FONT_FAMILY ? "System Default" : fontFamily}</span>
           <span className="font-option-preview" aria-hidden="true">Aa</span>
-          <ChevronDown size={15} aria-hidden="true" />
+          <ChevronDown size={ICON_SIZE.sm} aria-hidden="true" />
         </button>
         {fontPickerOpen ? (
           <div className="font-picker-popover" role="dialog" aria-label="Choose default font">
             <label className="font-search">
-              <Search size={15} aria-hidden="true" />
+              <Search size={ICON_SIZE.sm} aria-hidden="true" />
               <input
                 type="search"
                 autoFocus
@@ -972,13 +973,13 @@ function AccountsSettings({
           disabled={busyEmail !== null}
           onClick={() => runFor("__add__", onAdd)}
         >
-          <Plus size={15} />
+          <Plus size={ICON_SIZE.md} />
           {busyEmail === "__add__" ? "Waiting for Google…" : "Add Account"}
         </button>
       </div>
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
         <div className="notice accounts-config-notice">
-          <AlertCircle size={16} />
+          <AlertCircle size={ICON_SIZE.md} />
           <div>
             <strong>Google OAuth is not configured</strong>
             <p>
@@ -991,7 +992,7 @@ function AccountsSettings({
       ) : null}
       {accounts.length === 0 ? (
         <div className="accounts-empty">
-          <span className="accounts-empty-icon"><Mail size={18} /></span>
+          <span className="accounts-empty-icon"><Mail size={ICON_SIZE.lg} /></span>
           <strong>No accounts connected</strong>
           <p>Add a Gmail account to start syncing mail on this device.</p>
         </div>
@@ -1045,7 +1046,7 @@ function AccountsSettings({
                       disabled={index === 0 || busyEmail !== null}
                       onClick={() => move(index, -1)}
                     >
-                      <ChevronUp size={14} />
+                      <ChevronUp size={ICON_SIZE.sm} />
                     </button>
                     <button className="btn-icon btn-icon-sm"
                       type="button"
@@ -1053,7 +1054,7 @@ function AccountsSettings({
                       disabled={index === accounts.length - 1 || busyEmail !== null}
                       onClick={() => move(index, 1)}
                     >
-                      <ChevronDown size={14} />
+                      <ChevronDown size={ICON_SIZE.sm} />
                     </button>
                   </span>
                   <label className="account-color-swatch" title={`Color for ${account.email}`}>
@@ -1108,7 +1109,7 @@ function AccountsSettings({
 function AccountStatusBadge({ status }: { status: Account["status"] | CalendarAccount["status"] }) {
   return (
     <span className={`account-status ${status}`}>
-      {status === "needs_reauth" ? <AlertCircle size={13} /> : <CheckCircle2 size={13} />}
+      {status === "needs_reauth" ? <AlertCircle size={ICON_SIZE.xs} /> : <CheckCircle2 size={ICON_SIZE.xs} />}
       {status === "needs_reauth" ? "Needs reconnect" : "Connected"}
     </span>
   );
@@ -1309,13 +1310,13 @@ export function CalendarAccountsSettings({
           disabled={busyEmail !== null}
           onClick={() => runFor("__add__", onAdd)}
         >
-          <Plus size={15} />
+          <Plus size={ICON_SIZE.md} />
           {busyEmail === "__add__" ? "Waiting for Google…" : "Connect Calendar"}
         </button>
       </div>
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
         <div className="notice accounts-config-notice">
-          <AlertCircle size={16} />
+          <AlertCircle size={ICON_SIZE.md} />
           <div>
             <strong>Google OAuth is not configured</strong>
             <p>Configure the Google Desktop app credentials used for mail, then restart ThreeStrands.</p>
@@ -1324,7 +1325,7 @@ export function CalendarAccountsSettings({
       ) : null}
       {accounts.length === 0 ? (
         <div className="accounts-empty">
-          <span className="accounts-empty-icon"><CalendarDays size={18} /></span>
+          <span className="accounts-empty-icon"><CalendarDays size={ICON_SIZE.lg} /></span>
           <strong>No calendars connected</strong>
           <p>Connect Google Calendar to use the T shortcut and see your live schedule.</p>
         </div>
@@ -1336,7 +1337,7 @@ export function CalendarAccountsSettings({
             <li className="account-card" key={account.email}>
               <div className="account-card-row">
                 <span className="account-card-avatar calendar-account-avatar" aria-hidden="true">
-                  <CalendarDays size={18} />
+                  <CalendarDays size={ICON_SIZE.lg} />
                 </span>
                 <div className="account-card-identity">
                   <div className="account-card-heading">
@@ -1597,7 +1598,7 @@ export function SplitInboxesSettings({
           />
         )}
         <button type="submit" className="btn btn-primary" disabled={creating || !name.trim() || !matchValue.trim() || !accountId}>
-          <Plus size={15} />
+          <Plus size={ICON_SIZE.md} />
           {creating ? "Adding…" : "Add Split Inbox"}
         </button>
       </form>
@@ -1630,7 +1631,7 @@ export function SplitInboxesSettings({
                       disabled={index === 0 || busyId !== null}
                       onClick={() => move(index, -1)}
                     >
-                      <ChevronUp size={14} />
+                      <ChevronUp size={ICON_SIZE.sm} />
                     </button>
                     <button className="btn-icon btn-icon-sm"
                       type="button"
@@ -1638,7 +1639,7 @@ export function SplitInboxesSettings({
                       disabled={index === splitInboxes.length - 1 || busyId !== null}
                       onClick={() => move(index, 1)}
                     >
-                      <ChevronDown size={14} />
+                      <ChevronDown size={ICON_SIZE.sm} />
                     </button>
                   </span>
                   <button
@@ -1689,7 +1690,7 @@ export function SnippetsSettings({
           </p>
         </div>
         <button type="button" className="btn btn-primary" onClick={() => setEditorTarget("new")}>
-          <Plus size={15} /> Add Snippet
+          <Plus size={ICON_SIZE.md} /> Add Snippet
         </button>
       </div>
       {orderedSnippets.length === 0 ? (
@@ -1947,7 +1948,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           </div>
           <div className="settings-field-detail ai-key-status">
             <span className={`settings-connection-status${keyConfigured ? " configured" : ""}`} role="status">
-              {keyConfigured ? <CheckCircle2 size={13} aria-hidden="true" /> : <AlertCircle size={13} aria-hidden="true" />}
+              {keyConfigured ? <CheckCircle2 size={ICON_SIZE.xs} aria-hidden="true" /> : <AlertCircle size={ICON_SIZE.xs} aria-hidden="true" />}
               {keyConfigured ? "API key configured" : "API key required"}
             </span>
             <span className="settings-hint">Stored in your OS keychain, never in the mail database.</span>
@@ -1986,10 +1987,10 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                   .finally(() => setTestingConnection(false));
               }}
             >
-              <RefreshCw size={14} aria-hidden="true" />
+              <RefreshCw size={ICON_SIZE.sm} aria-hidden="true" />
               {testingConnection ? "Testing connection…" : "Test Connection"}
             </button>
-            {connectionTested ? <span className="settings-connection-status configured" role="status"><CheckCircle2 size={13} aria-hidden="true" /> Connection successful</span> : null}
+            {connectionTested ? <span className="settings-connection-status configured" role="status"><CheckCircle2 size={ICON_SIZE.xs} aria-hidden="true" /> Connection successful</span> : null}
           </div>
           {configurationError ? <p className="form-error settings-field-detail" role="alert">{configurationError}</p> : null}
 
@@ -2267,7 +2268,7 @@ export function DataTransferSettings({
             .finally(() => setBusy(null));
         }}
       >
-        <Download size={15} aria-hidden="true" />
+        <Download size={ICON_SIZE.sm} aria-hidden="true" />
         {busy === "export" ? "Exporting…" : "Export Encrypted Settings"}
       </button>
 
@@ -2304,7 +2305,7 @@ export function DataTransferSettings({
             .finally(() => setBusy(null));
         }}
       >
-        <Upload size={15} aria-hidden="true" />
+        <Upload size={ICON_SIZE.sm} aria-hidden="true" />
         {busy === "import" ? "Importing…" : "Choose Encrypted Settings File"}
       </button>
       {!isDesktop ? (
@@ -2315,7 +2316,7 @@ export function DataTransferSettings({
       {message?.tone === "error" ? <p className="form-error" role="alert">{message.text}</p> : null}
       {message?.tone === "success" ? (
         <p className="settings-connection-status configured" role="status">
-          <CheckCircle2 size={13} aria-hidden="true" /> {message.text}
+          <CheckCircle2 size={ICON_SIZE.xs} aria-hidden="true" /> {message.text}
         </p>
       ) : null}
     </section>

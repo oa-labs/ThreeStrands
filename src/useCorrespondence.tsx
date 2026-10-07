@@ -9,6 +9,7 @@ import type { Account, Snippet } from "./domain";
 import { matchesShortcut } from "./commands";
 import { logBackgroundFailure } from "./errors";
 import { draftWithSelectedQuote } from "./selectedMessageQuote";
+import { ICON_SIZE } from "./iconSizes";
 
 type ComposeOptions = {
   availabilityText?: string;
@@ -262,7 +263,7 @@ export function useCorrespondence(
     overlay: <>
       {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button className="btn-link" onClick={() => void undo(pending.id)}>Undo Send</button></div>}
       {closing && <div className="exit-backdrop"><div className="exit-notice" tabIndex={-1} role="dialog" aria-modal="true" aria-label="Closing ThreeStrands" onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Tab") { e.preventDefault(); e.currentTarget.querySelector("button")?.focus(); } }}><span>Saving drafts and finishing pending delivery before closing… Queued mail remains saved for the next launch.</span>{pending && <button className="btn" onClick={() => void undo(pending.id)}>Undo Queued Send</button>}</div></div>}
-      {error && <div className="compose-notice" role="alert">{error}<button className="btn-icon btn-icon-sm" aria-label="Dismiss Compose Error" onClick={() => setError("")}><X size={16} /></button></div>}
+      {error && <div className="compose-notice" role="alert">{error}<button className="btn-icon btn-icon-sm" aria-label="Dismiss Compose Error" onClick={() => setError("")}><X size={ICON_SIZE.sm} /></button></div>}
     </>,
   };
 }

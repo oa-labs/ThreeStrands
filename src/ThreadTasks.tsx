@@ -6,6 +6,7 @@ import { HoverTooltip } from "./AppChrome";
 import { errorMessage } from "./errors";
 import { ContextSection } from "./ContextSections";
 import { formatDue, isActiveTaskStatus, isCompletedToday, isDue, isOverdue } from "./taskViews";
+import { ICON_SIZE } from "./iconSizes";
 
 /**
  * Open tasks linked to the conversation, followed by open tasks from other
@@ -72,7 +73,7 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
       label={thread ? "Conversation tasks" : "Tasks with this person"}
       count={tasks.filter((task) => isActiveTaskStatus(task.status)).length}
       actions={onAddTask ? <HoverTooltip title="Add task" shortcut="d" placement="bottom">
-        <button type="button" className="btn-icon btn-icon-sm" aria-label="Add task" onClick={onAddTask}><Plus size={15} /></button>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Add task" onClick={onAddTask}><Plus size={ICON_SIZE.sm} /></button>
       </HoverTooltip> : undefined}
       rows={tasks.map((task) => {
         const due = formatDue(task);
@@ -90,7 +91,7 @@ export function ThreadTasks({ thread, contactId = null, refreshKey, onAddTask, o
           <button type="button" className="context-task-main" onClick={() => onEditTask(task)}>
             <strong>{task.title}</strong>
             {task.threadId !== thread?.id && task.subjectSnapshot ? <span className="context-task-source">{task.subjectSnapshot}</span> : null}
-            {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
+            {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={ICON_SIZE.xs} /> {due}</small> : null}
           </button>
           {task.kind === "follow_up" && isDue(task) ? <button type="button" className="btn btn-sm task-follow-up-button" onClick={() => onDraftFollowUp(task)}>Draft Follow-Up</button> : null}
         </article>;

@@ -10,6 +10,7 @@ import {
 } from "./calendarColors";
 import { queuePortablePreferences } from "./syncedPreferences";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+import { ICON_SIZE } from "./iconSizes";
 
 /**
  * One calendar row with a hover-revealed options button that opens the color
@@ -52,7 +53,7 @@ export function CalendarColorRow({
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
-        <MoreHorizontal size={15} />
+        <MoreHorizontal size={ICON_SIZE.sm} />
       </button>
       {open ? (
         <CalendarColorPalette
@@ -93,7 +94,7 @@ function CalendarColorPalette({
         onClick={() => onSelect(null)}
       >
         <span className="calendar-color-default-swatch" aria-hidden="true">
-          {selected === undefined ? <Check size={13} /> : null}
+          {selected === undefined ? <Check size={ICON_SIZE.xs} /> : null}
         </span>
         Default
       </button>
@@ -109,7 +110,7 @@ function CalendarColorPalette({
           style={{ "--swatch-color": color.value } as CSSProperties}
           onClick={() => onSelect(color.id)}
         >
-          {selected === color.id ? <Check size={13} aria-hidden="true" /> : null}
+          {selected === color.id ? <Check size={ICON_SIZE.xs} aria-hidden="true" /> : null}
         </button>
       ))}
     </div>

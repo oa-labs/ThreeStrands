@@ -95,3 +95,75 @@ describe("form controls", () => {
     expect(raw).toEqual([]);
   });
 });
+
+/** Component declarations: everything outside the :root token definitions. */
+function componentDeclarations(property: RegExp) {
+  const declarations: Declaration[] = [];
+  css.walkDecls(property, (declaration) => {
+    const parent = declaration.parent as Rule;
+    if (parent.selector?.startsWith(":root") || declaration.prop.startsWith("--")) return;
+    declarations.push(declaration);
+  });
+  return declarations;
+}
+
+describe("elevation and state", () => {
+  it("lifts surfaces only with the elevation tokens; rings and inset edges stay literal", () => {
+    const raw = componentDeclarations(/^box-shadow$/)
+      .filter((declaration) => !/^(var\(--(shadow-[a-z]+|focus-ring)\)|none|0 0 0 .+|inset .+)$/.test(declaration.value))
+      .map(describeDeclaration);
+    expect(raw).toEqual([]);
+  });
+
+  it("dims elements only with the state opacity tokens", () => {
+    const raw = componentDeclarations(/^opacity$/)
+      // Keyframes animate between fully hidden and fully shown.
+      .filter((declaration) => !/^(0|1|var\(--opacity-[a-z]+\))$/.test(declaration.value))
+      .map(describeDeclaration);
+    expect(raw).toEqual([]);
+  });
+
+  it("times transitions only with the duration tokens", () => {
+    const raw = componentDeclarations(/^transition(-duration)?$/)
+      // The reduced-motion override collapses every transition, which is its own rule in motion.test.ts.
+      .filter((declaration) => !declaration.important && /(\d|\.)(ms|s)\b/.test(declaration.value))
+      .map(describeDeclaration);
+    expect(raw).toEqual([]);
+  });
+});
+
+describe("colors", () => {
+  it("keeps literal colors in the theme tokens, except the accent palette preview and the all-accounts mark", () => {
+    const literal = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i;
+    const raw = componentDeclarations(/.*/)
+      .filter((declaration) => literal.test(declaration.value))
+      // Each swatch previews one accent regardless of the active one; the all-accounts mark is a fixed multicolor icon.
+      .filter((declaration) => !/^\.accent-swatch\[data-accent=|^\.account-icon\.all-accounts$/.test((declaration.parent as Rule).selector))
+      .map(describeDeclaration);
+    expect(raw).toEqual([]);
+  });
+
+  it("draws text on an accent fill with --accent-contrast, so themes with a light accent stay legible", () => {
+    const misses: string[] = [];
+    css.walkRules((rule) => {
+      if (rule.selector.startsWith(":root")) return;
+      const value = (property: string) => rule.nodes.find((node): node is Declaration => node.type === "decl" && node.prop === property)?.value;
+      if (value("background") === "var(--accent)" && value("color") && value("color") !== "var(--accent-contrast)") misses.push(rule.selector);
+    });
+    expect(misses).toEqual([]);
+  });
+});
+
+describe("icon sizes", () => {
+  it("sizes every icon by role from ICON_SIZE instead of a number", () => {
+    const dir = resolve(process.cwd(), "src");
+    const raw: string[] = [];
+    for (const file of readdirSync(dir).filter((name) => name.endsWith(".tsx") && !name.includes(".test."))) {
+      const source = readFileSync(resolve(dir, file), "utf8");
+      for (const match of source.matchAll(/\bsize=\{(?!ICON_SIZE\.[a-z]+\})[^}]*\}/g)) {
+        raw.push(`${file}:${source.slice(0, match.index).split("\n").length} ${match[0]}`);
+      }
+    }
+    expect(raw).toEqual([]);
+  });
+});

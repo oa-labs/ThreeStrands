@@ -11,6 +11,7 @@ import { PanelResizeHandle, useGoalsPaneWidth } from "./PanelResizeHandle";
 import { TaskDetailDialog } from "./TaskDetailDialog";
 import { errorMessage } from "./errors";
 import { adjacentTaskStatus, compareTasksForDisplay, formatDue, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll, type TaskBoardColumn, type TaskView } from "./taskViews";
+import { ICON_SIZE } from "./iconSizes";
 
 export type TaskLayout = "board" | "list";
 const TASK_LAYOUT_KEY = "threestrands.tasks.layout";
@@ -450,19 +451,19 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         {!board && task.status === "in_progress" ? <span className="task-progress-badge">In progress</span> : null}
         {due || kindLabel || task.threadId || task.status === "cancelled" || cardGoal ? <span className="task-card-meta">
           {task.status === "cancelled" ? <small className="task-card-kind">Cancelled</small> : null}
-          {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={12} /> {due}</small> : null}
+          {due ? <small className={isOverdue(task) ? "task-due-overdue" : undefined}><Clock3 size={ICON_SIZE.xs} /> {due}</small> : null}
           {kindLabel ? <small className="task-card-kind">{kindLabel}</small> : null}
-          {task.threadId ? <small className="task-card-source" title="From an email"><Mail size={12} aria-hidden="true" /><span className="sr-only">From an email</span></small> : null}
-          {cardGoal ? <small className="task-card-goal" title={`Supports ${cardGoal.title}`}><Target size={12} aria-hidden="true" /><span className="sr-only">Supports </span>{cardGoal.title}</small> : null}
+          {task.threadId ? <small className="task-card-source" title="From an email"><Mail size={ICON_SIZE.xs} aria-hidden="true" /><span className="sr-only">From an email</span></small> : null}
+          {cardGoal ? <small className="task-card-goal" title={`Supports ${cardGoal.title}`}><Target size={ICON_SIZE.xs} aria-hidden="true" /><span className="sr-only">Supports </span>{cardGoal.title}</small> : null}
         </span> : null}
       </button>
       {board ? (back || forward || followUp) ? <div className="task-board-moves">
         {followUp}
-        {back ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[back]}`} onClick={() => void setStatus(task, back)}><ChevronLeft size={14} aria-hidden="true" />{STATUS_LABELS[back]}</button> : null}
-        {forward ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[forward]}`} onClick={() => void setStatus(task, forward)}>{STATUS_LABELS[forward]}<ChevronRight size={14} aria-hidden="true" /></button> : null}
+        {back ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[back]}`} onClick={() => void setStatus(task, back)}><ChevronLeft size={ICON_SIZE.sm} aria-hidden="true" />{STATUS_LABELS[back]}</button> : null}
+        {forward ? <button type="button" className="btn btn-sm" aria-label={`Move ${task.title} to ${STATUS_LABELS[forward]}`} onClick={() => void setStatus(task, forward)}>{STATUS_LABELS[forward]}<ChevronRight size={ICON_SIZE.sm} aria-hidden="true" /></button> : null}
       </div> : null : <>
         <button type="button" className="btn-icon btn-icon-sm task-status-button" aria-label={active ? `Complete ${task.title}` : `Reopen ${task.title}`} onClick={() => void setStatus(task, active ? "completed" : "open")}>
-          {active ? <Check size={15} /> : <RotateCcw size={15} />}
+          {active ? <Check size={ICON_SIZE.sm} /> : <RotateCcw size={ICON_SIZE.sm} />}
         </button>
         {followUp}
       </>}
@@ -513,22 +514,22 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             <div className="tasks-title-row">
               <h1>{orderedTasks.length} {orderedTasks.length === 1 ? "task" : "tasks"}</h1>
               {goalFilter ? <button type="button" className="task-goal-filter-chip" aria-label={`Show all tasks, not only ${filterGoal ? `those supporting ${filterGoal.title}` : "those with no goal"}`} onClick={() => setGoalFilter(null)}>
-                <Target size={12} aria-hidden="true" /><span>{filterGoal ? `Supports ${filterGoal.title}` : "No goal"}</span><X size={12} aria-hidden="true" />
+                <Target size={ICON_SIZE.xs} aria-hidden="true" /><span>{filterGoal ? `Supports ${filterGoal.title}` : "No goal"}</span><X size={ICON_SIZE.xs} aria-hidden="true" />
               </button> : null}
             </div>
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
           <div className="segmented" role="group" aria-label="Task layout">
-            <button type="button" className="segment" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={15} />List</button>
-            <button type="button" className="segment" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={15} />Board</button>
+            <button type="button" className="segment" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={ICON_SIZE.md} />List</button>
+            <button type="button" className="segment" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={ICON_SIZE.md} />Board</button>
           </div>
-          {onCreateTask ? <button type="button" className="btn task-add-button" onClick={startNew}><Plus size={15} />Add Task</button> : null}
+          {onCreateTask ? <button type="button" className="btn task-add-button" onClick={startNew}><Plus size={ICON_SIZE.md} />Add Task</button> : null}
         </div>
       </header>
       {error ? <p className="form-error tasks-error" role="alert">
         <span>{error}</span>
-        <button type="button" className="btn-icon btn-icon-sm" aria-label="Dismiss error" onClick={() => setError(null)}><X size={13} /></button>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Dismiss error" onClick={() => setError(null)}><X size={ICON_SIZE.sm} /></button>
       </p> : null}
       <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
       {completionToast ? (
@@ -552,7 +553,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {addingTask ? <form className="task-quick-add" data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); void createTask(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!creatingTask) setAddingTask(false); } }}>
             <label htmlFor="quick-add-task-title">Task title</label>
             <input id="quick-add-task-title" ref={newTaskInput} autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="What needs doing?" maxLength={240} />
-            {filterGoal ? <p className="task-quick-add-goal"><Target size={12} aria-hidden="true" /> Supports {filterGoal.title}</p> : null}
+            {filterGoal ? <p className="task-quick-add-goal"><Target size={ICON_SIZE.xs} aria-hidden="true" /> Supports {filterGoal.title}</p> : null}
             {!accountId && !filterGoal && accountOptions.length > 1 ? <><label htmlFor="quick-add-task-account">Account</label><select id="quick-add-task-account" value={newTaskAccountId} onChange={(event) => setNewTaskAccountId(event.target.value)} required><option value="">Choose an account</option>{accountOptions.map((email) => <option key={email} value={email}>{email}</option>)}</select></> : null}
             <div><button type="button" className="btn" disabled={creatingTask} onClick={() => setAddingTask(false)}>Cancel</button><button type="submit" className="btn btn-primary" disabled={creatingTask || !newTaskTitle.trim() || (!accountId && !filterGoal && accountOptions.length > 1 && !newTaskAccountId)}>{creatingTask ? "Adding…" : "Add task"}</button></div>
           </form> : null}

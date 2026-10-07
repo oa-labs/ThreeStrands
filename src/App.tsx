@@ -158,6 +158,7 @@ import type { MailAccountSettings, SettingsSection, SyncDiagnosticsActions } fro
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { UpdateNotice } from "./UpdateNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
+import { ICON_SIZE } from "./iconSizes";
 
 type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | null;
 /** Where a suggestion set lives: its state key, and the thread revision its saved copy is stored under. */
@@ -2355,14 +2356,14 @@ export function App() {
         />
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
-          <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={19} /></button></HoverTooltip>
+          <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={ICON_SIZE.lg} /></button></HoverTooltip>
           <HoverTooltip label="Inbox" shortcut="1">
             <button
               className={`nav-button ${rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? "active" : ""}`}
               aria-label="Inbox (1)"
               onClick={() => executeById("view.mail")}
             >
-              <Inbox size={19} />
+              <Inbox size={ICON_SIZE.lg} />
             </button>
           </HoverTooltip>
           <HoverTooltip label="Calendar" shortcut="2">
@@ -2371,7 +2372,7 @@ export function App() {
               aria-label="Calendar (2)"
               onClick={() => executeById("view.calendar")}
             >
-              <CalendarDays size={19} />
+              <CalendarDays size={ICON_SIZE.lg} />
             </button>
           </HoverTooltip>
           <HoverTooltip label="Tasks" shortcut="3">
@@ -2380,7 +2381,7 @@ export function App() {
               aria-label="Tasks (3)"
               onClick={() => executeById("tasks.open")}
             >
-              <CheckSquare size={19} />
+              <CheckSquare size={ICON_SIZE.lg} />
             </button>
           </HoverTooltip>
           <HoverTooltip label={keepInTouchDueCount ? `Contacts · ${keepInTouchDueCount} to reconnect with` : "Contacts"} shortcut="4">
@@ -2389,17 +2390,17 @@ export function App() {
               aria-label={keepInTouchDueCount ? `Contacts (4), ${keepInTouchDueCount} due to reconnect` : "Contacts (4)"}
               onClick={openContactsView}
             >
-              <ContactRound size={19} />
+              <ContactRound size={ICON_SIZE.lg} />
               {keepInTouchDueCount ? <span className="nav-button-badge" aria-hidden="true">{keepInTouchDueCount > 99 ? "99+" : keepInTouchDueCount}</span> : null}
             </button>
           </HoverTooltip>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
           <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail"}><button className="nav-button" aria-label="Refresh mail" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
-            <RefreshCw size={19} className={checkingMail ? "spin" : ""} />
+            <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
           </button></HoverTooltip>
           <HoverTooltip title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}>
             <button className="nav-button" aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} onClick={toggleTheme}>
-              {effectiveThemeValue === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+              {effectiveThemeValue === "dark" ? <Sun size={ICON_SIZE.lg} /> : <Moon size={ICON_SIZE.lg} />}
             </button>
           </HoverTooltip>
           <HoverTooltip label="Command Palette" shortcut="⌘K">
@@ -2408,11 +2409,11 @@ export function App() {
               aria-label="Command Palette (⌘K)"
               onClick={() => executeById("palette.open")}
             >
-              <CommandIcon size={19} />
+              <CommandIcon size={ICON_SIZE.lg} />
             </button>
           </HoverTooltip>
           <HoverTooltip title="Settings (⌘,)"><button className="nav-button" aria-label="Settings (⌘,)" onClick={() => executeById("settings.open")}>
-            <SettingsIcon size={19} />
+            <SettingsIcon size={ICON_SIZE.lg} />
           </button></HoverTooltip>
         </div>
       </nav>
@@ -2440,36 +2441,36 @@ export function App() {
                 {mailbox === "trash" ? (
                   <HoverTooltip label="Restore" placement="bottom">
                     <ActionButton label="Restore" onClick={() => runOnSelection("Restore", { kind: "trash", value: false })}>
-                      <RotateCcw size={16} />
+                      <RotateCcw size={ICON_SIZE.md} />
                     </ActionButton>
                   </HoverTooltip>
                 ) : (
                   <>
                     <HoverTooltip label="Archive" placement="bottom">
                       <ActionButton label="Archive" onClick={() => runOnSelection("Archive", { kind: "archive", value: true })}>
-                        <Archive size={16} />
+                        <Archive size={ICON_SIZE.md} />
                       </ActionButton>
                     </HoverTooltip>
                     <HoverTooltip label="Trash" placement="bottom">
                       <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
-                        <Trash2 size={16} />
+                        <Trash2 size={ICON_SIZE.md} />
                       </ActionButton>
                     </HoverTooltip>
                     <HoverTooltip label="Mark spam" placement="bottom">
                       <ActionButton label="Mark Spam" onClick={() => runOnSelection("Mark Spam", { kind: "spam", value: true })}>
-                        <ShieldAlert size={16} />
+                        <ShieldAlert size={ICON_SIZE.md} />
                       </ActionButton>
                     </HoverTooltip>
                   </>
                 )}
                 <HoverTooltip label="Mark read" placement="bottom">
                   <ActionButton label="Mark Read" onClick={() => runOnSelection("Mark Read", { kind: "read", value: true })}>
-                    <MailOpen size={16} />
+                    <MailOpen size={ICON_SIZE.md} />
                   </ActionButton>
                 </HoverTooltip>
                 <HoverTooltip label="Mark unread" placement="bottom">
                   <ActionButton label="Mark Unread" onClick={() => runOnSelection("Mark Unread", { kind: "read", value: false })}>
-                    <Mail size={16} />
+                    <Mail size={ICON_SIZE.md} />
                   </ActionButton>
                 </HoverTooltip>
                 <HoverTooltip label={batchStarLabel} placement="bottom">
@@ -2477,12 +2478,12 @@ export function App() {
                     label={batchStarLabel}
                     onClick={() => runOnSelection(batchStarLabel, { kind: "star", value: !allSelectedThreadsStarred })}
                   >
-                    <Star size={16} fill={allSelectedThreadsStarred ? "currentColor" : "none"} />
+                    <Star size={ICON_SIZE.md} fill={allSelectedThreadsStarred ? "currentColor" : "none"} />
                   </ActionButton>
                 </HoverTooltip>
                 <HoverTooltip label="Labels" placement="bottom">
                   <ActionButton label="Labels" onClick={() => setLabelTargetIds([...checkedIds])}>
-                    <Tag size={16} />
+                    <Tag size={ICON_SIZE.md} />
                   </ActionButton>
                 </HoverTooltip>
                 <HoverTooltip label="Clear selection" placement="bottom">
@@ -2491,7 +2492,7 @@ export function App() {
                     aria-label="Clear Selection"
                     onClick={() => setCheckedIds(new Set())}
                   >
-                    <X size={16} />
+                    <X size={ICON_SIZE.lg} />
                   </button>
                 </HoverTooltip>
               </div>
@@ -2588,7 +2589,7 @@ export function App() {
           {!loading && threads.length === 0 ? (
             accounts.length === 0 ? (
               <div className="connect-account-cta">
-                <Mail size={28} />
+                <Mail size={ICON_SIZE.display} />
                 <p>Connect your Gmail account to start syncing mail.</p>
                 <button type="button" className="btn btn-primary" onClick={() => openSettingsAt("accounts")}>
                   Add Account
@@ -2653,7 +2654,7 @@ export function App() {
                     shortcut="s"
                     onClick={() => executeById("thread.star")}
                   >
-                    <Star size={17} fill={selected?.starred ? "currentColor" : "none"} />
+                    <Star size={ICON_SIZE.lg} fill={selected?.starred ? "currentColor" : "none"} />
                   </ActionButton>
                 </HoverTooltip>
                 <HoverTooltip
@@ -2666,50 +2667,50 @@ export function App() {
                     shortcut="u"
                     onClick={() => executeById("thread.read")}
                   >
-                    {selected?.unread ? <MailOpen size={17} /> : <Mail size={17} />}
+                    {selected?.unread ? <MailOpen size={ICON_SIZE.lg} /> : <Mail size={ICON_SIZE.lg} />}
                   </ActionButton>
                 </HoverTooltip>
                 {canUnsubscribe ? (
                   <HoverTooltip label="Unsubscribe" shortcut="⌘U" placement="bottom">
                     <ActionButton label="Unsubscribe" shortcut="⌘U" onClick={() => executeById("thread.unsubscribe")}>
-                      <Unlink size={17} />
+                      <Unlink size={ICON_SIZE.lg} />
                     </ActionButton>
                   </HoverTooltip>
                 ) : null}
                 <HoverTooltip label="Manage Labels" shortcut="L" placement="bottom">
                   <ActionButton label="Labels" shortcut="l" onClick={() => executeById("labels.open")}>
-                    <Tag size={17} />
+                    <Tag size={ICON_SIZE.lg} />
                   </ActionButton>
                 </HoverTooltip>
                 {mailbox === "trash" ? null : selected?.archived ? (
                   <HoverTooltip label="Mark not done" shortcut="Shift+E" placement="bottom">
                     <ActionButton label="Mark Not Done" shortcut="Shift+E" onClick={() => executeById("thread.unarchive")}>
-                      <Inbox size={17} />
+                      <Inbox size={ICON_SIZE.lg} />
                     </ActionButton>
                   </HoverTooltip>
                 ) : (
                   <HoverTooltip label="Archive" shortcut="e" placement="bottom">
                     <ActionButton label="Archive" shortcut="e" onClick={() => executeById("thread.archive")}>
-                      <Archive size={17} />
+                      <Archive size={ICON_SIZE.lg} />
                     </ActionButton>
                   </HoverTooltip>
                 )}
                 {mailbox === "trash" ? (
                   <HoverTooltip label="Restore" placement="bottom">
                     <ActionButton label="Restore" onClick={() => executeById("thread.untrash")}>
-                      <RotateCcw size={17} />
+                      <RotateCcw size={ICON_SIZE.lg} />
                     </ActionButton>
                   </HoverTooltip>
                 ) : (
                   <HoverTooltip label="Trash" shortcut="#" placement="bottom">
                     <ActionButton label="Trash" shortcut="#" onClick={() => executeById("thread.trash")}>
-                      <Trash2 size={17} />
+                      <Trash2 size={ICON_SIZE.lg} />
                     </ActionButton>
                   </HoverTooltip>
                 )}
                 <HoverTooltip label="Mark spam" shortcut="!" placement="bottom">
                   <ActionButton label="Mark Spam" shortcut="!" onClick={() => executeById("thread.spam")}>
-                    <ShieldAlert size={17} />
+                    <ShieldAlert size={ICON_SIZE.lg} />
                   </ActionButton>
                 </HoverTooltip>
               </div>
@@ -2764,7 +2765,7 @@ export function App() {
           </div>
         ) : (
           <div className="reader-empty">
-            <Mail size={28} />
+            <Mail size={ICON_SIZE.display} />
             <p>
               {mailbox === "drafts"
                 ? "Select a draft to open it for editing"
@@ -3105,18 +3106,18 @@ export function App() {
         <div className="toast" role="status">
           {notice.message}
           {notice.undo ? <button className="btn-link" onClick={notice.undo}>Undo</button> : null}
-          <button className="btn-icon btn-icon-sm" aria-label="Dismiss" onClick={() => setNotice(null)}><X size={14} /></button>
+          <button className="btn-icon btn-icon-sm" aria-label="Dismiss" onClick={() => setNotice(null)}><X size={ICON_SIZE.sm} /></button>
         </div>
       ) : null}
       {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "searching" ? (
         <div className="toast search-status-toast" role="status" aria-live="polite">
-          <RefreshCw size={14} className="spin" />
+          <RefreshCw size={ICON_SIZE.sm} className="spin" />
           Searching Gmail…
         </div>
       ) : null}
       {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "error" ? (
         <div className="toast search-status-toast error" role="status" aria-live="polite">
-          <AlertCircle size={14} />
+          <AlertCircle size={ICON_SIZE.sm} />
           Gmail search unavailable
         </div>
       ) : null}
@@ -3259,7 +3260,7 @@ function FolderSwitcher({
         aria-controls={open ? "folder-switcher-options" : undefined}
         onClick={() => setOpen((current) => !current)}
       >
-        {title}<ChevronDown size={14} aria-hidden="true" />
+        {title}<ChevronDown size={ICON_SIZE.sm} aria-hidden="true" />
       </button>
       {open ? (
         <div id="folder-switcher-options" className="folder-menu" role="group" aria-label="Folders">
@@ -3277,7 +3278,7 @@ function FolderSwitcher({
                 }}
               >
                 <span className="folder-menu-label">
-                  <span className="folder-menu-check" aria-hidden="true">{selected === option.id ? <Check size={14} /> : null}</span>
+                  <span className="folder-menu-check" aria-hidden="true">{selected === option.id ? <Check size={ICON_SIZE.sm} /> : null}</span>
                   {option.label}
                 </span>
                 <span className="folder-menu-meta" aria-hidden="true">
@@ -3390,7 +3391,7 @@ export function AccountSwitcher({
             >
               {name.charAt(0).toUpperCase()}
               {unreadCount > 0 ? <UnreadBadge count={unreadCount} /> : null}
-              {needsReconnect ? <span className="account-reconnect-badge" aria-hidden="true"><AlertCircle size={14} strokeWidth={2.5} /></span> : null}
+              {needsReconnect ? <span className="account-reconnect-badge" aria-hidden="true"><AlertCircle size={ICON_SIZE.sm} strokeWidth={2.5} /></span> : null}
             </button>
           </HoverTooltip>
         );
@@ -3486,7 +3487,7 @@ function LabelManager({
             onClick={option.onClick}
           >
             <span className="label-option-name">
-              {checkedLabelIds.has(label.id) ? <Check size={14} /> : <span className="label-option-check-spacer" />}
+              {checkedLabelIds.has(label.id) ? <Check size={ICON_SIZE.sm} /> : <span className="label-option-check-spacer" />}
               {formatLabelName(label)}
             </span>
             {label.kind === "user" ? (
@@ -3500,7 +3501,7 @@ function LabelManager({
                     setRenameValue(label.name);
                   }}
                 >
-                  <Pencil size={14} />
+                  <Pencil size={ICON_SIZE.sm} />
                 </button>
                 <button
                   className="btn-icon btn-icon-sm"
@@ -3510,7 +3511,7 @@ function LabelManager({
                     void onDelete(label.id);
                   }}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={ICON_SIZE.sm} />
                 </button>
               </span>
             ) : null}
@@ -3599,7 +3600,7 @@ function ImageLightbox({ src, onClose }: { src: string; onClose(): void }) {
   return (
     <div className="modal-backdrop lightbox-backdrop" role="presentation" onMouseDown={onClose}>
       <button type="button" className="lightbox-close" aria-label="Close" onClick={onClose}>
-        <X size={20} />
+        <X size={ICON_SIZE.lg} />
       </button>
       <img src={src} alt="" className="lightbox-image" onMouseDown={(event) => event.stopPropagation()} />
     </div>

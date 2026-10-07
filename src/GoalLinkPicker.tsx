@@ -5,6 +5,7 @@ import type { Goal, ThreadTask } from "./domain";
 import { errorMessage } from "./errors";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { formatPeriod, GOAL_HORIZON_LABELS, goalOptionsForTask, periodFor } from "./goals";
+import { ICON_SIZE } from "./iconSizes";
 
 type Choice = { goal: Goal | null; label: string };
 
@@ -75,7 +76,7 @@ export function GoalLinkPicker({
             onClick={option.onClick}
           >
             <span className="label-option-name">
-              {current ? <Check size={14} /> : <span className="label-option-check-spacer" />}
+              {current ? <Check size={ICON_SIZE.sm} /> : <span className="label-option-check-spacer" />}
               {choice.label}
             </span>
             {choice.goal ? <span className="goal-link-period">{GOAL_HORIZON_LABELS[choice.goal.horizon]} · {formatPeriod(choice.goal.period)}</span> : null}

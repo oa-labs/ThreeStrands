@@ -6,6 +6,7 @@ import type { ContactProfile } from "./domain";
 import { describeActivity } from "./contactContext";
 import { describeDue, isKeepInTouchDue } from "./keepInTouch";
 import { errorMessage } from "./errors";
+import { ICON_SIZE } from "./iconSizes";
 
 /**
  * What a contact card in the reader needs from the app: opening the address
@@ -87,19 +88,19 @@ export function ContactCard({ email, fallbackName, profile, loaded = true, facts
               : displayName}</Title>
             {!loaded ? null : profile ? (
               <button type="button" className="btn-icon btn-icon-sm context-contact-favorite" aria-label={profile.favorite ? "Remove favorite" : "Add favorite"} aria-pressed={profile.favorite} title={profile.favorite ? "Remove favorite" : "Add favorite"} onClick={() => void toggleFavorite()}>
-                <Heart size={15} fill={profile.favorite ? "currentColor" : "none"} />
+                <Heart size={ICON_SIZE.sm} fill={profile.favorite ? "currentColor" : "none"} />
               </button>
             ) : (
               <button type="button" className="btn-icon btn-icon-sm" aria-label="Save to contacts" title="Save to contacts" onClick={() => void save()}>
-                <UserPlus size={15} />
+                <UserPlus size={ICON_SIZE.sm} />
               </button>
             )}
             <span id={openHintId} hidden>Opens in Contacts</span>
           </div>
           <div className="contact-sidebar-email-row">
-            <a href={`mailto:${email}`}><Mail size={13} /><span>{email}</span></a>
+            <a href={`mailto:${email}`}><Mail size={ICON_SIZE.xs} /><span>{email}</span></a>
             <button type="button" className="contact-sidebar-email-copy" aria-label={copied ? "Copied email address" : "Copy email address"} onClick={() => void copyEmail()}>
-              {copied ? <Check size={13} /> : <Copy size={13} />}
+              {copied ? <Check size={ICON_SIZE.xs} /> : <Copy size={ICON_SIZE.xs} />}
             </button>
           </div>
           {copyFailed ? <span className="contact-sidebar-copy-status" role="status">Could not copy email address</span> : null}

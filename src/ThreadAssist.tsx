@@ -6,6 +6,7 @@ import { planMeeting } from "./scheduling";
 import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
 import { isSummaryStale } from "./threadPresentation";
+import { ICON_SIZE } from "./iconSizes";
 
 export const THREAD_ASSIST_ID = "thread-assist";
 
@@ -123,18 +124,18 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
           {!failure && (missingSummary || missingSuggestions) ? (
             <HoverTooltip title={missingSummary ? "Get Brief" : "Get Suggestions"} shortcut={missingSummary ? "i" : undefined} placement="bottom">
               <button type="button" className="btn btn-sm thread-assist-run" aria-keyshortcuts={missingSummary ? "i" : undefined} onClick={() => onRun(false)}>
-                <Sparkles size={12} />{missingSummary ? "Get Brief" : "Get Suggestions"}
+                <Sparkles size={ICON_SIZE.sm} />{missingSummary ? "Get Brief" : "Get Suggestions"}
               </button>
             </HoverTooltip>
           ) : null}
           {summaryText ? (
             <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">
-              <button type="button" className="btn-icon btn-icon-sm" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+              <button type="button" className="btn-icon btn-icon-sm" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={ICON_SIZE.sm} /> : <Copy size={ICON_SIZE.sm} />}</button>
             </HoverTooltip>
           ) : null}
           {generated ? (
             <HoverTooltip title={`Refresh ${title.toLowerCase()}`} placement="bottom">
-              <button type="button" className="btn-icon btn-icon-sm" aria-label={`Refresh ${title.toLowerCase()}`} onClick={() => onRun(true)}><RefreshCw size={14} /></button>
+              <button type="button" className="btn-icon btn-icon-sm" aria-label={`Refresh ${title.toLowerCase()}`} onClick={() => onRun(true)}><RefreshCw size={ICON_SIZE.sm} /></button>
             </HoverTooltip>
           ) : null}
         </div>
@@ -148,7 +149,7 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
     {failure ? <div className="action-analysis-error" role="alert">
       <p>{failure.summary}</p>
       <div className="action-analysis-error-actions">
-        {failure.retryable ? <button type="button" className="btn btn-sm" onClick={() => onRun(false)}><RotateCcw size={13} /> Try Again</button> : null}
+        {failure.retryable ? <button type="button" className="btn btn-sm" onClick={() => onRun(false)}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button> : null}
         {failure.retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{error}</p></details> : null}
       </div>
     </div> : null}
@@ -180,7 +181,7 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
             /> : null}
             <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
             <div className="proposal-actions">
-              <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "edit")}><Pencil size={13} /> Edit</button>
+              <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "edit")}><Pencil size={ICON_SIZE.sm} /> Edit</button>
               {proposal.type === "task" ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
               <button type="button" className="btn btn-sm" onClick={() => suggestions.onDiscard(index)}>Discard</button>
             </div>

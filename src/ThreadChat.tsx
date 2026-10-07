@@ -10,6 +10,7 @@ import {
   type Mention,
 } from "./chatAttachments";
 import type { ChatAttachmentSource, ChatAvailability, ChatSource } from "./domain";
+import { ICON_SIZE } from "./iconSizes";
 
 export type ChatEntry =
   | {
@@ -255,7 +256,7 @@ export function ThreadChat({
     </div> : pending ? <p className="context-status" role="status">Thinking…</p> : null}
     {error ? <div className="action-analysis-error" role="alert">
       <p>{error}</p>
-      <div className="action-analysis-error-actions"><button type="button" className="btn btn-sm" onClick={onRetry}><RotateCcw size={13} /> Try Again</button></div>
+      <div className="action-analysis-error-actions"><button type="button" className="btn btn-sm" onClick={onRetry}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button></div>
     </div> : null}
     {!enabled || !available ? <>
       <p className="context-status">{!enabled ? "Turn on Thread Chat in AI settings to ask questions about this conversation." : "Set up an AI provider and API key in AI settings to ask questions."}</p>
@@ -303,23 +304,23 @@ export function ThreadChat({
             onMouseEnter={() => setHighlighted(index)}
             onClick={() => choose(option)}
           >
-            <FileText size={13} aria-hidden="true" />
+            <FileText size={ICON_SIZE.xs} aria-hidden="true" />
             <span>{option.filename}</span>
             <small>{option.sender}</small>
           </li>)}
         </ul> : null}
         {sharedAttachments.length + selected.length > 0 ? <ul className="thread-chat-attachments" aria-label="Attachments shared with AI">
           {sharedAttachments.map((attachment) => <li key={attachmentKey(attachment)} title="Shared earlier in this chat">
-            <FileText size={12} aria-hidden="true" /><span>{attachment.filename}</span>
+            <FileText size={ICON_SIZE.xs} aria-hidden="true" /><span>{attachment.filename}</span>
           </li>)}
           {selected.map((attachment) => <li key={attachmentKey(attachment)}>
-            <FileText size={12} aria-hidden="true" /><span>{attachment.filename}</span>
+            <FileText size={ICON_SIZE.xs} aria-hidden="true" /><span>{attachment.filename}</span>
             <button
               type="button"
                 className="btn-icon btn-icon-sm"
               aria-label={`Don’t share ${attachment.filename}`}
               onClick={() => setSelected((current) => current.filter((candidate) => attachmentKey(candidate) !== attachmentKey(attachment)))}
-            ><X size={12} aria-hidden="true" /></button>
+            ><X size={ICON_SIZE.sm} aria-hidden="true" /></button>
           </li>)}
         </ul> : null}
         {!draft.trim() && entries.length === 0 ? <div className="thread-chat-quick" aria-label="Suggested questions" role="group">
@@ -330,12 +331,12 @@ export function ThreadChat({
             <input type="checkbox" checked={searchMailbox} onChange={(event) => setSearchMailbox(event.target.checked)} />
             Search all mail
           </label>
-          <button type="submit" className="btn btn-sm btn-primary" disabled={pending || !draft.trim()}><Sparkles size={13} /> Ask</button>
+          <button type="submit" className="btn btn-sm btn-primary" disabled={pending || !draft.trim()}><Sparkles size={ICON_SIZE.sm} /> Ask</button>
         </div>
       </form>
     ) : (
       <button type="button" className="thread-chat-prompt" onClick={activate} aria-keyshortcuts="q">
-        <MessageSquareText size={14} aria-hidden="true" />
+        <MessageSquareText size={ICON_SIZE.sm} aria-hidden="true" />
         <span>{draft.trim() ? draft : "Ask about this conversation…"}</span>
         <kbd aria-hidden="true">q</kbd>
       </button>

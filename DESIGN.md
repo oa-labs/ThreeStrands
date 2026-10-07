@@ -327,6 +327,31 @@ window. `src/styleTokens.test.ts` fails on any raw length, on a list gutter
 and row inset that no longer add up to the pane inset, and on a custom
 property the stylesheet reads but never defines.
 
+## Icons, elevation, and state
+
+Icons take their size from `ICON_SIZE` in `src/iconSizes.ts`, chosen by the
+icon's container: `xs` (12) inline with meta text, `sm` (14) in small
+buttons, `md` (16) in standard buttons and fields, `lg` (18) in icon buttons
+and the app rail, `display` (28) for empty states.
+
+Shadows come from one token per kind of surface: `--shadow-control`,
+`--shadow-raised`, `--shadow-popover` (menus, tooltips, suggestion lists),
+`--shadow-floating` (toasts, notices, save bars, drag previews, event cards),
+`--shadow-dialog`, and `--shadow-drawer`. Focus uses `--focus-ring`;
+selection rings (`0 0 0 …`) and inset edges stay literal.
+
+State opacity uses `--opacity-disabled`, `--opacity-dimmed`, and
+`--opacity-dragging`; transitions use `--duration-fast`, `--duration-base`,
+and `--duration-slow`.
+
+Colors come from theme tokens. Text on an accent fill uses
+`--accent-contrast`, because some accents are light enough to need dark text.
+Marks on a user-chosen account or calendar color, or on a dark overlay, use
+`--on-color`. Tints toward white or black are written as `color-mix()` with
+the `white` or `black` keyword.
+
+`src/styleTokens.test.ts` enforces these rules.
+
 ## Accessibility and testing
 
 ARIA semantics do not define shortcut behavior by themselves. A read-only

@@ -7,6 +7,7 @@ import { linkifyPlainText, sanitizeComposeHtml } from "./richText";
 import { snippetBodyPreview } from "./snippets";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { htmlToPlainText } from "./htmlPlainText";
+import { ICON_SIZE } from "./iconSizes";
 
 export function SnippetPicker({
   snippets,
@@ -64,7 +65,7 @@ export function SnippetPicker({
         listId="snippet-options"
         listLabel="Snippets"
         emptyMessage="No snippets yet. Type a name to create one."
-        createLabel={(name) => <><Plus size={14} /> Create snippet "{name}"</>}
+        createLabel={(name) => <><Plus size={ICON_SIZE.sm} /> Create snippet "{name}"</>}
         onSelect={onInsert}
         onCreate={(name) => { setNewSnippetName(name); setEditorTarget("new"); }}
         renderItem={(snippet, option) => (
@@ -90,7 +91,7 @@ export function SnippetPicker({
                   setEditorTarget(snippet);
                 }}
               >
-                <Pencil size={14} />
+                <Pencil size={ICON_SIZE.sm} />
               </button>
               <button
                 className="btn-icon btn-icon-sm"
@@ -100,7 +101,7 @@ export function SnippetPicker({
                   void onDelete(snippet.id);
                 }}
               >
-                <Trash2 size={14} />
+                <Trash2 size={ICON_SIZE.sm} />
               </button>
             </span>
           </div>
@@ -108,7 +109,7 @@ export function SnippetPicker({
         renderCreateItem={(name, option) => (
           <div id={option.id} role="option" aria-selected={option.active} className={option.active ? "highlighted" : undefined}
             onMouseEnter={option.onMouseEnter} onClick={option.onClick}>
-            <Plus size={14} /> Create snippet "{name}"
+            <Plus size={ICON_SIZE.sm} /> Create snippet "{name}"
           </div>
         )}
       />

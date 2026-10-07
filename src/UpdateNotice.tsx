@@ -3,6 +3,7 @@ import { Download, RefreshCw, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { checkForAppUpdate, installAppUpdate, type AvailableUpdate } from "./appUpdate";
 import { logBackgroundFailure } from "./errors";
+import { ICON_SIZE } from "./iconSizes";
 
 /** How often a running app looks for a newer release after the launch check. */
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -57,7 +58,7 @@ export function UpdateNotice() {
   if (installState === "installing") {
     return (
       <div className="toast update-toast" role="status" aria-live="polite">
-        <RefreshCw className="spin update-toast-icon" size={16} aria-hidden="true" />
+        <RefreshCw className="spin update-toast-icon" size={ICON_SIZE.md} aria-hidden="true" />
         <span className="update-toast-message">Installing ThreeStrands {update.version}. The app will restart when it's done.</span>
       </div>
     );
@@ -65,14 +66,14 @@ export function UpdateNotice() {
 
   const dismiss = (
     <button className="btn-icon btn-icon-sm" aria-label="Dismiss update" onClick={() => { setDismissedVersion(update.version); setInstallState("idle"); }}>
-      <X size={14} />
+      <X size={ICON_SIZE.sm} />
     </button>
   );
 
   if (installState === "failed") {
     return (
       <div className="toast update-toast" role="alert">
-        <Download className="update-toast-icon" size={18} aria-hidden="true" />
+        <Download className="update-toast-icon" size={ICON_SIZE.lg} aria-hidden="true" />
         <span className="update-toast-message">ThreeStrands {update.version} couldn't be installed.</span>
         <button className="btn-link" onClick={install}>Try again</button>
         <button className="btn-link" onClick={openRelease}>Download</button>
@@ -83,7 +84,7 @@ export function UpdateNotice() {
 
   return (
     <div className="toast update-toast" role="status" aria-live="polite">
-      <Download className="update-toast-icon" size={18} aria-hidden="true" />
+      <Download className="update-toast-icon" size={ICON_SIZE.lg} aria-hidden="true" />
       <span className="update-toast-message">
         ThreeStrands {update.version} is available.
         {update.installMode === "moveToApplications"

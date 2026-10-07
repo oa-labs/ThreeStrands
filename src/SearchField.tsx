@@ -1,5 +1,6 @@
 import { Archive, Search } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { ICON_SIZE } from "./iconSizes";
 
 /** How long typing must pause before a non-empty search is committed. */
 export const SEARCH_DEBOUNCE_MS = 180;
@@ -52,7 +53,7 @@ export function SearchField({
 
   return (
     <label className="search-box">
-      <Search size={16} />
+      <Search size={ICON_SIZE.md} />
       <input
         ref={inputRef}
         value={draft}
@@ -82,7 +83,7 @@ export function SearchField({
           title={includeArchived ? "Exclude archived and trashed mail from search" : "Include archived or trashed mail in search"}
           onClick={onToggleIncludeArchived}
         >
-          <Archive size={14} />
+          <Archive size={ICON_SIZE.sm} />
           <span>{includeArchived ? "Archived + Trash" : "Search All Mail"}</span>
         </button>
       ) : null}

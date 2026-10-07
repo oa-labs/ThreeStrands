@@ -10,6 +10,7 @@ import {
 import { MESSAGE_FILTER_OPTIONS, type MessageFilterKind } from "./messageFilters";
 import { formattingShortcuts } from "./richText";
 import { useEscapeDismiss } from "./useEscapeDismiss";
+import { ICON_SIZE } from "./iconSizes";
 
 export function FiltersButton({
   activeFilters,
@@ -40,7 +41,7 @@ export function FiltersButton({
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
-        <ListFilter size={15} />
+        <ListFilter size={ICON_SIZE.md} />
         <span>Filters</span>
         {activeFilters.size > 0 ? <span className="filters-badge">{activeFilters.size}</span> : null}
       </button>
@@ -74,7 +75,7 @@ function FiltersMenu({
             onClick={() => onToggleFilter(option.kind)}
           >
             <span className="filters-menu-item-label">
-              <span className="filters-menu-item-check" aria-hidden="true">{isActive ? <Check size={13} /> : null}</span>
+              <span className="filters-menu-item-check" aria-hidden="true">{isActive ? <Check size={ICON_SIZE.xs} /> : null}</span>
               {option.label}
             </span>
             <span className="filters-menu-item-keys"><kbd>shift</kbd><kbd>{option.shortcutKey}</kbd></span>
@@ -140,7 +141,7 @@ export function CommandPalette({
   return (
     <Modal title="Command Palette" onClose={onClose} shortcutScope="palette" initialFocusRef={inputRef}>
       <label className="palette-search">
-        <Search size={18} />
+        <Search size={ICON_SIZE.lg} />
         <input ref={inputRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Type a command" aria-label="Filter Commands" />
       </label>
       <div className="command-list">
@@ -290,7 +291,7 @@ export function Modal({
         onKeyDown={trapFocus}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header><h2>{title}</h2>{dismissible ? <button className="btn-icon" aria-label="Close" onClick={onClose}><X size={18} /></button> : null}</header>
+        <header><h2>{title}</h2>{dismissible ? <button className="btn-icon" aria-label="Close" onClick={onClose}><X size={ICON_SIZE.lg} /></button> : null}</header>
         {children}
       </div>
     </div>,

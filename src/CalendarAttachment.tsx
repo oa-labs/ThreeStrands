@@ -6,6 +6,7 @@ import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from ".
 import { errorMessage } from "./errors";
 import { HoverTooltip } from "./AppChrome";
 import { splitAttachmentName } from "./threadPresentation";
+import { ICON_SIZE } from "./iconSizes";
 
 export function isCalendarAttachment(attachment: MessageAttachment): boolean {
   return attachment.mimeType.split(";", 1)[0]?.trim().toLocaleLowerCase() === "text/calendar"
@@ -79,7 +80,7 @@ export function CalendarAttachmentGroup({ messageId, attachments, onError }: Gro
   if (!visibleIds) {
     return (
       <div className="calendar-card calendar-card-loading" role="status">
-        <CalendarDays size={18} />
+        <CalendarDays size={ICON_SIZE.lg} />
         <span>Loading calendar invitation…</span>
       </div>
     );
@@ -149,7 +150,7 @@ export function CalendarAttachment({ messageId, attachment, onError, loadedPrevi
   if (!preview) {
     return (
       <div className="calendar-card calendar-card-loading" role="status">
-        <CalendarDays size={18} />
+        <CalendarDays size={ICON_SIZE.lg} />
         <span>Loading calendar invitation…</span>
       </div>
     );
@@ -162,10 +163,10 @@ export function CalendarAttachment({ messageId, attachment, onError, loadedPrevi
       ))}
       {preview.truncated ? <p className="calendar-card-more">Additional events are included in this file.</p> : null}
       <footer className="calendar-card-actions">
-        <span><CalendarDays size={14} /> {attachment.filename}</span>
-        <button type="button" className="btn btn-sm btn-ghost" onClick={open}><ExternalLink size={14} /> Open Invitation</button>
+        <span><CalendarDays size={ICON_SIZE.sm} /> {attachment.filename}</span>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={open}><ExternalLink size={ICON_SIZE.sm} /> Open Invitation</button>
         <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button type="button" className="btn-icon btn-icon-sm" aria-label={`Download ${attachment.filename}`} onClick={download}>
-          <Download size={14} />
+          <Download size={ICON_SIZE.sm} />
         </button></HoverTooltip>
       </footer>
     </section>
@@ -186,11 +187,11 @@ function CalendarEvent({ event }: { event: CalendarEventPreview }) {
           {status === "cancelled" ? <span className="calendar-status">Cancelled</span> : null}
         </div>
         <p className="calendar-when">{formatEventTime(event)}</p>
-        {event.location ? <p><MapPin size={14} /><span>{event.location}</span></p> : null}
+        {event.location ? <p><MapPin size={ICON_SIZE.sm} /><span>{event.location}</span></p> : null}
         {event.organizer || event.attendeeCount > 0 ? (
-          <p><Users size={14} /><span>{peopleLabel(event)}</span></p>
+          <p><Users size={ICON_SIZE.sm} /><span>{peopleLabel(event)}</span></p>
         ) : null}
-        {event.recurring ? <p><Repeat2 size={14} /><span>Recurring event</span></p> : null}
+        {event.recurring ? <p><Repeat2 size={ICON_SIZE.sm} /><span>Recurring event</span></p> : null}
         {event.description ? <p className="calendar-description">{calendarDescriptionText(event.description)}</p> : null}
       </div>
     </article>
@@ -210,15 +211,15 @@ function StandardCalendarAttachment({
   return (
     <div className="message-attachment">
       <button type="button" className="attachment-badge" aria-label={`View ${attachment.filename}`} onClick={onOpen}>
-        <CalendarDays size={14} />
+        <CalendarDays size={ICON_SIZE.sm} />
         <span className="attachment-name">
           <span className="attachment-name-base">{base}</span>
           {extension ? <span className="attachment-name-ext">{extension}</span> : null}
         </span>
-        <ExternalLink size={13} />
+        <ExternalLink size={ICON_SIZE.xs} />
       </button>
       <button type="button" className="attachment-download" aria-label={`Download ${attachment.filename}`} onClick={onDownload}>
-        <Download size={14} />
+        <Download size={ICON_SIZE.sm} />
       </button>
     </div>
   );

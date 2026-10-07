@@ -23,6 +23,7 @@ import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { CalendarColorRow } from "./CalendarColorMenu";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
+import { ICON_SIZE } from "./iconSizes";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
 /** Calendar accounts collapsed in the week view's calendar list, remembered on this device. */
@@ -127,8 +128,8 @@ function MiniMonth({
       <header>
         <h3>{monthTitle(month)}</h3>
         <div>
-          <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Month" onClick={() => onMoveMonth(-1)}><ChevronLeft size={17} /></button>
-          <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Month" onClick={() => onMoveMonth(1)}><ChevronRight size={17} /></button>
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Previous Month" onClick={() => onMoveMonth(-1)}><ChevronLeft size={ICON_SIZE.sm} /></button>
+          <button type="button" className="btn-icon btn-icon-sm" aria-label="Next Month" onClick={() => onMoveMonth(1)}><ChevronRight size={ICON_SIZE.sm} /></button>
         </div>
       </header>
       <div className="calendar-mini-month-grid" role="grid">
@@ -179,9 +180,9 @@ function CalendarList({
   return (
     <section className="calendar-list" aria-label="Calendars">
       <header>
-        <CalendarDays size={17} />
+        <CalendarDays size={ICON_SIZE.lg} />
         <h3>Calendars</h3>
-        <HoverTooltip title="Add calendar account"><button type="button" className="btn-icon btn-icon-sm" aria-label="Add calendar account" onClick={onAdd}><Plus size={16} /></button></HoverTooltip>
+        <HoverTooltip title="Add calendar account"><button type="button" className="btn-icon btn-icon-sm" aria-label="Add calendar account" onClick={onAdd}><Plus size={ICON_SIZE.sm} /></button></HoverTooltip>
       </header>
       {accounts.length === 0 ? <p className="calendar-list-empty">No calendar accounts connected.</p> : null}
       {accounts.map((account) => {
@@ -202,7 +203,7 @@ function CalendarList({
               })}
             >
               <span>{account.email}</span>
-              <ChevronLeft size={16} className={open ? "calendar-list-chevron-open" : "calendar-list-chevron"} />
+              <ChevronLeft size={ICON_SIZE.md} className={open ? "calendar-list-chevron-open" : "calendar-list-chevron"} />
             </button>
             {open ? accountCalendars.map((calendar) => (
               <CalendarColorRow key={calendar.id} accountId={account.email} calendarId={calendar.id} calendarName={calendar.name}>
@@ -361,10 +362,10 @@ export function CalendarWeekView({
           <div className="calendar-week-controls">
             <button type="button" className="btn" onClick={goToToday}>Today</button>
             <div className="calendar-week-nav">
-              <HoverTooltip title="Previous week (-)"><button type="button" className="btn-icon" aria-label="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={20} /></button></HoverTooltip>
-              <HoverTooltip title="Next week (=)"><button type="button" className="btn-icon" aria-label="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={20} /></button></HoverTooltip>
+              <HoverTooltip title="Previous week (-)"><button type="button" className="btn-icon" aria-label="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
+              <HoverTooltip title="Next week (=)"><button type="button" className="btn-icon" aria-label="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={ICON_SIZE.lg} /></button></HoverTooltip>
             </div>
-            <button type="button" className="btn" onClick={newEventAtAnchor}><Plus size={15} />New Event</button>
+            <button type="button" className="btn" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event</button>
           </div>
         </header>
         {error ? (

@@ -5,6 +5,7 @@ import { formatDisplayName, parseAddress } from "./emailAddress";
 import { formatMailTimestamp } from "./threadPresentation";
 import { decodeHtmlEntities } from "./SafeMessage";
 import { selectionGestureFor, type SelectionGesture } from "./threadSelection";
+import { ICON_SIZE } from "./iconSizes";
 
 const MATCH_START = "\u0001";
 const MATCH_END = "\u0002";
@@ -77,9 +78,9 @@ export const ThreadRow = memo(function ThreadRow({
             onToggleCheck(thread.id);
           }}
         >
-          {checked ? <CheckSquare size={16} /> : <Square size={16} />}
+          {checked ? <CheckSquare size={ICON_SIZE.md} /> : <Square size={ICON_SIZE.md} />}
         </span>
-        {thread.hasAttachments ? <Paperclip className="thread-attachment" size={13} aria-label="Has attachments" /> : null}
+        {thread.hasAttachments ? <Paperclip className="thread-attachment" size={ICON_SIZE.xs} aria-label="Has attachments" /> : null}
       </span>
       {checked ? <span className="sr-only">Selected for batch actions</span> : null}
       <span className={`unread-dot ${thread.unread ? "visible" : ""}`} />
@@ -94,14 +95,14 @@ export const ThreadRow = memo(function ThreadRow({
           </span>
           <span className="thread-meta-trailing">
             {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
-            {hasTask ? <CheckSquare className="thread-task-indicator" size={13} aria-label="Has open task" /> : null}
+            {hasTask ? <CheckSquare className="thread-task-indicator" size={ICON_SIZE.xs} aria-label="Has open task" /> : null}
             <time>{formatMailTimestamp(thread.lastMessageAt)}</time>
           </span>
         </span>
         <span className="thread-subject">{thread.subject}</span>
         <span className="thread-snippet"><HighlightedSnippet thread={thread} /></span>
       </span>
-      {thread.starred ? <Star className="starred" size={15} fill="currentColor" /> : null}
+      {thread.starred ? <Star className="starred" size={ICON_SIZE.sm} fill="currentColor" /> : null}
     </button>
   );
 });

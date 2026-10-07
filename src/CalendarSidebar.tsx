@@ -23,6 +23,7 @@ import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
 import { useCalendarSchedule } from "./useCalendarSchedule";
+import { ICON_SIZE } from "./iconSizes";
 
 export const CALENDAR_SCROLL_TOP_KEY = "threestrands.calendar.scrollTop";
 const DEFAULT_CALENDAR_SCROLL_TOP = 7 * HOUR_HEIGHT;
@@ -228,21 +229,21 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
       <header>
         <span className="calendar-event-color" aria-hidden="true" style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)} />
         <h3>{event.title}</h3>
-        <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Event Details" onClick={onDismiss}><X size={16} /></button>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Event Details" onClick={onDismiss}><X size={ICON_SIZE.sm} /></button>
       </header>
       <div className="calendar-event-viewer-details">
-        <p><Clock3 size={17} /><span>{formatEventDate(event)} · {formatEventTime(event)}</span></p>
+        <p><Clock3 size={ICON_SIZE.lg} /><span>{formatEventDate(event)} · {formatEventTime(event)}</span></p>
         {conferenceUrl ? (
           <p>
-            <Video size={17} />
+            <Video size={ICON_SIZE.lg} />
             <a href={conferenceUrl} onClick={(clickEvent) => {
               clickEvent.preventDefault();
               void openUrl(conferenceUrl);
             }}>Join video meeting</a>
           </p>
         ) : null}
-        {event.location ? <p><MapPin size={17} /><span><EventLocation location={event.location} /></span></p> : null}
-        <p><CalendarDays size={17} /><span>{event.accountId}</span></p>
+        {event.location ? <p><MapPin size={ICON_SIZE.lg} /><span><EventLocation location={event.location} /></span></p> : null}
+        <p><CalendarDays size={ICON_SIZE.lg} /><span>{event.accountId}</span></p>
         {label ? <div className="calendar-event-response">
           <span>Your response: <strong>{label}</strong></span>
           {event.canRespond ? <div className="segmented calendar-response-actions" role="group" aria-label="Going?">
@@ -252,7 +253,7 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
           </div> : null}
           {responseError ? <p role="alert">{responseError}</p> : null}
         </div> : null}
-        {event.description ? <p className="calendar-event-viewer-description"><AlignLeft size={17} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
+        {event.description ? <p className="calendar-event-viewer-description"><AlignLeft size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
     </div>
   );
@@ -383,14 +384,14 @@ export function CalendarSidebar({
         </div>
         <div className="calendar-sidebar-actions">
           <HoverTooltip title="Previous day (-)"><button type="button" className="btn-icon" aria-label="Previous day (-)" onClick={() => moveDay(-1)}>
-            <ChevronLeft size={18} />
+            <ChevronLeft size={ICON_SIZE.lg} />
           </button></HoverTooltip>
           <HoverTooltip title="Next day (=)"><button type="button" className="btn-icon" aria-label="Next day (=)" onClick={() => moveDay(1)}>
-            <ChevronRight size={18} />
+            <ChevronRight size={ICON_SIZE.lg} />
           </button></HoverTooltip>
           {!embedded ? (
             <button type="button" className="btn-icon" aria-label="Close Calendar" onClick={onClose}>
-              <X size={18} />
+              <X size={ICON_SIZE.lg} />
             </button>
           ) : null}
         </div>
@@ -464,7 +465,7 @@ export function CalendarSidebar({
           <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>
           <div>
             <button type="button" className="btn btn-sm" onClick={reload}>
-              <RefreshCw size={14} /> Try Again
+              <RefreshCw size={ICON_SIZE.sm} /> Try Again
             </button>
             <button type="button" className="btn btn-sm" onClick={onOpenSettings}>Calendar Accounts</button>
           </div>

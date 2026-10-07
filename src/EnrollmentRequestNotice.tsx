@@ -3,6 +3,7 @@ import { Smartphone, X } from "lucide-react";
 import { logBackgroundFailure } from "./errors";
 import { replicatedSyncEnabled, replicatedSyncPendingRequests, type IncomingEnrollmentRequest } from "./replicatedSync";
 import { useLiveStatus } from "./settingsOperations";
+import { ICON_SIZE } from "./iconSizes";
 
 const reportFailure = logBackgroundFailure("Checking for devices waiting to join");
 
@@ -45,16 +46,16 @@ export function EnrollmentRequestNotice({ suppressed, onReview }: { suppressed: 
     if (!resolvedNotice) return null;
     return (
       <div className="toast enrollment-request-toast" role="status" aria-live="polite">
-        <Smartphone className="enrollment-request-icon" size={18} aria-hidden="true" />
+        <Smartphone className="enrollment-request-icon" size={ICON_SIZE.lg} aria-hidden="true" />
         <span className="enrollment-request-message">A device request was resolved. No action is needed here.</span>
-        <button className="btn-icon btn-icon-sm" aria-label="Dismiss status message" onClick={() => setResolvedNotice(false)}><X size={14} /></button>
+        <button className="btn-icon btn-icon-sm" aria-label="Dismiss status message" onClick={() => setResolvedNotice(false)}><X size={ICON_SIZE.sm} /></button>
       </div>
     );
   }
 
   return (
     <div className="toast enrollment-request-toast" role="status" aria-live="polite">
-      <Smartphone className="enrollment-request-icon" size={18} aria-hidden="true" />
+      <Smartphone className="enrollment-request-icon" size={ICON_SIZE.lg} aria-hidden="true" />
       <span className="enrollment-request-message">
         {visible.length === 1
           ? "A new device is asking to join Replicated Sync."
@@ -69,7 +70,7 @@ export function EnrollmentRequestNotice({ suppressed, onReview }: { suppressed: 
           return next;
         })}
       >
-        <X size={14} />
+        <X size={ICON_SIZE.sm} />
       </button>
     </div>
   );

@@ -4,6 +4,7 @@ import { mailClient } from "./data/client";
 import type { ContactSuggestion } from "./domain";
 import { looksLikeCompleteAddress, parseAddress } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
+import { ICON_SIZE } from "./iconSizes";
 
 type Props = {
   id: "to" | "cc" | "bcc";
@@ -223,7 +224,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
                 aria-label={`Remove ${chip.displayName ?? chip.email}`}
                 onClick={() => removeChip(chip)}
               >
-                <X size={11} />
+                <X size={ICON_SIZE.xs} />
               </button>
             )}
           </span>
@@ -338,7 +339,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
                   togglePin(contact);
                 }}
               >
-                {contact.pinned ? <Pin size={13} /> : <PinOff size={13} />}
+                {contact.pinned ? <Pin size={ICON_SIZE.xs} /> : <PinOff size={ICON_SIZE.xs} />}
               </button>
             </li>
           ))}
@@ -354,7 +355,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
                 addContact(addCandidate);
               }}
             >
-              <UserPlus size={13} />
+              <UserPlus size={ICON_SIZE.xs} />
               <span>Pin {addCandidate.email} as a contact</span>
             </li>
           )}

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { Check, Copy, X } from "lucide-react";
+import { ICON_SIZE } from "./iconSizes";
 
 const EMAIL_SEPARATOR_KEYS = new Set(["Enter", ",", ";", " "]);
 const LINK_SEPARATOR_KEYS = new Set(["Enter", " "]);
@@ -100,10 +101,10 @@ function ContactMultiValueField({ kind, values, disabled, onChange }: {
           <span key={value} className="recipient-chip contact-multi-value-chip">
             <span className="recipient-chip-label" title={value}>{value}</span>
             <button type="button" className="recipient-chip-remove contact-multi-value-copy" aria-label={copied === value ? `Copied ${value}` : `Copy ${value}`} title={`Copy ${itemName}`} onClick={() => void copy(value)}>
-              {copied === value ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+              {copied === value ? <Check size={ICON_SIZE.xs} aria-hidden="true" /> : <Copy size={ICON_SIZE.xs} aria-hidden="true" />}
             </button>
             <button type="button" className="recipient-chip-remove" aria-label={`Remove ${value}`} disabled={disabled} onClick={() => remove(value)}>
-              <X size={12} aria-hidden="true" />
+              <X size={ICON_SIZE.xs} aria-hidden="true" />
             </button>
           </span>
         ))}

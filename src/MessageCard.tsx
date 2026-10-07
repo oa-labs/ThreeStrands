@@ -14,6 +14,7 @@ import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import type { ThreadTextIndex } from "./quotedHistory";
 import type { FontFamily } from "./settings";
 import { formatAttachmentSize, formatMailTimestamp, splitAttachmentName } from "./threadPresentation";
+import { ICON_SIZE } from "./iconSizes";
 
 export type MessageResponseKind = "reply" | "replyAll" | "forward";
 
@@ -125,9 +126,9 @@ export const MessageCard = memo(function MessageCard({
           >
             <span className="message-card-sender">{senderDisplayName}</span>
             <CollapsedSnippet bodyText={message.bodyText} />
-            {downloadableAttachments.length > 0 ? <Paperclip size={13} aria-label="Has attachments" /> : null}
+            {downloadableAttachments.length > 0 ? <Paperclip size={ICON_SIZE.xs} aria-label="Has attachments" /> : null}
             <time>{formatMailTimestamp(message.sentAt)}</time>
-            <ChevronDown size={14} className="message-card-chevron" />
+            <ChevronDown size={ICON_SIZE.sm} className="message-card-chevron" />
           </button>
         </header>
         <div id={cardBodyId} hidden />
@@ -150,7 +151,7 @@ export const MessageCard = memo(function MessageCard({
                 aria-label="Reply"
                 onClick={() => onRespond("reply", message.id)}
               >
-                <Reply size={14} />
+                <Reply size={ICON_SIZE.sm} />
               </button>
             </HoverTooltip>
             <HoverTooltip label="Reply all" placement="bottom">
@@ -160,7 +161,7 @@ export const MessageCard = memo(function MessageCard({
                 aria-label="Reply All"
                 onClick={() => onRespond("replyAll", message.id)}
               >
-                <ReplyAll size={14} />
+                <ReplyAll size={ICON_SIZE.sm} />
               </button>
             </HoverTooltip>
             <HoverTooltip label="Forward" placement="bottom">
@@ -170,7 +171,7 @@ export const MessageCard = memo(function MessageCard({
                 aria-label="Forward"
                 onClick={() => onRespond("forward", message.id)}
               >
-                <Forward size={14} />
+                <Forward size={ICON_SIZE.sm} />
               </button>
             </HoverTooltip>
           </div>
@@ -213,7 +214,7 @@ export const MessageCard = memo(function MessageCard({
           onClick={toggleMessage}
           onKeyDown={toggleOnEnter}
         >
-          <ChevronUp size={14} />
+          <ChevronUp size={ICON_SIZE.sm} />
         </button>
       </header>
       <div id={cardBodyId} className="message-card-body">
@@ -255,13 +256,13 @@ export const MessageCard = memo(function MessageCard({
                       });
                     }}
                   >
-                    <Paperclip size={14} />
+                    <Paperclip size={ICON_SIZE.sm} />
                     <span className="attachment-name">
                       <span className="attachment-name-base">{attachmentName.base}</span>
                       {attachmentName.extension ? <span className="attachment-name-ext">{attachmentName.extension}</span> : null}
                     </span>
                     <small>{formatAttachmentSize(attachment.size)}</small>
-                    <ExternalLink size={13} />
+                    <ExternalLink size={ICON_SIZE.xs} />
                   </button></HoverTooltip>
                   <button
                     type="button"
@@ -273,7 +274,7 @@ export const MessageCard = memo(function MessageCard({
                       });
                     }}
                   >
-                    <Download size={14} />
+                    <Download size={ICON_SIZE.sm} />
                   </button>
                 </div>
                 );
@@ -449,7 +450,7 @@ function AddressWithCopy({ address, displayName }: { address: string; displayNam
           aria-label={copied ? "Copied" : `Copy ${parsed.email}`}
           onClick={handleCopy}
         >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? <Check size={ICON_SIZE.xs} /> : <Copy size={ICON_SIZE.xs} />}
         </button>
       </span>
     </span>

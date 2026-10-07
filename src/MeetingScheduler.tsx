@@ -6,6 +6,7 @@ import { refreshScheduleCache } from "./calendarScheduleCache";
 import { scheduleRequestFor } from "./CalendarSidebar";
 import { errorMessage } from "./errors";
 import { lookaheadRange, slotKey, SUGGESTED_SLOT_COUNT, type SchedulePlan, type ScheduleQuery } from "./scheduling";
+import { ICON_SIZE } from "./iconSizes";
 
 export type ScheduleSlot = Pick<AvailabilityCandidate, "start" | "end">;
 
@@ -130,18 +131,18 @@ export function MeetingScheduler({
     {state.phase === "idle" || state.phase === "loading" ? <p className="context-status" role="status">Checking your calendar…</p> : null}
     {state.phase === "error" ? <div className="meeting-scheduler-error" role="alert">
       <p>{state.message}</p>
-      <button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}><RotateCcw size={13} /> Try Again</button>
+      <button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button>
     </div> : null}
     {state.phase === "specific" && query.kind === "specific" ? <>
       <p className="meeting-slot">{formatSlot(query, timeZone)}</p>
       <p className={`meeting-slot-status meeting-slot-${state.check.status}`}>
-        {state.check.status === "free" ? <><CheckCircle2 size={13} aria-hidden="true" /> You&rsquo;re free</> : null}
-        {state.check.status === "conflicting" ? <><CircleAlert size={13} aria-hidden="true" /> {state.conflictTitles.length ? `Conflicts with ${state.conflictTitles.join(", ")}` : "Conflicts with another event"}</> : null}
+        {state.check.status === "free" ? <><CheckCircle2 size={ICON_SIZE.xs} aria-hidden="true" /> You&rsquo;re free</> : null}
+        {state.check.status === "conflicting" ? <><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> {state.conflictTitles.length ? `Conflicts with ${state.conflictTitles.join(", ")}` : "Conflicts with another event"}</> : null}
         {state.check.status === "partiallyChecked" ? <>Free on the calendars that could be checked</> : null}
         {state.check.status === "unverified" ? <>No calendar could be checked</> : null}
       </p>
       <div className="meeting-scheduler-actions">
-        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar(query)}><CalendarPlus size={13} /> Add to Calendar</button>
+        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar(query)}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
         {state.check.status === "conflicting"
           ? <button type="button" className="btn btn-sm" onClick={() => {
             const day = new Date(query.start);
@@ -176,7 +177,7 @@ export function MeetingScheduler({
           const chosen = state.candidates.filter((candidate) => selected.has(slotKey(candidate)));
           return <div className="meeting-scheduler-actions">
             <button type="button" className="btn btn-sm" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 1 ? "This Time" : "These Times"}</button>
-            <button type="button" className="btn btn-sm" disabled={chosen.length !== 1} title={chosen.length !== 1 ? "Select one time to add it" : undefined} onClick={() => onAddToCalendar(chosen[0])}><CalendarPlus size={13} /> Add to Calendar</button>
+            <button type="button" className="btn btn-sm" disabled={chosen.length !== 1} title={chosen.length !== 1 ? "Select one time to add it" : undefined} onClick={() => onAddToCalendar(chosen[0])}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
             {moreTimes}
           </div>;
         })()}

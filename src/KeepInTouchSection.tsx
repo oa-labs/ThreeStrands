@@ -7,6 +7,7 @@ import {
   KEEP_IN_TOUCH_FREQUENCIES, KEEP_IN_TOUCH_SNOOZES, MAX_KEEP_IN_TOUCH_DAYS, dateInputValue, describeDue, formatKeepInTouchDate,
   isSnoozeActive, lastTouchAt, parseIntervalDays, snoozeUntilDate, snoozeUntilDays,
 } from "./keepInTouch";
+import { ICON_SIZE } from "./iconSizes";
 
 type FrequencyChoice = "off" | "custom" | `${number}`;
 
@@ -84,7 +85,7 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
         {KEEP_IN_TOUCH_FREQUENCIES.map((item) => <option key={item.days} value={item.days}>{item.label}</option>)}
         <option value="custom">Custom…</option>
       </select>
-      {busy ? <LoaderCircle className="spin" size={14} aria-label="Saving" /> : saved ? <span className="contact-kit-saved" aria-live="polite"><Check size={13} />Saved</span> : null}</header>
+      {busy ? <LoaderCircle className="spin" size={ICON_SIZE.sm} aria-label="Saving" /> : saved ? <span className="contact-kit-saved" aria-live="polite"><Check size={ICON_SIZE.xs} />Saved</span> : null}</header>
     {choice === "custom" ? <div className="contact-kit-controls">
       <label>Every N Days
         <input type="number" inputMode="numeric" min={1} max={MAX_KEEP_IN_TOUCH_DAYS} value={customDays} disabled={busy}
@@ -99,9 +100,9 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
         {" · "}{touched ? `Last contact ${formatKeepInTouchDate(touched)}` : "No contact yet"}
       </p>
       <div className="contact-kit-actions">
-        <button type="button" className="btn" disabled={busy} title="Log a call, meeting, or message outside email" onClick={() => void run(() => mailClient.markContacted(profile.id))}><CheckCircle2 size={15} />Mark Contacted</button>
+        <button type="button" className="btn" disabled={busy} title="Log a call, meeting, or message outside email" onClick={() => void run(() => mailClient.markContacted(profile.id))}><CheckCircle2 size={ICON_SIZE.md} />Mark Contacted</button>
         <details className="contact-kit-snooze">
-          <summary><AlarmClock size={15} />Snooze</summary>
+          <summary><AlarmClock size={ICON_SIZE.sm} />Snooze</summary>
           <div className="contact-kit-snooze-menu">
             {KEEP_IN_TOUCH_SNOOZES.map((item) => <button key={item.days} type="button" className="btn" disabled={busy} onClick={() => void run(() => mailClient.snoozeKeepInTouch(profile.id, snoozeUntilDays(item.days)))}>{item.label}</button>)}
             <label>Until Date<input type="date" min={dateInputValue(tomorrow)} value={snoozeDate} disabled={busy} onChange={(event) => setSnoozeDate(event.target.value)} /></label>

@@ -5,6 +5,7 @@ import { addDays, eventDate, formatEventDate, startOfLocalDay } from "./calendar
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import { responseLabel } from "./calendarResponse";
 import { ContextSection } from "./ContextSections";
+import { ICON_SIZE } from "./iconSizes";
 
 /** How far ahead the context panel looks for meetings with conversation participants. */
 export const UPCOMING_MEETING_DAYS = 30;
@@ -53,7 +54,7 @@ export function ContactMeetings({ people, timeZone, onOpenEvent }: {
     count={meetings.length}
     rows={meetings.map(({ event, name }) => (
       <button type="button" key={`${event.accountId}:${event.id}`} className="context-meeting" data-response-status={event.responseStatus ?? undefined} onClick={() => onOpenEvent(event)}>
-        <CalendarDays size={14} aria-hidden="true" />
+        <CalendarDays size={ICON_SIZE.sm} aria-hidden="true" />
         <span>
           <strong>{event.title}</strong>
           <small className="context-meeting-meta">

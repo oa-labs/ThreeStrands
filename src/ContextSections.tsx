@@ -7,6 +7,7 @@ import { errorMessage } from "./errors";
 import { CONTACT_FILE_LIMIT, CONTEXT_SECTION_ROWS, DOMAIN_CONTEXT_LIMIT, formatHistoryDate, organizationDomain, THREAD_OUTLINE_MIN_MESSAGES } from "./contactContext";
 import { formatAttachmentSize, splitAttachmentName } from "./threadPresentation";
 import { decodeHtmlEntities } from "./SafeMessage";
+import { ICON_SIZE } from "./iconSizes";
 
 /** Per-device, per-section collapse choices. Transient layout, so not exported with settings. */
 const COLLAPSED_KEY = "threestrands.contextPanel.collapsedSections";
@@ -50,7 +51,7 @@ export function ContextSectionHeader({ title, titleId, count, toggle, actions }:
       <h3>
         {toggle ? (
           <button type="button" className="context-section-toggle" aria-expanded={!toggle.collapsed} aria-controls={toggle.controls} onClick={toggle.onToggle}>
-            {toggle.collapsed ? <ChevronRight size={13} aria-hidden="true" /> : <ChevronDown size={13} aria-hidden="true" />}
+            {toggle.collapsed ? <ChevronRight size={ICON_SIZE.xs} aria-hidden="true" /> : <ChevronDown size={ICON_SIZE.xs} aria-hidden="true" />}
             <span id={titleId}>{title}</span>
           </button>
         ) : <span id={titleId}>{title}</span>}
@@ -139,14 +140,14 @@ export function ContactFilesSection({ contactId, onShowMessage }: {
     return (
       <div className="context-file" key={`${file.messageId}:${file.attachment.id}`}>
         <button type="button" className="context-file-main" title={`Open ${file.attachment.filename}`} onClick={() => open(file.messageId, file.attachment.id)}>
-          <FileText size={14} aria-hidden="true" />
+          <FileText size={ICON_SIZE.sm} aria-hidden="true" />
           <span className="context-file-text">
             <strong><span className="context-file-base">{base}</span>{extension}</strong>
             <small>{formatHistoryDate(file.sentAt)} · {formatAttachmentSize(file.attachment.size)}</small>
           </span>
         </button>
         <button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
-          <MessageSquareText size={14} />
+          <MessageSquareText size={ICON_SIZE.sm} />
         </button>
       </div>
     );
