@@ -4105,6 +4105,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn contact_files_list_one_file_once_from_its_newest_message() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        database.adopt_account("you@work.example").unwrap();
+        let attachment=|id:&str,filename:&str,size:u64|crate::models::MessageAttachment{id:id.into(),filename:filename.into(),mime_type:"application/pdf".into(),size,content_id:None,inline:false};
+        let from_jane=|id:&str,thread:&str,at:&str,to:&str,files:Vec<crate::models::MessageAttachment>|{
+            let mut item=message(id,thread,at,"resume");
+            item.from="Jane <jane@example.com>".into();item.to=vec![to.into()];item.attachments=files;item
+        };
+        // One email delivered to both accounts is stored once per account.
+        database.upsert_thread("you@example.com",&[from_jane("copy-home","resume-home","2026-06-01T16:04:35Z","you@example.com",vec![attachment("part-1","Resume.pdf",37620)])]).unwrap();
+        database.upsert_thread("you@work.example",&[from_jane("copy-work","resume-work","2026-06-01T16:04:35Z","you@work.example",vec![attachment("part-1","Resume.pdf",37620)])]).unwrap();
+        // Re-sent later under different capitalization: the newest message wins.
+        database.upsert_thread("you@example.com",&[from_jane("resent","resume-again","2026-06-03T09:00:00Z","you@example.com",vec![attachment("part-1","resume.PDF",37620)])]).unwrap();
+        // Same name, different size: a revised file, listed separately.
+        database.upsert_thread("you@example.com",&[from_jane("revised","resume-revised","2026-06-02T09:00:00Z","you@example.com",vec![attachment("part-1","Resume.pdf",41000)])]).unwrap();
+
+        let files=database.contact_files("derived:jane@example.com",50).unwrap();
+        assert_eq!(files.total,2);
+        assert_eq!(files.files.iter().map(|file|(file.message_id.as_str(),file.attachment.size)).collect::<Vec<_>>(),vec![("resent",37620),("revised",41000)]);
+        let first=database.contact_files("derived:jane@example.com",1).unwrap();
+        assert_eq!((first.total,first.files.len()),(2,1));
+    }
+
+    #[test]
     fn domain_context_lists_other_people_at_the_domain_and_their_conversations() {
         let database=database();
         database.adopt_account("you@example.com").unwrap();

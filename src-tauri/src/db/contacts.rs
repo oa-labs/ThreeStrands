@@ -723,6 +723,9 @@ impl Database {
 
     /// Non-inline attachments on messages the person sent, newest first.
     /// Calendar invitations are left out; the meetings section covers them.
+    /// One file (same name, ignoring case, and size) is listed once, from its
+    /// newest message: a message delivered to several of the user's accounts
+    /// is stored once per account, and people re-send the same file.
     pub fn contact_files(&self, id: &str, limit: usize) -> DbResult<ContactFiles> {
         let addresses = self.contact_address_list(id)?;
         if addresses.is_empty() {
@@ -732,8 +735,9 @@ impl Database {
             let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
             let values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
             let from=format!("FROM (SELECT DISTINCT message_id FROM contact_interactions WHERE direction='received' AND email IN ({marks})) sent JOIN messages m ON m.id=sent.message_id JOIN threads t ON t.id=m.thread_id, json_each(m.attachments_json) a WHERE COALESCE(json_extract(a.value,'$.inline'),0)=0 AND trim(lower(COALESCE(json_extract(a.value,'$.mimeType'),''))) NOT LIKE 'text/calendar%' AND lower(COALESCE(json_extract(a.value,'$.filename'),'')) NOT LIKE '%.ics'");
-            let total=connection.query_row(&format!("SELECT COUNT(*) {from}"),rusqlite::params_from_iter(values.iter()),|row|row.get(0))?;
-            let mut statement=connection.prepare(&format!("SELECT m.id,m.thread_id,t.subject,m.sent_at,a.value {from} ORDER BY m.sent_at DESC,m.id,a.key LIMIT {}",limit.clamp(1,MAX_CONTACT_FILES)))?;
+            let distinct=format!("FROM (SELECT m.id AS message_id,m.thread_id,t.subject,m.sent_at,a.key AS part,a.value AS attachment,ROW_NUMBER() OVER (PARTITION BY lower(trim(COALESCE(json_extract(a.value,'$.filename'),''))),COALESCE(json_extract(a.value,'$.size'),-1) ORDER BY m.sent_at DESC,m.id,a.key) AS copy {from}) WHERE copy=1");
+            let total=connection.query_row(&format!("SELECT COUNT(*) {distinct}"),rusqlite::params_from_iter(values.iter()),|row|row.get(0))?;
+            let mut statement=connection.prepare(&format!("SELECT message_id,thread_id,subject,sent_at,attachment {distinct} ORDER BY sent_at DESC,message_id,part LIMIT {}",limit.clamp(1,MAX_CONTACT_FILES)))?;
             let rows=statement.query_map(rusqlite::params_from_iter(values.iter()),|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?)))?;
             let mut files=Vec::new();
             for row in rows {
