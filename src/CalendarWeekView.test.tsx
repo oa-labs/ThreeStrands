@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { CalendarWeekView, monthGridDays } from "./CalendarWeekView";
+import { COLLAPSED_CALENDAR_ACCOUNTS_KEY, CalendarWeekView, monthGridDays } from "./CalendarWeekView";
 import { startOfLocalDay } from "./calendarTime";
 import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
@@ -366,6 +366,46 @@ describe("CalendarWeekView", () => {
 
     fireEvent.click(holidays);
     expect(props.onToggleCalendar).toHaveBeenCalledWith("joel@example.com", "holidays", false);
+  });
+
+  it("remembers which calendar accounts are collapsed across visits", async () => {
+    const twoAccounts = {
+      accounts: [...accounts, { ...accounts[0], email: "work@example.com" }],
+      calendars: [...calendars, { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true, writable: true }],
+    };
+    const toggle = (email: string) => within(screen.getByRole("region", { name: "Calendars" })).getByRole("button", { name: email });
+    const { unmount } = renderWeek(twoAccounts);
+    await screen.findByText("Sun 20");
+    expect(toggle("joel@example.com")).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(toggle("joel@example.com"));
+    expect(toggle("joel@example.com")).toHaveAttribute("aria-expanded", "false");
+    expect(JSON.parse(localStorage.getItem(COLLAPSED_CALENDAR_ACCOUNTS_KEY)!)).toEqual(["joel@example.com"]);
+    unmount();
+
+    renderWeek(twoAccounts);
+    await screen.findByText("Sun 20");
+    expect(toggle("joel@example.com")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("checkbox", { name: "Holidays in United States" })).not.toBeInTheDocument();
+    expect(toggle("work@example.com")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("checkbox", { name: "Work" })).toBeInTheDocument();
+
+    fireEvent.click(toggle("joel@example.com"));
+    expect(screen.getByRole("checkbox", { name: "Holidays in United States" })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(COLLAPSED_CALENDAR_ACCOUNTS_KEY)!)).toEqual([]);
+  });
+
+  it("expands every calendar account when the remembered state is unreadable", async () => {
+    localStorage.setItem(COLLAPSED_CALENDAR_ACCOUNTS_KEY, "{not json");
+    renderWeek();
+    await screen.findByText("Sun 20");
+    expect(screen.getByRole("checkbox", { name: "Holidays in United States" })).toBeInTheDocument();
+
+    cleanup();
+    localStorage.setItem(COLLAPSED_CALENDAR_ACCOUNTS_KEY, JSON.stringify({ "joel@example.com": true }));
+    renderWeek();
+    await screen.findByText("Sun 20");
+    expect(screen.getByRole("checkbox", { name: "Holidays in United States" })).toBeInTheDocument();
   });
 
   it("opens an hour-long event from a clicked time and saves its details on the primary calendar", async () => {

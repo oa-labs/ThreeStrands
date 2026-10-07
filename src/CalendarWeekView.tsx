@@ -25,6 +25,8 @@ import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
+/** Calendar accounts collapsed in the week view's calendar list, remembered on this device. */
+export const COLLAPSED_CALENDAR_ACCOUNTS_KEY = "threestrands.calendarWeek.collapsedAccounts";
 const DEFAULT_WEEK_SCROLL_TOP = 7 * HOUR_HEIGHT;
 const MAX_WEEK_SCROLL_TOP = 24 * HOUR_HEIGHT;
 /** How often the "now" indicator re-renders, in milliseconds. */
@@ -64,6 +66,24 @@ function saveWeekScrollTop(scrollTop: number): void {
     localStorage.setItem(WEEK_SCROLL_TOP_KEY, String(scrollTop));
   } catch {
     // The scroll position still applies for this session when storage is unavailable.
+  }
+}
+
+function readCollapsedCalendarAccounts(): Set<string> {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(COLLAPSED_CALENDAR_ACCOUNTS_KEY) ?? "[]");
+    if (Array.isArray(stored)) return new Set(stored.filter((email): email is string => typeof email === "string"));
+  } catch {
+    // Unreadable or blocked storage leaves every account expanded.
+  }
+  return new Set();
+}
+
+function saveCollapsedCalendarAccounts(collapsed: ReadonlySet<string>): void {
+  try {
+    localStorage.setItem(COLLAPSED_CALENDAR_ACCOUNTS_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    // The collapsed accounts still apply for this session when storage is unavailable.
   }
 }
 
@@ -155,7 +175,7 @@ function CalendarList({
   onToggle(accountId: string, calendarId: string, selected: boolean): void;
   onAdd(): void;
 }) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsedCalendarAccounts);
   return (
     <section className="calendar-list" aria-label="Calendars">
       <header>
@@ -177,6 +197,7 @@ function CalendarList({
                 const next = new Set(current);
                 if (next.has(account.email)) next.delete(account.email);
                 else next.add(account.email);
+                saveCollapsedCalendarAccounts(next);
                 return next;
               })}
             >
