@@ -32,39 +32,11 @@ describe("custom properties", () => {
   });
 });
 
-/** Shells and headers (phase 1) converted to the spacing scale. */
-const spacedSurfaces = [
-  ".sidebar",
-  ".thread-header",
-  ".reader-header",
-  ".calendar-week-header",
-  ".calendar-sidebar-header",
-  ".calendar-week-side",
-  ".tasks-workspace .tasks-sidebar-header",
-  ".tasks-sidebar-header",
-  ".goals-pane",
-  ".goals-pane-header",
-  ".contacts-header",
-  ".contact-profile-main",
-  ".contact-profile-top",
-  ".contact-context-rail",
-  ".context-panel",
-  ".settings-nav",
-  ".settings-panel",
-  ".settings-page-header",
-];
-
-/** Dialogs, the composer, and notices (phase 2), matched by class family. Rows and lists come next. */
-const spacedSurfacePatterns = [
-  /modal|goal-review|goal-link|goal-delete-confirm|goal-dialog-footer|task-detail|task-editor|calendar-event-time-fields/,
-  /availability-request|recovery-phrase|command-(list|item)|palette-search|shortcut-|snippet-(editor|field|option|picker)|label-(list|search|option|actions)/,
-  /settings-inline-confirm|meeting-scheduler|meeting-slot/,
-  /composer|compose-|recipient-|reply-assist|attachment-list|outbox-row/,
-  /toast|send-notice|exit-notice|form-error/,
-];
-
-function isSpaced(selector: string) {
-  return spacedSurfaces.includes(selector) || spacedSurfacePatterns.some((pattern) => pattern.test(selector));
+/** Pixel value of a spacing token at the default scale, following var() references. */
+function spacePx(name: string): number {
+  const value = rootTokens.get(name) ?? "";
+  const reference = /^var\((--[\w-]+)\)$/.exec(value)?.[1];
+  return reference ? spacePx(reference) : Number.parseFloat(value);
 }
 
 describe("spacing", () => {
@@ -79,37 +51,34 @@ describe("spacing", () => {
   });
 
   it("builds the layout roles from the spacing scale", () => {
-    for (const role of ["--pane-inset", "--side-pane-inset", "--pane-header-padding", "--pane-end-padding", "--dialog-inset"]) {
+    const roles = ["--pane-inset", "--side-pane-inset", "--pane-header-padding", "--pane-end-padding", "--dialog-inset", "--list-gutter", "--list-row-inset", "--settings-label-gap"];
+    for (const role of roles) {
       const value = rootTokens.get(role);
       expect(value, role).toBeDefined();
-      for (const part of value!.split(/\s+/)) expect(part, role).toMatch(/^var\(--(space-\d+|pane-inset|side-pane-inset)\)$/);
+      for (const part of value!.split(/\s+/)) expect(part, role).toMatch(/^var\(--(space-\d+(-5)?|pane-inset|side-pane-inset)\)$/);
     }
   });
 
-  it("spaces converted surfaces only with scale steps and layout roles", () => {
+  it("lines list rows up with the pane title: gutter plus row inset equals the pane inset", () => {
+    expect(spacePx("--list-gutter") + spacePx("--list-row-inset")).toBe(spacePx("--pane-inset"));
+  });
+
+  it("spaces every rule only with scale steps and layout roles", () => {
     const raw: string[] = [];
     css.walkRules((rule) => {
-      if ((rule.parent as Rule | undefined)?.selector?.startsWith(":root") || rule.selector.startsWith(":root")) return;
-      if (!rule.selectors.some(isSpaced)) return;
-      rule.walkDecls(/^(padding|margin|gap)(-|$)/, (declaration) => {
+      if (rule.selector.startsWith(":root")) return;
+      rule.walkDecls(/^(padding|margin|gap|row-gap|column-gap)(-|$)/, (declaration) => {
         // Strip tokens, zero, and the clamp/calc wrappers that combine them; anything left is a raw length.
-        // Relative units (em, vw, vh) scale with their content or the window rather than the grid.
+        // Relative units (em, %, vw, vh) scale with their content or the window rather than the grid.
         const rest = declaration.value
           .replace(/var\(--[\w-]+\)/g, "")
           .replace(/\b(clamp|calc)\(/g, "(")
-          .replace(/(\d*\.)?\d+(em|vw|vh)\b|\*\s*-1\b|\b0\b|auto/g, "")
-          .replace(/[\s(),]/g, "");
+          .replace(/(\d*\.)?\d+(em|%|vw|vh)(?![\w-])|\*\s*-1\b|\b0\b|auto/g, "")
+          .replace(/[\s(),+]/g, "");
         if (rest) raw.push(describeDeclaration(declaration));
       });
     });
     expect(raw).toEqual([]);
-  });
-
-  it("covers every surface in the list, so a renamed selector cannot silently drop out", () => {
-    const seen = new Set<string>();
-    css.walkRules((rule) => { for (const selector of rule.selectors) seen.add(selector); });
-    expect(spacedSurfaces.filter((selector) => !seen.has(selector))).toEqual([]);
-    for (const pattern of spacedSurfacePatterns) expect([...seen].some((selector) => pattern.test(selector)), String(pattern)).toBe(true);
   });
 });
 

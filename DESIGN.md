@@ -301,7 +301,7 @@ of roles (`--text-*`) built from them. Components use only the roles:
 
 ## Spacing
 
-Spacing sits on a 4px grid: `--space-1` (4px) through `--space-12` (48px),
+Spacing sits on a 4px grid: `--space-1` (4px) through `--space-16` (64px),
 with half steps `--space-0-5`, `--space-1-5`, and `--space-2-5` (2, 6, 10px)
 for tight controls. Layout roles build on the scale:
 
@@ -312,17 +312,20 @@ for tight controls. Layout roles build on the scale:
 | `--side-pane-inset` | Horizontal inset of a narrow side pane: context panel, goals, calendar side |
 | `--pane-end-padding` | Room below the last item in a scrolling pane |
 | `--dialog-inset` | Horizontal inset of a dialog's header, body, and footer |
+| `--list-gutter` | Side padding of a scrolling list, so row highlights have room |
+| `--list-row-inset` | Horizontal padding inside a list row; with the gutter, it equals `--pane-inset` so row text lines up with the pane title |
+| `--settings-label-gap` | Between a settings label and its field; detail lines indent by the label width plus this gap |
 
 The composer sits in the reader, so it uses `--pane-inset` rather than the
 dialog inset. Text inputs, selects, and search fields take their height from
 `--control-h`, `--control-h-sm`, or `--control-h-xs`, the same heights as
 buttons, so a field and the button beside it line up.
 
-Shells, headers, dialogs, the composer, and notices use only scale steps and
-roles. List rows move onto the scale next; `src/styleTokens.test.ts` lists
-the surfaces converted so far and fails on raw lengths in them. That
-test also fails when the stylesheet reads a custom property that is never
-defined.
+Every padding, margin, and gap uses a scale step or a role; relative units
+(em, %, vw, vh) are allowed where spacing should follow the content or the
+window. `src/styleTokens.test.ts` fails on any raw length, on a list gutter
+and row inset that no longer add up to the pane inset, and on a custom
+property the stylesheet reads but never defines.
 
 ## Accessibility and testing
 

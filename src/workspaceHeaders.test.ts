@@ -88,7 +88,7 @@ describe("primary workspace headers", () => {
       rightOverride: undefined,
       minHeight: "90px",
       alignment: "flex-start",
-      titleMargin: "5px 0 0",
+      titleMargin: "var(--space-1) 0 0",
       titleSize: "var(--text-page-title)",
       titleWeight: "var(--weight-semibold)",
       titleTracking: "var(--tracking-tight)",
@@ -119,7 +119,11 @@ describe("primary workspace header buttons", () => {
     ".contacts-view-switch",
   ];
   const shapeProperties = ["height", "min-height", "padding", "border", "border-radius", "font-size", "font-weight", "letter-spacing", "text-transform"];
-  const px = (value: string | undefined) => Number.parseFloat(value ?? "");
+  /** Pixel value of a length, following a var() reference to its :root token. */
+  const px = (value: string | undefined): number => {
+    const reference = /^var\((--[\w-]+)\)$/.exec(value ?? "")?.[1];
+    return reference ? px(lastDeclaration(":root", reference)) : Number.parseFloat(value ?? "");
+  };
 
   it("gives buttons, icon buttons, and segmented toggles one shared height", () => {
     const controlHeight = px(lastDeclaration(":root", "--control-h"));
