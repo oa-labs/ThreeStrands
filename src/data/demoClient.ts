@@ -769,6 +769,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async syncStatus() {
       return { ...status };
     },
+    async mailSyncActivity() {
+      return [];
+    },
     async retryFailedMutations() {
       return { ...status };
     },

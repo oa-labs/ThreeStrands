@@ -162,6 +162,8 @@ export interface MailClient extends CorrespondenceClient {
   sync(): Promise<SyncStatus>;
   flushPending(): Promise<SyncStatus>;
   syncStatus(): Promise<SyncStatus>;
+  /** Accounts checking their provider for mail right now; `mail-sync-activity` events report changes. */
+  mailSyncActivity(): Promise<string[]>;
   /** Requeues every permanently failed mailbox operation for another attempt. */
   retryFailedMutations(): Promise<SyncStatus>;
   /** Clears failed-operation and quarantined-message reports once reviewed. */
@@ -286,6 +288,7 @@ const tauriClient: MailClient = {
   sync: () => complete("sync_account"),
   flushPending: () => complete("flush_pending_mutations"),
   syncStatus: () => read("sync_status"),
+  mailSyncActivity: () => read("mail_sync_activity"),
   retryFailedMutations: () => complete("retry_failed_mutations"),
   dismissSyncProblems: () => complete("dismiss_sync_problems"),
   recoveryStatus: () => read("recovery_status"),

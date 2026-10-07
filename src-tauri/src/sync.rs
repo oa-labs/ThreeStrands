@@ -1,12 +1,12 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     future::Future,
     sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
 
 use rand::Rng;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{watch, Mutex, Notify};
 
 use crate::{
     auth::AccountAuth,
@@ -58,6 +58,90 @@ fn database_provider_error(error: DatabaseError) -> ProviderError {
     ProviderError::Other(error.to_string())
 }
 
+type SyncActivityListener = Arc<dyn Fn(&str, bool) + Send + Sync>;
+
+/// Which accounts are checking their provider for mail right now, shared by
+/// every account's [`SyncService`]. The listener hears each account's first
+/// sync starting and its last one finishing, so the UI can show that mail is
+/// being checked whether the polling loop or a manual refresh started it.
+#[derive(Clone, Default)]
+pub struct SyncActivity {
+    active: Arc<StdMutex<HashMap<String, usize>>>,
+    listener: Option<SyncActivityListener>,
+}
+
+impl SyncActivity {
+    pub fn with_listener(listener: impl Fn(&str, bool) + Send + Sync + 'static) -> Self {
+        Self {
+            active: Arc::default(),
+            listener: Some(Arc::new(listener)),
+        }
+    }
+
+    /// Accounts with a sync in progress, sorted, for a UI that mounts after
+    /// a sync already announced its start.
+    pub fn active_accounts(&self) -> Vec<String> {
+        let mut accounts = self
+            .active
+            .lock()
+            .map(|active| active.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        accounts.sort();
+        accounts
+    }
+
+    /// Marks `account_id` as syncing until the returned guard drops, which
+    /// also covers a run that account retirement cancels mid-flight.
+    fn begin(&self, account_id: &str) -> SyncActivityGuard {
+        let started = self.active.lock().is_ok_and(|mut active| {
+            let runs = active.entry(account_id.to_string()).or_default();
+            *runs += 1;
+            *runs == 1
+        });
+        if started {
+            self.notify(account_id, true);
+        }
+        SyncActivityGuard {
+            activity: self.clone(),
+            account_id: account_id.to_string(),
+        }
+    }
+
+    fn end(&self, account_id: &str) {
+        let finished = self.active.lock().is_ok_and(|mut active| {
+            let Some(runs) = active.get_mut(account_id) else {
+                return false;
+            };
+            *runs -= 1;
+            if *runs > 0 {
+                return false;
+            }
+            active.remove(account_id);
+            true
+        });
+        if finished {
+            self.notify(account_id, false);
+        }
+    }
+
+    fn notify(&self, account_id: &str, active: bool) {
+        if let Some(listener) = &self.listener {
+            listener(account_id, active);
+        }
+    }
+}
+
+struct SyncActivityGuard {
+    activity: SyncActivity,
+    account_id: String,
+}
+
+impl Drop for SyncActivityGuard {
+    fn drop(&mut self) {
+        self.activity.end(&self.account_id);
+    }
+}
+
 #[derive(Clone)]
 pub struct SyncService {
     database: Arc<Database>,
@@ -67,6 +151,10 @@ pub struct SyncService {
     /// by every clone, so it reaches runs started outside the polling loop.
     retired: Arc<watch::Sender<bool>>,
     last_attempt: Arc<StdMutex<Option<Instant>>>,
+    activity: SyncActivity,
+    /// Signalled when the user returns to the app; see
+    /// [`Self::reset_poll_backoff`].
+    wake: Arc<Notify>,
 }
 
 /// Returned by a sync attempt on an account that is being removed.
@@ -88,7 +176,23 @@ impl SyncService {
             gate: Arc::new(Mutex::new(())),
             retired: Arc::new(watch::Sender::new(false)),
             last_attempt: Arc::new(StdMutex::new(None)),
+            activity: SyncActivity::default(),
+            wake: Arc::new(Notify::new()),
         }
+    }
+
+    /// Reports this account's syncs to the app-wide `activity` registry.
+    pub fn with_activity(mut self, activity: SyncActivity) -> Self {
+        self.activity = activity;
+        self
+    }
+
+    /// Brings an idle account's polling back to [`MIN_POLL_INTERVAL`] when
+    /// the user returns, instead of leaving the next check up to
+    /// [`MAX_POLL_INTERVAL`] away. A signal sent while a poll is running is
+    /// kept for the next wait.
+    pub fn reset_poll_backoff(&self) {
+        self.wake.notify_one();
     }
 
     /// Runs `work` holding the account's sync gate, unless the account is
@@ -166,6 +270,7 @@ impl SyncService {
     async fn sync_provider_reporting_changes_locked(&self) -> ProviderResult<(SyncStatus, bool)> {
         let account_id = self.account_id();
         let provider = self.auth.provider();
+        let _activity = self.activity.begin(&account_id);
         let result = sync_with(self.database.as_ref(), &account_id, provider.as_ref()).await;
         if let Ok(mut last_attempt) = self.last_attempt.lock() {
             *last_attempt = Some(Instant::now());
@@ -276,37 +381,54 @@ impl SyncService {
             .map_err(|error| error.to_string())
     }
 
-    /// `on_synced` fires after a successful poll that changed local state,
-    /// with the account's id, so callers (e.g. the frontend's per-account
-    /// unread badges) can refresh state that this background account just
+    /// Syncs once right away when `sync_immediately`, then polls the
+    /// provider forever with adaptive backoff. After any sync that changed what the
+    /// UI shows, including the startup one, calls `on_synced` with the
+    /// account's id, so callers (e.g. the frontend's thread list and
+    /// per-account unread badges) can refresh state that this account just
     /// changed without waiting for the user to switch to it. A poll that
     /// found nothing new, which is most of them, stays silent so the UI
     /// doesn't reload its lists and counts every interval.
-    pub async fn polling_loop(self, on_synced: impl Fn(&str) + Send + Sync + 'static) {
+    pub async fn polling_loop(
+        self,
+        sync_immediately: bool,
+        on_synced: impl Fn(&str) + Send + Sync + 'static,
+    ) {
+        if sync_immediately && self.is_connected() {
+            // The first poll after startup stays at the polling floor
+            // whatever the result, since the user has just opened the app.
+            self.poll_once(MIN_POLL_INTERVAL, &on_synced).await;
+        }
         let mut delay = MIN_POLL_INTERVAL;
         loop {
             // Jitter avoids multiple accounts/instances recovering from the
             // same outage and retrying in lockstep; `next_poll_delay` itself
             // stays deterministic so its unit tests aren't flaky.
             let jitter = Duration::from_millis(rand::thread_rng().gen_range(0..250));
-            tokio::time::sleep(delay + jitter).await;
+            delay = wait_for_next_poll(&self.wake, delay, jitter).await;
             if !self.auth.available() {
                 delay = Duration::from_secs(30);
                 continue;
             }
-            let before = self
-                .database
-                .sync_status(&self.account_id())
-                .map(|status| status.pending_mutations)
-                .unwrap_or_default();
-            let result = self.sync_provider_reporting_changes().await;
-            if should_notify_after_poll(before, &result) {
-                on_synced(&self.account_id());
-            }
-            delay = next_poll_delay(delay, before, result.map(|(status, _)| status));
+            delay = self.poll_once(delay, &on_synced).await;
             self.reconcile_if_due().await;
             self.backfill_sent_if_pending().await;
         }
+    }
+
+    /// One sync, notifying the UI if it changed anything; returns the delay
+    /// before the next poll.
+    async fn poll_once(&self, delay: Duration, on_synced: &impl Fn(&str)) -> Duration {
+        let before = self
+            .database
+            .sync_status(&self.account_id())
+            .map(|status| status.pending_mutations)
+            .unwrap_or_default();
+        let result = self.sync_provider_reporting_changes().await;
+        if should_notify_after_poll(before, &result) {
+            on_synced(&self.account_id());
+        }
+        next_poll_delay(delay, before, result.map(|(status, _)| status))
     }
 
     /// Advances the one-time sent-mail backfill by a few bounded steps once
@@ -377,6 +499,32 @@ fn should_notify_after_poll(
         Ok((status, changed)) => *changed || status.pending_mutations != pending_before,
         Err(_) => false,
     }
+}
+
+/// Sleeps out `delay` (plus `jitter`) before the next poll. A wake signal
+/// means the user is back: the delay drops to [`MIN_POLL_INTERVAL`] and the
+/// poll comes no later than that floor from the signal. Returns the delay
+/// the next backoff step grows from.
+async fn wait_for_next_poll(wake: &Notify, mut delay: Duration, jitter: Duration) -> Duration {
+    let mut deadline = tokio::time::Instant::now() + delay + jitter;
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => return delay,
+            _ = wake.notified() => {
+                delay = MIN_POLL_INTERVAL;
+                deadline = woken_poll_deadline(deadline, tokio::time::Instant::now(), jitter);
+            }
+        }
+    }
+}
+
+/// A wake signal only ever brings the next poll closer.
+fn woken_poll_deadline(
+    deadline: tokio::time::Instant,
+    now: tokio::time::Instant,
+    jitter: Duration,
+) -> tokio::time::Instant {
+    deadline.min(now + MIN_POLL_INTERVAL + jitter)
 }
 
 fn next_poll_delay(
@@ -1250,6 +1398,120 @@ mod tests {
         async fn delete_label(&self, _id: &str) -> ProviderResult<()> {
             unreachable!()
         }
+    }
+
+    fn recording_activity() -> (SyncActivity, Arc<StdMutex<Vec<(String, bool)>>>) {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let recorded = Arc::clone(&events);
+        let activity = SyncActivity::with_listener(move |account_id, active| {
+            recorded.lock().unwrap().push((account_id.to_string(), active));
+        });
+        (activity, events)
+    }
+
+    #[test]
+    fn sync_activity_reports_each_accounts_first_start_and_last_finish() {
+        let (activity, events) = recording_activity();
+
+        let first = activity.begin("a@example.com");
+        let overlapping = activity.begin("a@example.com");
+        let other = activity.begin("b@example.com");
+        assert_eq!(activity.active_accounts(), ["a@example.com", "b@example.com"]);
+
+        drop(first);
+        assert_eq!(activity.active_accounts(), ["a@example.com", "b@example.com"]);
+        drop(other);
+        drop(overlapping);
+        assert!(activity.active_accounts().is_empty());
+
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                ("a@example.com".to_string(), true),
+                ("b@example.com".to_string(), true),
+                ("b@example.com".to_string(), false),
+                ("a@example.com".to_string(), false),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_sync_reports_activity_while_it_runs_and_a_retired_account_reports_none() {
+        let credential = crate::auth::OAuthCredential::in_memory_for_test(
+            "http://127.0.0.1:9/token",
+            crate::auth::Tokens { access_token: "token".into(), refresh_token: Some("refresh".into()), expires_at: u64::MAX },
+        );
+        let database = Arc::new(Database::open_memory());
+        let (activity, events) = recording_activity();
+        let service = SyncService::new(Arc::clone(&database), AccountAuth::Gmail(credential))
+            .with_activity(activity.clone());
+        let account_id = service.account_id();
+        // A paused account syncs without contacting the provider.
+        database.adopt_account(&account_id).unwrap();
+        database.mark_account_needs_reauth(&account_id, "revoked").unwrap();
+
+        service.sync().await.unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            [(account_id.clone(), true), (account_id.clone(), false)]
+        );
+        assert!(activity.active_accounts().is_empty());
+
+        service.retire().await;
+        events.lock().unwrap().clear();
+        assert!(service.sync().await.is_err());
+        assert!(events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unwoken_wait_sleeps_out_the_backed_off_delay() {
+        let wake = Notify::new();
+        let started = tokio::time::Instant::now();
+
+        let delay = wait_for_next_poll(&wake, MAX_POLL_INTERVAL, Duration::ZERO).await;
+
+        assert_eq!(delay, MAX_POLL_INTERVAL);
+        assert_eq!(started.elapsed(), MAX_POLL_INTERVAL);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn waking_a_backed_off_wait_polls_within_the_floor_and_resets_backoff() {
+        let wake = Arc::new(Notify::new());
+        let started = tokio::time::Instant::now();
+        let waiter = tokio::spawn({
+            let wake = Arc::clone(&wake);
+            async move { wait_for_next_poll(&wake, MAX_POLL_INTERVAL, Duration::ZERO).await }
+        });
+        tokio::time::sleep(Duration::from_secs(60)).await;
+
+        wake.notify_one();
+
+        assert_eq!(waiter.await.unwrap(), MIN_POLL_INTERVAL);
+        assert_eq!(started.elapsed(), Duration::from_secs(60) + MIN_POLL_INTERVAL);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_wake_sent_during_a_poll_applies_to_the_next_wait() {
+        let wake = Notify::new();
+        wake.notify_one();
+        let started = tokio::time::Instant::now();
+
+        let delay = wait_for_next_poll(&wake, MAX_POLL_INTERVAL, Duration::ZERO).await;
+
+        assert_eq!(delay, MIN_POLL_INTERVAL);
+        assert_eq!(started.elapsed(), MIN_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn a_wake_never_postpones_a_poll_that_was_already_closer() {
+        let now = tokio::time::Instant::now();
+        let soon = now + Duration::from_secs(3);
+        assert_eq!(woken_poll_deadline(soon, now, Duration::ZERO), soon);
+        let jitter = Duration::from_millis(100);
+        assert_eq!(
+            woken_poll_deadline(now + MAX_POLL_INTERVAL, now, jitter),
+            now + MIN_POLL_INTERVAL + jitter
+        );
     }
 
     #[test]

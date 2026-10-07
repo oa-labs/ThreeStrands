@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.75.3"
+version = "0.76.0"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -77,3 +77,5 @@ xattr = "1"
 # `reqwest`-based client code is exercised over real HTTP rather than
 # mocked at the function-call level.
 axum = { version = "0.8", features = ["multipart"] }
+# Test-only: paused tokio time for the polling loop's wait tests.
+tokio = { version = "1", features = ["test-util"] }

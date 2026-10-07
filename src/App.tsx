@@ -126,6 +126,7 @@ import {
   readAiRequestConfig,
 } from "./aiSettings";
 import { useAccounts } from "./useAccounts";
+import { useMailSyncActivity } from "./useMailSyncActivity";
 import { useAppPreferences } from "./useAppPreferences";
 import { useCalendarAccounts } from "./useCalendarAccounts";
 import { useEscapeDismiss } from "./useEscapeDismiss";
@@ -310,6 +311,11 @@ export function App() {
     reorderAccounts,
   } = useAccounts(settingsOpen);
   const [unreadCounts, setUnreadCounts] = useState<UnreadCounts>({});
+  const mailSyncActive = useMailSyncActivity(() => {
+    void mailClient.syncStatus().then(setSyncStatus).catch(logBackgroundFailure("Sync status refresh"));
+  });
+  const checkingMail = mailSyncActive || syncStatus?.state === "syncing";
+
   const refreshUnreadCounts = useCallback(() => {
     void mailClient.listUnreadCounts().then(setUnreadCounts).catch(logBackgroundFailure("Unread count refresh"));
   }, []);
@@ -2388,8 +2394,8 @@ export function App() {
             </button>
           </HoverTooltip>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
-          <HoverTooltip title="Refresh mail"><button className="nav-button" aria-label="Refresh mail" onClick={() => executeById("mail.refresh")}>
-            <RefreshCw size={19} className={syncStatus?.state === "syncing" ? "spin" : ""} />
+          <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail"}><button className="nav-button" aria-label="Refresh mail" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
+            <RefreshCw size={19} className={checkingMail ? "spin" : ""} />
           </button></HoverTooltip>
           <HoverTooltip title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}>
             <button className="nav-button" aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} onClick={toggleTheme}>

@@ -55,14 +55,17 @@ describe("background unread count updates", () => {
       return Promise.resolve(1);
     });
 
+    async function fire(event: string, payload: unknown) {
+      await waitFor(() => expect(listenIdsByEvent.has(event)).toBe(true));
+      const id = listenIdsByEvent.get(event);
+      await act(async () => {
+        handlersById.get(id!)?.({ event, id, payload });
+      });
+    }
+
     return {
-      async fireUnreadCountsChanged(payload: string) {
-        await waitFor(() => expect(listenIdsByEvent.has("unread-counts-changed")).toBe(true));
-        const id = listenIdsByEvent.get("unread-counts-changed");
-        await act(async () => {
-          handlersById.get(id!)?.({ event: "unread-counts-changed", id, payload });
-        });
-      },
+      fire,
+      fireUnreadCountsChanged: (payload: string) => fire("unread-counts-changed", payload),
     };
   }
 
@@ -117,5 +120,29 @@ describe("background unread count updates", () => {
     await bridge.fireUnreadCountsChanged(DEMO_ACCOUNT_ID);
 
     expect(listThreadsPage).toHaveBeenCalled();
+  });
+
+  it("spins Refresh while any account checks for mail and picks up the finished sync's status", async () => {
+    const bridge = setupEventBridge();
+    const syncStatus = vi.spyOn(mailClient, "syncStatus");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const refresh = screen.getByRole("button", { name: "Refresh mail" });
+    expect(refresh).toHaveAttribute("aria-busy", "false");
+
+    await bridge.fire("mail-sync-activity", { accountId: DEMO_ACCOUNT_ID, active: true });
+    await bridge.fire("mail-sync-activity", { accountId: "other@example.com", active: true });
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    expect(refresh.querySelector("svg")).toHaveClass("spin");
+
+    syncStatus.mockClear();
+    await bridge.fire("mail-sync-activity", { accountId: DEMO_ACCOUNT_ID, active: false });
+    // Another account is still checking.
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    expect(syncStatus).toHaveBeenCalled();
+
+    await bridge.fire("mail-sync-activity", { accountId: "other@example.com", active: false });
+    expect(refresh).toHaveAttribute("aria-busy", "false");
+    expect(refresh.querySelector("svg")).not.toHaveClass("spin");
   });
 });

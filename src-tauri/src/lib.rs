@@ -563,6 +563,19 @@ fn merge_sync_statuses(
 }
 
 #[cfg(test)]
+mod mail_sync_activity_event_tests {
+    use super::MailSyncActivityEvent;
+
+    #[test]
+    fn serializes_the_shape_the_frontend_listens_for() {
+        assert_eq!(
+            serde_json::to_value(MailSyncActivityEvent { account_id: "a@example.com", active: true }).unwrap(),
+            serde_json::json!({ "accountId": "a@example.com", "active": true })
+        );
+    }
+}
+
+#[cfg(test)]
 mod combined_sync_status_tests {
     use super::merge_sync_statuses;
     use crate::models::SyncStatus;
@@ -664,14 +677,12 @@ fn spawn_synced_account(
     sync_immediately: bool,
     app: tauri::AppHandle,
 ) -> ConnectedAccount {
-    let service = SyncService::new(database, auth.clone());
+    let activity = app.state::<sync::SyncActivity>().inner().clone();
+    let service = SyncService::new(database, auth.clone()).with_activity(activity);
     let polling_service = service.clone();
     let poll_task = tauri::async_runtime::spawn(async move {
-        if sync_immediately && polling_service.is_connected() {
-            log_failure("initial account sync", polling_service.sync().await);
-        }
         polling_service
-            .polling_loop(move |account_id: &str| {
+            .polling_loop(sync_immediately, move |account_id: &str| {
                 use tauri::Emitter;
                 let _ = app.emit("unread-counts-changed", account_id);
             })
@@ -682,6 +693,21 @@ fn spawn_synced_account(
         sync: service,
         poll_task,
     }
+}
+
+/// Payload of the `mail-sync-activity` event.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MailSyncActivityEvent<'a> {
+    account_id: &'a str,
+    active: bool,
+}
+
+/// Accounts currently checking for mail, for a frontend that mounted after
+/// their `mail-sync-activity` start event fired.
+#[tauri::command]
+async fn mail_sync_activity(activity: State<'_, sync::SyncActivity>) -> Result<Vec<String>, String> {
+    Ok(activity.active_accounts())
 }
 
 #[tauri::command]
@@ -1381,6 +1407,9 @@ fn spawn_foreground_sync(handle: &tauri::AppHandle) {
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
         if let Some(state) = handle.try_state::<AppState>() {
+            for service in sync_services(&state, None).await {
+                service.reset_poll_backoff();
+            }
             let engine = state.replicated_sync.clone();
             log_failure("foreground replicated sync", engine.sync_once().await);
             reconcile_account_registry(&handle);
@@ -3522,6 +3551,16 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         force_full_resync(&database);
     }
     let auth_config = AuthConfig::from_environment();
+    // Managed before any account's sync service is built, since each one
+    // reports to it.
+    let activity_handle = app.handle().clone();
+    app.manage(sync::SyncActivity::with_listener(move |account_id, active| {
+        use tauri::Emitter;
+        let _ = activity_handle.emit(
+            "mail-sync-activity",
+            MailSyncActivityEvent { account_id, active },
+        );
+    }));
     spawn_badge_loop(database.clone(), app.handle().clone());
     spawn_storage_maintenance(database.clone());
     let root = data_dir.join("attachments");
@@ -3861,6 +3900,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         unsubscribe,
         // Mail sync
         sync_status,
+        mail_sync_activity,
         sync_account,
         flush_pending_mutations,
         retry_failed_mutations,
