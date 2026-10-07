@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, MessageSquareText } from "lucide-react";
+import { ChevronDown, ChevronRight, Mail, MessageSquareText } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Account, ContactFiles, ContactTimelineItem, DomainContext, Message, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
@@ -90,9 +90,10 @@ function revealIfTruncated(line: HTMLElement | null) {
  * row's date at the end of that line, then an optional detail line; trailing
  * actions sit after the text. Rows without a glyph keep the column, so all
  * row text in the panel starts at one edge. A title or detail line that is cut
- * off shows its full text on hover.
+ * off shows its full text on hover. A small icon `action` sits at the end of
+ * the detail line, under the date, so dates keep the panel's right edge.
  */
-export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, trailing, wrapTitle, className }: {
+export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, action, trailing, wrapTitle, className }: {
   as?: "div" | "article";
   /** A decorative glyph, drawn inside the row's button. */
   icon?: ReactNode;
@@ -107,6 +108,9 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   detail?: ReactNode;
   /** Makes the glyph and text one button. */
   onActivate?(): void;
+  /** One small icon button (.btn-icon-sm) under the date, outside the row's own button. */
+  action?: ReactNode;
+  /** Wider controls after the text, such as a labelled button; these do push the date in. */
   trailing?: ReactNode;
   /** Lets a long title wrap, for titles the user wrote, such as tasks. */
   wrapTitle?: boolean;
@@ -115,7 +119,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   const titleRef = useRef<HTMLElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const revealTruncated = () => { revealIfTruncated(titleRef.current); revealIfTruncated(detailRef.current); };
-  const classes = ["context-row", onActivate ? "context-row-interactive" : "", control ? "context-row-has-control" : "", wrapTitle ? "context-row-wrap" : "", className ?? ""].filter(Boolean).join(" ");
+  const classes = ["context-row", onActivate ? "context-row-interactive" : "", control ? "context-row-has-control" : "", wrapTitle ? "context-row-wrap" : "", action ? "context-row-has-action" : "", className ?? ""].filter(Boolean).join(" ");
   const body = <>
     {control ? null : <span className="context-row-glyph context-row-icon" aria-hidden="true">{icon}</span>}
     <span className="context-row-text">
@@ -132,6 +136,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
       {onActivate
         ? <button type="button" className="context-row-main" onClick={onActivate}>{body}</button>
         : <div className="context-row-main">{body}</div>}
+      {action ? <span className="context-row-action">{action}</span> : null}
       {trailing ? <span className="context-row-trailing">{trailing}</span> : null}
     </Element>
   );
@@ -186,6 +191,9 @@ export function ContextSection({ id, title, label, count, actions, note, rows, l
   );
 }
 
+/** The glyph on every row that is an email, sized like the Files rows' icons. */
+const emailIcon = <Mail size={ICON_SIZE.sm} />;
+
 /** Attachments the selected person sent, newest first. */
 export function ContactFilesSection({ contactId, onShowMessage }: {
   contactId: string;
@@ -217,7 +225,7 @@ export function ContactFilesSection({ contactId, onShowMessage }: {
         date={formatHistoryDate(file.sentAt)}
         detail={formatAttachmentSize(file.attachment.size)}
         onActivate={() => open(file.messageId, file.attachment.id)}
-        trailing={<button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
+        action={<button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
           <MessageSquareText size={ICON_SIZE.sm} />
         </button>}
       />
@@ -267,6 +275,7 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
     return (
       <ContextRow
         key={message.id}
+        icon={emailIcon}
         title={isMine(message) ? "You" : sender.name || sender.email}
         date={formatHistoryDate(message.sentAt)}
         detail={preview || undefined}
@@ -316,6 +325,7 @@ export function RecentEmailsSection({ items, onOpenThread, limit, onLoadOlder }:
         return (
           <ContextRow
             key={item.threadId}
+            icon={emailIcon}
             title={item.subject || "(no subject)"}
             date={formatHistoryDate(item.sentAt)}
             detail={snippet || undefined}
@@ -366,6 +376,7 @@ export function DomainSection({ email, addresses, accounts, hideThreadIds, onOpe
       rows={threads.map((item) => (
         <ContextRow
           key={item.threadId}
+          icon={emailIcon}
           title={item.subject || "(no subject)"}
           date={formatHistoryDate(item.sentAt)}
           detail={item.contactEmail}

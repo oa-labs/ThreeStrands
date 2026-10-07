@@ -2120,6 +2120,12 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-row-date { flex:0 0 auto; color:var(--muted); font-size:var(--text-meta); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .context-row-date.task-due-overdue { color:var(--error); font-weight:var(--weight-semibold); }
 .context-row-detail { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
+/* A small action shares the text column's cell, ending the detail line under the date. It
+   follows the row button in the DOM, so it paints on top; the detail line leaves it room. */
+.context-row-action { grid-row:1; grid-column:2; align-self:end; justify-self:end; }
+/* Both stay in row one; auto-placement would otherwise move the main button below the action. */
+.context-row-has-action .context-row-main { grid-row:1; }
+.context-row-has-action .context-row-detail { padding-right:calc(var(--control-h-xs) + var(--space-1)); }
 .context-row-trailing { grid-column:3; display:flex; align-self:center; align-items:center; gap:var(--space-1); margin-left:var(--space-1); }
 .context-task-checkbox { width:var(--check-size); height:var(--check-size); margin:0; accent-color:var(--accent); cursor:pointer; }
 .context-task-done .context-row-title { color:var(--muted); text-decoration:line-through; }

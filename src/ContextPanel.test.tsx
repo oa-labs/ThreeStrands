@@ -138,6 +138,8 @@ describe("ContextPanel",()=>{
     // Every row is with the selected person, so rows leave out their address.
     expect(row).not.toHaveTextContent("bob@example.com");
     expect(row).toHaveTextContent(formatHistoryDate("2026-09-20T00:00:00Z"));
+    // Rows that are emails carry the mail glyph, like files carry theirs.
+    expect(row.querySelector(".context-row-icon svg.lucide-mail")).not.toBeNull();
     expect(history).not.toHaveTextContent("you@example.com");
     fireEvent.click(within(history).getByRole("button",{name:/Budget review/}));
     expect(onOpenThread).toHaveBeenCalledWith("thread-2");
@@ -259,6 +261,7 @@ describe("ContextPanel",()=>{
 
     const outline=await screen.findByRole("region",{name:"This thread"});
     expectContextRows(outline);
+    for (const row of outline.querySelectorAll(".context-row")) expect(row.querySelector(".context-row-icon svg.lucide-mail")).not.toBeNull();
     const rows=()=>within(outline).getAllByRole("button",{name:/Message number/});
     expect(rows().map((row)=>row.textContent)).toEqual([expect.stringContaining("Message number 5"),expect.stringContaining("Message number 4"),expect.stringContaining("Message number 3")]);
     fireEvent.click(within(outline).getByRole("button",{name:"Your replies · 2"}));
@@ -288,6 +291,7 @@ describe("ContextPanel",()=>{
 
     const organization=await screen.findByRole("region",{name:"Others at acme.test"});
     expectContextRows(organization);
+    for (const row of organization.querySelectorAll(".context-row")) expect(row.querySelector(".context-row-icon svg.lucide-mail")).not.toBeNull();
     expect(mailClient.domainContext).toHaveBeenCalledWith("acme.test",["dana@acme.test","dana@acme-mail.test"],8);
     expect(organization).toHaveTextContent("Sam Lee, pat@acme.test");
     // The count is the conversations listed (thread-1 and thread-2 are shown elsewhere), not the two people.

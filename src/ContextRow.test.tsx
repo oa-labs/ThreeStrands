@@ -47,4 +47,15 @@ describe("ContextRow", () => {
       unmount();
     }
   });
+  it("puts a small action under the date, outside the row's button, and leaves the detail line room for it", () => {
+    const { container } = render(<ContextRow title="scan.pdf" date="Oct 2025" detail="538 KB" onActivate={() => {}}
+      action={<button type="button" className="btn-icon btn-icon-sm" aria-label="Show email" />} />);
+    const row = container.querySelector(".context-row")!;
+    expect(row).toHaveClass("context-row-has-action");
+    const action = row.querySelector(".context-row-action")!;
+    expect(action.parentElement).toBe(row);
+    expect(row.querySelector(".context-row-main")!.contains(action)).toBe(false);
+    expect(row.querySelector(".context-row-trailing")).toBeNull();
+    expect(row.querySelector(".context-row-date")!.parentElement).toHaveClass("context-row-line");
+  });
 });
