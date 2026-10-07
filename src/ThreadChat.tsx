@@ -1,4 +1,4 @@
-import { FileText, MessageSquareText, RotateCcw, Sparkles, X } from "lucide-react";
+import { MessageSquareText, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   MAX_CHAT_ATTACHMENTS,
@@ -11,6 +11,7 @@ import {
 } from "./chatAttachments";
 import type { ChatAttachmentSource, ChatAvailability, ChatSource } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
+import { AttachmentIcon } from "./AttachmentIcon";
 
 export type ChatEntry =
   | {
@@ -304,17 +305,17 @@ export function ThreadChat({
             onMouseEnter={() => setHighlighted(index)}
             onClick={() => choose(option)}
           >
-            <FileText size={ICON_SIZE.xs} aria-hidden="true" />
+            <AttachmentIcon filename={option.filename} size="xs" />
             <span>{option.filename}</span>
             <small>{option.sender}</small>
           </li>)}
         </ul> : null}
         {sharedAttachments.length + selected.length > 0 ? <ul className="thread-chat-attachments" aria-label="Attachments shared with AI">
           {sharedAttachments.map((attachment) => <li key={attachmentKey(attachment)} title="Shared earlier in this chat">
-            <FileText size={ICON_SIZE.xs} aria-hidden="true" /><span>{attachment.filename}</span>
+            <AttachmentIcon filename={attachment.filename} size="xs" /><span>{attachment.filename}</span>
           </li>)}
           {selected.map((attachment) => <li key={attachmentKey(attachment)}>
-            <FileText size={ICON_SIZE.xs} aria-hidden="true" /><span>{attachment.filename}</span>
+            <AttachmentIcon filename={attachment.filename} size="xs" /><span>{attachment.filename}</span>
             <button
               type="button"
                 className="btn-icon btn-icon-sm"

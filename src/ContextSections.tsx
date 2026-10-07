@@ -1,5 +1,5 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, FileText, MessageSquareText } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, MessageSquareText } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Account, ContactFiles, ContactTimelineItem, DomainContext, Message, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
@@ -8,6 +8,7 @@ import { CONTACT_FILE_LIMIT, CONTEXT_SECTION_ROWS, DOMAIN_CONTEXT_LIMIT, formatH
 import { formatAttachmentSize, splitAttachmentName } from "./threadPresentation";
 import { decodeHtmlEntities } from "./SafeMessage";
 import { ICON_SIZE } from "./iconSizes";
+import { AttachmentIcon } from "./AttachmentIcon";
 
 /** Per-device, per-section collapse choices. Transient layout, so not exported with settings. */
 const COLLAPSED_KEY = "threestrands.contextPanel.collapsedSections";
@@ -69,11 +70,25 @@ export function ContextSectionHeader({ title, titleId, count, toggle, actions }:
 }
 
 /**
+ * Gives a line its full text as a tooltip only while the text is cut off, so
+ * hovering never repeats what is already visible. Checked on each hover,
+ * since the panel's width changes.
+ */
+function revealIfTruncated(line: HTMLElement | null) {
+  if (!line) return;
+  const cut = [line, ...line.querySelectorAll<HTMLElement>("*")].some((node) => node.scrollWidth > node.clientWidth);
+  const text = line.textContent?.trim() ?? "";
+  if (cut && text) line.title = text;
+  else line.removeAttribute("title");
+}
+
+/**
  * The one row layout every context panel list shares. A glyph column lines up
  * with the section headers' chevrons; the text column holds the title with the
  * row's date at the end of that line, then an optional detail line; trailing
  * actions sit after the text. Rows without a glyph keep the column, so all
- * row text in the panel starts at one edge.
+ * row text in the panel starts at one edge. A title or detail line that is cut
+ * off shows its full text on hover.
  */
 export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, trailing, wrapTitle, className }: {
   as?: "div" | "article";
@@ -95,19 +110,22 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   wrapTitle?: boolean;
   className?: string;
 }) {
+  const titleRef = useRef<HTMLElement>(null);
+  const detailRef = useRef<HTMLElement>(null);
+  const revealTruncated = () => { revealIfTruncated(titleRef.current); revealIfTruncated(detailRef.current); };
   const classes = ["context-row", onActivate ? "context-row-interactive" : "", control ? "context-row-has-control" : "", wrapTitle ? "context-row-wrap" : "", className ?? ""].filter(Boolean).join(" ");
   const body = <>
     {control ? null : <span className="context-row-glyph context-row-icon" aria-hidden="true">{icon}</span>}
     <span className="context-row-text">
       <span className="context-row-line">
-        <strong className="context-row-title">{title}</strong>
+        <strong className="context-row-title" ref={titleRef}>{title}</strong>
         {date ? <small className={dateClassName ? `context-row-date ${dateClassName}` : "context-row-date"}>{date}</small> : null}
       </span>
-      {detail ? <small className="context-row-detail">{detail}</small> : null}
+      {detail ? <small className="context-row-detail" ref={detailRef}>{detail}</small> : null}
     </span>
   </>;
   return (
-    <Element className={classes}>
+    <Element className={classes} onMouseEnter={revealTruncated}>
       {control ? <span className="context-row-glyph context-row-control">{control}</span> : null}
       {onActivate
         ? <button type="button" className="context-row-main" onClick={onActivate}>{body}</button>
@@ -192,7 +210,7 @@ export function ContactFilesSection({ contactId, onShowMessage }: {
       <ContextRow
         key={`${file.messageId}:${file.attachment.id}`}
         className="context-file"
-        icon={<FileText size={ICON_SIZE.sm} />}
+        icon={<AttachmentIcon filename={file.attachment.filename} mimeType={file.attachment.mimeType} size="sm" />}
         title={<><span className="context-file-base">{base}</span>{extension}</>}
         date={formatHistoryDate(file.sentAt)}
         detail={formatAttachmentSize(file.attachment.size)}

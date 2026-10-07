@@ -108,6 +108,18 @@ line, then any trailing action. Section labels, notes, and "Show more" links
 start at the same text edge as row titles. A task's date slot shows its due
 date as "Due …". Do not hand-build a row in a section.
 
+Glyphs carry meaning: a checkbox is a control, and a file shows its kind
+through `AttachmentIcon` (image, spreadsheet, presentation, document,
+archive, audio, video, code, or a generic file). Message rows have no glyph;
+their empty column is deliberate. Do not add decorative icons for symmetry.
+
+Hover text follows one rule: a row's title or detail line shows its full
+text as a tooltip only while that line is cut off, and an icon-only control
+shows its name. A tooltip may add information, such as a shortcut or the
+addresses behind a list of names, but never repeats visible text. Hover is
+not available to keyboard and touch users, so nothing lives only in a
+tooltip.
+
 While a new message, forward, or reopened draft fills the reader, the panel
 follows the draft instead of the conversation behind it. It shows "Before you
 send" checks, the selected recipient (name, role and company, the same history

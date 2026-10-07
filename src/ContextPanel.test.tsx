@@ -231,6 +231,8 @@ describe("ContextPanel",()=>{
 
     const files=await screen.findByRole("region",{name:"Files"});
     expectContextRows(files);
+    // A PDF shows the document icon, not a generic file.
+    expect(files.querySelector(".context-row-icon [data-attachment-kind]")).toHaveAttribute("data-attachment-kind","document");
     expect(mailClient.contactFiles).toHaveBeenCalledWith(bob.id,50);
     expect(files).toHaveTextContent("30");
     expect(files).toHaveTextContent("Newest 4 of 30");

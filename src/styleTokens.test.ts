@@ -155,12 +155,21 @@ describe("colors", () => {
 });
 
 describe("icon sizes", () => {
+  it("draws file icons only through AttachmentIcon, so every file shows its kind", () => {
+    const dir = resolve(process.cwd(), "src");
+    const direct = readdirSync(dir)
+      .filter((name) => name.endsWith(".tsx") && !name.includes(".test.") && name !== "AttachmentIcon.tsx")
+      .filter((name) => /import \{[^}]*\bFile(Text|Image|Spreadsheet|Archive|Audio|Video|Code)?\b[^}]*\} from "lucide-react"/.test(readFileSync(resolve(dir, name), "utf8")));
+    expect(direct).toEqual([]);
+  });
+
   it("sizes every icon by role from ICON_SIZE instead of a number", () => {
     const dir = resolve(process.cwd(), "src");
     const raw: string[] = [];
     for (const file of readdirSync(dir).filter((name) => name.endsWith(".tsx") && !name.includes(".test."))) {
       const source = readFileSync(resolve(dir, file), "utf8");
-      for (const match of source.matchAll(/\bsize=\{(?!ICON_SIZE\.[a-z]+\})[^}]*\}/g)) {
+      // A role constant, or a role looked up by name in a component that takes the role as a prop.
+      for (const match of source.matchAll(/\bsize=\{(?!ICON_SIZE(\.[a-z]+|\[\w+\])\})[^}]*\}/g)) {
         raw.push(`${file}:${source.slice(0, match.index).split("\n").length} ${match[0]}`);
       }
     }
