@@ -8,6 +8,8 @@ export const THREAD_OUTLINE_MIN_MESSAGES = 6;
 export const CONTACT_FILE_LIMIT = 50;
 /** People and conversations fetched for the same-organization section. */
 export const DOMAIN_CONTEXT_LIMIT = 8;
+/** Longest message preview line, in characters; it is also the line's hover text. */
+export const MESSAGE_PREVIEW_MAX_CHARS = 200;
 /** Addresses loaded per account for the compose checks; the backend's own maximum. */
 export const KNOWN_ADDRESS_LIMIT = 5_000;
 
@@ -78,6 +80,20 @@ const fullDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "nume
 export function formatHistoryDate(iso: string, now = new Date()): string {
   const date = new Date(iso);
   return date.getFullYear() === now.getFullYear() ? monthDay.format(date) : monthYear.format(date);
+}
+
+const tileMonth = new Intl.DateTimeFormat(undefined, { month: "short" });
+const tileHover = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+
+/** A calendar tile's month and day, the year only outside the current one, and a full date and time for hover. */
+export function dateTileParts(iso: string, now = new Date()): { month: string; day: string; year: string | null; full: string } {
+  const date = new Date(iso);
+  return {
+    month: tileMonth.format(date),
+    day: String(date.getDate()),
+    year: date.getFullYear() === now.getFullYear() ? null : String(date.getFullYear()),
+    full: tileHover.format(date),
+  };
 }
 
 /**

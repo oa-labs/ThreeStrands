@@ -109,6 +109,7 @@
      that rows, section labels, notes, and links all share. */
   --context-row-inset: var(--space-1);
   --context-glyph-column: calc(var(--check-size) + var(--space-1-5));
+  --date-tile-size: 32px;   /* calendar date tiles on context panel email rows */
   --dialog-inset: var(--space-4);     /* horizontal inset of a dialog's header, body, and footer */
   --settings-label-width: 150px;      /* the label column of a settings row */
   --settings-label-gap: var(--space-4); /* between a settings label and its field; detail lines indent by both */
@@ -2119,6 +2120,12 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-row-wrap .context-row-title { white-space:normal; overflow-wrap:anywhere; }
 .context-row-date { flex:0 0 auto; color:var(--muted); font-size:var(--text-meta); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .context-row-date.task-due-overdue { color:var(--error); font-weight:var(--weight-semibold); }
+/* Email rows show their date as a small calendar tile in a column wide enough for "Sep" and "28". */
+.context-row-dated { --context-glyph-column:calc(var(--date-tile-size) + var(--space-2)); }
+.context-row-dated .context-row-icon { align-self:center; height:auto; }
+.context-calendar-date-tile { display:flex; flex-direction:column; align-items:center; justify-content:center; width:var(--date-tile-size); height:var(--date-tile-size); overflow:hidden; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--raised); line-height:var(--leading-none); }
+.context-calendar-date-tile-month { color:var(--accent); font-size:var(--text-micro); font-weight:var(--weight-semibold); }
+.context-calendar-date-tile-day { margin-top:var(--space-0-5); color:var(--text); font-size:var(--text-meta); font-weight:var(--weight-semibold); font-variant-numeric:tabular-nums; }
 .context-row-detail { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
 .context-row-trailing { grid-column:3; display:flex; align-self:center; align-items:center; gap:var(--space-1); margin-left:var(--space-1); }
 .context-task-checkbox { width:var(--check-size); height:var(--check-size); margin:0; accent-color:var(--accent); cursor:pointer; }

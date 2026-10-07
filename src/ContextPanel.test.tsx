@@ -263,7 +263,8 @@ describe("ContextPanel",()=>{
     expect(rows().map((row)=>row.textContent)).toEqual([expect.stringContaining("Message number 5"),expect.stringContaining("Message number 4"),expect.stringContaining("Message number 3")]);
     fireEvent.click(within(outline).getByRole("button",{name:"Your replies · 2"}));
     expect(within(outline).getByRole("button",{name:"Your replies · 2"})).toHaveAttribute("aria-pressed","true");
-    expect(rows().map((row)=>row.textContent)).toEqual([expect.stringMatching(/^You.*Message number 5/),expect.stringMatching(/^You.*Message number 2/)]);
+    // The date tile leads each row, so the sender is read from the title line.
+    expect(rows().map((row)=>`${row.querySelector(".context-row-title")?.textContent} ${row.querySelector(".context-row-detail")?.textContent}`)).toEqual(["You Message number 5","You Message number 2"]);
     fireEvent.click(rows()[1]);
     expect(onShowMessage).toHaveBeenCalledWith("thread-1","m2");
     cleanup();

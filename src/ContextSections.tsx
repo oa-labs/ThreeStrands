@@ -4,11 +4,13 @@ import { mailClient } from "./data/client";
 import type { Account, ContactFiles, ContactTimelineItem, DomainContext, Message, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
 import { errorMessage } from "./errors";
-import { CONTACT_FILE_LIMIT, CONTEXT_SECTION_ROWS, DOMAIN_CONTEXT_LIMIT, formatHistoryDate, organizationDomain, THREAD_OUTLINE_MIN_MESSAGES } from "./contactContext";
+import { CONTACT_FILE_LIMIT, CONTEXT_SECTION_ROWS, dateTileParts, DOMAIN_CONTEXT_LIMIT, formatHistoryDate, organizationDomain, THREAD_OUTLINE_MIN_MESSAGES } from "./contactContext";
 import { formatAttachmentSize, splitAttachmentName } from "./threadPresentation";
 import { decodeHtmlEntities } from "./SafeMessage";
 import { ICON_SIZE } from "./iconSizes";
 import { AttachmentIcon } from "./AttachmentIcon";
+import { messagePreview } from "./messagePreview";
+import { threadTextIndex } from "./threadTextIndex";
 
 /** Per-device, per-section collapse choices. Transient layout, so not exported with settings. */
 const COLLAPSED_KEY = "threestrands.contextPanel.collapsedSections";
@@ -88,9 +90,10 @@ function revealIfTruncated(line: HTMLElement | null) {
  * row's date at the end of that line, then an optional detail line; trailing
  * actions sit after the text. Rows without a glyph keep the column, so all
  * row text in the panel starts at one edge. A title or detail line that is cut
- * off shows its full text on hover.
+ * off shows its full text on hover. Email rows can show their date as a
+ * month-and-day tile in the glyph column instead (`dateTile`).
  */
-export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, trailing, wrapTitle, className }: {
+export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, dateTile, detail, onActivate, trailing, wrapTitle, className }: {
   as?: "div" | "article";
   /** A decorative glyph, drawn inside the row's button. */
   icon?: ReactNode;
@@ -101,6 +104,11 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   date?: ReactNode;
   /** A state on the date, such as overdue. */
   dateClassName?: string;
+  /**
+   * An ISO time shown as a month-and-day tile in the glyph column, in place of
+   * `icon` and `date`; the title line keeps only a year outside the current one.
+   */
+  dateTile?: string;
   /** The second line: a snippet, size, address, or source. */
   detail?: ReactNode;
   /** Makes the glyph and text one button. */
@@ -113,13 +121,21 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   const titleRef = useRef<HTMLElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const revealTruncated = () => { revealIfTruncated(titleRef.current); revealIfTruncated(detailRef.current); };
-  const classes = ["context-row", onActivate ? "context-row-interactive" : "", control ? "context-row-has-control" : "", wrapTitle ? "context-row-wrap" : "", className ?? ""].filter(Boolean).join(" ");
+  const classes = ["context-row", onActivate ? "context-row-interactive" : "", control ? "context-row-has-control" : "", wrapTitle ? "context-row-wrap" : "", dateTile ? "context-row-dated" : "", className ?? ""].filter(Boolean).join(" ");
+  const tile = dateTile ? dateTileParts(dateTile) : null;
+  const glyph = tile
+    ? <span className="context-calendar-date-tile" title={tile.full}><span className="context-calendar-date-tile-month">{tile.month}</span><span className="context-calendar-date-tile-day">{tile.day}</span></span>
+    : icon;
+  // The tile is decorative, so the title line still names the date for assistive technology.
+  const shownDate = tile
+    ? <>{tile.year ? <span aria-hidden="true">{tile.year}</span> : null}<span className="sr-only">{formatHistoryDate(dateTile!)}</span></>
+    : date;
   const body = <>
-    {control ? null : <span className="context-row-glyph context-row-icon" aria-hidden="true">{icon}</span>}
+    {control ? null : <span className="context-row-glyph context-row-icon" aria-hidden="true">{glyph}</span>}
     <span className="context-row-text">
       <span className="context-row-line">
         <strong className="context-row-title" ref={titleRef}>{title}</strong>
-        {date ? <small className={dateClassName ? `context-row-date ${dateClassName}` : "context-row-date"}>{date}</small> : null}
+        {shownDate ? <small className={dateClassName ? `context-row-date ${dateClassName}` : "context-row-date"}>{shownDate}</small> : null}
       </span>
       {detail ? <small className="context-row-detail" ref={detailRef}>{detail}</small> : null}
     </span>
@@ -247,6 +263,12 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
   useEffect(() => { setOnlyMine(false); }, [detail.thread.id]);
   const isMine = (message: Message) => own.has(parseAddress(message.sender).email.toLocaleLowerCase());
   const messages = detail.messages;
+  // Each preview drops text quoted from the messages before it.
+  const previews = useMemo(() => {
+    if (messages.length < THREAD_OUTLINE_MIN_MESSAGES) return new Map<string, string>();
+    const index = threadTextIndex(messages);
+    return new Map(messages.map((message, position) => [message.id, messagePreview(message, index.before(position))]));
+  }, [messages]);
   if (messages.length < THREAD_OUTLINE_MIN_MESSAGES) return null;
   const mine = messages.filter(isMine);
   const shown = (onlyMine ? mine : messages).slice().reverse();
@@ -255,12 +277,12 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
   const range = formatHistoryDate(first) === formatHistoryDate(last) ? formatHistoryDate(last) : `${formatHistoryDate(first)} – ${formatHistoryDate(last)}`;
   const rows = shown.map((message) => {
     const sender = parseAddress(message.sender);
-    const preview = message.bodyText.replace(/\s+/g, " ").trim();
+    const preview = previews.get(message.id);
     return (
       <ContextRow
         key={message.id}
         title={isMine(message) ? "You" : sender.name || sender.email}
-        date={formatHistoryDate(message.sentAt)}
+        dateTile={message.sentAt}
         detail={preview || undefined}
         onActivate={() => onShowMessage(detail.thread.id, message.id)}
       />
@@ -309,7 +331,7 @@ export function RecentEmailsSection({ items, onOpenThread, limit, onLoadOlder }:
           <ContextRow
             key={item.threadId}
             title={item.subject || "(no subject)"}
-            date={formatHistoryDate(item.sentAt)}
+            dateTile={item.sentAt}
             detail={snippet || undefined}
             onActivate={() => onOpenThread(item.threadId)}
           />
@@ -359,7 +381,7 @@ export function DomainSection({ email, addresses, accounts, hideThreadIds, onOpe
         <ContextRow
           key={item.threadId}
           title={item.subject || "(no subject)"}
-          date={formatHistoryDate(item.sentAt)}
+          dateTile={item.sentAt}
           detail={item.contactEmail}
           onActivate={() => onOpenThread(item.threadId)}
         />
