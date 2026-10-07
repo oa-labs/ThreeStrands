@@ -352,7 +352,8 @@ export function DomainSection({ email, addresses, accounts, hideThreadIds, onOpe
       id="organization"
       className="context-history context-organization"
       title={<>Others at <span className="context-domain">{domain}</span></>}
-      count={context.people.length}
+      // The heading counts the conversations it lists, like every other section; the names line covers the people.
+      count={threads.length}
       note={<span title={context.people.map((person) => person.email).join(", ")}>{names.join(", ")}</span>}
       rows={threads.map((item) => (
         <ContextRow

@@ -15,6 +15,7 @@ import type { ThreadTextIndex } from "./quotedHistory";
 import type { FontFamily } from "./settings";
 import { formatAttachmentSize, formatMailTimestamp, splitAttachmentName } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
+import { AttachmentIcon } from "./AttachmentIcon";
 
 export type MessageResponseKind = "reply" | "replyAll" | "forward";
 
@@ -256,7 +257,7 @@ export const MessageCard = memo(function MessageCard({
                       });
                     }}
                   >
-                    <Paperclip size={ICON_SIZE.sm} />
+                    <AttachmentIcon filename={attachment.filename} mimeType={attachment.mimeType} size="sm" />
                     <span className="attachment-name">
                       <span className="attachment-name-base">{attachmentName.base}</span>
                       {attachmentName.extension ? <span className="attachment-name-ext">{attachmentName.extension}</span> : null}

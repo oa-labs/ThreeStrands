@@ -106,11 +106,14 @@ lines up with the section headers' chevrons (a checkbox, a type icon, or empty),
 then the title with the row's date at the end of that line, then one detail
 line, then any trailing action. Section labels, notes, and "Show more" links
 start at the same text edge as row titles. A task's date slot shows its due
-date as "Due …". Do not hand-build a row in a section.
+date as "Due …". Do not hand-build a row in a section. A section's heading
+count is the number of rows it lists; "Others at" counts conversations, and
+its names line covers the people.
 
 Glyphs carry meaning: a checkbox is a control, and a file shows its kind
 through `AttachmentIcon` (image, spreadsheet, presentation, document,
-archive, audio, video, code, or a generic file). Message rows have no glyph;
+archive, audio, video, code, or a generic file), here and on the reader's
+attachment badges. A paperclip only means "has attachments". Message rows have no glyph;
 their empty column is deliberate. Do not add decorative icons for symmetry.
 
 Hover text follows one rule: a row's title or detail line shows its full

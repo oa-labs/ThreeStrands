@@ -56,4 +56,12 @@ describe("message attachments", () => {
     expect(within(badge).getByText("threestrands-shortcuts")).toHaveClass("attachment-name-base");
     expect(within(badge).getByText(".txt")).toHaveClass("attachment-name-ext");
   });
+
+  it("shows each reader attachment's kind instead of a generic paperclip", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    const badge = await screen.findByRole("button", { name: "View threestrands-shortcuts.txt" });
+    expect(badge.querySelector("[data-attachment-kind]")).toHaveAttribute("data-attachment-kind", "document");
+  });
 });

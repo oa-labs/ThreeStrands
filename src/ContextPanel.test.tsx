@@ -290,6 +290,8 @@ describe("ContextPanel",()=>{
     expectContextRows(organization);
     expect(mailClient.domainContext).toHaveBeenCalledWith("acme.test",["dana@acme.test","dana@acme-mail.test"],8);
     expect(organization).toHaveTextContent("Sam Lee, pat@acme.test");
+    // The count is the conversations listed (thread-1 and thread-2 are shown elsewhere), not the two people.
+    expect(organization.querySelector(".context-section-header .context-count")).toHaveTextContent("1");
     expect(within(organization).getAllByRole("button",{name:/Subject/}).map((button)=>button.textContent)).toEqual([expect.stringContaining("Subject thread-3")]);
     fireEvent.click(within(organization).getByRole("button",{name:/Subject thread-3/}));
     expect(onOpenThread).toHaveBeenCalledWith("thread-3");
