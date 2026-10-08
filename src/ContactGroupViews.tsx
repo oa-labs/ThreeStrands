@@ -7,6 +7,7 @@ import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { InlineConfirm } from "./InlineConfirm";
 import { ICON_SIZE } from "./iconSizes";
 import { MAX_CONTACT_GROUP_NAME, groupCandidates, groupMembers, memberCountLabel, typedAddress } from "./contactGroups";
+import { splitAddressList } from "./emailAddress";
 
 const contactName = (profile: ContactProfile) => profile.displayName || profile.addresses[0] || "Unnamed contact";
 
@@ -174,7 +175,11 @@ export function ContactGroupDetail({
   </div>;
 }
 
-/** Finds a contact to add, or adds a typed address as a new contact. */
+/**
+ * Collects several members, then adds them in one call. Choosing a contact
+ * toggles it; a typed or pasted address (or a comma-separated list of them)
+ * joins the selection as a new contact unless it is already in the book.
+ */
 function ContactMemberPicker({
   group,
   profiles,
@@ -188,9 +193,35 @@ function ContactMemberPicker({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [contactIds, setContactIds] = useState<string[]>([]);
+  const [emails, setEmails] = useState<string[]>([]);
+  // Remounting the picker clears its search after a typed address is taken.
+  const [searchKey, setSearchKey] = useState(0);
   const listId = useId();
-  const run = async (contactIds: string[], emails: string[]) => {
-    if (busy) return;
+  const candidates = groupCandidates(group, profiles);
+  const chosen = contactIds.flatMap((id) => candidates.find((profile) => profile.id === id) ?? []);
+  const count = contactIds.length + emails.length;
+  const toggle = (id: string) => setContactIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+  const takeTyped = (query: string) => {
+    const parsed = splitAddressList(query).map((segment) => ({ segment: segment.trim(), email: typedAddress(segment) })).filter((item) => item.segment);
+    const invalid = parsed.filter((item) => !item.email).map((item) => item.segment);
+    if (!parsed.length || invalid.length) {
+      setError(invalid.length > 1 || parsed.length > 1
+        ? `These aren't full email addresses: ${invalid.join(", ")}`
+        : "Type a full email address, such as name@example.com, to add someone new.");
+      return;
+    }
+    setError(null);
+    // An address that belongs to a listed contact selects that contact.
+    for (const { email } of parsed) {
+      const owner = candidates.find((profile) => profile.addresses.includes(email!));
+      if (owner) setContactIds((current) => current.includes(owner.id) ? current : [...current, owner.id]);
+      else setEmails((current) => current.includes(email!) ? current : [...current, email!]);
+    }
+    setSearchKey((key) => key + 1);
+  };
+  const submit = async () => {
+    if (busy || !count) return;
     setBusy(true);
     setError(null);
     try {
@@ -203,35 +234,58 @@ function ContactMemberPicker({
   };
   return <Modal title={`Add to “${group.name}”`} className="goal-link-modal" onClose={onClose}>
     <FindOrCreatePicker
-      items={groupCandidates(group, profiles)}
+      key={searchKey}
+      items={candidates}
       getSearchText={(profile) => `${profile.displayName ?? ""} ${profile.addresses.join(" ")}`}
-      placeholder="Find a contact, or type an email address"
-      ariaLabel="Find a contact to add"
+      placeholder="Find contacts, or type or paste email addresses"
+      ariaLabel="Find contacts to add"
       listId={listId}
       listLabel="Contacts"
       emptyMessage="Everyone in your address book is already in this group. Type an email address to add someone new."
-      createLabel={(query) => typedAddress(query) ? <>Add new contact “{typedAddress(query)}”</> : <>Type a full email address to add someone new</>}
-      onSelect={(profile) => void run([profile.id], [])}
-      onCreate={(query) => {
-        const email = typedAddress(query);
-        if (email) void run([], [email]);
-        else setError("Type a full email address, such as name@example.com, to add someone new.");
+      createLabel={(query) => {
+        const typed = splitAddressList(query).map(typedAddress);
+        if (typed.length > 1 && typed.every(Boolean)) return <>Add {typed.length} email addresses</>;
+        return typed.length === 1 && typed[0] ? <>Add new contact “{typed[0]}”</> : <>Type a full email address to add someone new</>;
       }}
-      renderItem={(profile, option) => <div
-        key={profile.id}
-        id={option.id}
-        role="option"
-        aria-label={contactName(profile)}
-        aria-selected={option.active}
-        className={option.active ? "highlighted" : undefined}
-        onMouseEnter={option.onMouseEnter}
-        onClick={option.onClick}
-      >
-        <span className="label-option-name">{contactName(profile)}</span>
-        {profile.displayName ? <small className="contact-group-option-detail">{profile.addresses[0]}</small> : null}
-      </div>}
+      onSelect={(profile) => toggle(profile.id)}
+      onCreate={takeTyped}
+      renderItem={(profile, option) => {
+        const checked = contactIds.includes(profile.id);
+        return <div
+          key={profile.id}
+          id={option.id}
+          role="option"
+          aria-label={checked ? `${contactName(profile)}, selected` : contactName(profile)}
+          aria-selected={option.active}
+          className={option.active ? "highlighted" : undefined}
+          onMouseEnter={option.onMouseEnter}
+          onClick={option.onClick}
+        >
+          <span className="label-option-name">
+            {checked ? <Check size={ICON_SIZE.sm} /> : <span className="label-option-check-spacer" />}
+            {contactName(profile)}
+          </span>
+          {profile.displayName ? <small className="contact-group-option-detail">{profile.addresses[0]}</small> : null}
+        </div>;
+      }}
     />
+    {count ? <div className="contact-group-chips contact-member-selection" aria-label="Selected members" role="group">
+      {chosen.map((profile) => <span key={profile.id} className="recipient-chip">
+        <span className="recipient-chip-label">{contactName(profile)}</span>
+        <button type="button" className="recipient-chip-remove" aria-label={`Unselect ${contactName(profile)}`} onClick={() => toggle(profile.id)}><X size={ICON_SIZE.xs} /></button>
+      </span>)}
+      {emails.map((email) => <span key={email} className="recipient-chip">
+        <span className="recipient-chip-label">{email}</span>
+        <button type="button" className="recipient-chip-remove" aria-label={`Unselect ${email}`} onClick={() => setEmails((current) => current.filter((value) => value !== email))}><X size={ICON_SIZE.xs} /></button>
+      </span>)}
+    </div> : null}
     {error ? <p className="contacts-error" role="alert">{error}</p> : null}
+    <div className="modal-form-actions">
+      <button type="button" className="btn" onClick={onClose}>Cancel</button>
+      <button type="button" className="btn btn-primary" disabled={busy || !count} onClick={() => void submit()}>
+        {count ? `Add ${count} ${count === 1 ? "Member" : "Members"}` : "Add Members"}
+      </button>
+    </div>
   </Modal>;
 }
 
