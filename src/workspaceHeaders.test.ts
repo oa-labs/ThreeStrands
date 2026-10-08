@@ -102,6 +102,15 @@ describe("primary workspace headers", () => {
     }
   });
 
+  it("top-anchors the reader action icons so they line up with the account-email line", () => {
+    // Centering made the icons drift to the middle of a tall, wrapped subject.
+    // Top alignment pins them to the first header line (the account email),
+    // matching the four workspace headers and keeping them fixed regardless of
+    // how many lines the subject takes.
+    expect(lastDeclaration(".reader-header", "align-items")).toBe("flex-start");
+    expect(lastDeclaration(".reader-actions", "margin-top")).toBe("var(--space-0-5)");
+  });
+
   it("titles Settings with the same page title type as the four workspaces", () => {
     for (const property of ["font-size", "font-weight", "letter-spacing"]) {
       expect(lastDeclaration(".settings-page-header h2", property)).toBe(lastDeclaration(".contacts-header h1", property));

@@ -110,12 +110,17 @@ describe("Composer recipient visibility and shortcuts", () => {
     expect(screen.queryByRole("textbox", { name: "Bcc" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cc / Bcc" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "To" }));
+    const toLabel = screen.getByRole("button", { name: "To" });
+    expect(toLabel).toHaveAttribute("title", "Click to show Cc/Bcc");
+
+    fireEvent.click(toLabel);
     expect(screen.getByRole("textbox", { name: "Bcc" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "To" })).toHaveAttribute("title", "Click to hide Cc/Bcc");
 
     fireEvent.click(screen.getByRole("button", { name: "To" }));
     expect(screen.getByRole("textbox", { name: "Cc" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Bcc" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "To" })).toHaveAttribute("title", "Click to show Cc/Bcc");
   });
 
   it.each([

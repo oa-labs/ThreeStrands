@@ -613,7 +613,12 @@ button:disabled { cursor: default; }
 .reader-header {
   min-height: 90px;
   display: flex;
-  align-items: center;
+  /* Anchor the action icons to the TOP of the left column (the account
+     email line) rather than vertically centering them. Centering made the
+     icons drift to the middle of a tall, multi-line subject, aligning them
+     with nothing; top alignment pins them to the first header line and keeps
+     them in a consistent spot regardless of subject length. */
+  align-items: flex-start;
   justify-content: space-between;
   padding: var(--pane-header-padding);
 }
@@ -1024,7 +1029,11 @@ kbd {
 
 .reader { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--reader); }
 .reader-header { flex-shrink: 0; border-bottom: 1px solid var(--border); }
-.reader-header h2, .reader-actions { transform: translateY(4px); }
+.reader-header h2 { transform: translateY(4px); }
+/* Line the top of the icon row up with the top of the account-email line.
+   The icon buttons are taller than that --text-meta line, so a small top
+   offset makes their optical top meet the email's cap height. */
+.reader-actions { margin-top: var(--space-0-5); }
 .subject-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); }
 .user-label-badges { display: inline-flex; flex-wrap: wrap; gap: var(--space-1-5); }
 .user-label-badge {

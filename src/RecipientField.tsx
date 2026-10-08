@@ -194,7 +194,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
     <>
     <div className="compose-field recipient-field">
       {onLabelClick ? (
-        <button type="button" className="recipient-field-label" aria-expanded={labelExpanded} onClick={onLabelClick} disabled={disabled}>{label}</button>
+        <button type="button" className="recipient-field-label" aria-expanded={labelExpanded} title={labelExpanded ? "Click to hide Cc/Bcc" : "Click to show Cc/Bcc"} onClick={onLabelClick} disabled={disabled}>{label}</button>
       ) : (
         <label htmlFor={inputId}>{label}</label>
       )}
