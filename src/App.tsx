@@ -2927,6 +2927,7 @@ export function App() {
           onAttach={correspondence.context.attachFiles}
           onReplaceRecipient={correspondence.replaceDraftRecipient}
           onSwitchAccount={correspondence.switchDraftAccount}
+          onMoveToBcc={correspondence.moveDraftRecipientsToBcc}
           onInsertTimes={draftAvailabilityReply}
           onAddToCalendar={addComposeMeeting}
           onMoreTimes={openCalendarAt}
@@ -2953,6 +2954,7 @@ export function App() {
                 onAttach={correspondence.context.attachFiles}
                 onReplaceRecipient={correspondence.replaceDraftRecipient}
                 onSwitchAccount={correspondence.switchDraftAccount}
+          onMoveToBcc={correspondence.moveDraftRecipientsToBcc}
               />
             ),
             availability: calendarConnected ? (

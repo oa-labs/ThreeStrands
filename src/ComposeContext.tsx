@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { mailClient } from "./data/client";
 import type { Draft } from "./correspondence";
-import type { Account, AvailabilityCandidate, AvailabilityPreferences, ContactActivity, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
+import type { Account, AvailabilityCandidate, ContactGroupRecipients, AvailabilityPreferences, ContactActivity, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
 import { composeChecks, draftRecipients, knownAddressMap, type ComposeCheck, type KnownCorrespondents } from "./composeChecks";
 import { ContactFilesSection, ContextSection, DomainSection, RecentEmailsSection } from "./ContextSections";
 import { AvailabilitySection, RecipientChips, RecipientSummary } from "./RecipientSections";
@@ -33,10 +33,24 @@ export function useKnownCorrespondents(accountEmails: string[]): KnownCorrespond
   return known;
 }
 
+/** Every contact group with its members' addresses, loaded once while a draft is open. Null until loaded. */
+export function useContactGroupRecipients(): ContactGroupRecipients[] | null {
+  const [groups, setGroups] = useState<ContactGroupRecipients[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    mailClient.listContactGroupRecipients()
+      .then((result) => { if (active) setGroups(result); })
+      .catch(logBackgroundFailure("Contact group lookup"));
+    return () => { active = false; };
+  }, []);
+  return groups;
+}
+
 function checkRow(check: ComposeCheck, actions: {
   onAttach(): void;
   onReplaceRecipient(from: string, to: string): void;
   onSwitchAccount(email: string): void;
+  onMoveToBcc(emails: string[]): void;
 }) {
   switch (check.kind) {
     case "attachment":
@@ -64,20 +78,27 @@ function checkRow(check: ComposeCheck, actions: {
         <span>You&rsquo;ve written to {check.emails.join(", ")} from {check.account}</span>
         <button type="button" className="btn btn-sm btn-wrap" onClick={() => actions.onSwitchAccount(check.account)}>Send From {check.account}</button>
       </div>;
+    case "groupExposure":
+      return <div className="compose-check compose-check-warning" key={`group:${check.group}`}>
+        <span>{check.count} people from <strong>{check.group}</strong> are in To or Cc, so each will see everyone else&rsquo;s address</span>
+        <button type="button" className="btn btn-sm btn-wrap" aria-label={`Move ${check.group} to Bcc`} onClick={() => actions.onMoveToBcc(check.emails)}>Move to Bcc</button>
+      </div>;
   }
 }
 
 /** Mistakes worth a look before sending, for a new message or a reply. Left out when there are none. */
-export function ComposeChecksSection({ draft, accounts, known, onAttach, onReplaceRecipient, onSwitchAccount }: {
+export function ComposeChecksSection({ draft, accounts, known, onAttach, onReplaceRecipient, onSwitchAccount, onMoveToBcc }: {
   draft: Draft;
   accounts: Account[];
   known: KnownCorrespondents | null;
   onAttach(): void;
   onReplaceRecipient(from: string, to: string): void;
   onSwitchAccount(email: string): void;
+  onMoveToBcc(emails: string[]): void;
 }) {
   const ownEmails = useMemo(() => accounts.map((account) => account.email), [accounts]);
-  const checks = composeChecks({ draft, ownEmails, known });
+  const groups = useContactGroupRecipients();
+  const checks = composeChecks({ draft, ownEmails, known, groups });
   if (checks.length === 0) return null;
   return (
     <ContextSection
@@ -85,7 +106,7 @@ export function ComposeChecksSection({ draft, accounts, known, onAttach, onRepla
       className="compose-checks"
       title="Before you send"
       count={checks.length}
-      rows={checks.map((check) => checkRow(check, { onAttach, onReplaceRecipient, onSwitchAccount }))}
+      rows={checks.map((check) => checkRow(check, { onAttach, onReplaceRecipient, onSwitchAccount, onMoveToBcc }))}
     />
   );
 }
@@ -105,6 +126,7 @@ export function ComposeContext({
   onAttach,
   onReplaceRecipient,
   onSwitchAccount,
+  onMoveToBcc,
   onInsertTimes,
   onAddToCalendar,
   onMoreTimes,
@@ -125,6 +147,7 @@ export function ComposeContext({
   onAttach(): void;
   onReplaceRecipient(from: string, to: string): void;
   onSwitchAccount(email: string): void;
+  onMoveToBcc(emails: string[]): void;
   onInsertTimes(candidates: AvailabilityCandidate[]): void;
   onAddToCalendar(slot: ScheduleSlot, invitees: string[]): void;
   onMoreTimes(day: Date, durationMinutes: number): void;
@@ -191,6 +214,7 @@ export function ComposeContext({
         onAttach={onAttach}
         onReplaceRecipient={onReplaceRecipient}
         onSwitchAccount={onSwitchAccount}
+        onMoveToBcc={onMoveToBcc}
       />
       <RecipientChips recipients={recipients} selectedEmail={email} onSelect={setPicked} />
       {selected ? <RecipientSummary email={selected.email} name={selected.name} profile={person?.profile ?? null} activity={person?.activity ?? null} /> : (

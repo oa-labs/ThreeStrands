@@ -2007,6 +2007,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .contact-group-chips { display:flex; flex-wrap:wrap; gap:var(--space-1-5); margin-top:var(--space-3); }
 .contact-group-chips .recipient-chip { cursor:default; }
 .contact-group-chips .recipient-chip-label { color:var(--text); font-size:inherit; }
+.contact-primary-tag { color:var(--muted); font-size:var(--text-meta); font-weight:var(--weight-semibold); }
 .contact-group-option-detail { margin-left:auto; color:var(--muted); font-size:var(--text-meta); }
 .contacts-view-count { min-width: var(--badge-size); height: var(--badge-size); padding:0 var(--space-1); display:inline-grid; place-items:center; border-radius:var(--radius-md); color:var(--accent-contrast); background:var(--accent); font-size:var(--text-micro); font-weight:var(--weight-bold); }
 .contacts-list-toolbar { display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-2); }
@@ -2793,6 +2794,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .recipient-suggestion-add { gap: var(--space-2); color: var(--muted); border-top: 1px solid var(--border); }
 .recipient-suggestions li:only-child.recipient-suggestion-add { border-top: 0; }
 .recipient-suggestion-add.active, .recipient-suggestion-add:hover { color: var(--text); }
+.recipient-suggestions li.recipient-suggestion-group { justify-content: flex-start; }
+.recipient-suggestion-group > svg { flex-shrink: 0; color: var(--muted); }
+/* What choosing a group added; wraps under the chips in the same field. */
+.recipient-field:has(.recipient-group-note) { flex-wrap: wrap; }
+.recipient-group-note { flex-basis: 100%; margin: 0 0 var(--space-1-5); color: var(--muted); font-size: var(--text-meta); }
 .compose-body { display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); flex-shrink: 0; padding: var(--space-3) 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: var(--text-reading); line-height: var(--leading-normal); white-space: pre-wrap; }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }

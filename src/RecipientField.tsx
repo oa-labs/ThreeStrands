@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Pin, PinOff, UserPlus, X } from "lucide-react";
+import { Pin, PinOff, UserPlus, Users, X } from "lucide-react";
 import { mailClient } from "./data/client";
-import type { ContactSuggestion } from "./domain";
+import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
+import { matchingGroups, memberCountLabel } from "./contactGroups";
 import { looksLikeCompleteAddress, parseAddress } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
@@ -72,6 +73,9 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
   const [dismissed, setDismissed] = useState(true);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [dragOver, setDragOver] = useState(false);
+  const [groups, setGroups] = useState<ContactGroupRecipients[]>([]);
+  // What choosing a group just added, until the next edit.
+  const [groupNote, setGroupNote] = useState<string | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestId = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -115,7 +119,12 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
   // Someone with zero mail history (a brand-new contact) never turns up from
   // `listContactSuggestions` on its own — this is the only way to pin them.
   const addCandidate: Chip | null = candidateEmail && !alreadyKnown ? toChip(draftText.trim()) : null;
-  const optionCount = visibleSuggestions.length + (addCandidate ? 1 : 0);
+  // Groups come first: typing a group's name is a deliberate choice, and
+  // choosing one adds every member as a chip, so nothing downstream changes.
+  const groupOptions = matchingGroups(groups, draftText);
+  const contactOffset = groupOptions.length;
+  const addIndex = contactOffset + visibleSuggestions.length;
+  const optionCount = addIndex + (addCandidate ? 1 : 0);
   const visible = !dismissed && optionCount > 0;
   const effectiveActiveIndex = optionCount > 0 ? Math.min(Math.max(activeIndex, 0), optionCount - 1) : -1;
 
@@ -138,6 +147,22 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
       return;
     }
     debounce.current = setTimeout(() => fetchSuggestions(token), 150);
+  }
+
+  function loadGroups() {
+    void mailClient.listContactGroupRecipients().then(setGroups).catch(logBackgroundFailure("Contact group lookup"));
+  }
+
+  function selectGroup(group: ContactGroupRecipients) {
+    let next = chips;
+    for (const member of group.members) next = mergeChip(next, { email: member.email, displayName: member.displayName });
+    const added = next.length - chips.length;
+    const already = group.members.length - added;
+    emit(next, "");
+    setGroupNote(`Added ${added} ${added === 1 ? "person" : "people"} from ${group.name}${already ? ` · ${already} already in ${label}` : ""}`);
+    setDismissed(true);
+    setActiveIndex(-1);
+    inputRef.current?.focus();
   }
 
   function select(contact: ContactSuggestion) {
@@ -239,9 +264,11 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
           aria-controls={`${id}-suggestions`}
           aria-activedescendant={
             visible && effectiveActiveIndex >= 0
-              ? effectiveActiveIndex < visibleSuggestions.length
-                ? `${id}-suggestion-${effectiveActiveIndex}`
-                : `${id}-suggestion-add`
+              ? effectiveActiveIndex < contactOffset
+                ? `${id}-group-${effectiveActiveIndex}`
+                : effectiveActiveIndex < addIndex
+                  ? `${id}-suggestion-${effectiveActiveIndex - contactOffset}`
+                  : `${id}-suggestion-add`
               : undefined
           }
           value={draftText}
@@ -250,10 +277,12 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
           onChange={(event) => {
             emit(chips, event.target.value);
             setDismissed(false);
+            setGroupNote(null);
             query(event.target.value);
           }}
           onFocus={() => {
             setDismissed(false);
+            loadGroups();
             query(draftText);
           }}
           onBlur={() => {
@@ -296,7 +325,8 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
               setActiveIndex((optionCount + effectiveActiveIndex - 1) % optionCount);
             } else if (event.key === "Enter") {
               event.preventDefault();
-              if (effectiveActiveIndex < visibleSuggestions.length) select(visibleSuggestions[effectiveActiveIndex]);
+              if (effectiveActiveIndex < contactOffset) selectGroup(groupOptions[effectiveActiveIndex]);
+              else if (effectiveActiveIndex < addIndex) select(visibleSuggestions[effectiveActiveIndex - contactOffset]);
               else if (addCandidate) addContact(addCandidate);
             } else if (event.key === "Escape") {
               event.preventDefault();
@@ -308,10 +338,33 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
       </div>
       {visible && (
         <ul className="recipient-suggestions" role="listbox" id={`${id}-suggestions`} aria-label={`${label} suggestions`}>
-          {visibleSuggestions.map((contact, index) => (
+          {groupOptions.map((group, index) => (
+            <li
+              key={`group:${group.id}`}
+              id={`${id}-group-${index}`}
+              role="option"
+              aria-label={`${group.name}, group of ${memberCountLabel(group.members.length)}`}
+              aria-selected={index === effectiveActiveIndex}
+              className={`recipient-suggestion-group${index === effectiveActiveIndex ? " active" : ""}`}
+              onMouseEnter={() => setActiveIndex(index)}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                selectGroup(group);
+              }}
+            >
+              <Users size={ICON_SIZE.xs} />
+              <span className="recipient-suggestion-name">
+                {group.name}
+                <small>{memberCountLabel(group.members.length)}</small>
+              </span>
+            </li>
+          ))}
+          {visibleSuggestions.map((contact, contactIndex) => {
+            const index = contactOffset + contactIndex;
+            return (
             <li
               key={contact.email}
-              id={`${id}-suggestion-${index}`}
+              id={`${id}-suggestion-${contactIndex}`}
               role="option"
               aria-selected={index === effectiveActiveIndex}
               className={index === effectiveActiveIndex ? "active" : undefined}
@@ -342,14 +395,15 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
                 {contact.pinned ? <Pin size={ICON_SIZE.xs} /> : <PinOff size={ICON_SIZE.xs} />}
               </button>
             </li>
-          ))}
+            );
+          })}
           {addCandidate && (
             <li
               id={`${id}-suggestion-add`}
               role="option"
-              aria-selected={visibleSuggestions.length === effectiveActiveIndex}
-              className={`recipient-suggestion-add${visibleSuggestions.length === effectiveActiveIndex ? " active" : ""}`}
-              onMouseEnter={() => setActiveIndex(visibleSuggestions.length)}
+              aria-selected={addIndex === effectiveActiveIndex}
+              className={`recipient-suggestion-add${addIndex === effectiveActiveIndex ? " active" : ""}`}
+              onMouseEnter={() => setActiveIndex(addIndex)}
               onMouseDown={(event) => {
                 event.preventDefault();
                 addContact(addCandidate);
@@ -361,6 +415,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
           )}
         </ul>
       )}
+      {groupNote && <p className="recipient-group-note" role="status">{groupNote}</p>}
     </div>
   );
 }

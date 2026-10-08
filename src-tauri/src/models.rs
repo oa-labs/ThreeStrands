@@ -539,6 +539,26 @@ pub struct ContactSuggestion {
     pub pinned: bool,
 }
 
+/// One group member as a compose recipient: the primary (first) address to
+/// send to, and every address so checks can recognize the person.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupRecipient {
+    pub contact_id: String,
+    pub display_name: Option<String>,
+    pub email: String,
+    pub addresses: Vec<String>,
+}
+
+/// A group with its members resolved for compose.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactGroupRecipients {
+    pub id: String,
+    pub name: String,
+    pub members: Vec<GroupRecipient>,
+}
+
 /// A named set of saved contacts, shared by every account. `member_ids`
 /// lists only members whose contact is present on this device.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]

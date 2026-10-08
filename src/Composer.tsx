@@ -24,7 +24,7 @@ import {
   splitReplyQuote,
 } from "./richText";
 import { SnippetPicker } from "./SnippetPicker";
-import { replaceAddress } from "./composeChecks";
+import { moveAddressesToBcc, replaceAddress } from "./composeChecks";
 import { firstNameFromRecipient, renderSnippetBody } from "./snippets";
 import { recordSnippetUsed } from "./settings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
@@ -39,6 +39,8 @@ export type ComposerHandle = {
   replaceRecipient(from: string, to: string): void;
   /** Changes a new message's sending account. */
   switchAccount(email: string): void;
+  /** Moves these addresses from To and Cc to Bcc. */
+  moveRecipientsToBcc(emails: string[]): void;
   /** Focuses the body with the caret back where it was before the body lost focus. */
   focusBody(): void;
 };
@@ -218,6 +220,13 @@ export const Composer = forwardRef<ComposerHandle, {
       if (next !== latest.current[field]) { edit(field, next); return; }
     }
   }
+  function moveRecipientsToBcc(emails: string[]) {
+    const changes = moveAddressesToBcc(latest.current, emails);
+    for (const field of ["to", "cc", "bcc"] as const) {
+      const value = changes[field];
+      if (value !== undefined) edit(field, value);
+    }
+  }
   function draftReplyWithAI() {
     if (!replyAssistAvailable || replyAssistOpen) return;
     void openReplyAssist();
@@ -343,7 +352,7 @@ export const Composer = forwardRef<ComposerHandle, {
     };
     reader.readAsDataURL(file);
   }
-  useImperativeHandle(ref, () => ({ flush, send, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, switchAccount: changeAccount, focusBody, prepareExit: async () => {
+  useImperativeHandle(ref, () => ({ flush, send, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
     try { await flush(); }

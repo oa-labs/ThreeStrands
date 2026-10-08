@@ -183,6 +183,7 @@ export function useCorrespondence(
   const insertIntoDraft = useCallback((text: string) => editor.current?.insertText(text), []);
   const replaceDraftRecipient = useCallback((from: string, to: string) => editor.current?.replaceRecipient(from, to), []);
   const switchDraftAccount = useCallback((email: string) => editor.current?.switchAccount(email), []);
+  const moveDraftRecipientsToBcc = useCallback((emails: string[]) => editor.current?.moveRecipientsToBcc(emails), []);
   const focusDraftBody = useCallback(() => editor.current?.focusBody(), []);
 
   const context = useMemo(() => ({
@@ -258,6 +259,7 @@ export function useCorrespondence(
     insertIntoDraft,
     replaceDraftRecipient,
     switchDraftAccount,
+    moveDraftRecipientsToBcc,
     focusDraftBody,
     composer,
     overlay: <>

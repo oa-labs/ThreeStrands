@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import { Check, Copy, X } from "lucide-react";
+import { Check, Copy, Star, X } from "lucide-react";
 import { ICON_SIZE } from "./iconSizes";
 
 const EMAIL_SEPARATOR_KEYS = new Set(["Enter", ",", ";", " "]);
@@ -20,7 +20,9 @@ function addAll(values: string[], text: string, kind: "email" | "link"): string[
  * A contact's email addresses as removable badges. Typing an address and
  * pressing Enter, comma, semicolon, or space (or leaving the field) adds it;
  * pasting a list adds each address. Each badge can copy its address. The
- * saved contact validates addresses.
+ * first address is the primary one, used when the contact is emailed as part
+ * of a group; any other can be made primary. The saved contact validates
+ * addresses.
  */
 export function ContactAddressField({ addresses, disabled, onChange }: {
   addresses: string[];
@@ -73,6 +75,7 @@ function ContactMultiValueField({ kind, values, disabled, onChange }: {
     setDraft("");
     if (next.length !== values.length) onChange(next);
   };
+  const makePrimary = (target: string) => onChange([target, ...values.filter((value) => value !== target)]);
   const remove = (target: string) => {
     onChange(values.filter((value) => value !== target));
     inputRef.current?.focus();
@@ -97,9 +100,14 @@ function ContactMultiValueField({ kind, values, disabled, onChange }: {
     <div className="contact-multi-value-field">
       <span id={labelId}>{label}</span>
       <div className="contact-multi-value-box" onClick={(event) => { if (event.target === event.currentTarget) inputRef.current?.focus(); }}>
-        {values.map((value) => (
+        {values.map((value, index) => (
           <span key={value} className="recipient-chip contact-multi-value-chip">
             <span className="recipient-chip-label" title={value}>{value}</span>
+            {isEmail && values.length > 1 ? index === 0
+              ? <span className="contact-primary-tag">Primary</span>
+              : <button type="button" className="recipient-chip-remove" aria-label={`Make ${value} primary`} title="Make primary address" disabled={disabled} onClick={() => makePrimary(value)}>
+                <Star size={ICON_SIZE.xs} aria-hidden="true" />
+              </button> : null}
             <button type="button" className="recipient-chip-remove contact-multi-value-copy" aria-label={copied === value ? `Copied ${value}` : `Copy ${value}`} title={`Copy ${itemName}`} onClick={() => void copy(value)}>
               {copied === value ? <Check size={ICON_SIZE.xs} aria-hidden="true" /> : <Copy size={ICON_SIZE.xs} aria-hidden="true" />}
             </button>

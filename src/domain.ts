@@ -333,6 +333,11 @@ export type ContactProfile = {
   keepInTouchDueAt: string | null;
 };
 
+/** A group member as a compose recipient: `email` is the primary address; `addresses` lists every one. */
+export type GroupRecipient = { contactId: string; displayName: string | null; email: string; addresses: string[] };
+/** A group with its members resolved for compose. */
+export type ContactGroupRecipients = { id: string; name: string; members: GroupRecipient[] };
+
 /** A named set of saved contacts, shared by every account. */
 export type ContactGroup = {
   id: string;

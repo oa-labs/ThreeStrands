@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ContactGroup, ContactProfile } from "./domain";
-import { filterGroups, groupCandidates, groupMembers, groupsForContact, memberCountLabel, typedAddress } from "./contactGroups";
+import type { ContactGroup, ContactGroupRecipients, ContactProfile } from "./domain";
+import { GROUP_VISIBLE_RECIPIENT_LIMIT, MAX_GROUP_SUGGESTIONS, filterGroups, groupCandidates, groupMembers, groupsForContact, matchingGroups, memberCountLabel, typedAddress } from "./contactGroups";
 
 const profile = (id: string, displayName: string | null, addresses: string[]): ContactProfile => ({
   id, displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false,
@@ -45,4 +45,19 @@ describe("contactGroups", () => {
     expect(typedAddress("New Person <new@example.com>")).toBe("new@example.com");
     for (const invalid of ["", "new", "new@", "@example.com", "two words@example.com"]) expect(typedAddress(invalid), invalid).toBeNull();
   });
+
+  it("suggests groups whose name contains the typed text, prefix matches first, skipping empty groups", () => {
+    const member = { contactId: "c", displayName: null, email: "c@example.com", addresses: ["c@example.com"] };
+    const named = (name: string, members = [member]): ContactGroupRecipients => ({ id: name, name, members });
+    const groups = [named("Old Board"), named("Board"), named("Boardgames", []), named("Family")];
+    expect(matchingGroups(groups, " board ").map((group) => group.name)).toEqual(["Board", "Old Board"]);
+    expect(matchingGroups(groups, "")).toEqual([]);
+    const many = Array.from({ length: MAX_GROUP_SUGGESTIONS + 2 }, (_, index) => named(`Team ${index}`));
+    expect(matchingGroups(many, "team")).toHaveLength(MAX_GROUP_SUGGESTIONS);
+  });
+
+  it("warns above ten visible group members", () => {
+    expect(GROUP_VISIBLE_RECIPIENT_LIMIT).toBe(10);
+  });
 });
+

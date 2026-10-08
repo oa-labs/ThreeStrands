@@ -2480,7 +2480,7 @@ impl Database {
             for contact in contacts {
                 let kit=&contact.keep_in_touch;
                 transaction.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339(),contact.birthday,kit.interval_days,kit.started_at,kit.snoozed_until,kit.snoozed_at,kit.last_touch_at])?;
-                for email in &contact.addresses { transaction.execute("INSERT INTO contact_addresses(contact_id,email) VALUES(?1,?2)",params![contact.id,email])?; }
+                for (position,email) in contact.addresses.iter().enumerate() { transaction.execute("INSERT INTO contact_addresses(contact_id,email,position) VALUES(?1,?2,?3)",params![contact.id,email,position as i64])?; }
             }
 
             // An export from before contact groups has none to offer, so

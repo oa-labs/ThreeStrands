@@ -402,3 +402,17 @@ describe("demoClient contact groups", () => {
     expect((await client.listContactGroups()).map((item) => item.name)).toEqual(["Everyone"]);
   });
 });
+
+describe("demoClient contact group recipients", () => {
+  it("resolves each member's primary address and skips members without a saved contact", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    const ada = await client.saveContactProfile({ id: null, displayName: "Ada", role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses: ["ada@home.example", "ada@work.example"], birthday: null });
+    const group = await client.createContactGroup("Board", [ada.id]);
+    await client.createContactGroup("Empty");
+    const directory = await client.listContactGroupRecipients();
+    expect(directory.map((item) => item.name)).toEqual(["Board", "Empty"]);
+    expect(directory[0]).toEqual({ id: group.id, name: "Board", members: [{ contactId: ada.id, displayName: "Ada", email: "ada@home.example", addresses: ["ada@home.example", "ada@work.example"] }] });
+    await client.deleteContactProfile(ada.id);
+    expect((await client.listContactGroupRecipients())[0].members).toEqual([]);
+  });
+});

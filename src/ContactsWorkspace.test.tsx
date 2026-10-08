@@ -148,6 +148,23 @@ describe("ContactsWorkspace",()=>{
     await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({addresses:["jane@work.example.com","one@example.com","two@example.com"]})));
   });
 
+  it("marks the first address primary and saves another as primary on request",async()=>{
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    // A single address needs no marker.
+    expect(screen.queryByText("Primary")).not.toBeInTheDocument();
+    const input=screen.getByRole("textbox",{name:"Email addresses"});
+    fireEvent.change(input,{target:{value:"jane@work.example.com"}});
+    fireEvent.keyDown(input,{key:"Enter"});
+    expect(screen.getByText("Primary").closest(".recipient-chip")).toHaveTextContent("jane@example.com");
+    expect(screen.queryByRole("button",{name:"Make jane@example.com primary"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Make jane@work.example.com primary"}));
+    expect(screen.getByText("Primary").closest(".recipient-chip")).toHaveTextContent("jane@work.example.com");
+    expect(screen.getByRole("region",{name:"Save changes"})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
+    await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({addresses:["jane@work.example.com","jane@example.com"]})));
+  });
+
   it("copies an address from its badge and reports clipboard failures",async()=>{
     const writeText=vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
     Object.defineProperty(navigator,"clipboard",{value:{writeText},configurable:true});

@@ -20,6 +20,7 @@ import type {
   ContactActivity,
   ContactFiles,
   ContactGroup,
+  ContactGroupRecipients,
   ContactProfile,
   ContactTimelineItem,
   DomainContext,
@@ -147,6 +148,8 @@ export interface MailClient extends CorrespondenceClient {
    * `emails` joins as its saved contact, or as a new one.
    */
   createContactGroup(name: string, contactIds?: string[], emails?: string[]): Promise<ContactGroup>;
+  /** Every group with its present members and each member's primary address, for compose. */
+  listContactGroupRecipients(): Promise<ContactGroupRecipients[]>;
   renameContactGroup(id: string, name: string): Promise<ContactGroup>;
   /** Adds members the same way `createContactGroup` resolves them. */
   addContactGroupMembers(id: string, contactIds: string[], emails?: string[]): Promise<ContactGroup>;
@@ -294,6 +297,7 @@ const tauriClient: MailClient = {
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
   listContactGroups: () => read("list_contact_groups"),
   createContactGroup: (name, contactIds = [], emails = []) => complete("create_contact_group", { name, contactIds, emails }),
+  listContactGroupRecipients: () => read("list_contact_group_recipients"),
   renameContactGroup: (id, name) => complete("rename_contact_group", { id, name }),
   addContactGroupMembers: (id, contactIds, emails = []) => complete("add_contact_group_members", { id, contactIds, emails }),
   removeContactGroupMembers: (id, contactIds) => complete("remove_contact_group_members", { id, contactIds }),

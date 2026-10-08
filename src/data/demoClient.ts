@@ -646,6 +646,16 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         throw error;
       }
     },
+    async listContactGroupRecipients() {
+      return (await client.listContactGroups()).map((group) => ({
+        id: group.id,
+        name: group.name,
+        members: group.memberIds.flatMap((contactId) => {
+          const profile = savedContactProfiles.find((item) => item.id === contactId);
+          return profile?.addresses[0] ? [{ contactId, displayName: profile.displayName, email: profile.addresses[0], addresses: [...profile.addresses] }] : [];
+        }),
+      }));
+    },
     async renameContactGroup(id, name) {
       const group = contactGroups.find((candidate) => candidate.id === id);
       if (!group) throw new Error("Group not found");

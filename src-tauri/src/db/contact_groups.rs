@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use serde_json::{Map, Value};
 
 use super::*;
-use crate::models::{ContactGroup, ContactProfile, SaveContactRequest};
+use crate::models::{ContactGroup, ContactGroupRecipients, ContactProfile, GroupRecipient, SaveContactRequest};
 
 pub(crate) const MAX_CONTACT_GROUPS: usize = 200;
 pub(crate) const MAX_GROUP_MEMBERS: usize = threestrands_sync_protocol::MAX_CONTACT_GROUP_MEMBERS;
@@ -273,6 +273,34 @@ impl Database {
         })
     }
 
+    /// Every group with its present members, in member order, each with
+    /// the primary address compose sends to.
+    pub fn list_contact_group_recipients(&self) -> DbResult<Vec<ContactGroupRecipients>> {
+        let groups = self.list_contact_groups()?;
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT c.display_name,(SELECT json_group_array(email) FROM (SELECT a.email FROM contact_addresses a WHERE a.contact_id=c.id ORDER BY a.position,a.email))
+                 FROM contacts c WHERE c.id=?1",
+            )?;
+            groups
+                .into_iter()
+                .map(|group| {
+                    let mut members = Vec::with_capacity(group.member_ids.len());
+                    for contact_id in group.member_ids {
+                        let row = statement
+                            .query_row([&contact_id], |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?)))
+                            .optional()?;
+                        let Some((display_name, addresses)) = row else { continue };
+                        let addresses: Vec<String> = serde_json::from_str(&addresses).unwrap_or_default();
+                        let Some(email) = addresses.first().cloned() else { continue };
+                        members.push(GroupRecipient { contact_id, display_name, email, addresses });
+                    }
+                    Ok(ContactGroupRecipients { id: group.id, name: group.name, members })
+                })
+                .collect()
+        })
+    }
+
     pub(crate) fn list_contact_group_ids(&self) -> DbResult<Vec<String>> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare("SELECT id FROM contact_groups ORDER BY id")?;
@@ -440,6 +468,38 @@ mod tests {
         database.delete_contact_group(&group.id).unwrap();
         assert!(database.get_contact_group(&group.id).unwrap().is_none());
         assert!(database.get_contact_profile(&bob).unwrap().is_some());
+    }
+
+    #[test]
+    fn group_recipients_send_to_each_members_primary_address() {
+        let database = Database::open_memory();
+        let ada = contact(&database, "Ada", "ada@work.example");
+        let mut request = database.get_contact_profile(&ada).unwrap().unwrap();
+        request.addresses = vec!["ada@home.example".into(), "ada@work.example".into()];
+        database
+            .save_contact_profile(&SaveContactRequest {
+                id: Some(request.id.clone()), display_name: request.display_name, role: None, company: None, location: None,
+                bio: None, notes: None, links: Vec::new(), photo_data: None, favorite: false, addresses: request.addresses,
+                birthday: None, keep_in_touch: None,
+            })
+            .unwrap();
+        let bob = contact(&database, "Bob", "bob@example.com");
+        let group = database.create_contact_group("Board", &[ada.clone(), bob.clone()], &[]).unwrap().group;
+        // A member whose contact hasn't synced here is left out.
+        let mut record = database.contact_group_record(&group.id).unwrap().unwrap();
+        record[member_field("contact:later")] = Value::Bool(true);
+        database.upsert_synced_contact_group(&group.id, &record).unwrap();
+        database.create_contact_group("Empty", &[], &[]).unwrap();
+        let directory = database.list_contact_group_recipients().unwrap();
+        assert_eq!(directory.iter().map(|group| group.name.as_str()).collect::<Vec<_>>(), vec!["Board", "Empty"]);
+        assert_eq!(
+            directory[0].members,
+            vec![
+                GroupRecipient { contact_id: ada, display_name: Some("Ada".into()), email: "ada@home.example".into(), addresses: vec!["ada@home.example".into(), "ada@work.example".into()] },
+                GroupRecipient { contact_id: bob, display_name: Some("Bob".into()), email: "bob@example.com".into(), addresses: vec!["bob@example.com".into()] },
+            ]
+        );
+        assert!(directory[1].members.is_empty());
     }
 
     #[test]

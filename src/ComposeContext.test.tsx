@@ -8,7 +8,7 @@ import type { Account, AvailabilityPreferences, ContactActivity, ContactProfile,
 vi.mock("./data/client", () => ({ mailClient: {
   listContactSuggestions: vi.fn(), resolveContactIds: vi.fn(), getContactProfile: vi.fn(), contactActivity: vi.fn(),
   contactTimeline: vi.fn(), contactFiles: vi.fn(), domainContext: vi.fn(), listTasks: vi.fn(), listContactTasks: vi.fn(),
-  findAvailability: vi.fn(), listScheduleEvents: vi.fn(), openAttachment: vi.fn(),
+  findAvailability: vi.fn(), listScheduleEvents: vi.fn(), openAttachment: vi.fn(), listContactGroupRecipients: vi.fn(),
 } }));
 
 const accounts = [{ email: "me@acme.com" }, { email: "me@gmail.com" }] as Account[];
@@ -36,7 +36,7 @@ const known = (email: string, sentCount: number, displayName: string | null = nu
 function renderPanel(overrides: Partial<Parameters<typeof ComposeContext>[0]> = {}) {
   const props: Parameters<typeof ComposeContext>[0] = {
     draft, accounts, calendarConnected: false, preferences, taskRefreshKey: 0,
-    onAttach: vi.fn(), onReplaceRecipient: vi.fn(), onSwitchAccount: vi.fn(), onInsertTimes: vi.fn(),
+    onAttach: vi.fn(), onReplaceRecipient: vi.fn(), onSwitchAccount: vi.fn(), onMoveToBcc: vi.fn(), onInsertTimes: vi.fn(),
     onAddToCalendar: vi.fn(), onMoreTimes: vi.fn(), onOpenCalendarSettings: vi.fn(), onOpenEvent: vi.fn(),
     onOpenThread: vi.fn(), onShowMessage: vi.fn(), onEditTask: vi.fn(), onDraftFollowUp: vi.fn(), onTasksChanged: vi.fn(),
     ...overrides,
@@ -58,6 +58,7 @@ describe("ComposeContext", () => {
       { threadId: "t-1", accountId: "me@acme.com", contactEmail: "ann@partner.com", subject: "Q3 budget", snippet: "Numbers inside", sentAt: "2026-09-20T00:00:00Z", labels: [] },
     ]);
     vi.mocked(mailClient.contactFiles).mockResolvedValue({ files: [], total: 0 });
+    vi.mocked(mailClient.listContactGroupRecipients).mockResolvedValue([]);
     vi.mocked(mailClient.domainContext).mockResolvedValue({ people: [], threads: [] });
     vi.mocked(mailClient.listTasks).mockResolvedValue([]);
     vi.mocked(mailClient.listContactTasks).mockResolvedValue([]);
@@ -152,7 +153,8 @@ describe("ReplyChecks", () => {
   it("checks a reply's own words but not the quoted message", async () => {
     vi.mocked(mailClient.listContactSuggestions).mockResolvedValue([known("ann@partner.com", 3)]);
     const reply: Draft = { ...draft, mode: "reply", to: "ann@partner.com", subject: "Re: Plan", body: "Sounds good\n\nOn Mon, Ann <ann@partner.com> wrote:\n> See attached" };
-    const props = { draft: reply, accounts, onAttach: vi.fn(), onReplaceRecipient: vi.fn(), onSwitchAccount: vi.fn() };
+    vi.mocked(mailClient.listContactGroupRecipients).mockResolvedValue([]);
+    const props = { draft: reply, accounts, onAttach: vi.fn(), onReplaceRecipient: vi.fn(), onSwitchAccount: vi.fn(), onMoveToBcc: vi.fn() };
     const { rerender } = render(<ReplyChecks {...props} />);
     await waitFor(() => expect(mailClient.listContactSuggestions).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("region", { name: "Before you send" })).not.toBeInTheDocument();
@@ -160,3 +162,40 @@ describe("ReplyChecks", () => {
     expect(await screen.findByRole("region", { name: "Before you send" })).toHaveTextContent("Says “attached”, but nothing is attached");
   });
 });
+
+describe("group recipient checks", () => {
+  afterEach(() => { cleanup(); vi.clearAllMocks(); });
+  const members = (count: number) => Array.from({ length: count }, (_, index) => ({
+    contactId: `contact:${index}`, displayName: `Person ${index}`, email: `p${index}@partner.com`, addresses: [`p${index}@partner.com`, `p${index}@home.example`],
+  }));
+  const addresses = (count: number) => members(count).map((member) => member.email).join(", ");
+  const renderReply = (to: string, bcc = "") => {
+    const onMoveToBcc = vi.fn();
+    render(<ReplyChecks draft={{ ...draft, to, bcc, subject: "Board update" }} accounts={accounts} onAttach={vi.fn()} onReplaceRecipient={vi.fn()} onSwitchAccount={vi.fn()} onMoveToBcc={onMoveToBcc} />);
+    return onMoveToBcc;
+  };
+
+  it("suggests Bcc once more than ten of a group's members are in To or Cc", async () => {
+    vi.mocked(mailClient.listContactSuggestions).mockResolvedValue([]);
+    vi.mocked(mailClient.listContactGroupRecipients).mockResolvedValue([{ id: "g1", name: "Board", members: members(11) }]);
+    const onMoveToBcc = renderReply(addresses(11));
+    const section = await screen.findByRole("region", { name: "Before you send" });
+    await waitFor(() => expect(section).toHaveTextContent("11 people from Board are in To or Cc, so each will see everyone else’s address"));
+    fireEvent.click(within(section).getByRole("button", { name: "Move Board to Bcc" }));
+    expect(onMoveToBcc).toHaveBeenCalledWith(members(11).map((member) => member.email));
+  });
+
+  it("stays quiet at exactly ten, or when the rest are already in Bcc", async () => {
+    vi.mocked(mailClient.listContactSuggestions).mockResolvedValue([]);
+    vi.mocked(mailClient.listContactGroupRecipients).mockResolvedValue([{ id: "g1", name: "Board", members: members(11) }]);
+    renderReply(addresses(10));
+    await waitFor(() => expect(mailClient.listContactGroupRecipients).toHaveBeenCalled());
+    await waitFor(() => expect(mailClient.listContactSuggestions).toHaveBeenCalled());
+    expect(screen.queryByText(/people from Board/)).not.toBeInTheDocument();
+    cleanup();
+    renderReply(addresses(10), "p10@partner.com");
+    await waitFor(() => expect(mailClient.listContactGroupRecipients).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/people from Board/)).not.toBeInTheDocument();
+  });
+});
+

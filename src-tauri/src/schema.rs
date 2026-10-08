@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 51;
+pub(crate) const LATEST_VERSION: i64 = 52;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1419,6 +1419,19 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             PRAGMA user_version=51;",
         ).map_err(error)?;
     }
+    if version < 52 {
+        // A contact's addresses keep the order they were saved in; the
+        // first is the primary address. Saves rewrite every row in request
+        // order, so rowid order is the order the user last saved.
+        if !has_column(&tx, "contact_addresses", "position")? {
+            tx.execute_batch(
+                "ALTER TABLE contact_addresses ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+                 UPDATE contact_addresses SET position=(SELECT COUNT(*) FROM contact_addresses earlier
+                     WHERE earlier.contact_id=contact_addresses.contact_id AND earlier.rowid<contact_addresses.rowid);",
+            ).map_err(error)?;
+        }
+        tx.execute_batch("PRAGMA user_version=52;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1635,6 +1648,29 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         let progress:(String,Option<String>,i64,i64,Option<String>)=connection.query_row("SELECT cursor,sent_backfill_page,sent_backfill_offset,sent_backfill_scanned,sent_backfill_completed_at FROM sync_state WHERE account_id='me@example.com'",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap();
         assert_eq!(progress,("history-1".to_string(),None,0,0,None));
+        let version:i64=connection.query_row("PRAGMA user_version",[],|row|row.get(0)).unwrap();
+        assert_eq!(version,super::LATEST_VERSION);
+    }
+
+    #[test]
+    fn v52_numbers_contact_addresses_in_saved_order() {
+        let mut connection=unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute("ALTER TABLE contact_addresses DROP COLUMN position",[]).unwrap();
+        connection.execute("INSERT INTO contacts(id,display_name,updated_at) VALUES('c1','Ada','2026-01-01T00:00:00Z'),('c2','Bob','2026-01-01T00:00:00Z')",[]).unwrap();
+        // Saved order, deliberately not alphabetical.
+        for (contact,email) in [("c1","zed@example.com"),("c2","bob@example.com"),("c1","ada@example.com")] {
+            connection.execute("INSERT INTO contact_addresses(contact_id,email) VALUES(?1,?2)",[contact,email]).unwrap();
+        }
+        connection.pragma_update(None,"user_version",51).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let rows={
+            let mut statement=connection.prepare("SELECT contact_id,email,position FROM contact_addresses ORDER BY contact_id,position").unwrap();
+            statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,i64>(2)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap()
+        };
+        assert_eq!(rows,vec![("c1".into(),"zed@example.com".into(),0),("c1".into(),"ada@example.com".into(),1),("c2".into(),"bob@example.com".into(),0)]);
+        connection.pragma_update(None,"user_version",51).unwrap();
+        super::migrate(&mut connection).unwrap();
         let version:i64=connection.query_row("PRAGMA user_version",[],|row|row.get(0)).unwrap();
         assert_eq!(version,super::LATEST_VERSION);
     }

@@ -1,5 +1,6 @@
 import type { Draft } from "./correspondence";
-import type { ContactSuggestion } from "./domain";
+import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
+import { overexposedGroups } from "./contactGroups";
 import { isPersonalMailDomain } from "./contactContext";
 import { looksLikeCompleteAddress, parseAddress, splitAddressList } from "./emailAddress";
 
@@ -47,7 +48,8 @@ export type ComposeCheck =
   | { kind: "typo"; email: string; suggestion: string; suggestionName: string | null }
   | { kind: "firstContact"; email: string }
   | { kind: "outside"; domain: string; emails: string[] }
-  | { kind: "account"; account: string; emails: string[] };
+  | { kind: "account"; account: string; emails: string[] }
+  | { kind: "groupExposure"; group: string; count: number; emails: string[] };
 
 /** Words that promise an attachment. "Attachment" alone is left out: replies discuss the sender's. */
 const ATTACHMENT_WORDS = /\b(attached|attaching|enclosed)\b/i;
@@ -137,12 +139,14 @@ function domainOf(email: string): string {
 /**
  * Mistakes worth a second look before a draft is sent. Every check is local
  * and deterministic, and none blocks sending. `known` is null until loaded,
- * which leaves out the checks that depend on correspondence history.
+ * which leaves out the checks that depend on correspondence history; `groups`
+ * likewise leaves out the group check.
  */
-export function composeChecks({ draft, ownEmails, known }: {
+export function composeChecks({ draft, ownEmails, known, groups = null }: {
   draft: Pick<Draft, "to" | "cc" | "bcc" | "subject" | "body" | "attachments" | "account" | "mode">;
   ownEmails: string[];
   known: KnownCorrespondents | null;
+  groups?: readonly ContactGroupRecipients[] | null;
 }): ComposeCheck[] {
   const checks: ComposeCheck[] = [];
   const recipients = draftRecipients(draft, ownEmails);
@@ -153,6 +157,16 @@ export function composeChecks({ draft, ownEmails, known }: {
     checks.push({ kind: "attachment", word: word.toLocaleLowerCase() });
   }
   if (!draft.subject.trim()) checks.push({ kind: "subject" });
+
+  // Everyone in To and Cc sees every other address there. A large group is
+  // usually better in Bcc. Listed before the per-recipient checks, which a
+  // large group can make numerous.
+  if (groups) {
+    const visible = recipients.filter((recipient) => recipient.field !== "bcc").map((recipient) => recipient.email);
+    for (const group of overexposedGroups(groups, visible)) {
+      checks.push({ kind: "groupExposure", group: group.name, count: group.count, emails: group.emails });
+    }
+  }
 
   if (known) {
     const here = known[account] ?? new Map<string, KnownAddress>();
@@ -200,7 +214,36 @@ export function composeChecks({ draft, ownEmails, known }: {
       checks.push({ kind: "outside", domain: senderDomain, emails: outside.map((recipient) => recipient.email) });
     }
   }
+
   return checks;
+}
+
+/**
+ * Moves each address in `emails` from To and Cc to the end of Bcc, keeping
+ * how each entry was written. Returns only the fields that changed.
+ */
+export function moveAddressesToBcc(fields: Pick<Draft, "to" | "cc" | "bcc">, emails: readonly string[]): Partial<Pick<Draft, "to" | "cc" | "bcc">> {
+  const targets = new Set(emails.map((email) => email.toLocaleLowerCase()));
+  const key = (segment: string) => parseAddress(segment).email.trim().toLocaleLowerCase();
+  const changes: Partial<Pick<Draft, "to" | "cc" | "bcc">> = {};
+  const moved: string[] = [];
+  for (const field of ["to", "cc"] as const) {
+    const segments = splitAddressList(fields[field]).map((segment) => segment.trim()).filter(Boolean);
+    const kept = segments.filter((segment) => !targets.has(key(segment)));
+    if (kept.length === segments.length) continue;
+    moved.push(...segments.filter((segment) => targets.has(key(segment))));
+    changes[field] = kept.join(", ");
+  }
+  if (!moved.length) return changes;
+  const bcc = splitAddressList(fields.bcc).map((segment) => segment.trim()).filter(Boolean);
+  const inBcc = new Set(bcc.map(key));
+  const added = moved.filter((segment) => {
+    if (inBcc.has(key(segment))) return false;
+    inBcc.add(key(segment));
+    return true;
+  });
+  if (added.length) changes.bcc = [...bcc, ...added].join(", ");
+  return changes;
 }
 
 /** Replaces `from` with `to` in an address list, keeping every other entry as written. */

@@ -713,6 +713,60 @@ describe("Composer recipient autocomplete", () => {
     expect(to).toHaveValue("");
   });
 
+  const board = {
+    id: "group-board",
+    name: "Board",
+    members: [
+      { contactId: "contact:ada", displayName: "Ada Park", email: "ada@home.example", addresses: ["ada@home.example", "ada@work.example"] },
+      { contactId: "contact:jane", displayName: "Jane Doe", email: "jane@example.com", addresses: ["jane@example.com"] },
+      { contactId: "contact:sam", displayName: null, email: "sam@example.com", addresses: ["sam@example.com"] },
+    ],
+  };
+
+  it("offers a matching group first and adds each member's primary address as a chip", async () => {
+    vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([contact]);
+    vi.spyOn(mailClient, "listContactGroupRecipients").mockResolvedValue([board, { id: "empty", name: "Boardgames", members: [] }]);
+    const onDraftChange = vi.fn();
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => next);
+    render(<Composer draft={{ ...draft, to: "Jane Doe <jane@example.com>, " }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} onDraftChange={onDraftChange} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+    fireEvent.focus(to);
+    fireEvent.change(to, { target: { value: "boa" } });
+    await vi.advanceTimersByTimeAsync(150);
+
+    const options = within(await screen.findByRole("listbox", { name: "To suggestions" })).getAllByRole("option");
+    // A group with no members is not offered.
+    expect(options[0]).toHaveAccessibleName("Board, group of 3 members");
+    expect(screen.queryByRole("option", { name: /Boardgames/ })).not.toBeInTheDocument();
+    expect(to).toHaveAttribute("aria-activedescendant", "to-group-0");
+    fireEvent.keyDown(to, { key: "Enter" });
+
+    expect(screen.getByRole("button", { name: "Remove Ada Park" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove sam@example.com" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Remove Jane Doe" })).toHaveLength(1);
+    expect(screen.getByText(/^Added 2 people/)).toHaveTextContent("Added 2 people from Board · 1 already in To");
+    expect(screen.getByText(/^Added 2 people/)).toHaveAttribute("role", "status");
+    expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ to: "Jane Doe <jane@example.com>, Ada Park <ada@home.example>, sam@example.com, " }));
+    fireEvent.change(to, { target: { value: "x" } });
+    expect(screen.queryByText(/^Added 2 people/)).not.toBeInTheDocument();
+  });
+
+  it("moves through group and contact suggestions with the arrow keys", async () => {
+    vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([{ ...contact, displayName: "Board Chair", email: "chair@example.com" }]);
+    vi.spyOn(mailClient, "listContactGroupRecipients").mockResolvedValue([board]);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+    fireEvent.focus(to);
+    fireEvent.change(to, { target: { value: "board" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await screen.findByRole("option", { name: /Board Chair/ });
+    fireEvent.keyDown(to, { key: "ArrowDown" });
+    expect(to).toHaveAttribute("aria-activedescendant", "to-suggestion-0");
+    fireEvent.keyDown(to, { key: "Enter" });
+    expect(screen.getByRole("button", { name: "Remove Board Chair" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Ada Park" })).not.toBeInTheDocument();
+  });
+
   it("pins a suggested contact without inserting it into the field", async () => {
     vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([contact]);
     const pin = vi.spyOn(mailClient, "pinContact").mockResolvedValue();
@@ -831,6 +885,16 @@ describe("Composer context panel actions", () => {
     editor.innerHTML = "See you there";
     fireEvent.input(editor);
     await waitFor(() => expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ body: "See you there" })));
+  });
+
+  it("moves the named addresses from To and Cc to Bcc", async () => {
+    const onDraftChange = vi.fn();
+    const ref = createRef<ComposerHandle>();
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => next);
+    render(<Composer ref={ref} draft={{ ...draft, to: "Ann <ann@example.com>, bob@example.com, ", cc: "cy@example.com", bcc: "" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} onDraftChange={onDraftChange} />);
+    act(() => ref.current!.moveRecipientsToBcc(["ANN@example.com", "cy@example.com"]));
+    expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ to: "bob@example.com", cc: "", bcc: "Ann <ann@example.com>, cy@example.com" }));
+    expect(screen.getByRole("textbox", { name: "Bcc" })).toBeInTheDocument();
   });
 
   it("swaps one recipient for another and leaves the rest", async () => {

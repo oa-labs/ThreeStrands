@@ -45,7 +45,7 @@ use auth::{AccountAuth, AuthConfig, OAuthProvider};
 use chrono::Utc;
 use db::Database;
 use models::{
-    ActionAnalysis, ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactGroup, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, UpdateCalendarEventRequest, CreateLabelRequest,
+    ActionAnalysis, ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactGroup, ContactGroupRecipients, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, UpdateCalendarEventRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailProviderKind, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
@@ -1185,6 +1185,12 @@ fn record_contact_group_write(
 async fn list_contact_groups(state: State<'_, AppState>) -> Result<Vec<ContactGroup>, String> {
     let database = state.database.clone();
     run_database_task(move || database.list_contact_groups()).await
+}
+
+#[tauri::command]
+async fn list_contact_group_recipients(state: State<'_, AppState>) -> Result<Vec<ContactGroupRecipients>, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_contact_group_recipients()).await
 }
 
 #[tauri::command(async)]
@@ -4078,6 +4084,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         save_contact_profile,
         delete_contact_profile,
         list_contact_groups,
+        list_contact_group_recipients,
         create_contact_group,
         rename_contact_group,
         add_contact_group_members,

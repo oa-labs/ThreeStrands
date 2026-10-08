@@ -7,10 +7,11 @@ import {
   editDistance,
   knownAddressMap,
   likelyIntendedAddress,
+  moveAddressesToBcc,
   replaceAddress,
   type KnownCorrespondents,
 } from "./composeChecks";
-import type { ContactSuggestion } from "./domain";
+import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
 
 const base: Draft = {
   id: "draft-1", revision: 0, account: "me@acme.com", mode: "new",
@@ -160,3 +161,46 @@ describe("replaceAddress", () => {
     expect(replaceAddress("ann@x.com", "bob@x.com", "rob@x.com")).toBe("ann@x.com");
   });
 });
+
+describe("group recipient exposure", () => {
+  const group = (name: string, count: number, prefix = "p"): ContactGroupRecipients => ({
+    id: name, name,
+    members: Array.from({ length: count }, (_, index) => ({ contactId: `${prefix}${index}`, displayName: null, email: `${prefix}${index}@partner.com`, addresses: [`${prefix}${index}@partner.com`, `${prefix}${index}@home.example`] })),
+  });
+  const list = (count: number, prefix = "p", domain = "partner.com") => Array.from({ length: count }, (_, index) => `${prefix}${index}@${domain}`).join(", ");
+  const exposure = (overrides: Partial<Draft>, groups: ContactGroupRecipients[] | null) =>
+    composeChecks({ draft: draft(overrides), ownEmails: own, known: null, groups }).filter((check) => check.kind === "groupExposure");
+
+  it("flags more than ten of one group's members across To and Cc, listed before other checks", () => {
+    expect(exposure({ to: list(10) }, [group("Board", 12)])).toEqual([]);
+    const checks = composeChecks({ draft: draft({ subject: "", to: list(6), cc: [6, 7, 8, 9, 10].map((index) => `p${index}@partner.com`).join(", ") }), ownEmails: own, known: null, groups: [group("Board", 12)] });
+    expect(checks[0]).toEqual({ kind: "subject" });
+    expect(checks[1]).toMatchObject({ kind: "groupExposure", group: "Board", count: 11 });
+  });
+
+  it("counts a member once, whichever address is used, and ignores Bcc and non-members", () => {
+    // Ten members by work address, one more by home address: eleven people.
+    const to = `${list(10)}, p10@home.example, outsider@else.example`;
+    expect(exposure({ to }, [group("Board", 12)])).toEqual([{ kind: "groupExposure", group: "Board", count: 11, emails: [...list(10).split(", "), "p10@home.example"] }]);
+    expect(exposure({ to: list(10), bcc: list(12) }, [group("Board", 12)])).toEqual([]);
+    expect(exposure({ to: list(11) }, null)).toEqual([]);
+  });
+
+  it("reports each overexposed group, largest first", () => {
+    const groups = [group("Small", 11, "s"), group("Large", 13, "l")];
+    const checks = exposure({ to: `${list(11, "s")}, ${list(13, "l")}` }, groups);
+    expect(checks.map((check) => check.kind === "groupExposure" && check.group)).toEqual(["Large", "Small"]);
+  });
+});
+
+describe("moveAddressesToBcc", () => {
+  it("moves matching entries as written, keeps the rest, and skips ones already in Bcc", () => {
+    expect(moveAddressesToBcc({ to: "Ann <ann@example.com>, bob@example.com, ", cc: "CY@example.com", bcc: "dee@example.com, cy@example.com" }, ["ann@example.com", "cy@example.com"]))
+      .toEqual({ to: "bob@example.com", cc: "", bcc: "dee@example.com, cy@example.com, Ann <ann@example.com>" });
+  });
+
+  it("changes nothing when no address matches", () => {
+    expect(moveAddressesToBcc({ to: "bob@example.com", cc: "", bcc: "" }, ["ann@example.com"])).toEqual({});
+  });
+});
+

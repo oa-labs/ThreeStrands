@@ -139,7 +139,7 @@ impl Database {
         self.with_connection(|connection|{
             let mut statement=connection.prepare(
                 &format!("SELECT c.id,c.display_name,c.role,c.company,c.location,c.bio,c.notes,c.links_json,c.photo_data,c.favorite,
-                    COALESCE((SELECT json_group_array(a.email) FROM contact_addresses a WHERE a.contact_id=c.id),'[]'),
+                    COALESCE((SELECT json_group_array(email) FROM (SELECT a.email FROM contact_addresses a WHERE a.contact_id=c.id ORDER BY a.position,a.email)),'[]'),
                     COALESCE(stats.sent_count,0),COALESCE(stats.received_count,0),stats.last_interacted_at,{CONTACT_EXTRA_COLUMNS}
                  FROM contacts c
                  LEFT JOIN (
@@ -497,7 +497,7 @@ impl Database {
                 kit_snoozed_at=CASE WHEN ?18 THEN excluded.kit_snoozed_at ELSE contacts.kit_snoozed_at END,
                 kit_last_touch_at=CASE WHEN ?18 THEN excluded.kit_last_touch_at ELSE contacts.kit_last_touch_at END",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339(),birthday,keep_in_touch.interval_days,keep_in_touch.started_at,keep_in_touch.snoozed_until,keep_in_touch.snoozed_at,keep_in_touch.last_touch_at,replace_keep_in_touch])?;
             tx.execute("DELETE FROM contact_addresses WHERE contact_id=?1",[&id])?;
-            for email in &addresses { tx.execute("INSERT INTO contact_addresses(contact_id,email) VALUES(?1,?2)",params![id,email])?; }
+            for (position,email) in addresses.iter().enumerate() { tx.execute("INSERT INTO contact_addresses(contact_id,email,position) VALUES(?1,?2,?3)",params![id,email,position as i64])?; }
             Ok(())
         })?;
         self.get_contact_profile(&id)?
@@ -816,7 +816,7 @@ impl Database {
     fn contact_addresses(&self, id: &str) -> DbResult<Vec<String>> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT email FROM contact_addresses WHERE contact_id=?1 ORDER BY email",
+                "SELECT email FROM contact_addresses WHERE contact_id=?1 ORDER BY position, email",
             )?;
             let rows = statement.query_map([id], |row| row.get(0))?;
             rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -940,6 +940,23 @@ mod tests {
             started_at: Some("2026-09-01T00:00:00+00:00".into()),
             ..KeepInTouch::default()
         }
+    }
+
+    #[test]
+    fn addresses_keep_their_saved_order_with_the_primary_first() {
+        let database = Database::open_memory();
+        let request = |id: Option<String>, addresses: &[&str]| SaveContactRequest {
+            id, display_name: Some("Zed".into()), role: None, company: None, location: None, bio: None, notes: None,
+            links: Vec::new(), photo_data: None, favorite: false, addresses: addresses.iter().map(|value| value.to_string()).collect(),
+            birthday: None, keep_in_touch: None,
+        };
+        let saved = database.save_contact_profile(&request(None, &["zed@work.example", "Zed@Home.example"])).unwrap();
+        assert_eq!(saved.addresses, vec!["zed@work.example", "zed@home.example"]);
+        let saved = database.save_contact_profile(&request(Some(saved.id), &["zed@home.example", "zed@work.example"])).unwrap();
+        assert_eq!(saved.addresses, vec!["zed@home.example", "zed@work.example"]);
+        assert_eq!(database.get_contact_profile(&saved.id).unwrap().unwrap().addresses, saved.addresses);
+        assert_eq!(database.list_saved_contact_profiles().unwrap()[0].addresses, saved.addresses);
+        assert_eq!(database.list_contact_profiles("", 10).unwrap()[0].addresses, saved.addresses);
     }
 
     #[test]
