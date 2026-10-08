@@ -767,6 +767,36 @@ describe("Composer recipient autocomplete", () => {
     expect(screen.queryByText(/^Added 2 people/)).not.toBeInTheDocument();
   });
 
+  it("quotes a group member whose name holds a comma, so the draft saves as one recipient", async () => {
+    vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listContactGroupRecipients").mockResolvedValue([{ id: "eo", name: "EO", members: [
+      { contactId: "contact:justin", displayName: "Fischgrund, Justin", email: "justin@example.com", addresses: ["justin@example.com"] },
+      { contactId: "contact:kelly", displayName: "Kelly Sjol", email: "kelly@example.com", addresses: ["kelly@example.com"] },
+    ] }]);
+    const save = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => next);
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+    fireEvent.focus(to);
+    fireEvent.change(to, { target: { value: "eo" } });
+    await vi.advanceTimersByTimeAsync(150);
+    fireEvent.mouseDown(await screen.findByRole("option", { name: /EO, group/ }));
+    expect(screen.getByRole("button", { name: "Remove Fischgrund, Justin" })).toBeInTheDocument();
+    await act(async () => { await ref.current!.flush(); });
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ to: '"Fischgrund, Justin" <justin@example.com>, Kelly Sjol <kelly@example.com>, ' }));
+  });
+
+  it("reads an older draft's unquoted comma as one recipient and saves it quoted", async () => {
+    const save = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => next);
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={{ ...draft, to: "Fischgrund, Justin <justin@example.com>, Kelly Sjol <kelly@example.com>, " }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    expect(screen.getByRole("button", { name: "Remove Fischgrund, Justin" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Fischgrund" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "EO All Chapter Event" } });
+    await act(async () => { await ref.current!.flush(); });
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ to: '"Fischgrund, Justin" <justin@example.com>, Kelly Sjol <kelly@example.com>, ' }));
+  });
+
   it("moves through group and contact suggestions with the arrow keys", async () => {
     vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([{ ...contact, displayName: "Board Chair", email: "chair@example.com" }]);
     vi.spyOn(mailClient, "listContactGroupRecipients").mockResolvedValue([board]);

@@ -93,3 +93,30 @@ export function splitAddressList(value: string): string[] {
   if (pendingName) merged.push(pendingName);
   return merged;
 }
+
+// RFC 5322 specials. A display name holding any of them must be a quoted
+// string, or a comma in "Doe, Jane" splits one recipient into two.
+const DISPLAY_NAME_SPECIALS = /[()<>[\]:;@\\,."]/;
+
+/** One recipient as header text: `Name <email>`, quoting the name when it needs it, or the bare address. */
+export function formatAddress(name: string | null, email: string): string {
+  const display = name?.replace(/\s+/g, " ").trim();
+  if (!display || display.toLocaleLowerCase() === email.toLocaleLowerCase()) return email;
+  return `${DISPLAY_NAME_SPECIALS.test(display) ? `"${display.replace(/(["\\])/g, "\\$1")}"` : display} <${email}>`;
+}
+
+/**
+ * Re-encodes every complete recipient in a list with `formatAddress`, so an
+ * unquoted comma in a name (from older drafts or pasted text) no longer reads
+ * as a separator. Pieces without an address are kept as written, and so is a
+ * trailing separator.
+ */
+export function normalizeAddressList(value: string): string {
+  const pieces = splitAddressList(value).map((segment) => {
+    const parsed = parseAddress(segment);
+    const email = parsed.email.trim();
+    return email.includes("@") ? formatAddress(parsed.name === parsed.email ? null : parsed.name, email) : segment.trim();
+  });
+  if (!pieces.length) return value;
+  return /,\s*$/.test(value) ? `${pieces.join(", ")}, ` : pieces.join(", ");
+}

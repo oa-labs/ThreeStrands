@@ -25,6 +25,7 @@ import {
 } from "./richText";
 import { SnippetPicker } from "./SnippetPicker";
 import { moveAddressesToBcc, replaceAddress } from "./composeChecks";
+import { normalizeAddressList } from "./emailAddress";
 import { firstNameFromRecipient, renderSnippetBody } from "./snippets";
 import { recordSnippetUsed } from "./settings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
@@ -118,7 +119,9 @@ export const Composer = forwardRef<ComposerHandle, {
     if (pending.current) return pending.current.then(() => generation.current === savedGeneration.current ? latest.current : flush());
     if (generation.current === savedGeneration.current) return Promise.resolve(latest.current);
     const version = generation.current;
-    const snapshot = latest.current;
+    // Saved recipients are always well-formed header text, which also repairs
+    // a draft holding an unquoted comma in a name.
+    const snapshot = { ...latest.current, to: normalizeAddressList(latest.current.to), cc: normalizeAddressList(latest.current.cc), bcc: normalizeAddressList(latest.current.bcc) };
     setStatus("Saving…"); setError("");
     const saving = mailClient.saveDraft(snapshot).then((saved) => {
       savedGeneration.current = version;

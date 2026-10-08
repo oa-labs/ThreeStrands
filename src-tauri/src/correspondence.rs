@@ -1399,6 +1399,20 @@ mod tests {
         assert_eq!(parsed[0].0, "Doe, Jane");
     }
     #[test]
+    fn addresses_accept_a_quoted_display_name_holding_a_comma() {
+        assert_eq!(
+            addresses(r#""Fischgrund, Justin" <justin@example.com>, Kelly Sjol <kelly@example.com>, "Say \"Hi\"" <hi@example.com>"#).unwrap(),
+            vec![
+                ("Fischgrund, Justin".to_string(), "justin@example.com".to_string()),
+                ("Kelly Sjol".to_string(), "kelly@example.com".to_string()),
+                ("Say \"Hi\"".to_string(), "hi@example.com".to_string()),
+            ]
+        );
+        // The unquoted form the field used to write is still rejected at save time.
+        assert!(addresses("Fischgrund, Justin <justin@example.com>").is_err());
+    }
+
+    #[test]
     fn stored_addresses_accept_unquoted_commas_that_strict_parsing_rejects() {
         let raw = "Daniel O'Connor, CFA® <doconnor@wealth.example>";
         assert!(addresses(raw).is_err());

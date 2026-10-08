@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
+import { formatAddress, formatDisplayName, normalizeAddressList, parseAddress, splitAddressList } from "./emailAddress";
 
 describe("parseAddress", () => {
   it("splits a display name and email out of a From-style header", () => {
@@ -98,3 +98,38 @@ describe("splitAddressList", () => {
     expect(splitAddressList("bob@example.com, undisclosed-recipients:;")).toEqual(["bob@example.com", "undisclosed-recipients:;"]);
   });
 });
+
+describe("formatAddress", () => {
+  it("quotes a display name holding a comma or other special, escaping quotes and backslashes", () => {
+    expect(formatAddress("Fischgrund, Justin", "justin@example.com")).toBe('"Fischgrund, Justin" <justin@example.com>');
+    expect(formatAddress('Say "Hi" \\ there', "hi@example.com")).toBe('"Say \\"Hi\\" \\\\ there" <hi@example.com>');
+    expect(formatAddress("J. Smith", "j@example.com")).toBe('"J. Smith" <j@example.com>');
+    expect(formatAddress("Kelly Sjol", "kelly@example.com")).toBe("Kelly Sjol <kelly@example.com>");
+  });
+
+  it("writes the bare address without a name, or when the name is the address", () => {
+    expect(formatAddress(null, "a@example.com")).toBe("a@example.com");
+    expect(formatAddress("  ", "a@example.com")).toBe("a@example.com");
+    expect(formatAddress("A@Example.com", "a@example.com")).toBe("a@example.com");
+  });
+
+  it("round-trips through splitting and parsing", () => {
+    const names = ["Fischgrund, Justin", 'Say "Hi"', "Kelly Sjol", "O'Brien; Pat (CFO)"];
+    const list = names.map((name, index) => formatAddress(name, `p${index}@example.com`)).join(", ");
+    expect(splitAddressList(list).map(parseAddress)).toEqual(names.map((name, index) => ({ name, email: `p${index}@example.com` })));
+  });
+});
+
+describe("normalizeAddressList", () => {
+  it("repairs an unquoted comma in a name, keeping the other recipients and the trailing separator", () => {
+    expect(normalizeAddressList("Fischgrund, Justin <justin@example.com>, ForceBuilders <dom@example.com>, pj@example.com, "))
+      .toBe('"Fischgrund, Justin" <justin@example.com>, ForceBuilders <dom@example.com>, pj@example.com, ');
+  });
+
+  it("leaves well-formed lists, empty values, and text still being typed alone", () => {
+    expect(normalizeAddressList('"Doe, Jane" <jane@example.com>, bob@example.com')).toBe('"Doe, Jane" <jane@example.com>, bob@example.com');
+    expect(normalizeAddressList("")).toBe("");
+    expect(normalizeAddressList("bob@example.com, jan")).toBe("bob@example.com, jan");
+  });
+});
+

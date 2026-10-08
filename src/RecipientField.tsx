@@ -3,7 +3,7 @@ import { Pin, PinOff, UserPlus, Users, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
 import { matchingGroups, memberCountLabel } from "./contactGroups";
-import { looksLikeCompleteAddress, parseAddress } from "./emailAddress";
+import { formatAddress, looksLikeCompleteAddress, parseAddress, splitAddressList } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 
@@ -33,7 +33,7 @@ function toChip(segment: string): Chip {
 }
 
 function formatChip(chip: Chip): string {
-  return chip.displayName ? `${chip.displayName} <${chip.email}>` : chip.email;
+  return formatAddress(chip.displayName, chip.email);
 }
 
 function mergeChip(chips: Chip[], candidate: Chip): Chip[] {
@@ -49,10 +49,13 @@ function mergeChip(chips: Chip[], candidate: Chip): Chip[] {
 // address; a value this component is itself producing keystroke-by-keystroke
 // never goes through this path (see the `lastEmitted` guard below), so a
 // chip never collapses out from under someone mid-type.
+// Splitting is quote-aware ("Doe, Jane" <jane@example.com> is one recipient)
+// and rejoins an unquoted "Doe, Jane <jane@example.com>" from older drafts.
 function parseExternalValue(value: string): { chips: Chip[]; draftText: string } {
-  const segments = value.split(",").map((segment) => segment.trim());
+  const segments = splitAddressList(value);
+  const endsWithSeparator = /,\s*$/.test(value);
   const last = segments[segments.length - 1] ?? "";
-  const lastIsComplete = last.length > 0 && looksLikeCompleteAddress(parseAddress(last).email);
+  const lastIsComplete = endsWithSeparator || (last.length > 0 && looksLikeCompleteAddress(parseAddress(last).email));
   const committed = lastIsComplete ? segments : segments.slice(0, -1);
   const chips = committed.filter((segment) => segment.length > 0).map(toChip);
   return { chips, draftText: lastIsComplete ? "" : last };
@@ -294,8 +297,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
             const pasted = event.clipboardData.getData("text");
             if (!pasted.includes(",")) return;
             event.preventDefault();
-            const segments = `${draftText}${pasted}`
-              .split(",")
+            const segments = splitAddressList(`${draftText}${pasted}`)
               .map((segment) => segment.trim())
               .filter(Boolean);
             emit(segments.map(toChip).reduce(mergeChip, chips), "");
