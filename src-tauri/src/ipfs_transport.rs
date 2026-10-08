@@ -137,7 +137,7 @@ impl IpfsRpcTransport {
         sync_space_id: &[u8],
     ) -> Result<Self, TransportError> {
         let origin = parse_rpc_origin(base_url).map_err(TransportError::Permanent)?;
-        let client = reqwest::Client::builder()
+        let client = crate::http_client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             // Never follow a redirect: the plan requires rejecting a

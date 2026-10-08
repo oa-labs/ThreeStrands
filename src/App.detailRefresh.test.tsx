@@ -325,7 +325,7 @@ describe("conversation brief", () => {
       const meeting = meetingAt(26);
       const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
       const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ id: "created", accountId: "calendar@example.com", title: "Budget review", start: meeting.normalizedStart, end: meeting.normalizedEnd, allDay: false });
-      const { panel, schedule } = await openWithMeeting(meeting);
+      const { schedule } = await openWithMeeting(meeting);
 
       expect(await within(schedule).findByText("You’re free")).toBeInTheDocument();
       expect(check).toHaveBeenCalledWith(expect.objectContaining({ start: meeting.normalizedStart, end: meeting.normalizedEnd }));
@@ -344,7 +344,10 @@ describe("conversation brief", () => {
         start: new Date(meeting.normalizedStart).toISOString(),
       })));
       expect(await screen.findByText("Added to calendar")).toBeInTheDocument();
-      await waitFor(() => expect(within(panel).queryByText("Budget review")).not.toBeInTheDocument());
+      expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
+      expect(await screen.findByRole("dialog", { name: "Budget review details" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
+      await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByText("Budget review")).not.toBeInTheDocument());
     });
 
     it("replies that a free time works, and opens more times on the meeting's day", async () => {
@@ -361,6 +364,50 @@ describe("conversation brief", () => {
       fireEvent.click(within(schedule).getByRole("button", { name: "Reply “That Works”" }));
       const editor = await screen.findByRole("textbox", { name: "Message Body" });
       await waitFor(() => expect(editor).toHaveTextContent("That time works for me:"));
+    });
+
+    it("keeps a failed chat suggestion reviewable, then opens the saved event and replaces the review link", async () => {
+      const meeting = meetingAt(26);
+      const unrelated = { ...meeting, title: "Another meeting" };
+      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const { panel } = await openWithMeeting(unrelated);
+      vi.spyOn(mailClient, "threadChat").mockResolvedValue({
+        answer: "I've prepared the class for review.", analysis: { proposals: [meeting], hiddenCount: 0 },
+        replyDraft: null, sources: [], searched: [], attachments: [], availability: null,
+      });
+      const saved = { id: "primary:created", calendarId: "primary", accountId: "calendar@example.com", title: "Budget review",
+        start: meeting.normalizedStart, end: meeting.normalizedEnd, allDay: false };
+      const create = vi.spyOn(mailClient, "createCalendarEvent")
+        .mockRejectedValueOnce(new Error("Could not save event")).mockResolvedValueOnce(saved);
+      vi.mocked(mailClient.listScheduleEvents).mockImplementation(async () => ({ events: create.mock.calls.length >= 2 ? [saved] : [], errors: [] }));
+      const remove = vi.spyOn(mailClient, "removeThreadSuggestion").mockResolvedValue(true);
+      fireEvent.click(within(panel).getByRole("button", { name: /Ask about this conversation/ }));
+      const input = within(panel).getByRole("textbox", { name: "Ask about this conversation" });
+      fireEvent.change(input, { target: { value: "add this class to my calendar" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      const review = await within(panel).findByRole("button", { name: "Added 1 suggestion to review" });
+      fireEvent.click(review);
+      const card = within(panel).getByText("Budget review").closest("article")!;
+      fireEvent.click(await within(card).findByRole("button", { name: "Add to Calendar" }));
+      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      await waitFor(() => expect(within(dialog).getByLabelText("Calendar")).toHaveValue("calendar@example.com\nprimary"));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("Could not save event");
+      expect(review).toBeInTheDocument();
+      expect(remove).not.toHaveBeenCalled();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+      const week = await screen.findByRole("region", { name: "Calendar week" });
+      expect(await within(week).findByRole("button", { name: /^Budget review/ })).toBeInTheDocument();
+      expect(await screen.findByRole("dialog", { name: "Budget review details" })).toBeInTheDocument();
+      expect(remove).toHaveBeenCalledWith("welcome", expect.any(String), meeting);
+
+      fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
+      const returned = await screen.findByRole("complementary", { name: "Conversation context" });
+      expect(within(returned).queryByRole("button", { name: "Added 1 suggestion to review" })).not.toBeInTheDocument();
+      expect(within(returned).getByText("Another meeting")).toBeInTheDocument();
+      fireEvent.click(within(returned).getByRole("button", { name: "View Budget review in schedule" }));
+      expect(await screen.findByRole("dialog", { name: "Budget review details" })).toBeInTheDocument();
+      expect(create).toHaveBeenCalledTimes(2);
     });
 
     it("shows open times from the calendar when a chat answer asks for them", async () => {
@@ -460,6 +507,40 @@ describe("conversation brief", () => {
       dueKind: "none" as const, dueValue: null, timeZone: null, repeatIntervalDays: null, confidence: 0.9,
       evidence: { sourceMessageId: "welcome-message", excerpt: "command palette" },
     };
+
+    it("updates only the originating chat answer as suggestions are edited and discarded", async () => {
+      await enableAi({ threadChat: true, actionExtraction: true });
+      const second = { ...chatProposal, title: "Another task" };
+      vi.spyOn(mailClient, "threadChat")
+        .mockResolvedValueOnce({ answer: "Two suggestions.", analysis: { proposals: [chatProposal, second], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], attachments: [], availability: null })
+        .mockResolvedValueOnce({ answer: "One more suggestion.", analysis: { proposals: [{ ...second, title: "Separate answer task" }], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], attachments: [], availability: null });
+      const remove = vi.spyOn(mailClient, "removeThreadSuggestion").mockResolvedValue(true);
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+      fireEvent.click(within(panel).getByRole("button", { name: /Ask about this conversation/ }));
+      const input = within(panel).getByRole("textbox", { name: "Ask about this conversation" });
+      fireEvent.change(input, { target: { value: "Suggest tasks" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await within(panel).findByText("Two suggestions.");
+      fireEvent.change(input, { target: { value: "Suggest another" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await within(panel).findByText("One more suggestion.");
+
+      const suggestions = within(panel).getByRole("region", { name: "Suggestions" });
+      const card = within(suggestions).getByText("Try the command palette").closest("article")!;
+      fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+      const editor = await screen.findByRole("dialog", { name: "Edit Task Proposal" });
+      fireEvent.change(within(editor).getByLabelText("Task"), { target: { value: "Edited task" } });
+      fireEvent.click(within(editor).getByRole("button", { name: "Save Proposal" }));
+      fireEvent.click(within(within(panel).getByText("Edited task").closest("article")!).getByRole("button", { name: "Discard" }));
+      expect(within(panel).queryByRole("button", { name: "Added 2 suggestions to review" })).not.toBeInTheDocument();
+      expect(within(panel).getAllByRole("button", { name: "Added 1 suggestion to review" })).toHaveLength(2);
+      expect(remove).toHaveBeenCalledWith("welcome", expect.any(String), chatProposal);
+      fireEvent.click(within(within(panel).getByText("Another task").closest("article")!).getByRole("button", { name: "Discard" }));
+      expect(within(panel).getAllByRole("button", { name: "Added 1 suggestion to review" })).toHaveLength(1);
+      expect(within(panel).getByText("Suggestions reviewed")).toBeInTheDocument();
+    });
 
     it("opens with q, keeps typed letters out of shortcuts, and returns to read mode on Escape", async () => {
       await enableAi({ threadChat: true });

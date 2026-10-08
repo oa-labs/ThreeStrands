@@ -14,6 +14,7 @@ mod db;
 mod endpoint_origin;
 mod enrollment;
 mod error_text;
+mod http_client;
 mod image_format;
 mod image_proxy;
 mod ipfs_transport;

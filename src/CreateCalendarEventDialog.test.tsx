@@ -11,7 +11,9 @@ describe("CreateCalendarEventDialog", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
   it("starts from a meeting suggestion's details and still creates only on submit", async () => {
-    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({} as ScheduleEvent);
+    const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Website kickoff",
+      start: new Date(2026, 9, 1, 15, 0).toISOString(), end: new Date(2026, 9, 1, 15, 30).toISOString(), allDay: false };
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
     const onCreated = vi.fn();
     render(<CreateCalendarEventDialog
       start={new Date(2026, 9, 1, 15, 0)}
@@ -36,6 +38,47 @@ describe("CreateCalendarEventDialog", () => {
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
       title: "Website kickoff", attendees: ["jane@example.com", "bob@example.com"], start: new Date(2026, 9, 1, 15, 0).toISOString(),
     })));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(saved));
+  });
+
+  it("defaults to a visible writable calendar ahead of a hidden primary", () => {
+    render(<CreateCalendarEventDialog start={new Date()} end={new Date(Date.now() + 3600000)} accounts={accounts}
+      calendars={[{ ...calendars[0], selected: false }, { ...calendars[0], id: "classes", primary: false }]}
+      onClose={vi.fn()} onCreated={vi.fn()} />);
+    expect(screen.getByLabelText("Calendar")).toHaveValue("you@example.com\nclasses");
+  });
+
+  it("shows an explicitly chosen hidden calendar before creating, preserving the account's other selections", async () => {
+    let finishSelection!: () => void;
+    const select = vi.spyOn(mailClient, "setCalendarSelection").mockImplementation(() => new Promise((resolve) => {
+      finishSelection = () => resolve([]);
+    }));
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({} as ScheduleEvent);
+    const onCreated = vi.fn();
+    render(<CreateCalendarEventDialog start={new Date()} end={new Date(Date.now() + 3600000)} accounts={accounts}
+      calendars={[...calendars, { ...calendars[0], id: "classes", primary: false, selected: false },
+        { ...calendars[0], id: "other-account", accountId: "someone@example.com" }]}
+      initialTitle="Class" onClose={vi.fn()} onCreated={onCreated} />);
+    fireEvent.change(screen.getByLabelText("Calendar"), { target: { value: "you@example.com\nclasses" } });
+    expect(screen.getByText("This calendar will be shown in your schedule.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create event" }));
+    expect(select).toHaveBeenCalledWith("you@example.com", ["primary", "classes"]);
+    expect(create).not.toHaveBeenCalled();
+    finishSelection();
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ calendarId: "classes" })));
     await waitFor(() => expect(onCreated).toHaveBeenCalled());
+  });
+
+  it("keeps the dialog open without creating an event when making its calendar visible fails", async () => {
+    vi.spyOn(mailClient, "setCalendarSelection").mockRejectedValue(new Error("Calendar selection failed"));
+    const create = vi.spyOn(mailClient, "createCalendarEvent");
+    const onCreated = vi.fn();
+    render(<CreateCalendarEventDialog start={new Date()} end={new Date(Date.now() + 3600000)} accounts={accounts}
+      calendars={[{ ...calendars[0], selected: false }]} initialTitle="Class" onClose={vi.fn()} onCreated={onCreated} />);
+    fireEvent.click(screen.getByRole("button", { name: "Create event" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Calendar selection failed");
+    expect(create).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Create event" })).toBeEnabled();
   });
 });

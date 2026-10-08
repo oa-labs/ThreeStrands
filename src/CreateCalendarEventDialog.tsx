@@ -43,12 +43,14 @@ export function CreateCalendarEventDialog({
   initialInvitees?: string[];
   initialDescription?: string;
   onClose(): void;
-  onCreated(): void;
+  onCreated(event: ScheduleEvent): void;
 }) {
   const writable = useMemo(() => calendars.filter((calendar) =>
     calendar.writable && accounts.some((account) => account.email === calendar.accountId && account.status === "connected"),
   ), [accounts, calendars]);
-  const defaultCalendar = writable.find((calendar) => calendar.primary) ?? writable[0];
+  const visible = writable.filter((calendar) => calendar.selected);
+  const defaultCalendar = visible.find((calendar) => calendar.primary) ?? visible[0]
+    ?? writable.find((calendar) => calendar.primary) ?? writable[0];
   const [calendarKey, setCalendarKey] = useState(() => defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "");
   const selectedCalendarKey = writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === calendarKey)
     ? calendarKey : defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "";
@@ -86,8 +88,15 @@ export function CreateCalendarEventDialog({
     };
     setSaving(true);
     try {
-      await mailClient.createCalendarEvent(request);
-      onCreated();
+      // A new event must be visible in the schedule. Do this before creating
+      // it, so a selection failure cannot leave an event that a retry duplicates.
+      if (!calendar.selected) {
+        await mailClient.setCalendarSelection(calendar.accountId, [
+          ...calendars.filter((option) => option.accountId === calendar.accountId && option.selected).map((option) => option.id),
+          calendar.id,
+        ]);
+      }
+      onCreated(await mailClient.createCalendarEvent(request));
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -113,6 +122,8 @@ export function CreateCalendarEventDialog({
             ))}
           </select>
         </label>
+        {writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === selectedCalendarKey && !calendar.selected)
+          ? <p className="modal-form-context">This calendar will be shown in your schedule.</p> : null}
         {writable.length === 0 ? <p className="form-error">Connect or reconnect a Google Calendar account with event access to create meetings.</p> : null}
         <label>Invite people<input type="text" value={invitees} onChange={(event) => setInvitees(event.target.value)} placeholder="name@example.com, colleague@example.com" /></label>
         <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>

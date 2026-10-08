@@ -1758,6 +1758,7 @@ export function App() {
   const [chatFailures, setChatFailures] = useState<Record<string, { message: string; question: string; searchMailbox: boolean; attachments: ChatAttachmentOption[] }>>({});
   const [chatFocusRequest, setChatFocusRequest] = useState(0);
   const chatEntrySequence = useRef(0);
+  const chatSuggestionOrigins = useRef(new WeakMap<ActionProposal, { threadId: string; entryId: string }>());
   const askThread = useCallback(async (question: string, searchMailbox: boolean, contactId: string | null, attachments: ChatAttachmentOption[]) => {
     if (!visibleDetail || !actionProposalKey) return;
     const threadId = visibleDetail.thread.id;
@@ -1805,6 +1806,9 @@ export function App() {
         searched: reply.searched,
         attachments: reply.attachments,
       };
+      for (const proposal of reply.analysis.proposals) {
+        chatSuggestionOrigins.current.set(proposal, { threadId, entryId: answer.id });
+      }
       setChatByThread((current) => ({ ...current, [threadId]: [...(current[threadId] ?? []), answer] }));
     } catch (error) {
       setChatByThread((current) => ({ ...current, [threadId]: (current[threadId] ?? []).filter((entry) => entry.id !== questionEntry.id) }));
@@ -1849,9 +1853,22 @@ export function App() {
   // Removes a handled suggestion by identity, so it still matches if the list
   // changed while a dialog was open, and drops it from the saved suggestions
   // so reopening the thread doesn't offer it again.
-  const removeActionProposal = useCallback((source: ProposalSource, proposal: ActionProposal) => {
+  const removeActionProposal = useCallback((source: ProposalSource, proposal: ActionProposal, createdEvent?: ScheduleEvent) => {
     setActionProposalSets((current) => ({ ...current, [source.key]: (current[source.key] ?? []).filter((item) => item !== proposal) }));
     const saved = proposalOrigins.current.get(proposal) ?? proposal;
+    const chatOrigin = chatSuggestionOrigins.current.get(saved);
+    if (chatOrigin) {
+      setChatByThread((current) => ({
+        ...current,
+        [chatOrigin.threadId]: (current[chatOrigin.threadId] ?? []).map((entry) =>
+          entry.role === "assistant" && entry.id === chatOrigin.entryId ? {
+            ...entry,
+            addedSuggestions: Math.max(0, entry.addedSuggestions - 1),
+            handledSuggestions: (entry.handledSuggestions ?? 0) + 1,
+            calendarEvents: createdEvent ? [...(entry.calendarEvents ?? []), createdEvent] : entry.calendarEvents,
+          } : entry),
+      }));
+    }
     mailClient.removeThreadSuggestion(source.threadId, source.revision, saved)
       .catch(logBackgroundFailure("Saving a handled suggestion"));
   }, []);
@@ -1967,13 +1984,17 @@ export function App() {
       .then(() => openTaskThread(threadId))
       .catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
   }, [correspondence, openTaskThread, setNotice]);
-  const meetingCreated = useCallback(() => {
+  const meetingCreated = useCallback((event: ScheduleEvent) => {
     const source = meetingEventDraft?.source;
-    if (source) removeActionProposal(source.from, source.proposal);
+    if (source) removeActionProposal(source.from, source.proposal, event);
     setMeetingEventDraft(null);
     revalidateScheduleCache();
+    setCalendarWeekAnchor(startOfLocalDay(eventDate(event)));
+    setCalendarEventToOpen(event);
+    setRightWorkspace("week");
+    void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
     setNotice({ message: "Added to calendar" });
-  }, [meetingEventDraft, removeActionProposal, setNotice]);
+  }, [meetingEventDraft, refreshCalendarOptions, removeActionProposal, setNotice]);
   const confirmMeetingTime = useCallback((slot: ScheduleSlot) => {
     correspondence.replyWithText(formatConfirmationText(slot, availabilityPreferences.timeZone), visibleDetail?.messages.at(-1)?.id);
   }, [availabilityPreferences.timeZone, correspondence, visibleDetail]);
@@ -2896,6 +2917,7 @@ export function App() {
               setRightWorkspace(null);
               openSettingsAt("calendarAccounts");
             }}
+            onCreated={() => void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"))}
           />
         </Suspense>
       ) : null}
@@ -3017,6 +3039,7 @@ export function App() {
               onUseReply={(text) => correspondence.replyWithText(text, visibleDetail.messages.at(-1)?.id)}
               onOpenThread={jumpToThread}
               onShowSuggestions={() => document.getElementById(THREAD_ASSIST_ID)?.scrollIntoView?.({ block: "nearest" })}
+              onOpenCalendarEvent={(event) => openCalendarView(eventDate(event), event)}
               onOpenSettings={() => openSettingsAt("ai")}
               renderAvailability={(availability) => (
                 <MeetingScheduler

@@ -50,7 +50,7 @@ struct ImageCacheInner {
 
 impl ImageCache {
     pub(crate) fn new() -> Result<Self, String> {
-        let client = reqwest::Client::builder()
+        let client = crate::http_client::builder()
             .dns_resolver(net_safety::dns_resolver())
             .redirect(Policy::limited(5))
             .connect_timeout(CONNECT_TIMEOUT)

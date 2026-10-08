@@ -240,7 +240,7 @@ struct GoogleEventTime {
 }
 
 fn calendar_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    crate::http_client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(45))
         .build()

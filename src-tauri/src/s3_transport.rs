@@ -342,7 +342,7 @@ impl S3Transport {
         } else {
             format!("{}/{CORPUS_DIR_NAME}", validated.prefix)
         };
-        let client = reqwest::Client::builder()
+        let client = crate::http_client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             // Never follow a redirect: a redirected presigned request would

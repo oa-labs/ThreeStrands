@@ -459,7 +459,7 @@ impl OAuthCredential {
             .exchange_code(AuthorizationCode::new(code.to_string()))
             .set_pkce_verifier(verifier)
             .set_redirect_uri(Cow::Owned(redirect_uri))
-            .request_async(&self.client)
+            .request_async(&OAuthHttp(self.client.clone()))
             .await
             .map_err(|error| {
                 format!("{} OAuth code exchange failed: {error}", self.provider.label())
@@ -483,7 +483,7 @@ impl OAuthCredential {
         let refreshed = self
             .oauth_client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
-            .request_async(&self.client)
+            .request_async(&OAuthHttp(self.client.clone()))
             .await
             .map_err(|error| map_refresh_error(error, self.provider))?;
         let refreshed = tokens_from_response(&refreshed, self.provider)
@@ -720,11 +720,53 @@ fn build_oauth_client(
         .set_token_uri(token_url))
 }
 
+/// oauth2's HTTP client seam over the app's own `reqwest` client. A named
+/// type returning a boxed `Send` future (rather than a closure) keeps token
+/// requests usable from Tauri's `Send` command futures.
+struct OAuthHttp(Client);
+
+impl<'c> oauth2::AsyncHttpClient<'c> for OAuthHttp {
+    type Error = oauth2::HttpClientError<reqwest::Error>;
+    type Future = std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<oauth2::HttpResponse, Self::Error>> + Send + 'c,
+        >,
+    >;
+
+    fn call(&'c self, request: oauth2::HttpRequest) -> Self::Future {
+        // `reqwest::Client` is a cheap handle; owning it keeps the future
+        // free of borrows.
+        let client = self.0.clone();
+        Box::pin(async move { send_oauth_request(&client, request).await })
+    }
+}
+
+/// Sends one oauth2 token request, mirroring the adapter oauth2 ships for
+/// the reqwest version it pins.
+async fn send_oauth_request(
+    client: &Client,
+    request: oauth2::HttpRequest,
+) -> Result<oauth2::HttpResponse, oauth2::HttpClientError<reqwest::Error>> {
+    let response = client
+        .execute(request.try_into().map_err(Box::new)?)
+        .await
+        .map_err(Box::new)?;
+    let mut builder = oauth2::http::Response::builder()
+        .status(response.status())
+        .version(response.version());
+    for (name, value) in response.headers() {
+        builder = builder.header(name, value);
+    }
+    builder
+        .body(response.bytes().await.map_err(Box::new)?.to_vec())
+        .map_err(oauth2::HttpClientError::Http)
+}
+
 fn build_http_client(
     connect_timeout: Duration,
     request_timeout: Duration,
 ) -> Result<Client, String> {
-    Client::builder()
+    crate::http_client::builder()
         .connect_timeout(connect_timeout)
         .timeout(request_timeout)
         .redirect(reqwest::redirect::Policy::none())

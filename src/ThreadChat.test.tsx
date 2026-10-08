@@ -31,6 +31,20 @@ const answer = (overrides: Partial<Extract<ChatEntry, { role: "assistant" }>> = 
 describe("ThreadChat", () => {
   afterEach(cleanup);
 
+  it("offers saved events in the schedule while counting only suggestions still awaiting review", () => {
+    const saved = { id: "saved", accountId: "you@example.com", title: "Class", start: "2026-10-12T18:00:00Z", end: "2026-10-12T19:30:00Z", allDay: false };
+    const onOpenCalendarEvent = vi.fn();
+    const { rerender } = render(<ThreadChat {...props({ onOpenCalendarEvent,
+      entries: [answer({ addedSuggestions: 1, handledSuggestions: 1, calendarEvents: [saved] })],
+    })} />);
+    expect(screen.getByRole("button", { name: "Added 1 suggestion to review" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View Class in schedule" }));
+    expect(onOpenCalendarEvent).toHaveBeenCalledWith(saved);
+    rerender(<ThreadChat {...props({ entries: [answer({ handledSuggestions: 2 })] })} />);
+    expect(screen.queryByRole("button", { name: /suggestion.*to review/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Suggestions reviewed")).toBeInTheDocument();
+  });
+
   it("stays a read-only prompt until activated, so single-key shortcuts keep working", () => {
     render(<ThreadChat {...props()} />);
     const prompt = screen.getByRole("button", { name: /Ask about this conversation/ });

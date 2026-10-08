@@ -558,7 +558,8 @@ describe("CalendarWeekView", () => {
 
   it("opens an hour-long event from a clicked time and saves its details on the primary calendar", async () => {
     const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(event("created", "2026-09-22T09:15:00", "2026-09-22T10:15:00", "Planning"));
-    const { container } = renderWeek();
+    const onCreated = vi.fn();
+    const { container } = renderWeek({ onCreated });
     const column = container.querySelectorAll<HTMLElement>(".calendar-week-column")[2]!;
     vi.spyOn(column, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
 
@@ -580,10 +581,13 @@ describe("CalendarWeekView", () => {
       attendees: ["ada@example.com", "bob@example.com"], description: "Review the plan",
     }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument());
+    expect(await screen.findByRole("dialog", { name: "Planning details" })).toBeInTheDocument();
+    expect(onCreated).toHaveBeenCalledOnce();
   });
 
   it("uses the dragged span and allows changing the calendar", async () => {
     const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(event("created", "2026-09-22T09:00:00", "2026-09-22T11:30:00"));
+    const select = vi.spyOn(mailClient, "setCalendarSelection").mockResolvedValue([]);
     const { container } = renderWeek({
       calendars: [...calendars, { id: "team", accountId: "joel@example.com", name: "Team", primary: false, selected: false, writable: true }],
     });
@@ -600,6 +604,7 @@ describe("CalendarWeekView", () => {
     fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Team sync" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ calendarId: "team", title: "Team sync" })));
+    expect(select).toHaveBeenCalledWith("joel@example.com", ["primary", "holidays", "team"]);
   });
 
   it("keeps a clicked late-night event one hour long across midnight", async () => {

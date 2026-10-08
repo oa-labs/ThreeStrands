@@ -22,7 +22,7 @@ pub async fn execute(target: &UnsubscribeTarget) -> Result<UnsubscribeResult, St
 
 async fn execute_one_click(target: &UnsubscribeTarget) -> Result<UnsubscribeResult, String> {
     let url = validate_https_url(&target.url)?;
-    let client = reqwest::Client::builder()
+    let client = crate::http_client::builder()
         .dns_resolver(net_safety::dns_resolver())
         .redirect(Policy::none())
         .timeout(Duration::from_secs(15))

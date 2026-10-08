@@ -37,7 +37,7 @@ pub struct GmailClient {
 impl GmailClient {
     pub fn new(auth: OAuthCredential) -> Self {
         Self {
-            http: reqwest::Client::builder()
+            http: crate::http_client::builder()
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(45))
                 .build()

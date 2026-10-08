@@ -233,6 +233,7 @@ export function CalendarWeekView({
   onToggleCalendar,
   onAddCalendarAccount,
   onOpenSettings,
+  onCreated,
 }: {
   anchor: Date;
   /** Opens these event details when arriving from a conversation. */
@@ -243,6 +244,7 @@ export function CalendarWeekView({
   onToggleCalendar(accountId: string, calendarId: string, selected: boolean): void;
   onAddCalendarAccount(): void;
   onOpenSettings(): void;
+  onCreated?(): void;
 }) {
   const [month, setMonth] = useState(() => startOfLocalDay(anchor));
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
@@ -510,7 +512,7 @@ export function CalendarWeekView({
           accounts={accounts}
           calendars={calendars}
           onClose={() => setNewEventRange(null)}
-          onCreated={() => { setNewEventRange(null); revalidateScheduleCache(); }}
+          onCreated={(event) => { setNewEventRange(null); setSelectedEvent(event); revalidateScheduleCache(); onCreated?.(); }}
         /> : null}
       </div>
       <aside className="calendar-week-side" aria-label="Calendar navigation">

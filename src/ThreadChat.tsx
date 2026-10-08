@@ -9,7 +9,7 @@ import {
   type ChatAttachmentOption,
   type Mention,
 } from "./chatAttachments";
-import type { ChatAttachmentSource, ChatAvailability, ChatSource } from "./domain";
+import type { ChatAttachmentSource, ChatAvailability, ChatSource, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { AttachmentIcon } from "./AttachmentIcon";
 
@@ -28,6 +28,9 @@ export type ChatEntry =
     content: string;
     replyDraft: string | null;
     addedSuggestions: number;
+    /** Handled suggestions no longer offer a review action. */
+    handledSuggestions?: number;
+    calendarEvents?: ScheduleEvent[];
     hiddenSuggestions: number;
     sources: ChatSource[];
     searched: ChatSource[];
@@ -80,6 +83,7 @@ export function ThreadChat({
   onUseReply,
   onOpenThread,
   onShowSuggestions,
+  onOpenCalendarEvent,
   onOpenSettings,
   renderAvailability,
 }: {
@@ -98,6 +102,7 @@ export function ThreadChat({
   onUseReply(text: string): void;
   onOpenThread(threadId: string): void;
   onShowSuggestions(): void;
+  onOpenCalendarEvent?(event: ScheduleEvent): void;
   onOpenSettings(): void;
   /** Shows open times for an answer that asked for them. */
   renderAvailability?(availability: ChatAvailability): ReactNode;
@@ -240,6 +245,13 @@ export function ThreadChat({
           {entry.addedSuggestions > 0 ? <button type="button" className="btn-link context-link-button" onClick={onShowSuggestions}>
             Added {entry.addedSuggestions === 1 ? "1 suggestion" : `${entry.addedSuggestions} suggestions`} to review
           </button> : null}
+          {entry.handledSuggestions && !entry.addedSuggestions && !entry.calendarEvents?.length
+            ? <small>Suggestions reviewed</small> : null}
+          {onOpenCalendarEvent ? entry.calendarEvents?.map((event) => (
+            <button type="button" className="btn-link context-link-button" key={`${event.accountId}:${event.id}`} onClick={() => onOpenCalendarEvent(event)}>
+              View {event.title} in schedule
+            </button>
+          )) : null}
           {entry.hiddenSuggestions > 0 ? <small>{entry.hiddenSuggestions === 1 ? "1 suggestion" : `${entry.hiddenSuggestions} suggestions`} couldn&rsquo;t be matched to the email, so {entry.hiddenSuggestions === 1 ? "it was" : "they were"} hidden.</small> : null}
           {entry.sources.length > 0 ? <nav className="thread-chat-sources" aria-label="Sources">
             {entry.sources.map((source) => <button type="button" className="btn-link" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}

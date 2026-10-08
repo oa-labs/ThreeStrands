@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.83.5"
+version = "0.83.7"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -27,19 +27,28 @@ imagesize = "0.15"
 gethostname = "1.1"
 iroh-car = "0.5"
 jiff = "0.2"
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# The default `v1` feature keeps keyring 3's entry naming (macOS login
+# keychain service/account, Windows `{user}.{service}` targets, Secret
+# Service service/username attributes), so stored OAuth tokens and keys
+# written by earlier releases still load. Re-check that on any upgrade.
+keyring = "4.2"
 log = "0.4"
 mail-builder = "1.0"
 mail-parser = "0.11"
 md-5 = "0.10"
-oauth2 = { version = "5", features = ["reqwest"] }
+# Token requests go through the app's own `reqwest` client (see
+# `auth::send_oauth_request`), so oauth2's bundled reqwest adapter is off.
+oauth2 = { version = "5", default-features = false }
 open = "5"
 percent-encoding = "2.3.2"
 # Text extraction for attachments the user shares with Thread Chat.
 pdf-extract = "0.12"
 quick-xml = "0.42"
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "query", "rustls-no-provider"] }
+# reqwest's `rustls-no-provider` leaves the TLS crypto backend to the app:
+# `http_client::builder` installs ring, matching tauri-plugin-updater.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rfd = "0.17"
 rusqlite = { version = "0.40", features = ["bundled"] }
 # Sans-IO SigV4 presigning and ListObjectsV2 parsing for the S3 sync
