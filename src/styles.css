@@ -2808,6 +2808,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* What choosing a group added, on its own line under that field's row. */
 .recipient-group-note { flex-shrink: 0; margin: 0; padding-bottom: var(--space-1-5); color: var(--muted); font-size: var(--text-meta); }
 .compose-body { display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); flex-shrink: 0; padding: var(--space-3) 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: var(--text-reading); line-height: var(--leading-normal); white-space: pre-wrap; }
+/* A new message has no thread above it, so its window is ~40% taller than a reply's;
+   the 100vh cap keeps Send on screen in short windows, where the 200px floor applies. */
+.composer-new .compose-body:not(.compose-quoted) { height: min(45vh + 90px, 600px, 100vh - 400px); }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
 .compose-body ol, .compose-body ul { margin: .5em 0; padding-left: 2em; }

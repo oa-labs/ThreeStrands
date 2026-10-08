@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createRef } from "react";
 import DOMPurify from "dompurify";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -81,6 +83,17 @@ describe("Composer From selector", () => {
     fireEvent.keyDown(selector, { key: "Tab", shiftKey: true });
 
     expect(screen.getByRole("button", { name: "Discard Draft" })).toHaveFocus();
+  });
+
+  it("gives a new message a taller body than a reply", () => {
+    const { unmount } = render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "New Message" })).toHaveClass("composer-new");
+    unmount();
+    render(<Composer draft={{ ...draft, mode: "reply" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "Reply Message" })).not.toHaveClass("composer-new");
+
+    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    expect(css).toContain(".composer-new .compose-body:not(.compose-quoted) { height: min(45vh + 90px, 600px, 100vh - 400px); }");
   });
 });
 
