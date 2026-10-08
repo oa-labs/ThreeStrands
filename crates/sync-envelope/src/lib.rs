@@ -34,7 +34,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 pub use cid::compute_cid;
-pub use crypto::{seal_to_x25519, try_open_sealed_box};
+pub use crypto::{os_rng, seal_to_x25519, try_open_sealed_box};
 pub use device_head::{
     decode_signed_head, encode_signed_head, sign_device_head, verify_device_head, DeviceHead,
     SignedDeviceHead,

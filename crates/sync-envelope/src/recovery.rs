@@ -9,8 +9,8 @@
 use bip39::Mnemonic;
 use ed25519_dalek::SigningKey;
 use hkdf::Hkdf;
-use rand::rngs::OsRng;
-use rand::RngCore;
+use crate::os_rng;
+use rand::Rng;
 use sha2::Sha256;
 use x25519_dalek::StaticSecret as X25519StaticSecret;
 
@@ -23,7 +23,7 @@ const RECOVERY_ED25519_DOMAIN: &[u8] = b"threestrands/sync-envelope/recovery-ed2
 /// 24-word BIP-39 mnemonic.
 pub fn generate_recovery_seed() -> [u8; RECOVERY_SEED_LEN] {
     let mut seed = [0u8; RECOVERY_SEED_LEN];
-    OsRng.fill_bytes(&mut seed);
+    os_rng().fill_bytes(&mut seed);
     seed
 }
 

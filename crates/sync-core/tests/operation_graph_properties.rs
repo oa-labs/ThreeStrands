@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use proptest::prelude::*;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use serde_json::json;
 use threestrands_sync_core::{
     ApplyOutcome, EntityType, Operation, OperationGraph, OperationId, WinnerStamp,
@@ -44,7 +44,7 @@ fn generate_operations(rng: &mut StdRng, count: usize) -> Vec<Operation> {
         let branch_width = if frontier.is_empty() {
             1
         } else {
-            rng.gen_range(1..=2)
+            rng.random_range(1..=2)
         }
         .min(count - created);
         let snapshot = frontier.clone();
@@ -56,7 +56,7 @@ fn generate_operations(rng: &mut StdRng, count: usize) -> Vec<Operation> {
             let parents = if snapshot.is_empty() {
                 Vec::new()
             } else {
-                let take = rng.gen_range(1..=snapshot.len());
+                let take = rng.random_range(1..=snapshot.len());
                 let mut chosen = snapshot.clone();
                 chosen.shuffle(rng);
                 chosen.truncate(take);
@@ -170,7 +170,7 @@ proptest! {
         let mut omit_rng = StdRng::seed_from_u64(omit_seed);
         let mut indices: Vec<usize> = (0..ops.len()).collect();
         indices.shuffle(&mut omit_rng);
-        let withhold_count = omit_rng.gen_range(0..ops.len());
+        let withhold_count = omit_rng.random_range(0..ops.len());
         let withheld: HashSet<usize> = indices.into_iter().take(withhold_count).collect();
 
         let mut graph = OperationGraph::new();
@@ -212,7 +212,7 @@ proptest! {
         let ops = generate_operations(&mut rng, count);
 
         let mut cut_rng = StdRng::seed_from_u64(cut_seed);
-        let cut = cut_rng.gen_range(1..ops.len());
+        let cut = cut_rng.random_range(1..ops.len());
         let (prefix, suffix) = ops.split_at(cut);
 
         // Compact the prefix into "the frontier at the cut point", standing

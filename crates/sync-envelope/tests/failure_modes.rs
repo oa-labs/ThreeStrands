@@ -4,7 +4,7 @@
 //! chunk substitution.
 
 use ed25519_dalek::SigningKey;
-use rand::rngs::OsRng;
+use threestrands_sync_envelope::os_rng;
 use serde_json::json;
 use threestrands_sync_envelope::header::{HEADER_LEN, NONCE_LEN};
 use threestrands_sync_envelope::{
@@ -41,7 +41,7 @@ struct Fixture {
 }
 
 fn sealed_fixture() -> Fixture {
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let signing_key = SigningKey::generate(&mut os_rng());
     let k_epoch = [4u8; 32];
     let sync_space_id: &[u8] = b"fixture-space";
     let key_epoch = 5;
@@ -132,7 +132,7 @@ fn wrong_key_fails_closed() {
 #[test]
 fn wrong_signature_key_fails_closed() {
     let fixture = sealed_fixture();
-    let other_verifying_key = SigningKey::generate(&mut OsRng).verifying_key();
+    let other_verifying_key = SigningKey::generate(&mut os_rng()).verifying_key();
     let result = open_snapshot(
         &fixture.chunks,
         &OpenParams {
@@ -210,7 +210,7 @@ fn cross_message_chunk_substitution_at_a_shared_index_fails_closed() {
     // narrower case where two chunks disagree only on their authenticated
     // message hash.
     let fixture = sealed_fixture();
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let signing_key = SigningKey::generate(&mut os_rng());
     let other_sealed = seal_snapshot(
         snapshot("a different message"),
         &SealParams {
@@ -237,7 +237,7 @@ fn cross_message_chunk_substitution_at_a_distinct_index_fails_closed() {
     // message id) and chunk count, but not content: splicing one message's chunk
     // into another's set at a non-colliding index must still be rejected,
     // via the authenticated message hash rather than index collision.
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let signing_key = SigningKey::generate(&mut os_rng());
     let k_epoch = [4u8; 32];
     let sync_space_id: &[u8] = b"fixture-space";
     let key_epoch = 5;
@@ -282,7 +282,7 @@ fn inconsistent_chunk_counts_fail_closed() {
     // Two distinct seals that happen to share an author and sequence (so they
     // share a message id) but disagree wildly on size, and therefore chunk count.
     // Splicing a chunk from one into the other must never be accepted.
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let signing_key = SigningKey::generate(&mut os_rng());
     let k_epoch = [4u8; 32];
     let sync_space_id: &[u8] = b"fixture-space";
     let key_epoch = 5;
@@ -321,7 +321,7 @@ fn inconsistent_chunk_counts_fail_closed() {
 
 #[test]
 fn incomplete_chunk_set_never_applies() {
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let signing_key = SigningKey::generate(&mut os_rng());
     let k_epoch = [4u8; 32];
     let sync_space_id: &[u8] = b"fixture-space";
     let key_epoch = 5;

@@ -30,7 +30,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use base64::Engine;
 use md5::{Digest, Md5};
-use rand::{rngs::OsRng, RngCore};
+use threestrands_sync_envelope::os_rng;
+use rand::Rng;
 use rusty_s3::{S3Action, UrlStyle};
 use serde::{Deserialize, Serialize};
 
@@ -580,7 +581,7 @@ impl S3Transport {
         report.can_list = true;
 
         let mut nonce = [0u8; 16];
-        OsRng.fill_bytes(&mut nonce);
+        os_rng().fill_bytes(&mut nonce);
         let nonce_hex: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
         let key = format!("{}/probe/{nonce_hex}", self.root);
         let payload = format!("threestrands connection test {nonce_hex}").into_bytes();
@@ -1261,6 +1262,13 @@ pub(crate) mod fake_server {
     fn content_md5(bytes: &[u8]) -> String {
         base64::engine::general_purpose::STANDARD.encode(Md5::digest(bytes))
     }
+
+    // The adapter and this fake both hash with the `md-5` crate, so pin a
+    // known RFC 1864 value: a crate upgrade must not change what S3 sees.
+    #[test]
+    fn content_md5_matches_a_known_rfc_1864_value() {
+        assert_eq!(content_md5(b"hello world"), "XrY7u+Ae7tCTyyK7j1rNww==");
+    }
 }
 
 #[cfg(test)]
@@ -1455,7 +1463,7 @@ mod transport_tests {
     async fn heads_round_trip_and_skip_missing_or_malformed_ones() {
         let server = FakeS3Server::spawn().await;
         let transport = open(&server, "s3", "p");
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
 
         let head = signed_head(&signing_key, [1; 16], 4);
         transport.publish_head(&head).await.unwrap();
@@ -1525,7 +1533,7 @@ mod transport_tests {
             let bytes = format!("corpus {index}").into_bytes();
             transport.put_object(&Cid::for_bytes(&bytes), &bytes).await.unwrap();
         }
-        transport.publish_head(&signed_head(&SigningKey::generate(&mut OsRng), [9; 16], 1)).await.unwrap();
+        transport.publish_head(&signed_head(&SigningKey::generate(&mut os_rng()), [9; 16], 1)).await.unwrap();
         {
             let mut state = server.state();
             state.objects.insert("mine/other-app/file".to_string(), vec![1]);
@@ -1634,7 +1642,7 @@ mod transport_tests {
             folder.put_object(&cid, &bytes).await.unwrap();
             cids.push(cid);
         }
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         folder.publish_head(&signed_head(&signing_key, [7; 16], 3)).await.unwrap();
 
         let server = FakeS3Server::spawn().await;

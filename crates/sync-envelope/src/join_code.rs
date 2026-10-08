@@ -55,7 +55,7 @@ const REDEMPTION_DEVICE_SIGNATURE_DOMAIN: &[u8] =
 
 pub fn generate_invite_secret() -> [u8; INVITE_SECRET_LEN] {
     let mut secret = [0u8; INVITE_SECRET_LEN];
-    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut secret);
+    rand::Rng::fill_bytes(&mut crate::os_rng(), &mut secret);
     secret
 }
 

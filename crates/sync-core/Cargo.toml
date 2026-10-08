@@ -10,4 +10,4 @@ threestrands-sync-protocol = { path = "../sync-protocol" }
 
 [dev-dependencies]
 proptest = "1"
-rand = "0.8"
+rand = "0.10"

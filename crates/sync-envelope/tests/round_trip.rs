@@ -1,5 +1,5 @@
 use ed25519_dalek::SigningKey;
-use rand::rngs::OsRng;
+use threestrands_sync_envelope::os_rng;
 use serde_json::json;
 use threestrands_sync_envelope::limits::{MAX_ENTITY_ID_BYTES, MAX_SNAPSHOT_FIELDS, MAX_VALUES_PER_FIELD, MAX_VALUE_BYTES};
 use threestrands_sync_envelope::{
@@ -40,7 +40,7 @@ fn sample_snapshot() -> ReplicaSnapshot {
 }
 
 fn keys_and_epoch() -> (SigningKey, [u8; 32], &'static [u8], u32) {
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let signing_key = SigningKey::generate(&mut os_rng());
     let k_epoch = [9u8; 32];
     let sync_space_id: &[u8] = b"space-under-test";
     (signing_key, k_epoch, sync_space_id, 3)
@@ -249,7 +249,7 @@ fn any_object_seals_and_opens_as_its_own_kind_only() {
     // as a snapshot.
     assert!(matches!(open_object::<SampleBody>(&sealed.chunks, &params, ObjectKind::Snapshot), Err(EnvelopeError::UnexpectedObjectKind)));
     assert!(matches!(open_snapshot(&sealed.chunks, &params), Err(EnvelopeError::UnexpectedObjectKind)));
-    let other = SigningKey::generate(&mut OsRng).verifying_key();
+    let other = SigningKey::generate(&mut os_rng()).verifying_key();
     assert!(matches!(
         open_object::<SampleBody>(&sealed.chunks, &OpenParams { verifying_key: &other, ..params }, ObjectKind::KeyRotation),
         Err(EnvelopeError::SignatureInvalid)
@@ -265,6 +265,6 @@ fn a_snapshot_is_sealed_only_as_a_snapshot_object() {
 
 fn random_nonce() -> [u8; 24] {
     let mut nonce = [0u8; 24];
-    rand::RngCore::fill_bytes(&mut OsRng, &mut nonce);
+    rand::Rng::fill_bytes(&mut os_rng(), &mut nonce);
     nonce
 }

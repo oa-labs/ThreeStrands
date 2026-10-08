@@ -906,7 +906,7 @@ pub async fn begin_genesis(
 
     let identity_x25519_public = x25519_public_bytes(&identity.x25519_secret);
     let mut k_epoch = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut k_epoch);
+    rand::Rng::fill_bytes(&mut threestrands_sync_envelope::os_rng(), &mut k_epoch);
 
     let rotation = KeyRotation {
         key_epoch: 0,
@@ -1729,7 +1729,7 @@ pub async fn rotate_epoch(
     let active_recipients: Vec<&RosterEntry> = roster.iter().filter(|entry| entry.status == "active").collect();
 
     let mut k_epoch = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut k_epoch);
+    rand::Rng::fill_bytes(&mut threestrands_sync_envelope::os_rng(), &mut k_epoch);
     let next_epoch = keys.key_epoch + 1;
 
     let mut sealed_stanzas = Vec::with_capacity(active_recipients.len() + 1);
@@ -1875,7 +1875,7 @@ pub(super) fn require_not_started(database: &Database) -> Result<(), String> {
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
-    use rand::RngCore;
+    use rand::Rng;
     use threestrands_sync_envelope::SigningKey;
 
     /// Builds a synthetic device identity directly, exactly as `test_keys`
@@ -1888,10 +1888,10 @@ pub(crate) mod test_support {
             tx.commit().unwrap();
             device_id
         };
-        let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+        let signing_key = SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
         let verifying_key = signing_key.verifying_key();
         let mut x25519_secret = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut x25519_secret);
+        threestrands_sync_envelope::os_rng().fill_bytes(&mut x25519_secret);
         let x25519_public = x25519_public_bytes(&x25519_secret);
         database.trust_device_keys(&device_id, &verifying_key, &x25519_public).unwrap();
         DeviceIdentity {
@@ -2834,7 +2834,7 @@ mod tests {
         a.sweep(&transports).await;
         a.rotate(&transports).await;
         // A share signed by a stranger, sealed to C, carrying a made-up key.
-        let stranger = threestrands_sync_envelope::SigningKey::generate(&mut rand::rngs::OsRng);
+        let stranger = threestrands_sync_envelope::SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
         let c_x25519 = x25519_public_bytes(&c.identity.x25519_secret);
         let (recovery_ed25519, recovery_x25519) = a.database.recovery_public_keys().unwrap().unwrap();
         let forged = sign_enrollment_grant(
@@ -3846,7 +3846,7 @@ mod tests {
             // Someone with write access to the folder publishes an
             // invitation with the same (public) invite keys but their own
             // roster and epoch key.
-            let mallory_key = SigningKey::generate(&mut rand::rngs::OsRng);
+            let mallory_key = SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
             let mallory_id = EnvelopeDeviceId::from_bytes([0xee; 16]);
             let invite_x25519_public = X25519PublicKey::from(&invite_x25519_secret(&secret)).to_bytes();
             let planted = sign_invitation(
@@ -3888,7 +3888,7 @@ mod tests {
             let now = now_ms();
             let code = decode_join_code(&create(&a, now).await).unwrap();
             let transports = a.transports().await;
-            let intruder = SigningKey::generate(&mut rand::rngs::OsRng);
+            let intruder = SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
 
             // Signed with an invite key that isn't the code's.
             let forged = sign_invitation_redemption(
@@ -3934,7 +3934,7 @@ mod tests {
         #[tokio::test]
         async fn an_invitation_alone_is_not_evidence_of_a_group() {
             let transports = fake_transports("empty");
-            let key = SigningKey::generate(&mut rand::rngs::OsRng);
+            let key = SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
             let id = EnvelopeDeviceId::from_bytes([1; 16]);
             let invitation = sign_invitation(
                 &key,

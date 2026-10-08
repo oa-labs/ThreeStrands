@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use rand::Rng;
+use rand::RngExt;
 use reqwest::{
     header::{HeaderValue, AUTHORIZATION},
     Method, RequestBuilder, StatusCode,
@@ -571,7 +571,7 @@ fn retry_delay(attempt: u32, quota_limited: bool) -> Duration {
 /// in lockstep. Kept separate from `retry_delay` so that function's
 /// exact-value tests stay deterministic.
 fn jitter() -> Duration {
-    Duration::from_millis(rand::thread_rng().gen_range(0..250))
+    Duration::from_millis(rand::rng().random_range(0..250))
 }
 
 fn is_quota_error(body: &str) -> bool {

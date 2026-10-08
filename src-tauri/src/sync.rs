@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rand::Rng;
+use rand::RngExt;
 use tokio::sync::{watch, Mutex, Notify};
 
 use crate::{
@@ -404,7 +404,7 @@ impl SyncService {
             // Jitter avoids multiple accounts/instances recovering from the
             // same outage and retrying in lockstep; `next_poll_delay` itself
             // stays deterministic so its unit tests aren't flaky.
-            let jitter = Duration::from_millis(rand::thread_rng().gen_range(0..250));
+            let jitter = Duration::from_millis(rand::rng().random_range(0..250));
             delay = wait_for_next_poll(&self.wake, delay, jitter).await;
             if !self.auth.available() {
                 delay = Duration::from_secs(30);

@@ -11,7 +11,8 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
 };
 use chrono::Utc;
-use rand::{rngs::OsRng, RngCore};
+use threestrands_sync_envelope::os_rng;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -578,8 +579,8 @@ fn encrypt(payload: &TransferPayload, password: &str) -> Result<Vec<u8>, String>
     let plaintext = serde_json::to_vec(payload).map_err(display)?;
     let mut salt = [0_u8; SALT_LEN];
     let mut nonce = [0_u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut salt);
-    OsRng.fill_bytes(&mut nonce);
+    os_rng().fill_bytes(&mut salt);
+    os_rng().fill_bytes(&mut nonce);
     seal(&plaintext, password, &salt, &nonce)
 }
 
@@ -592,7 +593,7 @@ fn seal(
     let key = derive_key(password, salt)?;
     let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(display)?;
     let ciphertext = cipher
-        .encrypt(XNonce::from_slice(nonce), plaintext)
+        .encrypt(&XNonce::from(*nonce), plaintext)
         .map_err(|_| "Could not encrypt the settings export".to_string())?;
     serde_json::to_vec_pretty(&EncryptedEnvelope {
         format: FORMAT.to_string(),
@@ -630,8 +631,10 @@ fn decrypt(encoded: &[u8], password: &str) -> Result<TransferPayload, String> {
         .map_err(|_| "The settings export is damaged".to_string())?;
     let key = derive_key(password, &salt)?;
     let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(display)?;
+    let nonce = XNonce::try_from(nonce.as_slice())
+        .map_err(|_| "The settings export is damaged".to_string())?;
     let plaintext = cipher
-        .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
+        .decrypt(&nonce, ciphertext.as_ref())
         .map_err(|_| "The password is incorrect or the settings export is damaged".to_string())?;
     let mut payload: TransferPayload = serde_json::from_slice(&plaintext)
         .map_err(|_| "The settings export contains invalid data".to_string())?;

@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use threestrands_sync_core::{Dot, FieldKey, Operation, OperationGraph, OperationId, WinnerStamp};
 use threestrands_sync_protocol::EntityType;
 use threestrands_sync_transport::fake::FakeTransport;
@@ -107,10 +107,10 @@ impl Sim {
             history: OperationGraph::new(),
             markers: BTreeSet::new(),
         };
-        if sim.rng.gen_bool(0.5) {
+        if sim.rng.random_bool(0.5) {
             sim.transport.enable_scan_reordering();
         }
-        for _ in 0..sim.rng.gen_range(1..=2) {
+        for _ in 0..sim.rng.random_range(1..=2) {
             sim.join().await;
         }
         sim
@@ -179,7 +179,7 @@ impl Sim {
 
     fn write(&mut self, index: usize) {
         let ids = self.devices[index].snippet_ids();
-        let roll = self.rng.gen_range(0..10);
+        let roll = self.rng.random_range(0..10);
         self.names += 1;
         let name = format!("name {}", self.names);
         let database = &self.devices[index].database;
@@ -197,7 +197,7 @@ impl Sim {
                 Err(error) => self.fail(format!("create: {error}")),
             }
         } else {
-            let id = ids[self.rng.gen_range(0..ids.len())].clone();
+            let id = ids[self.rng.random_range(0..ids.len())].clone();
             let before = entity_values(database, &id);
             if roll < 8 {
                 let result = database.update_snippet(&id, &name, "edited").map_err(String::from).and_then(|snippet| {
@@ -283,7 +283,7 @@ impl Sim {
         if candidates.is_empty() {
             return;
         }
-        let device = &self.devices[candidates[self.rng.gen_range(0..candidates.len())]];
+        let device = &self.devices[candidates[self.rng.random_range(0..candidates.len())]];
         let keys = local_keys_for(&device.database, &device.identity, &device.epoch_keys);
         if let Err(error) = rotate_epoch(&device.database, &device.identity, &keys, &device.epoch_keys, &self.transports, None).await {
             self.fail(format!("{} rotate: {error}", device.name));
@@ -291,11 +291,11 @@ impl Sim {
     }
 
     fn inject_faults(&mut self) {
-        if self.rng.gen_bool(0.15) {
-            self.transport.inject_transient_outage(self.rng.gen_range(1..=3));
+        if self.rng.random_bool(0.15) {
+            self.transport.inject_transient_outage(self.rng.random_range(1..=3));
         }
-        if self.rng.gen_bool(0.2) {
-            let device = &self.devices[self.rng.gen_range(0..self.devices.len())];
+        if self.rng.random_bool(0.2) {
+            let device = &self.devices[self.rng.random_range(0..self.devices.len())];
             let cids: Vec<String> = {
                 let connection = device.database.connection().unwrap();
                 let mut statement = connection.prepare("SELECT cid FROM sync_objects ORDER BY cid").unwrap();
@@ -303,8 +303,8 @@ impl Sim {
                 cids
             };
             if !cids.is_empty() {
-                let cid = cids[self.rng.gen_range(0..cids.len())].clone();
-                self.transport.inject_delayed_visibility(&TransportCid(cid), self.rng.gen_range(1..=2));
+                let cid = cids[self.rng.random_range(0..cids.len())].clone();
+                self.transport.inject_delayed_visibility(&TransportCid(cid), self.rng.random_range(1..=2));
             }
         }
     }
@@ -317,10 +317,10 @@ impl Sim {
             if self.devices[index].offline_until > self.round {
                 continue;
             }
-            match self.rng.gen_range(0..20) {
+            match self.rng.random_range(0..20) {
                 0 => {
                     // A few days away.
-                    self.devices[index].offline_until = self.round + self.rng.gen_range(2..6);
+                    self.devices[index].offline_until = self.round + self.rng.random_range(2..6);
                     continue;
                 }
                 1 => {
@@ -331,22 +331,22 @@ impl Sim {
                 }
                 2..=3 => {}
                 _ => {
-                    for _ in 0..self.rng.gen_range(1..=2) {
+                    for _ in 0..self.rng.random_range(1..=2) {
                         self.write(index);
                     }
                 }
             }
         }
-        if self.devices.len() < MAX_DEVICES && self.rng.gen_bool(0.1) {
+        if self.devices.len() < MAX_DEVICES && self.rng.random_bool(0.1) {
             self.join().await;
         }
-        if self.rng.gen_bool(0.12) {
+        if self.rng.random_bool(0.12) {
             self.maybe_rotate().await;
         }
         self.inject_faults();
         let mut order: Vec<usize> = (0..self.devices.len()).filter(|&index| self.devices[index].offline_until <= self.round).collect();
         for position in (1..order.len()).rev() {
-            order.swap(position, self.rng.gen_range(0..=position));
+            order.swap(position, self.rng.random_range(0..=position));
         }
         for index in order {
             let _ = self.sync(index).await;

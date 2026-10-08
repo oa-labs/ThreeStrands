@@ -28,7 +28,8 @@
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use rand::{rngs::OsRng, RngCore};
+use threestrands_sync_envelope::os_rng;
+use rand::Rng;
 use tokio::io::AsyncWriteExt;
 
 use threestrands_sync_envelope::{compute_cid, decode_signed_head, encode_signed_head, DeviceId, SignedDeviceHead};
@@ -362,7 +363,7 @@ async fn remove_dir_contents(dir: &Path) -> std::io::Result<()> {
 /// atomically renames into place — a reader can never observe `final_path`
 /// with partial bytes.
 async fn atomic_write(dir: &Path, final_path: &Path, bytes: &[u8]) -> Result<(), TransportError> {
-    let suffix = OsRng.next_u64();
+    let suffix = os_rng().next_u64();
     let temp_path = dir.join(format!(".tmp-{suffix:016x}-{}", std::process::id()));
     {
         let mut file = tokio::fs::File::create(&temp_path).await.map_err(io_error)?;
@@ -398,7 +399,7 @@ fn io_error(error: std::io::Error) -> TransportError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::OsRng as TestOsRng;
+    use threestrands_sync_envelope::os_rng;
     use threestrands_sync_envelope::{sign_device_head, DeviceHead, SigningKey};
     use threestrands_sync_transport::conformance;
     use uuid::Uuid;
@@ -444,7 +445,7 @@ mod tests {
         let cid = Cid::for_bytes(&bytes);
         source.put_object(&cid, &bytes).await.unwrap();
 
-        let signing_key = SigningKey::generate(&mut TestOsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let head = DeviceHead {
             sync_space_id: b"space".to_vec(),
             device_id: DeviceId::from_bytes([3u8; 16]),

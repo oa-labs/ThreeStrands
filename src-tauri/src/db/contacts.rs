@@ -996,6 +996,19 @@ mod tests {
         assert_eq!(database.list_contact_profiles("", 10).unwrap()[0].addresses, saved.addresses);
     }
 
+    // New saved-contact ids are persisted and synced between devices, so the
+    // SHA-256 they derive from must never drift across crate upgrades.
+    #[test]
+    fn a_new_contact_id_is_the_sha256_of_its_normalized_primary_address() {
+        let database = Database::open_memory();
+        let saved = database.save_contact_profile(&SaveContactRequest {
+            id: None, display_name: Some("Jane".into()), role: None, company: None, location: None, bio: None, notes: None,
+            links: Vec::new(), photo_data: None, favorite: false, addresses: vec!["  Jane@Example.com ".into()],
+            birthday: None, keep_in_touch: None,
+        }).unwrap();
+        assert_eq!(saved.id, "contact:8c87b489ce35cf2e2f39f80e282cb2e804932a56a213983eeeb428407d43b52d");
+    }
+
     #[test]
     fn due_date_is_off_without_an_interval() {
         let value = KeepInTouch { interval_days: None, ..kit(7) };

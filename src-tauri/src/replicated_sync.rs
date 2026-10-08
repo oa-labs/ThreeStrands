@@ -22,7 +22,8 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use keyring::Entry;
-use rand::{rngs::OsRng, RngCore};
+use threestrands_sync_envelope::os_rng;
+use rand::Rng;
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -336,7 +337,7 @@ pub(crate) fn ensure_space_and_device(tx: &Transaction) -> DbResult<[u8; 16]> {
 
 pub(crate) fn random_id() -> [u8; 16] {
     let mut bytes = [0u8; 16];
-    OsRng.fill_bytes(&mut bytes);
+    os_rng().fill_bytes(&mut bytes);
     bytes
 }
 
@@ -593,7 +594,7 @@ fn load_or_create_signing_key() -> Result<SigningKey, String> {
         }
         Err(keyring::Error::NoEntry) => {
             let mut seed = [0u8; 32];
-            OsRng.fill_bytes(&mut seed);
+            os_rng().fill_bytes(&mut seed);
             entry.set_password(&hex_encode(&seed)).map_err(display)?;
             Ok(SigningKey::from_bytes(&seed))
         }
@@ -613,7 +614,7 @@ fn load_or_create_device_x25519_secret() -> Result<[u8; 32], String> {
             .map_err(|_| "Stored device X25519 key is invalid".to_string()),
         Err(keyring::Error::NoEntry) => {
             let mut secret = [0u8; 32];
-            OsRng.fill_bytes(&mut secret);
+            os_rng().fill_bytes(&mut secret);
             entry.set_password(&hex_encode(&secret)).map_err(display)?;
             Ok(secret)
         }
@@ -2546,7 +2547,7 @@ mod replicator_tests {
             tx.commit().unwrap();
             device_id
         };
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         database.trust_device_public_key(&device_id, &signing_key.verifying_key()).unwrap();
         LocalKeys {
             signing_key,
@@ -3145,7 +3146,7 @@ mod replicator_tests {
         let database = Database::open_memory();
         let keys = test_keys(&database);
         let peer = random_id();
-        let peer_key = SigningKey::generate(&mut OsRng).verifying_key();
+        let peer_key = SigningKey::generate(&mut os_rng()).verifying_key();
         database.trust_device_keys(&peer, &peer_key, &[9u8; 32]).unwrap();
 
         let roster = database.known_device_roster().unwrap();

@@ -6,8 +6,9 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use ed25519_dalek::{Signature as EdSignature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
+use rand::Rng;
 use sha2::Sha256;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 
@@ -34,13 +35,20 @@ pub fn derive_epoch_aead_key(k_epoch: &[u8; 32], sync_space_id: &[u8], key_epoch
     out
 }
 
+/// The operating system's CSPRNG, for key material, nonces, and salts.
+/// Like rand 0.8's `OsRng`, it panics if the OS cannot supply randomness
+/// rather than handing back weaker bytes.
+pub fn os_rng() -> UnwrapErr<SysRng> {
+    UnwrapErr(SysRng)
+}
+
 /// Draws a fresh random nonce from the OS CSPRNG. Callers that need a
 /// crash-safe, reproducible re-encryption (see the local-persistence
 /// contract) must persist the nonce they used and supply it back on retry
 /// rather than calling this again.
 pub fn random_nonce() -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut nonce);
+    os_rng().fill_bytes(&mut nonce);
     nonce
 }
 
@@ -50,10 +58,10 @@ pub fn aead_encrypt(
     aad: &[u8],
     plaintext: &[u8],
 ) -> Vec<u8> {
-    let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
+    let cipher = XChaCha20Poly1305::new(&Key::from(*key));
     cipher
         .encrypt(
-            XNonce::from_slice(nonce),
+            &XNonce::from(*nonce),
             Payload {
                 msg: plaintext,
                 aad,
@@ -68,10 +76,10 @@ pub fn aead_decrypt(
     aad: &[u8],
     ciphertext_and_tag: &[u8],
 ) -> Result<Vec<u8>, EnvelopeError> {
-    let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
+    let cipher = XChaCha20Poly1305::new(&Key::from(*key));
     cipher
         .decrypt(
-            XNonce::from_slice(nonce),
+            &XNonce::from(*nonce),
             Payload {
                 msg: ciphertext_and_tag,
                 aad,
@@ -144,7 +152,7 @@ pub fn verify_bytes(
 /// stanzas are anonymous" rule, a holder of a candidate static secret must
 /// call [`try_open_sealed_box`] and see whether it opens.
 pub fn seal_to_x25519(recipient_public: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
-    let ephemeral_secret = EphemeralSecret::random_from_rng(OsRng);
+    let ephemeral_secret = EphemeralSecret::random_from_rng(&mut os_rng());
     let ephemeral_public = X25519PublicKey::from(&ephemeral_secret);
     let recipient = X25519PublicKey::from(*recipient_public);
     let shared = ephemeral_secret.diffie_hellman(&recipient);
@@ -202,7 +210,7 @@ fn signing_preimage(domain: &[u8], message_id: &[u8; 8], canonical_unsigned_body
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::OsRng as RandOsRng;
+    use crate::os_rng;
 
     #[test]
     fn epoch_key_derivation_is_deterministic_and_domain_separated() {
@@ -271,7 +279,7 @@ mod tests {
 
     #[test]
     fn signature_round_trips_and_rejects_tampering() {
-        let signing_key = SigningKey::generate(&mut RandOsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let verifying_key = signing_key.verifying_key();
         let domain = b"test-domain";
         let message_id = [9u8; 8];
@@ -279,7 +287,7 @@ mod tests {
         let signature = sign_object(&signing_key, domain, &message_id, body);
         verify_object(&verifying_key, domain, &message_id, body, &signature).unwrap();
 
-        let other_key = SigningKey::generate(&mut RandOsRng).verifying_key();
+        let other_key = SigningKey::generate(&mut os_rng()).verifying_key();
         assert!(verify_object(&other_key, domain, &message_id, body, &signature).is_err());
         assert!(verify_object(&verifying_key, domain, &message_id, b"different-body", &signature).is_err());
         assert!(verify_object(&verifying_key, domain, &[0u8; 8], body, &signature).is_err());

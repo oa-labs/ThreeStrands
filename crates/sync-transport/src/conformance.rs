@@ -10,7 +10,7 @@
 //! methods for the in-memory case. What this module checks is what must
 //! stay true no matter how a transport got into whatever state it's in.
 
-use rand::rngs::OsRng;
+use threestrands_sync_envelope::os_rng;
 use threestrands_sync_envelope::{sign_device_head, DeviceHead, DeviceId, SigningKey};
 
 use crate::{Cid, HeadLocator, SyncTransport};
@@ -92,7 +92,7 @@ pub async fn scan_enumerates_every_put_object_across_pages(transport: &dyn SyncT
 /// A published head is exactly what `resolve_heads` returns for that
 /// device afterward, and its signature still verifies.
 pub async fn resolve_heads_round_trips_a_published_head(transport: &dyn SyncTransport) {
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let signing_key = SigningKey::generate(&mut os_rng());
     let device_id = DeviceId::from_bytes([9u8; 16]);
     let head = DeviceHead {
         sync_space_id: b"conformance-space".to_vec(),

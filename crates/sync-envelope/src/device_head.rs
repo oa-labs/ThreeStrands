@@ -98,7 +98,7 @@ pub fn decode_signed_head(bytes: &[u8]) -> Result<SignedDeviceHead, EnvelopeErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::OsRng;
+    use crate::os_rng;
 
     fn sample_head() -> DeviceHead {
         DeviceHead {
@@ -113,14 +113,14 @@ mod tests {
 
     #[test]
     fn round_trips_and_verifies() {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let signed = sign_device_head(&signing_key, sample_head()).unwrap();
         verify_device_head(&signing_key.verifying_key(), &signed).unwrap();
     }
 
     #[test]
     fn wire_encoding_round_trips() {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let signed = sign_device_head(&signing_key, sample_head()).unwrap();
         let bytes = encode_signed_head(&signed).unwrap();
         let decoded = decode_signed_head(&bytes).unwrap();
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn rejects_a_tampered_head() {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let mut signed = sign_device_head(&signing_key, sample_head()).unwrap();
         signed.head.state_sequence += 1;
         assert_eq!(verify_device_head(&signing_key.verifying_key(), &signed), Err(EnvelopeError::SignatureInvalid));
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn the_signature_covers_the_snapshot_and_publication_time() {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let signed = sign_device_head(&signing_key, sample_head()).unwrap();
         let verifying_key = signing_key.verifying_key();
 
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn a_malformed_snapshot_link_is_refused() {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let mut bad_link = sample_head();
         bad_link.state_cid = Some("not-a-cid".to_string());
         assert_eq!(sign_device_head(&signing_key, bad_link), Err(EnvelopeError::InvalidCidReference));
@@ -173,8 +173,8 @@ mod tests {
 
     #[test]
     fn rejects_the_wrong_key() {
-        let signing_key = SigningKey::generate(&mut OsRng);
-        let other = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
+        let other = SigningKey::generate(&mut os_rng());
         let signed = sign_device_head(&signing_key, sample_head()).unwrap();
         assert_eq!(verify_device_head(&other.verifying_key(), &signed), Err(EnvelopeError::SignatureInvalid));
     }

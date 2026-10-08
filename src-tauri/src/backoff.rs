@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
-use rand::Rng;
+use rand::RngExt;
 
 const RETRY_BACKOFF_BASE_SECS: i64 = 30;
 const RETRY_BACKOFF_MAX_SECS: i64 = 60 * 60;
@@ -19,7 +19,7 @@ pub(crate) fn retry_delay_secs(attempts: u32) -> i64 {
 /// a small random jitter window. The final delay, including jitter, never
 /// exceeds the configured cap.
 pub(crate) fn retry_at(attempts: u32) -> String {
-    let jitter_millis = rand::thread_rng().gen_range(0..RETRY_BACKOFF_JITTER_WINDOW_MILLIS);
+    let jitter_millis = rand::rng().random_range(0..RETRY_BACKOFF_JITTER_WINDOW_MILLIS);
     retry_at_with_jitter(Utc::now(), attempts, jitter_millis).to_rfc3339()
 }
 

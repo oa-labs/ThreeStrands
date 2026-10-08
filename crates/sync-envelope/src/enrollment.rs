@@ -269,7 +269,7 @@ pub fn enrollment_fingerprint(ed25519_public: &[u8], x25519_public: &[u8]) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::OsRng;
+    use crate::os_rng;
 
     fn sample_request(signing_key: &SigningKey, x25519_public: [u8; 32]) -> EnrollmentRequest {
         EnrollmentRequest {
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn request_round_trips_and_verifies_self_consistently() {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let signed = sign_enrollment_request(&signing_key, sample_request(&signing_key, [9u8; 32])).unwrap();
         verify_enrollment_request(&signing_key.verifying_key(), &signed).unwrap();
 
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn request_rejects_a_tampered_field() {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let mut signed = sign_enrollment_request(&signing_key, sample_request(&signing_key, [9u8; 32])).unwrap();
         signed.request.created_at_ms += 1;
         assert!(verify_enrollment_request(&signing_key.verifying_key(), &signed).is_err());
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn rejection_round_trips_and_verifies() {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::generate(&mut os_rng());
         let signed = sign_enrollment_rejection(
             &signing_key,
             EnrollmentRejection {
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn grant_round_trips_and_verifies() {
-        let approver = SigningKey::generate(&mut OsRng);
+        let approver = SigningKey::generate(&mut os_rng());
         let grant = EnrollmentGrant {
             request_id: RequestId::from_bytes([1u8; 16]),
             approver_device_id: DeviceId::from_bytes([3u8; 16]),
@@ -345,7 +345,7 @@ mod tests {
         let signed = sign_enrollment_grant(&approver, grant).unwrap();
         verify_enrollment_grant(&approver.verifying_key(), &signed).unwrap();
 
-        let other = SigningKey::generate(&mut OsRng).verifying_key();
+        let other = SigningKey::generate(&mut os_rng()).verifying_key();
         assert!(verify_enrollment_grant(&other, &signed).is_err());
 
         let bytes = encode_signed_enrollment_grant(&signed).unwrap();
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn a_grant_carries_earlier_epoch_keys_under_its_signature() {
-        let approver = SigningKey::generate(&mut OsRng);
+        let approver = SigningKey::generate(&mut os_rng());
         let signed = sign_enrollment_grant(&approver, sample_grant(&approver, 4, earlier([0, 1, 3]))).unwrap();
         let bytes = encode_signed_enrollment_grant(&signed).unwrap();
         let decoded = decode_signed_enrollment_grant(&bytes).unwrap();
@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn a_grant_from_before_earlier_epoch_keys_still_decodes_and_verifies() {
-        let approver = SigningKey::generate(&mut OsRng);
+        let approver = SigningKey::generate(&mut os_rng());
         let current = sample_grant(&approver, 4, vec![]);
         let legacy = PreKeyringGrant {
             request_id: current.request_id,
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn earlier_epoch_keys_are_limited_in_count() {
-        let approver = SigningKey::generate(&mut OsRng);
+        let approver = SigningKey::generate(&mut os_rng());
         let at_limit = MAX_EARLIER_EPOCH_KEYS as u32;
         let below = sign_enrollment_grant(&approver, sample_grant(&approver, at_limit, earlier(0..at_limit - 1))).unwrap();
         assert!(decode_signed_enrollment_grant(&encode_signed_enrollment_grant(&below).unwrap()).is_ok());
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn earlier_epoch_keys_must_be_distinct_ascending_and_before_the_current_epoch() {
-        let approver = SigningKey::generate(&mut OsRng);
+        let approver = SigningKey::generate(&mut os_rng());
         for bad in [earlier([2, 1]), earlier([1, 1]), earlier([1, 4]), earlier([5])] {
             let grant = sample_grant(&approver, 4, bad);
             assert!(matches!(
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn rotation_round_trips_and_verifies() {
-        let initiator = SigningKey::generate(&mut OsRng);
+        let initiator = SigningKey::generate(&mut os_rng());
         let rotation = KeyRotation {
             key_epoch: 5,
             initiator_device_id: DeviceId::from_bytes([4u8; 16]),

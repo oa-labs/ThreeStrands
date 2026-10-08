@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use serde_json::json;
 use threestrands_sync_core::{
     Dot, EntityType, FieldKey, Operation, OperationGraph, OperationId, ReplicaState, WinnerStamp,
@@ -63,12 +63,12 @@ fn run(seed: u64, replica_count: usize, steps: usize) -> History {
     let mut marker_count = 0u64;
 
     for _ in 0..steps {
-        let replica = rng.gen_range(0..replica_count);
-        let entity = ENTITIES[rng.gen_range(0..ENTITIES.len())];
-        match rng.gen_range(0..10) {
+        let replica = rng.random_range(0..replica_count);
+        let entity = ENTITIES[rng.random_range(0..ENTITIES.len())];
+        match rng.random_range(0..10) {
             0..=4 => {
                 lamport += 1;
-                let fields: Vec<&str> = FIELDS.iter().copied().filter(|_| rng.gen_bool(0.6)).collect();
+                let fields: Vec<&str> = FIELDS.iter().copied().filter(|_| rng.random_bool(0.6)).collect();
                 let fields = if fields.is_empty() { vec![FIELDS[0]] } else { fields };
                 let parents: BTreeMap<FieldKey, Vec<OperationId>> = fields
                     .iter()
@@ -131,13 +131,13 @@ fn run(seed: u64, replica_count: usize, steps: usize) -> History {
                 }
             }
             _ => {
-                let from = rng.gen_range(0..replica_count);
+                let from = rng.random_range(0..replica_count);
                 let source = replicas[from].clone();
                 replicas[replica].merge(&source);
             }
         }
-        if rng.gen_bool(0.2) {
-            snapshots.push(replicas[rng.gen_range(0..replica_count)].clone());
+        if rng.random_bool(0.2) {
+            snapshots.push(replicas[rng.random_range(0..replica_count)].clone());
         }
     }
     History { replicas, snapshots, graph, markers }

@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use rand::RngCore;
+use rand::Rng;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -27,7 +27,7 @@ macro_rules! fixed_bytes_id {
                 &self.0
             }
 
-            pub fn random(rng: &mut impl RngCore) -> Self {
+            pub fn random(rng: &mut impl Rng) -> Self {
                 let mut bytes = [0u8; $len];
                 rng.fill_bytes(&mut bytes);
                 Self(bytes)

@@ -1109,7 +1109,7 @@ mod transport_tests {
     async fn publish_and_resolve_head_round_trips_through_the_pin_index() {
         let server = FakeKuboServer::spawn().await;
         let transport = open(&server, "a");
-        let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+        let signing_key = SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
         let device_id = DeviceId::from_bytes([9u8; 16]);
         let head = DeviceHead {
             sync_space_id: b"space".to_vec(),
@@ -1137,7 +1137,7 @@ mod transport_tests {
     async fn resolve_heads_returns_all_candidates_newest_first_for_signature_verification() {
         let server = FakeKuboServer::spawn().await;
         let transport = open(&server, "a");
-        let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+        let signing_key = SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
         let device_id = DeviceId::from_bytes([3u8; 16]);
         for sequence in [1u64, 2, 3] {
             let head = DeviceHead {
@@ -1175,7 +1175,7 @@ mod transport_tests {
     async fn resolve_heads_ignores_non_heads_other_spaces_and_unknown_devices() {
         let server = FakeKuboServer::spawn().await;
         let transport = open(&server, "a");
-        let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+        let signing_key = SigningKey::generate(&mut threestrands_sync_envelope::os_rng());
         let known_device = DeviceId::from_bytes([7u8; 16]);
 
         let ordinary = b"not a signed head".to_vec();
