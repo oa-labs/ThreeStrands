@@ -220,11 +220,13 @@ describe("ContactsWorkspace",()=>{
     expect(screen.getByRole("button",{name:`Copy ${link}`})).toBeInTheDocument();
   });
 
-  it("uses the shared header button and segmented view switch",async()=>{
+  it("uses the shared header buttons and segmented view switch",async()=>{
     const {container}=render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
     expectSharedButtons(container.querySelector(".contacts-header")!);
     expect(screen.getByRole("button",{name:"New Contact"})).toHaveClass("btn");
+    expect(screen.getByRole("button",{name:"New Group"})).toHaveClass("btn");
+    expect(within(container.querySelector(".contacts-header-actions") as HTMLElement).getAllByRole("button").map(button=>button.textContent)).toEqual(["New Group","New Contact"]);
     const views=screen.getByRole("tablist",{name:"Contact Views"});
     expect(views).toHaveClass("segmented");
     expectSharedButtons(views);
@@ -909,6 +911,20 @@ describe("ContactsWorkspace",()=>{
       expect(screen.queryByRole("textbox",{name:"New group name"})).not.toBeInTheDocument();
       const list=screen.getByRole("region",{name:"Groups"});
       expect(within(list).getAllByRole("button").map(button=>button.querySelector("strong")?.textContent)).toEqual(["Board","Family"]);
+    });
+
+    it("opens the Groups view with a name field from the header's New Group, and Escape cancels it",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+      const onViewChange=vi.fn();
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} onViewChange={onViewChange}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.click(screen.getByRole("button",{name:"New Group"}));
+      expect(onViewChange).toHaveBeenCalledWith("groups");
+      const name=screen.getByRole("textbox",{name:"New group name"});
+      expect(name).toHaveFocus();
+      fireEvent.keyDown(name,{key:"Escape"});
+      expect(screen.queryByRole("textbox",{name:"New group name"})).not.toBeInTheDocument();
+      expect(screen.getByRole("tab",{name:"Groups"})).toHaveAttribute("aria-selected","true");
     });
 
     it("keeps the inline form open and reports a duplicate group name",async()=>{

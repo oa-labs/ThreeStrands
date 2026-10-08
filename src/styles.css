@@ -643,7 +643,7 @@ button:disabled { cursor: default; }
 .thread-header > .filters-anchor,
 .calendar-week-controls,
 .tasks-workspace .tasks-sidebar-header-actions,
-.contacts-header > .btn { align-self: center; }
+.contacts-header-actions { align-self: center; }
 
 .thread-header-title { display: flex; align-items: center; gap: var(--space-3); }
 .mailbox-heading-context { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--muted); font-size: var(--text-meta); }
@@ -1354,6 +1354,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .quoted-history-toggle:hover { color: var(--text); background: var(--raised); }
 .quoted-history-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .reader-empty { height: 100%; display: grid; place-content: center; justify-items: center; color: var(--muted); }
+/* A pane with nothing selected: an icon over one line of default UI text. */
+.reader-empty p,
+.contacts-empty-state p { font-size: var(--text-body); }
 
 .calendar-sidebar {
   position: relative;
@@ -1953,6 +1956,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .contact-identity > div { display:grid; gap:var(--space-2); min-width:0; }
 .contact-identity input:not([type=file]) { min-width:0; padding:var(--space-1) 0; border:0; color:var(--secondary); background:transparent; font:inherit; }
 .contact-identity input.contact-name-input { color:var(--text); font-size:var(--text-display); font-weight:var(--weight-semibold); }
+/* A group's name has no role line beside it, so it takes the whole row up to the actions instead of the input's default width. */
+.contact-group-detail .contact-identity,
+.contact-group-detail .contact-identity > div { flex:1; }
+.contact-group-detail .contact-identity input.contact-name-input { width:100%; text-overflow:ellipsis; }
 .contact-profile-actions { display:flex; gap:var(--space-1-5); }
 .contact-editor-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-4) var(--space-6); margin:var(--space-6) 0; }
 .contact-editor-grid label,.contact-editor-grid .contact-multi-value-field { min-width:0; display:grid; align-content:start; gap:var(--space-1-5); color:var(--muted); }
@@ -2179,7 +2186,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   padding: var(--pane-header-padding);
   border-bottom: 1px solid var(--border);
 }
-.tasks-sidebar-header-actions { display: flex; flex-shrink: 0; align-items: center; gap: var(--space-2); }
+.tasks-sidebar-header-actions,
+.contacts-header-actions { display: flex; flex-shrink: 0; align-items: center; gap: var(--space-2); }
 .tasks-board-pane { min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
 .tasks-board-pane .task-view-nav { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
 .task-board { min-height: 0; flex: 1; display: grid; grid-template-columns: repeat(var(--task-board-columns, 3), minmax(190px, 1fr)); gap: var(--space-3); padding: var(--space-4); overflow-x: auto; }

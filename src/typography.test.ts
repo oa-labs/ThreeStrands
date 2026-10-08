@@ -129,6 +129,10 @@ describe("component typography", () => {
     expect(overrides).toEqual([]);
   });
 
+  it("sets every pane empty-state message in default UI text rather than the inherited shell size", () => {
+    for (const selector of [".reader-empty p", ".contacts-empty-state p"]) expect(sizeOf(selector), selector).toBe("--text-body");
+  });
+
   it("keeps the micro size for badges, key hints, and dense calendar blocks", () => {
     const micro = componentDeclarations("font-size").filter((declaration) => declaration.value === "var(--text-micro)");
     expect(micro.length).toBeGreaterThan(0);

@@ -16,12 +16,17 @@ function ContactAvatar({ profile }: { profile: ContactProfile }) {
   </span>;
 }
 
-/** The Groups view's list pane: every group by name, and an inline form to create one. */
+/**
+ * The Groups view's list pane: every group by name. While `creating` (the
+ * header's New Group), an inline form at the top names the new group.
+ */
 export function ContactGroupList({
   groups,
   selectedId,
   busy,
   searching,
+  creating,
+  onCreatingChange,
   onSelect,
   onCreate,
 }: {
@@ -29,10 +34,12 @@ export function ContactGroupList({
   selectedId: string | null;
   busy: boolean;
   searching: boolean;
+  creating: boolean;
+  onCreatingChange(creating: boolean): void;
   onSelect(id: string): void;
   onCreate(name: string): Promise<boolean>;
 }) {
-  const [creating, setCreating] = useState(false);
+  const setCreating = onCreatingChange;
   const [name, setName] = useState("");
   const submit = async () => {
     if (!name.trim()) return;
@@ -42,10 +49,7 @@ export function ContactGroupList({
     }
   };
   return <>
-    <div className="contacts-list-toolbar">
-      <p className="contacts-sort-hint">By name · use a group to email everyone in it</p>
-      <button type="button" className="btn-link contacts-select-toggle" aria-expanded={creating} onClick={() => setCreating((current) => !current)}>New Group</button>
-    </div>
+    <p className="contacts-sort-hint">By name</p>
     {creating ? <form className="contact-group-create" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
       <input
         autoFocus
@@ -80,7 +84,7 @@ export function ContactGroupList({
         </button>)}
       </section> : null}
     </div>
-    {!groups.length ? <p className="contacts-empty">{searching ? "No groups match this search." : "No groups yet. Create one, or use Select in All Contacts to add several people to a group at once."}</p> : null}
+    {!groups.length && !creating ? <p className="contacts-empty">{searching ? "No groups match this search." : "No groups yet. Use New Group, or Select in All Contacts to add several people to a group at once."}</p> : null}
   </>;
 }
 
