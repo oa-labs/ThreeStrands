@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.83.2"
+version = "0.83.3"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -41,7 +41,7 @@ quick-xml = "0.42"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 rfd = "0.15"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 # Sans-IO SigV4 presigning and ListObjectsV2 parsing for the S3 sync
 # connector; requests go over the app's own `reqwest` client.
 rusty-s3 = { version = "0.10", default-features = false, features = ["rustcrypto", "xml"] }
