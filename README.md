@@ -38,6 +38,11 @@ against live accounts. Compose, reply, forward, local drafts, attachments, and
 undo send are available. See the
 [correspondence status and keyboard shortcuts](docs/phase-2-status.md).
 
+Contacts include profiles with linked addresses, groups, birthdays, Keep in Touch
+reminders, CSV/vCard import and export, explicit profile merging, and reversible
+recipient-suggestion suppression. See [contact management](docs/address-book.md)
+for workflows, export limits, and sync behavior.
+
 ## Product principles
 
 1. Every common action is available from the keyboard.

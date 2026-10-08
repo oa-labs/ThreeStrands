@@ -17,6 +17,9 @@ import type {
   CreateCalendarEventRequest,
   UpdateCalendarEventRequest,
   ContactSuggestion,
+  ContactFormat,
+  ContactImportPreview,
+  ContactImportResult,
   ContactActivity,
   ContactFiles,
   ContactGroup,
@@ -140,6 +143,13 @@ export interface MailClient extends CorrespondenceClient {
   getContactProfile(id: string): Promise<ContactProfile | null>;
   saveContactProfile(request: SaveContactRequest): Promise<ContactProfile>;
   deleteContactProfile(id: string): Promise<void>;
+  previewContactImport(): Promise<ContactImportPreview | null>;
+  importContacts(contacts: SaveContactRequest[]): Promise<ContactImportResult>;
+  exportContacts(format: ContactFormat): Promise<boolean>;
+  mergeContacts(targetId: string, sourceIds: string[]): Promise<ContactProfile>;
+  listContactSuppressions(): Promise<string[]>;
+  setContactSuppressed(email: string, suppressed: boolean): Promise<void>;
+
   /** Every contact group, by name. */
   listContactGroups(): Promise<ContactGroup[]>;
   /**
@@ -295,6 +305,13 @@ const tauriClient: MailClient = {
   getContactProfile: (id) => read("get_contact_profile", { id }),
   saveContactProfile: (request) => complete("save_contact_profile", { request }),
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
+  previewContactImport: () => complete("preview_contact_import"),
+  importContacts: (contacts) => complete("import_contacts", { contacts }),
+  exportContacts: (format) => complete("export_contacts", { format }),
+  mergeContacts: (targetId, sourceIds) => complete("merge_contacts", { targetId, sourceIds }),
+  listContactSuppressions: () => read("list_contact_suppressions"),
+  setContactSuppressed: (email, suppressed) => complete("set_contact_suppressed", { email, suppressed }),
+
   listContactGroups: () => read("list_contact_groups"),
   createContactGroup: (name, contactIds = [], emails = []) => complete("create_contact_group", { name, contactIds, emails }),
   listContactGroupRecipients: () => read("list_contact_group_recipients"),

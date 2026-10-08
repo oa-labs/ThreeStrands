@@ -5,7 +5,7 @@ import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
 import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
 
-vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),openAttachment:vi.fn(),resolveContactIds:vi.fn(),listContactGroups:vi.fn(),createContactGroup:vi.fn(),renameContactGroup:vi.fn(),addContactGroupMembers:vi.fn(),removeContactGroupMembers:vi.fn(),deleteContactGroup:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),openAttachment:vi.fn(),resolveContactIds:vi.fn(),listContactGroups:vi.fn(),createContactGroup:vi.fn(),renameContactGroup:vi.fn(),addContactGroupMembers:vi.fn(),removeContactGroupMembers:vi.fn(),deleteContactGroup:vi.fn(),mergeContacts:vi.fn()}}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:"Founder",company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:3,receivedCount:2,lastInteractedAt:"2026-09-20T00:00:00Z",birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const favoriteContact:ContactProfile={...jane,id:"contact:favorite@example.com",displayName:"Favorite Person",favorite:true,addresses:["favorite@example.com"],lastInteractedAt:"2026-09-10T00:00:00Z"};
@@ -27,6 +27,63 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.listContactGroups).mockResolvedValue([]);
   });
   afterEach(()=>{cleanup();vi.clearAllMocks();localStorage.clear();});
+
+  it("merges selected saved contacts and refreshes groups, reminders, and the surviving profile",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,newerContact]);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([{threadId:"history",accountId:"me@example.com",contactEmail:"jane@example.com",subject:"History",snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]}]);
+    const merged={...jane,addresses:[...jane.addresses,...newerContact.addresses]};
+    vi.mocked(mailClient.mergeContacts).mockImplementation(async()=>{
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([merged]);
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(merged);
+      return merged;
+    });
+    const onSaved=vi.fn();render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={onSaved}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(screen.getByRole("button",{name:"Select"}));
+    fireEvent.click(screen.getByRole("checkbox",{name:"Select Jane Doe"}));
+    expect(screen.getByRole("button",{name:"Merge…"})).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox",{name:"Select Newer Person"}));
+    fireEvent.click(screen.getByRole("button",{name:"Merge…"}));
+    const dialog=screen.getByRole("dialog",{name:"Merge contacts"});
+    fireEvent.change(within(dialog).getByLabelText("Profile to keep"),{target:{value:jane.id}});
+    fireEvent.click(within(dialog).getByRole("button",{name:"Merge 2 contacts"}));
+    await waitFor(()=>expect(mailClient.mergeContacts).toHaveBeenCalledWith(jane.id,[newerContact.id]));
+    await waitFor(()=>expect(mailClient.contactTimeline).toHaveBeenCalledTimes(2));
+    await waitFor(()=>expect(mailClient.contactFiles).toHaveBeenCalledTimes(2));
+    expect(onSaved).toHaveBeenCalledOnce();
+    expect(mailClient.listContactGroups).toHaveBeenCalledTimes(2);
+    expect(mailClient.listKeepInTouch).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog",{name:"Merge contacts"})).not.toBeInTheDocument();
+  });
+
+  it("requires selecting only saved profiles before merging",async()=>{
+    const derived={...newerContact,id:"derived:newer@example.com"};
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,derived]);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(screen.getByRole("button",{name:"Select"}));
+    fireEvent.click(screen.getByRole("checkbox",{name:"Select Jane Doe"}));
+    fireEvent.click(screen.getByRole("checkbox",{name:"Select Newer Person"}));
+    expect(screen.getByRole("button",{name:"Merge…"})).toBeDisabled();
+    expect(mailClient.mergeContacts).not.toHaveBeenCalled();
+  });
+
+  it("preserves profile edits by requiring save or discard before importing or merging",async()=>{
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,newerContact]);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    fireEvent.click(screen.getByRole("button",{name:"Select"}));
+    fireEvent.click(screen.getByRole("checkbox",{name:"Select Jane Doe"}));
+    fireEvent.click(screen.getByRole("checkbox",{name:"Select Newer Person"}));
+    expect(screen.getByRole("button",{name:"Merge…"})).toBeEnabled();
+    fireEvent.change(screen.getByRole("textbox",{name:"Name"}),{target:{value:"Edited Jane"}});
+    expect(screen.getByRole("button",{name:"Merge…"})).toBeDisabled();
+    fireEvent.click(screen.getByRole("button",{name:"Manage Contacts…"}));
+    expect(screen.getByRole("button",{name:"Import CSV or vCard…"})).toBeDisabled();
+    expect(screen.getByRole("button",{name:"Export CSV or vCard…"})).toBeEnabled();
+    fireEvent.click(within(screen.getByRole("dialog",{name:"Manage contacts"})).getByRole("button",{name:"Close"}));
+    expect(screen.getByRole("textbox",{name:"Name"})).toHaveValue("Edited Jane");
+  });
 
   it("clears search and returns focus to the selected contact on Escape",async()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
@@ -226,7 +283,7 @@ describe("ContactsWorkspace",()=>{
     expectSharedButtons(container.querySelector(".contacts-header")!);
     expect(screen.getByRole("button",{name:"New Contact"})).toHaveClass("btn");
     expect(screen.getByRole("button",{name:"New Group"})).toHaveClass("btn");
-    expect(within(container.querySelector(".contacts-header-actions") as HTMLElement).getAllByRole("button").map(button=>button.textContent)).toEqual(["New Group","New Contact"]);
+    expect(within(container.querySelector(".contacts-header-actions") as HTMLElement).getAllByRole("button").map(button=>button.textContent)).toEqual(["Manage Contacts…","New Group","New Contact"]);
     const views=screen.getByRole("tablist",{name:"Contact Views"});
     expect(views).toHaveClass("segmented");
     expectSharedButtons(views);

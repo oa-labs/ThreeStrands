@@ -78,6 +78,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   };
   let snippets = seed.snippets;
   let contacts = seed.contacts;
+  const suppressedContacts = new Set<string>();
   /** A saved profile for `id`, saving a `derived:<email>` contact first. */
   const ensureSavedContact = async (id: string): Promise<ContactProfile> => {
     const saved = savedContactProfiles.find((item) => item.id === id);
@@ -554,8 +555,18 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     async listContactSuggestions(_accountId, query, limit = 8) {
       const needle = query.trim().toLocaleLowerCase();
-      const matches = contacts.filter(
+      const candidates = new Map(contacts.map(contact => [contact.email.toLowerCase(), { ...contact }]));
+      for (const profile of savedContactProfiles) {
+        for (const email of profile.addresses) {
+          const previous = candidates.get(email);
+          candidates.set(email, { email, displayName: profile.displayName, pinned: profile.favorite,
+            sentCount: previous?.sentCount ?? 0, receivedCount: previous?.receivedCount ?? 0,
+            lastInteractedAt: previous?.lastInteractedAt ?? "" });
+        }
+      }
+      const matches = [...candidates.values()].filter(
         (contact) => {
+          if (suppressedContacts.has(contact.email.toLowerCase())) return false;
           const email = contact.email.toLocaleLowerCase();
           const domain = email.split("@").at(-1) ?? "";
           return (
@@ -624,6 +635,53 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       });
       savedContactProfiles = [...savedContactProfiles.filter((profile) => profile.id !== id), candidate];
       return structuredClone(candidate);
+    },
+    async previewContactImport() { throw new Error("Contact file import is available in the desktop app."); },
+    async exportContacts() { throw new Error("Contact file export is available in the desktop app."); },
+    async importContacts(requests) {
+      if (requests.length > 5000) throw new Error("Too many contacts in one import");
+      const before = structuredClone(savedContactProfiles);
+      let imported = 0, skipped = 0;
+      try {
+        for (const request of requests) {
+          if (request.addresses.some(email => savedContactProfiles.some(profile => profile.addresses.includes(email.trim().toLowerCase())))) { skipped++; continue; }
+          await client.saveContactProfile({ ...request, id: null }); imported++;
+        }
+      } catch (error) { savedContactProfiles = before; throw error; }
+      return { imported, skipped };
+    },
+    async mergeContacts(targetId, sourceIds) {
+      const sources = [...new Set(sourceIds)].sort();
+      const target = structuredClone(savedContactProfiles.find(profile => profile.id === targetId));
+      if (!target || !sources.length || sources.length > 50 || sources.includes(targetId)) throw new Error("Choose a retained contact and 1 to 50 other saved contacts");
+      const join = (first: string | null, second: string | null) => !first ? second : !second || first === second ? first : `${first}\n\n${second}`;
+      for (const id of sources) {
+        const source = savedContactProfiles.find(profile => profile.id === id);
+        if (!source) throw new Error("Saved contact not found");
+        const conflicts: string[] = [];
+        for (const [key, label] of [["displayName", "Name"], ["role", "Role"], ["company", "Company"], ["location", "Location"], ["birthday", "Birthday"]] as const) {
+          if (!target[key]) target[key] = source[key];
+          else if (source[key] && source[key] !== target[key]) conflicts.push(`${label}: ${source[key]}`);
+        }
+        target.notes = join(join(target.notes, source.notes), conflicts.length ? `Merged profile details:\n${conflicts.join("\n")}` : null);
+        target.bio = join(target.bio, source.bio);
+        target.addresses = [...new Set([...target.addresses, ...source.addresses])];
+        target.links = [...new Set([...target.links, ...source.links])];
+        target.favorite ||= source.favorite; target.photoData ??= source.photoData;
+        const lastTouchAt = [target.keepInTouch.lastTouchAt, source.keepInTouch.lastTouchAt].filter((value): value is string => !!value).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+        if (!target.keepInTouch.intervalDays) target.keepInTouch = structuredClone(source.keepInTouch);
+        target.keepInTouch.lastTouchAt = lastTouchAt;
+      }
+      if ((target.notes?.length ?? 0) > 8000 || (target.bio?.length ?? 0) > 4000 || target.links.length > 20) throw new Error("Combined profile exceeds contact limits. Shorten its notes, bio, or links before merging.");
+      savedContactProfiles = [...savedContactProfiles.filter(profile => profile.id !== targetId && !sources.includes(profile.id)), withKeepInTouchDue(target)];
+      contactGroups = contactGroups.map(group => ({ ...group, memberIds: [...new Set(group.memberIds.map(id => sources.includes(id) ? targetId : id))] }));
+      return structuredClone(withKeepInTouchDue(target));
+    },
+    async listContactSuppressions() { return [...suppressedContacts].sort(); },
+    async setContactSuppressed(raw, suppressed) {
+      const email = raw.trim().toLowerCase();
+      if (email.length > 320 || !/^[^\s@<>]+@[^\s@<>]+$/.test(email)) throw new Error("Enter one valid email address");
+      if (suppressed) suppressedContacts.add(email); else suppressedContacts.delete(email);
     },
     async deleteContactProfile(id) {
       savedContactProfiles = savedContactProfiles.filter((profile) => profile.id !== id);

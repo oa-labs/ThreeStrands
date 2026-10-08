@@ -21,6 +21,7 @@ use crate::transfer::{TransferAccount, TransferContact, TransferContactGroup, Tr
 mod accounts;
 mod ai;
 mod calendar_accounts;
+pub(crate) mod contact_management;
 pub(crate) mod contact_groups;
 pub(crate) mod contacts;
 mod goals;
@@ -876,6 +877,14 @@ impl Database {
         query: &str,
         limit: usize,
     ) -> DbResult<Vec<ContactSuggestion>> {
+        self.contact_suggestions(account_id, query, limit, true)
+    }
+
+    pub(crate) fn contact_suggestions_including_suppressed(&self, account_id: &str, query: &str, limit: usize) -> DbResult<Vec<ContactSuggestion>> {
+        self.contact_suggestions(account_id, query, limit, false)
+    }
+
+    fn contact_suggestions(&self, account_id: &str, query: &str, limit: usize, hide_suppressed: bool) -> DbResult<Vec<ContactSuggestion>> {
         let limit = limit.clamp(1, 5_000);
         self.with_connection(|connection| {
             struct Agg {
@@ -935,10 +944,14 @@ impl Database {
             let profile_rows=profile_statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,bool>(2)?,row.get::<_,String>(3)?)))?;
             for row in profile_rows {let(email,name,favorite,updated)=row?;let email=email.to_ascii_lowercase();let entry=by_email.entry(email).or_insert_with(||Agg{display_name:name.clone(),sent_count:0,received_count:0,last_interacted_at:updated,pinned:false});if entry.display_name.is_none(){entry.display_name=name;}entry.pinned|=favorite;}
 
+            let mut suppressed_statement = connection.prepare("SELECT email FROM contact_suggestion_suppressions")?;
+            let suppressed = suppressed_statement.query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<std::collections::HashSet<_>, _>>()?;
             let needle = query.trim().to_ascii_lowercase();
             let mut suggestions: Vec<ContactSuggestion> = by_email
                 .into_iter()
                 .filter(|(email, agg)| {
+                    if hide_suppressed && suppressed.contains(email) { return false; }
                     let domain_matches = email
                         .split_once('@')
                         .is_some_and(|(_, domain)| domain.contains(&needle));
@@ -3683,6 +3696,23 @@ pub(crate) mod tests {
             .list_contact_suggestions("you@example.com", "zzz", 10)
             .unwrap();
         assert!(filtered_out.is_empty());
+    }
+
+    #[test]
+    fn never_suggest_hides_mail_derived_addresses_without_hiding_the_address_book_history() {
+        let database=database();
+        database.adopt_account("you@example.com").unwrap();
+        let mut sent=message("sent-hidden","thread-hidden","2026-01-01T00:00:00Z","body");
+        sent.from="you@example.com".into();sent.to=vec!["Person <person@example.com>".into()];
+        database.upsert_thread("you@example.com", &[sent]).unwrap();
+        database.set_contact_suppressed("PERSON@EXAMPLE.COM",true).unwrap();
+        assert!(database.list_contact_suggestions("you@example.com","person",10).unwrap().is_empty());
+        let profiles=database.list_contact_profiles("person",10).unwrap();
+        assert_eq!(profiles.len(),1);
+        assert!(profiles[0].id.starts_with("derived:"));
+        assert_eq!(database.contact_timeline_for_account(&profiles[0].id,0,20,None).unwrap().len(),1);
+        database.set_contact_suppressed("person@example.com",false).unwrap();
+        assert_eq!(database.list_contact_suggestions("you@example.com","person",10).unwrap().len(),1);
     }
 
     #[test]

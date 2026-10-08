@@ -311,26 +311,7 @@ impl Database {
 
     /// The group's complete sync record, with every stored member.
     pub(crate) fn contact_group_record(&self, id: &str) -> DbResult<Option<Value>> {
-        self.with_connection(|connection| {
-            let row = connection
-                .query_row(
-                    "SELECT name,created_at FROM contact_groups WHERE id=?1",
-                    [id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                )
-                .optional()?;
-            let Some((name, created_at)) = row else {
-                return Ok(None);
-            };
-            let mut record = Map::new();
-            record.insert("id".into(), Value::String(id.to_string()));
-            record.insert("name".into(), Value::String(name));
-            record.insert("createdAt".into(), Value::String(created_at));
-            for member in stored_member_ids(connection, id)? {
-                record.insert(member_field(&member), Value::Bool(true));
-            }
-            Ok(Some(Value::Object(record)))
-        })
+        self.with_connection(|connection| contact_group_record_on(connection, id))
     }
 
     /// Materializes a resolved group record. Membership is replaced by the
@@ -362,6 +343,30 @@ impl Database {
             Ok(())
         })
     }
+}
+
+pub(super) fn contact_group_record_on(
+    connection: &Connection,
+    id: &str,
+) -> DbResult<Option<Value>> {
+    let row = connection
+        .query_row(
+            "SELECT name,created_at FROM contact_groups WHERE id=?1",
+            [id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let Some((name, created_at)) = row else {
+        return Ok(None);
+    };
+    let mut record = Map::new();
+    record.insert("id".into(), Value::String(id.to_string()));
+    record.insert("name".into(), Value::String(name));
+    record.insert("createdAt".into(), Value::String(created_at));
+    for member in stored_member_ids(connection, id)? {
+        record.insert(member_field(&member), Value::Bool(true));
+    }
+    Ok(Some(Value::Object(record)))
 }
 
 #[cfg(test)]

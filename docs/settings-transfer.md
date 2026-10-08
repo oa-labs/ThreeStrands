@@ -1,66 +1,69 @@
 # Settings and account-list transfer
 
-ThreeStrands can move its configuration between desktop installations without
-moving mail or credentials. Every export is password-encrypted; there is no
-plaintext export mode.
+ThreeStrands moves configuration between desktop installations with a
+password-encrypted settings bundle. This transfer includes a richer saved
+address book than [CSV/vCard interchange](address-book.md#csv-and-vcard-interchange),
+whose standard contact files are unencrypted.
 
 ## Included data
 
-The version 1 payload contains:
+Current exports contain:
 
 - appearance, reading, remote-image, selected-account, and non-secret AI
   preferences from the typed allowlist in `src/userPreferences.ts`;
-- account email addresses, display names, colors, and ordering;
-- local Split Inbox definitions; and
+- availability preferences and calendar colors;
+- account email addresses, provider identifiers, display names, colors, and order;
+- local Split Inbox definitions and reusable snippets;
+- saved contact profiles, ordered linked addresses, photos, favorites, birthdays,
+  and Keep in Touch settings;
+- named contact groups and their membership; and
 - the local mail-retention preference.
 
-The import replaces preferences and Split Inbox definitions. It merges account
-metadata by email address. An account already connected on the destination
-keeps its connection status; an account present only in the export is created
-with `needs_reauth` and shown as “Connect on this device.”
+The import replaces preferences, Split Inboxes, snippets, and saved contacts.
+It replaces groups when the bundle includes them; an earlier bundle without
+that field preserves the destination's groups. Account metadata merges by
+email address. An already connected account keeps its connection status; an
+account present only in the export is created with `needs_reauth` and shown
+as “Connect on this device.”
 
 ## Excluded data and trust boundary
 
 Exports never contain:
 
-- Google OAuth access or refresh tokens;
-- AI API keys or any other OS-keychain value;
+- Google OAuth access or refresh tokens, AI API keys, or other OS-keychain values;
 - cached messages, attachments, search indexes, or correspondence history;
+- unsaved mail-derived contact suggestions or the device's “never suggest” list;
 - drafts, queued sends, or pending provider mutations;
-- crash reports, logs, or telemetry identifiers; or
-- window geometry and transient layout state.
+- tasks, goals, sync credentials, or device enrollment keys;
+- crash reports, logs, telemetry identifiers, or transient window/layout state.
 
-The React layer supplies only the typed preference object. The trusted Tauri
-layer reads account and Split Inbox metadata from SQLite, encrypts and writes
-the complete bundle, decrypts imports, validates every field, and applies the
-native data transactionally. It never reads or writes the keychain during a
-transfer.
+The React layer supplies only typed preferences. The trusted Tauri layer reads
+native metadata from SQLite, encrypts and writes the bundle, decrypts imports,
+validates every field, and applies native data transactionally. It never reads
+or writes the keychain during transfer.
 
-## Format version 1
+## Format and compatibility
 
-The file is a JSON envelope with the marker `dispatch-settings`, version `1`,
-and base64-encoded salt, nonce, and ciphertext fields. The payload is encrypted
-with XChaCha20-Poly1305. Its 256-bit key is derived from the user's password
-using Argon2id with a random 128-bit salt. Authentication failure is reported
-as either an incorrect password or a damaged file without attempting an
-import.
+Current exports use version **3**, with the JSON envelope marker
+`dispatch-settings` and base64-encoded salt, nonce, and ciphertext. Imports
+continue to accept versions 1 and 2 with compatibility defaults and migrations.
+The `.dispatch-settings` extension retains the former product name; new
+exports default to `threestrands-settings.dispatch-settings`.
 
-The marker and `.dispatch-settings` extension intentionally retain the former
-product name so exports created by Dispatch remain importable by ThreeStrands.
-New exports use `threestrands-settings.dispatch-settings` as their default
-filename without changing the version 1 transfer format.
+XChaCha20-Poly1305 encrypts the payload. Argon2id derives the 256-bit key from
+the password and a random 128-bit salt. Authentication failure is reported as
+an incorrect password or damaged file without applying an import. Unknown
+fields, unsupported values or versions, invalid limits, and oversized files
+are rejected before SQLite changes.
 
-The encrypted payload has its own version and a strict schema. Unknown fields,
-unsupported enum values, invalid limits, oversized files, and unsupported
-versions are rejected before SQLite is changed.
+Fields added under the same version require backward-compatible defaults.
+Incompatible changes require an intentional version bump and continued import
+support for earlier versions. Frozen historical fixtures cover those contracts.
+CSV/vCard interchange, profile merging, and device-local suggestion suppression
+in 0.83.0 do not change this encrypted format.
 
-Changing the payload requires a new schema version and an explicit migration;
-the application must not deserialize an old file directly into the current
-database schema.
-
-## Minimum email font size (0.56)
-
-`emailMinimumFontSize` is an optional, defaulted addition to format version 3.
-Missing values in earlier exports import as `0` (off); valid nonzero values are
-whole CSS-pixel sizes from 12 through 32. The frozen `v3-0.55` fixture covers the
-preceding schema. The preference participates in the portable sync record.
+`emailMinimumFontSize`, added in 0.56, defaults to `0` (off) for earlier exports;
+valid nonzero values are whole CSS-pixel sizes from 12 through 32. Contact
+birthdays and Keep in Touch settings added in 0.67 default to absent/reminders
+off. Calendar colors added in 0.73 default to the standard palette. Contact
+groups added in 0.79 are optional so older exports preserve local groups.

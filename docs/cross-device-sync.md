@@ -211,3 +211,16 @@ of them.
 
 Turning the beta off stops replication without deleting local data, keys, or
 group membership.
+
+## Contact management boundaries
+
+CSV/vCard imports create saved profiles, and explicit merges update the retained
+profile, remove the other profiles, and combine group membership. Those changes
+participate in encrypted sync when it is enabled. Profile and replica writes
+commit together, and a peer releases deleted profiles' email ownership before
+applying a merged profile. Mail and attachment history remain device-local.
+
+“Never suggest this address” preferences apply across accounts on one installation.
+They survive deleting a profile but are excluded from cross-device sync and
+settings transfer. Explicitly typed recipients and deliberately chosen groups
+remain available. See [contact management](address-book.md) for the workflows.

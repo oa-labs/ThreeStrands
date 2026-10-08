@@ -654,3 +654,11 @@ export type CrashReport = {
   appVersion: string;
   userAgent: string;
 };
+
+export type ContactFormat = "csv" | "vcard";
+export interface ContactImportPreview {
+  contacts: SaveContactRequest[];
+  warnings: string[];
+  skipped: number;
+}
+export interface ContactImportResult { imported: number; skipped: number }

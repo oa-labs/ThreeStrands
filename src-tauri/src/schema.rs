@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 52;
+pub(crate) const LATEST_VERSION: i64 = 53;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1432,6 +1432,11 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         }
         tx.execute_batch("PRAGMA user_version=52;").map_err(error)?;
     }
+    if version < 53 {
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS contact_suggestion_suppressions(
+            email TEXT PRIMARY KEY NOT NULL
+        ); PRAGMA user_version=53;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1477,6 +1482,19 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn upgrading_v52_adds_suggestion_suppression_without_changing_contacts() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch("DROP TABLE contact_suggestion_suppressions; PRAGMA user_version=52;").unwrap();
+        connection.execute("INSERT INTO contacts(id,display_name,links_json,favorite,updated_at) VALUES('person','Person','[]',0,'2026-10-01')", []).unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(connection.query_row("SELECT display_name FROM contacts WHERE id='person'", [], |row| row.get::<_, String>(0)).unwrap(), "Person");
+        connection.execute("INSERT INTO contact_suggestion_suppressions(email) VALUES('person@example.com')", []).unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM contact_suggestion_suppressions", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
     }
 
     #[test]

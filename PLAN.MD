@@ -2,6 +2,7 @@
 
 **Status:** Current product baseline and forward-looking roadmap
 **Reviewed:** 2026-10-02 against the 0.55.1 codebase
+**Contact capabilities updated:** 2026-10-08 for 0.83.0
 
 ## Product direction
 
@@ -64,8 +65,12 @@ particular platform package, or always-on service behavior.
   follow-up tasks linked to a conversation can complete when a new reply
   arrives.
 - Browse, add, and edit contacts outside the composer, with multiple addresses,
-  notes, profile details, and correspondence history. A conversation context
-  panel brings people, related tasks, and meetings beside the message.
+  notes, profile details, correspondence history, groups, birthdays, and Keep in
+  Touch reminders. Import and export CSV/vCard address books, explicitly merge
+  saved profiles, and reversibly hide addresses from recipient suggestions on
+  this device. See [contact management](docs/address-book.md) for merge rules,
+  interchange limits, and sync boundaries. A conversation context panel brings
+  people, related tasks, and meetings beside the message.
 - Unsubscribe when a message advertises a supported unsubscribe method, with
   confirmation before the request.
 
@@ -218,7 +223,8 @@ flowchart LR
    production reliability.
 3. **Build the near-term roadmap deliberately.** Define scheduled-action
    behavior around app sleep and shutdown before adding snooze or send later.
-   Build the standalone address book on the existing local suggestion model.
+   Extend the existing standalone address book with connected provider address
+   books after defining ownership and conflict behavior.
    Mature replicated sync before presenting it as a standard feature.
 4. **Expand integrations from tested contracts.** The Rust provider traits
    isolate Gmail-specific access. Add another provider only with its own
@@ -245,4 +251,4 @@ flowchart LR
   review decisions.
 - [Cross-device sync](docs/cross-device-sync.md) and [replicated sync design](docs/replicated-sync-design.md) — sync scope and trust model.
 - [Settings transfer](docs/settings-transfer.md) and [email rendering policy](docs/email-rendering-policy.md) — persistent-format and reader boundaries.
-- [Phase 1 status](docs/phase-1.md), [Phase 2 correspondence status](docs/phase-2-status.md), [multi-account plan](docs/multi-account.md), and [address-book proposal](docs/address-book.md) — historical milestones and feature-specific context; check the current code before treating their status labels as current.
+- [Phase 1 status](docs/phase-1.md), [Phase 2 correspondence status](docs/phase-2-status.md), [multi-account plan](docs/multi-account.md), and [contact management](docs/address-book.md) — milestones and feature-specific context; the contact document describes current capabilities.

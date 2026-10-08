@@ -2955,3 +2955,14 @@ input::placeholder { color: var(--muted); opacity: 1; }
     scroll-behavior: auto !important;
   }
 }
+
+/* Contact management dialogs use the shared modal and control system. */
+.contact-management-dialog { max-width: 640px; }
+.contact-management-dialog p { line-height: var(--leading-normal); }
+.contact-management-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.contact-management-dialog label { display: grid; gap: var(--space-2); margin-block: var(--space-3); }
+.contact-management-dialog ul { max-height: 240px; overflow: auto; padding-left: var(--space-5); overflow-wrap: anywhere; }
+.contact-management-dialog li { margin-block: var(--space-2); }
+.contact-management-dialog li .btn { margin-left: var(--space-2); }
+.contacts-header-actions { flex-wrap: wrap; }
+.contacts-bulk-bar { flex-wrap: wrap; }

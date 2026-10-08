@@ -1203,6 +1203,16 @@ impl Database {
         if pending.is_empty() {
             return Ok(());
         }
+        // Contact merges transfer unique email ownership. Apply deleted
+        // profiles before retained profiles, regardless of identifier order.
+        let mut contact_deletions = std::collections::BTreeSet::new();
+        for (entity_type, entity_id) in &pending {
+            if *entity_type == EntityType::Contact
+                && self.resolve_field_winner(*entity_type, entity_id, ENTITY_EXISTENCE_FIELD)?
+                    .and_then(|value| value.as_bool()) != Some(true)
+            { contact_deletions.insert(entity_id.clone()); }
+        }
+        pending.sort_by_key(|(kind, id)| !(*kind == EntityType::Contact && contact_deletions.contains(id)));
         self.with_remote_projection(|| {
             // Two passes: a dependency that materializes within this same
             // batch (e.g. a calendar account and its selection arriving

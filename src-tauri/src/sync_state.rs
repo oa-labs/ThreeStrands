@@ -175,6 +175,13 @@ pub(crate) fn record_replicated_write_in_transaction(
     mark_changed(tx, true)
 }
 
+/// Records deletion atomically with the corresponding application-table mutation.
+pub(crate) fn record_replicated_deletion_in_transaction(tx: &Transaction, entity_type: EntityType, entity_id: &str) -> DbResult<()> {
+    ensure_space_and_device(tx)?;
+    tx.execute("DELETE FROM sync_values WHERE entity_type=?1 AND entity_id=?2", params![entity_type.as_str(), entity_id])?;
+    mark_changed(tx, true)
+}
+
 impl Database {
     /// Records a local write (creation or update) into the replica, in one
     /// transaction: one new write whose value replaces each named field's
@@ -209,12 +216,7 @@ impl Database {
             return Ok(());
         }
         self.with_transaction(|tx| {
-            ensure_space_and_device(tx)?;
-            tx.execute(
-                "DELETE FROM sync_values WHERE entity_type=?1 AND entity_id=?2",
-                params![entity_type.as_str(), entity_id],
-            )?;
-            mark_changed(tx, true)
+            record_replicated_deletion_in_transaction(tx, entity_type, entity_id)
         })
         .map_err(String::from)
     }

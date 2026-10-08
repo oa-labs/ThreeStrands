@@ -8,6 +8,7 @@ mod auth;
 mod backoff;
 mod calendar;
 mod correspondence;
+mod contact_interchange;
 mod credentials;
 mod db;
 mod endpoint_origin;
@@ -1090,6 +1091,72 @@ fn save_contact_profile(
         None,
     )?;
     Ok(profile)
+}
+
+#[tauri::command]
+async fn preview_contact_import() -> Result<Option<contact_interchange::ContactImportPreview>, String> {
+    use std::io::Read;
+    let Some(file) = rfd::AsyncFileDialog::new().set_title("Import contacts")
+        .add_filter("Contact files", &["csv", "vcf", "vcard"]).pick_file().await else { return Ok(None); };
+    let path = file.path().to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        let format = match path.extension().and_then(|extension| extension.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+            "csv" => contact_interchange::ContactFormat::Csv,
+            "vcf" | "vcard" => contact_interchange::ContactFormat::Vcard,
+            _ => return Err("Choose a CSV or vCard file".into()),
+        };
+        let mut data = Vec::new();
+        std::fs::File::open(path).map_err(|error| error.to_string())?
+            .take(contact_interchange::MAX_IMPORT_BYTES + 1).read_to_end(&mut data).map_err(|error| error.to_string())?;
+        if data.len() as u64 > contact_interchange::MAX_IMPORT_BYTES { return Err("Contact files must be at most 10 MiB".into()); }
+        let text = String::from_utf8(data).map_err(|_| "Save the contact file with UTF-8 encoding")?;
+        contact_interchange::parse(&text, format).map(Some)
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn import_contacts(contacts: Vec<SaveContactRequest>, state: State<'_, AppState>) -> Result<db::contact_management::ContactImportResult, String> {
+    let database = state.database.clone();
+    let result = run_database_task(move || database.import_contacts(&contacts)).await?;
+    kick_replicated_sync(&state);
+    Ok(result)
+}
+
+#[tauri::command]
+async fn export_contacts(format: contact_interchange::ContactFormat, state: State<'_, AppState>) -> Result<bool, String> {
+    let database = state.database.clone();
+    let contacts = run_database_task(move || database.list_saved_contact_profiles()).await?;
+    if contacts.is_empty() { return Err("Save a contact before exporting".into()); }
+    let (extension, label) = match format { contact_interchange::ContactFormat::Csv => ("csv", "CSV"), contact_interchange::ContactFormat::Vcard => ("vcf", "vCard") };
+    let Some(file) = rfd::AsyncFileDialog::new().set_title("Export saved contacts")
+        .set_file_name(format!("ThreeStrands Contacts.{extension}"))
+        .add_filter(label, &[extension]).save_file().await else { return Ok(false); };
+    let path = file.path().to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = contact_interchange::export(&contacts, format)?;
+        std::fs::write(path, bytes).map_err(|error| error.to_string())?;
+        Ok(true)
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn merge_contacts(target_id: String, source_ids: Vec<String>, state: State<'_, AppState>) -> Result<ContactProfile, String> {
+    let database = state.database.clone();
+    let profile = run_database_task(move || database.merge_contacts(&target_id, &source_ids)).await?;
+    kick_replicated_sync(&state);
+    Ok(profile)
+}
+
+#[tauri::command]
+async fn list_contact_suppressions(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_contact_suppressions()).await
+}
+
+#[tauri::command]
+async fn set_contact_suppressed(email: String, suppressed: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let database = state.database.clone();
+    run_database_task(move || database.set_contact_suppressed(&email, suppressed)).await
 }
 
 #[tauri::command]
@@ -4079,6 +4146,12 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         list_triage_sender_stats,
         list_contact_suggestions,
         list_contact_profiles,
+        preview_contact_import,
+        import_contacts,
+        export_contacts,
+        merge_contacts,
+        list_contact_suppressions,
+        set_contact_suppressed,
         resolve_contact_ids,
         get_contact_profile,
         save_contact_profile,

@@ -205,7 +205,7 @@ impl Database {
         })?;
         let mut mail_history = Vec::new();
         for account in self.list_accounts()?.into_iter().filter(|account| account_id.is_none_or(|selected| selected == account.email)) {
-            mail_history.extend(self.list_contact_suggestions(&account.email, "", MAX_CONTACTS)?);
+            mail_history.extend(self.contact_suggestions_including_suppressed(&account.email, "", MAX_CONTACTS)?);
         }
         let mut stats = HashMap::<String, (i64, i64, Option<String>)>::new();
         for item in &mail_history {
@@ -354,7 +354,7 @@ impl Database {
         if let Some(email) = id.strip_prefix("derived:") {
             let mut suggestions = Vec::new();
             for account in self.list_accounts()? {
-                suggestions.extend(self.list_contact_suggestions(
+                suggestions.extend(self.contact_suggestions_including_suppressed(
                     &account.email,
                     email,
                     MAX_CONTACTS,
@@ -401,105 +401,7 @@ impl Database {
     }
 
     pub fn save_contact_profile(&self, request: &SaveContactRequest) -> DbResult<ContactProfile> {
-        let generated_id = request
-            .id
-            .as_deref()
-            .is_none_or(|id| id.starts_with("derived:"));
-        let mut id = request
-            .id
-            .as_deref()
-            .filter(|id| !id.starts_with("derived:"))
-            .map(ToOwned::to_owned)
-            .or_else(|| {
-                request.addresses.first().map(|email| {
-                    let digest = Sha256::digest(email.trim().to_ascii_lowercase().as_bytes());
-                    format!(
-                        "contact:{}",
-                        digest
-                            .iter()
-                            .map(|byte| format!("{byte:02x}"))
-                            .collect::<String>()
-                    )
-                })
-            })
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
-        if id.trim().is_empty() || id.len() > 128 {
-            return Err("Contact id is invalid".into());
-        }
-        let name = clean_contact_text(request.display_name.as_deref(), 200)?;
-        let role = clean_contact_text(request.role.as_deref(), 200)?;
-        let company = clean_contact_text(request.company.as_deref(), 200)?;
-        let location = clean_contact_text(request.location.as_deref(), 200)?;
-        let bio = clean_contact_text(request.bio.as_deref(), 4000)?;
-        let notes = clean_contact_text(request.notes.as_deref(), 8000)?;
-        let birthday = normalize_birthday(request.birthday.as_deref())?;
-        if let Some(keep_in_touch) = &request.keep_in_touch {
-            validate_keep_in_touch(keep_in_touch)?;
-        }
-        let replace_keep_in_touch = request.keep_in_touch.is_some();
-        let keep_in_touch = request.keep_in_touch.clone().unwrap_or_default();
-        let mut addresses = Vec::new();
-        for raw in &request.addresses {
-            let email = raw.trim().to_ascii_lowercase();
-            if !email.contains('@') || email.len() > 320 || email.chars().any(char::is_whitespace) {
-                return Err("Enter a valid email address".into());
-            }
-            if !addresses.iter().any(|value: &String| value == &email) {
-                addresses.push(email);
-            }
-        }
-        if addresses.is_empty() {
-            return Err("A contact needs at least one email address".into());
-        }
-        if request.links.len() > 20 {
-            return Err("A contact can have at most 20 links".into());
-        }
-        let mut links = Vec::new();
-        for link in &request.links {
-            let value = link.trim();
-            let parsed = url::Url::parse(value).map_err(|_| "Enter a valid https link")?;
-            if parsed.scheme() != "https" || parsed.host_str().is_none() || value.len() > 2048 {
-                return Err("Contact links must be valid https URLs".into());
-            }
-            links.push(value.to_string());
-        }
-        if let Some(photo) = request.photo_data.as_deref() {
-            let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, photo)
-                .map_err(|_| "Contact photo is invalid")?;
-            crate::image_format::validate_contact_photo(&bytes)?;
-        }
-        let links_json = serde_json::to_string(&links).map_err(|error| error.to_string())?;
-        self.with_transaction(|tx| {
-            // The address-derived ID is convenient for a first save, but an
-            // address can later be removed and claimed by someone else. Keep
-            // re-saving the same contact stable when it still owns an address;
-            // otherwise avoid turning a hash collision into an upsert that
-            // would replace the unrelated profile.
-            if generated_id {
-                let id_exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM contacts WHERE id=?1)",[&id],|row|row.get(0))?;
-                if id_exists {
-                    let mut owns_requested_address=false;
-                    for email in &addresses {
-                        let owner:Option<String>=tx.query_row("SELECT contact_id FROM contact_addresses WHERE email=?1",[email],|row|row.get(0)).optional()?;
-                        if owner.as_deref()==Some(id.as_str()) {owns_requested_address=true;break;}
-                    }
-                    if !owns_requested_address { id=Uuid::new_v4().to_string(); }
-                }
-            }
-            for email in &addresses {
-                let existing:Option<String>=tx.query_row("SELECT contact_id FROM contact_addresses WHERE email=?1",[email],|row|row.get(0)).optional()?;
-                if existing.as_deref().is_some_and(|owner|owner!=id) { return Err("That address already belongs to another saved contact. Remove it there before linking it here.".into()); }
-            }
-            tx.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,role=excluded.role,company=excluded.company,location=excluded.location,bio=excluded.bio,notes=excluded.notes,links_json=excluded.links_json,photo_data=excluded.photo_data,favorite=excluded.favorite,updated_at=excluded.updated_at,birthday=excluded.birthday,
-                kit_interval_days=CASE WHEN ?18 THEN excluded.kit_interval_days ELSE contacts.kit_interval_days END,
-                kit_started_at=CASE WHEN ?18 THEN excluded.kit_started_at ELSE contacts.kit_started_at END,
-                kit_snoozed_until=CASE WHEN ?18 THEN excluded.kit_snoozed_until ELSE contacts.kit_snoozed_until END,
-                kit_snoozed_at=CASE WHEN ?18 THEN excluded.kit_snoozed_at ELSE contacts.kit_snoozed_at END,
-                kit_last_touch_at=CASE WHEN ?18 THEN excluded.kit_last_touch_at ELSE contacts.kit_last_touch_at END",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339(),birthday,keep_in_touch.interval_days,keep_in_touch.started_at,keep_in_touch.snoozed_until,keep_in_touch.snoozed_at,keep_in_touch.last_touch_at,replace_keep_in_touch])?;
-            tx.execute("DELETE FROM contact_addresses WHERE contact_id=?1",[&id])?;
-            for (position,email) in addresses.iter().enumerate() { tx.execute("INSERT INTO contact_addresses(contact_id,email,position) VALUES(?1,?2,?3)",params![id,email,position as i64])?; }
-            Ok(())
-        })?;
+        let id = self.with_transaction(|tx| save_contact_on(tx, request))?;
         self.get_contact_profile(&id)?
             .ok_or_else(|| "Saved contact could not be loaded".into())
     }
@@ -928,6 +830,141 @@ pub(crate) fn keep_in_touch_due_at(value: &KeepInTouch, last_mail_at: Option<&st
     }
     let base = last_touch.or_else(|| value.started_at.as_deref().and_then(parse_instant))?;
     Some((base + Duration::days(days)).to_rfc3339())
+}
+
+/// Validates and writes a profile on an existing transaction. Import and merge
+/// use this same validation so a rejected batch leaves no partial changes.
+pub(super) fn save_contact_on(
+    tx: &rusqlite::Transaction,
+    request: &SaveContactRequest,
+) -> DbResult<String> {
+    let generated_id = request
+        .id
+        .as_deref()
+        .is_none_or(|id| id.starts_with("derived:"));
+    let mut id = request
+        .id
+        .as_deref()
+        .filter(|id| !id.starts_with("derived:"))
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            request.addresses.first().map(|email| {
+                let digest = Sha256::digest(email.trim().to_ascii_lowercase().as_bytes());
+                format!(
+                    "contact:{}",
+                    digest
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>()
+                )
+            })
+        })
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    if id.trim().is_empty() || id.len() > 128 {
+        return Err("Contact id is invalid".into());
+    }
+    let name = clean_contact_text(request.display_name.as_deref(), 200)?;
+    let role = clean_contact_text(request.role.as_deref(), 200)?;
+    let company = clean_contact_text(request.company.as_deref(), 200)?;
+    let location = clean_contact_text(request.location.as_deref(), 200)?;
+    let bio = clean_contact_text(request.bio.as_deref(), 4000)?;
+    let notes = clean_contact_text(request.notes.as_deref(), 8000)?;
+    let birthday = normalize_birthday(request.birthday.as_deref())?;
+    if let Some(keep_in_touch) = &request.keep_in_touch {
+        validate_keep_in_touch(keep_in_touch)?;
+    }
+    let replace_keep_in_touch = request.keep_in_touch.is_some();
+    let keep_in_touch = request.keep_in_touch.clone().unwrap_or_default();
+    let mut addresses = Vec::new();
+    for raw in &request.addresses {
+        let email = raw.trim().to_ascii_lowercase();
+        if !email.contains('@') || email.len() > 320 || email.chars().any(char::is_whitespace) {
+            return Err("Enter a valid email address".into());
+        }
+        if !addresses.iter().any(|value: &String| value == &email) {
+            addresses.push(email);
+        }
+    }
+    if addresses.is_empty() {
+        return Err("A contact needs at least one email address".into());
+    }
+    if request.links.len() > 20 {
+        return Err("A contact can have at most 20 links".into());
+    }
+    let mut links = Vec::new();
+    for link in &request.links {
+        let value = link.trim();
+        let parsed = url::Url::parse(value).map_err(|_| "Enter a valid https link")?;
+        if parsed.scheme() != "https" || parsed.host_str().is_none() || value.len() > 2048 {
+            return Err("Contact links must be valid https URLs".into());
+        }
+        links.push(value.to_string());
+    }
+    if let Some(photo) = request.photo_data.as_deref() {
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, photo)
+            .map_err(|_| "Contact photo is invalid")?;
+        crate::image_format::validate_contact_photo(&bytes)?;
+    }
+    let links_json = serde_json::to_string(&links).map_err(|error| error.to_string())?;
+    {
+        // The address-derived ID is convenient for a first save, but an
+        // address can later be removed and claimed by someone else. Keep
+        // re-saving the same contact stable when it still owns an address;
+        // otherwise avoid turning a hash collision into an upsert that
+        // would replace the unrelated profile.
+        if generated_id {
+            let id_exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM contacts WHERE id=?1)",
+                [&id],
+                |row| row.get(0),
+            )?;
+            if id_exists {
+                let mut owns_requested_address = false;
+                for email in &addresses {
+                    let owner: Option<String> = tx
+                        .query_row(
+                            "SELECT contact_id FROM contact_addresses WHERE email=?1",
+                            [email],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    if owner.as_deref() == Some(id.as_str()) {
+                        owns_requested_address = true;
+                        break;
+                    }
+                }
+                if !owns_requested_address {
+                    id = Uuid::new_v4().to_string();
+                }
+            }
+        }
+        for email in &addresses {
+            let existing: Option<String> = tx
+                .query_row(
+                    "SELECT contact_id FROM contact_addresses WHERE email=?1",
+                    [email],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if existing.as_deref().is_some_and(|owner| owner != id) {
+                return Err("That address already belongs to another saved contact. Remove it there before linking it here.".into());
+            }
+        }
+        tx.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,role=excluded.role,company=excluded.company,location=excluded.location,bio=excluded.bio,notes=excluded.notes,links_json=excluded.links_json,photo_data=excluded.photo_data,favorite=excluded.favorite,updated_at=excluded.updated_at,birthday=excluded.birthday,
+                kit_interval_days=CASE WHEN ?18 THEN excluded.kit_interval_days ELSE contacts.kit_interval_days END,
+                kit_started_at=CASE WHEN ?18 THEN excluded.kit_started_at ELSE contacts.kit_started_at END,
+                kit_snoozed_until=CASE WHEN ?18 THEN excluded.kit_snoozed_until ELSE contacts.kit_snoozed_until END,
+                kit_snoozed_at=CASE WHEN ?18 THEN excluded.kit_snoozed_at ELSE contacts.kit_snoozed_at END,
+                kit_last_touch_at=CASE WHEN ?18 THEN excluded.kit_last_touch_at ELSE contacts.kit_last_touch_at END",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339(),birthday,keep_in_touch.interval_days,keep_in_touch.started_at,keep_in_touch.snoozed_until,keep_in_touch.snoozed_at,keep_in_touch.last_touch_at,replace_keep_in_touch])?;
+        tx.execute("DELETE FROM contact_addresses WHERE contact_id=?1", [&id])?;
+        for (position, email) in addresses.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO contact_addresses(contact_id,email,position) VALUES(?1,?2,?3)",
+                params![id, email, position as i64],
+            )?;
+        }
+    }
+    Ok(id)
 }
 
 #[cfg(test)]
