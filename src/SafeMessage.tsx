@@ -291,6 +291,17 @@ function linkifyTextNodes(root: Node): void {
   });
 }
 
+/**
+ * The href of the link containing `target`, if any. Duck-typed rather than
+ * `instanceof Element` because targets inside the message iframe belong to
+ * that frame's realm, not the parent's.
+ */
+function linkHrefAt(target: EventTarget | null): string | null {
+  const closest = (target as Element | null)?.closest;
+  if (typeof closest !== "function") return null;
+  return (target as Element).closest("a[href]")?.getAttribute("href") ?? null;
+}
+
 export function sanitizeMessageHtml(html: string): string {
   const fragment = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: allowedTags,
@@ -593,6 +604,10 @@ export function SafeMessage({
   const cleanupRef = useRef<(() => void) | null>(null);
   const [frameHeight, setFrameHeight] = useState(0);
   const [foldTop, setFoldTop] = useState<number | null>(null);
+  // The real destination of the link under the pointer or keyboard focus.
+  // Shown by the app outside the untrusted document, so a sender's markup,
+  // CSS, or title attribute can't disguise where a link actually goes.
+  const [hoveredLinkHref, setHoveredLinkHref] = useState<string | null>(null);
 
   const handleLoad = useCallback(() => {
     cleanupRef.current?.();
@@ -673,14 +688,30 @@ export function SafeMessage({
       });
       if (!window.dispatchEvent(forwarded)) event.preventDefault();
     };
+    const onLinkEnter = (event: Event) => setHoveredLinkHref(linkHrefAt(event.target));
+    const onLinkLeave = (event: MouseEvent | FocusEvent) => {
+      // Moving between children of the same link fires out/over pairs;
+      // only clear once the pointer or focus has actually left the link.
+      const leaving = linkHrefAt(event.target);
+      if (leaving !== null && linkHrefAt(event.relatedTarget) !== leaving) setHoveredLinkHref(null);
+    };
     frameDoc.addEventListener("click", onClick);
     frameDoc.addEventListener("keydown", onKeyDown);
+    frameDoc.addEventListener("mouseover", onLinkEnter);
+    frameDoc.addEventListener("mouseout", onLinkLeave);
+    frameDoc.addEventListener("focusin", onLinkEnter);
+    frameDoc.addEventListener("focusout", onLinkLeave);
 
     cleanupRef.current = () => {
       observer?.disconnect();
       frameDoc.defaultView?.removeEventListener("resize", onResize);
       frameDoc.removeEventListener("click", onClick);
       frameDoc.removeEventListener("keydown", onKeyDown);
+      frameDoc.removeEventListener("mouseover", onLinkEnter);
+      frameDoc.removeEventListener("mouseout", onLinkLeave);
+      frameDoc.removeEventListener("focusin", onLinkEnter);
+      frameDoc.removeEventListener("focusout", onLinkLeave);
+      setHoveredLinkHref(null);
     };
   }, []);
 
@@ -714,6 +745,12 @@ export function SafeMessage({
     </button>
   ) : null;
 
+  const linkStatus = hoveredLinkHref ? (
+    <div className="message-link-status" data-testid="message-link-status" aria-hidden="true">
+      {hoveredLinkHref}
+    </div>
+  ) : null;
+
   if (!hasContent) {
     const decoded = decodeHtmlEntities(text);
     const plainFold = !sanitized.trim() ? textFold : null;
@@ -722,6 +759,16 @@ export function SafeMessage({
         className="message-body message-body-plain"
         data-testid="message-body"
         style={minimumFontSize ? { fontSize: `max(${minimumFontSize}px, var(--text-reading))` } : undefined}
+        onMouseOver={(event) => setHoveredLinkHref(linkHrefAt(event.target))}
+        onMouseOut={(event) => {
+          const leaving = linkHrefAt(event.target);
+          if (leaving !== null && linkHrefAt(event.relatedTarget) !== leaving) setHoveredLinkHref(null);
+        }}
+        onFocus={(event) => setHoveredLinkHref(linkHrefAt(event.target))}
+        onBlur={(event) => {
+          const leaving = linkHrefAt(event.target);
+          if (leaving !== null && linkHrefAt(event.relatedTarget) !== leaving) setHoveredLinkHref(null);
+        }}
       >
         {plainFold ? (
           <>
@@ -730,6 +777,7 @@ export function SafeMessage({
             {quotedHistoryExpanded ? linkifyText(decodeHtmlEntities(plainFold.quoted)) : null}
           </>
         ) : decoded ? linkifyText(decoded) : "No message content."}
+        {linkStatus}
       </div>
     );
   }
@@ -767,6 +815,7 @@ export function SafeMessage({
           style={{ height: frameHeight }}
         />
         {renderQuotedHistoryButton(foldTop)}
+        {linkStatus}
       </div>
     </>
   );

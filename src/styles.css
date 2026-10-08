@@ -1353,6 +1353,30 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .quoted-history-toggle svg { display: block; fill: currentColor; }
 .quoted-history-toggle:hover { color: var(--text); background: var(--raised); }
 .quoted-history-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Browser-style status bar naming a hovered link's real destination. Drawn by
+   the app, outside the untrusted message document, so senders can't spoof it. */
+.message-link-status {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  bottom: var(--space-2);
+  left: var(--space-2);
+  max-width: min(640px, calc(100vw - 32px));
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  box-shadow: var(--shadow-popover);
+  color: var(--text);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  pointer-events: none;
+}
 .reader-empty { height: 100%; display: grid; place-content: center; justify-items: center; color: var(--muted); }
 /* A pane with nothing selected: an icon over one line of default UI text. */
 .reader-empty p,

@@ -1023,6 +1023,75 @@ it.each([
   expect(openUrl).toHaveBeenCalledWith(expected);
 });
 
+describe("link destination status", () => {
+  it.each([
+    {
+      name: "text whose label disguises the destination",
+      html: '<p>Sign in at <a href="https://evil.example/login" title="https://bank.example">https://bank.example</a>.</p>',
+      selector: "a",
+      expected: "https://evil.example/login",
+    },
+    {
+      name: "image button nested in a table",
+      html: '<table><tbody><tr><td><a href="mailto:help@support.example"><span><img alt="Contact us" src="data:image/png;base64,iVBORw0KGgo="></span></a></td></tr></tbody></table>',
+      selector: "a span",
+      expected: "mailto:help@support.example",
+    },
+  ])("shows the real href while hovering $name", ({ html, selector, expected }) => {
+    render(<SafeMessage html={html} />);
+    const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    const target = frameDoc.querySelector(selector)!;
+
+    expect(screen.queryByTestId("message-link-status")).toBeNull();
+    fireEvent.mouseOver(target);
+    expect(screen.getByTestId("message-link-status")).toHaveTextContent(expected);
+
+    fireEvent.mouseOut(target, { relatedTarget: frameDoc.body });
+    expect(screen.queryByTestId("message-link-status")).toBeNull();
+  });
+
+  it("keeps the status while moving between parts of the same link", () => {
+    render(<SafeMessage html='<p><a href="https://news.example/story"><strong>full</strong> story</a></p>' />);
+    const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    const anchor = frameDoc.querySelector("a")!;
+    const strong = frameDoc.querySelector("strong")!;
+
+    fireEvent.mouseOver(strong);
+    fireEvent.mouseOut(strong, { relatedTarget: anchor });
+    fireEvent.mouseOver(anchor);
+    expect(screen.getByTestId("message-link-status")).toHaveTextContent("https://news.example/story");
+  });
+
+  it("shows the destination when a link receives keyboard focus", () => {
+    render(<SafeMessage html='<p><a href="https://news.example/story">Read more</a></p>' />);
+    const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    const anchor = frameDoc.querySelector("a")!;
+
+    fireEvent.focusIn(anchor);
+    expect(screen.getByTestId("message-link-status")).toHaveTextContent("https://news.example/story");
+    fireEvent.focusOut(anchor);
+    expect(screen.queryByTestId("message-link-status")).toBeNull();
+  });
+
+  it("shows nothing for unsafe hrefs the sanitizer removed", () => {
+    render(<SafeMessage html='<p><a href="javascript:alert(1)">Click</a></p>' />);
+    const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+
+    fireEvent.mouseOver(frameDoc.querySelector("a")!);
+    expect(screen.queryByTestId("message-link-status")).toBeNull();
+  });
+
+  it("shows the full href for linkified plain-text URLs", () => {
+    render(<SafeMessage html="" text="Write to someone@example.com today." />);
+    const link = screen.getByRole("link", { name: "someone@example.com" });
+
+    fireEvent.mouseOver(link);
+    expect(screen.getByTestId("message-link-status")).toHaveTextContent("mailto:someone@example.com");
+    fireEvent.mouseOut(link);
+    expect(screen.queryByTestId("message-link-status")).toBeNull();
+  });
+});
+
 it("leaves plain text without links untouched", () => {
   render(<SafeMessage html="" text="No links in this message." />);
   expect(screen.getByTestId("message-body").querySelector("a")).toBeNull();
