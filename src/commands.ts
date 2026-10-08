@@ -121,10 +121,18 @@ export type Command = {
   title: string;
   keys: string[];
   group: "Navigation" | "Triage" | "Application" | "Compose";
+  /** Extra palette search terms for words people reach for that the title doesn't use. */
+  keywords?: string[];
   enabled(context: CommandContext): boolean;
   run(context: CommandContext): Promise<CommandResult>;
   undo?: (result: CommandResult) => Promise<void>;
 };
+
+/** Palette search: every query word must appear in the title or keywords, in any order. */
+export function commandMatchesFilter(command: Command, filter: string): boolean {
+  const haystack = [command.title, ...(command.keywords ?? [])].join(" ").toLocaleLowerCase();
+  return filter.toLocaleLowerCase().split(/\s+/).filter(Boolean).every((word) => haystack.includes(word));
+}
 
 const complete = async (action: () => void): Promise<CommandResult> => {
   action();
@@ -559,6 +567,7 @@ export const commands: Command[] = [
     title: "Add Task From Conversation",
     keys: ["d"],
     group: "Application",
+    keywords: ["new", "create", "todo", "email", "message", "thread"],
     enabled: (context) => (context.focusedPane === "tasks" || context.selectedId !== null) && !context.composerActive,
     run: (context) => complete(context.newTask),
   },

@@ -61,6 +61,18 @@ describe("App chrome", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("finds a command by its extra search terms", () => {
+    render(<CommandPalette context={context} execute={vi.fn()} onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "Filter Commands" });
+
+    for (const query of ["new task", "create task", "task from email"]) {
+      fireEvent.change(input, { target: { value: query } });
+      expect(screen.getByRole("button", { name: /Add Task From Conversation/ })).toBeInTheDocument();
+    }
+    fireEvent.change(input, { target: { value: "new widget" } });
+    expect(screen.queryByRole("button", { name: /Add Task From Conversation/ })).not.toBeInTheDocument();
+  });
+
   it("shows readable shortcut keys in the command palette", () => {
     render(<CommandPalette context={context} execute={vi.fn()} onClose={vi.fn()} />);
     const input = screen.getByRole("textbox", { name: "Filter Commands" });

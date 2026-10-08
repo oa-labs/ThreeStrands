@@ -2,6 +2,7 @@ import { Check, ListFilter, Search, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
+  commandMatchesFilter,
   commands,
   shortcutSteps,
   type Command,
@@ -137,7 +138,7 @@ export function CommandPalette({
   const [filter, setFilter] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => inputRef.current?.focus(), []);
-  const visible = [...commands, ...extraCommands].filter((command) => command.title.toLocaleLowerCase().includes(filter.toLocaleLowerCase()));
+  const visible = [...commands, ...extraCommands].filter((command) => commandMatchesFilter(command, filter));
   return (
     <Modal title="Command Palette" onClose={onClose} shortcutScope="palette" initialFocusRef={inputRef}>
       <label className="palette-search">

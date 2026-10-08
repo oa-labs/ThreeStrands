@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   accountCommand,
+  commandMatchesFilter,
   commands,
   isEditableTarget,
   matchesShortcut,
@@ -245,6 +246,19 @@ describe("command registry", () => {
     expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(false);
     await command?.run({ ...noopContext(), openContactGroupsView });
     expect(openContactGroupsView).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches palette filters word by word against titles and keywords", () => {
+    const command = commands.find((candidate) => candidate.id === "tasks.new")!;
+    expect(commandMatchesFilter(command, "")).toBe(true);
+    expect(commandMatchesFilter(command, "Add Task")).toBe(true);
+    expect(commandMatchesFilter(command, "  task   NEW ")).toBe(true);
+    expect(commandMatchesFilter(command, "create todo")).toBe(true);
+    expect(commandMatchesFilter(command, "new widget")).toBe(false);
+    const untagged = commands.find((candidate) => candidate.id === "shortcuts.open")!;
+    expect(untagged.keywords).toBeUndefined();
+    expect(commandMatchesFilter(untagged, "keyboard shortcuts")).toBe(true);
+    expect(commandMatchesFilter(untagged, "new")).toBe(false);
   });
 
   it("matches shortcuts case-insensitively", () => {
