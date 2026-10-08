@@ -231,7 +231,7 @@ export function ComposeContext({
       ) : null}
       {person ? (
         <ThreadTasks
-          key={person.contactId}
+          key={`tasks:${person.contactId}`}
           thread={null}
           contactId={person.contactId}
           refreshKey={taskRefreshKey}
@@ -244,7 +244,7 @@ export function ComposeContext({
         <ContactMeetings people={meetingPeople} timeZone={preferences.timeZone} onOpenEvent={onOpenEvent} />
       ) : null}
       {person && person.timeline.length > 0 ? <RecentEmailsSection items={person.timeline} onOpenThread={onOpenThread} /> : null}
-      {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} onShowMessage={onShowMessage} /> : null}
+      {person ? <ContactFilesSection key={`files:${person.contactId}`} contactId={person.contactId} onShowMessage={onShowMessage} /> : null}
       {person ? (
         <DomainSection
           email={person.email}

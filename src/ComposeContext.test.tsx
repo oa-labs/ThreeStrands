@@ -83,6 +83,19 @@ describe("ComposeContext", () => {
     expect(props.onOpenThread).toHaveBeenCalledWith("t-1");
   });
 
+  it("keys the recipient's tasks and files sections distinctly", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      renderPanel({ draft: { ...draft, to: "Ann Lee <ann@partner.com>" } });
+      await screen.findByRole("region", { name: "About Ann Lee" });
+      await waitFor(() => expect(mailClient.contactFiles).toHaveBeenCalled());
+      await waitFor(() => expect(mailClient.listContactTasks).toHaveBeenCalled());
+      expect(consoleError.mock.calls.filter((args) => String(args[0]).includes("same key"))).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("switches whose history is shown among several recipients", async () => {
     renderPanel({ draft: { ...draft, to: "ann@partner.com", cc: "Pal <pal@friends.org>" } });
     const chips = screen.getByRole("group", { name: "Show history with" });

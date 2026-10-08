@@ -362,6 +362,21 @@ describe("ContactsWorkspace",()=>{
     expect(screen.getByText("Select a contact to see their details")).toBeInTheDocument();
   });
 
+  it("keeps a new contact open when the first list load finishes after New Contact",async()=>{
+    let finishLoad:(profiles:ContactProfile[])=>void=()=>{};
+    vi.mocked(mailClient.listContactProfiles).mockImplementationOnce(()=>new Promise(resolve=>{finishLoad=resolve;}));
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    fireEvent.click(screen.getByRole("button",{name:/New Contact/}));
+    fireEvent.change(screen.getByRole("textbox",{name:"Name"}),{target:{value:"Primary Person"}});
+    await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenCalled());
+    finishLoad([jane]);
+    await screen.findByText("Jane Doe");
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(screen.getByRole("region",{name:"Save changes"})).toHaveTextContent("New contact");
+    expect(screen.getByRole("textbox",{name:"Name"})).toHaveValue("Primary Person");
+    expect(mailClient.getContactProfile).not.toHaveBeenCalled();
+  });
+
   it("collapses empty optional fields behind Add buttons and shows filled ones",async()=>{
     const filled={...jane,company:"Acme",notes:"Met at the conference"};
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([filled]);

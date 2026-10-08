@@ -1619,6 +1619,43 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn mime_round_trips_recipients_unicode_subject_and_reply_headers() {
+        let db = database();
+        let mut d = saved(&db);
+        d.to = "Jane <jane@example.com>, José Núñez <jose@example.com>".into();
+        d.cc = "cc@example.com".into();
+        d.bcc = "hidden@example.com".into();
+        d.subject = "Re: Café meeting — résumé ✓".into();
+        d.reply_id = Some("original@example.com".into());
+        d.references = vec!["ancestor@example.com".into(), "original@example.com".into()];
+        let raw = build_mime(&d, None, "headers-id", Path::new("/unused")).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        let addresses = |list: Option<&mail_parser::Address>| -> Vec<String> {
+            list.into_iter()
+                .flat_map(|list| list.iter())
+                .filter_map(|addr| addr.address().map(str::to_string))
+                .collect()
+        };
+        assert_eq!(addresses(parsed.to()), ["jane@example.com", "jose@example.com"]);
+        assert_eq!(
+            parsed.to().and_then(|to| to.iter().nth(1)).and_then(|addr| addr.name()),
+            Some("José Núñez")
+        );
+        assert_eq!(addresses(parsed.cc()), ["cc@example.com"]);
+        // The Gmail send API derives Bcc recipients from the raw message and
+        // strips the header itself, so it must be present in what we build.
+        assert_eq!(addresses(parsed.bcc()), ["hidden@example.com"]);
+        assert_eq!(parsed.subject(), Some("Re: Café meeting — résumé ✓"));
+        assert_eq!(
+            parsed.in_reply_to().as_text_list().map(|ids| ids.to_vec()),
+            Some(vec!["original@example.com".into()])
+        );
+        assert_eq!(
+            parsed.references().as_text_list().map(|ids| ids.to_vec()),
+            Some(vec!["ancestor@example.com".into(), "original@example.com".into()])
+        );
+    }
+    #[test]
     fn mime_includes_rich_html_and_plain_text_fallback() {
         let db = database();
         let mut d = saved(&db);
