@@ -19,7 +19,7 @@ use crate::{
     correspondence::validate_retention_days,
     db::Database,
     error_text::display,
-    models::{is_known_account_provider, Account, AvailabilityPreferences, Snippet, SplitInbox, ContactProfile, KeepInTouch},
+    models::{is_known_account_provider, Account, AvailabilityPreferences, Snippet, SplitInbox, ContactGroup, ContactProfile, KeepInTouch},
 };
 
 const FORMAT: &str = "dispatch-settings";
@@ -298,6 +298,22 @@ impl From<&TransferKeepInTouch> for KeepInTouch {
     fn from(k:&TransferKeepInTouch)->Self { Self{interval_days:k.interval_days,started_at:k.started_at.clone(),snoozed_until:k.snoozed_until.clone(),snoozed_at:k.snoozed_at.clone(),last_touch_at:k.last_touch_at.clone()} }
 }
 
+/// A contact group in the export. Members are contact ids from the same
+/// export's `contacts`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TransferContactGroup {
+    pub id: String,
+    pub name: String,
+    pub member_ids: Vec<String>,
+    pub created_at: String,
+}
+impl From<ContactGroup> for TransferContactGroup {
+    fn from(group: ContactGroup) -> Self {
+        Self { id: group.id, name: group.name, member_ids: group.member_ids, created_at: group.created_at }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TransferPayload {
@@ -311,6 +327,10 @@ struct TransferPayload {
     #[serde(default)]
     contacts: Vec<TransferContact>,
     retention_days: Option<i64>,
+    /// Added in 0.79.0. An earlier export has none, and importing it keeps
+    /// this device's groups instead of clearing them.
+    #[serde(default)]
+    contact_groups: Option<Vec<TransferContactGroup>>,
 }
 
 impl TransferPayload {
@@ -408,6 +428,27 @@ impl TransferPayload {
             crate::db::contacts::validate_keep_in_touch(&KeepInTouch::from(&contact.keep_in_touch)).map_err(|_|"The transfer contains invalid keep-in-touch settings")?;
             if let Some(photo)=&contact.photo_data {use base64::{engine::general_purpose::STANDARD,Engine};let bytes=STANDARD.decode(photo).map_err(|_|"The transfer contains an invalid contact photo")?;crate::image_format::validate_contact_photo(&bytes)?;}
         }
+        let groups = self.contact_groups.as_deref().unwrap_or_default();
+        if groups.len() > crate::db::contact_groups::MAX_CONTACT_GROUPS {
+            return Err("The transfer contains too many contact groups".into());
+        }
+        let mut group_ids = HashSet::new();
+        let mut group_names = HashSet::new();
+        for group in groups {
+            validate_required_text("contact group id", &group.id, 128)?;
+            validate_required_text("contact group created time", &group.created_at, 64)?;
+            let name = crate::db::contact_groups::validate_group_name(&group.name)
+                .map_err(|_| "The transfer contains an invalid contact group name")?;
+            if !group_ids.insert(&group.id) || !group_names.insert(name.to_lowercase()) {
+                return Err("The transfer contains a duplicate contact group".into());
+            }
+            let mut members = HashSet::new();
+            if group.member_ids.len() > crate::db::contact_groups::MAX_GROUP_MEMBERS
+                || group.member_ids.iter().any(|id| !contact_ids.contains(id) || !members.insert(id))
+            {
+                return Err("The transfer contains a contact group with invalid members".into());
+            }
+        }
         Ok(())
     }
 }
@@ -432,6 +473,7 @@ pub struct ImportResult {
     pub split_inbox_count: usize,
     pub snippet_count: usize,
     pub contact_count: usize,
+    pub contact_group_count: usize,
 }
 
 pub fn export(
@@ -457,6 +499,7 @@ pub fn export(
         .map(TransferSnippet::from)
         .collect();
     let contacts=database.list_saved_contact_profiles()?.into_iter().map(TransferContact::from).collect();
+    let contact_groups = database.list_contact_groups()?.into_iter().map(TransferContactGroup::from).collect();
     let payload = TransferPayload {
         version: VERSION,
         exported_at: Utc::now().to_rfc3339(),
@@ -466,6 +509,7 @@ pub fn export(
         snippets,
         contacts,
         retention_days: database.retention_days()?,
+        contact_groups: Some(contact_groups),
     };
     let encoded = encrypt(&payload, password)?;
     validate_export_size(encoded.len() as u64)?;
@@ -507,6 +551,7 @@ fn apply_import(database: &Database, payload: TransferPayload) -> Result<ImportR
         &payload.split_inboxes,
         &payload.snippets,
         &payload.contacts,
+        payload.contact_groups.as_deref(),
         payload.retention_days,
     )?;
     Ok(ImportResult {
@@ -515,6 +560,7 @@ fn apply_import(database: &Database, payload: TransferPayload) -> Result<ImportR
         split_inbox_count: payload.split_inboxes.len(),
         snippet_count: payload.snippets.len(),
         contact_count: payload.contacts.len(),
+        contact_group_count: payload.contact_groups.as_ref().map_or(0, Vec::len),
     })
 }
 
@@ -686,6 +732,7 @@ mod tests {
             snippets: vec![],
             contacts: vec![],
             retention_days: Some(90),
+            contact_groups: None,
         }
     }
 
@@ -968,6 +1015,7 @@ mod tests {
     /// - `v3-0.66`: last export before contact birthdays and keep-in-touch
     ///   settings (0.66.10).
     /// - `v3-0.72`: last export before calendar colors (0.72.4).
+    /// - `v3-0.78`: last export before contact groups (0.78.0).
     /// - `v3-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
@@ -1339,6 +1387,12 @@ mod tests {
                 },
             }],
             retention_days: Some(365),
+            contact_groups: Some(vec![TransferContactGroup {
+                id: "group-current".to_string(),
+                name: "Navy friends".to_string(),
+                member_ids: vec!["contact-current".to_string()],
+                created_at: "2026-09-26T08:00:00+00:00".to_string(),
+            }]),
         }
     }
 
@@ -1370,6 +1424,13 @@ mod tests {
         assert_eq!(preferences.calendar_colors["current@example.com"]["team@group.calendar.google.com"], "coral");
 
         assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (2, 1, 1, 1));
+        assert_eq!(result.contact_group_count, 1);
+        let groups = database.list_contact_groups().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, "group-current");
+        assert_eq!(groups[0].name, "Navy friends");
+        assert_eq!(groups[0].member_ids, vec!["contact-current".to_string()]);
+        assert_eq!(groups[0].created_at, "2026-09-26T08:00:00+00:00");
         assert_eq!(
             accounts_of(&database),
             vec![
@@ -1420,6 +1481,63 @@ mod tests {
         assert_eq!(result.preferences.accent, "amber");
         assert_eq!(result.preferences.availability_preferences.time_zone, "Asia/Tokyo");
         assert_eq!(result.contact_count, 1);
+    }
+
+    #[test]
+    fn frozen_v3_0_78_export_imports_without_contact_groups_and_keeps_local_ones() {
+        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v3-0.78.dispatch-settings");
+        assert_eq!(envelope_version(bytes), 3);
+        let database = Database::open_memory();
+        database.create_contact_group("Local group", &[], &["local@example.com".into()]).unwrap();
+        let payload = decrypt(bytes, fixtures::PASSWORD).unwrap();
+        assert!(payload.contact_groups.is_none());
+        let result = apply_import(&database, payload).unwrap();
+        assert_eq!((result.contact_count, result.contact_group_count), (1, 0));
+        assert_eq!(result.preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
+        let groups = database.list_contact_groups().unwrap();
+        assert_eq!(groups.iter().map(|group| group.name.as_str()).collect::<Vec<_>>(), vec!["Local group"]);
+        // Import replaced the address book, so the local member is gone while the group stays.
+        assert!(groups[0].member_ids.is_empty());
+    }
+
+    #[test]
+    fn importing_contact_groups_replaces_the_local_ones() {
+        let database = Database::open_memory();
+        database.create_contact_group("Local group", &[], &[]).unwrap();
+        apply_import(&database, current_fixture_payload()).unwrap();
+        let names = database.list_contact_groups().unwrap().into_iter().map(|group| group.name).collect::<Vec<_>>();
+        assert_eq!(names, vec!["Navy friends"]);
+        let mut empty = current_fixture_payload();
+        empty.contact_groups = Some(Vec::new());
+        apply_import(&database, empty).unwrap();
+        assert!(database.list_contact_groups().unwrap().is_empty());
+    }
+
+    #[test]
+    fn transfer_rejects_invalid_contact_groups() {
+        fn group(payload: &mut TransferPayload) -> &mut TransferContactGroup {
+            &mut payload.contact_groups.as_mut().unwrap()[0]
+        }
+        let mutations: [fn(&mut TransferPayload); 7] = [
+            |p| p.contact_groups.as_mut().unwrap()[0].name = " ".into(),
+            |p| p.contact_groups.as_mut().unwrap()[0].name = "x".repeat(crate::db::contact_groups::MAX_GROUP_NAME + 1),
+            |p| p.contact_groups.as_mut().unwrap()[0].id = String::new(),
+            |p| p.contact_groups.as_mut().unwrap()[0].member_ids = vec!["not-in-this-export".into()],
+            |p| p.contact_groups.as_mut().unwrap()[0].member_ids = vec!["contact-current".into(), "contact-current".into()],
+            |p| { let copy = p.contact_groups.as_ref().unwrap()[0].clone(); p.contact_groups.as_mut().unwrap().push(TransferContactGroup { id: "group-2".into(), name: "NAVY FRIENDS".into(), ..copy }); },
+            |p| { let copy = p.contact_groups.as_ref().unwrap()[0].clone(); p.contact_groups.as_mut().unwrap().push(TransferContactGroup { name: "Other".into(), ..copy }); },
+        ];
+        for (index, mutate) in mutations.iter().enumerate() {
+            let mut payload = current_fixture_payload();
+            mutate(&mut payload);
+            assert!(payload.validate().is_err(), "mutation {index} should be rejected");
+        }
+        let mut edge = current_fixture_payload();
+        group(&mut edge).name = "x".repeat(crate::db::contact_groups::MAX_GROUP_NAME);
+        edge.validate().unwrap();
+        let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
+        unknown["contactGroups"][0]["color"] = serde_json::json!("red");
+        assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
     }
 
     #[test]

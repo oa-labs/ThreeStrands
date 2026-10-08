@@ -201,6 +201,11 @@ impl Database {
         for contact in self.list_saved_contact_profiles()? {
             repaired += usize::from(self.reconcile_one_entity(EntityType::Contact, &contact.id, serde_json::to_value(crate::models::ContactRecord::from(&contact)).map_err(display)?)?);
         }
+        for id in self.list_contact_group_ids()? {
+            if let Some(record) = self.contact_group_record(&id)? {
+                repaired += usize::from(self.reconcile_one_entity(EntityType::ContactGroup, &id, record)?);
+            }
+        }
         for split in self.list_split_inboxes()? {
             if self.reconcile_one_entity(EntityType::SplitInbox, &split.id, serde_json::to_value(&split).map_err(display)?)? {
                 repaired += 1;
@@ -2470,6 +2475,53 @@ mod replicator_tests {
         let synced = other.get_contact_profile("synced-contact").unwrap().unwrap();
         assert_eq!(synced.display_name.as_deref(), Some("Synced person"));
         assert_eq!(synced.addresses, vec!["synced@example.com"]);
+    }
+
+    #[test]
+    fn concurrent_contact_group_membership_edits_merge_without_a_conflict() {
+        let save = |database: &Database, email: &str| {
+            database
+                .save_contact_profile(&crate::models::SaveContactRequest {
+                    id: None, display_name: Some(email.into()), role: None, company: None, location: None,
+                    bio: None, notes: None, links: Vec::new(), photo_data: None, favorite: false,
+                    addresses: vec![email.into()], birthday: None, keep_in_touch: None,
+                })
+                .unwrap()
+                .id
+        };
+        let record = |database: &Database, write: crate::db::contact_groups::ContactGroupWrite| {
+            let payload = database.contact_group_record(&write.group.id).unwrap().unwrap();
+            database.record_replicated_write(EntityType::ContactGroup, &write.group.id, &write.fields, &payload).unwrap();
+            write.group
+        };
+        let exchange = |from: &Database, to: &Database| {
+            let touched = to.merge_replica_state(&from.load_replica_state().unwrap()).unwrap();
+            to.materialize_touched_entities(&touched).unwrap();
+        };
+        let (a, b) = (Database::open_memory(), Database::open_memory());
+        let [ada, bob, cyd] = ["ada@example.com", "bob@example.com", "cyd@example.com"].map(|email| {
+            let id = save(&a, email);
+            assert_eq!(save(&b, email), id);
+            id
+        });
+        let group = record(&a, a.create_contact_group("Board", &[ada.clone(), bob.clone()], &[]).unwrap());
+        exchange(&a, &b);
+        assert_eq!(b.get_contact_group(&group.id).unwrap().unwrap().member_ids, vec![ada.clone(), bob.clone()]);
+
+        record(&a, a.remove_contact_group_members(&group.id, &[bob.clone()]).unwrap());
+        record(&b, b.add_contact_group_members(&group.id, &[cyd.clone()], &[]).unwrap());
+        exchange(&a, &b);
+        exchange(&b, &a);
+        for database in [&a, &b] {
+            assert_eq!(database.get_contact_group(&group.id).unwrap().unwrap().member_ids, vec![ada.clone(), cyd.clone()]);
+            assert!(database.list_frontier_conflicts().unwrap().is_empty());
+        }
+
+        a.delete_contact_group(&group.id).unwrap();
+        a.record_replicated_deletion(EntityType::ContactGroup, &group.id).unwrap();
+        exchange(&a, &b);
+        assert!(b.get_contact_group(&group.id).unwrap().is_none());
+        assert!(b.get_contact_profile(&ada).unwrap().is_some());
     }
 
     /// Synthetic key material matching whatever device id

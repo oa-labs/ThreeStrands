@@ -453,7 +453,7 @@ impl Database {
 
 /// Task and goal optionals are materialized as JSON `null`, while older or
 /// partial writes can leave the same unset field as a replica tombstone
-/// (`None`). They have identical semantics and should not create a
+/// (`None`). A removed contact group member is likewise unset either way. They have identical semantics and should not create a
 /// user-facing conflict. Keep this scoped to nullable task and goal fields so
 /// a missing required value on another entity remains visible as a real
 /// conflict.
@@ -479,7 +479,9 @@ fn same_frontier_value(
                 | "completedAt"
                 | "goalId"
         )
-        || entity_type == EntityType::Goal.as_str() && matches!(field, "notes" | "parentGoalId" | "closedAt"))
+        || entity_type == EntityType::Goal.as_str() && matches!(field, "notes" | "parentGoalId" | "closedAt")
+        || entity_type == EntityType::ContactGroup.as_str()
+            && field.starts_with(threestrands_sync_protocol::CONTACT_GROUP_MEMBER_PREFIX))
         && left.as_ref().is_none_or(Value::is_null)
         && right.as_ref().is_none_or(Value::is_null)
     {

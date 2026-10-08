@@ -2029,6 +2029,7 @@ export function App() {
 
   const openContactsView = useCallback(() => { setContactAddressBookTarget(null); setRightWorkspace(current => current === "contacts" ? null : "contacts"); }, []);
   const openKeepInTouchView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("keepInTouch"); setRightWorkspace("contacts"); }, []);
+  const openContactGroupsView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("groups"); setRightWorkspace("contacts"); }, []);
   const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setContactsView("all"); setRightWorkspace("contacts"); }, []);
   // The participant picked from a message header, kept per conversation so
   // opening another conversation returns the panel to its latest sender.
@@ -2290,6 +2291,7 @@ export function App() {
     openTasksView,
     openContactsView,
     openKeepInTouchView,
+    openContactGroupsView,
     openCalendarView,
     getSuggestions,
     openThreadChat,
@@ -2301,7 +2303,7 @@ export function App() {
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
-  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, goBack, returnStep, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openThreadChat, openContactsView, openKeepInTouchView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleContextPanelFocus, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
+  }), [accountSplitInboxes.length, activeAccountId, adjustFontScale, goBack, returnStep, aiSummaryAvailable, canUnsubscribe, canUndoAction, composerBelongsToVisibleThread, displayedMessages, goToInboxTab, openCalendarView, goToNextSplitTab, goToPreviousSplitTab, goToSplitTab, includeArchived, interactionScope, isTabbedMailbox, labelTargetIds, latestMessage, mailbox, messageStackRef, mutateIds, newTask, getSuggestions, openThreadChat, openContactsView, openKeepInTouchView, openContactGroupsView, openFolder, openMailView, openSettingsAt, openTasks, openTasksView, openToday, recordTriageEvent, refreshMail, rightWorkspace, runBrief, selectAdjacentMessage, selected, selectedId, selectedIndex, selectedTaskHasThread, selectedTaskStatus, setMessageExpansionOverrides, taskLayout, switchAccount, toggleContextPanelFocus, toggleMessageFilter, visibleThreads, correspondence.context, undoLastAction]);
 
   const executeCommand = useCallback((command: Command) => {
     void command.run(context)

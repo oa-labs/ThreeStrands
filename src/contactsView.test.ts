@@ -12,10 +12,17 @@ describe("contactsView", () => {
     expect(readContactsView()).toBe("all");
   });
 
-  it("alternates between the two views in either direction", () => {
+  it("cycles through all three views in either direction", () => {
     expect(adjacentContactsView("all", 1)).toBe("keepInTouch");
-    expect(adjacentContactsView("keepInTouch", 1)).toBe("all");
-    expect(adjacentContactsView("all", -1)).toBe("keepInTouch");
+    expect(adjacentContactsView("keepInTouch", 1)).toBe("groups");
+    expect(adjacentContactsView("groups", 1)).toBe("all");
+    expect(adjacentContactsView("all", -1)).toBe("groups");
+    expect(adjacentContactsView("groups", -1)).toBe("keepInTouch");
     expect(adjacentContactsView("keepInTouch", -1)).toBe("all");
+  });
+
+  it("remembers the groups view", () => {
+    writeContactsView("groups");
+    expect(readContactsView()).toBe("groups");
   });
 });

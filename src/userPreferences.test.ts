@@ -161,6 +161,7 @@ describe("settings transfer commands", () => {
       accountCount: 2,
       splitInboxCount: 1,
       contactCount: 3,
+      contactGroupCount: 1,
     };
     vi.mocked(invoke).mockResolvedValueOnce(result);
 

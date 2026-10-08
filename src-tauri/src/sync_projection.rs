@@ -86,6 +86,7 @@ impl Database {
                 EntityType::Goal => {
                     self.delete_goal(entity_id)?;
                 }
+                EntityType::ContactGroup => self.delete_contact_group(entity_id)?,
                 EntityType::MailAccount => {
                     clear_provider_credential("app.threestrands.mail", entity_id)?;
                     if self.get_account(entity_id)?.is_some() {
@@ -115,6 +116,7 @@ impl Database {
                 EntityType::Goal => {
                     self.upsert_synced_goal(&serde_json::from_value(payload.clone()).map_err(display)?)?
                 }
+                EntityType::ContactGroup => self.upsert_synced_contact_group(entity_id, payload)?,
                 EntityType::MailAccount => self.upsert_synced_account(payload)?,
                 EntityType::CalendarAccount => self.upsert_synced_calendar(payload)?,
                 EntityType::CalendarSelection => self.upsert_synced_calendar_selection(payload)?,

@@ -1,4 +1,5 @@
 import type {
+  ContactGroup,
   Goal,
   Account,
   ActionAnalysis,
@@ -47,6 +48,7 @@ export type DemoDataset = {
   splitInboxes: SplitInbox[];
   tasks: ThreadTask[];
   goals?: Goal[];
+  contactGroups?: ContactGroup[];
   snippets: Snippet[];
   calendarAccounts: CalendarAccount[];
   calendarOptions: CalendarOption[];

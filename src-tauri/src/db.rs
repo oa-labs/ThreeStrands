@@ -16,11 +16,12 @@ use crate::models::{
     ThreadMutation, ThreadPage, TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats,
     UnsubscribeMethod, UnsubscribeTarget,
 };
-use crate::transfer::{TransferAccount, TransferSnippet, TransferSplitInbox, TransferContact};
+use crate::transfer::{TransferAccount, TransferContact, TransferContactGroup, TransferSnippet, TransferSplitInbox};
 
 mod accounts;
 mod ai;
 mod calendar_accounts;
+pub(crate) mod contact_groups;
 pub(crate) mod contacts;
 mod goals;
 mod snippets;
@@ -2414,6 +2415,7 @@ impl Database {
         split_inboxes: &[TransferSplitInbox],
         snippets: &[TransferSnippet],
         contacts: &[TransferContact],
+        contact_groups: Option<&[TransferContactGroup]>,
         retention_days: Option<i64>,
     ) -> DbResult<()> {
         self.with_transaction(|transaction| {
@@ -2479,6 +2481,26 @@ impl Database {
                 let kit=&contact.keep_in_touch;
                 transaction.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339(),contact.birthday,kit.interval_days,kit.started_at,kit.snoozed_until,kit.snoozed_at,kit.last_touch_at])?;
                 for email in &contact.addresses { transaction.execute("INSERT INTO contact_addresses(contact_id,email) VALUES(?1,?2)",params![contact.id,email])?; }
+            }
+
+            // An export from before contact groups has none to offer, so
+            // the groups already here stay.
+            if let Some(groups) = contact_groups {
+                transaction.execute("DELETE FROM contact_groups", [])?;
+                transaction.execute("DELETE FROM contact_group_members", [])?;
+                let now = Utc::now().to_rfc3339();
+                for group in groups {
+                    transaction.execute(
+                        "INSERT INTO contact_groups(id,name,created_at,updated_at) VALUES(?1,?2,?3,?4)",
+                        params![group.id, group.name.trim(), group.created_at, now],
+                    )?;
+                    for member in &group.member_ids {
+                        transaction.execute(
+                            "INSERT INTO contact_group_members(group_id,contact_id) VALUES(?1,?2)",
+                            params![group.id, member],
+                        )?;
+                    }
+                }
             }
 
             match retention_days {
@@ -3251,6 +3273,7 @@ pub(crate) mod tests {
                     created_at: "2026-03-06T00:00:00Z".to_string(),
                 }],
                 &[],
+                None,
                 Some(90),
             )
             .unwrap();

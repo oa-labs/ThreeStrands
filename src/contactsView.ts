@@ -1,6 +1,6 @@
-export type ContactsView = "all" | "keepInTouch";
+export type ContactsView = "all" | "keepInTouch" | "groups";
 
-export const CONTACTS_VIEWS: readonly ContactsView[] = ["all", "keepInTouch"];
+export const CONTACTS_VIEWS: readonly ContactsView[] = ["all", "keepInTouch", "groups"];
 const CONTACTS_VIEW_KEY = "threestrands.contacts.view";
 
 export function readContactsView(): ContactsView {

@@ -349,3 +349,56 @@ describe("demoClient keep in touch", () => {
     expect((await client.listKeepInTouch()).map((item) => item.id)).toEqual([sam.id]);
   });
 });
+
+describe("demoClient contact groups", () => {
+  const save = (client: ReturnType<typeof createDemoClient>, name: string, email: string) =>
+    client.saveContactProfile({ id: null, displayName: name, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses: [email], birthday: null });
+
+  it("seeds the showcase with a group of saved contacts", async () => {
+    const client = createDemoClient(buildShowcaseDataset(new Date("2026-10-07T12:00:00Z")));
+    const [group] = await client.listContactGroups();
+    expect(group.name).toBe("Key accounts");
+    expect(group.memberIds).toEqual(["contact:marcus@brightwater.example", "contact:priya@harborlight.example"]);
+  });
+
+  it("creates, renames, and lists groups by name with unique names ignoring case", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    const board = await client.createContactGroup("  Board ");
+    expect(board.name).toBe("Board");
+    await client.createContactGroup("alpha");
+    expect((await client.listContactGroups()).map((group) => group.name)).toEqual(["alpha", "Board"]);
+    await expect(client.createContactGroup("BOARD")).rejects.toThrow("already exists");
+    await expect(client.createContactGroup(" ")).rejects.toThrow("between 1 and 100");
+    await expect(client.createContactGroup("x".repeat(101))).rejects.toThrow("between 1 and 100");
+    expect((await client.createContactGroup("y".repeat(100))).name).toHaveLength(100);
+    await expect(client.renameContactGroup(board.id, "Alpha")).rejects.toThrow("already exists");
+    expect((await client.renameContactGroup(board.id, "board")).name).toBe("board");
+  });
+
+  it("resolves typed addresses to saved contacts and drops members whose contact is deleted", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    const ada = await save(client, "Ada", "ada@example.com");
+    const group = await client.createContactGroup("Board", [ada.id], [" ADA@example.com ", "new@example.com"]);
+    expect(group.memberIds).toHaveLength(2);
+    expect(group.memberIds).toContain(ada.id);
+    expect(await client.getContactProfile("contact:new@example.com")).not.toBeNull();
+    await expect(client.addContactGroupMembers(group.id, [], ["not an address"])).rejects.toThrow("isn't a valid email address");
+    await client.deleteContactProfile(ada.id);
+    expect((await client.listContactGroups())[0].memberIds).toEqual(["contact:new@example.com"]);
+    const removed = await client.removeContactGroupMembers(group.id, ["contact:new@example.com"]);
+    expect(removed.memberIds).toEqual([]);
+    await client.deleteContactGroup(group.id);
+    expect(await client.listContactGroups()).toEqual([]);
+    expect(await client.getContactProfile("contact:new@example.com")).not.toBeNull();
+  });
+
+  it("bounds membership at the limit and rolls back a group whose first members fail", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    const group = await client.createContactGroup("Everyone");
+    const emails = Array.from({ length: 500 }, (_, index) => `person${index}@example.com`);
+    expect((await client.addContactGroupMembers(group.id, [], emails)).memberIds).toHaveLength(500);
+    await expect(client.addContactGroupMembers(group.id, [], ["one-more@example.com"])).rejects.toThrow("at most 500 members");
+    await expect(client.createContactGroup("Broken", [], ["nope"])).rejects.toThrow();
+    expect((await client.listContactGroups()).map((item) => item.name)).toEqual(["Everyone"]);
+  });
+});

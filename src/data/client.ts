@@ -19,6 +19,7 @@ import type {
   ContactSuggestion,
   ContactActivity,
   ContactFiles,
+  ContactGroup,
   ContactProfile,
   ContactTimelineItem,
   DomainContext,
@@ -138,6 +139,20 @@ export interface MailClient extends CorrespondenceClient {
   getContactProfile(id: string): Promise<ContactProfile | null>;
   saveContactProfile(request: SaveContactRequest): Promise<ContactProfile>;
   deleteContactProfile(id: string): Promise<void>;
+  /** Every contact group, by name. */
+  listContactGroups(): Promise<ContactGroup[]>;
+  /**
+   * Creates a group with optional first members. `contactIds` may name
+   * `derived:<email>` contacts, which are saved first; each typed address in
+   * `emails` joins as its saved contact, or as a new one.
+   */
+  createContactGroup(name: string, contactIds?: string[], emails?: string[]): Promise<ContactGroup>;
+  renameContactGroup(id: string, name: string): Promise<ContactGroup>;
+  /** Adds members the same way `createContactGroup` resolves them. */
+  addContactGroupMembers(id: string, contactIds: string[], emails?: string[]): Promise<ContactGroup>;
+  removeContactGroupMembers(id: string, contactIds: string[]): Promise<ContactGroup>;
+  /** Deletes the group; its contacts stay. */
+  deleteContactGroup(id: string): Promise<void>;
   /** Saved contacts with keep-in-touch reminders or a birthday, soonest reminder first. */
   listKeepInTouch(): Promise<ContactProfile[]>;
   /** Sets the interval for each contact (saving `derived:<email>` contacts first), or turns reminders off with null. */
@@ -277,6 +292,12 @@ const tauriClient: MailClient = {
   getContactProfile: (id) => read("get_contact_profile", { id }),
   saveContactProfile: (request) => complete("save_contact_profile", { request }),
   deleteContactProfile: (id) => complete("delete_contact_profile", { id }),
+  listContactGroups: () => read("list_contact_groups"),
+  createContactGroup: (name, contactIds = [], emails = []) => complete("create_contact_group", { name, contactIds, emails }),
+  renameContactGroup: (id, name) => complete("rename_contact_group", { id, name }),
+  addContactGroupMembers: (id, contactIds, emails = []) => complete("add_contact_group_members", { id, contactIds, emails }),
+  removeContactGroupMembers: (id, contactIds) => complete("remove_contact_group_members", { id, contactIds }),
+  deleteContactGroup: (id) => complete("delete_contact_group", { id }),
   listKeepInTouch: () => read("list_keep_in_touch"),
   setKeepInTouch: (ids, intervalDays) => complete("set_keep_in_touch", { ids, intervalDays }),
   snoozeKeepInTouch: (id, until) => complete("snooze_keep_in_touch", { id, until }),

@@ -69,6 +69,7 @@ describe("settings import navigation", () => {
       accountCount: 2,
       splitInboxCount: 1,
       contactCount: 0,
+      contactGroupCount: 0,
     });
 
     render(<App />);

@@ -333,6 +333,16 @@ export type ContactProfile = {
   keepInTouchDueAt: string | null;
 };
 
+/** A named set of saved contacts, shared by every account. */
+export type ContactGroup = {
+  id: string;
+  name: string;
+  /** Members whose contact is on this device, by name. */
+  memberIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** Keep-in-touch reminder settings stored on a saved contact. */
 export type KeepInTouch = {
   /** Days between touches; null turns reminders off. */

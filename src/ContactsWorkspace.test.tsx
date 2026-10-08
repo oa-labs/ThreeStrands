@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ContactProfile } from "./domain";
+import type { ContactGroup, ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
 import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
 
-vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),openAttachment:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),openAttachment:vi.fn(),resolveContactIds:vi.fn(),listContactGroups:vi.fn(),createContactGroup:vi.fn(),renameContactGroup:vi.fn(),addContactGroupMembers:vi.fn(),removeContactGroupMembers:vi.fn(),deleteContactGroup:vi.fn()}}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:"Founder",company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:3,receivedCount:2,lastInteractedAt:"2026-09-20T00:00:00Z",birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const favoriteContact:ContactProfile={...jane,id:"contact:favorite@example.com",displayName:"Favorite Person",favorite:true,addresses:["favorite@example.com"],lastInteractedAt:"2026-09-10T00:00:00Z"};
@@ -24,6 +24,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[],messagesReviewed:0,hasMore:false});
     vi.mocked(mailClient.listKeepInTouch).mockResolvedValue([]);
     vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[],total:0});
+    vi.mocked(mailClient.listContactGroups).mockResolvedValue([]);
   });
   afterEach(()=>{cleanup();vi.clearAllMocks();localStorage.clear();});
 
@@ -864,6 +865,255 @@ describe("ContactsWorkspace",()=>{
       fireEvent.change(field("Birthday"),{target:{value:""}});
       fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
       await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenLastCalledWith(expect.objectContaining({birthday:null})));
+    });
+  });
+
+  describe("contact groups",()=>{
+    const board:ContactGroup={id:"group-board",name:"Board",memberIds:[],createdAt:"2026-10-01T00:00:00Z",updatedAt:"2026-10-01T00:00:00Z"};
+    const withMembers=(group:ContactGroup,...memberIds:string[]):ContactGroup=>({...group,memberIds});
+    const groupsView=()=>render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} initialView="groups"/>);
+
+    it("lists groups by name in the Groups view and creates one inline",async()=>{
+      const family:ContactGroup={...board,id:"group-family",name:"Family"};
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
+      vi.mocked(mailClient.createContactGroup).mockResolvedValue(family);
+      groupsView();
+      expect(await screen.findByRole("button",{name:/Board.*1 member/})).toHaveAttribute("aria-pressed","true");
+      expect(screen.getByRole("tab",{name:"Groups"})).toHaveAttribute("aria-selected","true");
+      expect(screen.getByRole("textbox",{name:"Group name"})).toHaveValue("Board");
+      fireEvent.click(screen.getByRole("button",{name:"New Group"}));
+      const name=screen.getByRole("textbox",{name:"New group name"});
+      expect(screen.getByRole("button",{name:"Create"})).toBeDisabled();
+      fireEvent.change(name,{target:{value:"Family"}});
+      fireEvent.submit(name);
+      await waitFor(()=>expect(mailClient.createContactGroup).toHaveBeenCalledWith("Family"));
+      expect(await screen.findByRole("button",{name:/Family.*0 members/})).toHaveAttribute("aria-pressed","true");
+      expect(screen.getByRole("textbox",{name:"Group name"})).toHaveValue("Family");
+      expect(screen.queryByRole("textbox",{name:"New group name"})).not.toBeInTheDocument();
+      const list=screen.getByRole("region",{name:"Groups"});
+      expect(within(list).getAllByRole("button").map(button=>button.querySelector("strong")?.textContent)).toEqual(["Board","Family"]);
+    });
+
+    it("keeps the inline form open and reports a duplicate group name",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+      vi.mocked(mailClient.createContactGroup).mockRejectedValue(new Error("A group named “Board” already exists"));
+      groupsView();
+      await screen.findByRole("button",{name:/Board/});
+      fireEvent.click(screen.getByRole("button",{name:"New Group"}));
+      const name=screen.getByRole("textbox",{name:"New group name"});
+      fireEvent.change(name,{target:{value:"board"}});
+      fireEvent.submit(name);
+      expect(await screen.findByRole("alert")).toHaveTextContent("already exists");
+      expect(screen.getByRole("textbox",{name:"New group name"})).toHaveValue("board");
+    });
+
+    it("searches groups by name and explains an empty Groups view",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board,{...board,id:"group-family",name:"Family"}]);
+      groupsView();
+      await screen.findByRole("button",{name:/Family/});
+      fireEvent.change(screen.getByRole("textbox",{name:"Search groups"}),{target:{value:"fam"}});
+      expect(screen.queryByRole("button",{name:/Board/})).not.toBeInTheDocument();
+      expect(screen.getByRole("button",{name:/Family/})).toBeInTheDocument();
+      fireEvent.change(screen.getByRole("textbox",{name:"Search groups"}),{target:{value:"zzz"}});
+      expect(screen.getByText("No groups match this search.")).toBeInTheDocument();
+      cleanup();
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([]);
+      groupsView();
+      expect(await screen.findByText(/No groups yet/)).toBeInTheDocument();
+      expect(screen.getByText("Create a group to email several people at once")).toBeInTheDocument();
+    });
+
+    it("reads members from the whole address book, opens one, and removes one",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
+      vi.mocked(mailClient.removeContactGroupMembers).mockResolvedValue(board);
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} initialView="groups" accountId="work@example.com"/>);
+      const members=await screen.findByRole("region",{name:"Members"});
+      await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenCalledWith("",5000));
+      expect(await within(members).findByRole("button",{name:/Jane Doe.*jane@example.com/})).toBeInTheDocument();
+      fireEvent.click(within(members).getByRole("button",{name:"Remove Jane Doe from Board"}));
+      await waitFor(()=>expect(mailClient.removeContactGroupMembers).toHaveBeenCalledWith(board.id,[jane.id]));
+      expect(await within(members).findByText(/No members yet/)).toBeInTheDocument();
+      expect(screen.getByText("0 members",{selector:".contact-identity-meta"})).toBeInTheDocument();
+    });
+
+    it("opens a member's profile in All Contacts",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
+      const onViewChange=vi.fn();
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} initialView="groups" onViewChange={onViewChange}/>);
+      const members=await screen.findByRole("region",{name:"Members"});
+      fireEvent.click(await within(members).findByRole("button",{name:/Jane Doe.*jane@example.com/}));
+      expect(onViewChange).toHaveBeenCalledWith("all");
+      expect(await screen.findByDisplayValue("Jane Doe")).toHaveAccessibleName("Name");
+      expect(screen.getByRole("region",{name:"Groups"})).toHaveTextContent("Board");
+    });
+
+    it("adds an existing contact or a typed address from the member picker",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+      vi.mocked(mailClient.addContactGroupMembers).mockImplementation(async(_id,contactIds,emails=[])=>withMembers(board,...contactIds,...emails.map(email=>`contact:${email}`)));
+      groupsView();
+      fireEvent.click(await screen.findByRole("button",{name:"Add Members"}));
+      const search=screen.getByRole("combobox",{name:"Find a contact to add"});
+      fireEvent.change(search,{target:{value:"not an address"}});
+      expect(screen.getByRole("option",{name:/Type a full email address/})).toBeInTheDocument();
+      fireEvent.keyDown(search,{key:"Enter"});
+      expect(await screen.findByRole("alert")).toHaveTextContent("Type a full email address");
+      expect(mailClient.addContactGroupMembers).not.toHaveBeenCalled();
+      fireEvent.change(search,{target:{value:"New Person <New@Example.com>"}});
+      expect(screen.getByRole("option",{name:/Add new contact “new@example.com”/})).toBeInTheDocument();
+      fireEvent.keyDown(search,{key:"Enter"});
+      await waitFor(()=>expect(mailClient.addContactGroupMembers).toHaveBeenCalledWith(board.id,[],["new@example.com"]));
+      // A typed address becomes a saved contact, so the lists reload.
+      await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenCalledTimes(3));
+      expect(screen.queryByRole("combobox",{name:"Find a contact to add"})).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button",{name:"Add Members"}));
+      fireEvent.change(screen.getByRole("combobox",{name:"Find a contact to add"}),{target:{value:"jane"}});
+      fireEvent.click(screen.getByRole("option",{name:"Jane Doe"}));
+      await waitFor(()=>expect(mailClient.addContactGroupMembers).toHaveBeenLastCalledWith(board.id,[jane.id],[]));
+    });
+
+    it("leaves current members out of the member picker",async()=>{
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,newerContact]);
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
+      groupsView();
+      await within(await screen.findByRole("region",{name:"Members"})).findByRole("button",{name:/Jane Doe.*jane@example.com/});
+      fireEvent.click(screen.getByRole("button",{name:"Add Members"}));
+      const options=within(screen.getByRole("listbox",{name:"Contacts"})).getAllByRole("option");
+      expect(options.map(option=>option.getAttribute("aria-label"))).toEqual(["Newer Person"]);
+    });
+
+    it("renames on Enter and restores the name when the rename fails",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+      vi.mocked(mailClient.renameContactGroup).mockResolvedValueOnce({...board,name:"Directors"}).mockRejectedValueOnce(new Error("A group named “Family” already exists"));
+      groupsView();
+      const name=await screen.findByRole("textbox",{name:"Group name"});
+      fireEvent.change(name,{target:{value:"Directors"}});
+      fireEvent.keyDown(name,{key:"Enter"});
+      fireEvent.blur(name);
+      await waitFor(()=>expect(mailClient.renameContactGroup).toHaveBeenCalledWith(board.id,"Directors"));
+      expect(await screen.findByRole("button",{name:/Directors/})).toBeInTheDocument();
+      fireEvent.change(name,{target:{value:"Family"}});
+      fireEvent.blur(name);
+      expect(await screen.findByRole("alert")).toHaveTextContent("already exists");
+      expect(name).toHaveValue("Directors");
+      // Leaving the name unchanged saves nothing.
+      fireEvent.blur(name);
+      expect(mailClient.renameContactGroup).toHaveBeenCalledTimes(2);
+    });
+
+    it("confirms before deleting a group",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
+      vi.mocked(mailClient.deleteContactGroup).mockResolvedValue(undefined);
+      groupsView();
+      fireEvent.click(await screen.findByRole("button",{name:"Delete group"}));
+      const confirm=screen.getByRole("group",{name:"Delete group"});
+      expect(confirm).toHaveTextContent("Its contacts stay in your address book.");
+      fireEvent.click(within(confirm).getByRole("button",{name:"Cancel"}));
+      expect(mailClient.deleteContactGroup).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button",{name:"Delete group"}));
+      fireEvent.click(screen.getByRole("button",{name:"Delete Group"}));
+      await waitFor(()=>expect(mailClient.deleteContactGroup).toHaveBeenCalledWith(board.id));
+      expect(await screen.findByText("Create a group to email several people at once")).toBeInTheDocument();
+      expect(mailClient.deleteContactProfile).not.toHaveBeenCalled();
+    });
+
+    it("moves between groups with arrow keys",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board,{...board,id:"group-family",name:"Family"}]);
+      groupsView();
+      await screen.findByRole("button",{name:/Board/,pressed:true});
+      fireEvent.keyDown(window,{key:"ArrowDown"});
+      expect(screen.getByRole("button",{name:/Family/})).toHaveAttribute("aria-pressed","true");
+      expect(screen.getByRole("textbox",{name:"Group name"})).toHaveValue("Family");
+      fireEvent.keyDown(window,{key:"ArrowUp"});
+      expect(screen.getByRole("button",{name:/Board/})).toHaveAttribute("aria-pressed","true");
+    });
+
+    it("adds the open contact to a group from its profile and removes it again",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+      vi.mocked(mailClient.addContactGroupMembers).mockResolvedValue(withMembers(board,jane.id));
+      vi.mocked(mailClient.removeContactGroupMembers).mockResolvedValue(board);
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      const section=screen.getByRole("region",{name:"Groups"});
+      expect(section).toHaveTextContent("Not in any group yet.");
+      fireEvent.change(field("Company"),{target:{value:"Unsaved Co"}});
+      fireEvent.click(within(section).getByRole("button",{name:"Add to Group"}));
+      fireEvent.click(screen.getByRole("option",{name:"Board"}));
+      await waitFor(()=>expect(mailClient.addContactGroupMembers).toHaveBeenCalledWith(board.id,[jane.id]));
+      expect(await within(section).findByRole("button",{name:"Board"})).toBeInTheDocument();
+      // Group changes apply at once and leave the profile form alone.
+      expect(mailClient.saveContactProfile).not.toHaveBeenCalled();
+      expect(field("Company")).toHaveValue("Unsaved Co");
+      fireEvent.click(within(section).getByRole("button",{name:"Remove from Board"}));
+      await waitFor(()=>expect(mailClient.removeContactGroupMembers).toHaveBeenCalledWith(board.id,[jane.id]));
+      expect(await within(section).findByText("Not in any group yet.")).toBeInTheDocument();
+    });
+
+    it("opens a group from a contact's group chip",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.click(await within(screen.getByRole("region",{name:"Groups"})).findByRole("button",{name:"Board"}));
+      expect(await screen.findByRole("textbox",{name:"Group name"})).toHaveValue("Board");
+      expect(screen.getByRole("tab",{name:"Groups"})).toHaveAttribute("aria-selected","true");
+    });
+
+    it("moves to the saved profile when a mail-derived person joins a group",async()=>{
+      const derived:ContactProfile={...jane,id:"derived:jane@example.com"};
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([derived]);
+      vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===jane.id?jane:derived);
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+      vi.mocked(mailClient.addContactGroupMembers).mockResolvedValue(withMembers(board,jane.id));
+      vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"jane@example.com":jane.id});
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.click(within(screen.getByRole("region",{name:"Groups"})).getByRole("button",{name:"Add to Group"}));
+      fireEvent.click(screen.getByRole("option",{name:"Board"}));
+      await waitFor(()=>expect(mailClient.addContactGroupMembers).toHaveBeenCalledWith(board.id,[derived.id]));
+      await waitFor(()=>expect(mailClient.getContactProfile).toHaveBeenCalledWith(jane.id));
+      expect(await within(screen.getByRole("region",{name:"Groups"})).findByRole("button",{name:"Board"})).toBeInTheDocument();
+    });
+
+    it("creates a group for the selected contacts from the bulk bar",async()=>{
+      const clients:ContactGroup={...board,id:"group-clients",name:"Clients",memberIds:[jane.id,favoriteContact.id]};
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,favoriteContact]);
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+      vi.mocked(mailClient.createContactGroup).mockResolvedValue(clients);
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.click(screen.getByRole("button",{name:"Select"}));
+      const addButton=screen.getByRole("button",{name:"Add to Group…"});
+      expect(addButton).toBeDisabled();
+      fireEvent.click(screen.getByRole("checkbox",{name:"Select Jane Doe"}));
+      fireEvent.click(screen.getByRole("checkbox",{name:"Select Favorite Person"}));
+      fireEvent.click(addButton);
+      expect(screen.getByText("Add 2 contacts to a group")).toBeInTheDocument();
+      fireEvent.change(screen.getByRole("combobox",{name:"Find or create a group"}),{target:{value:"Clients"}});
+      fireEvent.click(screen.getByRole("option",{name:/Create group “Clients”/}));
+      await waitFor(()=>expect(mailClient.createContactGroup).toHaveBeenCalledWith("Clients",[jane.id,favoriteContact.id]));
+      expect(await screen.findByRole("status")).toHaveTextContent("Added 2 contacts to Clients");
+      expect(screen.queryByRole("checkbox",{name:"Select Jane Doe"})).not.toBeInTheDocument();
+    });
+
+    it("keeps the group picker open with the error when adding fails",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+      vi.mocked(mailClient.addContactGroupMembers).mockRejectedValue(new Error("A group can have at most 500 members"));
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      fireEvent.click(within(screen.getByRole("region",{name:"Groups"})).getByRole("button",{name:"Add to Group"}));
+      fireEvent.click(screen.getByRole("option",{name:"Board"}));
+      expect(await screen.findByRole("alert")).toHaveTextContent("at most 500 members");
+      expect(screen.getByRole("combobox",{name:"Find or create a group"})).toBeInTheDocument();
+    });
+
+    it("refreshes group members after deleting a contact",async()=>{
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+      await screen.findByDisplayValue("Jane Doe");
+      expect(mailClient.listContactGroups).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole("button",{name:"Delete contact"}));
+      fireEvent.click(screen.getByRole("button",{name:"Confirm"}));
+      await waitFor(()=>expect(mailClient.listContactGroups).toHaveBeenCalledTimes(2));
     });
   });
 });

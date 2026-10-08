@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 50;
+pub(crate) const LATEST_VERSION: i64 = 51;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1398,6 +1398,27 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         }
         tx.execute_batch("PRAGMA user_version=50;").map_err(error)?;
     }
+    if version < 51 {
+        // Named contact groups, global like saved contacts. Membership is
+        // not a foreign key to `contacts`: synced groups and contacts can
+        // arrive in any order, and a member whose contact is not here reads
+        // as absent. Deleting a contact removes its memberships explicitly.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS contact_groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS contact_group_members (
+                group_id TEXT NOT NULL REFERENCES contact_groups(id) ON DELETE CASCADE,
+                contact_id TEXT NOT NULL,
+                PRIMARY KEY(group_id, contact_id)
+            );
+            CREATE INDEX IF NOT EXISTS contact_group_members_contact ON contact_group_members(contact_id);
+            PRAGMA user_version=51;",
+        ).map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1614,6 +1635,25 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         let progress:(String,Option<String>,i64,i64,Option<String>)=connection.query_row("SELECT cursor,sent_backfill_page,sent_backfill_offset,sent_backfill_scanned,sent_backfill_completed_at FROM sync_state WHERE account_id='me@example.com'",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap();
         assert_eq!(progress,("history-1".to_string(),None,0,0,None));
+        let version:i64=connection.query_row("PRAGMA user_version",[],|row|row.get(0)).unwrap();
+        assert_eq!(version,super::LATEST_VERSION);
+    }
+
+    #[test]
+    fn v51_adds_contact_groups_and_reruns_cleanly() {
+        let mut connection=unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch("DROP TABLE contact_group_members; DROP TABLE contact_groups;").unwrap();
+        connection.pragma_update(None,"user_version",50).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection.execute("INSERT INTO contact_groups(id,name,created_at,updated_at) VALUES('g1','Board','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",[]).unwrap();
+        // A member's contact may not have synced yet, so no foreign key to contacts.
+        connection.execute("INSERT INTO contact_group_members(group_id,contact_id) VALUES('g1','contact:not-here-yet')",[]).unwrap();
+        connection.execute("DELETE FROM contact_groups WHERE id='g1'",[]).unwrap();
+        let members:i64=connection.query_row("SELECT COUNT(*) FROM contact_group_members",[],|row|row.get(0)).unwrap();
+        assert_eq!(members,0);
+        connection.pragma_update(None,"user_version",50).unwrap();
+        super::migrate(&mut connection).unwrap();
         let version:i64=connection.query_row("PRAGMA user_version",[],|row|row.get(0)).unwrap();
         assert_eq!(version,super::LATEST_VERSION);
     }

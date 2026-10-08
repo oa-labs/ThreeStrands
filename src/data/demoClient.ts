@@ -7,7 +7,9 @@ import { buildShowcaseDataset } from "./showcaseDataset";
 import { parseAddress, splitAddressList } from "../emailAddress";
 import { isCalendarAttachment } from "../CalendarAttachment";
 import { MAX_KEEP_IN_TOUCH_DAYS } from "../keepInTouch";
+import { MAX_CONTACT_GROUP_MEMBERS, MAX_CONTACT_GROUP_NAME, MAX_CONTACT_GROUPS } from "../contactGroups";
 import type {
+  ContactGroup,
   Account,
   ActionAnalysis,
   AiUsageDay,
@@ -83,6 +85,33 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     const derived = await client.getContactProfile(id);
     if (!derived) throw new Error("Contact not found");
     return client.saveContactProfile({ ...derived, id: derived.id });
+  };
+  let contactGroups: ContactGroup[] = seed.contactGroups ?? [];
+  /** Mirrors the backend: members are listed by name and only while their contact is saved. */
+  const presentGroup = (group: ContactGroup): ContactGroup => {
+    const name = (id: string) => savedContactProfiles.find((profile) => profile.id === id)?.displayName ?? null;
+    const memberIds = group.memberIds
+      .filter((id) => savedContactProfiles.some((profile) => profile.id === id))
+      .sort((a, b) => (name(a) === null ? 1 : 0) - (name(b) === null ? 1 : 0) || (name(a) ?? "").localeCompare(name(b) ?? "", undefined, { sensitivity: "base" }) || a.localeCompare(b));
+    return structuredClone({ ...group, memberIds });
+  };
+  const validGroupName = (name: string, exceptId?: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || [...trimmed].length > MAX_CONTACT_GROUP_NAME || /\p{Cc}/u.test(trimmed)) throw new Error(`Group names must be between 1 and ${MAX_CONTACT_GROUP_NAME} characters`);
+    const existing = contactGroups.find((group) => group.id !== exceptId && group.name.toLocaleLowerCase() === trimmed.toLocaleLowerCase());
+    if (existing) throw new Error(`A group named \u201c${existing.name}\u201d already exists`);
+    return trimmed;
+  };
+  const resolveGroupMembers = async (contactIds: string[], emails: string[]) => {
+    const resolved: string[] = [];
+    for (const id of contactIds) resolved.push((await ensureSavedContact(id)).id);
+    for (const raw of emails) {
+      const email = raw.trim().toLocaleLowerCase();
+      if (!email.includes("@") || /\s/.test(email)) throw new Error(`\u201c${raw.trim()}\u201d isn't a valid email address`);
+      const owner = savedContactProfiles.find((profile) => profile.addresses.includes(email));
+      resolved.push(owner ? owner.id : (await client.saveContactProfile({ id: null, displayName: null, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses: [email], birthday: null })).id);
+    }
+    return resolved;
   };
   let savedContactProfiles: ContactProfile[] = seed.contactProfiles.map((profile) => withKeepInTouchDue({ birthday: null, keepInTouch: { ...NO_KEEP_IN_TOUCH }, keepInTouchDueAt: null, ...profile }));
   const { details, messages: seededMessages } = seed;
@@ -596,7 +625,53 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       savedContactProfiles = [...savedContactProfiles.filter((profile) => profile.id !== id), candidate];
       return structuredClone(candidate);
     },
-    async deleteContactProfile(id) { savedContactProfiles = savedContactProfiles.filter((profile) => profile.id !== id); },
+    async deleteContactProfile(id) {
+      savedContactProfiles = savedContactProfiles.filter((profile) => profile.id !== id);
+      contactGroups = contactGroups.map((group) => ({ ...group, memberIds: group.memberIds.filter((member) => member !== id) }));
+    },
+    async listContactGroups() {
+      return [...contactGroups].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.id.localeCompare(b.id)).map(presentGroup);
+    },
+    async createContactGroup(name, contactIds = [], emails = []) {
+      if (contactGroups.length >= MAX_CONTACT_GROUPS) throw new Error(`You can have at most ${MAX_CONTACT_GROUPS} groups`);
+      const trimmed = validGroupName(name);
+      const now = new Date().toISOString();
+      const group: ContactGroup = { id: `group-${crypto.randomUUID()}`, name: trimmed, memberIds: [], createdAt: now, updatedAt: now };
+      contactGroups = [...contactGroups, group];
+      if (!contactIds.length && !emails.length) return presentGroup(group);
+      try {
+        return await client.addContactGroupMembers(group.id, contactIds, emails);
+      } catch (error) {
+        contactGroups = contactGroups.filter((candidate) => candidate.id !== group.id);
+        throw error;
+      }
+    },
+    async renameContactGroup(id, name) {
+      const group = contactGroups.find((candidate) => candidate.id === id);
+      if (!group) throw new Error("Group not found");
+      const next = { ...group, name: validGroupName(name, id), updatedAt: new Date().toISOString() };
+      contactGroups = contactGroups.map((candidate) => candidate.id === id ? next : candidate);
+      return presentGroup(next);
+    },
+    async addContactGroupMembers(id, contactIds, emails = []) {
+      const group = contactGroups.find((candidate) => candidate.id === id);
+      if (!group) throw new Error("Group not found");
+      if (contactIds.length + emails.length > MAX_CONTACT_GROUP_MEMBERS) throw new Error(`A group can have at most ${MAX_CONTACT_GROUP_MEMBERS} members`);
+      const resolved = await resolveGroupMembers(contactIds, emails);
+      const memberIds = [...new Set([...group.memberIds, ...resolved])];
+      if (memberIds.length > MAX_CONTACT_GROUP_MEMBERS) throw new Error(`A group can have at most ${MAX_CONTACT_GROUP_MEMBERS} members`);
+      const next = { ...group, memberIds, updatedAt: new Date().toISOString() };
+      contactGroups = contactGroups.map((candidate) => candidate.id === id ? next : candidate);
+      return presentGroup(next);
+    },
+    async removeContactGroupMembers(id, contactIds) {
+      const group = contactGroups.find((candidate) => candidate.id === id);
+      if (!group) throw new Error("Group not found");
+      const next = { ...group, memberIds: group.memberIds.filter((member) => !contactIds.includes(member)), updatedAt: new Date().toISOString() };
+      contactGroups = contactGroups.map((candidate) => candidate.id === id ? next : candidate);
+      return presentGroup(next);
+    },
+    async deleteContactGroup(id) { contactGroups = contactGroups.filter((group) => group.id !== id); },
     async listKeepInTouch() {
       const due = (profile: ContactProfile) => profile.keepInTouchDueAt ? Date.parse(profile.keepInTouchDueAt) : Number.POSITIVE_INFINITY;
       return structuredClone(savedContactProfiles.map(withKeepInTouchDue)

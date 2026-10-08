@@ -539,6 +539,18 @@ pub struct ContactSuggestion {
     pub pinned: bool,
 }
 
+/// A named set of saved contacts, shared by every account. `member_ids`
+/// lists only members whose contact is present on this device.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactGroup {
+    pub id: String,
+    pub name: String,
+    pub member_ids: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactProfile {

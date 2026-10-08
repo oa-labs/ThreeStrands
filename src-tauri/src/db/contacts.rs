@@ -610,7 +610,7 @@ impl Database {
     }
 
     /// Returns a saved contact id, saving a `derived:<email>` contact first.
-    fn ensure_saved_contact(&self, id: &str) -> DbResult<String> {
+    pub(super) fn ensure_saved_contact(&self, id: &str) -> DbResult<String> {
         let profile = self.get_contact_profile(id)?.ok_or("Contact not found")?;
         if !profile.id.starts_with("derived:") {
             return Ok(profile.id);
@@ -641,6 +641,7 @@ impl Database {
             let addresses = rows.collect::<Result<Vec<_>, _>>()?;
             drop(statement);
             tx.execute("DELETE FROM contacts WHERE id=?1", [id])?;
+            tx.execute("DELETE FROM contact_group_members WHERE contact_id=?1", [id])?;
             for email in addresses {
                 tx.execute("DELETE FROM pinned_contacts WHERE email=?1", [email])?;
             }

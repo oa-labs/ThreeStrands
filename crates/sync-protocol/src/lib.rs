@@ -23,7 +23,14 @@ pub enum EntityType {
     Contact,
     // New variants go last: the derived order is the snapshots' canonical field order.
     Goal,
+    ContactGroup,
 }
+
+/// Most members one synchronized contact group may list.
+pub const MAX_CONTACT_GROUP_MEMBERS: usize = 500;
+/// Prefix of a contact group's per-member field: `member:<contact id>` is
+/// `true` while the contact belongs to the group.
+pub const CONTACT_GROUP_MEMBER_PREFIX: &str = "member:";
 
 impl EntityType {
     pub fn as_str(self) -> &'static str {
@@ -38,6 +45,7 @@ impl EntityType {
             Self::Retention => "retention",
             Self::Contact => "contact",
             Self::Goal => "goal",
+            Self::ContactGroup => "contact_group",
         }
     }
 
@@ -106,6 +114,26 @@ impl EntityType {
                 optional_string(object, "notes", 8_000)?;
                 optional_string(object, "parentGoalId", 128)?;
             }
+            Self::ContactGroup => {
+                optional_string(object, "id", 128)?;
+                required_string(object, "name", 100)?;
+                optional_string(object, "createdAt", 64)?;
+                let mut members = 0;
+                for (field, value) in object.iter().filter(|(field, _)| field.starts_with(CONTACT_GROUP_MEMBER_PREFIX)) {
+                    let contact_id = &field[CONTACT_GROUP_MEMBER_PREFIX.len()..];
+                    if contact_id.is_empty() || contact_id.len() > 128 {
+                        return Err("A contact group member id is invalid".to_string());
+                    }
+                    match value {
+                        Value::Bool(true) => members += 1,
+                        Value::Null => {}
+                        _ => return Err("A contact group member is invalid".to_string()),
+                    }
+                }
+                if members > MAX_CONTACT_GROUP_MEMBERS {
+                    return Err("The contact group has too many members".to_string());
+                }
+            }
             Self::Contact => {
                 required_string(object, "id", 128)?;
                 optional_string(object, "displayName", 200)?;
@@ -144,6 +172,7 @@ impl std::str::FromStr for EntityType {
             "retention" => Ok(Self::Retention),
             "contact" => Ok(Self::Contact),
             "goal" => Ok(Self::Goal),
+            "contact_group" => Ok(Self::ContactGroup),
             _ => Err("Unknown synchronized entity type".to_string()),
         }
     }
@@ -246,7 +275,8 @@ mod tests {
             | EntityType::Preferences
             | EntityType::Retention
             | EntityType::Contact
-            | EntityType::Goal => entity_type,
+            | EntityType::Goal
+            | EntityType::ContactGroup => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -259,6 +289,7 @@ mod tests {
             EntityType::Retention,
             EntityType::Contact,
             EntityType::Goal,
+            EntityType::ContactGroup,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));
@@ -327,6 +358,34 @@ mod tests {
         ] {
             assert!(!goal_period_matches(horizon, period), "{horizon} {period}");
         }
+    }
+
+    #[test]
+    fn validates_contact_group_contract_and_bounded_membership() {
+        let valid = json!({"id": "group-1", "name": "Board", "createdAt": "2026-10-07T00:00:00Z", "member:contact:a": true, "member:contact:b": null});
+        assert!(EntityType::ContactGroup.validate_payload(&valid).is_ok());
+        for (field, value) in [
+            ("name", json!(" ")),
+            ("name", json!("x".repeat(101))),
+            ("member:contact:a", json!(false)),
+            ("member:contact:a", json!("yes")),
+            ("member:", json!(true)),
+            ("id", json!(7)),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            assert!(EntityType::ContactGroup.validate_payload(&invalid).is_err(), "{field} should be rejected");
+        }
+        let mut at_limit = json!({"name": "Everyone"});
+        for index in 0..MAX_CONTACT_GROUP_MEMBERS {
+            at_limit[format!("member:contact:{index}")] = json!(true);
+        }
+        assert!(EntityType::ContactGroup.validate_payload(&at_limit).is_ok());
+        // Removed members (null) don't count toward the limit.
+        at_limit["member:contact:removed"] = json!(null);
+        assert!(EntityType::ContactGroup.validate_payload(&at_limit).is_ok());
+        at_limit["member:contact:one-more"] = json!(true);
+        assert!(EntityType::ContactGroup.validate_payload(&at_limit).is_err());
     }
 
     #[test]

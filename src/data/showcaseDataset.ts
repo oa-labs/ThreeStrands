@@ -567,6 +567,9 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
         birthday: monthDayIn(5), keepInTouch: keepInTouch(7, 30),
       },
     ],
+    contactGroups: [
+      { id: "group-key-accounts", name: "Key accounts", memberIds: ["contact:marcus@brightwater.example", "contact:priya@harborlight.example"], createdAt: connectedAt, updatedAt: connectedAt },
+    ],
     splitInboxes: [
       { id: "split-notifications", name: "Notifications", matchKind: "pattern", matchValue: "notifications", sortOrder: 0, createdAt: connectedAt, accountId: SHOWCASE_WORK_ACCOUNT },
       { id: "split-newsletters", name: "Newsletters", matchKind: "label", matchValue: "newsletters", sortOrder: 1, createdAt: connectedAt, accountId: SHOWCASE_WORK_ACCOUNT },

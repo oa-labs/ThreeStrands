@@ -45,7 +45,7 @@ use auth::{AccountAuth, AuthConfig, OAuthProvider};
 use chrono::Utc;
 use db::Database;
 use models::{
-    ActionAnalysis, ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, UpdateCalendarEventRequest, CreateLabelRequest,
+    ActionAnalysis, ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactGroup, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, UpdateCalendarEventRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailProviderKind, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
@@ -1141,10 +1141,96 @@ fn mark_contacted(id: String, state: State<'_, AppState>) -> Result<ContactProfi
 
 #[tauri::command(async)]
 fn delete_contact_profile(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let groups = state.database.contact_group_ids_for_contact(&id)?;
     state.database.delete_contact_profile(&id)?;
     state
         .database
         .record_local_entity_deletion(threestrands_sync_protocol::EntityType::Contact, &id)?;
+    for group_id in groups {
+        let fields = std::collections::BTreeSet::from([db::contact_groups::member_field(&id)]);
+        record_contact_group_fields(&state, &group_id, fields)?;
+    }
+    kick_replicated_sync(&state);
+    Ok(())
+}
+
+/// Replicates the named fields of a group's sync record. A removed member
+/// is absent from the record, so naming its field unsets it.
+fn record_contact_group_fields(
+    state: &State<'_, AppState>,
+    id: &str,
+    fields: std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let Some(record) = state.database.contact_group_record(id)? else {
+        return Ok(());
+    };
+    record_synced_value(state, threestrands_sync_protocol::EntityType::ContactGroup, id, &record, Some(fields))
+}
+
+fn record_contact_group_write(
+    state: &State<'_, AppState>,
+    write: db::contact_groups::ContactGroupWrite,
+) -> Result<ContactGroup, String> {
+    for profile in &write.saved_contacts {
+        record_synced_contact(state, profile)?;
+    }
+    record_contact_group_fields(state, &write.group.id, write.fields)?;
+    Ok(write.group)
+}
+
+#[tauri::command]
+async fn list_contact_groups(state: State<'_, AppState>) -> Result<Vec<ContactGroup>, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_contact_groups()).await
+}
+
+#[tauri::command(async)]
+fn create_contact_group(
+    name: String,
+    contact_ids: Vec<String>,
+    emails: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<ContactGroup, String> {
+    let write = state.database.create_contact_group(&name, &contact_ids, &emails)?;
+    record_contact_group_write(&state, write)
+}
+
+#[tauri::command(async)]
+fn rename_contact_group(id: String, name: String, state: State<'_, AppState>) -> Result<ContactGroup, String> {
+    let write = state.database.rename_contact_group(&id, &name)?;
+    record_contact_group_write(&state, write)
+}
+
+#[tauri::command(async)]
+fn add_contact_group_members(
+    id: String,
+    contact_ids: Vec<String>,
+    emails: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<ContactGroup, String> {
+    let write = state.database.add_contact_group_members(&id, &contact_ids, &emails)?;
+    record_contact_group_write(&state, write)
+}
+
+#[tauri::command(async)]
+fn remove_contact_group_members(
+    id: String,
+    contact_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<ContactGroup, String> {
+    let write = state.database.remove_contact_group_members(&id, &contact_ids)?;
+    record_contact_group_write(&state, write)
+}
+
+#[tauri::command(async)]
+fn delete_contact_group(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.delete_contact_group(&id)?;
+    state
+        .database
+        .record_local_entity_deletion(threestrands_sync_protocol::EntityType::ContactGroup, &id)?;
     kick_replicated_sync(&state);
     Ok(())
 }
@@ -3991,6 +4077,12 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         get_contact_profile,
         save_contact_profile,
         delete_contact_profile,
+        list_contact_groups,
+        create_contact_group,
+        rename_contact_group,
+        add_contact_group_members,
+        remove_contact_group_members,
+        delete_contact_group,
         list_keep_in_touch,
         set_keep_in_touch,
         snooze_keep_in_touch,
