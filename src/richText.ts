@@ -40,12 +40,16 @@ export function selectionIsInList(editor: HTMLElement): boolean {
   return Boolean(element?.closest("li") && editor.contains(element));
 }
 
+// Markdown-style markers that start a list when typed alone and followed by
+// a space: `*` for bullets, `1.` for numbers.
+const listShortcutMarkers: Record<string, "ul" | "ol"> = { "*": "ul", "1.": "ol" };
+
 /**
- * Converts a standalone asterisk followed by a space into an empty bullet.
- * The caller invokes this while handling the space key, before the browser
- * inserts the space itself.
+ * Converts a standalone list marker (`*` or `1.`) followed by a space into an
+ * empty bulleted or numbered list. The caller invokes this while handling the
+ * space key, before the browser inserts the space itself.
  */
-export function applyAsteriskListShortcut(editor: HTMLElement): boolean {
+export function applyListShortcut(editor: HTMLElement): boolean {
   const selection = window.getSelection();
   if (!selection?.rangeCount || !selection.isCollapsed) return false;
 
@@ -60,7 +64,7 @@ export function applyAsteriskListShortcut(editor: HTMLElement): boolean {
   const block = anchorElement?.closest("p, div, blockquote, pre");
   const container = block && block !== editor && editor.contains(block)
     ? block
-    : editor.textContent === "*" && !editor.querySelector("p, div, blockquote, pre, br")
+    : Object.hasOwn(listShortcutMarkers, editor.textContent ?? "") && !editor.querySelector("p, div, blockquote, pre, br")
       ? editor
       : null;
   if (!container) return false;
@@ -71,9 +75,10 @@ export function applyAsteriskListShortcut(editor: HTMLElement): boolean {
   beforeCaret.setEnd(range.endContainer, range.endOffset);
   const afterCaret = contents.cloneRange();
   afterCaret.setStart(range.endContainer, range.endOffset);
-  if (beforeCaret.toString() !== "*" || afterCaret.toString() !== "") return false;
+  const marker = beforeCaret.toString();
+  if (!Object.hasOwn(listShortcutMarkers, marker) || afterCaret.toString() !== "") return false;
 
-  const list = document.createElement("ul");
+  const list = document.createElement(listShortcutMarkers[marker]);
   const item = document.createElement("li");
   item.append(document.createElement("br"));
   list.append(item);
@@ -313,6 +318,20 @@ export function composeHtmlToText(root: Node): string {
 }
 
 /** Turns bare URLs/emails pasted into the composer into real <a> tags. */
+/**
+ * The link destination for pasted text that is exactly one URL or email
+ * address (surrounding whitespace aside), or null when the text is anything
+ * else. Pasting such text over a selection links the selection instead of
+ * replacing it.
+ */
+export function pastedLinkHref(text: string): string | null {
+  const candidate = text.trim();
+  const match = candidate.match(new RegExp(`^${LINKIFY_PATTERN.source}$`, "i"));
+  if (!match) return null;
+  const { url } = trimTrailingPunctuation(candidate);
+  return url ? linkHrefFor(url) : null;
+}
+
 export function linkifyPlainText(text: string): string {
   const container = document.createElement("div");
   text.split("\n").forEach((line, lineIndex) => {

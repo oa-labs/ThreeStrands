@@ -12,11 +12,12 @@ import {
 import { RecipientField } from "./RecipientField";
 import { Modal } from "./AppChrome";
 import {
-  applyAsteriskListShortcut,
+  applyListShortcut,
   applyFormattingShortcut,
   formattingShortcutFor,
   insertHtmlAtRange,
   linkifyPlainText,
+  pastedLinkHref,
   draftTextToComposeHtml,
   plainTextToHtml,
   sanitizeComposeHtml,
@@ -444,7 +445,14 @@ export const Composer = forwardRef<ComposerHandle, {
         return;
       }
       event.preventDefault();
-      document.execCommand("insertHTML", false, linkifyPlainText(event.clipboardData.getData("text/plain")));
+      const text = event.clipboardData.getData("text/plain");
+      const selection = window.getSelection();
+      const href = pastedLinkHref(text);
+      if (href && selection && !selection.isCollapsed && selection.toString().trim() && event.currentTarget.contains(selection.anchorNode)) {
+        document.execCommand("createLink", false, href);
+        return;
+      }
+      document.execCommand("insertHTML", false, linkifyPlainText(text));
     },
     onClick: (event: ReactMouseEvent<HTMLDivElement>) => {
       const remove = (event.target as Element).closest<HTMLElement>("[data-compose-image-remove]");
@@ -507,7 +515,7 @@ export const Composer = forwardRef<ComposerHandle, {
         event.stopPropagation();
         return;
       }
-      if (!event.nativeEvent.isComposing && event.key === " " && applyAsteriskListShortcut(event.currentTarget)) {
+      if (!event.nativeEvent.isComposing && event.key === " " && applyListShortcut(event.currentTarget)) {
         event.preventDefault();
         event.stopPropagation();
         editBody();

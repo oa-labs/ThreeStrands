@@ -2,13 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { sanitizeMessageHtml } from "./SafeMessage";
 import { collapseQuotedHistoryHtml } from "./quotedHistory";
 import {
-  applyAsteriskListShortcut,
+  applyListShortcut,
   composeHtmlToText,
   draftTextToComposeHtml,
   applyFormattingShortcut,
   formattingShortcutFor,
   formattingShortcuts,
   insertHtmlAtRange,
+  pastedLinkHref,
   plainTextToHtml,
   sanitizeComposeHtml,
   serializeComposeBody,
@@ -86,40 +87,78 @@ describe("Superhuman formatting shortcuts", () => {
   });
 });
 
-describe("asterisk list shortcut", () => {
-  it("turns a standalone asterisk into an empty bulleted list", () => {
-    const editor = document.createElement("div");
-    editor.textContent = "*";
-    document.body.append(editor);
-    const text = editor.firstChild!;
+describe("list marker shortcuts", () => {
+  const placeCaretAtEnd = (node: Node) => {
     const range = document.createRange();
-    range.setStart(text, 1);
-    range.collapse(true);
+    range.selectNodeContents(node);
+    range.collapse(false);
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
+    return selection;
+  };
 
-    expect(applyAsteriskListShortcut(editor)).toBe(true);
-    expect(editor.innerHTML).toBe("<ul><li><br></li></ul>");
+  it.each([
+    ["*", "<ul><li><br></li></ul>"],
+    ["1.", "<ol><li><br></li></ol>"],
+  ])("turns a standalone %s into an empty list", (marker, expected) => {
+    const editor = document.createElement("div");
+    editor.textContent = marker;
+    document.body.append(editor);
+    const selection = placeCaretAtEnd(editor.firstChild!);
+
+    expect(applyListShortcut(editor)).toBe(true);
+    expect(editor.innerHTML).toBe(expected);
     expect(selection.anchorNode).toBe(editor.querySelector("li"));
   });
 
-  it.each(["<p>Hello *</p>", "<ul><li>*</li></ul>", "<p>* more</p>"]) (
+  it("turns a marker in its own paragraph into a list in place", () => {
+    const editor = document.createElement("div");
+    editor.innerHTML = "<p>Intro</p><p>1.</p><p>Outro</p>";
+    document.body.append(editor);
+    placeCaretAtEnd(editor.querySelectorAll("p")[1].firstChild!);
+
+    expect(applyListShortcut(editor)).toBe(true);
+    expect(editor.innerHTML).toBe("<p>Intro</p><ol><li><br></li></ol><p>Outro</p>");
+  });
+
+  it.each([
+    "<p>Hello *</p>",
+    "<ul><li>*</li></ul>",
+    "<p>* more</p>",
+    "<p>Step 1.</p>",
+    "<p>2.</p>",
+    "<p>1</p>",
+    "<p>1.)</p>",
+    "<ol><li>1.</li></ol>",
+  ])(
     "leaves %s unchanged",
     (html) => {
       const editor = document.createElement("div");
       editor.innerHTML = html;
       document.body.append(editor);
-      const text = editor.querySelector("p, li")?.firstChild ?? editor.firstChild!;
-      const range = document.createRange();
-      range.selectNodeContents(text);
-      range.collapse(false);
-      const selection = window.getSelection()!;
-      selection.removeAllRanges();
-      selection.addRange(range);
+      placeCaretAtEnd(editor.querySelector("p, li")?.firstChild ?? editor.firstChild!);
 
-      expect(applyAsteriskListShortcut(editor)).toBe(false);
+      expect(applyListShortcut(editor)).toBe(false);
       expect(editor.innerHTML).toBe(html);
+    },
+  );
+});
+
+describe("pasted link destinations", () => {
+  it.each([
+    ["https://example.com/path?q=1", "https://example.com/path?q=1"],
+    ["  www.example.com\n", "https://www.example.com"],
+    ["person@example.com", "mailto:person@example.com"],
+    ["https://example.com/page.", "https://example.com/page"],
+  ])("links over a selection when pasting %j", (text, href) => {
+    expect(pastedLinkHref(text)).toBe(href);
+  });
+
+  it.each(["", "plain words", "see https://example.com", "https://a.example https://b.example", "javascript:alert(1)"])(
+    "pastes %j as text",
+    (text) => {
+      expect(pastedLinkHref(text)).toBeNull();
     },
   );
 });

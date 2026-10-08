@@ -131,18 +131,21 @@ describe("Composer recipient visibility and shortcuts", () => {
   });
 });
 
-describe("Composer asterisk list shortcut", () => {
+describe("Composer list marker shortcuts", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
   });
 
-  it("starts a bulleted list when space follows an asterisk", () => {
-    render(<Composer draft={{ ...draft, body: "*" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+  it.each([
+    ["*", "ul > li"],
+    ["1.", "ol > li"],
+  ])("starts a list when space follows %s", (marker, selector) => {
+    render(<Composer draft={{ ...draft, body: marker }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const editor = screen.getByRole("textbox", { name: "Message Body" });
     const text = editor.firstChild!;
     const range = document.createRange();
-    range.setStart(text, 1);
+    range.setStart(text, marker.length);
     range.collapse(true);
     const selection = window.getSelection()!;
     selection.removeAllRanges();
@@ -150,8 +153,56 @@ describe("Composer asterisk list shortcut", () => {
 
     fireEvent.keyDown(editor, { key: " " });
 
-    expect(editor.querySelector("ul > li")).toBeInTheDocument();
-    expect(editor).not.toHaveTextContent("*");
+    expect(editor.querySelector(selector)).toBeInTheDocument();
+    expect(editor).not.toHaveTextContent(marker);
+  });
+});
+
+describe("Composer pasted links", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  const renderWithSelection = (collapsed: boolean) => {
+    render(<Composer draft={{ ...draft, body: "Read the docs" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    const text = editor.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 9);
+    range.setEnd(text, collapsed ? 9 : 13);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const execute = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execute });
+    return { editor, execute };
+  };
+
+  it("links the selected text when a URL is pasted over it", () => {
+    const { editor, execute } = renderWithSelection(false);
+
+    fireEvent.paste(editor, { clipboardData: { files: [], getData: () => "https://example.com/docs" } });
+
+    expect(execute).toHaveBeenCalledWith("createLink", false, "https://example.com/docs");
+    expect(execute).not.toHaveBeenCalledWith("insertHTML", expect.anything(), expect.anything());
+  });
+
+  it("inserts a pasted URL as a link when nothing is selected", () => {
+    const { editor, execute } = renderWithSelection(true);
+
+    fireEvent.paste(editor, { clipboardData: { files: [], getData: () => "https://example.com/docs" } });
+
+    expect(execute).toHaveBeenCalledWith("insertHTML", false, '<a href="https://example.com/docs">https://example.com/docs</a>');
+  });
+
+  it("replaces the selection with pasted text that is not a lone URL", () => {
+    const { editor, execute } = renderWithSelection(false);
+
+    fireEvent.paste(editor, { clipboardData: { files: [], getData: () => "see https://example.com/docs" } });
+
+    expect(execute).not.toHaveBeenCalledWith("createLink", expect.anything(), expect.anything());
+    expect(execute).toHaveBeenCalledWith("insertHTML", false, 'see <a href="https://example.com/docs">https://example.com/docs</a>');
   });
 });
 
