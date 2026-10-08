@@ -188,6 +188,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
   }
 
   return (
+    <>
     <div className="compose-field recipient-field">
       {onLabelClick ? (
         <button type="button" className="recipient-field-label" aria-expanded={labelExpanded} onClick={onLabelClick} disabled={disabled}>{label}</button>
@@ -415,7 +416,9 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
           )}
         </ul>
       )}
-      {groupNote && <p className="recipient-group-note" role="status">{groupNote}</p>}
     </div>
+    {/* Below the field's row, so the chips stay aligned with the label. */}
+    {groupNote && <p className="recipient-group-note" role="status">{groupNote}</p>}
+    </>
   );
 }

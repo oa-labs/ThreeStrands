@@ -746,6 +746,9 @@ describe("Composer recipient autocomplete", () => {
     expect(screen.getAllByRole("button", { name: "Remove Jane Doe" })).toHaveLength(1);
     expect(screen.getByText(/^Added 2 people/)).toHaveTextContent("Added 2 people from Board · 1 already in To");
     expect(screen.getByText(/^Added 2 people/)).toHaveAttribute("role", "status");
+    // The note sits under the field's row, not inside it, so it can't push the chips off the label's line.
+    expect(screen.getByText(/^Added 2 people/).closest(".recipient-field")).toBeNull();
+    expect(to.closest(".recipient-field")?.nextElementSibling).toBe(screen.getByText(/^Added 2 people/));
     expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ to: "Jane Doe <jane@example.com>, Ada Park <ada@home.example>, sam@example.com, " }));
     fireEvent.change(to, { target: { value: "x" } });
     expect(screen.queryByText(/^Added 2 people/)).not.toBeInTheDocument();

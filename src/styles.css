@@ -2780,7 +2780,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-field:focus-within { border-bottom-color: var(--accent); }
 .compose-field > span, .compose-field > label { width: 50px; flex-shrink: 0; color: var(--muted); }
 .compose-field input { box-sizing: border-box; height: var(--control-h); min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: var(--space-1) var(--space-1-5); outline: none; line-height: var(--leading-normal); }
-.recipient-field { position: relative; border-bottom: 0; }
+/* Baseline alignment keeps the label on the first line of chips when they wrap. */
+.recipient-field { position: relative; align-items: baseline; border-bottom: 0; }
 .recipient-field:focus-within { border-bottom-color: transparent; }
 .recipient-field-label { width: 50px; flex-shrink: 0; padding: 0; border: 0; color: var(--muted); background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .recipient-field-label:disabled { cursor: default; }
@@ -2804,9 +2805,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .recipient-suggestion-add.active, .recipient-suggestion-add:hover { color: var(--text); }
 .recipient-suggestions li.recipient-suggestion-group { justify-content: flex-start; }
 .recipient-suggestion-group > svg { flex-shrink: 0; color: var(--muted); }
-/* What choosing a group added; wraps under the chips in the same field. */
-.recipient-field:has(.recipient-group-note) { flex-wrap: wrap; }
-.recipient-group-note { flex-basis: 100%; margin: 0 0 var(--space-1-5); color: var(--muted); font-size: var(--text-meta); }
+/* What choosing a group added, on its own line under that field's row. */
+.recipient-group-note { flex-shrink: 0; margin: 0; padding-bottom: var(--space-1-5); color: var(--muted); font-size: var(--text-meta); }
 .compose-body { display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); flex-shrink: 0; padding: var(--space-3) 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: var(--text-reading); line-height: var(--leading-normal); white-space: pre-wrap; }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
