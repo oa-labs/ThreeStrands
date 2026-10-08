@@ -201,14 +201,18 @@ function listStyle(value: string): string | null {
     if (listStylePosition.test(part)) {
       if (positionSeen) return null;
       positionSeen = true;
+    } else if (listStyleType.test(part)) {
+      // `none` matches both the type and image slots; prefer type (the near-
+      // universal `list-style: none` reset) and only fall back to the image
+      // slot once a type keyword has already been consumed.
+      if (!typeSeen) {
+        typeSeen = true;
+      } else if (listStyleImage.test(part) && !imageSeen) {
+        imageSeen = true;
+      } else return null;
     } else if (listStyleImage.test(part)) {
-      // `none` is accepted here as the image slot; it also doubles as the
-      // type keyword, so a lone `none` is treated as the (common) type reset.
       if (imageSeen) return null;
       imageSeen = true;
-    } else if (listStyleType.test(part)) {
-      if (typeSeen) return null;
-      typeSeen = true;
     } else return null;
   }
   return trimmed;
