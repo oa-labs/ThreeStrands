@@ -81,4 +81,28 @@ describe("email rendering numeric policy", () => {
     expect(sanitizeCssDeclaration("opacity", "1")).toBe("1");
     expect(sanitizeCssDeclaration("opacity", "1.1")).toBeNull();
   });
+
+  it("keeps the cosmetic list-marker family so a sender's marker reset survives", () => {
+    // Senders repurpose <ol>/<ul> as layout scaffolding and suppress the
+    // markers with their own CSS; dropping that reset leaks the UA's default
+    // decimal/disc markers (the "1." "2." other clients don't show).
+    expect(sanitizeCssDeclaration("list-style", "none")).toBe("none");
+    expect(sanitizeCssDeclaration("list-style-type", "none")).toBe("none");
+    expect(sanitizeCssDeclaration("list-style", "square inside")).toBe("square inside");
+    expect(sanitizeCssDeclaration("list-style", "none inside none")).toBe("none inside none");
+    expect(sanitizeCssDeclaration("list-style-type", "lower-roman")).toBe("lower-roman");
+    expect(sanitizeCssDeclaration("list-style-position", "outside")).toBe("outside");
+    expect(sanitizeCssDeclaration("list-style-image", "none")).toBe("none");
+    // Malformed / out-of-family values are rejected rather than clamped.
+    expect(sanitizeCssDeclaration("list-style-type", "bogus-glyph")).toBeNull();
+    expect(sanitizeCssDeclaration("list-style-position", "floating")).toBeNull();
+    expect(sanitizeCssDeclaration("list-style", "square inside circle")).toBeNull();
+  });
+
+  it("never admits a remote marker image through the list-style family", () => {
+    // The shared url() ban must hold here too: no list property may fetch.
+    expect(sanitizeCssDeclaration("list-style-image", "url(https://tracker.invalid/dot.gif)")).toBeNull();
+    expect(sanitizeCssDeclaration("list-style", "url(https://tracker.invalid/dot.gif)")).toBeNull();
+    expect(sanitizeCssDeclaration("list-style", "disc url(https://tracker.invalid/dot.gif)")).toBeNull();
+  });
 });

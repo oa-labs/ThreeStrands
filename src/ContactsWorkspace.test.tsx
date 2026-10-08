@@ -1057,6 +1057,8 @@ describe("ContactsWorkspace",()=>{
       vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
       vi.mocked(mailClient.addContactGroupMembers).mockImplementation(async(_id,contactIds,emails=[])=>withMembers(board,...contactIds,...emails.map(email=>`contact:${email}`)));
       const {container}=groupsView();
+      // Let the debounced first list load land, so only the add's reloads follow.
+      await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenCalledWith("",500,undefined));
       fireEvent.click(await screen.findByRole("button",{name:"Add Members"}));
       const dialogActions=()=>container.ownerDocument.querySelector(".modal-form-actions") as HTMLElement;
       expectPrimaryActionLast(dialogActions());
@@ -1083,12 +1085,13 @@ describe("ContactsWorkspace",()=>{
       expect(within(selection).getAllByText(/./,{selector:".recipient-chip-label"}).map(chip=>chip.textContent)).toEqual(["Jane Doe","Newer Person","new@example.com","two@example.com"]);
       fireEvent.click(within(selection).getByRole("button",{name:"Unselect two@example.com"}));
 
+      const loadsBeforeAdd=vi.mocked(mailClient.listContactProfiles).mock.calls.length;
       fireEvent.click(within(dialogActions()).getByRole("button",{name:"Add 3 Members"}));
       await waitFor(()=>expect(mailClient.addContactGroupMembers).toHaveBeenCalledTimes(1));
       expect(mailClient.addContactGroupMembers).toHaveBeenCalledWith(board.id,[jane.id,newerContact.id],["new@example.com"]);
       expect(screen.queryByRole("combobox",{name:"Find contacts to add"})).not.toBeInTheDocument();
-      // A typed address becomes a saved contact, so the lists reload.
-      await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenCalledTimes(3));
+      // A typed address becomes a saved contact, so the address book and the list reload once each.
+      await waitFor(()=>expect(vi.mocked(mailClient.listContactProfiles).mock.calls.slice(loadsBeforeAdd).map(([,limit])=>limit).sort((x,y)=>(x??0)-(y??0))).toEqual([500,5000]));
     });
 
     it("lists the bad entries in a pasted list and keeps the dialog open when adding fails",async()=>{

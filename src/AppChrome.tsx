@@ -189,7 +189,7 @@ function formatShortcutStep(step: string): string {
 }
 
 function ShortcutKeys({ shortcut }: { shortcut: string }) {
-  return <span className="shortcut-keys">{shortcutSteps(shortcut).map((step, index) => <span key={step}>{index > 0 ? <small>then</small> : null}<kbd>{formatShortcutStep(step)}</kbd></span>)}</span>;
+  return <span className="shortcut-keys">{shortcutSteps(shortcut).map((step, index) => <span key={index}>{index > 0 ? <small>then</small> : null}<kbd>{formatShortcutStep(step)}</kbd></span>)}</span>;
 }
 
 export function Modal({

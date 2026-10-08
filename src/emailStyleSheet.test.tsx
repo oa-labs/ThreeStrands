@@ -25,6 +25,40 @@ describe("sanitizeStyleSheet", () => {
     expect(body).toContain("float: right");
   });
 
+  it("keeps a sender's list-marker reset on element selectors so UA markers don't leak", () => {
+    // Two structurally different real-world shapes that both repurpose a list
+    // as layout and reset its markers: a flex <ul> nav bar and an <ol> footer.
+    // Without the list-marker family these list-style-* lines were dropped
+    // while the surrounding layout survived, so the default decimal/disc
+    // markers rendered — the "1." "2." other clients suppress.
+    const nav = sanitizeStyleSheet(`
+      ul {
+        list-style-type: none;
+        list-style-position: outside;
+        padding: 0px;
+        margin: 0px;
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        width: 100%;
+      }
+    `);
+    expect(nav).toContain("list-style-type: none");
+    expect(nav).toContain("list-style-position: outside");
+    expect(nav).toContain("display: flex");
+
+    const footer = sanitizeStyleSheet(".footer ol { list-style: none; margin: 0; padding: 0; }");
+    expect(footer).toContain("[data-email-root] .footer ol");
+    expect(footer).toContain("list-style: none");
+  });
+
+  it("still refuses a remote list-marker image inside a stylesheet", () => {
+    const css = sanitizeStyleSheet("ol { list-style-image: url(https://tracker.invalid/dot.gif); color: red; }");
+    expect(css).toContain("color: red");
+    expect(css).not.toContain("list-style-image");
+    expect(css).not.toContain("url(");
+  });
+
   it("keeps safe theme overrides and scopes them to the message root", () => {
     const css = sanitizeStyleSheet(`
       @media (prefers-color-scheme: dark) {

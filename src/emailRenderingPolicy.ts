@@ -173,6 +173,47 @@ function boxShadow(value: string): string | null {
   return trimmed;
 }
 
+// List-marker capability family. These control only the presence, glyph, and
+// gutter position of list-item markers — purely cosmetic. They cannot fetch a
+// resource (the shared url() ban in sanitizeCssDeclaration rejects any value
+// carrying url(), so list-style-image is limited to `none`), execute code,
+// escape the iframe, or create an interactive surface. Senders routinely use
+// `list-style: none` to repurpose <ol>/<ul> as layout scaffolding; without
+// this family that reset is dropped and the UA's default decimal/disc markers
+// leak through, which other mail clients suppress.
+const listStyleTypes = [
+  "none", "disc", "circle", "square", "decimal", "decimal-leading-zero",
+  "lower-roman", "upper-roman", "lower-alpha", "upper-alpha", "lower-latin",
+  "upper-latin", "lower-greek", "armenian", "georgian",
+];
+const listStyleType = namedValue(listStyleTypes);
+const listStylePosition = namedValue(["inside", "outside"]);
+const listStyleImage = namedValue(["none"]);
+function listStyle(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed === "inherit" || trimmed === "initial") return trimmed;
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 0 || parts.length > 3) return null;
+  let typeSeen = false;
+  let positionSeen = false;
+  let imageSeen = false;
+  for (const part of parts) {
+    if (listStylePosition.test(part)) {
+      if (positionSeen) return null;
+      positionSeen = true;
+    } else if (listStyleImage.test(part)) {
+      // `none` is accepted here as the image slot; it also doubles as the
+      // type keyword, so a lone `none` is treated as the (common) type reset.
+      if (imageSeen) return null;
+      imageSeen = true;
+    } else if (listStyleType.test(part)) {
+      if (typeSeen) return null;
+      typeSeen = true;
+    } else return null;
+  }
+  return trimmed;
+}
+
 type Validator = (value: string) => string | null;
 const regex = (pattern: RegExp): Validator => (value) => pattern.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : null;
 const keyword = (values: string[]) => regex(namedValue(values));
@@ -231,6 +272,10 @@ const validators: Record<string, Validator> = {
   "box-shadow": boxShadow,
   "box-sizing": keyword(["content-box", "border-box"]),
   display: keyword(["none", "block", "inline", "inline-block", "table", "table-cell", "table-row", "inline-table", "flex", "inline-flex"]),
+  "list-style": listStyle,
+  "list-style-type": keyword(listStyleTypes),
+  "list-style-position": keyword(["inside", "outside"]),
+  "list-style-image": keyword(["none"]),
   visibility: keyword(["visible", "hidden", "collapse"]),
   float: keyword(["none", "left", "right"]),
   clear: keyword(["none", "left", "right", "both"]),

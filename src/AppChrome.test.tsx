@@ -95,6 +95,20 @@ describe("App chrome", () => {
     expect(within(screen.getByRole("button", { name: /Decrease Font Size/ })).getByText("⌘/Ctrl + -")).toBeInTheDocument();
   });
 
+  it("shows a shortcut that repeats a key as two distinct steps", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(<CommandPalette context={context} execute={vi.fn()} onClose={vi.fn()} />);
+      fireEvent.change(screen.getByRole("textbox", { name: "Filter Commands" }), { target: { value: "go to goals" } });
+      const goals = screen.getByRole("button", { name: /Go to Goals/ });
+      expect(within(goals).getAllByText("g").map((key) => key.tagName)).toEqual(["KBD", "KBD"]);
+      expect(within(goals).getByText("then").tagName).toBe("SMALL");
+      expect(consoleError.mock.calls.filter((args) => String(args[0]).includes("same key"))).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("renders shortcut help and reusable action buttons", () => {
     const action = vi.fn();
     const close = vi.fn();
