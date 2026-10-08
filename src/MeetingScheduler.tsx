@@ -1,4 +1,4 @@
-import { CalendarPlus, CheckCircle2, CircleAlert, RotateCcw } from "lucide-react";
+import { CalendarPlus, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { AvailabilityCandidate, AvailabilityPreferences, ProposedTimeCheck } from "./domain";
 import { mailClient } from "./data/client";
@@ -136,7 +136,7 @@ export function MeetingScheduler({
     {state.phase === "specific" && query.kind === "specific" ? <>
       <p className="meeting-slot">{formatSlot(query, timeZone)}</p>
       <p className={`meeting-slot-status meeting-slot-${state.check.status}`}>
-        {state.check.status === "free" ? <><CheckCircle2 size={ICON_SIZE.xs} aria-hidden="true" /> You&rsquo;re free</> : null}
+        {state.check.status === "free" ? <><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> You&rsquo;re free</> : null}
         {state.check.status === "conflicting" ? <><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> {state.conflictTitles.length ? `Conflicts with ${state.conflictTitles.join(", ")}` : "Conflicts with another event"}</> : null}
         {state.check.status === "partiallyChecked" ? <>Free on the calendars that could be checked</> : null}
         {state.check.status === "unverified" ? <>No calendar could be checked</> : null}

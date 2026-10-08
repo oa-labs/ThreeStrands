@@ -1,4 +1,4 @@
-import { CheckSquare, Paperclip, Square, Star } from "lucide-react";
+import { SquareCheckBig, Paperclip, Square, Star } from "lucide-react";
 import { memo, type RefObject } from "react";
 import type { Thread } from "./domain";
 import { formatDisplayName, parseAddress } from "./emailAddress";
@@ -78,7 +78,7 @@ export const ThreadRow = memo(function ThreadRow({
             onToggleCheck(thread.id);
           }}
         >
-          {checked ? <CheckSquare size={ICON_SIZE.md} /> : <Square size={ICON_SIZE.md} />}
+          {checked ? <SquareCheckBig size={ICON_SIZE.md} /> : <Square size={ICON_SIZE.md} />}
         </span>
         {thread.hasAttachments ? <Paperclip className="thread-attachment" size={ICON_SIZE.xs} aria-label="Has attachments" /> : null}
       </span>
@@ -95,7 +95,7 @@ export const ThreadRow = memo(function ThreadRow({
           </span>
           <span className="thread-meta-trailing">
             {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
-            {hasTask ? <CheckSquare className="thread-task-indicator" size={ICON_SIZE.xs} aria-label="Has open task" /> : null}
+            {hasTask ? <SquareCheckBig className="thread-task-indicator" size={ICON_SIZE.xs} aria-label="Has open task" /> : null}
             <time>{formatMailTimestamp(thread.lastMessageAt)}</time>
           </span>
         </span>

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Check, Plus, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Check, Plus, Trash, UserPlus, Users, X } from "lucide-react";
 import { Modal } from "./AppChrome";
 import type { ContactGroup, ContactProfile } from "./domain";
 import { errorMessage } from "./errors";
@@ -152,7 +152,7 @@ export function ContactGroupDetail({
       </div>
       <div className="contact-profile-actions">
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setAdding(true)}><UserPlus size={ICON_SIZE.sm} />Add Members</button>
-        <button type="button" className="btn-icon" aria-label="Delete group" disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={ICON_SIZE.lg} /></button>
+        <button type="button" className="btn-icon" aria-label="Delete group" disabled={busy} onClick={() => setConfirmDelete(true)}><Trash size={ICON_SIZE.lg} /></button>
       </div>
     </div>
     {confirmDelete ? <InlineConfirm

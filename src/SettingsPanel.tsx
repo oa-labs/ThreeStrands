@@ -1,10 +1,10 @@
 import {
   Activity,
-  AlertCircle,
+  CircleAlert,
   ArrowLeftRight,
   CalendarDays,
   Check,
-  CheckCircle2,
+  CircleCheck,
   ChevronDown,
   ChevronUp,
   Clock,
@@ -153,7 +153,7 @@ function DiagnosticsIssue({
   return (
     <div className="diagnostics-issue" role="group" aria-label={title}>
       <div className="diagnostics-issue-header">
-        <AlertCircle size={ICON_SIZE.sm} aria-hidden="true" />
+        <CircleAlert size={ICON_SIZE.sm} aria-hidden="true" />
         <strong>{title}</strong>
         {actions ? <span className="diagnostics-issue-actions">{actions}</span> : null}
       </div>
@@ -212,7 +212,7 @@ export function DiagnosticsSettings({
     <section className="settings-section" aria-label="Diagnostics">
       <h3>Sync Health</h3>
       <div className={`diagnostics-summary${issueCount ? " attention" : ""}`} role="status">
-        {issueCount ? <AlertCircle size={ICON_SIZE.lg} aria-hidden="true" /> : <CheckCircle2 size={ICON_SIZE.lg} aria-hidden="true" />}
+        {issueCount ? <CircleAlert size={ICON_SIZE.lg} aria-hidden="true" /> : <CircleCheck size={ICON_SIZE.lg} aria-hidden="true" />}
         <div>
           <strong>{issueCount ? `${plural(issueCount, "item")} to review` : "Sync is healthy"}</strong>
           <span>
@@ -979,7 +979,7 @@ function AccountsSettings({
       </div>
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
         <div className="notice accounts-config-notice">
-          <AlertCircle size={ICON_SIZE.md} />
+          <CircleAlert size={ICON_SIZE.md} />
           <div>
             <strong>Google OAuth is not configured</strong>
             <p>
@@ -1109,7 +1109,7 @@ function AccountsSettings({
 function AccountStatusBadge({ status }: { status: Account["status"] | CalendarAccount["status"] }) {
   return (
     <span className={`account-status ${status}`}>
-      {status === "needs_reauth" ? <AlertCircle size={ICON_SIZE.xs} /> : <CheckCircle2 size={ICON_SIZE.xs} />}
+      {status === "needs_reauth" ? <CircleAlert size={ICON_SIZE.xs} /> : <CircleCheck size={ICON_SIZE.xs} />}
       {status === "needs_reauth" ? "Needs reconnect" : "Connected"}
     </span>
   );
@@ -1316,7 +1316,7 @@ export function CalendarAccountsSettings({
       </div>
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
         <div className="notice accounts-config-notice">
-          <AlertCircle size={ICON_SIZE.md} />
+          <CircleAlert size={ICON_SIZE.md} />
           <div>
             <strong>Google OAuth is not configured</strong>
             <p>Configure the Google Desktop app credentials used for mail, then restart ThreeStrands.</p>
@@ -1948,7 +1948,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           </div>
           <div className="settings-field-detail ai-key-status">
             <span className={`settings-connection-status${keyConfigured ? " configured" : ""}`} role="status">
-              {keyConfigured ? <CheckCircle2 size={ICON_SIZE.xs} aria-hidden="true" /> : <AlertCircle size={ICON_SIZE.xs} aria-hidden="true" />}
+              {keyConfigured ? <CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> : <CircleAlert size={ICON_SIZE.xs} aria-hidden="true" />}
               {keyConfigured ? "API key configured" : "API key required"}
             </span>
             <span className="settings-hint">Stored in your OS keychain, never in the mail database.</span>
@@ -1990,7 +1990,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               <RefreshCw size={ICON_SIZE.sm} aria-hidden="true" />
               {testingConnection ? "Testing connection…" : "Test Connection"}
             </button>
-            {connectionTested ? <span className="settings-connection-status configured" role="status"><CheckCircle2 size={ICON_SIZE.xs} aria-hidden="true" /> Connection successful</span> : null}
+            {connectionTested ? <span className="settings-connection-status configured" role="status"><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> Connection successful</span> : null}
           </div>
           {configurationError ? <p className="form-error settings-field-detail" role="alert">{configurationError}</p> : null}
 
@@ -2316,7 +2316,7 @@ export function DataTransferSettings({
       {message?.tone === "error" ? <p className="form-error" role="alert">{message.text}</p> : null}
       {message?.tone === "success" ? (
         <p className="settings-connection-status configured" role="status">
-          <CheckCircle2 size={ICON_SIZE.xs} aria-hidden="true" /> {message.text}
+          <CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> {message.text}
         </p>
       ) : null}
     </section>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlarmClock, Check, CheckCircle2, LoaderCircle } from "lucide-react";
+import { AlarmClock, Check, CircleCheck, LoaderCircle } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactProfile } from "./domain";
 import { errorMessage } from "./errors";
@@ -100,7 +100,7 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
         {" · "}{touched ? `Last contact ${formatKeepInTouchDate(touched)}` : "No contact yet"}
       </p>
       <div className="contact-kit-actions">
-        <button type="button" className="btn" disabled={busy} title="Log a call, meeting, or message outside email" onClick={() => void run(() => mailClient.markContacted(profile.id))}><CheckCircle2 size={ICON_SIZE.md} />Mark Contacted</button>
+        <button type="button" className="btn" disabled={busy} title="Log a call, meeting, or message outside email" onClick={() => void run(() => mailClient.markContacted(profile.id))}><CircleCheck size={ICON_SIZE.md} />Mark Contacted</button>
         <details className="contact-kit-snooze">
           <summary><AlarmClock size={ICON_SIZE.sm} />Snooze</summary>
           <div className="contact-kit-snooze-menu">

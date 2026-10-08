@@ -1,5 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlignLeft, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, Pencil, RefreshCw, Trash2, Video, X } from "lucide-react";
+import { TextAlignStart, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, Pencil, RefreshCw, Trash, Video, X } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HoverTooltip, Modal } from "./AppChrome";
 import {
@@ -251,7 +251,7 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
         <div className="calendar-event-viewer-actions">
           {event.canEdit ? <>
             <HoverTooltip title="Edit event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Edit Event" disabled={deletePending} onClick={() => setEditing(true)}><Pencil size={ICON_SIZE.sm} /></button></HoverTooltip>
-            <HoverTooltip title="Delete event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Delete Event" aria-expanded={confirmingDelete} disabled={deletePending} onClick={() => { setDeleteError(null); setConfirmingDelete(true); }}><Trash2 size={ICON_SIZE.sm} /></button></HoverTooltip>
+            <HoverTooltip title="Delete event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Delete Event" aria-expanded={confirmingDelete} disabled={deletePending} onClick={() => { setDeleteError(null); setConfirmingDelete(true); }}><Trash size={ICON_SIZE.sm} /></button></HoverTooltip>
           </> : null}
           <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Event Details" onClick={onDismiss}><X size={ICON_SIZE.sm} /></button>
         </div>
@@ -285,7 +285,7 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
           </div> : null}
           {responseError ? <p role="alert">{responseError}</p> : null}
         </div> : null}
-        {event.description ? <p className="calendar-event-viewer-description"><AlignLeft size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
+        {event.description ? <p className="calendar-event-viewer-description"><TextAlignStart size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
       {editing ? <EditCalendarEventDialog
         event={event}

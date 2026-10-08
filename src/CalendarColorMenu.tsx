@@ -1,4 +1,4 @@
-import { Check, MoreHorizontal } from "lucide-react";
+import { Check, Ellipsis } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   CALENDAR_COLORS,
@@ -53,7 +53,7 @@ export function CalendarColorRow({
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
-        <MoreHorizontal size={ICON_SIZE.sm} />
+        <Ellipsis size={ICON_SIZE.sm} />
       </button>
       {open ? (
         <CalendarColorPalette

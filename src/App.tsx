@@ -1,9 +1,9 @@
 import {
   ArrowLeft,
   Archive,
-  AlertCircle,
+  CircleAlert,
   CalendarDays,
-  CheckSquare,
+  SquareCheckBig,
   Check,
   ContactRound,
   ChevronDown,
@@ -20,7 +20,7 @@ import {
   ShieldAlert,
   Star,
   Tag,
-  Trash2,
+  Trash,
   Unlink,
   X,
 } from "lucide-react";
@@ -2466,7 +2466,7 @@ export function App() {
               aria-label="Tasks (3)"
               onClick={() => executeById("tasks.open")}
             >
-              <CheckSquare size={ICON_SIZE.lg} />
+              <SquareCheckBig size={ICON_SIZE.lg} />
             </button>
           </HoverTooltip>
           <HoverTooltip label={keepInTouchDueCount ? `Contacts · ${keepInTouchDueCount} to reconnect with` : "Contacts"} shortcut="4">
@@ -2538,7 +2538,7 @@ export function App() {
                     </HoverTooltip>
                     <HoverTooltip label="Trash" placement="bottom">
                       <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
-                        <Trash2 size={ICON_SIZE.md} />
+                        <Trash size={ICON_SIZE.md} />
                       </ActionButton>
                     </HoverTooltip>
                     <HoverTooltip label="Mark spam" placement="bottom">
@@ -2797,7 +2797,7 @@ export function App() {
                 ) : (
                   <HoverTooltip label="Trash" shortcut="#" placement="bottom">
                     <ActionButton label="Trash" shortcut="#" onClick={() => executeById("thread.trash")}>
-                      <Trash2 size={ICON_SIZE.lg} />
+                      <Trash size={ICON_SIZE.lg} />
                     </ActionButton>
                   </HoverTooltip>
                 )}
@@ -3212,7 +3212,7 @@ export function App() {
       ) : null}
       {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "error" ? (
         <div className="toast search-status-toast error" role="status" aria-live="polite">
-          <AlertCircle size={ICON_SIZE.sm} />
+          <CircleAlert size={ICON_SIZE.sm} />
           Gmail search unavailable
         </div>
       ) : null}
@@ -3486,7 +3486,7 @@ export function AccountSwitcher({
             >
               {name.charAt(0).toUpperCase()}
               {unreadCount > 0 ? <UnreadBadge count={unreadCount} /> : null}
-              {needsReconnect ? <span className="account-reconnect-badge" aria-hidden="true"><AlertCircle size={ICON_SIZE.sm} strokeWidth={2.5} /></span> : null}
+              {needsReconnect ? <span className="account-reconnect-badge" aria-hidden="true"><CircleAlert size={ICON_SIZE.sm} strokeWidth={2.5} /></span> : null}
             </button>
           </HoverTooltip>
         );
@@ -3606,7 +3606,7 @@ function LabelManager({
                     void onDelete(label.id);
                   }}
                 >
-                  <Trash2 size={ICON_SIZE.sm} />
+                  <Trash size={ICON_SIZE.sm} />
                 </button>
               </span>
             ) : null}

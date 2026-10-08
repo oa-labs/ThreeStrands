@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash } from "lucide-react";
 import { Modal } from "./AppChrome";
 import type { Snippet } from "./domain";
 import { readSnippetUsage } from "./settings";
@@ -101,7 +101,7 @@ export function SnippetPicker({
                   void onDelete(snippet.id);
                 }}
               >
-                <Trash2 size={ICON_SIZE.sm} />
+                <Trash size={ICON_SIZE.sm} />
               </button>
             </span>
           </div>

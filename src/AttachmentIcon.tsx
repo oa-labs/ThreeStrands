@@ -1,4 +1,4 @@
-import { File, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileText, FileVideo, Presentation, type LucideIcon } from "lucide-react";
+import { File, FileArchive, FileHeadphone, FileCode, FileImage, FileSpreadsheet, FileText, FilePlay, Presentation, type LucideIcon } from "lucide-react";
 import { attachmentKind, type AttachmentKind } from "./attachmentKind";
 import { ICON_SIZE } from "./iconSizes";
 
@@ -8,8 +8,8 @@ const ICONS: Record<AttachmentKind, LucideIcon> = {
   presentation: Presentation,
   document: FileText,
   archive: FileArchive,
-  audio: FileAudio,
-  video: FileVideo,
+  audio: FileHeadphone,
+  video: FilePlay,
   code: FileCode,
   other: File,
 };
