@@ -1392,7 +1392,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   background: var(--surface);
   touch-action: pan-y;
 }
-.app-shell.mail-context-open > .calendar-sidebar { grid-column: 5; }
+/* Pin the row too: the schedule precedes the context panel in the DOM, and
+   auto-placement would otherwise wrap the panel (column 4) onto a new row. */
+.app-shell.mail-context-open > .calendar-sidebar { grid-column: 5; grid-row: 1; }
 .calendar-sidebar-header {
   min-height: 90px;
   display: flex;
@@ -2072,7 +2074,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .contacts-status,.contacts-empty { padding:var(--space-3); color:var(--muted); font-size:var(--text-meta); }
 .contacts-error { color:var(--error); font-size:var(--text-meta); }
 .contacts-empty-state { min-height:320px; display:grid; place-content:center; justify-items:center; gap:var(--space-2); color:var(--muted); }
-.context-panel { grid-column:4; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:auto; padding:var(--space-3) var(--side-pane-inset) var(--space-4); border-left:1px solid var(--border); background:var(--surface); }
+.context-panel { grid-column:4; grid-row:1; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:auto; padding:var(--space-3) var(--side-pane-inset) var(--space-4); border-left:1px solid var(--border); background:var(--surface); }
 .context-contact-card { display:flex; align-items:flex-start; gap:var(--space-2-5); }
 .context-contact-text { display:grid; flex:1; gap:var(--space-0-5); min-width:0; }
 /* Three type tiers: name, email address, then every detail line at one smaller size. */

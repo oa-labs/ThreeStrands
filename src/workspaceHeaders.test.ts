@@ -275,6 +275,15 @@ describe("mail workspace with the calendar schedule open", () => {
     expect(scheduleColumn).toBe("5");
   });
 
+  it("keeps the context panel on the first row even though the schedule precedes it in the DOM", () => {
+    let scheduleRow: string | undefined;
+    css.walkRules(".app-shell.mail-context-open > .calendar-sidebar", (rule) => {
+      if (rule.parent === css) rule.walkDecls("grid-row", (declaration) => { scheduleRow = declaration.value; });
+    });
+    expect(scheduleRow).toBe("1");
+    expect(lastDeclaration(".context-panel", "grid-row")).toBe("1");
+  });
+
   it("returns the schedule to fixed drawer positioning on narrow screens", () => {
     let position: string | undefined;
     let column: string | undefined;
