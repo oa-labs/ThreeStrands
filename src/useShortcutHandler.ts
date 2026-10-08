@@ -83,6 +83,21 @@ export function useShortcutHandler(
       }
 
       const allCommands = [...commands, ...extraRef.current];
+      // A held key only repeats commands that opt in. Anything else (Archive,
+      // Trash, a chord step) still claims the repeat so it can't fall through.
+      if (event.repeat) {
+        const command = allCommands.find(
+          (candidate) =>
+            candidate.enabled(currentContext) &&
+            candidate.keys.some((key) => {
+              const steps = shortcutSteps(key);
+              return steps.length === 1 && matchesShortcut(event, steps[0]);
+            }),
+        );
+        if (command) event.preventDefault();
+        if (command?.repeatable) executeRef.current(command);
+        return;
+      }
       if (pendingStep.current) {
         const command = allCommands.find(
           (candidate) =>

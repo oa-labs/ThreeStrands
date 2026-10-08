@@ -126,6 +126,46 @@ describe("useShortcutHandler", () => {
     hook.unmount();
   });
 
+  it("ignores key repeat for one-shot actions so holding e archives only the selected thread", () => {
+    const current = context({ selectedId: "thread-1" });
+    const execute = vi.fn();
+    const hook = renderHook(() => useShortcutHandler(current, execute));
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "e", cancelable: true }));
+    const repeat = new KeyboardEvent("keydown", { key: "e", repeat: true, cancelable: true });
+    window.dispatchEvent(repeat);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "#", repeat: true, cancelable: true }));
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "thread.archive" }));
+    expect(repeat.defaultPrevented).toBe(true);
+    hook.unmount();
+  });
+
+  it("lets navigation commands repeat while a key is held", () => {
+    const current = context({ selectedId: "thread-1" });
+    const execute = vi.fn();
+    const hook = renderHook(() => useShortcutHandler(current, execute));
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", cancelable: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", repeat: true, cancelable: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", repeat: true, cancelable: true }));
+
+    expect(execute.mock.calls.map(([command]) => command.id)).toEqual(["thread.next", "thread.next", "thread.previous"]);
+    hook.unmount();
+  });
+
+  it("does not complete a two-step shortcut from a held prefix key", () => {
+    const current = context({ focusedPane: "tasks" });
+    const execute = vi.fn();
+    const hook = renderHook(() => useShortcutHandler(current, execute));
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "g", cancelable: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "g", repeat: true, cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
   it("leaves Escape to an open overlay, and otherwise runs Go Back", () => {
     const current = context({ canGoBack: true });
     const execute = vi.fn();

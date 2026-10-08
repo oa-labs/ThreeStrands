@@ -126,6 +126,12 @@ export type Command = {
   enabled(context: CommandContext): boolean;
   run(context: CommandContext): Promise<CommandResult>;
   undo?: (result: CommandResult) => Promise<void>;
+  /**
+   * Whether holding the key repeats the command. Off by default: a one-shot
+   * action like Archive moves selection on, so a key repeat would act on the
+   * next thread the user never chose.
+   */
+  repeatable?: boolean;
 };
 
 /** Palette search: every query word must appear in the title or keywords, in any order. */
@@ -188,6 +194,7 @@ export const commands: Command[] = [
     title: "Next Conversation",
     keys: ["j", "ArrowDown"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "mail" && !context.composerActive,
     run: (context) => complete(context.selectNext),
   },
@@ -196,6 +203,7 @@ export const commands: Command[] = [
     title: "Previous Conversation",
     keys: ["k", "ArrowUp"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "mail" && !context.composerActive,
     run: (context) => complete(context.selectPrevious),
   },
@@ -204,6 +212,7 @@ export const commands: Command[] = [
     title: "Next Task",
     keys: ["j", "ArrowDown"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
     run: (context) => complete(context.selectNextTask),
   },
@@ -212,6 +221,7 @@ export const commands: Command[] = [
     title: "Previous Task",
     keys: ["k", "ArrowUp"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "tasks" && !context.composerActive,
     run: (context) => complete(context.selectPreviousTask),
   },
@@ -268,6 +278,7 @@ export const commands: Command[] = [
     title: "Next Board Column",
     keys: ["ArrowRight"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "tasks" && context.taskBoardActive && !context.composerActive,
     run: (context) => complete(() => context.selectAdjacentTaskColumn(1)),
   },
@@ -276,6 +287,7 @@ export const commands: Command[] = [
     title: "Previous Board Column",
     keys: ["ArrowLeft"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "tasks" && context.taskBoardActive && !context.composerActive,
     run: (context) => complete(() => context.selectAdjacentTaskColumn(-1)),
   },
@@ -340,6 +352,7 @@ export const commands: Command[] = [
     title: "Next Message",
     keys: ["n", "ArrowRight"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "mail" && context.canNavigateMessages && !context.composerActive,
     run: (context) => complete(context.selectNextMessage),
   },
@@ -348,6 +361,7 @@ export const commands: Command[] = [
     title: "Previous Message",
     keys: ["p", "ArrowLeft"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "mail" && context.canNavigateMessages && !context.composerActive,
     run: (context) => complete(context.selectPreviousMessage),
   },
@@ -446,6 +460,7 @@ export const commands: Command[] = [
     title: "Scroll Message Down",
     keys: ["Space"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && !context.composerActive,
     run: (context) => complete(context.pageMessageDown),
   },
@@ -454,6 +469,7 @@ export const commands: Command[] = [
     title: "Scroll Message Up",
     keys: ["Shift+Space"],
     group: "Navigation",
+    repeatable: true,
     enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && !context.composerActive,
     run: (context) => complete(context.pageMessageUp),
   },
@@ -640,6 +656,7 @@ export const commands: Command[] = [
     title: "Increase Font Size",
     keys: ["Mod+=", "Mod++"],
     group: "Application",
+    repeatable: true,
     enabled: () => true,
     run: (context) => complete(context.increaseFontSize),
   },
@@ -648,6 +665,7 @@ export const commands: Command[] = [
     title: "Decrease Font Size",
     keys: ["Mod+-"],
     group: "Application",
+    repeatable: true,
     enabled: () => true,
     run: (context) => complete(context.decreaseFontSize),
   },
