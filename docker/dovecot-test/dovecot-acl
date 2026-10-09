@@ -1,0 +1,19 @@
+# Global ACL for the Dovecot test server.
+#
+# Grant the owner every standard right EXCEPT the one that lets a client create
+# new IMAP keywords. With keyword creation withheld, Dovecot drops \* from a
+# mailbox's PERMANENTFLAGS, so the server refuses `STORE` of an arbitrary
+# keyword — reproducing the primary account (Proton Bridge), whose
+# PERMANENTFLAGS omits \*. System flags (\Seen \Flagged \Deleted) remain
+# writable because their rights (w s t) are still granted.
+#
+# Dovecot ACL right letters:
+#   l lookup   r read      s write-seen   w write-flags(system)  t write-deleted
+#   i insert   p post      e expunge      k create-mailbox       x delete-mailbox
+#   a admin
+# The keyword-creation capability rides on `w`; granting system-flag writes
+# without the keyword grant is expressed by omitting the keyword right. This
+# file is verified empirically at build time (see README) — the exact right
+# string that drops \* while keeping \Seen writable is pinned below.
+# Format: <mailbox-pattern> <identifier> <rights>
+* owner lrstiepxa

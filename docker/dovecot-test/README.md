@@ -45,10 +45,24 @@ Test account: `test@threestrands.test` / `testpassword`.
   Starred (`\Flagged`).
 - Seeded mail: 2 INBOX messages (one shares a Message-ID with a Sent message to
   exercise the "one message, two locations" identity rule) + 1 Archive message.
+- **`PERMANENTFLAGS` omits `\*`** — the `acl` plugin plus the global
+  `dovecot-acl` file withhold the keyword-creation right, so the server reports
+  `PERMANENTFLAGS = (\Deleted \Seen …)` with no `\*` and refuses to persist an
+  arbitrary keyword, exactly like Proton Bridge. System flags stay writable.
+  Verified over the wire by `examples/imap_spike.rs` check 4
+  (`admits arbitrary keywords? false`; an unknown keyword does not survive a
+  re-fetch). This is what forces the primary account onto label-folders rather
+  than keyword-labels, so the harness now exercises that path.
 
-## Open verification item
+## Re-verifying
 
-- **`PERMANENTFLAGS` must omit `\*`** (so custom keywords can't be stored, as on
-  the primary account). The config targets this, but it is best asserted by the
-  Phase-2 Slice-1 Rust integration test that parses a real `SELECT` response,
-  rather than by shell scripting an IMAP transcript. Confirm it there.
+Run the Phase-2 Slice-1 integration tests, or the spike example directly:
+
+```sh
+scripts/dovecot-test-server.sh up
+cargo run --example imap_spike -- \
+  --fingerprint "$(scripts/dovecot-test-server.sh fingerprint)"
+```
+
+Check 4 asserts `\*` is absent and that an arbitrary keyword STORE does not
+persist.

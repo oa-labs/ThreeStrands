@@ -46,6 +46,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY dovecot.conf /etc/dovecot/dovecot.conf
+COPY dovecot-acl /etc/dovecot/dovecot-acl
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY seed.sh /usr/local/bin/seed.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/seed.sh
